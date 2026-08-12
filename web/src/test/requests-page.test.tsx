@@ -22,6 +22,7 @@ const {
   clearRequests,
   getSettings,
   getUsers,
+  getArrStatus,
 } = vi.hoisted(() => ({
   listRequests: vi.fn(),
   getUsers: vi.fn((): Promise<unknown[]> => Promise.resolve([])),
@@ -39,6 +40,9 @@ const {
   getSettings: vi.fn((): Promise<Record<string, unknown>> =>
     Promise.resolve({ "requests.enabled": true }),
   ),
+  getArrStatus: vi.fn((): Promise<unknown> =>
+    Promise.resolve({ statuses: {}, radarr: "off", sonarr: "off" }),
+  ),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -55,6 +59,7 @@ vi.mock("@/lib/api", () => ({
     clearRequests: (ids: number[]) => clearRequests(ids),
     getSettings: () => getSettings(),
     getUsers: () => getUsers(),
+    getArrStatus: () => getArrStatus(),
   },
 }));
 
@@ -146,6 +151,12 @@ describe("RequestsPage", () => {
     clearRequests.mockClear();
     getSettings.mockResolvedValue({ "requests.enabled": true });
     getUsers.mockResolvedValue([]);
+    getArrStatus.mockReset();
+    getArrStatus.mockResolvedValue({
+      statuses: {},
+      radarr: "off",
+      sonarr: "off",
+    });
   });
 
   it("shows an empty state when nothing has ever been queued", async () => {
@@ -1153,5 +1164,106 @@ describe("RequestsPage", () => {
     expect(
       screen.getByRole("checkbox", { name: /Fallout/i }),
     ).not.toBeDisabled();
+  });
+});
+
+/**
+ * The Arr badge. Three of its four states used to render as the same nothing: a lookup still in
+ * flight, an app that never answered, and a title genuinely absent from both. The query also
+ * fetched ONCE with no polling and nothing ever invalidated it, so two of those three were states
+ * you could sit in indefinitely with no way to tell which you were in.
+ */
+describe("RequestsPage — what Sonarr/Radarr has", () => {
+  beforeEach(() => {
+    listRequests.mockReset();
+    sendRequests.mockClear();
+    getSettings.mockResolvedValue({ "requests.enabled": true });
+    getUsers.mockResolvedValue([]);
+    getArrStatus.mockReset();
+  });
+
+  it("says it is checking while the first lookup is in flight", async () => {
+    listRequests.mockResolvedValue([candidate({ id: 1, title: "Dune" })]);
+    // Never resolves: the state under test is the one that used to be invisible.
+    getArrStatus.mockReturnValue(new Promise(() => {}));
+    renderPage();
+
+    await screen.findByText("Dune");
+    expect(await screen.findByText(/Checking/i)).toBeInTheDocument();
+  });
+
+  it("shows what the app reported once the lookup lands", async () => {
+    listRequests.mockResolvedValue([candidate({ id: 1, title: "Dune" })]);
+    getArrStatus.mockResolvedValue({
+      statuses: { "1": "downloaded" },
+      radarr: "ok",
+      sonarr: "off",
+    });
+    renderPage();
+
+    expect(await screen.findByText("Downloaded")).toBeInTheDocument();
+    expect(screen.queryByText(/Checking/i)).toBeNull();
+  });
+
+  it("names an app it couldn't reach instead of drawing nothing", async () => {
+    // The bug: a failed lookup is swallowed server-side so one app being down can't blank the
+    // other, which left an unreachable Radarr looking exactly like "Radarr tracks none of these".
+    listRequests.mockResolvedValue([candidate({ id: 1, title: "Dune" })]);
+    getArrStatus.mockResolvedValue({
+      statuses: {},
+      radarr: "unreachable",
+      sonarr: "ok",
+    });
+    renderPage();
+
+    expect(await screen.findByText(/Can.t reach Radarr/i)).toBeInTheDocument();
+  });
+
+  it("blames only the app that is down, per title", async () => {
+    listRequests.mockResolvedValue([
+      candidate({ id: 1, title: "Dune", media_type: "movie" }),
+      candidate({
+        id: 2,
+        tmdb_id: 200,
+        title: "Shogun",
+        media_type: "show",
+      }),
+    ]);
+    getArrStatus.mockResolvedValue({
+      statuses: { "2": "downloading" },
+      radarr: "unreachable",
+      sonarr: "ok",
+    });
+    renderPage();
+
+    // The film says Radarr is down; the show, served by a healthy Sonarr, just reports its status.
+    expect(await screen.findByText(/Can.t reach Radarr/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Can.t reach Sonarr/i)).toBeNull();
+    expect(screen.getByText("Downloading")).toBeInTheDocument();
+  });
+
+  it("re-asks the Arrs the moment something is sent to them", async () => {
+    // Nothing invalidated this key at all, so a title you had just sent carried no badge until the
+    // next poll — or, before there was a poll, until you reloaded the page.
+    listRequests.mockResolvedValue([candidate({ id: 1, title: "Dune" })]);
+    getArrStatus.mockResolvedValue({
+      statuses: {},
+      radarr: "ok",
+      sonarr: "off",
+    });
+    renderPage();
+
+    await screen.findByText("Dune");
+    await waitFor(() => expect(getArrStatus).toHaveBeenCalled());
+    const before = getArrStatus.mock.calls.length;
+
+    await userEvent.click(screen.getByRole("checkbox", { name: /Dune/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /to Radarr\/Sonarr/i }),
+    );
+
+    await waitFor(() =>
+      expect(getArrStatus.mock.calls.length).toBeGreaterThan(before),
+    );
   });
 });

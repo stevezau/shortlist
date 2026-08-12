@@ -97,7 +97,7 @@ class TestRunningACheck:
         page.get_by_role("button", name=re.compile("switch on the checks", re.IGNORECASE)).click()
         expect(page.get_by_text(re.compile("checks are switched on", re.IGNORECASE))).to_be_visible(timeout=20_000)
 
-        page.get_by_role("button", name=re.compile("show all 21 checks", re.IGNORECASE)).click()
+        page.get_by_role("button", name=re.compile("show all 22 checks", re.IGNORECASE)).click()
 
         expect(page.get_by_role("button", name=re.compile("ask plex directly", re.IGNORECASE))).to_be_visible()
         expect(

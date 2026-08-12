@@ -25,6 +25,7 @@ import type {
   PlexServer,
   ProbeRequest,
   ProbeResult,
+  ArrStatus,
   RequestCandidate,
   RequestSendResult,
   Run,
@@ -653,9 +654,8 @@ export const api = {
       body: JSON.stringify({ ids }),
     }),
 
-  // Fetch Arr download status for all sent requests
-  getArrStatus: (): Promise<Record<number, string | null>> =>
-    request("/api/requests/status"),
+  /** Live Sonarr/Radarr status for every waiting and sent title, plus whether each app answered. */
+  getArrStatus: (): Promise<ArrStatus> => request("/api/requests/status"),
 
   // --- System ---
   /**
@@ -724,6 +724,16 @@ export const api = {
     ),
 
   supportSharing: (): Promise<SupportResult> => request("/api/support/sharing"),
+
+  /** Where each row is ACTUALLY showing, vs where it should be.
+   *
+   *  The one check that can see the owner's own Home screen. Share filters hide a row from everyone
+   *  else, but the owner has no share filter (plex-safety rule 5), so nothing but the row's own
+   *  `promotedToOwnHome` flag keeps somebody else's row off it — which `supportSharing` cannot read
+   *  at all. Built for issue #75 and then never wired to the UI, leaving the page's highest-stakes
+   *  question ("someone can see another person's row") answerable only in half. */
+  supportSurfaces: (): Promise<SupportResult> =>
+    request("/api/support/surfaces"),
 
   supportDrift: (): Promise<SupportResult> => request("/api/support/drift"),
 

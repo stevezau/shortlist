@@ -9,6 +9,7 @@ import { Link } from "react-router";
 
 import { MutationAlert } from "@/components/mutation-alert";
 import { RowDestructiveActions } from "@/components/rows/row-destructive-actions";
+import { RowRunAction } from "@/components/rows/row-run-action";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -53,7 +54,10 @@ export function RowCard({
   // harmless and stays a single click.
   const [confirmDisable, setConfirmDisable] = useState(false);
   const setEnabled = (enabled: boolean) =>
-    save.mutate({ id: collection.id, body: { ...toInput(collection), enabled } });
+    save.mutate({
+      id: collection.id,
+      body: { ...toInput(collection), enabled },
+    });
 
   // null until the library list actually arrives — a half-loaded card must not label a row's
   // libraries with raw Plex section keys, which mean nothing to the owner.
@@ -132,9 +136,9 @@ export function RowCard({
             </div>
           )}
         </div>
-        {/* Wraps: six controls (toggle, Runs, Edit, Rename, Remove from Plex, Delete) need 533px in
-            one line, so on a phone they ran 184px off the screen and Delete was unreachable. Wrapping
-            costs a row of height on narrow screens and changes nothing above it. */}
+        {/* Wraps: six controls (toggle, Run, Runs, Edit, Remove from Plex, Delete) need well over
+            500px in one line, so on a phone they ran off the screen and Delete was unreachable.
+            Wrapping costs a row of height on narrow screens and changes nothing above it. */}
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Switch
             checked={collection.enabled}
@@ -143,6 +147,9 @@ export function RowCard({
             }
             aria-label={`Enable ${collection.name}`}
           />
+          {/* Rebuild, then the history of rebuilding — "Run" beside "Runs" in that order, because
+              the answer to "did that work?" is the screen the Run button already sends you to. */}
+          <RowRunAction collection={collection} />
           <Button
             asChild
             variant="ghost"

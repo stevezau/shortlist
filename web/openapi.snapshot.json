@@ -98,6 +98,51 @@
         "title": "ArrOptionsOut",
         "type": "object"
       },
+      "ArrStatusOut": {
+        "additionalProperties": true,
+        "description": "Per-row download status, plus whether each app actually answered.\n\n``reach`` is the half this used to omit. A failed Arr lookup is swallowed on purpose (one app\nbeing down must not blank the other), so an unreachable Radarr produced an all-``null`` map \u2014\nbyte-identical to \"Radarr is fine and tracks none of these\". The inbox therefore showed no\nbadges, for ever, with nothing anywhere saying why.",
+        "properties": {
+          "radarr": {
+            "enum": [
+              "ok",
+              "unreachable",
+              "off"
+            ],
+            "title": "Radarr",
+            "type": "string"
+          },
+          "sonarr": {
+            "enum": [
+              "ok",
+              "unreachable",
+              "off"
+            ],
+            "title": "Sonarr",
+            "type": "string"
+          },
+          "statuses": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Statuses",
+            "type": "object"
+          }
+        },
+        "required": [
+          "statuses",
+          "radarr",
+          "sonarr"
+        ],
+        "title": "ArrStatusOut",
+        "type": "object"
+      },
       "BackupCreatedOut": {
         "additionalProperties": true,
         "description": "A manual backup carries no `created_at`: it was just taken, which is the answer.",
@@ -7170,25 +7215,14 @@
     },
     "/api/requests/status": {
       "get": {
-        "description": "Arr download status for every request row. Returns {request_id: 'downloaded' | 'downloading' | ...}.\n\nCovers waiting rows as well as sent ones. A waiting title is normally absent from the Arrs \u2014 the\nnightly pass drops anything they already track \u2014 so a status there means the owner (or another\ntool) added it by hand since, which is exactly the case where \"why is this still waiting?\" needs\nan answer. Rejected rows are skipped: nothing is going to happen to them.\n\nWhole-library maps, not per-title lookups, so the cost is a handful of calls no matter how long\nthe inbox is. Runs in an executor since the Arr clients are sync. A title neither app tracks\nappears as None.",
+        "description": "Arr download status for every request row, keyed by request id, plus per-app reachability.\n\nCovers waiting rows as well as sent ones. A waiting title is normally absent from the Arrs \u2014 the\nnightly pass drops anything they already track \u2014 so a status there means the owner (or another\ntool) added it by hand since, which is exactly the case where \"why is this still waiting?\" needs\nan answer. Rejected rows are skipped: nothing is going to happen to them.\n\nWhole-library maps, not per-title lookups, so the cost is a handful of calls no matter how long\nthe inbox is \u2014 which is what makes it cheap enough for the inbox to poll. Runs in an executor\nsince the Arr clients are sync. A title neither app tracks appears as None.",
         "operationId": "get_arr_status_api_requests_status_get",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "title": "Response Get Arr Status Api Requests Status Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ArrStatusOut"
                 }
               }
             },

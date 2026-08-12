@@ -8,10 +8,11 @@ import { RowEditor } from "@/components/rows/row-editor";
 import type * as ApiModule from "@/lib/api";
 import type { Collection, User } from "@/lib/types";
 
-const { updateCollection, settingsData } = vi.hoisted(() => ({
+const { updateCollection, settingsData, startRun } = vi.hoisted(() => ({
   updateCollection: vi.fn((id: number, body: unknown) =>
     Promise.resolve({ ...(body as object), id }),
   ),
+  startRun: vi.fn((_body: unknown) => Promise.resolve({ run_id: 42 })),
   // Mutable so a test can serve a real server's globals; empty = "settings haven't loaded".
   settingsData: { current: {} as Record<string, unknown> },
 }));
@@ -27,6 +28,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getLibraries: () => Promise.resolve([]),
       getImageProvider: () =>
         Promise.resolve({ capable: false, provider: "", reason: "" }),
+      startRun: (body: unknown) => startRun(body),
     },
   };
 });
@@ -108,6 +110,45 @@ function renderEditor(collection: Collection, users: User[] = []) {
     </MemoryRouter>,
   );
 }
+
+describe("RowEditor — acting on the row you're editing", () => {
+  beforeEach(() => {
+    settingsData.current = {};
+    startRun.mockClear();
+  });
+
+  it("rebuilds this row and shows its run history, without a trip to another page", async () => {
+    // Both actions existed already — Run behind a dialog on the Runs page that made you re-pick the
+    // row you were editing, Runs only on the Rows CARD, which this page replaced. Neither was
+    // reachable from the editor at all.
+    renderEditor(row());
+
+    expect(await screen.findByRole("link", { name: /Runs/ })).toHaveAttribute(
+      "href",
+      "/runs?row=hidden-gems",
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /Run Hidden Gems now/i }),
+    );
+    expect(startRun).toHaveBeenCalledWith({ collection_ids: [1] });
+  });
+
+  it("warns that Run rebuilds the SAVED row once the form has been edited", async () => {
+    // Run is scoped to the stored row, so pressing it mid-edit silently rebuilds without your
+    // changes — and nothing on the button says so.
+    renderEditor(row());
+
+    await screen.findByRole("button", { name: /Run Hidden Gems now/i });
+    expect(screen.queryByText(/unsaved changes/i)).toBeNull();
+
+    await userEvent.click(
+      screen.getByRole("switch", { name: /watch it again row/i }),
+    );
+
+    expect(await screen.findByText(/unsaved changes/i)).toBeInTheDocument();
+  });
+});
 
 describe("RowEditor — inherited globals", () => {
   beforeEach(() => {
@@ -1441,9 +1482,7 @@ describe("RowEditor — a shared row hides the dials that do not apply to it", (
     // Sources, libraries and display order all work on the shared path — hiding those would remove
     // real function.
     renderEditor(row({ build: "shared", min_watchers: 2 }));
-    expect(
-      screen.getByRole("group", { name: /order/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: /order/i })).toBeInTheDocument();
   });
 
   it("hides the release-date weight, which a shared row has nothing to apply it to", () => {

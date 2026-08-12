@@ -277,6 +277,10 @@ class TestArrStatusEndpoint:
         monkeypatch.setattr(arr_mod, "SonarrClient", lambda *a, **k: sonarr)
         monkeypatch.setattr(client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(cfg))
 
+    @staticmethod
+    def _statuses(client: TestClient) -> dict:
+        return client.get("/api/requests/status").json()["statuses"]
+
     def test_shows_are_keyed_on_show_not_tv(self, client: TestClient, monkeypatch):
         """Regression: the endpoint used to branch on media_type == "tv", but MediaType.SHOW stores
         "show" — so Sonarr status silently never resolved for a single series."""
@@ -284,7 +288,7 @@ class TestArrStatusEndpoint:
         self._patch(monkeypatch, client, cfg, sonarr=FakeSonarrStatus({}, {20: "downloading"}))
 
         # Row id 2 is the pending SHOW (tmdb_id 20) from the fixture.
-        assert client.get("/api/requests/status").json()["2"] == "downloading"
+        assert self._statuses(client)["2"] == "downloading"
 
     def test_covers_waiting_rows_not_only_sent_ones(self, client: TestClient, monkeypatch):
         """A waiting title someone added to the Arr by hand is exactly the "why is this still here?"
@@ -292,7 +296,7 @@ class TestArrStatusEndpoint:
         cfg = RequestConfig(enabled=True, radarr=_RADARR)
         self._patch(monkeypatch, client, cfg, radarr=FakeRadarrStatus({10: "downloaded", 30: "downloading"}))
 
-        body = client.get("/api/requests/status").json()
+        body = self._statuses(client)
         assert body["1"] == "downloaded"  # pending
         assert body["3"] == "downloading"  # sent
 
@@ -300,14 +304,14 @@ class TestArrStatusEndpoint:
         cfg = RequestConfig(enabled=True, radarr=_RADARR)
         self._patch(monkeypatch, client, cfg, radarr=FakeRadarrStatus({}))
 
-        assert client.get("/api/requests/status").json()["1"] is None
+        assert self._statuses(client)["1"] is None
 
     def test_rejected_rows_are_skipped(self, client: TestClient, monkeypatch):
         client.post("/api/requests/reject", json={"ids": [1]})
         cfg = RequestConfig(enabled=True, radarr=_RADARR)
         self._patch(monkeypatch, client, cfg, radarr=FakeRadarrStatus({10: "downloaded"}))
 
-        assert "1" not in client.get("/api/requests/status").json()
+        assert "1" not in self._statuses(client)
 
     def test_one_arr_failing_does_not_lose_the_other(self, client: TestClient, monkeypatch):
         """Sonarr being down must not blank out every movie's status too."""
@@ -320,8 +324,32 @@ class TestArrStatusEndpoint:
         self._patch(monkeypatch, client, cfg, radarr=FakeRadarrStatus({10: "downloaded"}), sonarr=Broken())
 
         body = client.get("/api/requests/status").json()
-        assert body["1"] == "downloaded"
-        assert body["2"] is None
+        assert body["statuses"]["1"] == "downloaded"
+        assert body["statuses"]["2"] is None
+
+    def test_an_unreachable_arr_is_reported_not_silently_blank(self, client: TestClient, monkeypatch):
+        """The blank a down Sonarr leaves behind is indistinguishable from "Sonarr tracks none of
+        these" — so the inbox showed no badges for ever with nothing anywhere saying why."""
+
+        class Broken:
+            def status_by_ids(self):
+                raise RuntimeError("sonarr down")
+
+        cfg = RequestConfig(enabled=True, radarr=_RADARR, sonarr=_SONARR)
+        self._patch(monkeypatch, client, cfg, radarr=FakeRadarrStatus({10: "downloaded"}), sonarr=Broken())
+
+        body = client.get("/api/requests/status").json()
+        assert body["sonarr"] == "unreachable"
+        assert body["radarr"] == "ok"
+
+    def test_an_arr_that_is_not_configured_reads_off_not_unreachable(self, client: TestClient, monkeypatch):
+        """ "Off" and "down" want different words on screen: one is a choice, the other is a fault."""
+        cfg = RequestConfig(enabled=True, radarr=_RADARR)
+        self._patch(monkeypatch, client, cfg, radarr=FakeRadarrStatus({}))
+
+        body = client.get("/api/requests/status").json()
+        assert body["radarr"] == "ok"
+        assert body["sonarr"] == "off"
 
     def test_sonarr_v3_falls_back_to_a_tvdb_lookup_keyed_on_show(self, client: TestClient, monkeypatch):
         """Sonarr v3 carries no tmdbId on a series, so the only way to resolve a show is TMDB→TVDB.
@@ -346,9 +374,9 @@ class TestArrStatusEndpoint:
         )
 
         # Row id 2 is the pending SHOW (tmdb_id 20) from the fixture.
-        assert client.get("/api/requests/status").json()["2"] == "downloaded"
+        assert self._statuses(client)["2"] == "downloaded"
         assert asked == [(20, MediaType.SHOW)]
 
     def test_requests_not_configured_returns_empty(self, client: TestClient, monkeypatch):
         monkeypatch.setattr(client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(None))
-        assert client.get("/api/requests/status").json() == {}
+        assert client.get("/api/requests/status").json() == {"statuses": {}, "radarr": "off", "sonarr": "off"}

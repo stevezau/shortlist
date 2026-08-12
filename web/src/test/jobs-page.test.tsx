@@ -775,6 +775,24 @@ describe("JobsPage — one place for everything on a timer", () => {
     expect(screen.getByText(/Movie night/)).toBeInTheDocument();
   });
 
+  it("leads with the schedule and gives every row its own link", async () => {
+    // The names used to be comma-joined into one truncating line with the cron as its subtitle, so
+    // a group of three rows on the nightly cron was an unreadable, unclickable string — and the one
+    // "Edit" button beside it could only point at /rows, because there was no single row it meant.
+    renderPage();
+
+    expect(await screen.findByText("Every day at 3:30 AM")).toBeInTheDocument();
+    expect(screen.getByText(/builds 2 rows/i)).toBeInTheDocument();
+
+    expect(
+      screen.getByRole("link", { name: /Picked for You/ }),
+    ).toHaveAttribute("href", "/rows/1");
+    expect(screen.getByRole("link", { name: /Movie night/ })).toHaveAttribute(
+      "href",
+      "/rows/2",
+    );
+  });
+
   it("still lands somewhere sensible for an old ?tab=timeline link", async () => {
     renderPage("/jobs?tab=timeline");
 

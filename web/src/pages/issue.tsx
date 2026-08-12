@@ -26,6 +26,7 @@ import {
   ClipboardCopy,
   Download,
   LifeBuoy,
+  RefreshCw,
   Search,
   X,
 } from "lucide-react";
@@ -48,7 +49,9 @@ import { cn } from "@/lib/utils";
 // one panel component rather than nineteen.
 // ---------------------------------------------------------------------------
 
-type Needs = "nothing" | "title" | "person" | "person+title" | "read-as";
+/** What an operator has to supply before a check can run. `person?` accepts one but does not need it. */
+type Needs =
+  "nothing" | "title" | "person" | "person?" | "person+title" | "read-as";
 
 interface CheckArgs {
   title: string;
@@ -131,6 +134,14 @@ const CHECKS: Check[] = [
     run: () => api.supportSharing(),
   },
   {
+    id: "surfaces",
+    label: "Where is each row actually showing?",
+    blurb:
+      "The only check that sees the OWNER's own Home screen — no share filter hides anything there.",
+    needs: "nothing",
+    run: () => api.supportSurfaces(),
+  },
+  {
     id: "drift",
     label: "Does Plex match our records?",
     blurb:
@@ -172,9 +183,13 @@ const CHECKS: Check[] = [
   {
     id: "timeline",
     label: "What has been happening?",
-    blurb: "Runs, jobs and changes on one axis, in your local time.",
-    needs: "nothing",
-    run: () => api.supportTimeline(""),
+    blurb:
+      "Runs, jobs and changes on one axis, in your local time. Name someone to narrow it to them.",
+    // The server has always taken a person here; the page hardcoded "" and so could never ask for
+    // one, which left half the endpoint unreachable. Optional, because the whole-server timeline is
+    // the common case and demanding a name to see it would be a step backwards.
+    needs: "person?",
+    run: ({ person }) => api.supportTimeline(person),
   },
   {
     id: "settings-history",
@@ -228,62 +243,105 @@ const CHECKS: Check[] = [
   },
 ];
 
-/** The common problems, in the words someone would use. Each opens one check. */
-const PROBLEMS: { title: string; blurb: string; check: string }[] = [
+/**
+ * The common problems, in the words someone would use. Each runs the checks it promises.
+ *
+ * `checks` is a LIST because three of these were writing cheques one check could not cash: "checks
+ * the queue, the schedule and the clocks" opened the queue and nothing else; "which value applied,
+ * and when the row next rebuilds" opened the settings and never the schedule; "the recent errors,
+ * and which people the last runs failed on" opened the errors and never the runs. The blurb was
+ * right about what the question needs — the wiring only ran the first one.
+ */
+const PROBLEMS: { title: string; blurb: string; checks: string[] }[] = [
   {
     title: "They keep seeing something they've watched",
     blurb:
       "Checks whether we have a watched record for it, and which cap applied.",
-    check: "title",
+    checks: ["title"],
   },
   {
     title: "A setting I changed did nothing",
     blurb: "Shows which value applied, and when the row next rebuilds.",
-    check: "rows",
+    checks: ["rows", "row-schedule"],
   },
   {
     title: "One person's recommendations look wrong",
     blurb: "Shows what we've managed to read of their history.",
-    check: "person",
+    checks: ["person"],
   },
   {
     title: "Someone can see another person's row",
-    blurb: "Compares every share filter against the rows that exist.",
-    check: "sharing",
+    // Both halves, because they see different things. `sharing` reads the share filters that hide a
+    // row from other people; `surfaces` reads the OWNER's Home screen, which no share filter covers
+    // (plex-safety rule 5) and which `sharing` is therefore blind to.
+    blurb:
+      "Checks the share filters that hide each row, and the owner's own Home screen, which no filter covers.",
+    checks: ["sharing", "surfaces"],
   },
   {
     title: "A row is empty or too short",
     blurb: "Walks the funnel and names the stage that emptied it.",
-    check: "funnel",
+    checks: ["funnel"],
   },
   {
     title: "Something went wrong and I don't know what",
     blurb: "Shows the recent errors, and which people the last runs failed on.",
-    check: "errors",
+    checks: ["errors", "runs"],
   },
   {
     title: "Rows aren't updating at all",
     blurb: "Checks the queue, the schedule and the clocks.",
-    check: "jobs",
+    checks: ["jobs", "row-schedule", "clocks"],
   },
 ];
 
 // ---------------------------------------------------------------------------
 
+/** Stable ids, so each list's buttons can `aria-controls` the region they actually open. */
+const PROBLEM_RESULTS_ID = "issue-problem-results";
+const ALL_RESULTS_ID = "issue-all-results";
+
 export function IssuePage() {
   const queryClient = useQueryClient();
-  // WHERE it was opened from, not just which check. The panel renders directly below the list that
+  // WHERE it was opened from, not just which check. The panels render directly below the list that
   // was clicked: opening one from the full list used to render it above that list, off-screen
   // upward, so the click looked like it had done nothing at all.
   const [openFrom, setOpenFrom] = useState<"problems" | "all" | null>(null);
-  const [openId, setOpenId] = useState<string | null>(null);
+  // A LIST, not one id. Two things needed that: a problem now runs every check it promises rather
+  // than only the first, and answering "what's wrong with my server" takes three or four answers —
+  // opening the second used to destroy the first, so each had to be copied before moving on.
+  const [openIds, setOpenIds] = useState<string[]>([]);
   const [showAll, setShowAll] = useState(false);
 
-  const pick = (id: string, from: "problems" | "all") => {
-    const same = openId === id;
-    setOpenId(same ? null : id);
-    setOpenFrom(same ? null : from);
+  /** A problem card: show exactly its checks, or close them all if they are already showing. */
+  const pickProblem = (checks: string[]) => {
+    const showing =
+      openFrom === "problems" &&
+      checks.length === openIds.length &&
+      checks.every((id) => openIds.includes(id));
+    setOpenIds(showing ? [] : checks);
+    setOpenFrom(showing ? null : "problems");
   };
+
+  /** A single check from the full list: add it to what's open, or take it away again. */
+  const pickCheck = (id: string) => {
+    setOpenFrom("all");
+    setOpenIds((prev) => {
+      // Switching lists starts a fresh set — the panels live under whichever list was used, so
+      // carrying a problem's checks into the all-checks slot would move them out from under it.
+      const base = openFrom === "all" ? prev : [];
+      return base.includes(id)
+        ? base.filter((other) => other !== id)
+        : [...base, id];
+    });
+  };
+
+  const openChecks = (from: "problems" | "all") =>
+    openFrom === from
+      ? openIds
+          .map((id) => CHECKS.find((check) => check.id === id))
+          .filter((check): check is Check => check !== undefined)
+      : [];
 
   const status = useQuery({
     queryKey: ["support", "status"],
@@ -300,7 +358,6 @@ export function IssuePage() {
   });
 
   const enabled = status.data?.enabled ?? false;
-  const open = CHECKS.find((c) => c.id === openId) ?? null;
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
@@ -351,31 +408,47 @@ export function IssuePage() {
           <section className="flex flex-col gap-3">
             <h2 className="text-lg font-semibold">What's the problem?</h2>
             <div className="grid gap-3 sm:grid-cols-2">
-              {PROBLEMS.map((problem) => (
-                <button
-                  key={problem.check}
-                  type="button"
-                  onClick={() => pick(problem.check, "problems")}
-                  aria-expanded={openId === problem.check}
-                  className={cn(
-                    "flex flex-col gap-1 rounded-lg border p-4 text-left transition-colors",
-                    openId === problem.check
-                      ? "border-primary bg-accent"
-                      : "border-border bg-card hover:bg-elevated",
-                  )}
-                >
-                  <span className="text-sm font-semibold">{problem.title}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {problem.blurb}
-                  </span>
-                </button>
-              ))}
+              {PROBLEMS.map((problem) => {
+                const showing =
+                  openFrom === "problems" &&
+                  problem.checks.every((id) => openIds.includes(id)) &&
+                  problem.checks.length === openIds.length;
+                return (
+                  <button
+                    key={problem.title}
+                    type="button"
+                    onClick={() => pickProblem(problem.checks)}
+                    aria-expanded={showing}
+                    // Names the region rather than only claiming to be expanded: the panels are a
+                    // sibling of a whole different section, so "expanded" on its own left a screen
+                    // reader with nothing to point at.
+                    aria-controls={PROBLEM_RESULTS_ID}
+                    className={cn(
+                      "flex flex-col gap-1 rounded-lg border p-4 text-left transition-colors",
+                      showing
+                        ? "border-primary bg-accent"
+                        : "border-border bg-card hover:bg-elevated",
+                    )}
+                  >
+                    <span className="text-sm font-semibold">
+                      {problem.title}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {problem.blurb}
+                      {problem.checks.length > 1 &&
+                        ` Runs ${problem.checks.length} checks.`}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </section>
 
-          {open && openFrom === "problems" ? (
-            <CheckPanel key={open.id} check={open} />
-          ) : null}
+          <div id={PROBLEM_RESULTS_ID} className="flex flex-col gap-4">
+            {openChecks("problems").map((check) => (
+              <CheckPanel key={check.id} check={check} />
+            ))}
+          </div>
 
           <section className="flex flex-col gap-3">
             <button
@@ -395,39 +468,53 @@ export function IssuePage() {
             </button>
             {showAll ? (
               <div className="grid gap-2 sm:grid-cols-2">
-                {CHECKS.map((check) => (
-                  <button
-                    key={check.id}
-                    type="button"
-                    onClick={() => pick(check.id, "all")}
-                    aria-expanded={openId === check.id}
-                    className={cn(
-                      "flex flex-col gap-0.5 rounded-md border p-3 text-left transition-colors",
-                      openId === check.id
-                        ? "border-primary bg-accent"
-                        : "border-border bg-card hover:bg-elevated",
-                    )}
-                  >
-                    <span className="text-sm font-medium">{check.label}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {check.blurb}
-                    </span>
-                  </button>
-                ))}
+                {CHECKS.map((check) => {
+                  const showing =
+                    openFrom === "all" && openIds.includes(check.id);
+                  return (
+                    <button
+                      key={check.id}
+                      type="button"
+                      onClick={() => pickCheck(check.id)}
+                      aria-expanded={showing}
+                      aria-controls={ALL_RESULTS_ID}
+                      className={cn(
+                        "flex flex-col gap-0.5 rounded-md border p-3 text-left transition-colors",
+                        showing
+                          ? "border-primary bg-accent"
+                          : "border-border bg-card hover:bg-elevated",
+                      )}
+                    >
+                      <span className="text-sm font-medium">{check.label}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {check.blurb}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             ) : null}
           </section>
 
           {/* The second slot. A check opened from the full list renders HERE, below that list —
               rendering it in the slot above meant the click scrolled nothing into view and looked
-              like it had failed. */}
-          {open && openFrom === "all" ? (
-            <CheckPanel key={open.id} check={open} />
-          ) : null}
-
-          <ReportSection />
+              like it had failed. Several can stack: answering "what is wrong with my server" takes
+              more than one, and opening the next used to destroy the last. */}
+          <div id={ALL_RESULTS_ID} className="flex flex-col gap-4">
+            {openChecks("all").map((check) => (
+              <CheckPanel key={check.id} check={check} />
+            ))}
+          </div>
         </>
       ) : null}
+
+      {/* OUTSIDE the `enabled` gate. Filing a bug is the one thing on this page that should never
+          have needed a diagnostics mode switched on first — someone who just wants to report
+          something used to be shown a lone toggle and no way to report anything. The two buttons
+          that read the gated endpoints still say so; the GitHub link does not need them.
+          Held back only while the mode is still UNKNOWN, so it can't flash "switch the checks on
+          first" at someone who already has. */}
+      {!status.isLoading && <ReportSection diagnosticsAvailable={enabled} />}
     </div>
   );
 }
@@ -656,8 +743,281 @@ function verdictFor(
             text: "Every row is hidden from everyone it doesn't belong to.",
           };
     }
-    case "libraries":
-      return data.error ? { bad: true, text: String(data.error) } : null;
+    case "surfaces": {
+      if (data.error) return { bad: true, text: String(data.error) };
+      // An INVARIANT, not a preference: a per-person row that isn't the owner's must never claim the
+      // owner's Home. No setting makes that correct, so any hit is a bug.
+      const home = count("on_owner_home");
+      const shelf = count("on_owner_shelf");
+      if (home) {
+        return {
+          bad: true,
+          text: `${home} row${home === 1 ? "" : "s"} belonging to someone else ${home === 1 ? "is" : "are"} on your own Home screen. No setting makes that correct — the copy text below names them.`,
+        };
+      }
+      // A CONSEQUENCE, not a fault: the Recommended shelf is one flag per collection and the owner
+      // has no filter, so a row shown on friends' library shelves lands on the owner's too. The fix
+      // is a settings change, which is why this reads as an explanation.
+      if (shelf) {
+        return {
+          bad: false,
+          text: `Nothing is on your Home screen that shouldn't be. ${shelf} row${shelf === 1 ? "" : "s"} of other people's do appear on your Recommended shelf — that is a Plex limitation of showing rows on friends' library shelves, not a fault, and turning that placement off is what removes them.`,
+        };
+      }
+      return {
+        bad: false,
+        text: "Every row is showing exactly where it should, including on your own Home screen.",
+      };
+    }
+    case "libraries": {
+      if (data.error) return { bad: true, text: String(data.error) };
+      const found = count("libraries");
+      return found
+        ? {
+            bad: false,
+            text: `Shortlist can see ${found} ${found === 1 ? "library" : "libraries"}.`,
+          }
+        : {
+            bad: true,
+            text: "Shortlist can see no libraries at all, so it has nothing to recommend from.",
+          };
+    }
+    case "rows": {
+      const rows = (Array.isArray(data.rows) ? data.rows : []) as {
+        enabled?: boolean;
+      }[];
+      const on = rows.filter((row) => row.enabled).length;
+      return rows.length === 0
+        ? {
+            bad: true,
+            text: "There are no rows at all, so nothing can be built.",
+          }
+        : on === 0
+          ? {
+              bad: true,
+              text: `All ${rows.length} rows are switched off, so no run will build anything.`,
+            }
+          : {
+              bad: false,
+              text: `${on} of ${rows.length} rows are on. The value each setting actually uses is below — "global" means it is inherited, "row" means this row overrides it.`,
+            };
+    }
+    case "row-schedule": {
+      // The single most common "it's broken" that isn't: the setting IS applied, the row simply has
+      // not rebuilt since. Which is why this states the wait rather than just tabulating dates.
+      const rows = (Array.isArray(data.rows) ? data.rows : []) as {
+        slug?: string;
+        enabled?: boolean;
+        due?: boolean;
+        never_built?: boolean;
+      }[];
+      const live = rows.filter((row) => row.enabled);
+      const never = live.filter((row) => row.never_built).map((r) => r.slug);
+      const waiting = live.filter((row) => !row.never_built && !row.due);
+      if (live.length === 0)
+        return { bad: true, text: "No row is switched on." };
+      if (never.length) {
+        return {
+          bad: true,
+          text: `${never.join(", ")} ${never.length === 1 ? "has" : "have"} never been built, so nothing you set on ${never.length === 1 ? "it" : "them"} has reached Plex yet. Run it from Rows.`,
+        };
+      }
+      return waiting.length
+        ? {
+            bad: false,
+            text: `${waiting.length} ${waiting.length === 1 ? "row is" : "rows are"} not due to rebuild yet — a setting you changed does not reach a row until it does. The table below says when.`,
+          }
+        : {
+            bad: false,
+            text: "Every row is due to rebuild, so the next run will pick up anything you have changed.",
+          };
+    }
+    case "funnel": {
+      const stages = (Array.isArray(data.stages) ? data.stages : []) as {
+        pool?: string;
+        pooled?: number;
+      }[];
+      const delivered = Number(data.delivered ?? 0);
+      if (!data.run_id) {
+        return {
+          bad: true,
+          text: "This person has never had a row built, so there is no funnel to walk. Run a row for them first.",
+        };
+      }
+      if (stages.length === 0) {
+        return {
+          bad: true,
+          text: `Their last run recorded no candidates at all — nothing was even considered, so the row could only ever be empty. ${delivered} titles were delivered.`,
+        };
+      }
+      const pooled = stages.reduce((n, s) => n + Number(s.pooled ?? 0), 0);
+      return {
+        bad: delivered === 0,
+        text:
+          delivered === 0
+            ? `${pooled} candidates were gathered and NONE survived to the row. The stage that ate them names itself in the counts below.`
+            : `${pooled} candidates gathered, ${delivered} delivered. Every title that didn't make it is accounted for below.`,
+      };
+    }
+    case "ai": {
+      if (data.error) return { bad: true, text: String(data.error) };
+      const provider = String(data.provider ?? "none");
+      if (provider === "none") {
+        return {
+          bad: false,
+          text: "No AI curator is configured — picks are chosen by ranking alone, which is a valid setup rather than a fault.",
+        };
+      }
+      if (!data.run_id) {
+        return {
+          bad: true,
+          text: `${provider} is configured, but nothing has been built for this person yet, so it has never been asked anything.`,
+        };
+      }
+      const tokens = Number(data.llm_tokens ?? 0);
+      return tokens === 0
+        ? {
+            bad: true,
+            text: `${provider} is configured but spent no tokens on this person's last run — it was never actually called.`,
+          }
+        : {
+            bad: false,
+            text: `${provider} ran for this person and spent ${tokens} tokens. The per-step breakdown is below.`,
+          };
+    }
+    case "pick": {
+      const picks = count("picks");
+      return picks
+        ? {
+            bad: false,
+            text: `Found in ${picks} ${picks === 1 ? "row" : "rows"} for this person — the seed and the source behind each are below.`,
+          }
+        : {
+            bad: true,
+            text: "This person was never given that title, so there is nothing to explain. Try “Why is this NOT in their row?” instead.",
+          };
+    }
+    case "errors": {
+      const lines = (Array.isArray(data.lines) ? data.lines : []) as {
+        level?: string;
+      }[];
+      // WARNING is not a fault — a healthy server logs them. Only an ERROR earns the red panel, or
+      // every install would open on a scary red box saying nothing is wrong.
+      const errors = lines.filter((l) =>
+        String(l.level ?? "").startsWith("ERROR"),
+      ).length;
+      const total = Number(data.total_matched ?? lines.length);
+      if (total === 0) {
+        return {
+          bad: false,
+          text: "Nothing has been logged at WARNING or above — no errors, no warnings.",
+        };
+      }
+      return errors
+        ? {
+            bad: true,
+            text: `${errors} error${errors === 1 ? "" : "s"} in the recent log, out of ${total} lines at WARNING or above.`,
+          }
+        : {
+            bad: false,
+            text: `${total} warning${total === 1 ? "" : "s"} and no errors. Warnings are normal; the lines are below if you want to read them.`,
+          };
+    }
+    case "runs": {
+      const runs = (Array.isArray(data.runs) ? data.runs : []) as {
+        id?: number;
+        status?: string;
+        failed?: unknown[];
+      }[];
+      if (runs.length === 0) {
+        return {
+          bad: true,
+          text: "Nothing has ever been built. Run all rows once from Runs, then come back.",
+        };
+      }
+      const broken = runs.filter((r) => r.status === "error");
+      const people = runs.reduce((n, r) => n + (r.failed?.length ?? 0), 0);
+      if (broken.length) {
+        return {
+          bad: true,
+          text: `${broken.length} of the last ${runs.length} runs failed outright.`,
+        };
+      }
+      return people
+        ? {
+            bad: true,
+            text: `Every recent run finished, but ${people} ${people === 1 ? "person was" : "people were"} skipped with an error inside them — named below.`,
+          }
+        : {
+            bad: false,
+            text: `The last ${runs.length} ${runs.length === 1 ? "run" : "runs"} finished with nobody failing.`,
+          };
+    }
+    case "clocks": {
+      const offset = Number(data.offset_hours ?? 0);
+      const tz = String(data.tz ?? "");
+      const fires = count("scheduled");
+      // Worth stating out loud whatever the answer: every timestamp in the database is UTC while
+      // every line in the log is local, and reading one as the other inverts the order of events.
+      const where = tz
+        ? `${tz} (UTC${offset >= 0 ? "+" : ""}${offset})`
+        : `UTC${offset >= 0 ? "+" : ""}${offset}`;
+      return fires
+        ? {
+            bad: false,
+            text: `This server runs on ${where}, and ${fires} scheduled ${fires === 1 ? "job is" : "jobs are"} due at the times below. The database stores UTC, so a log line and a database timestamp for the same event are ${offset} hours apart.`,
+          }
+        : {
+            bad: true,
+            text: `This server runs on ${where}, but NOTHING is scheduled to fire — so nothing will rebuild on its own.`,
+          };
+    }
+    case "config": {
+      const settings = (Array.isArray(data.settings) ? data.settings : []) as {
+        key?: string;
+        env_set?: boolean;
+        has_value?: boolean;
+      }[];
+      // The whole point of this check: an env var that no longer decides anything, still set, still
+      // believed. Naming those is the finding; the rest of the table is reference.
+      const ignored = settings
+        .filter((s) => s.env_set && s.has_value)
+        .map((s) => s.key);
+      return ignored.length
+        ? {
+            bad: false,
+            text: `${ignored.length} setting${ignored.length === 1 ? " is" : "s are"} set BOTH by an environment variable and in the database — the database wins, and the variable now changes nothing: ${ignored.slice(0, 6).join(", ")}${ignored.length > 6 ? "…" : ""}.`,
+          }
+        : {
+            bad: false,
+            text: "Every setting comes from the database. No environment variable is competing with one.",
+          };
+    }
+    case "timeline": {
+      const entries = count("entries");
+      return entries
+        ? {
+            bad: false,
+            text: `${entries} things happened, newest first, in your local time.`,
+          }
+        : {
+            bad: true,
+            text: "Nothing is recorded at all — no runs, no jobs, no changes. On a working server that is itself the finding.",
+          };
+    }
+    case "read-as": {
+      const code = Number(data.status_code ?? 0);
+      if (!code) return null;
+      return code >= 400
+        ? {
+            bad: true,
+            text: `Plex answered HTTP ${code} to this person's own token — so this is what Shortlist gets when it reads for them, and it is why their history may be missing.`,
+          }
+        : {
+            bad: false,
+            text: `Plex answered HTTP ${code} to this person's own token. Their raw reply is below — this is exactly what Shortlist sees.`,
+          };
+    }
     default:
       return null;
   }
@@ -717,13 +1077,17 @@ function CheckPanel({ check }: { check: Check }) {
   const data = (result.data ?? null) as Record<string, unknown> | null;
   const verdict = data ? verdictFor(check.id, data) : null;
   const needsTitle = check.needs === "title" || check.needs === "person+title";
+  // Offers a person field. `person?` is in here and NOT in `requiresPerson` below — the check takes
+  // one but works without it, so the field appears and the button stays live either way.
   const needsPerson =
     check.needs === "person" ||
+    check.needs === "person?" ||
     check.needs === "person+title" ||
     check.needs === "read-as";
+  const requiresPerson = needsPerson && check.needs !== "person?";
   const ready =
     (!needsTitle || title.trim().length > 0) &&
-    (!needsPerson || person.trim().length > 0) &&
+    (!requiresPerson || person.trim().length > 0) &&
     // The server refuses a watched-* read with no library (400), so don't let the click happen.
     (check.needs !== "read-as" ||
       !endpoint.startsWith("watched-") ||
@@ -782,7 +1146,14 @@ function CheckPanel({ check }: { check: Check }) {
         >
           {needsPerson ? (
             <div className="flex min-w-52 flex-1 flex-col gap-1.5">
-              <Label htmlFor={`${check.id}-person`}>Plex username</Label>
+              <Label htmlFor={`${check.id}-person`}>
+                Plex username
+                {!requiresPerson && (
+                  <span className="ml-1 font-normal text-muted-foreground">
+                    — optional, leave blank for the whole server
+                  </span>
+                )}
+              </Label>
               {/* A real `<datalist>`, not a bespoke dropdown: typing a couple of characters filters
                   it, the keyboard works, and there is no "did I spell it right" step. A username
                   typed from memory is the commonest way one of these checks returns nothing. */}
@@ -903,11 +1274,22 @@ function CheckPanel({ check }: { check: Check }) {
           className="h-20 animate-pulse rounded-md bg-elevated"
         />
       ) : null}
+      {/* A failure is a finding too, and until now it was the one thing on this page you could not
+          copy: "Copy for support" hangs off `data.text`, which a failed check has none of — so the
+          exact moment a maintainer most wants the message, there was nothing to put on a clipboard. */}
       {result.isError ? (
-        <ErrorNote
-          message={apiErrorMessage(result.error, "That check could not run.")}
-          onRetry={() => void result.refetch()}
-        />
+        <>
+          <ErrorNote
+            message={apiErrorMessage(result.error, "That check could not run.")}
+            onRetry={() => void result.refetch()}
+          />
+          <div>
+            <CopyButton
+              label="Copy this failure"
+              text={`${check.label}\n${apiErrorMessage(result.error, "That check could not run.")}`}
+            />
+          </div>
+        </>
       ) : null}
       {verdict ? <Verdict bad={verdict.bad}>{verdict.text}</Verdict> : null}
       {typeof data?.text === "string" ? (
@@ -928,6 +1310,10 @@ function HealthStrip() {
   const health = useQuery<SupportHealth>({
     queryKey: ["support", "health"],
     queryFn: api.supportHealth,
+    // It probes a live PMS and reads "last run" — both of which move while you sit here fixing
+    // something. With no refetch at all, the first thing on the page froze at whatever was true
+    // when it loaded, and there was no button to ask it again either.
+    staleTime: 15_000,
   });
 
   if (health.isLoading) {
@@ -955,7 +1341,26 @@ function HealthStrip() {
     <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold">Health</h2>
-        {health.data?.text ? <CopyButton text={health.data.text} /> : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => void health.refetch()}
+            disabled={health.isFetching}
+          >
+            <RefreshCw
+              className={cn(
+                "mr-2 h-4 w-4",
+                // Spins only while it is actually fetching, and not for anyone who asked for less
+                // movement — the disabled button already says something is happening.
+                health.isFetching && "animate-spin motion-reduce:animate-none",
+              )}
+              aria-hidden="true"
+            />
+            {health.isFetching ? "Checking…" : "Check again"}
+          </Button>
+          {health.data?.text ? <CopyButton text={health.data.text} /> : null}
+        </div>
       </div>
       <Verdict bad={bad.length > 0}>
         {bad.length
@@ -995,7 +1400,12 @@ function HealthStrip() {
  *  The privacy choice here is the point. The report NAMES the people on the server, because a
  *  maintainer cannot act on "someone can't be read" — and a GitHub issue is public. So the default is
  *  to hide names, and sending them is the deliberate option, not the accident. */
-function ReportSection() {
+function ReportSection({
+  diagnosticsAvailable,
+}: {
+  /** Support Mode is on, so the two buttons that read the gated endpoints will actually work. */
+  diagnosticsAvailable: boolean;
+}) {
   const version = useVersion();
   const { state, copy } = useCopy(2500);
 
@@ -1003,8 +1413,9 @@ function ReportSection() {
     <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4">
       <h2 className="text-sm font-semibold">Still stuck? Report it</h2>
       <p className="text-sm text-muted-foreground">
-        Open an issue, then attach the report below so whoever picks it up
-        already has the answers to the first three questions they'd ask.
+        {diagnosticsAvailable
+          ? "Open an issue, then attach the report below so whoever picks it up already has the answers to the first three questions they'd ask."
+          : "Open an issue. To attach the diagnostics with it, switch the checks on above first — the report is built by the same read-only tools."}
       </p>
 
       <div className="flex flex-wrap gap-2">
@@ -1020,50 +1431,77 @@ function ReportSection() {
         </Button>
         {/* Both the fetch (a 500 building the report) and the clipboard write can fail — useCopy
             surfaces either as an error state rather than a silently dead button. */}
-        <Button variant="outline" onClick={() => copy(api.getSupportBundle())}>
-          {state === "copied" ? (
-            <Check className="mr-2 h-4 w-4" aria-hidden="true" />
-          ) : (
-            <ClipboardCopy className="mr-2 h-4 w-4" aria-hidden="true" />
-          )}
-          <span aria-live="polite">
-            {state === "copied"
-              ? "Copied — paste it into the issue"
-              : state === "error"
-                ? "Couldn't copy — use the download instead"
-                : "Copy the summary"}
-          </span>
-        </Button>
-        <Button asChild variant="outline">
-          <a href={api.supportReportZipUrl()} download="shortlist-report.zip">
-            <Download className="mr-2 h-4 w-4" aria-hidden="true" />
-            Download everything (with logs)
-          </a>
-        </Button>
+        {/* Both the fetch (a 500 building the report) and the clipboard write can fail — useCopy
+            surfaces either as an error state rather than a silently dead button. Hidden entirely
+            when the mode is off, rather than shown and 403ing: a button that always fails is worse
+            than one that isn't there, and the sentence above says how to get it back. */}
+        {diagnosticsAvailable && (
+          <>
+            <Button
+              variant="outline"
+              onClick={() => copy(api.getSupportBundle())}
+            >
+              {state === "copied" ? (
+                <Check className="mr-2 h-4 w-4" aria-hidden="true" />
+              ) : (
+                <ClipboardCopy className="mr-2 h-4 w-4" aria-hidden="true" />
+              )}
+              <span aria-live="polite">
+                {state === "copied"
+                  ? "Copied — paste it into the issue"
+                  : state === "error"
+                    ? "Couldn't copy — use the download instead"
+                    : "Copy the summary"}
+              </span>
+            </Button>
+            <Button asChild variant="outline">
+              <a
+                href={api.supportReportZipUrl()}
+                download="shortlist-report.zip"
+              >
+                <Download className="mr-2 h-4 w-4" aria-hidden="true" />
+                Download everything (with logs)
+              </a>
+            </Button>
+          </>
+        )}
       </div>
+
       {/* Specific about what IS and ISN'T in there, and honest that it is best effort. "No passwords
           or tokens" was true and misleading — it sat next to a button that posts publicly, so someone
           reading it would reasonably conclude the whole thing was safe to publish and paste without
           looking. A promise this text cannot keep is worse than no promise: the machine id survived
-          three rounds of exactly that confidence before an audit of a real report found it. */}
-      <p className="text-xs text-muted-foreground">
-        <strong className="font-medium text-foreground">
-          Passwords, tokens, API keys, IP addresses and your server&rsquo;s
-          machine id are masked
-        </strong>{" "}
-        — in the report and in the logs, with a URL reduced to{" "}
-        <code className="font-mono">http://&lt;host&gt;:32400</code>. Treat that
-        as a good first pass rather than a guarantee: logs are free text, and
-        something unusual can still slip through, so give it a skim before
-        posting anywhere public. It{" "}
-        <strong className="font-medium text-foreground">does</strong> include
-        your library names, the titles involved, and the Plex usernames of
-        people on your server — replace those yourself before posting if that
-        matters to you. On a busy server the summary runs to tens of kilobytes,
-        which is more than a chat message holds — attach it as a file if the
-        paste gets cut off. The download adds the full logs and can take a few
-        seconds to build, so give it a moment before clicking again.
-      </p>
+          three rounds of exactly that confidence before an audit of a real report found it.
+
+          Split into three, with the thing to DO first. It was one ~100-word paragraph doing four
+          jobs, and the only instruction in it — skim before posting — sat in the middle where it
+          read as background. */}
+      {diagnosticsAvailable && (
+        <div className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+          <p>
+            <strong className="font-medium text-foreground">
+              Give it a skim before posting anywhere public.
+            </strong>{" "}
+            Passwords, tokens, API keys, IP addresses and your server&rsquo;s
+            machine id are masked — in the report and in the logs, with a URL
+            reduced to{" "}
+            <code className="font-mono">http://&lt;host&gt;:32400</code> — but
+            logs are free text, so treat that as a good first pass rather than a
+            guarantee.
+          </p>
+          <p>
+            It <strong className="font-medium text-foreground">does</strong>{" "}
+            include your library names, the titles involved, and the Plex
+            usernames of people on your server. Replace those yourself if that
+            matters to you.
+          </p>
+          <p>
+            On a busy server the summary runs to tens of kilobytes — more than a
+            chat message holds, so attach it as a file if a paste gets cut off.
+            The download adds the full logs and takes a few seconds to build.
+          </p>
+        </div>
+      )}
     </section>
   );
 }

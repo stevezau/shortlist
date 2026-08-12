@@ -2,10 +2,12 @@ import {
   Clapperboard,
   ExternalLink,
   Inbox,
+  Loader2,
   RotateCcw,
   Send,
   Star,
   Trash2,
+  TriangleAlert,
   Users,
   X,
 } from "lucide-react";
@@ -40,7 +42,7 @@ import {
   useUsers,
 } from "@/lib/queries";
 import { sourceShortLabel } from "@/lib/sources";
-import type { RequestCandidate } from "@/lib/types";
+import type { ArrStatus, RequestCandidate } from "@/lib/types";
 import { type DisplayNameLookup, displayNameLookup } from "@/lib/user-names";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -329,8 +331,48 @@ const ARR_STATUS_LABELS: Record<
   unmonitored: { label: "Not monitored", variant: "warning" },
 };
 
-function ArrStatusBadge({ status }: { status?: string | null }) {
-  const shown = status ? ARR_STATUS_LABELS[status] : undefined;
+/**
+ * Which of the four things the Arr column can be saying about one title.
+ *
+ * Three of these used to render as the SAME nothing. The badge only knew a status string, so a
+ * lookup still in flight, an Arr that never answered, and a title genuinely absent from both apps
+ * were indistinguishable on screen — and since the query fetched once with no polling, "in flight"
+ * and "never answered" were both states you could sit in indefinitely with no way to tell.
+ */
+type ArrView =
+  | { kind: "checking" }
+  | { kind: "unreachable"; app: string }
+  | { kind: "status"; status: string }
+  | { kind: "none" };
+
+function ArrStatusBadge({ view }: { view: ArrView }) {
+  if (view.kind === "checking") {
+    return (
+      <Badge variant="secondary" className="gap-1.5 font-normal">
+        {/* `motion-reduce:animate-none` — a spinner is decoration, and the word carries the meaning
+            on its own for anyone who has asked for less movement. */}
+        <Loader2
+          aria-hidden="true"
+          className="h-3 w-3 animate-spin motion-reduce:animate-none"
+        />
+        Checking…
+      </Badge>
+    );
+  }
+  if (view.kind === "unreachable") {
+    return (
+      <Badge
+        variant="warning"
+        className="gap-1.5"
+        title={`Shortlist couldn't reach ${view.app}, so it can't say what state this title is in there. Check ${view.app} is running and that its URL and API key are right in Settings → Requests.`}
+      >
+        <TriangleAlert aria-hidden="true" className="h-3 w-3" />
+        Can&rsquo;t reach {view.app}
+      </Badge>
+    );
+  }
+  if (view.kind === "none") return null;
+  const shown = ARR_STATUS_LABELS[view.status];
   if (!shown) return null;
   return <Badge variant={shown.variant}>{shown.label}</Badge>;
 }
@@ -341,7 +383,7 @@ function PendingRow({
   onToggle,
   globalTag,
   disabled,
-  arrStatus,
+  arrView,
   nameOf,
 }: {
   item: RequestCandidate;
@@ -350,7 +392,7 @@ function PendingRow({
   globalTag: string;
   /** Requests are off — the row is still readable, but it cannot be selected for sending. */
   disabled: boolean;
-  arrStatus?: string | null;
+  arrView: ArrView;
   nameOf: DisplayNameLookup;
 }) {
   const app = item.media_type === "movie" ? "Radarr" : "Sonarr";
@@ -376,7 +418,7 @@ function PendingRow({
       <div className="min-w-0 flex-1 space-y-2">
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
           <p className="text-base font-semibold leading-tight">{item.title}</p>
-          <ArrStatusBadge status={arrStatus} />
+          <ArrStatusBadge view={arrView} />
         </div>
         <TitleMeta item={item} globalTag={globalTag} nameOf={nameOf} />
         <WhyBreakdown why={item.why} nameOf={nameOf} />
@@ -384,7 +426,9 @@ function PendingRow({
         {/* Deliberately does NOT promise the row disappears next run: the tidy-up matches shows by
             the TMDB id Sonarr v4 reports, and Sonarr v3 doesn't report one at all (`_apply_arr_state`,
             `arr_present`), so on v3 a show sitting in Sonarr stays in this list. */}
-        {arrStatus ? (
+        {/* Only for a real status — "checking" and "couldn't reach it" are not evidence the title
+            is already there, and this sentence tells you not to send it. */}
+        {arrView.kind === "status" ? (
           <p className="text-xs text-muted-foreground">
             Already in {app} &mdash; it was added there after it landed here, so
             you don&rsquo;t need to send it again.
@@ -421,7 +465,7 @@ function SentRow({
   sonarrUrl,
   onClear,
   clearing,
-  arrStatus,
+  arrView,
   nameOf,
 }: {
   item: RequestCandidate;
@@ -429,7 +473,7 @@ function SentRow({
   sonarrUrl: string;
   onClear: (id: number) => void;
   clearing: boolean;
-  arrStatus?: string | null;
+  arrView: ArrView;
   nameOf: DisplayNameLookup;
 }) {
   const isMovie = item.media_type === "movie";
@@ -466,7 +510,7 @@ function SentRow({
               <ArrGlyph className="h-3.5 w-3.5 rounded-[2px]" />
               Sent to {app}
             </Badge>
-            <ArrStatusBadge status={arrStatus} />
+            <ArrStatusBadge view={arrView} />
             <Button
               variant="ghost"
               size="sm"
@@ -863,10 +907,36 @@ function sortRequests(
   return copy;
 }
 
+/**
+ * What one title's Arr column should say, from the live query and that title's kind.
+ *
+ * Keyed on media type because the apps fail independently: a dead Sonarr must not put "can't reach
+ * Radarr" on a film, which is the same one-app-must-not-blank-the-other rule the endpoint follows.
+ */
+function arrViewFor(
+  item: RequestCandidate,
+  status: ArrStatus | undefined,
+  isPending: boolean,
+): ArrView {
+  const isMovie = item.media_type === "movie";
+  if (isPending) return { kind: "checking" };
+  if (!status) return { kind: "none" }; // the fetch failed outright; the page says so elsewhere
+  const reach = isMovie ? status.radarr : status.sonarr;
+  if (reach === "unreachable") {
+    return { kind: "unreachable", app: isMovie ? "Radarr" : "Sonarr" };
+  }
+  const found = status.statuses[String(item.id)];
+  return found ? { kind: "status", status: found } : { kind: "none" };
+}
+
 export function RequestsPage() {
   const requestsQuery = useRequests();
   const settingsQuery = useSettings();
   const arrStatusQuery = useArrStatus();
+  // `isPending` is the FIRST load only — a background refetch keeps the last answer on screen, so a
+  // settled badge never flickers back to "Checking…" every time the poll comes round.
+  const arrView = (item: RequestCandidate): ArrView =>
+    arrViewFor(item, arrStatusQuery.data, arrStatusQuery.isPending);
   // `wanters` and `why[].user` are bare Plex usernames; the users list is what turns them into the
   // names the Users page shows. Nothing here waits on it — until it arrives (or if it fails) every
   // name resolves to itself, which is exactly what this page showed before.
@@ -1396,7 +1466,7 @@ export function RequestsPage() {
                                   onToggle={toggle}
                                   globalTag={globalTag}
                                   disabled={!requestsEnabled}
-                                  arrStatus={arrStatusQuery.data?.[item.id]}
+                                  arrView={arrView(item)}
                                   nameOf={nameOf}
                                 />
                               ))}
@@ -1459,7 +1529,7 @@ export function RequestsPage() {
                                 sonarrUrl={sonarrUrl}
                                 onClear={(id) => clear.mutate([id])}
                                 clearing={clear.isPending}
-                                arrStatus={arrStatusQuery.data?.[item.id]}
+                                arrView={arrView(item)}
                                 nameOf={nameOf}
                               />
                             ))}

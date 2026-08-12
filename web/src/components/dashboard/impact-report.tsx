@@ -17,7 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatDate, formatHitRate, timeAgo } from "@/lib/format";
+import { formatDate, formatHitRate, timeAgo, weekStarting } from "@/lib/format";
 import {
   useClearDeletedRows,
   useDeletedRows,
@@ -25,6 +25,7 @@ import {
   useSyncWatched,
 } from "@/lib/queries";
 import type { EffectivenessReport, ReportWindow } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 const WINDOW_OPTIONS: { value: ReportWindow; label: string }[] = [
   { value: "7", label: "7 days" },
@@ -113,8 +114,19 @@ function Delta({
   );
 }
 
-/** A tiny watches-per-week bar chart — no library, just normalized divs. */
+/**
+ * A tiny watches-per-week bar chart — no library, just normalized divs.
+ *
+ * The count is readable. It used to hang off a native `title` on the BAR, which made the hover
+ * target the drawn rectangle: a quiet week is a ~3px sliver glued to the bottom of an 80px box, so
+ * most of each column hit nothing, and even a direct hit needed a second of stillness to pay out.
+ * Each week is now a full-height column that reports into a readout line under the chart, and the
+ * two ends of the axis are labelled — 16 unnamed bars said nothing about *when*.
+ */
 function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
+  // Which week the pointer is over; null falls back to the latest week, so the readout says
+  // something useful on a touch screen, where there is no hover at all.
+  const [hovered, setHovered] = useState<string | null>(null);
   const max = Math.max(1, ...trend.map((t) => t.watched));
   if (trend.length === 0)
     return (
@@ -136,26 +148,75 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
   const total = trend.reduce((s, t) => s + t.watched, 0);
   const first = trend[0];
   const last = trend[trend.length - 1];
+  // Unreachable — the `< 3` return above guarantees three entries. It is here because
+  // `noUncheckedIndexedAccess` types an index read as possibly-undefined, and narrowing once here
+  // beats threading `first &&` / `last &&` through every line of the markup below.
+  if (!first || !last) return null;
+  const shown = trend.find((t) => t.week === hovered) ?? last;
+
   return (
-    <div>
-      {/* The bars are aria-hidden (a per-bar `title` only reaches a mouse), so a screen reader gets
-          NOTHING from this chart without a text alternative — this is that alternative. */}
+    <div className="space-y-1.5">
+      {/* The chart is aria-hidden (hover reaches a mouse and nothing else), so a screen reader gets
+          NOTHING from it without a text alternative — this is that alternative. */}
       <p className="sr-only">
-        {total} watched across the last {trend.length} weeks
-        {first && last
-          ? `, from ${first.watched} in week ${first.week} to ${last.watched} in week ${last.week}`
-          : ""}
-        .
+        {total} watched across the last {trend.length} weeks, from{" "}
+        {first.watched} in the week of {weekStarting(first.week)} to{" "}
+        {last.watched} in the week of {weekStarting(last.week)}.
       </p>
-      <div className="flex h-20 items-end gap-1" aria-hidden="true">
+
+      {/* The readout the hover feeds. Not a live region: the sr-only line above already carries the
+          whole series, and announcing a new week on every pixel of mouse travel is noise. With
+          nothing hovered it names the latest week, so it still says something on a touch screen —
+          where there is no hover to give at all. */}
+      <p
+        aria-hidden="true"
+        className="flex flex-wrap items-baseline gap-x-1.5 text-xs text-muted-foreground"
+      >
+        <span className="font-medium tabular-nums text-foreground">
+          {shown.watched}
+        </span>
+        watched in the week of {weekStarting(shown.week)}
+        {hovered === null && <span className="opacity-70">· latest</span>}
+      </p>
+
+      <div
+        className="flex h-20 items-stretch gap-1"
+        aria-hidden="true"
+        onMouseLeave={() => setHovered(null)}
+      >
         {trend.map((t) => (
+          // The COLUMN is the hover target, not the bar it contains: `justify-end` drops the bar to
+          // the bottom of a full-height box, so a week with two watches is still readable from the
+          // 77px of empty space above its 3px bar.
           <div
             key={t.week}
-            className="flex-1 rounded-t bg-primary/70"
-            style={{ height: `${Math.max(4, (t.watched / max) * 100)}%` }}
-            title={`${t.week}: ${t.watched} watched`}
-          />
+            data-testid="trend-week"
+            onMouseEnter={() => setHovered(t.week)}
+            className={cn(
+              "flex flex-1 cursor-default flex-col justify-end rounded-t transition-colors",
+              hovered === t.week ? "bg-muted" : "hover:bg-muted/60",
+            )}
+          >
+            <div
+              className={cn(
+                "rounded-t transition-colors",
+                hovered === t.week ? "bg-primary" : "bg-primary/70",
+              )}
+              style={{ height: `${Math.max(4, (t.watched / max) * 100)}%` }}
+            />
+          </div>
         ))}
+      </div>
+
+      {/* The axis. Only weeks with a watch get a bucket (`report_service` groups over rows that
+          exist), so the bars are not evenly spaced in time — naming both ends is what stops the
+          chart being read as sixteen consecutive weeks when it might span twenty. */}
+      <div
+        aria-hidden="true"
+        className="flex justify-between text-xs text-muted-foreground/80"
+      >
+        <span>{weekStarting(first.week)}</span>
+        <span>{weekStarting(last.week)}</span>
       </div>
     </div>
   );
@@ -324,7 +385,9 @@ function ByPerson({
   return (
     <Section
       title="By person"
-      hint={`Picks watched in ${WINDOW_PHRASE[reportWindow]}, of picks delivered.`}
+      // "Most watched first" is load-bearing here, not decoration: only the top ten are shown
+      // outright, so without it the fold looks arbitrary rather than like the bottom of a ranking.
+      hint={`Picks watched in ${WINDOW_PHRASE[reportWindow]}, of picks delivered. Most watched first.`}
     >
       {active.length === 0 && idle.length === 0 ? (
         <p className="text-sm text-muted-foreground">
@@ -338,9 +401,14 @@ function ByPerson({
               Nobody watched a pick in this window.
             </p>
           )}
+          {/* Positional, not a fresh claim. This is the TAIL of the list above — people 11 and
+              beyond in the same watched-count ranking — and labelling it "N more people watched
+              something" reused the section's own verb, so it read as a second, different finding
+              sitting under the first. It is one list, shown ten at a time. */}
           {overflow.length > 0 && (
             <Disclosure
-              label={`${overflow.length} more ${overflow.length === 1 ? "person" : "people"} watched something`}
+              label={`Show ${overflow.length} more ${overflow.length === 1 ? "person" : "people"}`}
+              openLabel={`Hide ${overflow.length} more ${overflow.length === 1 ? "person" : "people"}`}
             >
               {overflow.map(line)}
             </Disclosure>
@@ -395,7 +463,7 @@ function ByRow({
   return (
     <Section
       title="By row"
-      hint={`Picks watched in ${WINDOW_PHRASE[reportWindow]}, of picks delivered.`}
+      hint={`Picks watched in ${WINDOW_PHRASE[reportWindow]}, of picks delivered. Most watched first.`}
     >
       {live.length === 0 && gone.length === 0 ? (
         <p className="text-sm text-muted-foreground">
@@ -649,14 +717,14 @@ function ReportBody({
             // reader has to invert. "Needs picks delivered before <date>" reads as though it wants
             // OLD picks; what it actually needs is for the picks it has to get older.
             <p className="text-sm text-muted-foreground">
-              Not enough time yet. Every pick gets {landing.matured_days} days to
-              be watched before it counts, so a fair score needs picks that have
-              had their full {landing.matured_days} days.{" "}
+              Not enough time yet. Every pick gets {landing.matured_days} days
+              to be watched before it counts, so a fair score needs picks that
+              have had their full {landing.matured_days} days.{" "}
               {report.first_pick ? (
                 <>
                   Your first picks landed{" "}
-                  {formatDate(report.first_pick as string, { dateOnly: true })}, so
-                  this starts showing a score around{" "}
+                  {formatDate(report.first_pick as string, { dateOnly: true })},
+                  so this starts showing a score around{" "}
                   {formatDate(
                     new Date(
                       new Date(report.first_pick as string).getTime() +
@@ -752,31 +820,70 @@ function ReportBody({
         )}
       </div>
 
-      {report.recent.length > 0 && (
-        <Section title="Recently watched from Shortlist">
-          <ul className="space-y-1 text-sm">
-            {report.recent.slice(0, 12).map((w, i) => (
-              <li
-                // watched_at (when present) is a stable, unique-enough identity for this list;
-                // falling back to the index only for the rare entry missing it.
-                key={`${w.username}-${w.title}-${w.watched_at ?? i}`}
-                className="flex flex-wrap items-baseline gap-x-2 text-muted-foreground"
-              >
-                <span className="font-medium text-foreground">
-                  {w.display_name || w.username}
-                </span>
-                watched
-                <span className="text-foreground">{w.title}</span>
-                <Badge variant="secondary" className="font-normal">
-                  {w.row}
-                </Badge>
-                {w.watched_at && <span>· {timeAgo(w.watched_at)}</span>}
-              </li>
-            ))}
-          </ul>
-        </Section>
-      )}
+      {report.recent.length > 0 && <RecentlyWatched recent={report.recent} />}
     </div>
+  );
+}
+
+/** How many watches show before the rest are folded away. The server sends at most 20
+ *  (`report_service._recent_watches`), so this list is bounded twice over and can never grow the
+ *  page without limit — the fold is about what is worth reading at a glance, not about volume. */
+const RECENT_SHOWN = 12;
+
+/**
+ * The newest watches, newest first.
+ *
+ * The extras used to be `slice(0, 12)` and nothing else: the server sends up to 20, so eight of
+ * them were dropped on the floor with no count, no disclosure and nothing on screen admitting the
+ * list was capped at all — which reads as "this is everything that happened" when it is not.
+ */
+function RecentlyWatched({
+  recent,
+}: {
+  recent: EffectivenessReport["recent"];
+}) {
+  const line = (
+    w: EffectivenessReport["recent"][number],
+    i: number,
+  ): React.ReactNode => (
+    <li
+      // watched_at (when present) is a stable, unique-enough identity for this list;
+      // falling back to the index only for the rare entry missing it.
+      key={`${w.username}-${w.title}-${w.watched_at ?? i}`}
+      className="flex flex-wrap items-baseline gap-x-2 text-muted-foreground"
+    >
+      <span className="font-medium text-foreground">
+        {w.display_name || w.username}
+      </span>
+      watched
+      <span className="text-foreground">{w.title}</span>
+      <Badge variant="secondary" className="font-normal">
+        {w.row}
+      </Badge>
+      {w.watched_at && <span>· {timeAgo(w.watched_at)}</span>}
+    </li>
+  );
+
+  const shown = recent.slice(0, RECENT_SHOWN);
+  const rest = recent.slice(RECENT_SHOWN);
+
+  return (
+    <Section
+      title="Recently watched from Shortlist"
+      // Says the list is bounded. Without it, a feed that stops at twenty reads as a complete
+      // history of what people watched — and the dashboard has no other place that number appears.
+      hint={`The ${recent.length === 1 ? "newest watch" : `newest ${recent.length} watches`}. Older ones are on each person's page.`}
+    >
+      <ul className="space-y-1 text-sm">{shown.map(line)}</ul>
+      {rest.length > 0 && (
+        <Disclosure
+          label={`Show ${rest.length} more`}
+          openLabel={`Hide ${rest.length} more`}
+        >
+          <ul className="space-y-1 text-sm">{rest.map(line)}</ul>
+        </Disclosure>
+      )}
+    </Section>
   );
 }
 

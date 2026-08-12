@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { rowOverrides } from "@/lib/collections";
+import { hasUnsavedChanges, rowOverrides, toInput } from "@/lib/collections";
 import type { Collection, PlexLibrary } from "@/lib/types";
 
 const LIBRARIES: PlexLibrary[] = [
@@ -36,6 +36,65 @@ function collection(patch: Partial<Collection> = {}): Collection {
     ...patch,
   } as Collection;
 }
+
+describe("hasUnsavedChanges", () => {
+  it("reports a form matching the saved row as clean", () => {
+    const row = collection();
+    expect(hasUnsavedChanges(toInput(row), row)).toBe(false);
+  });
+
+  it("reports an edited field as unsaved", () => {
+    const row = collection();
+    expect(hasUnsavedChanges({ ...toInput(row), size: 25 }, row)).toBe(true);
+  });
+
+  it("compares nested objects and arrays by VALUE, not by identity or key order", () => {
+    // The reason this is not `JSON.stringify`. The form rebuilds `poster` and `hub_anchor`
+    // wholesale as you edit, so a stringify comparison reports a row as edited for having been
+    // looked at — a warning about nothing, next to the Run button.
+    const row = collection({
+      library_keys: ["1", "2"],
+      hub_anchor: {
+        "1": { anchor: "recentlyAdded", before: true, top: false },
+      },
+    });
+    const saved = toInput(row);
+    const reordered = {
+      ...saved,
+      library_keys: [...saved.library_keys],
+      hub_anchor: {
+        "1": { top: false, before: true, anchor: "recentlyAdded" },
+      },
+      poster: {
+        style: saved.poster.style,
+        title: saved.poster.title,
+        subtitle: saved.poster.subtitle,
+        mode: saved.poster.mode,
+      },
+    };
+    expect(hasUnsavedChanges(reordered, row)).toBe(false);
+
+    // ...but a genuinely different nested value is still caught.
+    expect(
+      hasUnsavedChanges(
+        {
+          ...reordered,
+          hub_anchor: {
+            "1": { top: true, before: true, anchor: "recentlyAdded" },
+          },
+        },
+        row,
+      ),
+    ).toBe(true);
+    expect(
+      hasUnsavedChanges({ ...reordered, library_keys: ["2", "1"] }, row),
+    ).toBe(true);
+  });
+
+  it("treats a row being created as having nothing to differ from", () => {
+    expect(hasUnsavedChanges(toInput(collection()), null)).toBe(false);
+  });
+});
 
 describe("rowOverrides", () => {
   it("returns nothing for a row that is entirely on the global defaults", () => {
@@ -99,9 +158,9 @@ describe("rowOverrides", () => {
     expect(rowOverrides(collection({ refresh_days: 1 }), LIBRARIES)).toContain(
       "Rebuilds: nightly",
     );
-    expect(
-      rowOverrides(collection({ refresh_days: null }), LIBRARIES),
-    ).toEqual([]);
+    expect(rowOverrides(collection({ refresh_days: null }), LIBRARIES)).toEqual(
+      [],
+    );
   });
 
   it("badges a narrowed placement and a pinned row, but not the default both/unpinned", () => {

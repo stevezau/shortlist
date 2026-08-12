@@ -20,8 +20,15 @@ export function JobDetail({ job }: { job: Job }) {
     const rendered = Array.isArray(value) ? value.join(", ") : String(value);
     if (rendered) rows.push([key, rendered]);
   }
+  // A job back in `queued` after a failure still carries the timestamps of the attempt BEFORE this
+  // one — the server never clears them, because `finished_at` is also the backoff clock. Labelling
+  // those "Started"/"Took" would date work that has not begun, so say which attempt they describe.
+  const retrying = job.status === "queued" && job.attempts > 0;
   if (job.started_at) {
-    rows.push(["Started", new Date(job.started_at).toLocaleString()]);
+    rows.push([
+      retrying ? "Last attempt" : "Started",
+      new Date(job.started_at).toLocaleString(),
+    ]);
   }
   const took = jobDuration(job);
   if (took) rows.push(["Took", took]);

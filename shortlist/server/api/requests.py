@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -256,9 +256,28 @@ def clear_requests(body: RequestAction, request: Request) -> dict:
     return {"cleared": count}
 
 
-@router.get("/status")
-async def get_arr_status(request: Request) -> dict[int, str | None]:
-    """Arr download status for every request row. Returns {request_id: 'downloaded' | 'downloading' | ...}.
+#: Whether an Arr answered this fetch. "off" means it isn't configured at all — a distinct thing
+#: from a configured app that could not be reached, and the UI has to say which.
+ArrReach = Literal["ok", "unreachable", "off"]
+
+
+class ArrStatusOut(PassthroughModel):
+    """Per-row download status, plus whether each app actually answered.
+
+    ``reach`` is the half this used to omit. A failed Arr lookup is swallowed on purpose (one app
+    being down must not blank the other), so an unreachable Radarr produced an all-``null`` map —
+    byte-identical to "Radarr is fine and tracks none of these". The inbox therefore showed no
+    badges, for ever, with nothing anywhere saying why.
+    """
+
+    statuses: dict[int, str | None]
+    radarr: ArrReach
+    sonarr: ArrReach
+
+
+@router.get("/status", response_model=ArrStatusOut)
+async def get_arr_status(request: Request) -> dict:
+    """Arr download status for every request row, keyed by request id, plus per-app reachability.
 
     Covers waiting rows as well as sent ones. A waiting title is normally absent from the Arrs — the
     nightly pass drops anything they already track — so a status there means the owner (or another
@@ -266,16 +285,16 @@ async def get_arr_status(request: Request) -> dict[int, str | None]:
     an answer. Rejected rows are skipped: nothing is going to happen to them.
 
     Whole-library maps, not per-title lookups, so the cost is a handful of calls no matter how long
-    the inbox is. Runs in an executor since the Arr clients are sync. A title neither app tracks
-    appears as None.
+    the inbox is — which is what makes it cheap enough for the inbox to poll. Runs in an executor
+    since the Arr clients are sync. A title neither app tracks appears as None.
     """
     state = request.app.state
     svc = state.run_service
 
-    def _fetch_statuses() -> dict[int, str | None]:
+    def _fetch_statuses() -> dict:
         cfg, tmdb = svc.build_requests_context()
         if cfg is None:
-            return {}
+            return {"statuses": {}, "radarr": "off", "sonarr": "off"}
 
         from shortlist.engine.clients.arr import RadarrClient, SonarrClient
 
@@ -283,19 +302,26 @@ async def get_arr_status(request: Request) -> dict[int, str | None]:
             rows = session.query(RequestCandidate).filter(RequestCandidate.status.in_(("pending", "sent"))).all()
 
         # One fetch per app up front. A failure here is not fatal: the inbox simply shows no status
-        # rather than erroring, which is what it did before this endpoint existed.
+        # rather than erroring, which is what it did before this endpoint existed — but it is now
+        # REPORTED, so "no badges" can be told apart from "nothing to badge".
         movies: dict[int, str] = {}
         shows_by_tvdb: dict[int, str] = {}
         shows_by_tmdb: dict[int, str] = {}
+        radarr_reach: ArrReach = "off"
+        sonarr_reach: ArrReach = "off"
         if cfg.radarr:
+            radarr_reach = "ok"
             try:
                 movies = RadarrClient(cfg.radarr).status_by_tmdb()
             except Exception as e:
+                radarr_reach = "unreachable"
                 logger.warning("request status: Radarr lookup failed ({})", e)
         if cfg.sonarr:
+            sonarr_reach = "ok"
             try:
                 shows_by_tvdb, shows_by_tmdb = SonarrClient(cfg.sonarr).status_by_ids()
             except Exception as e:
+                sonarr_reach = "unreachable"
                 logger.warning("request status: Sonarr lookup failed ({})", e)
 
         statuses: dict[int, str | None] = {}
@@ -320,7 +346,7 @@ async def get_arr_status(request: Request) -> dict[int, str | None]:
                 status = shows_by_tvdb.get(tvdb_id) if tvdb_id else None
             statuses[row.id] = status
 
-        return statuses
+        return {"statuses": statuses, "radarr": radarr_reach, "sonarr": sonarr_reach}
 
     return await asyncio.get_running_loop().run_in_executor(None, _fetch_statuses)
 

@@ -310,6 +310,19 @@ export type RequestSendOutcome = Schemas["SendOutcomeOut"];
 /** POST /api/requests/send response. */
 export type RequestSendResult = Schemas["SendOut"];
 
+/**
+ * GET /api/requests/status — live Arr state for the inbox's badges.
+ *
+ * `statuses` is keyed by request id (JSON object keys are strings), and `radarr`/`sonarr` say
+ * whether that app answered at all: "off" is not configured, "unreachable" is configured and down.
+ * Without the second half an all-empty `statuses` is ambiguous between "nothing is tracked" and
+ * "the app never replied", and the inbox drew the same nothing for both.
+ */
+export type ArrStatus = Schemas["ArrStatusOut"];
+
+/** Whether one Arr answered the last status fetch. */
+export type ArrReach = ArrStatus["radarr"];
+
 // --- Setup wizard / auth ---
 
 /** GET /api/setup/servers — a server plex.tv says this account can reach, with every advertised
