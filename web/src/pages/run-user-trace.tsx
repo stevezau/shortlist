@@ -30,7 +30,11 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { provenanceLabel, sourceLabel } from "@/lib/pick-provenance";
 import { Button } from "@/components/ui/button";
-import { useBlockSeed, useRunUserTrace } from "@/lib/queries";
+import {
+  useBlockSeed,
+  useRunSharedRowTrace,
+  useRunUserTrace,
+} from "@/lib/queries";
 import {
   buildLibraries,
   fateLabel,
@@ -73,11 +77,19 @@ function useRequestOutcome(
 }
 
 export function RunUserTracePage() {
-  const { id, userId } = useParams();
+  // Serves BOTH traces. A shared row runs the same pipeline minus the per-person history stage and
+  // returns the same shape, with the row's title standing in for the person — so forking this view
+  // would mean maintaining 1,600 lines twice to render identical stages.
+  const { id, userId, rowSlug } = useParams();
   const runId = Number(id);
   const uid = Number(userId);
-  const valid = Number.isFinite(runId) && Number.isFinite(uid);
-  const query = useRunUserTrace(runId, uid, valid);
+  const isRow = rowSlug !== undefined;
+  const valid = Number.isFinite(runId) && (isRow ? Boolean(rowSlug) : Number.isFinite(uid));
+  // Both hooks always run — hooks cannot be called conditionally — and `enabled` decides which one
+  // actually fetches.
+  const userQuery = useRunUserTrace(runId, uid, valid && !isRow);
+  const rowQuery = useRunSharedRowTrace(runId, rowSlug ?? "", valid && isRow);
+  const query = isRow ? rowQuery : userQuery;
 
   return (
     <div className="space-y-6">

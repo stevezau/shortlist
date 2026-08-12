@@ -128,6 +128,10 @@ export default function App() {
             <Route path="logs" element={<LogsPage />} />
             <Route path="runs/:id" element={<RunDetailPage />} />
             <Route
+              path="runs/:id/trace/row/:rowSlug"
+              element={<RunUserTracePage />}
+            />
+            <Route
               path="runs/:id/trace/:userId"
               element={<RunUserTracePage />}
             />

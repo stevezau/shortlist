@@ -34,6 +34,8 @@ export const queryKeys = {
   run: (id: number) => ["runs", id] as const,
   runUserTrace: (runId: number, userId: number) =>
     ["runs", runId, "trace", userId] as const,
+  runSharedRowTrace: (runId: number, slug: string) =>
+    ["runs", runId, "trace", "row", slug] as const,
   runLog: (runId: number) => ["run-log", runId] as const,
   settings: ["settings"] as const,
   collections: ["collections"] as const,
@@ -208,6 +210,16 @@ export function useRunUserTrace(runId: number, userId: number, enabled = true) {
   return useQuery({
     queryKey: queryKeys.runUserTrace(runId, userId),
     queryFn: () => api.getRunUserTrace(runId, userId),
+    enabled,
+  });
+}
+
+/** A SHARED row's trace. Same response shape as a user's — a shared row runs the same pipeline
+ *  minus the per-person history stage — so one view renders both. */
+export function useRunSharedRowTrace(runId: number, slug: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.runSharedRowTrace(runId, slug),
+    queryFn: () => api.getRunSharedRowTrace(runId, slug),
     enabled,
   });
 }

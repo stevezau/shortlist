@@ -246,10 +246,20 @@ export type RunUserResult = {
   breakdown: RunLibraryBreakdown[];
 } & Schemas["RunUserOut"];
 
-/** GET /api/runs/{id} — the run plus its per-user results. */
+/** One SHARED row's slice of GET /api/runs/{id}.
+ *
+ *  A shared row is built once for the whole server from pooled watching, so it belongs to nobody and
+ *  never appears in `users` — it is carried alongside them, not among them. */
+export type RunSharedRowResult = {
+  diff: RunDiff;
+  breakdown: RunLibraryBreakdown[];
+} & Schemas["RunSharedRowOut"];
+
+/** GET /api/runs/{id} — the run, its per-user results, and every shared row it built. */
 export type RunDetail = {
   stats: RunStats;
   users: RunUserResult[];
+  shared_rows: RunSharedRowResult[];
 } & Schemas["RunDetailOut"];
 
 /** POST /api/runs — the queued run's id. */

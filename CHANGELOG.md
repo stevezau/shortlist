@@ -8,6 +8,19 @@ All notable changes to this project are documented here. This project follows
 
 ### Added
 
+- **Runs are now shown by row, not by person.** A run's unit of work is a row, but the run page listed
+  people — so a **shared row**, which is built once for the whole server and belongs to nobody, had
+  nowhere to appear at all. On a night when no per-person row was due, the page was 46 lines of
+  "skipped" with the run's only real output — a shared row of 40 picks — nowhere on screen. Runs open
+  on a **Rows** tab listing every row the run touched: per-person rows expand to the people under
+  them, each saying whether their row was built, not due, muted, or not theirs; shared rows sit
+  alongside as peers with their own picks, diff and **Trace**. The People tab is still there for
+  reading one person's picks and errors.
+
+- **Shared rows have a trace.** The same view a per-person row has always had, minus the per-person
+  watch history a shared row doesn't use — so "why did it pick that" is answerable for a shared row
+  for the first time.
+
 - **The sidebar now names the exact build you're running** — version, branch, and commit
   (`Shortlist · 1.4.0 · dev · ba891f5`), with the full commit on hover and in the debug bundle. On
   `:dev` the version number is identical for every push between two releases, so it could never tell
@@ -15,6 +28,15 @@ All notable changes to this project are documented here. This project follows
   source checkout shows the version alone, as before.
 
 ### Fixed
+
+- **A shared row's result is kept.** It was thrown away at the end of every run: the row was built,
+  labelled and promoted on Plex, but only a one-line audit note survived — no trace, no per-library
+  breakdown, no token cost, and not even the list of what it picked. Older runs can't be recovered;
+  from now on it is all recorded.
+
+- **A shared row's collections are now tracked like everyone else's.** They never entered the
+  internal ledger Shortlist uses to find a row again later, which is what lets it clean up a row
+  whose title changes every night.
 
 - **Docker installs no longer report themselves as source checkouts.** The app read `GIT_SHA` and
   `GIT_BRANCH` to tell a container from a development checkout, but nothing ever set them — the image
