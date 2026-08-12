@@ -316,25 +316,9 @@ jobs:
           # Its own scope — see docker-smoke's note. This one holds both platforms.
           cache-from: type=gha,scope=publish
           cache-to: type=gha,mode=max,scope=publish
-      # The Docker Hub overview page is the whole reason the mirror exists, so it is kept in
-      # sync from the repo rather than edited by hand in the web UI. It is a SEPARATE file from
-      # README.md on purpose: the GitHub README's relative links (docs/*.md) and relative image
-      # paths render broken on Docker Hub, which has no notion of the repo tree.
-      # Only on a release tag — the overview describes :latest, and rewriting it on every dev
-      # push would burn Docker Hub API calls to write identical text.
-      # If this step ever fails with 401, the PAT lacks write scope: Docker Hub tokens need
-      # "Read, Write, Delete" to change a repository description.
-      - name: Sync the Docker Hub overview page
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: peter-evans/dockerhub-description@v5
-        with:
-          username: stevezzau
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: stevezzau/shortlist
-          # Hardcoded, NOT github.event.repository.description: Docker Hub caps the short
-          # description at 100 characters and the repo's is over 200.
-          short-description: "Per-user movie & TV recommendations for Plex — a private Picked for You row for everyone"
-          readme-filepath: ./.github/dockerhub-overview.md
+      # The Docker Hub overview page is NOT synced here. It lives in .github/workflows/dockerhub.yml
+      # so that editing the prose doesn't require cutting a release, and so a description failure
+      # can never mark a successful image publish as failed.
 
   # A tag published the image but never announced it: v1.0.0 through v1.2.1 all exist as tags with
   # no GitHub Release, because the beta ones were created by hand and nothing replaced that habit.
