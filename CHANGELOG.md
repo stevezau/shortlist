@@ -116,6 +116,12 @@ All notable changes to this project are documented here. This project follows
   looking exactly like one that simply isn't tracking anything, and the inbox showed no badges for
   ever with nothing anywhere explaining why. Each title now says which app couldn't be reached.
 
+- **A run that is only queued no longer counts a duration up.** `started_at` is stamped the moment
+  a run is *asked for*, not the moment it begins, so a run still waiting for the Plex writer lock
+  ticked a stopwatch up from the button press — under a tooltip reading "Running…" beside a badge
+  reading "queued". It now shows nothing until it actually starts, and the Started column says
+  "queued 5m ago" rather than claiming it began then.
+
 - **A background job waiting to be retried no longer shows how long it took.** After a failure the
   job goes back in the queue keeping the timestamps of the attempt that failed, so the Jobs page
   displayed that attempt's duration beside "Retrying" — a time for work that had not started.

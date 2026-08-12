@@ -67,17 +67,41 @@ function RunsSkeleton() {
 
 /** When a run started, as relative time. A live run re-reads the clock on the same second-by-second
  *  tick as its duration — computed once at render, "8m ago" sat frozen next to a duration reading
- *  "10m 54s" until something else re-rendered the row (#67). */
+ *  "10m 54s" until something else re-rendered the row (#67).
+ *
+ *  A queued run says "queued", because `started_at` is stamped at INSERT: for a run still waiting on
+ *  the writer lock this column was reporting the moment it was asked for as the moment it began. The
+ *  time is kept — it is the useful part — and only the claim about what it means is corrected. */
 export function RunStarted({ run }: { run: Run }) {
   const now = useLiveClock(!run.finished_at);
-  return <>{timeAgo(run.started_at, now)}</>;
+  const when = timeAgo(run.started_at, now);
+  return <>{run.status === "queued" ? `queued ${when}` : when}</>;
 }
 
-/** How long a run took. A finished run shows its fixed duration; a live one ticks up each second. */
+/**
+ * How long a run took. A finished run shows its fixed duration; a live one ticks up each second.
+ *
+ * A QUEUED run shows neither, because it has not started. `runs.started_at` is stamped by the
+ * column default at INSERT — the moment the run is queued, not the moment it begins — so treating
+ * "no finish time" as "running" made a run that was still waiting for the writer lock tick a
+ * duration up from the button press, under a tooltip reading "Running…" beside a badge reading
+ * "queued". Same rule as `jobDuration`: a duration requires the work to have started.
+ */
 export function RunDuration({ run }: { run: Run }) {
-  const running = !run.finished_at;
+  const queued = run.status === "queued";
+  const running = !queued && !run.finished_at;
   const now = useLiveClock(running);
 
+  if (queued) {
+    return (
+      <span
+        className="tabular-nums text-muted-foreground"
+        title="Waiting to start — nothing is running yet, so there is no duration to show."
+      >
+        —
+      </span>
+    );
+  }
   if (running) {
     const started = Date.parse(run.started_at ?? "");
     const elapsed = Number.isNaN(started) ? null : Math.max(0, now - started);

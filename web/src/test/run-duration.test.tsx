@@ -59,11 +59,57 @@ describe("RunDuration", () => {
     unmount();
     expect(clearSpy).toHaveBeenCalled();
   });
+
+  it("shows no duration at all for a run that is still queued", () => {
+    // `runs.started_at` is stamped by the column default at INSERT — when the run was ASKED for,
+    // not when it began. Treating "no finish time" as "running" therefore ticked a duration up from
+    // the button press for a run still waiting on the writer lock, under a tooltip saying
+    // "Running…" beside a badge saying "queued".
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-19T03:30:11Z")); // 11s after it was queued
+
+    render(
+      <RunDuration run={makeRun({ status: "queued", finished_at: null })} />,
+    );
+
+    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.queryByText(/11\.0s/)).toBeNull();
+  });
+
+  it("does not tick a queued run up as time passes", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-19T03:30:10Z"));
+
+    render(
+      <RunDuration run={makeRun({ status: "queued", finished_at: null })} />,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+
+    // Still nothing — the whole point is that waiting is not elapsed work.
+    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.queryByText(/s$/)).toBeNull();
+  });
 });
 
 describe("RunStarted", () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("says a queued run was QUEUED, not started", () => {
+    // Same root cause as the duration beside it: `started_at` is the moment the run was asked for.
+    // A run sitting behind the writer lock read "Started · 5m ago" when it had not begun.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-19T03:35:00Z")); // 5m after it was queued
+
+    render(
+      <RunStarted run={makeRun({ status: "queued", finished_at: null })} />,
+    );
+
+    expect(screen.getByText("queued 5m ago")).toBeInTheDocument();
   });
 
   it("keeps pace with the duration beside it while a run is running", () => {
