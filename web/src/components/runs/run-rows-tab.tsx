@@ -237,11 +237,20 @@ export function RunRowsTab({
           aria-hidden="true"
         />
         <div className="space-y-1">
-          <p className="font-medium">This run built no rows</p>
+          {/* A RUNNING run has nothing persisted yet, so it lands here — and blaming a legacy run for
+              a run that started seconds ago is a confidently wrong explanation, the exact failure
+              this view exists to end. Three cases, not one. */}
+          <p className="font-medium">
+            {run.finished_at
+              ? "This run built no rows"
+              : "Working — rows appear as they finish"}
+          </p>
           <p className="text-muted-foreground">
-            {notInRun.length > 0
-              ? `Nothing was due to rebuild. ${notInRun.length} row${notInRun.length === 1 ? " was" : "s were"} considered and skipped.`
-              : "Runs from before this view existed recorded their results per person rather than per row — the Log tab still has everything that happened."}
+            {!run.finished_at
+              ? "Each row lands here once it is built. The People tab fills in as each person completes, and the Log tab shows live progress."
+              : notInRun.length > 0
+                ? `Nothing was due to rebuild. ${notInRun.length} row${notInRun.length === 1 ? " was" : "s were"} considered and skipped.`
+                : "Runs from before this view existed recorded their results per person rather than per row — the Log tab still has everything that happened."}
           </p>
         </div>
       </div>
