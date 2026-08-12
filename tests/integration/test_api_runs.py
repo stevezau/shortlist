@@ -28,7 +28,7 @@ RUN_SUMMARY_KEYS = {
     "error",
     "promotion_blockers",
 }
-RUN_DETAIL_KEYS = RUN_SUMMARY_KEYS | {"users"}
+RUN_DETAIL_KEYS = RUN_SUMMARY_KEYS | {"users", "shared_rows"}
 RUN_USER_KEYS = {
     "username",
     "display_name",
@@ -44,6 +44,13 @@ RUN_USER_KEYS = {
     "picks",
     "breakdown",
     "has_trace",
+    "rows_considered",
+}
+#: A shared row's entry. Same field set as a user's minus the three user fields, plus the row's own
+#: slug and its title as rendered at run time.
+RUN_SHARED_ROW_KEYS = (RUN_USER_KEYS - {"username", "display_name", "slug", "rows_considered"}) | {
+    "collection_slug",
+    "row_title",
 }
 PICK_KEYS = {"rank", "title", "reason", "seed_title", "sources", "affinity", "year", "rating"}
 TRACE_KEYS = {"username", "display_name", "status", "error", "reason", "trace", "breakdown", "requests"}
@@ -120,6 +127,92 @@ class TestRunsApi:
         assert result["status"] == "skipped"
         assert result["reason"] == "There are no per-person rows to build."
         assert result["error"] is None
+
+    def _run_with_a_shared_row(self, client: TestClient, **overrides) -> int:
+        """A finished run whose only work was a shared row — the exact shape of live run #37."""
+        from shortlist.server.db.models import Run, RunSharedRow
+
+        with client.app.state.sessions() as session:
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(
+                RunSharedRow(
+                    run_id=run.id,
+                    collection_slug="popular",
+                    **{
+                        "row_title": "👥 Popular Movies on SFLIX",
+                        "status": "ok",
+                        "diff": {"added": ["Dune"], "removed": []},
+                        "picks": [{"rank": 1, "title": "Dune", "reason": "3 people watched it"}],
+                        "trace": {"gathers": [{"source": "popular"}]},
+                        "breakdown": [{"row_slug": "popular", "library_key": "1"}],
+                        **overrides,
+                    },
+                )
+            )
+            session.commit()
+            return run.id
+
+    def test_a_shared_row_appears_in_the_run_detail_with_every_key(self, client: TestClient):
+        """A shared row belongs to no user, so it never appears in `users` — and before it had a
+        record of its own, a run whose only work was a shared row rendered as a wall of skipped
+        people with its actual output nowhere on screen."""
+        run_id = self._run_with_a_shared_row(client)
+
+        body = client.get(f"/api/runs/{run_id}").json()
+
+        assert body["users"] == [], "a shared row is nobody's — it must not be faked into the people list"
+        assert len(body["shared_rows"]) == 1
+        row = body["shared_rows"][0]
+        assert set(row) == RUN_SHARED_ROW_KEYS
+        assert row["collection_slug"] == "popular"
+        assert row["row_title"] == "👥 Popular Movies on SFLIX"
+        assert [p["title"] for p in row["picks"]] == ["Dune"]
+        assert set(row["picks"][0]) == PICK_KEYS, (
+            "picks come from a JSON column nothing validates — a partial one must be filled in on "
+            "read, not fail response validation and 500 the whole run page"
+        )
+        assert row["has_trace"] is True, "the trace flag is what puts a Trace link on the row"
+
+    def test_a_shared_rows_trace_is_served_like_a_users(self, client: TestClient):
+        """Same response model as the per-user trace so one view renders both: a shared row runs the
+        same pipeline minus the per-person history stage. Its TITLE stands in for the person."""
+        run_id = self._run_with_a_shared_row(client)
+
+        body = client.get(f"/api/runs/{run_id}/rows/popular/trace").json()
+
+        assert set(body) == TRACE_KEYS, "the trace view reads one shape — a fork here would need a second view"
+        assert body["display_name"] == "👥 Popular Movies on SFLIX"
+        assert body["trace"] == {"gathers": [{"source": "popular"}]}
+        assert client.get(f"/api/runs/{run_id}/rows/nope/trace").status_code == 404
+
+    def test_a_legacy_run_reports_no_shared_rows_rather_than_failing(self, client: TestClient):
+        """Nothing is backfilled: a run recorded before this existed keeps exactly what it had. The
+        key must still be present and empty, so the UI can say "not recorded for this run" instead of
+        the page losing a field it renders around."""
+        from shortlist.server.db.models import Run
+
+        with client.app.state.sessions() as session:
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.commit()
+            run_id = run.id
+
+        assert client.get(f"/api/runs/{run_id}").json()["shared_rows"] == []
+
+    def test_clearing_run_history_takes_the_shared_rows_with_it(self, client: TestClient):
+        """`run_shared_rows.run_id` is a real FK and `PRAGMA foreign_keys` is ON, so a bulk delete
+        that forgot this table would either strand the rows or fail the whole clear. A bulk ORM
+        delete does not cascade in Python — the same reason the log lines are deleted explicitly."""
+        from shortlist.server.db.models import Run, RunSharedRow
+
+        run_id = self._run_with_a_shared_row(client)
+
+        assert client.delete("/api/runs").status_code == 200
+        with client.app.state.sessions() as session:
+            assert session.query(Run).count() == 0
+            assert session.query(RunSharedRow).filter_by(run_id=run_id).count() == 0
 
     def test_run_detail_carries_every_key_for_a_finished_and_a_still_pending_user(self, client: TestClient):
         """Both branches of the users list — the people the run has finished, and the ones it hasn't

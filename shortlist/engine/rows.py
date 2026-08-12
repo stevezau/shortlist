@@ -2063,6 +2063,22 @@ def _run_user(
     #     re-opens the same takeover through a different door.
     owned = [spec for spec in cfg.per_person_rows() if _in_audience(user, spec)]
     specs = [s for s in owned if not _is_muted(user, s) and cfg.should_build(s)]
+    # The same three conditions, recorded per row rather than collapsed into one sentence. `reason`
+    # explains the person; this attributes the decision to the ROW, which is what a rows-first run
+    # view needs to place someone under the rows they were skipped for. Written on every path — a
+    # user who builds successfully is in the tree too.
+    user_report.rows_considered = {
+        spec.slug: (
+            "not_in_audience"
+            if not _in_audience(user, spec)
+            else "muted"
+            if _is_muted(user, spec)
+            else "due"
+            if cfg.should_build(spec)
+            else "not_due"
+        )
+        for spec in cfg.per_person_rows()
+    }
     if not specs:
         # Mark the STATUS too, not just the live event: the pipeline's terminal event said "skipped"
         # while the persisted row kept its default "pending", so a reload showed a user stuck

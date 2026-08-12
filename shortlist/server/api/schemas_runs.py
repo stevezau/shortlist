@@ -65,6 +65,35 @@ class RunUserOut(PassthroughModel):
     picks: list[PickOut]
     breakdown: list[dict[str, Any]]
     has_trace: bool
+    #: What this run decided about each per-person row FOR THIS PERSON:
+    #: `{row_slug: "due" | "not_due" | "muted" | "not_in_audience"}`. `reason` explains the person in
+    #: one sentence and cannot be attributed to a row, so this is what lets a rows-first view place
+    #: somebody under the rows they were skipped for. `{}` on a run recorded before it existed —
+    #: which the UI must render as "not recorded", never as "no rows were considered".
+    rows_considered: dict[str, str]
+
+
+class RunSharedRowOut(PassthroughModel):
+    """One SHARED row's outcome in a run — the per-row twin of `RunUserOut`.
+
+    A shared row is built once for the whole server from pooled history, so it belongs to nobody and
+    never appears in `users`. Before it had a record of its own, a run whose only work was a shared
+    row rendered as a wall of skipped people with its actual output nowhere on screen.
+    """
+
+    collection_slug: str
+    row_title: str  # as rendered at run time — a later rename must not rewrite a past run
+    status: str
+    error: str | None
+    reason: str | None
+    duration_ms: int
+    llm_tokens: int
+    llm_tokens_by_step: dict[str, int]
+    exa_searches: int
+    diff: dict[str, Any]
+    picks: list[PickOut]
+    breakdown: list[dict[str, Any]]
+    has_trace: bool
 
 
 class RunSummaryOut(PassthroughModel):
@@ -90,9 +119,12 @@ class RunSummaryOut(PassthroughModel):
 
 
 class RunDetailOut(RunSummaryOut):
-    """A run plus every person in it."""
+    """A run plus every person in it, and every shared row it built."""
 
     users: list[RunUserOut]
+    #: Empty on a run recorded before shared rows had a record of their own — the row may well have
+    #: built, so the UI says "not recorded for this run" rather than "no shared rows".
+    shared_rows: list[RunSharedRowOut]
 
 
 class RunsSummaryOut(PassthroughModel):
@@ -115,7 +147,12 @@ class TraceRequestOut(PassthroughModel):
 
 
 class RunUserTraceOut(PassthroughModel):
-    """The full pipeline trace for one user in one run."""
+    """The full pipeline trace for one user in one run.
+
+    Also serves a SHARED row's trace, which has the same stages minus `history` — a shared row is
+    built from pooled watching, so it records `gathers` and no per-person history. `username` and
+    `display_name` carry the row's title there, so one trace view renders both without a fork.
+    """
 
     username: str
     display_name: str

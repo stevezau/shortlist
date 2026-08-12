@@ -765,6 +765,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/runs/{run_id}/rows/{collection_slug}/trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Run Shared Row Trace
+         * @description The full pipeline trace for one SHARED row in one run — the per-row twin of the user trace.
+         *
+         *     Same response model, because a shared row runs the same pipeline minus the per-person history
+         *     stage (it is built from pooled watching, so it records `gathers` and no `history`). The row's
+         *     TITLE is served as `username`/`display_name` so a single trace view renders both without forking.
+         *
+         *     Empty `{}` on a run recorded before shared rows were persisted — the UI reads that as "no trace
+         *     for this run", not an error, exactly as it does for a user.
+         */
+        get: operations["get_run_shared_row_trace_api_runs__run_id__rows__collection_slug__trace_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/runs/{run_id}/users/{user_id}/trace": {
         parameters: {
             query?: never;
@@ -3922,7 +3949,7 @@ export interface components {
         };
         /**
          * RunDetailOut
-         * @description A run plus every person in it.
+         * @description A run plus every person in it, and every shared row it built.
          */
         RunDetailOut: {
             /** Dry Run */
@@ -3935,6 +3962,8 @@ export interface components {
             id: number;
             /** Promotion Blockers */
             promotion_blockers: string[];
+            /** Shared Rows */
+            shared_rows: components["schemas"]["RunSharedRowOut"][];
             /** Started At */
             started_at: string;
             /** Stats */
@@ -4053,6 +4082,50 @@ export interface components {
             user_ids?: number[] | null;
         };
         /**
+         * RunSharedRowOut
+         * @description One SHARED row's outcome in a run — the per-row twin of `RunUserOut`.
+         *
+         *     A shared row is built once for the whole server from pooled history, so it belongs to nobody and
+         *     never appears in `users`. Before it had a record of its own, a run whose only work was a shared
+         *     row rendered as a wall of skipped people with its actual output nowhere on screen.
+         */
+        RunSharedRowOut: {
+            /** Breakdown */
+            breakdown: {
+                [key: string]: unknown;
+            }[];
+            /** Collection Slug */
+            collection_slug: string;
+            /** Diff */
+            diff: {
+                [key: string]: unknown;
+            };
+            /** Duration Ms */
+            duration_ms: number;
+            /** Error */
+            error: string | null;
+            /** Exa Searches */
+            exa_searches: number;
+            /** Has Trace */
+            has_trace: boolean;
+            /** Llm Tokens */
+            llm_tokens: number;
+            /** Llm Tokens By Step */
+            llm_tokens_by_step: {
+                [key: string]: number;
+            };
+            /** Picks */
+            picks: components["schemas"]["PickOut"][];
+            /** Reason */
+            reason: string | null;
+            /** Row Title */
+            row_title: string;
+            /** Status */
+            status: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * RunSummaryOut
          * @description One run, as the Runs list shows it.
          */
@@ -4117,6 +4190,10 @@ export interface components {
             picks: components["schemas"]["PickOut"][];
             /** Reason */
             reason: string | null;
+            /** Rows Considered */
+            rows_considered: {
+                [key: string]: string;
+            };
             /** Slug */
             slug: string;
             /** Status */
@@ -4129,6 +4206,10 @@ export interface components {
         /**
          * RunUserTraceOut
          * @description The full pipeline trace for one user in one run.
+         *
+         *     Also serves a SHARED row's trace, which has the same stages minus `history` — a shared row is
+         *     built from pooled watching, so it records `gathers` and no per-person history. `username` and
+         *     `display_name` carry the row's title there, so one trace view renders both without a fork.
          */
         RunUserTraceOut: {
             /** Breakdown */
@@ -5995,6 +6076,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunLogLineOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_run_shared_row_trace_api_runs__run_id__rows__collection_slug__trace_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: number;
+                collection_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunUserTraceOut"];
                 };
             };
             /** @description Validation Error */

@@ -3434,7 +3434,7 @@
       },
       "RunDetailOut": {
         "additionalProperties": true,
-        "description": "A run plus every person in it.",
+        "description": "A run plus every person in it, and every shared row it built.",
         "properties": {
           "dry_run": {
             "title": "Dry Run",
@@ -3471,6 +3471,13 @@
               "type": "string"
             },
             "title": "Promotion Blockers",
+            "type": "array"
+          },
+          "shared_rows": {
+            "items": {
+              "$ref": "#/components/schemas/RunSharedRowOut"
+            },
+            "title": "Shared Rows",
             "type": "array"
           },
           "started_at": {
@@ -3513,7 +3520,8 @@
           "stats",
           "error",
           "promotion_blockers",
-          "users"
+          "users",
+          "shared_rows"
         ],
         "title": "RunDetailOut",
         "type": "object"
@@ -3704,6 +3712,106 @@
         "title": "RunRequest",
         "type": "object"
       },
+      "RunSharedRowOut": {
+        "additionalProperties": true,
+        "description": "One SHARED row's outcome in a run \u2014 the per-row twin of `RunUserOut`.\n\nA shared row is built once for the whole server from pooled history, so it belongs to nobody and\nnever appears in `users`. Before it had a record of its own, a run whose only work was a shared\nrow rendered as a wall of skipped people with its actual output nowhere on screen.",
+        "properties": {
+          "breakdown": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Breakdown",
+            "type": "array"
+          },
+          "collection_slug": {
+            "title": "Collection Slug",
+            "type": "string"
+          },
+          "diff": {
+            "additionalProperties": true,
+            "title": "Diff",
+            "type": "object"
+          },
+          "duration_ms": {
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "exa_searches": {
+            "title": "Exa Searches",
+            "type": "integer"
+          },
+          "has_trace": {
+            "title": "Has Trace",
+            "type": "boolean"
+          },
+          "llm_tokens": {
+            "title": "Llm Tokens",
+            "type": "integer"
+          },
+          "llm_tokens_by_step": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Llm Tokens By Step",
+            "type": "object"
+          },
+          "picks": {
+            "items": {
+              "$ref": "#/components/schemas/PickOut"
+            },
+            "title": "Picks",
+            "type": "array"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "row_title": {
+            "title": "Row Title",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "collection_slug",
+          "row_title",
+          "status",
+          "error",
+          "reason",
+          "duration_ms",
+          "llm_tokens",
+          "llm_tokens_by_step",
+          "exa_searches",
+          "diff",
+          "picks",
+          "breakdown",
+          "has_trace"
+        ],
+        "title": "RunSharedRowOut",
+        "type": "object"
+      },
       "RunSummaryOut": {
         "additionalProperties": true,
         "description": "One run, as the Runs list shows it.",
@@ -3862,6 +3970,13 @@
             ],
             "title": "Reason"
           },
+          "rows_considered": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Rows Considered",
+            "type": "object"
+          },
           "slug": {
             "title": "Slug",
             "type": "string"
@@ -3889,14 +4004,15 @@
           "diff",
           "picks",
           "breakdown",
-          "has_trace"
+          "has_trace",
+          "rows_considered"
         ],
         "title": "RunUserOut",
         "type": "object"
       },
       "RunUserTraceOut": {
         "additionalProperties": true,
-        "description": "The full pipeline trace for one user in one run.",
+        "description": "The full pipeline trace for one user in one run.\n\nAlso serves a SHARED row's trace, which has the same stages minus `history` \u2014 a shared row is\nbuilt from pooled watching, so it records `gathers` and no per-person history. `username` and\n`display_name` carry the row's title there, so one trace view renders both without a fork.",
         "properties": {
           "breakdown": {
             "items": {
@@ -7401,6 +7517,58 @@
           }
         },
         "summary": "Get Run Log",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/runs/{run_id}/rows/{collection_slug}/trace": {
+      "get": {
+        "description": "The full pipeline trace for one SHARED row in one run \u2014 the per-row twin of the user trace.\n\nSame response model, because a shared row runs the same pipeline minus the per-person history\nstage (it is built from pooled watching, so it records `gathers` and no `history`). The row's\nTITLE is served as `username`/`display_name` so a single trace view renders both without forking.\n\nEmpty `{}` on a run recorded before shared rows were persisted \u2014 the UI reads that as \"no trace\nfor this run\", not an error, exactly as it does for a user.",
+        "operationId": "get_run_shared_row_trace_api_runs__run_id__rows__collection_slug__trace_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "collection_slug",
+            "required": true,
+            "schema": {
+              "title": "Collection Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunUserTraceOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run Shared Row Trace",
         "tags": [
           "runs"
         ]

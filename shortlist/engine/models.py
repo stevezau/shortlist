@@ -888,6 +888,18 @@ class UserRunReport:
     # for this person" without re-running anything. Purely diagnostic; the engine never reads it back.
     # {} when tracing produced nothing (a skipped/cold user). Persisted on RunUser.trace.
     trace: dict = field(default_factory=dict)
+    # Every per-person row and what this run decided about it FOR THIS PERSON, as
+    # ``{row_slug: "due" | "not_due" | "muted" | "not_in_audience"}``.
+    #
+    # `reason` says why somebody built nothing as one sentence for the whole person, which cannot be
+    # attributed to a row — so a rows-first view had no way to put a skipped person under the rows
+    # they were skipped for, and the largest group on a run page fell outside the tree entirely.
+    # Recorded for EVERY user, not just skipped ones, so the tree is complete for a successful run too.
+    #
+    # "due" is intent, not outcome: it says this run meant to build the row, and the person's own
+    # `status` says what became of it. Naming it "built" would claim a success that a later error in
+    # the pipeline can still take away. {} on a cold-start skip, which never reaches the decision.
+    rows_considered: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

@@ -389,7 +389,9 @@ class TestFilterWritesAreQueuedWhenOwed:
         assert {u["slug"] for u in client.get("/api/users").json() if u["enabled"]} >= {"mike", "ana"}
         assert "user.cleanup" not in self._kinds(client)
         with client.app.state.sessions() as session:
-            assert session.query(Event).filter_by(scope="user.departed.refused").count() == 1
+            # Both halves refuse in their own right — "disable" is the one under test here.
+            refused = session.query(Event).filter_by(scope="user.departed.refused").all()
+            assert "disable" in {r.message["half"] for r in refused}
 
     def test_one_person_leaving_the_share_still_acts_immediately(self, client: TestClient):
         """The guard must not swallow the case it exists to serve. One departure out of three is a
