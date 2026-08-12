@@ -509,3 +509,131 @@ class TestEveryNotificationIsRenderable:
         session.commit()  # the initial migration already seeds a per_person row on both shelves
 
         self._check("_owner_sees_all_rows", notif._owner_sees_all_rows(session))
+
+
+class TestShelfContention:
+    """Another tool reordering the Recommended shelf — the case a single pass cannot see.
+
+    Each ordering pass on SFLIX moved its rows, re-read the shelf, confirmed the new order and
+    reported success. It was right every time; agregarr moved them back ten minutes later. So the
+    signal is not "did our write land" (it did) but "did it STAY", and only repetition answers that.
+    """
+
+    @staticmethod
+    def _ordered(session, library: str, moved: list[str], *, when=None, dry_run: bool = False) -> None:
+        session.add(
+            Event(
+                scope="shelf.order",
+                level="info",
+                ts=when or datetime.now(UTC),
+                message={"library": library, "moved": moved, "verified": True, "dry_run": dry_run},
+            )
+        )
+
+    def test_fires_when_the_same_row_keeps_being_put_back(self, session):
+        for _ in range(3):
+            self._ordered(session, "Movies", ["Picked for You"])
+        session.commit()
+
+        result = notif._shelf_contention(session)
+
+        assert result["severity"] == "warning"
+        assert "Movies" in result["title"]
+        assert "3 times" in result["body"]
+        # Names suspects, never asserts one — Plex does not report who moved a hub.
+        assert "Kometa" in result["body"] and "agregarr" in result["body"]
+        assert result["action_url"] == "/settings#placement"
+
+    def test_a_row_placed_once_is_not_a_fight(self, session):
+        """A new user's row is positioned for the first time. That is the system working."""
+        self._ordered(session, "Movies", ["Picked for You", "Another Row"])
+        session.commit()
+
+        assert notif._shelf_contention(session) is None
+
+    def test_two_passes_are_not_enough(self, session):
+        """A rename re-titles a row and it gets placed again — benign, and must stay silent."""
+        for _ in range(2):
+            self._ordered(session, "Movies", ["Picked for You"])
+        session.commit()
+
+        assert notif._shelf_contention(session) is None
+
+    def test_different_rows_moving_once_each_is_not_a_fight(self, session):
+        """A rollout places many rows, each exactly once. Counting EVENTS would misfire here."""
+        for i in range(6):
+            self._ordered(session, "Movies", [f"Row {i}"])
+        session.commit()
+
+        assert notif._shelf_contention(session) is None
+
+    def test_a_settled_shelf_says_nothing(self, session):
+        assert notif._shelf_contention(session) is None
+
+    def test_previews_are_not_evidence(self, session):
+        """A dry run moved nothing, so it cannot prove anyone is fighting us."""
+        for _ in range(5):
+            self._ordered(session, "Movies", ["Picked for You"], dry_run=True)
+        session.commit()
+
+        assert notif._shelf_contention(session) is None
+
+    def test_old_events_fall_out_of_the_window(self, session):
+        stale = datetime.now(UTC) - timedelta(days=2)
+        for _ in range(5):
+            self._ordered(session, "Movies", ["Picked for You"], when=stale)
+        session.commit()
+
+        assert notif._shelf_contention(session) is None
+
+    def test_both_libraries_are_named(self, session):
+        for _ in range(3):
+            self._ordered(session, "Movies", ["Picked for You"])
+            self._ordered(session, "TV Shows", ["Picked for You"])
+        session.commit()
+
+        result = notif._shelf_contention(session)
+
+        assert "Movies and TV Shows" in result["title"]
+
+    def test_the_run_scoped_event_counts_too(self, session):
+        """A full run audits under `run.hub_order`; the jobs use `shelf.order`. Both are the same fact,
+        and a fight split across the two must not read as two innocent halves."""
+        self._ordered(session, "Movies", ["Picked for You"])
+        for _ in range(2):
+            session.add(
+                Event(
+                    scope="run.hub_order",
+                    level="info",
+                    ts=datetime.now(UTC),
+                    message={"library": "Movies", "moved": ["Picked for You"]},
+                )
+            )
+        session.commit()
+
+        assert notif._shelf_contention(session) is not None
+
+    def test_it_is_dismissable_per_day(self, session):
+        """Dismissing hides today's; a fight still running tomorrow says so again."""
+        for _ in range(3):
+            self._ordered(session, "Movies", ["Picked for You"])
+        session.commit()
+
+        result = notif._shelf_contention(session)
+
+        assert result["dismissable"] is True
+        assert result["id"] == f"shelf-contention-{datetime.now(UTC).date().isoformat()}"
+
+    def test_it_is_wired_into_the_bell(self, session):
+        """Registered in `build_notifications`, not merely defined.
+
+        A detector nobody calls is the same silent nothing as the ordering bug it exists to report,
+        and every other test here calls `_shelf_contention` directly and would never notice.
+        """
+        for _ in range(3):
+            self._ordered(session, "Movies", ["Picked for You"])
+        session.commit()
+
+        items = notif.build_notifications(session, SettingsStore(session), "1.0.0")
+
+        assert any(n["id"].startswith("shelf-contention-") for n in items)
