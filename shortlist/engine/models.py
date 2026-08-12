@@ -212,7 +212,7 @@ class Pick:
     year: int | None = None
     # The `row_recipe` this pick was built under. Compared against tonight's on the next run: a
     # mismatch means the owner changed a setting that decides row contents, so the row rebuilds
-    # instead of waiting for its freshness cadence.
+    # instead of waiting for its refresh cadence.
     recipe: str = ""
 
 
@@ -328,15 +328,14 @@ class RowSpec:
     # are three episodes into is otherwise still eligible. This is what makes "a series to start" true.
     # Meaningless for movies (a movie with any view is already finished), so it applies to shows only.
     unstarted_only: bool = False
-    # How much this row varies day to day, as a fraction: 0.0 = stable (same strong picks daily,
-    # best quality), 1.0 = fresh (rotate the whole row + reach deep for novelty). None -> inherit
-    # EngineConfig.freshness.
-    freshness: float | None = None
+    # How often this row re-picks its titles, in DAYS: 0 = never once built (frozen), 1 = nightly,
+    # N = every N days. None -> inherit EngineConfig.refresh_days.
+    refresh_days: int | None = None
     # How much a title's RELEASE DATE counts when ranking it: 0.0 = ignore age, 1.0 = strongly prefer
     # new. None -> inherit EngineConfig.recency.
     #
-    # Not the same axis as `freshness` despite the neighbouring names, and the pair is the reason the
-    # UI label is "Recent releases" rather than "Newness": freshness is a CADENCE (how often this row
+    # Not the same axis as `refresh_days`, and the pair is the reason the UI label is "Recent
+    # releases" rather than "Newness": that is a CADENCE (how often this row
     # re-picks), this is a PREFERENCE (which titles win when it does). A row can rebuild nightly and
     # still fill with 1990s titles — that combination is exactly what this setting exists for.
     recency: float | None = None
@@ -381,10 +380,10 @@ class RowSpec:
     #
     # "new_first" and "rotate" are issue #63's two asks. Both are PRESENTATION, like the rest of this
     # setting: neither changes which titles the row holds or which ones leave it, so neither can be
-    # used to make a row cycle faster — that is `freshness`, the refresh cadence.
+    # used to make a row cycle faster — that is `refresh_days`, the refresh cadence.
     #
     # Per-row with a plain default rather than an inheritable global (like `media` and `rewatch`, not
-    # like `freshness`): the right order is a property of what a row IS, so a server-wide default
+    # like `refresh_days`): the right order is a property of what a row IS, so a server-wide default
     # would be a setting nobody sets.
     pick_order: str = "best"
     # Which surfaces the OWNER's own collection appears on: "both" (Home + Library Recommended, the
@@ -515,7 +514,7 @@ class RequestWhy:
 
 @dataclass
 class MissingTitle:
-    """A candidate the curator's pool surfaced that no delivery library actually holds yet."""
+    """A candidate the candidate pool surfaced that no delivery library actually holds yet."""
 
     tmdb_id: int
     title: str
@@ -629,6 +628,19 @@ class HubAnchor:
 # settings_store's ``row.name_template`` default and web's DEFAULT_ROW_TEMPLATE.
 DEFAULT_ROW_TEMPLATE = "✨ {library_name} Picked for You"
 
+# How large a row may be. THE definition — the server's three size validators (`row.size`, a row's
+# own `size`, a per-user `row_size`) all import these rather than restating 5 and 40, and web mirrors
+# them as ROW_SIZE_MIN/ROW_SIZE_MAX (pinned by tests/unit/test_web_constant_parity.py). Duplicating
+# the maximum is how the pool cap below silently stopped clearing it.
+MIN_ROW_SIZE = 5
+MAX_ROW_SIZE = 40
+
+# The slowest refresh cadence a row may be set to, in days. A VALIDATION bound (reject nonsense),
+# not a behaviour cap: the engine handles any period. The old 0..1 freshness fraction was stretched
+# onto 1..14 days, so a fortnight was the slowest expressible cadence and a monthly row could not be
+# asked for at all — the ceiling is a year now because nothing about the mechanism objects.
+MAX_REFRESH_DAYS = 365
+
 
 @dataclass
 class EngineConfig:
@@ -636,7 +648,15 @@ class EngineConfig:
 
     row_size: int = 15
     row_name_template: str = DEFAULT_ROW_TEMPLATE
-    candidates_pre_rank: int = 40  # heuristic pre-rank keeps this many for the curator
+    # How many candidates per media type survive the pre-rank cut and are offered to the picker.
+    # DERIVED from the row ceiling, never restated: this was a flat 40 while `row.size` was validated
+    # up to 40, so at the top of the range the pool and the row were the same size — every surviving
+    # candidate had to go in, and a refresh night had nothing spare to swap the weakest third for.
+    # Twice the ceiling because that is what a refresh actually needs: it keeps ~2/3 of the row and
+    # must find the rest among candidates NOT already in it, with slack left for watched-filtering.
+    # Only a sort and a slice over a list already in memory — the gather happened before this, and
+    # MDBList ratings are fetched per PICK (rows.py), so a larger pool costs no extra API calls.
+    candidates_pre_rank: int = MAX_ROW_SIZE * 2
     # How many of a person's most recent watched titles the web-search source searches per row (one
     # cached Exa search each). Row-overridable via RowSpec.recent_count.
     recent_count: int = 10
@@ -682,13 +702,24 @@ class EngineConfig:
     # "Deadliest Catch: The Viking Returns" at 8/9 = 89% slipped under the 0.9 bar (2026-07-21). The
     # season-worth floor in `_watched_titles` catches long shows; this catches near-complete short ones.
     watched_show_pct: float = 0.8
-    # Day-to-day variability, as a fraction: 0.0 (default) = stable (the strongest picks every day);
-    # 1.0 = fresh (rotate the whole row daily and reach deep down the ranked list). Overridable per row.
-    freshness: float = 0.0
+    # Refresh cadence in DAYS: 0 (the dataclass default) = frozen, never rebuilt once built; 1 =
+    # every night; N = every N days. Overridable per row. `settings_store` defaults the PRODUCT to 8.
+    #
+    # Was a 0..1 "freshness" fraction stretched onto 1..14 days by a curve, so the stored number
+    # described nothing (0.55 meant 7 days), the far end of the scale was a constant duplicated in
+    # TypeScript, and no cadence slower than a fortnight was expressible. Migration 0065 converted
+    # every stored value through that same curve, so no row's cadence moved.
+    #
+    # It sets HOW OFTEN a row rebuilds, never how much of it turns over: a refresh keeps the strongest
+    # ~two-thirds and swaps the weakest third (`_KEEP_FRACTION`, rows.py), at every cadence including
+    # nightly. The old name promised "rotate the whole row daily and reach deep down the ranked list",
+    # a magnitude nothing implements — and folding turnover in here would tie more variety to worse
+    # picks, since the only way to swap more of a row is to reach further down the ranked list.
+    refresh_days: int = 0
     # How much a title's release date counts when ranking it: 0.0 (default) = ignore age entirely,
     # which is how this ranked before the setting existed; 1.0 = every ~8 years of age halves a
     # title's weight. A WEIGHT, never a filter — an old title is only ever asked to be a better
-    # match. Overridable per row (see RowSpec.recency for why it is not `freshness`).
+    # match. Overridable per row (see RowSpec.recency for why it is not the refresh cadence).
     #
     # The DATACLASS defaults to 0.0 so a library caller opts in rather than inheriting an opinion.
     # The product does not: `settings_store` defaults `recommendations.recency` to 0.5 for every

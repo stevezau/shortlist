@@ -558,52 +558,56 @@ class TestReusablePrior:
         assert [p.tmdb_id for p in kept] == [10]
 
 
-class TestFreshnessCadence:
-    """Freshness as a REFRESH CADENCE: 0 = never rebuild, 1 = nightly, in between = every N days."""
+class TestRefreshCadence:
+    """The cadence is the stored number now: 0 = never rebuild, 1 = nightly, N = every N days.
 
-    def test_period_scales_with_freshness(self):
-        from shortlist.engine.rows import _refresh_period_days
+    It used to be a 0..1 "freshness" fraction a curve stretched onto 1..14 days, which is why these
+    tests once had to assert the curve itself (0.5 -> 8) before they could assert the behaviour.
+    """
 
-        assert _refresh_period_days(1.0) == 1  # full freshness -> rebuild every night
-        assert _refresh_period_days(0.5) == 8  # ~weekly at the default
-        assert _refresh_period_days(0.1) > _refresh_period_days(0.9)  # lower freshness -> longer gap
-        assert _refresh_period_days(0.01) <= 14  # capped near a fortnight
-
-    def test_zero_freshness_never_refreshes(self):
+    def test_zero_never_refreshes(self):
         from shortlist.engine.rows import _is_refresh_night
 
         # A frozen row: once built it is never a refresh night, on any day.
-        assert not any(_is_refresh_night("row", "sarah", day, 0.0) for day in range(1, 60))
+        assert not any(_is_refresh_night("row", "sarah", day, 0) for day in range(1, 60))
 
-    def test_full_freshness_refreshes_every_night(self):
+    def test_one_refreshes_every_night(self):
         from shortlist.engine.rows import _is_refresh_night
 
-        assert all(_is_refresh_night("row", "sarah", day, 1.0) for day in range(1, 30))
+        assert all(_is_refresh_night("row", "sarah", day, 1) for day in range(1, 30))
 
     def test_run_day_zero_always_refreshes(self):
         # Direct engine calls / tests pass no day (0) — behave like the pre-cadence engine.
         from shortlist.engine.rows import _is_refresh_night
 
-        assert _is_refresh_night("row", "sarah", 0, 0.5)
+        assert _is_refresh_night("row", "sarah", 0, 8)
 
     def test_cadence_fires_once_per_period_and_is_stable(self):
-        from shortlist.engine.rows import _is_refresh_night, _refresh_period_days
+        from shortlist.engine.rows import _is_refresh_night
 
-        period = _refresh_period_days(0.5)
+        period = 8
         # Real run days start at 1 (day 0 is the tests/direct "always refresh" sentinel).
-        hits = [d for d in range(1, period * 3 + 1) if _is_refresh_night("row", "sarah", d, 0.5)]
+        hits = [d for d in range(1, period * 3 + 1) if _is_refresh_night("row", "sarah", d, period)]
         # Exactly one refresh night per period window, and the schedule is reproducible (stable crc).
         assert len(hits) == 3
-        assert all(_is_refresh_night("row", "sarah", d, 0.5) for d in hits)
+        assert all(_is_refresh_night("row", "sarah", d, period) for d in hits)
+
+    def test_a_cadence_slower_than_a_fortnight_is_now_expressible(self):
+        """The old fraction bottomed out at ~14 days, so a monthly row could not be asked for."""
+        from shortlist.engine.rows import _is_refresh_night
+
+        hits = [d for d in range(1, 91) if _is_refresh_night("row", "sarah", d, 30)]
+        assert len(hits) == 3, "a 30-day cadence should fire three times in 90 days"
 
     def test_phase_differs_across_rows_so_the_server_does_not_all_refresh_at_once(self):
-        from shortlist.engine.rows import _is_refresh_night, _refresh_period_days
+        from shortlist.engine.rows import _is_refresh_night
 
-        period = _refresh_period_days(0.5)
+        period = 8
         # Different (row, owner) keys land on different phase days within the period (crc-spread), so
         # the whole roster never re-curates on the same night. Search from day 1 (0 always refreshes).
         phases = {
-            next(d for d in range(1, period + 1) if _is_refresh_night(f"row{n}", f"user{n}", d, 0.5)) for n in range(8)
+            next(d for d in range(1, period + 1) if _is_refresh_night(f"row{n}", f"user{n}", d, period))
+            for n in range(8)
         }
         assert len(phases) > 1
 

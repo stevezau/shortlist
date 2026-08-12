@@ -70,7 +70,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
       //
       // (The engine now forces this for any `{top_seed}` row, so it also holds for rows made before
       // this default existed — but it stays here so the value the card shows is the value it saves.)
-      freshness: 1,
+      refresh_days: 1,
       // Their most recent watch, which is the behaviour this template was asked for (issue #57: "a
       // Netflix-style row about ONE thing they watched"). Cycling between several is one number away
       // in the editor, but it is not the default: it rebuilds the row and writes to Plex most nights,
@@ -96,7 +96,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
       // dropping finished titles before the ordering ever sees them.
       rewatch: true,
       watched_pct: 1,
-      freshness: 0.25,
+      refresh_days: 11,
       size: 15,
     },
   },
@@ -110,7 +110,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     values: {
       name: "🌱 New {library_name} to try",
       build: "per_person",
-      freshness: 1,
+      refresh_days: 1,
       watched_pct: 0,
       size: 15,
     },
@@ -125,7 +125,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     values: {
       name: "🕰️ {library_name} from the vault",
       build: "per_person",
-      freshness: 0,
+      refresh_days: 0,
       size: 20,
     },
   },
@@ -155,9 +155,9 @@ export const ROW_TEMPLATES: RowTemplate[] = [
       build: "per_person",
       media: "movie",
       size: 10,
-      // 0.53, not 0.5: freshness is a cadence of `round(1 + (1 - f) * 13)` days, and 0.5 lands on 8
-      // — so the blurb's "refreshed weekly" was a day out. This is the value that means 7.
-      freshness: 0.53,
+      // The blurb says "refreshed weekly", so the cadence is 7. This needed a comment when it was a
+      // fraction: 0.5 resolved to 8 days, a day out, so the value had to be nudged to 0.53.
+      refresh_days: 7,
     },
   },
   {

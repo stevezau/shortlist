@@ -68,7 +68,7 @@ def recency_factor(year: int | None, year_now: int, recency: float) -> float:
 
 
 def score(candidate: Candidate, *, recency: float = 0.0, year_now: int = 0) -> float:
-    """How promising a candidate is, before the curator sees it.
+    """How promising a candidate is, before the picker selects from it.
 
     ``1 + seed_frequency`` (not ``seed_frequency``): "three of your seeds suggested this" is a real
     signal and should win ties, but a title nobody's history pointed at is not worthless — surfacing

@@ -1,6 +1,6 @@
 import { asColdStart, COLD_START_LABELS } from "@/lib/cold-start";
 import {
-  FRESHNESS_DEFAULT,
+  REFRESH_DAYS_DEFAULT,
   RECENCY_DEFAULT,
   WATCHED_PCT_DEFAULT,
 } from "@/lib/constants";
@@ -22,7 +22,7 @@ const MAX_SEEDS_DEFAULT = 30;
  * claiming a default that may not be this server's.
  */
 
-/** The raw global freshness, for callers that need to phrase it themselves rather than take the
+/** The raw global value, for callers that need to phrase it themselves rather than take the
  *  toggle caption. The row preview says what a row will actually DO, so "whatever the global is"
  *  would be the one line on that panel which answers nothing. */
 export function watchedPctGlobalValue(
@@ -31,10 +31,10 @@ export function watchedPctGlobalValue(
   return num(settings, "recommendations.watched_pct");
 }
 
-export function freshnessGlobalValue(
+export function refreshDaysGlobalValue(
   settings: Settings | undefined,
 ): number | null {
-  return num(settings, "recommendations.freshness");
+  return num(settings, "recommendations.refresh_days");
 }
 
 function num(settings: Settings | undefined, key: string): number | null {
@@ -55,16 +55,16 @@ export function watchedPctGlobal(
   return `${pct}% — up to ${pct}% already-watched`;
 }
 
-/** 0..1 fraction → "50% — refreshes about weekly". */
-export function freshnessGlobal(settings: Settings | undefined): string | null {
-  const fraction = num(settings, "recommendations.freshness");
-  if (fraction === null) return null;
-  const pct = Math.round(fraction * 100);
-  if (pct <= 0) return "0% — frozen once built";
-  if (pct >= 100) return "100% — rebuilds every night";
-  // Mirrors refreshEveryDays() in constants.ts: 100 → nightly, lower → longer, capped near a fortnight.
-  const days = Math.max(1, Math.round(1 + (1 - pct / 100) * 13));
-  return `${pct}% — refreshes about every ${days} days`;
+/** Day count → "every 8 days". The percent this replaced needed a third copy of the
+ *  fraction→days curve right here just to say it. */
+export function refreshDaysGlobal(
+  settings: Settings | undefined,
+): string | null {
+  const days = num(settings, "recommendations.refresh_days");
+  if (days === null) return null;
+  if (days <= 0) return "never — frozen once built";
+  if (days === 1) return "every night";
+  return `every ${days} days`;
 }
 
 export function recencyGlobalValue(
@@ -115,8 +115,8 @@ export function watchedPctSeed(settings: Settings | undefined): number {
   );
 }
 
-export function freshnessSeed(settings: Settings | undefined): number {
-  return num(settings, "recommendations.freshness") ?? FRESHNESS_DEFAULT / 100;
+export function refreshDaysSeed(settings: Settings | undefined): number {
+  return num(settings, "recommendations.refresh_days") ?? REFRESH_DAYS_DEFAULT;
 }
 
 export function recencySeed(settings: Settings | undefined): number {

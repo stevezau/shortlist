@@ -79,7 +79,7 @@ faster than a list of questions: _"open /issue, switch the checks on, type the t
   3. _Timing._ The watched set is read per run, so a title marked watched after the last run stays
      eligible until the next one. **Jobs → Sync history** re-reads everyone's set immediately
      (writes nothing to Plex); any run after that drops it. Note also that a row only re-picks its
-     titles on a refresh night — at the default freshness, roughly weekly — so a change can take
+     titles on a rebuild night — every 8 days by default — so a change can take
      until then to show. The **"When does each row next rebuild?"** check gives the date.
 
   Before 1.2 there was a fourth cause: a 0% row excluded only shows you had _finished_, so one you

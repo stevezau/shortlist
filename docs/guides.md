@@ -32,7 +32,7 @@ Eight short pages instead of one long one. If you know what you want to do, star
 | -------------------------------------------------------- | --------------------------------------------------------------------------- |
 | [The web interface](guides/interface.md)                 | What every page does, and what each dashboard figure means                  |
 | [Rows and templates](guides/rows.md)                     | Starting from a template, naming, ordering, where a row shows, posters      |
-| [What goes in a row](guides/picks.md)                    | Recommendation sources, freshness, per-row and per-person overrides         |
+| [What goes in a row](guides/picks.md)                    | Recommendation sources, rebuild cadence, per-row and per-person overrides   |
 | [Schedules and runs](guides/schedules.md)                | Each row's own schedule, custom schedules, the jobs worth knowing about     |
 | [AI and cost](guides/ai.md)                              | What AI does, which search backend to pick, how to keep the bill down       |
 | [Requests (Radarr and Sonarr)](guides/requests.md)       | Setting it up, the approval inbox, guardrails, why a title is still waiting |

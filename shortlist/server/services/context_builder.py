@@ -432,7 +432,7 @@ class ContextBuilder:
         This is deliberately a different source from `user_history`, which reads the PMS live. The
         cache is what every recommendation is filtered against, so showing it here means the page
         answers "why was this recommended when I've seen it?" instead of showing a second, unrelated
-        list. The cost is honesty about freshness, which is why `last_full_sync_at` and
+        list. The cost is honesty about staleness, which is why `last_full_sync_at` and
         `synced_titles` come back with the page and the UI states them.
 
         Args:
@@ -609,7 +609,7 @@ class ContextBuilder:
                     year=r.year,
                     # The settings fingerprint this pick was built under. Carried so the engine can
                     # tell "the owner changed the recipe" from "nothing changed" and rebuild rather
-                    # than wait out the freshness cadence.
+                    # than wait out the refresh cadence.
                     recipe=r.recipe or "",
                     collection_slug=r.collection_slug,
                     section_key=r.section_key,
@@ -759,12 +759,13 @@ class ContextBuilder:
             manage_shelf_order=bool(store.get("rows.manage_shelf_order")),
             # The `or` fallbacks below are safe only because the validators exclude the falsy
             # value: `min_history` is bounded 1-100, `recent_count` 1-25, `max_seeds` 5-100
-            # (api/settings.py). For the three fractions the fallback IS the falsy value, so a
-            # stored 0.0 survives. Correct by coincidence of the bounds rather than by construction
-            # — lower any of those floors to 0 and several settings start silently reading as their
+            # (api/settings.py). Where 0 IS a legal value — the two fractions, and `refresh_days`,
+            # where it means "frozen, never rebuilt" — the fallback is that same 0, so the owner's
+            # zero survives. Correct by coincidence of the bounds rather than by construction —
+            # lower any of those floors to 0 and several settings start silently reading as their
             # default instead of as the zero the owner chose.
             watched_pct=float(store.get("recommendations.watched_pct") or 0.0),
-            freshness=float(store.get("recommendations.freshness") or 0.0),
+            refresh_days=int(store.get("recommendations.refresh_days") or 0),
             recency=float(store.get("recommendations.recency") or 0.0),
             recent_count=int(store.get("recommendations.recent_count") or 10),
             max_seeds=int(store.get("recommendations.max_seeds") or 30),
@@ -831,7 +832,7 @@ class ContextBuilder:
                     watched_pct=collection.watched_pct,  # None -> inherit the global watched cap
                     rewatch=bool(collection.rewatch),
                     unstarted_only=bool(collection.unstarted_only),
-                    freshness=collection.freshness,  # None -> inherit the global freshness
+                    refresh_days=collection.refresh_days,  # None -> inherit the global cadence
                     recency=collection.recency,  # None -> inherit the global recency
                     recent_count=collection.recent_count,  # None -> inherit the global recent_count
                     max_seeds=collection.max_seeds,  # None -> inherit the global recommendations.max_seeds

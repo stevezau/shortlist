@@ -1426,8 +1426,8 @@ export interface paths {
          * Row Schedule
          * @description When each row last rebuilt, and when it is next due to.
          *
-         *     The gap this closes: freshness is a CADENCE, not a nightly shuffle. At the 0.5 default a row
-         *     re-selects its titles roughly weekly and redelivers the same picks on every other night, and the
+         *     The gap this closes: the refresh cadence is exactly that — a cadence. At the 8-day default a row
+         *     re-selects its titles about weekly and redelivers the same picks on every other night, and the
          *     engine logs that decision NOWHERE. So "I changed the setting and nothing happened" has been
          *     unanswerable — the setting was fine, the row simply had not rebuilt yet.
          */
@@ -2636,8 +2636,6 @@ export interface components {
              * @default true
              */
             enabled: boolean;
-            /** Freshness */
-            freshness?: number | null;
             /** Hub Anchor */
             hub_anchor?: {
                 [key: string]: components["schemas"]["HubAnchorIn"];
@@ -2696,6 +2694,8 @@ export interface components {
             recency?: number | null;
             /** Recent Count */
             recent_count?: number | null;
+            /** Refresh Days */
+            refresh_days?: number | null;
             /**
              * Request Tag
              * @default
@@ -2763,8 +2763,6 @@ export interface components {
             cold_start: "popular" | "skip" | null;
             /** Enabled */
             enabled: boolean;
-            /** Freshness */
-            freshness: number | null;
             /** Hub Anchor */
             hub_anchor: {
                 [key: string]: components["schemas"]["HubAnchorOut"];
@@ -2814,6 +2812,8 @@ export interface components {
             recency: number | null;
             /** Recent Count */
             recent_count: number | null;
+            /** Refresh Days */
+            refresh_days: number | null;
             /** Request Tag */
             request_tag: string;
             /** Rewatch */
@@ -4830,7 +4830,7 @@ export interface components {
          * WatchedPageOut
          * @description A page of the watched set, plus how complete the set behind it is.
          *
-         *     The freshness fields travel WITH the page on purpose: this list is a cache, and a page that
+         *     The staleness fields travel WITH the page on purpose: this list is a cache, and a page that
          *     doesn't say when it was last filled invites "I watched that, why is it recommended?" — the exact
          *     question this endpoint exists to answer.
          */

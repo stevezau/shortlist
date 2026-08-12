@@ -46,7 +46,7 @@ class EngineContext:
     # provider/key. None when the curator provider can't make images (Anthropic, Ollama) or none is set.
     poster_artist: PosterArtist | None = None
     # (owner_slug, row_slug, section_key) -> last run's delivered picks for that row+library, newest
-    # first. Carried forward so a row is REUSED unchanged on non-refresh nights (freshness is the
+    # first. Carried forward so a row is REUSED unchanged on non-refresh nights (`refresh_days` is the
     # refresh CADENCE) instead of re-curated from scratch every night — the fix for the nightly
     # full-row churn that staleness_runs=3 used to force (SFLIX 2026-07-20). Empty -> every row
     # bootstraps by curating fresh, exactly like a first run.
@@ -133,9 +133,9 @@ class EngineContext:
     # (user_slug, row_slug, section_key) -> the `row_recipe` the stored picks were built under.
     # Absent for a row never built, and for picks written before recipes were recorded — both read
     # as "unknown", which deliberately does NOT force a rebuild: a one-off rebuild of every row on
-    # every server at upgrade is exactly the churn freshness exists to prevent.
+    # every server at upgrade is exactly the churn the refresh cadence exists to prevent.
     previous_recipes: dict[tuple[str, str, str], str] = field(default_factory=dict)
-    # Day number of this run (date.toordinal()), the phase for freshness rotation so a row shifts
+    # Day number of this run (date.toordinal()), the phase for refresh rotation so a row shifts
     # day to day but is reproducible within a day. Set at the start of run(); 0 disables rotation.
     run_day: int = 0
     # How many users to process concurrently. 1 = fully sequential (the safe engine/test default).

@@ -318,37 +318,32 @@ def _started_shows(watched_shows: dict[int, tuple[int, int | None]]) -> set[tupl
     return {(tid, MediaType.SHOW) for tid, (viewed, _total) in watched_shows.items() if viewed and viewed > 0}
 
 
-_MAX_REFRESH_PERIOD_DAYS = 14  # freshness just above 0 → refresh about fortnightly
 _KEEP_FRACTION = 2 / 3  # on a refresh night, keep the strongest ~two-thirds; swap the weakest third
 
 
-def _refresh_period_days(freshness: float) -> int:
-    """Days between a row's refreshes, from its freshness. 1.0 → 1 (nightly); lower → longer, capped
-    at ~a fortnight. Freshness 0.0 is handled by the caller as 'never refresh once built'."""
-    f = max(0.0, min(1.0, freshness))
-    if f >= 1.0:
-        return 1
-    return max(1, round(1 + (1 - f) * (_MAX_REFRESH_PERIOD_DAYS - 1)))
-
-
-def _is_refresh_night(row_slug: str, owner_slug: str, run_day: int, freshness: float) -> bool:
+def _is_refresh_night(row_slug: str, owner_slug: str, run_day: int, refresh_days: int) -> bool:
     """Whether this row rebuilds today, vs redelivering last run's picks unchanged.
 
-    Freshness is a CADENCE, not a nightly shuffle: 0.0 = never refresh once built (a frozen, pinned
-    row), 1.0 = every night, in between = every N days. A per-(row, owner) phase — a STABLE crc32,
-    never Python's per-process-salted ``hash`` — spreads refreshes across the cycle so the whole
-    server never re-curates (and re-writes to Plex) on one night. ``run_day <= 0`` (direct engine
-    calls and tests, which pass no day) always refreshes, preserving the pre-cadence behaviour.
+    ``refresh_days`` IS the cadence, in days: 0 = never refresh once built (a frozen, pinned row),
+    1 = every night, N = every N days. It used to be a 0..1 "freshness" fraction stretched onto
+    1..14 days by a ``_refresh_period_days`` curve, which meant the stored number said nothing about
+    the behaviour (0.55 → 7 days), the scale's far end was a constant duplicated in TypeScript, and
+    no cadence slower than a fortnight could be expressed at all. Migration 0065 converted every
+    stored fraction through that same curve, so no row's cadence moved.
+
+    A per-(row, owner) phase — a STABLE crc32, never Python's per-process-salted ``hash`` — spreads
+    refreshes across the cycle so the whole server never re-curates (and re-writes to Plex) on one
+    night. ``run_day <= 0`` (direct engine calls and tests, which pass no day) always refreshes,
+    preserving the pre-cadence behaviour.
     """
     if run_day <= 0:
         return True
-    if freshness <= 0.0:
+    if refresh_days <= 0:
         return False
-    period = _refresh_period_days(freshness)
-    if period <= 1:
+    if refresh_days == 1:
         return True
-    phase = zlib.crc32(f"{row_slug}|{owner_slug}".encode()) % period
-    return run_day % period == phase
+    phase = zlib.crc32(f"{row_slug}|{owner_slug}".encode()) % refresh_days
+    return run_day % refresh_days == phase
 
 
 def _reusable_prior(
@@ -366,12 +361,12 @@ def _reusable_prior(
 
     "Watched" here is whatever `RowPolicy.zero_pct_exclusions` says, which since 1.2 means STARTED,
     not merely finished. Without that, a show someone began after the last run kept its place in
-    their row until the next rebuild — up to a fortnight at the slowest freshness.
+    their row until the next rebuild — however long that row's `refresh_days` cadence is.
 
     ``keep_watched`` exempts a REWATCH row from that last rule. Its picks are already-finished titles
     by design, so the 0%-row filter discarded every one of them — and since a rewatch row inherits the
     default `watched_pct` of 0.0, that was the normal case, not an edge one. The row then never took a
-    carry-forward branch at all: its `freshness` was inoperative, the anti-immediate-repeat guard never
+    carry-forward branch at all: its `refresh_days` was inoperative, the anti-immediate-repeat guard never
     ran, and it re-wrote to Plex on nights nothing had changed.
 
     ``started`` drops shows the person has begun, and is checked at EVERY `pct`, unlike the rule
@@ -402,7 +397,7 @@ def _names_a_seed(spec: RowSpec, user: UserProfile, config: EngineConfig) -> boo
     exactly that row. It was then neither forced nightly nor rebuilt when its seed moved: the row
     kept a title naming a watch it was no longer built from, which is the whole bug this guards
     (issue #57). Worse, the editor computes the same claim from the effective name, so it HID the
-    freshness control and promised "every night" for a row the engine refreshed every eight days.
+    cadence control and promised "every night" for a row the engine refreshed every eight days.
 
     `resolve_row_template` is the single source of truth for that precedence, and delivery renders
     the delivered title through it too — so this now asks the same question the title answers.
@@ -517,7 +512,7 @@ def _apply_order(
 
     ``rotate`` answers the same issue's "cycle the ones at the top off" — but as a cyclic shift of the
     display order, NOT as eviction. Eviction belongs to the refresh branch (weakest third out, every
-    `freshness` nights); expressing it here instead would need a second, persisted notion of position
+    refresh nights); expressing it here instead would need a second, persisted notion of position
     and would collide with `rank`, which means match quality and is what `render_row_name` and
     `_seed_moved` read. Rotating gives what the request was actually after — every title gets a turn
     at the front, in the ranking's relative order — and gives it EVERY night rather than once per
@@ -581,7 +576,7 @@ def row_recipe(policy: RowPolicy, spec: RowSpec) -> str:
     byte-identical picks for up to a fortnight, which is indistinguishable from the feature not
     working. `_seed_moved` already sets the precedent — the row's premise changed, so rebuild it.
 
-    Contents only. `pick_order` decides presentation and `freshness` is the cadence itself, so
+    Contents only. `pick_order` decides presentation and `refresh_days` is the cadence itself, so
     neither belongs here: reordering a row must not force a rebuild, and changing the cadence must
     not trigger the very rebuild the cadence is there to schedule. Row NAME, poster and placement are
     likewise excluded — they change what a row looks like, never which titles are in it.
@@ -1355,22 +1350,23 @@ class RowPolicy:
             rule = True
         return excluded if rule else None
 
-    def effective_freshness(self, spec: RowSpec) -> float:
-        """How often this row re-selects its titles — forced to nightly for a row that follows a watch.
+    def effective_refresh_days(self, spec: RowSpec) -> int:
+        """How often this row re-selects its titles, in days — forced to nightly for a row that
+        follows a watch.
 
-        Freshness is a CADENCE, and a row whose title names a watch (or that cycles between several)
-        is ABOUT recency: at the global default of 0.5 it re-checks its seed every ~8 days, so it goes
-        on claiming "Because you watched X" for a week after the person moved on, and a cycling row
-        advances a step a fortnight instead of a day. Reported as broken twice on issue #57, because
-        from the outside it is indistinguishable from broken.
+        A row whose title names a watch (or that cycles between several) is ABOUT recency: at the
+        default of 8 days it re-checks its seed barely once a week, so it goes on claiming "Because
+        you watched X" long after the person moved on, and a cycling row advances a step a fortnight
+        instead of a day. Reported as broken twice on issue #57, because from the outside it is
+        indistinguishable from broken.
 
         Forced rather than merely defaulted, and forced over an explicit stored value too, because the
-        row editor HIDES the freshness control for these rows — honouring a slow value someone saved
+        row editor HIDES the cadence control for these rows — honouring a slow value someone saved
         before that would leave a row stuck with nothing in the UI to explain it or undo it.
         """
         if _names_a_seed(spec, self.user, self.cfg) or effective_seed_window(spec) > 1:
-            return 1.0
-        return spec.freshness if spec.freshness is not None else self.cfg.freshness
+            return 1
+        return spec.refresh_days if spec.refresh_days is not None else self.cfg.refresh_days
 
     def effective_recency(self, spec: RowSpec) -> float:
         """How much this row weights a title's release date. Row's own value, else the global.
@@ -1379,7 +1375,7 @@ class RowPolicy:
         per-person and shared paths cannot resolve it differently — they already did once, and the
         shared row was the one that lost.
 
-        No forcing clause (unlike ``effective_freshness``): every row is free to hold any value,
+        No forcing clause (unlike ``effective_refresh_days``): every row is free to hold any value,
         including an explicit 0.0 on a server whose global is high — that is how one person gets a
         "New & Notable" row and a "Hidden Gems" row at the same time.
         """
@@ -1711,7 +1707,7 @@ def _build_section_picks(
     """
     ctx, user = policy.ctx, policy.user
     section_picks: dict[str, list[Pick]] = {}
-    fresh = policy.effective_freshness(spec)
+    refresh_days = policy.effective_refresh_days(spec)
     for section in targets:
         kind = section_kind(section)
         # tmdb_id -> ratingKey for THIS library only; a candidate not in this library isn't a
@@ -1790,7 +1786,7 @@ def _build_section_picks(
         recipe = row_recipe(policy, spec)
         was = ctx.previous_recipes.get((user.slug, spec.slug, str(section.key)), "")
         recipe_changed = bool(was) and was != recipe
-        refresh = _is_refresh_night(spec.slug, user.slug, ctx.run_day, fresh)
+        refresh = _is_refresh_night(spec.slug, user.slug, ctx.run_day, refresh_days)
         # Hoisted out of the refresh branch because the `new_first` order needs it on every path: a
         # pick is "new" if this row was not already carrying it, whichever branch produced it.
         prior_ids = {(p.tmdb_id, p.media_type) for p in prior_valid}
@@ -1825,7 +1821,7 @@ def _build_section_picks(
             # unchanged-skip avoids the Plex write. Pad only if a title has since left the library,
             # so the row stays full.
             #
-            # What freshness does NOT save is LLM tokens, though this said it did for a long time and
+            # What a slower cadence does NOT save is LLM tokens, though this said it did for a long time and
             # the claim survived into a cost warning to the owner. The candidate gather — the only
             # thing that calls a curator — runs in `pools_for` ABOVE this function, before the
             # refresh check, so it happens on every run at every cadence. `build_picks` is pure
@@ -1924,9 +1920,8 @@ def _build_section_picks(
                 "cut_cap": ctx.config.candidates_pre_rank,
                 "carried": len(prior_valid),
                 "new": len(new_keys),
-                "freshness": fresh,
                 "refresh_night": refresh,
-                "rebuild_every_days": _refresh_period_days(fresh) if fresh > 0 else None,
+                "rebuild_every_days": refresh_days or None,  # 0 = frozen, never rebuilt
                 "recency": policy.effective_recency(spec),
                 "watched_pct": pct,
                 "pick_order": spec.pick_order,
@@ -2409,7 +2404,7 @@ def _shared_row(
         # `_build_section_picks` is invisible to a shared row, so "Shuffled" and "Highest rated" did
         # nothing at all while the editor went on offering them. `pick_order` is the one that both
         # applies to an aggregate row and needs no per-user state, so it is honoured here; the rest
-        # (`watched_pct`, `rewatch`, `unstarted_only`, `cold_start`, `freshness`) are hidden in the
+        # (`watched_pct`, `rewatch`, `unstarted_only`, `cold_start`, `refresh_days`) are hidden in the
         # editor instead, because they have no coherent meaning for a row nobody owns.
         sec_picks = [replace(p, rank=i + 1) for i, p in enumerate(sec_picks[:k])]
         section_picks[section.key] = _apply_order(

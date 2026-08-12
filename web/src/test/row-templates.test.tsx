@@ -61,7 +61,7 @@ describe("ROW_TEMPLATES", () => {
       "size",
       "min_watchers",
       "watched_pct",
-      "freshness",
+      "refresh_days",
       "recent_count",
       "max_seeds",
       "candidate_sources",
@@ -120,15 +120,13 @@ describe("ROW_TEMPLATES", () => {
   });
 
   it("means what it says about cadence", () => {
-    // Freshness is a cadence of `round(1 + (1 - f) * 13)` days (engine `_refresh_period_days`), not a
-    // 0..1 mood. A template whose blurb promises "weekly" has to carry the value that IS weekly —
-    // 0.5 gives 8 days, which is how "refreshed weekly" was a day out.
-    const periodDays = (f: number) => (f >= 1 ? 1 : Math.max(1, Math.round(1 + (1 - f) * 13)));
-
-    expect(periodDays(findRowTemplate("movie-night")!.values.freshness!)).toBe(7);
+    // A template whose blurb promises "weekly" must carry the cadence that IS weekly. This needed a
+    // fraction->days conversion here when the field was a 0..1 mood, and the conversion is what
+    // caught "refreshed weekly" being a day out: 0.5 resolved to 8, not 7. The value says it now.
+    expect(findRowTemplate("movie-night")!.values.refresh_days).toBe(7);
     // "Rebuilds nightly" and "Never rebuilds on its own" are the two ends, and both are exact.
-    expect(findRowTemplate("fresh-finds")!.values.freshness).toBe(1);
-    expect(findRowTemplate("from-the-vault")!.values.freshness).toBe(0);
+    expect(findRowTemplate("fresh-finds")!.values.refresh_days).toBe(1);
+    expect(findRowTemplate("from-the-vault")!.values.refresh_days).toBe(0);
   });
 
   it("keeps a {top_seed} row down to the one watch it names", () => {

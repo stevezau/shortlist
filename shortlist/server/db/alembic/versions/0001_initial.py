@@ -281,13 +281,19 @@ def _seed_default_row(bind: sa.engine.Connection) -> None:
     now = datetime.now(UTC).isoformat()
     bind.execute(
         sa.text(
+            # Names only columns this seed gives a NON-DEFAULT value. It used to list the nullable
+            # inheritance columns too, explicitly setting them to the NULL they would default to
+            # anyway — harmless until 0065 dropped `freshness`, at which point this INSERT started
+            # failing on the crash-recovery path, where the seed runs against the HEAD schema rather
+            # than the one 0001 just created. Any nullable column a later migration adds or removes
+            # is therefore none of this statement's business.
             "INSERT INTO collections "
             "(slug, name, build, audience, enabled, schedule, size, media, sort_order, name_template, "
-            " candidate_sources, watched_pct, freshness, recent_count, library_keys, min_watchers, "
+            " candidate_sources, library_keys, min_watchers, "
             " request_tag, placement, placement_friends, pin_top, hub_anchor, prompt, poster, created_at, updated_at) "
             "VALUES "
             "('picked', :name, 'per_person', 'everyone', 1, '', 15, 'both', 0, '', "
-            " '[]', NULL, NULL, NULL, '[]', 2, '', 'both', 'both', 0, '{}', '{}', '{}', :now, :now)"
+            " '[]', '[]', 2, '', 'both', 'both', 0, '{}', '{}', '{}', :now, :now)"
         ),
         {"name": "✨ Picked for You", "now": now},
     )

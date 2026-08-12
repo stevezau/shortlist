@@ -26,10 +26,29 @@ from shortlist.engine.models import (
     RequestWhy,
 )
 
-# When gating on a non-TMDB source, only this many top-by-demand candidates are looked up on MDBList
-# per run, so a large missing pool can't blow the daily cap (each title's whole rating set is also
-# cached, so re-runs mostly hit the cache). A generous multiple of the request cap.
-_IMDB_SHORTLIST = 20
+# When gating on a non-TMDB source, only the top-by-demand candidates are looked up on MDBList per
+# run, so a large missing pool can't blow the daily cap (each title's whole rating set is also cached,
+# so re-runs mostly hit the cache). DERIVED from the owner's own `requests.max_per_run`, never a flat
+# number: the gate exists to reject most of what it inspects, so the pool it inspects has to be a
+# multiple of what the run may actually send, or the run cannot fill.
+#
+# It WAS a flat 20, described as "a generous multiple of the request cap" — which it was at the
+# default cap of 5, and was not above 20, where `max_per_run` is accepted all the way to 100 and was
+# then silently capped at 20. The TMDB path (`_gate_by_tmdb`) filters the whole pool and has never had
+# a limit, so the same setting meant two different things depending on the rating source, with nothing
+# saying so. `_MIN_LOOKUP_POOL` keeps the default behaviour byte-identical (5 x 4 = 20).
+#
+# The MDBList quota is protected by the rate-limit fallback below (a 429 stops the gate, falls back to
+# TMDB for the whole run and raises an owner notification), not by quietly honouring a smaller number
+# than the owner asked for.
+_LOOKUP_HEADROOM = 4
+_MIN_LOOKUP_POOL = 20
+
+
+def _lookup_budget(max_per_run: int) -> int:
+    """How many candidates may be rated on MDBList this run, from the owner's own request cap."""
+    return max(_MIN_LOOKUP_POOL, max(0, max_per_run) * _LOOKUP_HEADROOM)
+
 
 # Demand accumulator: (tmdb_id, media_type) -> the missing title and how many users wanted it. The
 # pair, never the bare id — movie 1399 and TV 1399 are different titles (see filter_candidates).
@@ -412,13 +431,17 @@ def _gate_by_source(
 
     Only a shortlist (top by demand, then TMDB score as a cheap proxy) is looked up, so a big missing
     pool stays well under MDBList's daily cap — and every source is cached per title, so re-runs mostly
-    hit the cache. A lookup that fails or has no score for this source just drops that title. If the
+    hit the cache. Its size comes from ``max_per_run`` (see ``_lookup_budget``) rather than a flat
+    number, so raising the request cap raises what this may inspect instead of silently capping the
+    run below the figure the owner set. A lookup that fails or has no score for this source just
+    drops that title. If the
     daily quota runs out mid-gate, we stop, flag the run, and fall back to TMDB for the WHOLE pool so
     the run still completes (the owner is alerted from the flag).
     """
     source = cfg.rating_source
     enforce_votes = source in VOTE_SOURCES  # RT/Metacritic are critic scores — no audience-vote floor
-    shortlist = sorted(pool, key=lambda m: (m.demand, m.rating, m.vote_count), reverse=True)[:_IMDB_SHORTLIST]
+    budget = _lookup_budget(cfg.max_per_run)
+    shortlist = sorted(pool, key=lambda m: (m.demand, m.rating, m.vote_count), reverse=True)[:budget]
     scored: list[tuple[MissingTitle, float, int]] = []
     for title in shortlist:
         try:

@@ -1,6 +1,7 @@
 import pytest
 
-from shortlist.engine.models import RowSpec, UserProfile, UserType, slugify
+from shortlist.engine.models import MAX_ROW_SIZE, EngineConfig, RowSpec, UserProfile, UserType, slugify
+from shortlist.engine.rows import _KEEP_FRACTION
 
 
 class TestSlugify:
@@ -115,3 +116,36 @@ class TestRowSpecPlacement:
         assert self._spec("library", "off").show_library is True
         assert self._spec("off", "library").show_library is True
         assert self._spec("off", "off").show_library is False
+
+
+class TestPoolClearsTheRowCeiling:
+    """`candidates_pre_rank` vs `MAX_ROW_SIZE` — the invariant that used to be a comment.
+
+    The pool cap was a flat 40 while `row.size` validated up to 40, so a row at the top of its legal
+    range was the same size as the pool it was drawn from: every surviving candidate had to go in, and
+    a refresh night had nothing spare to swap the weakest third for. Two numbers that had to agree,
+    coupled only by a comment in `api/settings.py`.
+    """
+
+    def test_the_pool_leaves_room_for_a_refresh_at_the_largest_legal_row(self):
+        """A refresh keeps ~2/3 of the row and must find the rest among candidates NOT already in it.
+        At the ceiling that needs pool > row, with slack — equality is the bug this pins."""
+        pool = EngineConfig().candidates_pre_rank
+        assert pool > MAX_ROW_SIZE, f"pool {pool} must exceed the largest legal row {MAX_ROW_SIZE}"
+        spare = pool - MAX_ROW_SIZE
+        needed = MAX_ROW_SIZE - round(_KEEP_FRACTION * MAX_ROW_SIZE)  # the weakest third, swapped out
+        assert spare >= needed, f"{spare} spare candidates cannot refill {needed} slots on a refresh"
+
+    def test_every_size_validator_uses_the_one_ceiling(self):
+        """Three validators bound a row's size. Each must read MAX_ROW_SIZE, not restate the number —
+        restating it is exactly how the pool cap drifted into matching it."""
+        from shortlist.server.api.collections import CollectionIn
+        from shortlist.server.api.settings import VALIDATORS
+        from shortlist.server.api.user_rows import RowOverridePatch
+
+        assert VALIDATORS["row.size"](MAX_ROW_SIZE) is None
+        assert VALIDATORS["row.size"](MAX_ROW_SIZE + 1) is not None
+        for model, field in ((CollectionIn, "size"), (RowOverridePatch, "row_size")):
+            meta = model.model_fields[field].metadata
+            ceiling = next(m.le for m in meta if hasattr(m, "le"))
+            assert ceiling == MAX_ROW_SIZE, f"{model.__name__}.{field} restates {ceiling}"

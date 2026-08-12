@@ -357,8 +357,8 @@ function decisionLine(entry: TraceSelection): string {
   switch (entry.decision) {
     case "carried_forward":
       return `— not re-picked tonight; last run's titles were redelivered unchanged${
-        every ? `. This row rebuilds about every ${every} days` : ""
-      }. Raise Freshness, or change a setting that decides its titles, to rebuild it sooner.`;
+        every ? `. This row rebuilds every ${every} days` : ""
+      }. Lower “How often rows rebuild”, or change a setting that decides its titles, to rebuild it sooner.`;
     case "settings_changed":
       return "— rebuilt now because a setting that decides its titles changed.";
     case "refreshed":

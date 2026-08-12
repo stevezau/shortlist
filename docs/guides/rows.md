@@ -140,18 +140,18 @@ on one scale and half on another.
 
 **Shuffled** and **Taking turns** are the two with a cost worth knowing about. The other four are
 applied while the row is being written anyway, so they are free; these two reorder the row on Plex
-every day, including days when nothing about the row has changed. It is the front of the row that
-moves — the first 15 titles, which is what shows on the Home shelf before "see all" — so the cost is
-bounded per row, but it is one Plex write per title moved, per person, per night. On a server with
+every day, including days when nothing about the row has changed. The whole row is ordered, and it is
+one Plex write per title actually out of place, per person, per night — so a row that barely moved
+costs a handful of writes and a row that turned over completely costs one per title. On a server with
 many people that is real write volume, so neither is on by default.
 
 Both are stable within a day. Re-running a row the same night reproduces the same order, and two
 people's copies of one row shuffle differently.
 
 **Just added** only moves on the nights a row actually refreshes — on the other nights nothing has
-arrived, so there is nothing to put in front. How often that happens is **Freshness**, not this
-setting. If the front of a row feels stuck, freshness is usually the dial you want, and **Taking
-turns** is the one that moves the front every night regardless.
+arrived, so there is nothing to put in front. How often that happens is **How often rows rebuild**,
+not this setting. If the front of a row feels stuck, the rebuild cadence is usually the dial you
+want, and **Taking turns** is the one that moves the front every night regardless.
 
 ## Where a row shows
 

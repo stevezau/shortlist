@@ -18,7 +18,7 @@ from starlette.responses import StreamingResponse
 from shortlist.engine.candidates import KNOWN_SOURCES
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.delivery import target_sections
-from shortlist.engine.models import RowSpec, dedupe_slug, slugify
+from shortlist.engine.models import MAX_REFRESH_DAYS, MAX_ROW_SIZE, MIN_ROW_SIZE, RowSpec, dedupe_slug, slugify
 from shortlist.server.api.row_changes import (
     POSTER_RESET,
     PRIVACY_SYNC,
@@ -113,7 +113,7 @@ class CollectionIn(BaseModel):
     # This row's own run schedule (5-field cron); "" = never runs on a schedule. New rows default to
     # a nightly 03:30 so they work out of the box; there is no global schedule.
     schedule: str = Field(default="30 3 * * *", max_length=64)
-    size: int = Field(default=15, ge=5, le=40)
+    size: int = Field(default=15, ge=MIN_ROW_SIZE, le=MAX_ROW_SIZE)
     media: str = _closed_set(MEDIA, "both", "Which library types this row builds in.")
     sort_order: int = 0
     name_template: str = ""
@@ -129,7 +129,7 @@ class CollectionIn(BaseModel):
     rewatch: bool = False
     # Shows only: exclude every series this person has started, not just the ones they finished.
     unstarted_only: bool = False
-    freshness: float | None = Field(default=None, ge=0.0, le=1.0)  # None -> inherit global freshness
+    refresh_days: int | None = Field(default=None, ge=0, le=MAX_REFRESH_DAYS)  # None -> inherit the global cadence
     # How much this row weights a title's release date. None -> inherit recommendations.recency.
     recency: float | None = Field(default=None, ge=0.0, le=1.0)
     recent_count: int | None = Field(default=None, ge=1, le=25)  # None -> inherit global recent_count
@@ -199,7 +199,7 @@ class CollectionOut(PassthroughModel):
     watched_pct: float | None
     rewatch: bool
     unstarted_only: bool
-    freshness: float | None
+    refresh_days: int | None
     recency: float | None
     recent_count: int | None
     max_seeds: int | None
@@ -366,7 +366,7 @@ def _serialize(session, collection: Collection) -> dict:
         "watched_pct": collection.watched_pct,
         "rewatch": bool(collection.rewatch),
         "unstarted_only": bool(collection.unstarted_only),
-        "freshness": collection.freshness,
+        "refresh_days": collection.refresh_days,
         "recency": collection.recency,
         "recent_count": collection.recent_count,
         "max_seeds": collection.max_seeds,
@@ -453,7 +453,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             watched_pct=body.watched_pct,
             rewatch=body.rewatch,
             unstarted_only=body.unstarted_only,
-            freshness=body.freshness,
+            refresh_days=body.refresh_days,
             recency=body.recency,
             recent_count=body.recent_count,
             max_seeds=body.max_seeds,
@@ -493,7 +493,7 @@ _PATCHABLE_COLUMNS = (
     "watched_pct",
     "rewatch",
     "unstarted_only",
-    "freshness",
+    "refresh_days",
     "recency",
     "recent_count",
     "max_seeds",

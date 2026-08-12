@@ -165,7 +165,7 @@ class WatchedTitleOut(PassthroughModel):
 class WatchedPageOut(PassthroughModel):
     """A page of the watched set, plus how complete the set behind it is.
 
-    The freshness fields travel WITH the page on purpose: this list is a cache, and a page that
+    The staleness fields travel WITH the page on purpose: this list is a cache, and a page that
     doesn't say when it was last filled invites "I watched that, why is it recommended?" — the exact
     question this endpoint exists to answer.
     """

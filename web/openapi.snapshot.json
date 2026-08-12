@@ -481,19 +481,6 @@
             "title": "Enabled",
             "type": "boolean"
           },
-          "freshness": {
-            "anyOf": [
-              {
-                "maximum": 1.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Freshness"
-          },
           "hub_anchor": {
             "additionalProperties": {
               "$ref": "#/components/schemas/HubAnchorIn"
@@ -621,6 +608,19 @@
             ],
             "title": "Recent Count"
           },
+          "refresh_days": {
+            "anyOf": [
+              {
+                "maximum": 365.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Days"
+          },
           "request_tag": {
             "default": "",
             "maxLength": 64,
@@ -738,17 +738,6 @@
           "enabled": {
             "title": "Enabled",
             "type": "boolean"
-          },
-          "freshness": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Freshness"
           },
           "hub_anchor": {
             "additionalProperties": {
@@ -876,6 +865,17 @@
             ],
             "title": "Recent Count"
           },
+          "refresh_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Days"
+          },
           "request_tag": {
             "title": "Request Tag",
             "type": "string"
@@ -940,7 +940,7 @@
           "watched_pct",
           "rewatch",
           "unstarted_only",
-          "freshness",
+          "refresh_days",
           "recency",
           "recent_count",
           "max_seeds",
@@ -5632,7 +5632,7 @@
       },
       "WatchedPageOut": {
         "additionalProperties": true,
-        "description": "A page of the watched set, plus how complete the set behind it is.\n\nThe freshness fields travel WITH the page on purpose: this list is a cache, and a page that\ndoesn't say when it was last filled invites \"I watched that, why is it recommended?\" \u2014 the exact\nquestion this endpoint exists to answer.",
+        "description": "A page of the watched set, plus how complete the set behind it is.\n\nThe staleness fields travel WITH the page on purpose: this list is a cache, and a page that\ndoesn't say when it was last filled invites \"I watched that, why is it recommended?\" \u2014 the exact\nquestion this endpoint exists to answer.",
         "properties": {
           "dislike_threshold": {
             "anyOf": [
@@ -8454,7 +8454,7 @@
     },
     "/api/support/row-schedule": {
       "get": {
-        "description": "When each row last rebuilt, and when it is next due to.\n\nThe gap this closes: freshness is a CADENCE, not a nightly shuffle. At the 0.5 default a row\nre-selects its titles roughly weekly and redelivers the same picks on every other night, and the\nengine logs that decision NOWHERE. So \"I changed the setting and nothing happened\" has been\nunanswerable \u2014 the setting was fine, the row simply had not rebuilt yet.",
+        "description": "When each row last rebuilt, and when it is next due to.\n\nThe gap this closes: the refresh cadence is exactly that \u2014 a cadence. At the 8-day default a row\nre-selects its titles about weekly and redelivers the same picks on every other night, and the\nengine logs that decision NOWHERE. So \"I changed the setting and nothing happened\" has been\nunanswerable \u2014 the setting was fine, the row simply had not rebuilt yet.",
         "operationId": "row_schedule_api_support_row_schedule_get",
         "responses": {
           "200": {

@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+import sqlalchemy as sa
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config as AlembicConfig
@@ -671,3 +672,134 @@ class TestDroppingTheAutoWebSearchBackend:
         finally:
             con.close()
         assert row is None  # back to 0062's own default
+
+
+class TestFreshnessBecomesADayCount:
+    """0065 replaces the 0..1 `freshness` fraction with `refresh_days`, the cadence itself.
+
+    The one thing this migration must not do is change how often anybody's row rebuilds. The
+    conversion therefore runs every stored value through the very curve the engine applied to it the
+    night before (`round(1 + (1 - f) * 13)`), and these pin the cells that curve actually lands on —
+    including the two ends, where "frozen" and "nightly" are exact rather than approximate.
+
+    The maintainer's own server sat at 0.55 -> 7 days; verified against a copy of that database
+    before release, and `test_the_maintainers_stored_value_keeps_its_cadence` is that case in the
+    suite so it cannot regress unnoticed.
+    """
+
+    @staticmethod
+    def _days(config_dir: Path):
+        from shortlist.server.db.session import make_session_factory
+        from shortlist.server.services.secrets import SecretBox
+        from shortlist.server.settings_store import SettingsStore
+
+        sessions = make_session_factory(make_engine(config_dir))
+        with sessions() as session:
+            return SettingsStore(session, SecretBox(config_dir)).get("recommendations.refresh_days")
+
+    @pytest.mark.parametrize(
+        ("freshness", "days", "why"),
+        [
+            (0.0, 0, "frozen stays frozen — 0 is a choice, not an absent value"),
+            (1.0, 1, "nightly stays nightly"),
+            (0.5, 8, "the OLD default resolved to 8, so the new default must be 8, not a tidy 7"),
+            (0.55, 7, "the maintainer's own server"),
+            (0.25, 11, "a slow row keeps its pace"),
+        ],
+    )
+    def test_every_stored_fraction_keeps_the_cadence_it_already_had(
+        self, tmp_path: Path, freshness: float, days: int, why: str
+    ):
+        command.upgrade(_alembic(tmp_path), "0064")
+        _write_setting(tmp_path, "recommendations.freshness", freshness)
+
+        run_migrations(tmp_path)
+
+        assert self._days(tmp_path) == days, why
+
+    def test_the_maintainers_stored_value_keeps_its_cadence(self, tmp_path: Path):
+        """0.55 was live on the maintainer's server and resolved to 7 days. Called out separately
+        from the matrix because it is the one value a real upgrade was observed to convert."""
+        command.upgrade(_alembic(tmp_path), "0064")
+        _write_setting(tmp_path, "recommendations.freshness", 0.55)
+
+        run_migrations(tmp_path)
+
+        assert self._days(tmp_path) == 7
+
+    def test_an_install_that_never_set_it_lands_on_the_same_cadence_it_had(self, tmp_path: Path):
+        """No stored row means the OLD default (0.5) was in force, which meant 8 days. The new
+        default has to be 8 for that server to see no change — a tidier-looking 7 would quietly
+        speed up every row on every install that never touched the setting."""
+        run_migrations(tmp_path)
+
+        assert self._days(tmp_path) == 8
+
+    def test_a_per_row_override_is_converted_too(self, tmp_path: Path):
+        """The column, not just the global. A row carrying its own fraction must come out carrying
+        the day count that fraction meant."""
+        command.upgrade(_alembic(tmp_path), "0064")
+        with make_engine(tmp_path).begin() as conn:
+            conn.execute(sa.text("UPDATE collections SET freshness = 0.25 WHERE slug = 'picked'"))
+
+        run_migrations(tmp_path)
+
+        with make_engine(tmp_path).begin() as conn:
+            days = conn.execute(sa.text("SELECT refresh_days FROM collections WHERE slug = 'picked'")).scalar()
+        assert days == 11
+
+    def test_a_row_that_inherits_still_inherits(self, tmp_path: Path):
+        """NULL means "use the global" and is NOT the same as 0 ("frozen"). Converting it to a number
+        would silently pin every inheriting row to whatever the global happened to be that night."""
+        command.upgrade(_alembic(tmp_path), "0064")
+        with make_engine(tmp_path).begin() as conn:
+            conn.execute(sa.text("UPDATE collections SET freshness = NULL WHERE slug = 'picked'"))
+
+        run_migrations(tmp_path)
+
+        with make_engine(tmp_path).begin() as conn:
+            days = conn.execute(sa.text("SELECT refresh_days FROM collections WHERE slug = 'picked'")).scalar()
+        assert days is None
+
+    def test_the_downgrade_reproduces_the_same_cadence(self, tmp_path: Path):
+        """The conversion is many-to-one (0.55 and 0.58 both meant 7 days), so the downgrade cannot
+        return the exact original — it returns a fraction that resolves to the SAME day count, which
+        is the only thing the engine ever read from it. Round-tripping must therefore be a no-op in
+        behaviour, not in bytes."""
+        command.upgrade(_alembic(tmp_path), "0064")
+        _write_setting(tmp_path, "recommendations.freshness", 0.55)
+        run_migrations(tmp_path)
+
+        command.downgrade(_alembic(tmp_path), "0064")
+        run_migrations(tmp_path)
+
+        assert self._days(tmp_path) == 7
+
+    @pytest.mark.parametrize("days", [14, 30, 90, 365])
+    def test_a_cadence_the_old_scheme_cannot_express_downgrades_to_slow_not_to_frozen(self, tmp_path: Path, days: int):
+        """The half of the range the first version of this migration got wrong.
+
+        `1 - (days-1)/13` is already 0.0 at 14 days and negative past it, and clamping that to 0.0
+        lands on the OLD scheme's "never refresh once built". So every cadence the new field exists
+        to make expressible — monthly, quarterly — downgraded to a permanently frozen row. The
+        nearest HONEST pre-0065 value is the slowest the old scheme could say, a fortnight: being
+        slowed is recoverable, being silently stopped is not.
+        """
+        run_migrations(tmp_path)
+        _write_setting(tmp_path, "recommendations.refresh_days", days)
+
+        command.downgrade(_alembic(tmp_path), "0064")
+        run_migrations(tmp_path)
+
+        assert self._days(tmp_path) == 14, "a slow row must come back slow, never frozen"
+
+    def test_a_deliberately_frozen_row_still_downgrades_to_frozen(self, tmp_path: Path):
+        """The other side of that clamp: 0 genuinely means "never" in BOTH schemes, so the fix above
+        must not turn a pinned row into a fortnightly one."""
+        run_migrations(tmp_path)
+        _write_setting(tmp_path, "recommendations.refresh_days", 0)
+
+        command.downgrade(_alembic(tmp_path), "0064")
+        run_migrations(tmp_path)
+
+        assert self._days(tmp_path) == 0

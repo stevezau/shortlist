@@ -40,7 +40,7 @@ COLLECTION_KEYS = {
     "watched_pct",
     "rewatch",
     "unstarted_only",
-    "freshness",
+    "refresh_days",
     "recency",
     "recent_count",
     "max_seeds",
@@ -258,22 +258,25 @@ class TestCollectionsSeed:
             specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
         assert next(s for s in specs if s.slug == "rewatch_row").watched_pct == 0.5
 
-    def test_per_row_freshness_round_trips_and_reaches_the_spec(self, client: TestClient):
+    def test_per_row_cadence_round_trips_and_reaches_the_spec(self, client: TestClient):
         from shortlist.server.services.context_builder import ContextBuilder
         from shortlist.server.services.sse import EventBus
 
-        created = client.post("/api/collections", json={"name": "Fresh Row", "freshness": 0.75})
-        assert created.status_code == 201 and created.json()["freshness"] == 0.75
-        # Out of the 0..1 range is rejected.
-        assert client.post("/api/collections", json={"name": "X", "freshness": 1.5}).status_code == 422
-        # And the global freshness setting is range-checked too.
-        assert client.put("/api/settings", json={"values": {"recommendations.freshness": 2.0}}).status_code == 422
-        assert client.put("/api/settings", json={"values": {"recommendations.freshness": 0.3}}).status_code == 200
+        created = client.post("/api/collections", json={"name": "Fresh Row", "refresh_days": 3})
+        assert created.status_code == 201 and created.json()["refresh_days"] == 3
+        # Out of range is rejected, at both ends.
+        assert client.post("/api/collections", json={"name": "X", "refresh_days": -1}).status_code == 422
+        assert client.post("/api/collections", json={"name": "X", "refresh_days": 400}).status_code == 422
+        # And the global cadence setting is range-checked too.
+        assert client.put("/api/settings", json={"values": {"recommendations.refresh_days": 400}}).status_code == 422
+        assert client.put("/api/settings", json={"values": {"recommendations.refresh_days": 30}}).status_code == 200
+        # 0 is a CHOICE ("frozen"), not out of range — the one value a bounds check must let through.
+        assert client.put("/api/settings", json={"values": {"recommendations.refresh_days": 0}}).status_code == 200
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
             specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
-        assert next(s for s in specs if s.slug == "fresh_row").freshness == 0.75
+        assert next(s for s in specs if s.slug == "fresh_row").refresh_days == 3
 
     def test_per_row_recency_round_trips_and_reaches_the_spec(self, client: TestClient):
         from shortlist.server.services.context_builder import ContextBuilder
@@ -368,7 +371,7 @@ class TestCollectionsSeed:
 
         The one link NOT asserted here is `store.get(...)` -> `EngineConfig(max_seeds=...)` inside
         `ContextBuilder.build`, which needs a live PMS to reach and is stubbed out in every test that
-        goes near it — the same untested seam its three neighbours (watched_pct, freshness,
+        goes near it — the same untested seam its three neighbours (watched_pct, refresh_days,
         recent_count) already sit on. The engine half IS covered: test_pipeline's
         `test_two_rows_differing_only_in_max_seeds_do_not_share_seeds` asserts a row with no override
         falls back to `cfg.max_seeds`.

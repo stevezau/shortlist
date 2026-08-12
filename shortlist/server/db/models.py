@@ -177,9 +177,10 @@ class Collection(Base):
     # Shows only: drop any series this person has STARTED, however little. Stricter than the normal
     # filter, which only drops FINISHED ones — so this is what makes "a series to start" true.
     unstarted_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
-    # Per-row day-to-day variability, as a fraction (0.0 stable .. 1.0 fresh). NULL -> inherit the
-    # global recommendations.freshness.
-    freshness: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    # Per-row refresh cadence in DAYS: 0 = never once built, 1 = nightly, N = every N days. NULL ->
+    # inherit the global recommendations.refresh_days. Was `freshness`, a 0..1 fraction a curve
+    # stretched onto 1..14 days; migration 0065 converted every value through that same curve.
+    refresh_days: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     # Per-row weight on a title's RELEASE DATE when ranking it (0.0 ignore age .. 1.0 strongly prefer
     # new). NULL -> inherit the global recommendations.recency. Nullable rather than defaulting to
     # 0.0 because "never touched" and "deliberately off" must stay distinguishable: every row that
@@ -201,7 +202,7 @@ class Collection(Base):
     # rotates belongs to what that row IS, not to a server-wide default.
     seed_window: Mapped[int] = mapped_column(Integer, default=1, nullable=False, server_default="1")
     # How the delivered collection is ORDERED: best | rating | newest | shuffle. Not nullable and not
-    # inheritable — unlike freshness/max_seeds there is no global default to fall back to, because the
+    # inheritable — unlike refresh_days/max_seeds there is no global default to fall back to, because the
     # right order belongs to what a row IS rather than to the server.
     pick_order: Mapped[str] = mapped_column(String(16), default="best")
     # Specific Plex library section keys this row builds in; [] -> every library of its media type.

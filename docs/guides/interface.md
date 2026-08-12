@@ -19,7 +19,7 @@ also a **Sync watched now** button to refresh the numbers on demand.
 ## Rows
 
 Create, edit, and reorder your rows. Each card shows who sees it and how it differs from the
-defaults (sources, libraries, freshness, placement). This is where the whole multi-row feature
+defaults (sources, libraries, rebuild cadence, placement). This is where the whole multi-row feature
 lives. See [Rows and templates](rows.md).
 
 ## Users

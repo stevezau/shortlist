@@ -11,6 +11,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from shortlist.engine.clients.http_retry import redact
+from shortlist.engine.models import MAX_REFRESH_DAYS, MAX_ROW_SIZE, MIN_ROW_SIZE
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import DEFAULT_SLUG, Server
@@ -211,7 +212,9 @@ def _known_sources(value: object) -> str | None:
 # Values the UI already constrains — but the API accepted anything, so a bad value from any other
 # client reached the engine (`row.size: "abc"` crashed every run and 500'd two endpoints).
 VALIDATORS = {
-    "row.size": _bounded_int(5, 40),  # ceiling = candidates_pre_rank (per-media pool cap)
+    # `candidates_pre_rank` is derived from this ceiling (2x), so the pool always clears the largest
+    # legal row — it used to be a flat 40 restated here, which met the ceiling and left no headroom.
+    "row.size": _bounded_int(MIN_ROW_SIZE, MAX_ROW_SIZE),
     "runs.retention": _bounded_int(0, 24),  # months; 0 = keep forever
     "events.retention": _bounded_int(0, 24),  # months; 0 = keep forever (the default)
     "sync.watch_incremental": _is_bool,
@@ -229,7 +232,10 @@ VALIDATORS = {
     "llm_web.search_provider": _one_of("native", "exa", "searxng"),
     "searxng.url": _url_without_credentials,
     "recommendations.watched_pct": _bounded_float(0.0, 1.0),
-    "recommendations.freshness": _bounded_float(0.0, 1.0),
+    # Refresh cadence in days. 0 = frozen; the ceiling is a validation bound, not a behaviour cap —
+    # the old 0..1 fraction could not express anything slower than a fortnight, and a monthly or
+    # quarterly row is a legitimate thing to want.
+    "recommendations.refresh_days": _bounded_int(0, MAX_REFRESH_DAYS),
     "recommendations.recency": _bounded_float(0.0, 1.0),
     "recommendations.recent_count": _bounded_int(1, 25),
     "recommendations.max_seeds": _bounded_int(5, 100),

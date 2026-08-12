@@ -5,27 +5,28 @@ import { renderRowName } from "@/lib/format";
 import { sourceShortLabel } from "@/lib/sources";
 import type { CollectionInput, PlexLibrary, Settings, User } from "@/lib/types";
 
-/** How often the row swaps titles, in words, from the same 0..1 scale the engine reads.
+/** How often the row swaps titles, in words, from the day count the engine reads.
  *
- * Mirrors `_refresh_period_days` in engine/rows.py: 1.0 is nightly, 0.0 never, and everything
- * between is `round(1 + (1 - f) * 13)` days. Said in days rather than as a percentage because
- * "50% fresh" tells nobody when their row will change.
+ * 0 is never, 1 is nightly, N is every N days — the stored number IS the cadence, so there is no
+ * conversion to mirror here any more. It used to be a 0..1 fraction and this function carried its
+ * own copy of `round(1 + (1 - f) * 13)`, one of four uncoordinated copies of that curve; saying it
+ * in days is the whole point, because "50% fresh" told nobody when their row would change.
  */
 function updateFrequency(
   input: CollectionInput,
   followsAWatch: boolean,
-  globalFreshness: number | null,
+  globalRefreshDays: number | null,
 ): string {
   if (followsAWatch) return "Every night";
   // An inheriting row is resolved against the real global, not reported as "the default" — the panel
   // exists to answer "what will this row do", and naming the setting instead of its effect is the
   // one answer it must not give. Only unresolvable while settings are still loading.
-  const f = input.freshness ?? globalFreshness;
-  if (f === null) return "Following the global default";
-  if (f >= 1) return "Every night";
-  if (f <= 0) return "Never — built once, then left alone";
-  const days = Math.max(1, Math.round(1 + (1 - f) * 13));
-  return days === 7 ? "About once a week" : `About every ${days} days`;
+  const days = input.refresh_days ?? globalRefreshDays;
+  if (days === null) return "Following the global default";
+  if (days <= 0) return "Never — built once, then left alone";
+  if (days === 1) return "Every night";
+  if (days === 7) return "Once a week";
+  return `Every ${days} days`;
 }
 
 /** Where the row turns up, in the words someone would use about their own Plex. */
@@ -152,7 +153,7 @@ export function RowPreview({
   libraries,
   settings,
   followsAWatch,
-  globalFreshness,
+  globalRefreshDays,
   globalWatchedPct,
 }: {
   input: CollectionInput;
@@ -160,8 +161,8 @@ export function RowPreview({
   libraries: PlexLibrary[];
   settings: Settings | undefined;
   followsAWatch: boolean;
-  /** The server-wide freshness, so an inheriting row still shows a real cadence. */
-  globalFreshness: number | null;
+  /** The server-wide cadence, so an inheriting row still shows a real one. */
+  globalRefreshDays: number | null;
   globalWatchedPct: number | null;
 }) {
   const template = input.name_template || input.name;
@@ -229,7 +230,7 @@ export function RowPreview({
         />
         <Fact
           label="Updates"
-          value={updateFrequency(input, followsAWatch, globalFreshness)}
+          value={updateFrequency(input, followsAWatch, globalRefreshDays)}
         />
         <Fact label="Appears on" value={whereItShows(input)} />
         {input.request_tag.trim() && (

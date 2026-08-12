@@ -316,16 +316,16 @@ class TestEveryTemplateDelivers:
 
         delivered = [p.tmdb_id for p in _picks_by_row(report)["fresh_finds"]]
         assert 20 not in delivered, "a finished title reached a row that promises nothing already watched"
-        # "Rebuilds nightly" is freshness 1.0 -> a refresh EVERY day, whatever the day number.
-        assert all(_is_refresh_night(spec.slug, "sarah", day, spec.freshness) for day in range(1, 30))
+        # "Rebuilds nightly" is a cadence of 1 -> a refresh EVERY day, whatever the day number.
+        assert all(_is_refresh_night(spec.slug, "sarah", day, spec.refresh_days) for day in range(1, 30))
 
     def test_from_the_vault_never_rebuilds_on_its_own(self, engine_ctx):
         """Claim: "Never rebuilds on its own"."""
         from shortlist.engine.rows import _is_refresh_night
 
         spec = _spec("from-the-vault")
-        assert spec.freshness == 0
-        assert not any(_is_refresh_night(spec.slug, "sarah", day, spec.freshness) for day in range(1, 400))
+        assert spec.refresh_days == 0
+        assert not any(_is_refresh_night(spec.slug, "sarah", day, spec.refresh_days) for day in range(1, 400))
 
     def test_popular_on_this_server_is_shared_and_needs_several_watchers(self, engine_ctx, mock_plextv):
         """Claims: "Shared with everyone" and "Needs 3 watchers" — a title one person watched must not
@@ -366,12 +366,11 @@ class TestEveryTemplateDelivers:
     def test_movie_night_is_movies_only_ten_picks_and_weekly(self, engine_ctx, mock_plextv):
         """Claims: "Movies only", "10 picks", "Weekly"."""
         import shortlist.engine.pipeline as pipeline_mod
-        from shortlist.engine.rows import _refresh_period_days
 
         spec = _spec("movie-night")
         assert spec.media == "movie"
         assert spec.size == 10
-        assert _refresh_period_days(spec.freshness) == 7, "the tile says weekly, so the cadence must BE weekly"
+        assert spec.refresh_days == 7, "the tile says weekly, so the cadence must BE weekly"
 
         # The pool holds movies AND shows, so "movies only" has something real to exclude.
         engine_ctx.history_source.fetch.return_value = _mixed_history()

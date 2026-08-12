@@ -5,7 +5,7 @@ import { MAX_SEEDS_LABEL } from "@/components/max-seeds-field";
 import { RECENT_COUNT_LABEL } from "@/components/recent-count-field";
 import { SaveStatus } from "@/components/save-status";
 import { AiWebSearchCard } from "@/components/settings/ai-web-search-card";
-import { FreshnessSlider } from "@/components/settings/freshness-slider";
+import { RefreshDaysField } from "@/components/settings/refresh-days-field";
 import { InlineKeyField } from "@/components/settings/inline-key-field";
 import { RecencySlider } from "@/components/settings/recency-slider";
 import { WatchedSlider } from "@/components/settings/watched-slider";
@@ -28,7 +28,7 @@ import {
 } from "@/lib/rating-sources";
 import { useAutosavedSettings } from "@/lib/autosave";
 import {
-  FRESHNESS_DEFAULT,
+  REFRESH_DAYS_DEFAULT,
   RECENCY_DEFAULT,
   WATCHED_PCT_DEFAULT,
 } from "@/lib/constants";
@@ -55,6 +55,16 @@ function readPercent(
   const value = Number(settings[key]);
   if (!Number.isFinite(value)) return fallback;
   return Math.round(Math.min(1, Math.max(0, value)) * 100);
+}
+
+/** A global setting that is already a whole number in its own units (days, counts). */
+function readWholeNumber(
+  settings: Settings,
+  key: string,
+  fallback: number,
+): number {
+  const value = Number(settings[key]);
+  return Number.isFinite(value) ? Math.round(value) : fallback;
 }
 
 /** When an enabled source is missing its dependency, show how to satisfy it RIGHT HERE. */
@@ -86,8 +96,12 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
   const [watchedPct, setWatchedPct] = useState<number>(() =>
     readPercent(settings, "recommendations.watched_pct", WATCHED_PCT_DEFAULT),
   );
-  const [freshness, setFreshness] = useState<number>(() =>
-    readPercent(settings, "recommendations.freshness", FRESHNESS_DEFAULT),
+  const [refreshDays, setRefreshDays] = useState<number>(() =>
+    readWholeNumber(
+      settings,
+      "recommendations.refresh_days",
+      REFRESH_DAYS_DEFAULT,
+    ),
   );
   const [recency, setRecency] = useState<number>(() =>
     readPercent(settings, "recommendations.recency", RECENCY_DEFAULT),
@@ -129,7 +143,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
     {
       enabled,
       watchedPct,
-      freshness,
+      refreshDays,
       recency,
       recentCount,
       maxSeeds,
@@ -146,7 +160,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
       "recommendations.use_plex_ratings": usePlexRatings,
       "recommendations.dislike_threshold": dislikeThreshold,
       "recommendations.watched_pct": watchedPct / 100,
-      "recommendations.freshness": freshness / 100,
+      "recommendations.refresh_days": refreshDays,
       "recommendations.recency": recency / 100,
       "recommendations.recent_count": recentCount,
       "recommendations.max_seeds": maxSeeds,
@@ -266,20 +280,21 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
               />
             </div>
             <div className="space-y-2 border-t pt-4">
-              <Label htmlFor="freshness">Freshness</Label>
+              <Label htmlFor="refresh-days">How often rows rebuild</Label>
               <p className="text-sm text-muted-foreground">
-                How often a row swaps in new titles. Most nights a row keeps the
-                same set (nothing rewritten to Plex); on its refresh night the
-                strongest picks stay and the weakest are swapped for new ones.
-                Lower = stickier and cheaper; higher = fresher. This decides{" "}
-                <strong>which</strong> titles a row holds — the order they
-                appear in is that row’s own <strong>Order</strong> setting. The
-                default every row inherits; any row can choose its own.
+                How often a row swaps in new titles. On the nights in between it
+                keeps the same set and nothing is rewritten to Plex; on its
+                rebuild night the strongest picks stay and the weakest are
+                swapped for new ones. Longer = stickier and cheaper; shorter =
+                fresher. This decides <strong>which</strong> titles a row holds
+                — the order they appear in is that row’s own{" "}
+                <strong>Order</strong> setting. The default every row inherits;
+                any row can choose its own.
               </p>
-              <FreshnessSlider
-                id="freshness"
-                value={freshness}
-                onChange={setFreshness}
+              <RefreshDaysField
+                id="refresh-days"
+                value={refreshDays}
+                onChange={setRefreshDays}
               />
             </div>
             <div className="space-y-2 border-t pt-4">
@@ -290,9 +305,9 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 one every time, and rows fill up with older titles. It’s a
                 preference, not a filter — old titles still reach rows, they
                 just have to be a better match. Distinct from{" "}
-                <strong>Freshness</strong> above, which is how often a row
-                re-picks rather than which titles win. The default every row
-                inherits; any row can choose its own.
+                <strong>How often rows rebuild</strong> above, which is how
+                often a row re-picks rather than which titles win. The default
+                every row inherits; any row can choose its own.
               </p>
               <RecencySlider
                 id="recency"

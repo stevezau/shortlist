@@ -1,5 +1,5 @@
 import {
-  freshnessBadgeLabel,
+  refreshDaysBadgeLabel,
   recencyBadgeLabel,
   watchedBadgeLabel,
 } from "@/lib/constants";
@@ -35,7 +35,7 @@ export function blankInput(): CollectionInput {
     watched_pct: null,
     rewatch: false,
     unstarted_only: false,
-    freshness: null,
+    refresh_days: null,
     recency: null,
     recent_count: null,
     max_seeds: null,
@@ -71,7 +71,7 @@ export function toInput(collection: Collection): CollectionInput {
     watched_pct: collection.watched_pct ?? null,
     rewatch: collection.rewatch ?? false,
     unstarted_only: collection.unstarted_only ?? false,
-    freshness: collection.freshness ?? null,
+    refresh_days: collection.refresh_days ?? null,
     recency: collection.recency ?? null,
     recent_count: collection.recent_count ?? null,
     max_seeds: collection.max_seeds ?? null,
@@ -175,9 +175,12 @@ export function rowOverrides(
     parts.push("Never started only");
   }
 
-  // null inherits the global freshness, so only badge a per-row override.
-  if (collection.freshness !== null && collection.freshness !== undefined) {
-    parts.push(freshnessBadgeLabel(collection.freshness));
+  // null inherits the global cadence, so only badge a per-row override.
+  if (
+    collection.refresh_days !== null &&
+    collection.refresh_days !== undefined
+  ) {
+    parts.push(refreshDaysBadgeLabel(collection.refresh_days));
   }
 
   // null inherits the global release-date weight, so only badge a per-row override.

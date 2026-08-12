@@ -33,19 +33,23 @@ all ticked, the default, to cover every library, or point a row at just one such
 server with several libraries of a type. What the row recommends, movies or shows or both, follows
 the libraries you pick.
 
-### Freshness, already-watched, and cost
+### How often rows rebuild, already-watched, and cost
 
 Settings → Finding titles has four more dials, each of which a row can override:
 
-- **How often it changes**, called **Freshness** in Settings where the global lives. This sets how
-  often a row's picks change, and it is a pace rather than a nightly shuffle. `1.0` refreshes every
-  night, lower means every few days, and `0.0` means build once and never reshuffle.
+- **How often it changes**, called **How often rows rebuild** in Settings where the global lives.
+  A number of days, so it says what it does: `1` rebuilds every night, `7` weekly, `30` monthly, and
+  `0` means build once and never reshuffle.
 
   On most nights an unchanged row is left exactly as it is, with no rebuild and no Plex write, which
-  is why a person's row stays familiar instead of being reshuffled daily. On a refresh night the
+  is why a person's row stays familiar instead of being reshuffled daily. On a rebuild night the
   strongest two-thirds or so of the picks stay and the weakest third rotates out. The default is
-  `0.5`, about weekly. If you trigger two runs the same day, a row that isn't due won't change. That
-  is expected.
+  `8` days. If you trigger two runs the same day, a row that isn't due won't change. That is
+  expected.
+
+  This used to be a 0–1 "Freshness" percentage that a curve turned into days behind the scenes, so
+  `0.55` meant "every 7 days" and there was no way to ask for anything slower than a fortnight.
+  Upgrading converts every value to the day count it already meant, so no row changes pace.
 
 - **Recent releases.** How much a title's **release date** counts when Shortlist ranks it. At
   `0.0` release date is ignored entirely: a well-rated 1996 film and a well-rated 2024 one are
@@ -57,7 +61,7 @@ Settings → Finding titles has four more dials, each of which a row can overrid
   no opinion about age just inherits that skew.
 
   **This applies to existing servers too.** Upgrading to the release that introduced it shifts each
-  row towards newer titles on its next refresh night — staggered by each row's freshness rather than
+  row towards newer titles on its next rebuild night — staggered by each row's cadence rather than
   all at once. Nothing about who can see what changes. If you preferred the old behaviour, set the
   slider to `0` and ranking ignores release date exactly as it used to.
 
@@ -67,7 +71,7 @@ Settings → Finding titles has four more dials, each of which a row can overrid
   at `0.5` it takes about 16 years. The slider shows a live strip of what each era is worth so you
   can see the trade before you save it.
 
-  This is **not** Freshness. Freshness is how often a row re-picks; this is which titles win when it
+  This is **not** the rebuild cadence. That is how often a row re-picks; this is which titles win when it
   does. A row can rebuild every night and still be full of 1990s films — that pairing is exactly
   what this dial is for.
 

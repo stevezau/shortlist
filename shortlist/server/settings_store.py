@@ -107,15 +107,18 @@ DEFAULTS: dict[str, Any] = {
     # Cap on already-finished titles in a row, as a fraction: 0.0 = all fresh (default), 1.0 = no
     # filtering, in between = at most that share of the row may be things already watched. Per-row.
     "recommendations.watched_pct": 0.0,
-    # Freshness is the REFRESH CADENCE, not a nightly shuffle: 0.0 = never refresh once built (a
-    # frozen, pinned row), 1.0 = rebuild every night, in between = every N days (0.5 ≈ weekly). On a
-    # refresh night the strongest ~two-thirds stay and the weakest third is swapped for new picks; on
-    # every other night the row is reused unchanged (no re-curation, no Plex write). Default weekly so
-    # rows feel curated and stable instead of churning completely every night. Per-row overridable.
-    "recommendations.freshness": 0.5,
+    # The REFRESH CADENCE in days, not a nightly shuffle: 0 = never refresh once built (a frozen,
+    # pinned row), 1 = rebuild every night, N = every N days. On a refresh night the strongest
+    # ~two-thirds stay and the weakest third is swapped for new picks; on every other night the row is
+    # reused unchanged (no re-curation, no Plex write). Per-row overridable.
+    #
+    # 8 rather than 7 because 8 is exactly what the old `recommendations.freshness` default of 0.5
+    # resolved to, and migration 0065 must not shift the cadence of a server that never set it.
+    "recommendations.refresh_days": 8,
     # How much a title's RELEASE DATE counts when ranking it: 0.0 = ignore age, 1.0 = every ~8 years
     # of age halves a title's weight. A weight, never a filter — an old title is only asked to be a
-    # better match. Distinct from freshness above, which is the refresh CADENCE, not the preference.
+    # better match. Distinct from the cadence above, which is HOW OFTEN a row rebuilds, not which
+    # titles win when it does.
     # 0.5 = "leans towards recent releases", the phrasing the UI uses for this value. NOT 0.0:
     # age-blind is not neutral, it is the status quo, and the status quo is a pool of mostly-old
     # candidates deciding the row. This default applies to EVERY install, existing servers

@@ -47,7 +47,7 @@ const SUBSET_ROW: Collection = {
   watched_pct: null,
   rewatch: false,
   unstarted_only: false,
-  freshness: null,
+  refresh_days: null,
   recency: null,
   recent_count: null,
   max_seeds: null,

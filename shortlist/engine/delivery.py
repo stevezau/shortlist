@@ -937,7 +937,7 @@ def _deliver_one(
     if not to_add_keys and to_remove_count == 0:
         # Membership already IS the wanted set — skip the add/remove/sortUpdate writes entirely. An
         # unchanged row used to fire a sortUpdate every run (a real write on a slow library, for
-        # nothing). The deferred order pass still runs via order_work, so a freshness re-rank is still
+        # nothing). The deferred order pass still runs via order_work, so a refresh-night re-rank is still
         # applied and the collection keeps its custom sort from prior runs. (perf: SFLIX 2026-07-19)
         if order_work is not None:
             order_work.append((collection, wanted_keys))
