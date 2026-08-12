@@ -18,7 +18,7 @@ import {
 } from "@/components/rows/row-sources-field";
 import { TemplateVarsHint } from "@/components/rows/template-vars-hint";
 import { Segmented } from "@/components/segmented";
-import { FreshnessSlider } from "@/components/settings/freshness-slider";
+import { RefreshDaysField } from "@/components/settings/refresh-days-field";
 import { RecencySlider } from "@/components/settings/recency-slider";
 import { WatchedSlider } from "@/components/settings/watched-slider";
 import { Button } from "@/components/ui/button";
@@ -50,9 +50,9 @@ import {
 import type { RowTemplate } from "@/lib/row-templates";
 import {
   coldStartGlobal,
-  freshnessGlobal,
-  freshnessGlobalValue,
-  freshnessSeed,
+  refreshDaysGlobal,
+  refreshDaysGlobalValue,
+  refreshDaysSeed,
   recencyGlobal,
   recencySeed,
   maxSeedsGlobal,
@@ -98,7 +98,7 @@ function pickOrderHelp(
       return "A different order every day, from the same titles. The only order that writes to Plex on days the row is otherwise unchanged.";
     case "new_first":
       // Says "when the row refreshes" out loud because the commonest disappointment here is setting
-      // this on a row at the default freshness and seeing nothing move for a week.
+      // this on a row at the default cadence and seeing nothing move for a week.
       return "Whatever is new goes to the front, the rest follow in match order. Only moves on the nights the row refreshes.";
     case "rotate":
       return "Everything keeps its place in the list, but the front moves along by one title a day, so each pick gets a turn there. Writes to Plex on days the row is otherwise unchanged.";
@@ -164,7 +164,7 @@ function seedAdvice(maxSeeds: number | null, media: string): ReactNode {
 /**
  * One "leave on the global default, or override it here" field.
  *
- * The same shape used four times in this dialog (already-watched cap, freshness, recent-watches,
+ * The same shape used four times in this dialog (already-watched cap, cadence, recent-watches,
  * seed count): a label, a description, the `GlobalDefaultToggle`, and the field itself once the row
  * overrides it. Each call site now states only what's different — its copy and its control — instead
  * of repeating the toggle/conditional wiring.
@@ -338,7 +338,7 @@ export function RowEditor({
     namesASeed && input.max_seeds !== namedRowSeeds(input.media);
   // Whether the engine forces this row to a nightly cadence — which it does for a row that FOLLOWS a
   // watch, by name or by cycling. Both arms, not just `namesASeed`: an unnamed cycling row is run
-  // nightly too, so showing it a freshness slider would state a cadence the row does not obey.
+  // nightly too, so showing it a cadence control would state a cadence the row does not obey.
   const followsAWatch = namesASeed || input.seed_window > 1;
   const drawsOnSummary = [
     // "[]" means every library OF THIS ROW'S TYPE — saying "every library" on a movies row
@@ -354,17 +354,17 @@ export function RowEditor({
     input.candidate_sources.length === 0
       ? "default sources"
       : `${input.candidate_sources.length} source${input.candidate_sources.length === 1 ? "" : "s"}`,
-    // A followed-watch row's stored freshness is ignored by the engine, so reporting it here would
+    // A followed-watch row's stored cadence is ignored by the engine, so reporting it here would
     // describe a cadence the row does not run on.
     followsAWatch
-      ? "refreshes nightly"
-      : input.freshness === null
-        ? "default freshness"
-        : input.freshness >= 1
-          ? "refreshes nightly"
-          : input.freshness <= 0
+      ? "rebuilds nightly"
+      : input.refresh_days === null
+        ? "default cadence"
+        : input.refresh_days === 1
+          ? "rebuilds nightly"
+          : input.refresh_days <= 0
             ? "frozen"
-            : `${Math.round(input.freshness * 100)}% fresh`,
+            : `rebuilds every ${input.refresh_days} days`,
     input.max_seeds === null
       ? null
       : `${input.max_seeds} watch${input.max_seeds === 1 ? "" : "es"}`,
@@ -729,24 +729,26 @@ export function RowEditor({
             {!followsAWatch && !isSharedRow && (
               <InheritableField
                 label="How often it changes"
-                labelFor="row-freshness"
+                labelFor="row-refresh-days"
                 description="How often this row swaps some of its titles for new ones. Leave it on the global default to use the figure from Settings → Finding titles, where you set it once for every row."
-                ariaLabel="Use the global freshness default"
-                inheriting={input.freshness === null}
-                globalValue={freshnessGlobal(settings.data)}
+                ariaLabel="Use the global rebuild cadence"
+                inheriting={input.refresh_days === null}
+                globalValue={refreshDaysGlobal(settings.data)}
                 onToggle={(on) =>
-                  set({ freshness: on ? null : freshnessSeed(settings.data) })
+                  set({
+                    refresh_days: on ? null : refreshDaysSeed(settings.data),
+                  })
                 }
               >
-                <FreshnessSlider
-                  id="row-freshness"
-                  value={Math.round((input.freshness ?? 0) * 100)}
-                  onChange={(pct) => set({ freshness: pct / 100 })}
+                <RefreshDaysField
+                  id="row-refresh-days"
+                  value={input.refresh_days ?? 0}
+                  onChange={(days) => set({ refresh_days: days })}
                 />
               </InheritableField>
             )}
 
-            {/* Shown for EVERY row, including one that follows a watch — unlike freshness above,
+            {/* Shown for EVERY row, including one that follows a watch — unlike the cadence above,
                 whose cadence those rows have forced. Which titles win is still a free choice there:
                 "Because you watched X" can lean modern or not, independently of rebuilding nightly. */}
             <InheritableField
@@ -1142,7 +1144,7 @@ export function RowEditor({
             libraries={libraries.data ?? []}
             settings={settings.data}
             followsAWatch={followsAWatch}
-            globalFreshness={freshnessGlobalValue(settings.data)}
+            globalRefreshDays={refreshDaysGlobalValue(settings.data)}
             globalWatchedPct={watchedPctGlobalValue(settings.data)}
           />
         </aside>

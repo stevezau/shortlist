@@ -275,10 +275,25 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # Docker Hub is what the docs tell people to pull from (owner decision 2026-08-12): its
+      # repository pages get indexed by Google where ghcr.io pages don't, and it reports a pull
+      # count, which GHCR doesn't expose. GHCR keeps publishing the identical manifest and is
+      # documented as the alternative for anyone avoiding Docker Hub's anonymous pull limits.
+      # The namespace is `stevezzau` (two z's) — it is NOT the GitHub username, which is stevezau.
+      # The old single-z account was lost; do not "correct" this to match GitHub.
+      - uses: docker/login-action@v4
+        with:
+          username: stevezzau
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
       - id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ github.repository }}
+          # Both registries in one metadata block, so the single build-push-action below
+          # pushes the SAME manifest to both. Building twice would risk the two registries
+          # holding different bytes for the same tag.
+          images: |
+            ghcr.io/${{ github.repository }}
+            docker.io/stevezzau/shortlist
           tags: |
             # `dev` on a dev push AND on a release tag. Tags are cut from master after a
             # dev -> master promotion PR, at which point the two branches are identical, so
@@ -301,6 +316,9 @@ jobs:
           # Its own scope — see docker-smoke's note. This one holds both platforms.
           cache-from: type=gha,scope=publish
           cache-to: type=gha,mode=max,scope=publish
+      # The Docker Hub overview page is NOT synced here. It lives in .github/workflows/dockerhub.yml
+      # so that editing the prose doesn't require cutting a release, and so a description failure
+      # can never mark a successful image publish as failed.
 
   # A tag published the image but never announced it: v1.0.0 through v1.2.1 all exist as tags with
   # no GitHub Release, because the beta ones were created by hand and nothing replaced that habit.

@@ -242,13 +242,20 @@ users are independent (`try/except` per user), shared caches across the loop.
 3. FILTER                    ∩ library index · unwatched by this user · minus user's excluded
                              genres/max rating · minus items recommended in last N runs (staleness
                              guard, N=3 configurable)
-4. PRE-RANK (heuristic)      score = seed_frequency × rating × library-recency → top 40
-5. CURATE (LLM, optional)    one structured-output call: user taste summary + 40 owned candidates →
-                             top K ranked + one-line reason each (JSON schema; reasons ≤ 90 chars).
-                             Provider=None → keep heuristic order, template reasons.
+4. PRE-RANK (heuristic)      score = (1+seed_frequency) × rating × seed_weight × affinity, then
+                             × release-date weight (recency) → top MAX_ROW_SIZE×2 PER MEDIA TYPE,
+                             round-robin so each source gets a fair share. The cut is twice the
+                             largest legal row so a row at the ceiling still has spares to swap in
+                             on a refresh; it was a flat 40 against a max row of 40, which left none.
+5. SELECT                    diversify_by_seed → top K, spread across the tastes that seeded them;
+                             reasons templated in code. (Was an LLM curate call; removed in ebd14ce
+                             — ranking and reasons are pure Python now. The LLM's only remaining job
+                             is FINDING titles, via the llm_web candidate source.)
 6. DELIVER                   upsert collection (rename if template dynamic) · clear+add items ·
                              custom sort (best first: sortUpdate("custom") + moveItem, verified in
-                             plexapi source) · label shortlist_<slug> · poster ·
+                             plexapi source; the WHOLE row is ordered — capping it at the visible
+                             head left the tail alphabetical and read as broken ranking) ·
+                             label shortlist_<slug> · poster ·
                              collection mode = "hide" (modeUpdate — row shows on Home but the
                              collection stays out of library browsing, so 40 collections never
                              clutter anyone's Collections tab; same trick Kometa uses) ·

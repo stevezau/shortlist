@@ -91,7 +91,6 @@ class FakeCollection:
     promoted_recommended: bool = False
     promoted_own_home: bool = False
     promoted_shared_home: bool = False
-    pinned_top: bool = False  # moved to the front of this library's Managed Recommendations
 
 
 @dataclass
@@ -99,13 +98,22 @@ class FakeUser:
     id: int
     username: str
     home: bool = False
-    restricted: bool = False
+    restricted: bool | None = None
     # The Plex parental preset ("little_kid"|"older_kid"|"teen", "" for none). Only /api/home/users
     # reports it, and it is what decides whether Plex accepts a label restriction at all (#20).
     restriction_profile: str = ""
     protected: bool = False
     uuid: str = ""
     filters: dict[str, str] = field(default_factory=lambda: dict.fromkeys(FILTER_FIELDS, ""))
+
+    def __post_init__(self) -> None:
+        # DERIVED, not a free field: plex.tv reports `restricted="1"` for EVERY Plex Home account,
+        # preset or not (that is the whole reason #20 needed `restrictionProfile` to tell them apart).
+        # Left independent, this fake could serve a home account as `restricted="0"` — a shape plex.tv
+        # cannot produce, and one that silently disarms the skip in `privacy.py`, which is gated on
+        # BOTH flags. A test built that way writes filters for an account Plex would 422.
+        if self.restricted is None:
+            self.restricted = self.home
 
 
 @dataclass
@@ -324,6 +332,12 @@ def seed_state() -> FakePlexState:
     state.users[201] = FakeUser(id=201, username="sarah")
     state.users[202] = FakeUser(id=202, username="mike")
     state.users[203] = FakeUser(id=203, username="canary", home=True, uuid="uuid-203")
+    # A managed account with a parental preset. Plex refuses a label filter for one, so Shortlist
+    # writes it no excludes — and this account can still SEE collections, which is the whole point:
+    # `little_kid` sees none, `older_kid` sees them (measured on a real server, 2026-08-11, #76).
+    # The listing above serves every collection to every token, which for an account carrying no
+    # excludes is exactly what a real PMS does, so this models the case faithfully.
+    state.users[204] = FakeUser(id=204, username="kid", home=True, uuid="uuid-204", restriction_profile="older_kid")
     base_viewed = 1_752_000_000
     # One run then covers the whole delivery matrix: sarah watches both types (two rows), mike
     # watches only TV (one row, in the TV library), the canary has no history (cold start).
@@ -738,8 +752,24 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
     @app.put("/hubs/sections/{section_id}/manage/{identifier}/move")
     def move_hub(section_id: int, identifier: str, request: Request) -> Response:
         # after=None (no query) -> pinned to the top of the Managed Recommendations shelf.
-        collection = _collection(int(identifier.rsplit(".", 1)[-1]))
-        collection.pinned_top = request.query_params.get("after") is None
+        key = int(identifier.rsplit(".", 1)[-1])
+        after = request.query_params.get("after")
+        # And REALLY reorder. `manage_hubs` serves `state.collections` in insertion order, so this
+        # used to answer 200 while the shelf never moved — which is precisely the misbehaviour a real
+        # PMS was caught in (2026-08-12), and which `order_owned_hubs` now retries and reports as
+        # unverified. A fake that behaves like the bug makes every shelf-order assertion vacuous and
+        # would have had e2e re-issuing moves three times and finishing on a warning. Testing rule:
+        # the fake must be no easier than the real server.
+        order = [k for k in state.collections if k != key]
+        if after is None:
+            index = 0
+        else:
+            after_key = int(after.rsplit(".", 1)[-1])
+            index = order.index(after_key) + 1 if after_key in order else len(order)
+        order.insert(index, key)
+        reordered = {k: state.collections[k] for k in order}
+        state.collections.clear()
+        state.collections.update(reordered)
         return Response(status_code=200)
 
     @app.put("/hubs/sections/{section_id}/manage/{identifier}")

@@ -296,6 +296,15 @@ async def sync_users_from_state(state) -> dict:
                 # Refreshed every sync so a rename in Tautulli follows through — but `nickname`
                 # (the owner's own choice) is never touched, so an override always survives.
                 user.friendly_name = friendly_names.get(r.id, user.friendly_name)
+                # Re-DERIVED every sync, never latched: plex.tv lists them, so they have not left.
+                # A re-invite (or a roster blip that slipped past the guards below) therefore heals
+                # itself here instead of leaving a permanent "gone" badge on a present account.
+                user.departed_at = None
+                # `removed_at` too. It is the owner's INTENT, so it is not re-derived lightly — but the
+                # intent was "file away someone who is gone", and they are not gone. Left latched, a
+                # re-invited person is absent from `/api/users` for ever with no field able to restore
+                # them: the list filters on it, and DELETE now 409s because they are no longer departed.
+                user.removed_at = None
                 updated += 1
             emit("sync.progress", {"phase": "save", "done": i, "total": total})
         # A Tautulli rename changes what `{user}` renders to, exactly like a nickname edit — and the
@@ -343,6 +352,10 @@ async def sync_users_from_state(state) -> dict:
         for user in session.query(User).filter(User.slug.in_(departed)) if departed else []:
             logger.warning("{} no longer shares this server — turning them off and removing their rows", user.username)
             user.enabled = False
+            # Recorded as a DEPARTURE, not just an off switch. `enabled=0` is also what the owner sets
+            # by hand, and the Users list cannot explain a row it cannot tell apart — nor prompt for
+            # the clean-up that a departure, unlike a manual toggle, leaves behind.
+            user.departed_at = datetime.now(UTC)
         if departed:
             session.add(
                 Event(

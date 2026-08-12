@@ -1599,8 +1599,8 @@ class TestPerRowOverrides:
             assert len(entry["picks"]) == 5, "each library's row has its own full set of picks"
             assert [p["rank"] for p in entry["picks"]] == [1, 2, 3, 4, 5], "picks ranked 1..k within the library"
 
-    def _movie_row_ctx(self, ctx, freshness, run_day):
-        """A single Movies library holding tmdb 10-19, one 'picked' movie row at the given freshness."""
+    def _movie_row_ctx(self, ctx, refresh_days, run_day):
+        """A single Movies library holding tmdb 10-19, one 'picked' movie row at the given cadence."""
         movies = MagicMock(type="movie", key="1", title="Movies")
         ctx.plex.sections.return_value = [movies]
         ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
@@ -1609,7 +1609,7 @@ class TestPerRowOverrides:
         pool = [{"id": i, "title": f"T{i}", "genre_ids": [], "vote_average": 8.0} for i in range(10, 20)]
         ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
         ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
-        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=5, media="movie", freshness=freshness)]
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=5, media="movie", refresh_days=refresh_days)]
         ctx.config.min_history = 1
         ctx.config.candidates_pre_rank = 50
         ctx.run_day = run_day  # a real day; 0 is the tests/direct "always refresh" sentinel
@@ -1636,7 +1636,7 @@ class TestPerRowOverrides:
         """Freshness 0 = a frozen row: after the first build it redelivers last run's picks unchanged
         and never rebuilds the row (no wasted work, and delivery's unchanged-skip avoids the Plex
         write too) — the fix for nightly churn."""
-        self._movie_row_ctx(ctx, freshness=0.0, run_day=5)
+        self._movie_row_ctx(ctx, refresh_days=0, run_day=5)
         ctx.previous_picks = {("sarah", "picked", "1"): self._prior_movies([12, 13, 14, 15, 16])}
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
@@ -1653,7 +1653,7 @@ class TestPerRowOverrides:
     ):
         """On a refresh night the strongest ~two-thirds carry over and the rest are swapped for titles
         NOT already in the row, so a just-rotated-out pick can't immediately bounce back."""
-        self._movie_row_ctx(ctx, freshness=1.0, run_day=5)  # 1.0 = refresh every night
+        self._movie_row_ctx(ctx, refresh_days=1, run_day=5)  # 1.0 = refresh every night
         ctx.previous_picks = {("sarah", "picked", "1"): self._prior_movies([12, 13, 14, 15, 16])}
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
@@ -1673,7 +1673,7 @@ class TestPerRowOverrides:
         takes the head of the row. Concatenating `kept + new` instead pinned last run's top
         two-thirds to positions 1..keep_n for ever — on a 20-title row, 13 slots that never moved
         again however the candidates scored."""
-        self._movie_row_ctx(ctx, freshness=1.0, run_day=5)
+        self._movie_row_ctx(ctx, refresh_days=1, run_day=5)
         # Last run held the pool's WEAKER half; 10 and 11 rank above all of them tonight.
         ctx.previous_picks = {("sarah", "picked", "1"): self._prior_movies([12, 13, 14, 15, 16])}
         sarah = make_profile("sarah", account_id=100)
@@ -1687,16 +1687,16 @@ class TestPerRowOverrides:
         assert ids[0] not in {12, 13, 14, 15, 16}, f"a newcomer can reach position 1, got {ids}"
         assert [p["rank"] for p in picks] == [1, 2, 3, 4, 5], "ranks renumbered to the delivered order"
 
-    def _named_row_ctx(self, ctx, *, freshness: float, max_seeds: int = 1):
+    def _named_row_ctx(self, ctx, *, refresh_days: int, max_seeds: int = 1):
         """The `_movie_row_ctx` world, but with a row NAMED after the watch it is built from."""
-        self._movie_row_ctx(ctx, freshness=freshness, run_day=5)
+        self._movie_row_ctx(ctx, refresh_days=refresh_days, run_day=5)
         ctx.config.rows = [
             RowSpec(
                 slug="picked",
                 name_template="Because you watched {top_seed}",
                 size=5,
                 media="movie",
-                freshness=freshness,
+                refresh_days=refresh_days,
                 max_seeds=max_seeds,
             )
         ]
@@ -1708,7 +1708,7 @@ class TestPerRowOverrides:
         """A `{top_seed}` row's title renders from pick #1's seed, and the refresh branch always
         carries pick #1 forward — so without the seed check the row stays named after the FIRST watch
         that ever seeded it while its tail fills from newer ones. This person's only seed is Fargo."""
-        self._named_row_ctx(ctx, freshness=1.0)
+        self._named_row_ctx(ctx, refresh_days=1)
         ctx.previous_picks = {
             ("sarah", "picked", "1"): self._prior_seeded_by(
                 [12, 13, 14, 15, 16], seed_tmdb_id=555, seed_title="Chernobyl"
@@ -1727,7 +1727,7 @@ class TestPerRowOverrides:
     def test_a_named_row_carries_forward_while_its_seed_is_unchanged(self, ctx: EngineContext, mock_plextv):
         """The seed check must not turn every refresh into a full rebuild: while the row is still
         built from the seed it is named after, the normal keep-two-thirds carry-forward applies."""
-        self._named_row_ctx(ctx, freshness=1.0)
+        self._named_row_ctx(ctx, refresh_days=1)
         # 900 is what "Fargo" resolves to in this fixture, so the seed has NOT moved.
         ctx.previous_picks = {
             ("sarah", "picked", "1"): self._prior_seeded_by([12, 13, 14, 15, 16], seed_tmdb_id=900, seed_title="Fargo")
@@ -1779,7 +1779,7 @@ class TestPerRowOverrides:
     def test_an_unnamed_row_ignores_the_seed_check(self, ctx: EngineContext, mock_plextv):
         """A row that names no seed keeps the cheap carry-forward however far its seeds have drifted —
         re-deriving a normal 30-seed row on any seed change would make every refresh a full rebuild."""
-        self._movie_row_ctx(ctx, freshness=1.0, run_day=5)  # name_template="" — names no seed
+        self._movie_row_ctx(ctx, refresh_days=1, run_day=5)  # name_template="" — names no seed
         ctx.previous_picks = {
             ("sarah", "picked", "1"): self._prior_seeded_by(
                 [12, 13, 14, 15, 16], seed_tmdb_id=555, seed_title="Chernobyl"
@@ -1794,15 +1794,15 @@ class TestPerRowOverrides:
         assert {12, 13, 14} <= {p["tmdb_id"] for p in picks}, "seed drift alone does not rebuild an unnamed row"
 
     def test_a_named_row_follows_its_seed_even_when_stored_frozen(self, ctx: EngineContext, mock_plextv):
-        """A `{top_seed}` row ignores a stored freshness — even 0.0, which freezes any other row.
+        """A `{top_seed}` row ignores a stored cadence — even 0, which freezes any other row.
 
         A row whose title names a watch is ABOUT recency, so a slow cadence makes it claim a watch the
         person moved on from days ago (issue #57: "it still says Because you watched Little Brother",
-        reported twice). Forced rather than merely defaulted because the row editor HIDES the freshness
+        reported twice). Forced rather than merely defaulted because the row editor HIDES the cadence
         control for these rows — honouring a slow value saved before that would strand the row with
         nothing in the UI to explain it or undo it.
         """
-        self._named_row_ctx(ctx, freshness=0.0)  # 0.0 freezes any row that does NOT name its seed
+        self._named_row_ctx(ctx, refresh_days=0)  # 0.0 freezes any row that does NOT name its seed
         ctx.previous_picks = {
             ("sarah", "picked", "1"): self._prior_seeded_by(
                 [12, 13, 14, 15, 16], seed_tmdb_id=555, seed_title="Chernobyl"
@@ -1819,10 +1819,10 @@ class TestPerRowOverrides:
         lead = min(picks, key=lambda p: p["rank"])
         assert titles == [f"Because you watched {lead['seed_title']}"], f"got {titles}, lead {lead}"
 
-    def test_an_unnamed_row_still_freezes_at_zero_freshness(self, ctx: EngineContext, mock_plextv, monkeypatch):
-        """The freshness override is scoped to rows that name a seed. Everywhere else 0.0 still means
+    def test_an_unnamed_row_still_freezes_at_zero(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        """The nightly override is scoped to rows that name a seed. Everywhere else 0 still means
         "never refresh once built" — the control is still offered for those rows, so it must still work."""
-        self._movie_row_ctx(ctx, freshness=0.0, run_day=5)  # name_template="" — names no seed
+        self._movie_row_ctx(ctx, refresh_days=0, run_day=5)  # name_template="" — names no seed
         ctx.previous_picks = {
             ("sarah", "picked", "1"): self._prior_seeded_by(
                 [12, 13, 14, 15, 16], seed_tmdb_id=555, seed_title="Chernobyl"
@@ -1844,7 +1844,7 @@ class TestPerRowOverrides:
         tmdb 10..19 get descending ratings (10 is best) and ascending years (19 is newest), so
         "rating" and "newest" produce opposite orders and neither can be confused with the ranking.
         """
-        self._movie_row_ctx(ctx, freshness=1.0, run_day=run_day)
+        self._movie_row_ctx(ctx, refresh_days=1, run_day=run_day)
         pool = [
             {
                 "id": i,
@@ -1940,13 +1940,13 @@ class TestPerRowOverrides:
         mock_plextv.users = [plextv_user(100, "sarah")]
 
         self._ordered_row_ctx(ctx, "shuffle", run_day=5)
-        ctx.config.rows[0] = replace(ctx.config.rows[0], freshness=0.0)  # 0.0 = never refresh
+        ctx.config.rows[0] = replace(ctx.config.rows[0], refresh_days=0)  # 0.0 = never refresh
         ctx.previous_picks = {("sarah", "picked", "1"): prior}
         built = spy_build_picks(monkeypatch)
         day5 = self._delivered_ids(pipeline_mod.run(ctx, [sarah]))
 
         self._ordered_row_ctx(ctx, "shuffle", run_day=6)
-        ctx.config.rows[0] = replace(ctx.config.rows[0], freshness=0.0)
+        ctx.config.rows[0] = replace(ctx.config.rows[0], refresh_days=0)
         ctx.previous_picks = {("sarah", "picked", "1"): prior}
         day6 = self._delivered_ids(pipeline_mod.run(ctx, [sarah]))
 
@@ -1963,9 +1963,9 @@ class TestPerRowOverrides:
         candidates (15, 16); `new_first` has to invert that.
         """
         self._ordered_row_ctx(ctx, "new_first")
-        # `_ordered_row_ctx` rebuilds the RowSpec without a freshness, so it inherits the config's
+        # `_ordered_row_ctx` rebuilds the RowSpec without a cadence, so it inherits the config's
         # 0.0 — "never refresh". This case is about the refresh branch, so ask for one.
-        ctx.config.rows[0] = replace(ctx.config.rows[0], freshness=1.0)
+        ctx.config.rows[0] = replace(ctx.config.rows[0], refresh_days=1)
         ctx.previous_picks = {("sarah", "picked", "1"): self._prior_movies([10, 11, 12, 13, 14])}
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
@@ -1978,11 +1978,11 @@ class TestPerRowOverrides:
         """A carried-forward night has no newcomers, so the row must sit still rather than scramble.
 
         Without this, "new" defaulting to the whole row (or to none of it, sorted unstably) would
-        reorder a row on nights nothing changed — the one thing `freshness` exists to avoid, and a
+        reorder a row on nights nothing changed — the one thing the cadence exists to avoid, and a
         Plex write for no reason.
         """
         self._ordered_row_ctx(ctx, "new_first", run_day=5)
-        ctx.config.rows[0] = replace(ctx.config.rows[0], freshness=0.0)  # 0.0 = never refresh
+        ctx.config.rows[0] = replace(ctx.config.rows[0], refresh_days=0)  # 0.0 = never refresh
         ctx.previous_picks = {("sarah", "picked", "1"): self._prior_movies([12, 13, 14, 15, 16])}
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
@@ -2013,7 +2013,7 @@ class TestPerRowOverrides:
 
         for day in (5, 6, 7):
             self._ordered_row_ctx(ctx, "rotate", run_day=day)
-            ctx.config.rows[0] = replace(ctx.config.rows[0], freshness=0.0)
+            ctx.config.rows[0] = replace(ctx.config.rows[0], refresh_days=0)
             ctx.previous_picks = {("sarah", "picked", "1"): prior}
             seen[day] = self._delivered_ids(pipeline_mod.run(ctx, [sarah]))
 
@@ -2044,7 +2044,7 @@ class TestPerRowOverrides:
         Fargo's candidates are old and poorly rated; Chernobyl's are new and highly rated. So "rating"
         and "newest" both put a Chernobyl-seeded pick first, while the ranking does not.
         """
-        self._movie_row_ctx(ctx, freshness=1.0, run_day=run_day)
+        self._movie_row_ctx(ctx, refresh_days=1, run_day=run_day)
         ctx.history_source.fetch.return_value = [
             make_watched("Fargo", days_ago=1, rating_key=999),
             make_watched("Chernobyl", days_ago=2, rating_key=998),
@@ -2067,7 +2067,7 @@ class TestPerRowOverrides:
                 name_template="Because you watched {top_seed}",
                 size=5,
                 media="movie",
-                freshness=1.0,
+                refresh_days=1,
                 pick_order=pick_order,
             )
         ]
@@ -3065,6 +3065,30 @@ class TestLibraryScoping:
 
         assert scanned == ["1"]  # Movies only — Sports and TV Shows never read
         assert [str(s.key) for s in ctx.delivery_sections] == ["1"]
+
+    def test_a_run_with_no_users_names_the_libraries_without_scanning_them(self, ctx: EngineContext):
+        """`engine_run(ctx, [])` still has to know WHERE rows live — it just must not read their contents.
+
+        These are two questions and this used to answer both with one list: with no users
+        `delivery_sections` came back EMPTY, so the shelf-ordering phase iterated nothing and every
+        `privacy.sync` — the nightly job and the "Fix privacy" button — silently reordered nothing
+        at all, whatever else it was asked to do (SFLIX, 2026-08-12). Indexing stays gated on users
+        because that is the part that costs thousands of PMS reads.
+        """
+        from shortlist.engine.models import RowSpec
+
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        sports = MagicMock(type="movie", key="2", title="Sports")  # no row targets it
+        ctx.config.rows = [RowSpec(slug="m", name_template="Movies", size=5, media="movie", library_keys=["1"])]
+        ctx.config.rows_defined = True
+        ctx.plex.section_signature.return_value = None
+        scanned: list[str] = []
+        ctx.plex.build_library_index.side_effect = lambda sec: scanned.append(str(sec.key)) or {}
+
+        pipeline_mod._build_indexes(ctx, [], [movies, sports])
+
+        assert [str(s.key) for s in ctx.delivery_sections] == ["1"]  # the shelf phase has a library
+        assert scanned == []  # and not one item was read
 
     def test_unconfigured_run_still_reads_every_library(self, ctx: EngineContext):
         """No rows configured -> the synthesized default row targets everything, so all libraries read."""
@@ -4172,23 +4196,23 @@ class TestSeedCycling:
     @pytest.mark.parametrize(
         ("name_template", "seed_window", "stored", "expected", "why"),
         [
-            ("Because you watched {top_seed}", 1, 0.0, 1.0, "a named row overrides even a frozen value"),
-            ("Because you watched {top_seed}", 1, None, 1.0, "and the inherited global"),
+            ("Because you watched {top_seed}", 1, 0, 1, "a named row overrides even a frozen value"),
+            ("Because you watched {top_seed}", 1, None, 1, "and the inherited global"),
             # The arm the row editor originally failed to mirror: an UNNAMED row that cycles is run
-            # nightly too, so a freshness control on it would state a cadence the row never uses.
-            ("Tonight's pick", 3, 0.0, 1.0, "a cycling row is nightly whether or not it names a seed"),
-            ("Tonight's pick", 1, 0.0, 0.0, "a row that follows no watch still freezes at 0"),
-            ("Tonight's pick", 1, None, 0.5, "and still inherits the global otherwise"),
+            # nightly too, so a cadence control on it would state a cadence the row never uses.
+            ("Tonight's pick", 3, 0, 1, "a cycling row is nightly whether or not it names a seed"),
+            ("Tonight's pick", 1, 0, 0, "a row that follows no watch still freezes at 0"),
+            ("Tonight's pick", 1, None, 8, "and still inherits the global otherwise"),
         ],
     )
     def test_only_a_row_following_a_watch_is_forced_nightly(
         self, ctx: EngineContext, name_template, seed_window, stored, expected, why
     ):
-        ctx.config = replace(ctx.config, freshness=0.5)
+        ctx.config = replace(ctx.config, refresh_days=8)
         policy = self._policy(ctx, make_profile("sarah", account_id=100))
-        spec = RowSpec(slug="r", name_template=name_template, size=5, seed_window=seed_window, freshness=stored)
+        spec = RowSpec(slug="r", name_template=name_template, size=5, seed_window=seed_window, refresh_days=stored)
 
-        assert policy.effective_freshness(spec) == expected, why
+        assert policy.effective_refresh_days(spec) == expected, why
 
     def test_the_DEFAULT_row_is_forced_nightly_from_the_global_template(self, ctx: EngineContext):
         """The row-identity cell the matrix above cannot reach, and the one that matters most.
@@ -4197,24 +4221,24 @@ class TestSeedCycling:
         the global `row.name_template`, which is what the wizard and Settings edit. Asking the SPEC
         whether it names a seed therefore answered "no" for the one row every new install starts
         with, and the wizard offers "Because you watched {top_seed}" for exactly that row: it was
-        neither forced nightly nor rebuilt when its seed moved, while the editor hid the freshness
+        neither forced nightly nor rebuilt when its seed moved, while the editor hid the cadence
         control and promised "every night".
         """
-        ctx.config = replace(ctx.config, freshness=0.5, row_name_template="Because you watched {top_seed}")
+        ctx.config = replace(ctx.config, refresh_days=8, row_name_template="Because you watched {top_seed}")
         policy = self._policy(ctx, make_profile("sarah", account_id=100))
         default_row = RowSpec(slug="picked", name_template="", size=5)
 
-        assert policy.effective_freshness(default_row) == 1.0
+        assert policy.effective_refresh_days(default_row) == 1
 
     def test_a_per_user_template_that_names_a_seed_also_forces_nightly(self, ctx: EngineContext):
         """Same precedence, middle rung: `resolve_row_template` is row -> user -> global, so a
         per-user override naming a seed has to count as much as the row's own template."""
-        ctx.config = replace(ctx.config, freshness=0.5, row_name_template="Picked for You")
+        ctx.config = replace(ctx.config, refresh_days=8, row_name_template="Picked for You")
         user = make_profile("sarah", account_id=100)
         user.row_name_template = "Because you watched {top_seed}"
         policy = self._policy(ctx, user)
 
-        assert policy.effective_freshness(RowSpec(slug="picked", name_template="", size=5)) == 1.0
+        assert policy.effective_refresh_days(RowSpec(slug="picked", name_template="", size=5)) == 1
 
     def test_two_cycling_rows_do_not_share_one_derivation(self, ctx: EngineContext):
         """The seed cache keys on (media, libraries, max_seeds) — which two cycling rows can match on
@@ -4273,7 +4297,7 @@ class TestRefreshNightVariety:
             make_watched("Heavy", days_ago=1, rating_key=999),
             make_watched("Light", days_ago=2, rating_key=998),
         ]
-        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=6, media="movie", freshness=1.0)]
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=6, media="movie", refresh_days=1)]
         ctx.config.min_history = 1
         ctx.config.candidates_pre_rank = 50
         ctx.run_day = self.RUN_DAY
@@ -4380,9 +4404,9 @@ class TestASettingsChangeRebuildsTheRow:
         ]
         ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
         ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
-        # freshness 0.0 = frozen. Nothing but a recipe change may rebuild this row.
+        # A cadence of 0 = frozen. Nothing but a recipe change may rebuild this row.
         ctx.config.rows = [
-            RowSpec(slug="picked", name_template="", size=4, media="movie", freshness=0.0, recency=recency)
+            RowSpec(slug="picked", name_template="", size=4, media="movie", refresh_days=0, recency=recency)
         ]
         ctx.config.min_history = 1
         ctx.config.candidates_pre_rank = 50
@@ -4412,7 +4436,7 @@ class TestASettingsChangeRebuildsTheRow:
         return [p["tmdb_id"] for p in picks]
 
     def test_a_frozen_row_still_redelivers_unchanged_when_nothing_changed(self, ctx, mock_plextv):
-        """The control. Same settings, frozen row — freshness must still do its job."""
+        """The control. Same settings, frozen row — the cadence must still do its job."""
         self._ctx(ctx, recency=0.0)
         from shortlist.engine.rows import RowPolicy, _rating_key_resolver, row_recipe
 
@@ -4446,7 +4470,7 @@ class TestASettingsChangeRebuildsTheRow:
     def test_a_row_with_no_recorded_recipe_is_left_alone(self, ctx, mock_plextv):
         """Picks predating this feature carry no recipe. Treating unknown as a mismatch would
         rebuild every row on every server the first night after an upgrade — the exact churn
-        freshness exists to prevent."""
+        the cadence exists to prevent."""
         self._ctx(ctx, recency=1.0)
         ctx.previous_picks = {self.KEY: self._prior("")}
         ctx.previous_recipes = {}
@@ -4639,7 +4663,7 @@ class TestUnstartedOnlyIsRecheckedOnCarryForward:
                 media="show",
                 unstarted_only=True,
                 watched_pct=pct,
-                freshness=0.0,
+                refresh_days=0,
             )
         ]
         ctx.config.min_history = 1
@@ -4689,7 +4713,7 @@ class TestTheTraceExplainsWhatHappenedToTheRow:
     RUN_DAY = date(2026, 6, 15).toordinal()
     KEY = ("sarah", "picked", "1")
 
-    def _ctx(self, ctx: EngineContext, *, freshness: float) -> None:
+    def _ctx(self, ctx: EngineContext, *, refresh_days: int) -> None:
         movies = MagicMock(type="movie", key="1", title="Movies")
         ctx.plex.sections.return_value = [movies]
         ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
@@ -4698,7 +4722,7 @@ class TestTheTraceExplainsWhatHappenedToTheRow:
         ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
         ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
         ctx.config.rows = [
-            RowSpec(slug="picked", name_template="", size=3, media="movie", freshness=freshness, recency=0.75)
+            RowSpec(slug="picked", name_template="", size=3, media="movie", refresh_days=refresh_days, recency=0.75)
         ]
         ctx.config.min_history = 1
         ctx.run_day = self.RUN_DAY
@@ -4728,12 +4752,12 @@ class TestTheTraceExplainsWhatHappenedToTheRow:
         ]
 
     def test_a_first_build_is_recorded_as_rebuilt(self, ctx: EngineContext, mock_plextv):
-        self._ctx(ctx, freshness=1.0)
+        self._ctx(ctx, refresh_days=1)
         assert self._selection(ctx, mock_plextv)["decision"] == "rebuilt"
 
     def test_a_row_left_alone_says_so(self, ctx: EngineContext, mock_plextv):
         """The line that would have saved three rounds of confusion: this row was NOT re-picked."""
-        self._ctx(ctx, freshness=0.0)
+        self._ctx(ctx, refresh_days=0)
         ctx.previous_picks = {self.KEY: self._prior()}
         ctx.previous_recipes = {}  # unknown recipe = "nothing to compare", so no forced rebuild
 
@@ -4744,7 +4768,7 @@ class TestTheTraceExplainsWhatHappenedToTheRow:
 
     def test_a_settings_change_is_named_as_the_reason(self, ctx: EngineContext, mock_plextv):
         """Distinct from a plain rebuild — this is the row the owner's edit actually moved."""
-        self._ctx(ctx, freshness=0.0)
+        self._ctx(ctx, refresh_days=0)
         ctx.previous_picks = {self.KEY: self._prior()}
         ctx.previous_recipes = {self.KEY: "a-different-recipe"}
 
@@ -4753,12 +4777,11 @@ class TestTheTraceExplainsWhatHappenedToTheRow:
     def test_it_carries_the_settings_that_decided_the_row(self, ctx: EngineContext, mock_plextv):
         """The settings are reported from the values the branch itself used, so the trace cannot
         claim one thing while the engine did another."""
-        self._ctx(ctx, freshness=1.0)
+        self._ctx(ctx, refresh_days=1)
 
         entry = self._selection(ctx, mock_plextv)
 
         assert entry["recency"] == 0.75
-        assert entry["freshness"] == 1.0
         assert entry["size"] == 3
         assert entry["candidates"] >= entry["delivered"] > 0
         assert entry["cut_cap"] == ctx.config.candidates_pre_rank

@@ -150,7 +150,7 @@ describe("RecommendationsSection", () => {
     ).toHaveValue("50");
   });
 
-  it("keeps recent releases and freshness as two separate controls", () => {
+  it("keeps recent releases and the rebuild cadence as two separate controls", () => {
     // They are near-synonyms in English and completely different settings here. If one ever
     // replaces the other in this card, the owner silently loses a control.
     renderSection({});
@@ -158,7 +158,7 @@ describe("RecommendationsSection", () => {
       screen.getByRole("slider", { name: /release date counts/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("slider", { name: /how often the row refreshes/i }),
+      screen.getByRole("spinbutton", { name: /how often the row rebuilds/i }),
     ).toBeInTheDocument();
   });
 

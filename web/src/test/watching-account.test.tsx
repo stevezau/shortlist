@@ -54,6 +54,8 @@ function user(over: Partial<User>): User {
     avatar_url: "",
     plex_account_id: 0,
     restriction_profile: "",
+    unhidden_rows: 0,
+    departed: false,
     preview_titles: [],
     prefs: {},
     ...over,
@@ -194,10 +196,14 @@ describe("WatchingAccountPage", () => {
     window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
     renderPage();
 
-    await userEvent.click(await screen.findByRole("button", { name: /set it up/i }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: /set it up/i }),
+    );
 
     expect(
-      await screen.findByRole("heading", { name: /set up the watching account/i }),
+      await screen.findByRole("heading", {
+        name: /set up the watching account/i,
+      }),
     ).toBeInTheDocument();
     expect(scrollIntoView).toHaveBeenCalled();
   });

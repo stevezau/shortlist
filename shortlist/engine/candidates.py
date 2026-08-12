@@ -8,7 +8,7 @@ recommendation engine is not locked to TMDB's per-seed similarity. Sources today
 * ``tmdb_discover`` — TMDB /discover in the genres a person's history skews toward (widens recall).
 * ``trakt`` — Trakt's related-titles graph for each seed.
 * ``llm_web`` — a live web search proposes titles to watch next, each resolved via TMDB search.
-  Backed by the curator's own web-search tool (Claude/GPT/Gemini) or an external provider (Exa),
+  Backed by the model's own web-search tool (Claude/GPT/Gemini) or an external provider (Exa),
   chosen by ``web_search_provider`` — an external backend is the only path for a local Ollama
   model, which cannot search on its own. This is the
   only AI-powered source: the providers are used to FIND titles, never to rank them.
@@ -26,7 +26,7 @@ from shortlist.engine.clients.search import SearchResult
 from shortlist.engine.clients.tmdb import Cache, NullCache, TmdbClient
 from shortlist.engine.curator import NullCurator
 from shortlist.engine.curator.base import build_web_query_for_title, build_web_rag_prompt, parse_web_titles
-from shortlist.engine.models import Candidate, MediaType, Seed
+from shortlist.engine.models import MAX_ROW_SIZE, Candidate, MediaType, Seed
 
 # One cached web search PER recent title (Exa bills per search): cache the RESULTS by (media, tmdb_id)
 # so a title many users watched is searched once server-wide. 14 days — "if you liked X" doesn't
@@ -34,7 +34,7 @@ from shortlist.engine.models import Candidate, MediaType, Seed
 WEB_SEARCH_CACHE_TTL_S = 14 * 24 * 3600
 _WEB_SEARCH_PER_TITLE = 5  # results per per-title search (many titles → keep each lean for the RAG)
 _WEB_SEARCH_MAX_TITLES = 10  # default number of recent titles to search; overridden by recent_count
-_WEB_SEARCH_RAG_CAP = 40  # cap the unioned results handed to the curator so the RAG prompt stays bounded
+_WEB_SEARCH_RAG_CAP = 40  # cap the unioned results handed to the web-search LLM so the RAG prompt stays bounded
 
 # Every candidate source the engine knows how to run. The owner can enable any subset globally
 # (settings ``candidates.sources``) or per row (``collections.candidate_sources``); an unknown value
@@ -46,7 +46,14 @@ KNOWN_SOURCES = ("tmdb_similar", "tmdb_discover", "trakt", "llm_web")
 EXTERNAL_SEARCH_MODES = ("exa", "searxng")
 DEFAULT_SOURCES = ("tmdb_similar",)
 _DISCOVER_TOP_GENRES = 3  # how many of a person's dominant genres to widen into
-_LLM_WEB_K = 20  # how many titles the web-search LLM proposes (each resolved to TMDB, then verified)
+# How many titles the web-search LLM proposes (each resolved to TMDB, then verified). Derived from
+# the largest legal row, so this source can fill one on its own — it was a flat 20 against a row that
+# may be 40, so an owner who enabled `llm_web` ALONE and asked for 40 titles could never get more
+# than 20, with nothing saying why. Only the proposal count moves: `k` is asked for in ONE completion
+# (`curator.recommend_web` / the RAG's single `complete`), never one call per title, and the per-seed
+# web searches are driven by `recent_count` instead — so this costs output tokens for the extra
+# titles, not extra requests.
+_LLM_WEB_K = MAX_ROW_SIZE
 _TRACE_SEEDS_SAMPLE = 12  # per source, how many seeds' queries to record in the trace (display only)
 _TRACE_RETURNS_SAMPLE = 25  # per seed, how many returned titles to record in the trace (display only —
 # the UI shows the first few and lets you expand the rest, so this is the ceiling on what "expand" reveals)

@@ -1,0 +1,85 @@
+# Docker Hub upkeep — the two things the CI publish job deliberately doesn't do.
+#
+# CI's `docker` job pushes :dev on every dev push and :latest/:X.Y.Z on every v* tag, to BOTH
+# registries, from one build. That covers everything going forward. What it can't do is
+# (a) populate tags that were released before the mirror existed, or (b) update the overview
+# page when only the overview page changed. Hence this workflow.
+name: Docker Hub
+
+on:
+  push:
+    branches: [dev]
+    # The overview page is the mirror's whole reason to exist (hub.docker.com pages get indexed
+    # by Google; ghcr.io pages don't), so it syncs when it changes rather than waiting for a
+    # release. Editing prose should not require cutting a version.
+    paths: [".github/dockerhub-overview.md", ".github/workflows/dockerhub.yml"]
+  workflow_dispatch:
+    inputs:
+      backfill:
+        description: "Also copy pre-existing release tags from GHCR to Docker Hub"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  description:
+    name: Sync the overview page
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # If this 401s, the PAT is missing write scope: Docker Hub requires a token with
+      # "Read, Write, Delete" to change a repository description, though a plain
+      # "Read, Write" token is enough to push images. Regenerate rather than debug.
+      - uses: peter-evans/dockerhub-description@v5
+        with:
+          # stevezzau — two z's, NOT the GitHub username. The single-z account was lost.
+          username: stevezzau
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: stevezzau/shortlist
+          # Hardcoded because Docker Hub caps this at 100 chars and the repo description is 200+.
+          short-description: "Per-user movie & TV recommendations for Plex — a private Picked for You row for everyone"
+          readme-filepath: ./.github/dockerhub-overview.md
+
+  backfill:
+    name: Copy existing release tags from GHCR
+    if: github.event_name == 'workflow_dispatch' && inputs.backfill
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/login-action@v4
+        with:
+          username: stevezzau
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      # `imagetools create` copies the manifest LIST between registries — it re-points a tag at
+      # blobs it transfers, rather than pulling and re-pushing a single platform. A rebuild here
+      # would produce different bytes for a tag that already shipped, which is the one thing a
+      # mirror must never do.
+      # The 0.1.0-beta.* tags are deliberately not copied: nobody should be starting on a beta,
+      # and a fresh mirror listing reads better without seven of them at the top.
+      - name: Copy latest + 1.x releases
+        run: |
+          set -euo pipefail
+          for tag in latest 1.3.0 1.2.1 1.2.0 1.1.0 1.0.0; do
+            echo "::group::$tag"
+            docker buildx imagetools create \
+              --tag "docker.io/stevezzau/shortlist:${tag}" \
+              "ghcr.io/stevezau/shortlist:${tag}"
+            echo "::endgroup::"
+          done
+      - name: Confirm every copied tag resolves on Docker Hub
+        run: |
+          set -euo pipefail
+          for tag in latest 1.3.0 1.2.1 1.2.0 1.1.0 1.0.0; do
+            docker buildx imagetools inspect --raw "docker.io/stevezzau/shortlist:${tag}" > /dev/null
+            echo "ok  $tag"
+          done

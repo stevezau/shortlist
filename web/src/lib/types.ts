@@ -698,7 +698,6 @@ export interface TraceSelection {
   cut_cap?: number;
   carried?: number;
   new?: number;
-  freshness?: number;
   refresh_night?: boolean;
   rebuild_every_days?: number | null;
   recency?: number;
@@ -738,6 +737,7 @@ export type TestableService =
   | "plex"
   | "tautulli"
   | "tmdb"
+  | "agregarr"
   | "llm"
   | "radarr"
   | "sonarr"
@@ -859,8 +859,8 @@ export interface SupportRowSetting {
   size: number;
   watched_pct: number;
   watched_pct_source: string;
-  freshness: number;
-  freshness_source: string;
+  refresh_days: number;
+  refresh_days_source: string;
   rewatch: boolean;
   unstarted_only: boolean;
 }

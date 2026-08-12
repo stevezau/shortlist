@@ -18,6 +18,8 @@ from loguru import logger
 
 import shortlist.engine.rows as rows
 from shortlist.engine import requests as requests_mod
+from shortlist.engine import shelf_mirror
+from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.clients.plextv import FilterWriteRefused
 from shortlist.engine.context import EngineContext, _emit
 from shortlist.engine.delivery import (
@@ -33,6 +35,7 @@ from shortlist.engine.models import (
     CollectionDiff,
     HubAnchor,
     MediaType,
+    OwnedRow,
     RequestOutcome,
     RequestReport,
     RowSpec,
@@ -45,6 +48,7 @@ from shortlist.engine.privacy import (
     shared_label_audiences,
     shortlist_labels_in,
     sync_user_restrictions,
+    unhidden_rows_visible_to,
 )
 
 
@@ -249,26 +253,30 @@ def _build_indexes(
     seed_index: dict[int, int] = {}
     library_index: dict[MediaType, dict[int, int]] = {MediaType.MOVIE: {}, MediaType.SHOW: {}}
     section_index: dict[str, dict[int, int]] = {}
-    # Only when there is someone to recommend to. The indexes walk every item in every TARGETED
-    # library, and are read only inside _run_user — so with no users this is thousands of PMS reads
-    # thrown away, in front of the sweep, on the one path (a closed gate) where the sweep is the entire
-    # point and must not be preceded by anything that can fail.
-    #
     # Read only the libraries some row targets (media type + library_keys). Retired rows are included
     # so a disabled row is still curated/indexed where it lives; the mute/retire CLEANUP scans every
     # library independently (rows._remove_muted_and_retired), and the leak sweep covers everything else
     # independently too. A library no row uses (e.g. a Sports library) is skipped entirely.
-    if users:
-        # The EFFECTIVE specs — per_person_rows() synthesizes the legacy default row when rows aren't
-        # managed, so an unconfigured run still reads every library (it targets them all).
-        wanted_keys = {
-            str(section.key)
-            for spec in (*ctx.config.per_person_rows(), *ctx.config.shared_rows(), *ctx.config.retired_rows)
-            for section in target_sections(sections, spec)
-        }
-        index_sections = [section for section in sections if str(section.key) in wanted_keys]
-    else:
-        index_sections = []
+    #
+    # The EFFECTIVE specs — per_person_rows() synthesizes the legacy default row when rows aren't
+    # managed, so an unconfigured run still reads every library (it targets them all).
+    wanted_keys = {
+        str(section.key)
+        for spec in (*ctx.config.per_person_rows(), *ctx.config.shared_rows(), *ctx.config.retired_rows)
+        for section in target_sections(sections, spec)
+    }
+    # WHICH libraries rows live in, and WHETHER to walk their contents, are two different questions.
+    # This used to answer both with one list, so a run with no users — `engine_run(ctx, [])`, i.e. every
+    # `privacy.sync` — got `delivery_sections = []` and the shelf-ordering phase then iterated nothing
+    # at all. That is the second, independent reason the SFLIX shelf could never be repaired by a job:
+    # even with the right rows to move, there were no libraries to move them in (2026-08-12).
+    # Naming the sections is pure in-memory filtering of a list we already hold; it is the INDEXING
+    # below that costs thousands of PMS reads, and that is what stays gated on there being users.
+    ctx.delivery_sections = [section for section in sections if str(section.key) in wanted_keys]
+    # Only when there is someone to recommend to. The indexes are read only inside _run_user, so with
+    # no users they are thousands of PMS reads thrown away, in front of the sweep, on the one path (a
+    # closed gate) where the sweep is the entire point and must not be preceded by anything that can fail.
+    index_sections = ctx.delivery_sections if users else []
     for section in index_sections:
         kind = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
         index = _library_index(ctx, section)
@@ -278,7 +286,6 @@ def _build_indexes(
         library_index[kind].update(index)
         section_index[section.key] = index
     ctx.section_index = section_index
-    ctx.delivery_sections = index_sections
     return seed_index, library_index
 
 
@@ -329,7 +336,7 @@ def _deliver_phase(
 
     def process(user: UserProfile) -> tuple[UserProfile, UserRunReport, bool]:
         user_report = UserRunReport(username=user.username, slug=user.slug)
-        # Cancelled: skip this user's gather/curate/delivery entirely. Checked here (not mid-user) so
+        # Cancelled: skip this user's gather/rank/delivery entirely. Checked here (not mid-user) so
         # a user already in flight finishes cleanly — per-user transactionality means a cancel never
         # leaves a half-applied user. Queued users fall straight through as "skipped".
         if ctx.cancelled():
@@ -344,7 +351,7 @@ def _deliver_phase(
         delivered = False
         try:
             # PMS timeouts are retried at the DELIVERY write (idempotent) inside _run_user, so a Plex
-            # hiccup no longer re-runs the whole user's gather + LLM curate (which is what made a slow
+            # hiccup no longer re-runs the whole user's gather + ranking (which is what made a slow
             # night catastrophic — SFLIX run 3, 2026-07-19). A timeout that exhausts the delivery
             # retries, or one from a non-delivery PMS read, falls through here and fails just this user.
             delivered = rows._run_user(
@@ -418,6 +425,70 @@ def _deliver_phase(
     return to_promote, shared_to_promote
 
 
+def _record_unhideable(ctx, user, remote, owned, collections_known, report) -> None:
+    """Check what an account we could not write a hide-list for can actually SEE, and record it.
+
+    Only for accounts Plex genuinely refuses (a managed account with a parental profile) — every other
+    empty write is either a no-op or already handled as a blocker upstream.
+
+    Deliberately NOT a promotion blocker. Nothing we can do would hide these rows, so stopping the run
+    would punish every other user on the server for one account's Plex settings, permanently. The
+    honest response is to tell the owner, who can set that account's Restriction Profile to None (the
+    path Plex's own documentation gives) or disable it in Shortlist.
+
+    Never raises: this is a diagnostic on top of a sync that already succeeded, and a failed read here
+    must not fail the run. A read that fails is simply not reported as clean.
+
+    `owned` is this phase's own FRESH PMS enumeration, not `ctx.delivered_keys`. The ledger is loaded
+    when the context is built, so on a first run it holds nothing and every account would measure as
+    clean — silence indistinguishable from the bug.
+    """
+    if ctx.pms_for_user is None or remote is None or not getattr(remote, "restriction_profile", ""):
+        return
+    if not collections_known or not owned:
+        # We could not establish which rows exist, so "sees none of ours" would be an artefact of the
+        # failed read, not a finding — and it would be PERSISTED, clearing last night's real one from
+        # the badge and the alert. The docstring of `unhidden_rows_visible_to` refuses exactly this
+        # (plex-safety rule 4); honouring it means not calling it at all here.
+        logger.warning(
+            "{}: could not check what this '{}' account can see — the collections read did not "
+            "produce a usable picture, so this run reports nothing rather than a false all-clear",
+            user.username,
+            remote.restriction_profile,
+        )
+        return
+    try:
+        as_them = ctx.pms_for_user(user)
+        if as_them is None:
+            # No token could be minted for this account, so we cannot look AS them. Said out loud
+            # for the same reason as the failed-collections-read above: silence here is read
+            # downstream as "sees none of ours". Not a rare cell — `canary_server_token` refuses a
+            # PIN-protected Home user, which is the archetype of a parental-profile account.
+            logger.warning(
+                "{}: could not check what this '{}' account can see — no token could be obtained for "
+                "it, so this run reports nothing rather than a false all-clear",
+                user.username,
+                remote.restriction_profile,
+            )
+            return
+        exposed = unhidden_rows_visible_to(as_them, owned, user.slug)
+    except Exception as e:
+        logger.warning("{}: could not check what this account can see ({})", user.username, type(e).__name__)
+        return
+    if not exposed:
+        logger.debug("{}: '{}' account, and it sees none of our rows", user.username, remote.restriction_profile)
+        return
+    report.unhideable_rows[user.username] = exposed
+    logger.warning(
+        "{}: Plex refuses a hide-list for this '{}' account AND it can see {} row(s) that are not "
+        "its own — set its Restriction Profile to None (disabling the account in Shortlist does NOT "
+        "help: that removes THEIR row, not their view of everyone else's)",
+        user.username,
+        remote.restriction_profile,
+        len(exposed),
+    )
+
+
 def _privacy_sync_phase(
     ctx: EngineContext, users: list[UserProfile], stored_labels: dict[str, str], report: RunReport
 ) -> bool | None:
@@ -437,14 +508,25 @@ def _privacy_sync_phase(
     # the collections" and "that collection is gone" are indistinguishable, and one of those readings
     # un-hides a live row.
     collections_known = False
+    # Bound BEFORE the try: the enumeration below can raise, and `owned` is read again further down by
+    # the unhideable-rows check. Left unbound, that failure path raises NameError inside the privacy
+    # phase — turning a handled "could not read the collections" into an unhandled crash.
+    owned: dict[str, OwnedRow] = {}
     # Read in a DRY RUN too. The enumeration is read-only, and skipping it made `--dry-run` report the
     # merges while silently omitting the exclude REMOVALS a live run would make — a preview that is
     # missing the only destructive half is worse than no preview (rule 8).
+    # The SECOND source `dead_private` needs before it removes another account's private-row exclude:
+    # which accounts still have a collection here according to the TITLE MARKER, which is not read
+    # through `collection.labels` and so cannot fail the same way (rule 4). None until proven —
+    # not knowing must never license a removal. Mapped to slugs once `own_slugs` exists, below.
+    marked_accounts: set[int] | None = None
     try:
         ctx.plex.invalidate_collections_cache()
         owned = ctx.plex.owned_collections(LABEL_PREFIX)
         stored_labels.update({slug: row.label for slug, row in owned.items()})
         collections_known = True
+        # Same cached listing the enumeration above walked, so this costs no extra PMS reads.
+        marked_accounts = ctx.plex.marked_account_ids()
         if not owned:
             # A successful read that returned NOTHING. Correct to carry on — nothing is promoted that
             # shouldn't be, and the prune declines to act on it (privacy.py) — but silent otherwise,
@@ -489,6 +571,11 @@ def _privacy_sync_phase(
     # records); `known_slugs` covers everyone else Shortlist knows but isn't processing tonight. An
     # account in neither owns no row, and is therefore excluded from every one of them.
     own_slugs = {**ctx.known_slugs, **{u.plex_account_id: u.slug for u in users}}
+    # Marker evidence, keyed the way the prune compares: slug, not account id. Stays None when the
+    # enumeration failed, which is what stops `dead_private` acting on an unknown.
+    marker_present_slugs = (
+        None if marked_accounts is None else {slug for account, slug in own_slugs.items() if account in marked_accounts}
+    )
 
     audience = _server_audience(users, roster, own_slugs)
     # Every CONFIGURED shared row: label -> its audience (None = public, seen by all). This is the
@@ -500,6 +587,11 @@ def _privacy_sync_phase(
     # account_id -> {field: expected} for every write this run, verified in ONE roster read after the
     # loop (below) instead of a full GET /api/users per write (which was O(A²) on a change night).
     to_verify: dict[int, dict[str, str]] = {}
+    # Reaching this loop IS the measurement: every profiled account in the audience gets checked
+    # inside it. Recorded before the loop rather than after, so a crash part-way still counts as
+    # having looked — what must never be recorded as a measurement is a run that died BEFORE here
+    # (in the sweep or delivery), because its empty findings would otherwise clear a live alert.
+    report.unhideable_measured = True
     # One plex.tv write per account, throttled and backing off on a 429 (rule 6) — minutes on a
     # 40-account server. Counted out loud so the feed shows it moving rather than sitting on
     # "filters" for the duration.
@@ -518,6 +610,8 @@ def _privacy_sync_phase(
                 label_prefix=LABEL_PREFIX,
                 shared_labels=shared_labels,
                 collections_known=collections_known,
+                departed_slugs=ctx.departed_slugs,
+                marker_present_slugs=marker_present_slugs,
                 # A disabled (opted-out) Shortlist account gets even public shared rows hidden, so
                 # disabling someone removes them from Shortlist entirely. Non-Shortlist accounts that
                 # merely share the server aren't in disabled_account_ids, so they still see public rows.
@@ -535,10 +629,25 @@ def _privacy_sync_phase(
                     to_verify[user.plex_account_id] = {field: after for field, (_before, after) in written.items()}
             if user_report is not None:
                 user_report.privacy_synced = bool(written)
+            if not written:
+                # Nothing was written for this account. For a profiled managed account that is
+                # expected (Plex refuses label filters) — but "expected" was doing too much work: the
+                # code assumed such an account sees nothing, so there was nothing to hide. Measured on
+                # a real server, an `older_kid` account saw three collections. So find out.
+                _record_unhideable(ctx, user, roster.get(user.plex_account_id), owned, collections_known, report)
         except FilterWriteRefused as e:
             # plex.tv permanently refused the write (422). Safe to skip ONLY for an account with a
-            # parental PROFILE: Plex declines label restrictions while one is set, and such an account
-            # sees zero collections anyway, so there is nothing an exclude would have hidden.
+            # parental PROFILE: Plex declines label restrictions while one is set.
+            #
+            # It used to add "and such an account sees zero collections anyway, so there is nothing an
+            # exclude would have hidden". That is FALSE and `privacy.py` says so with a measurement:
+            # true of `little_kid`, not of `older_kid`, one of which listed three collections on a real
+            # server (2026-08-11, #76). The sentence mattered because it was the load-bearing
+            # justification for skipping an account on a privacy path while promotion proceeds for the
+            # whole server. What actually makes the skip acceptable is narrower: nothing we can write
+            # would hide these rows, so blocking the run would punish everyone else permanently for one
+            # account's Plex settings. So skip, but MEASURE — `_record_unhideable` below reports what
+            # the account can really see, which is the only honest version of "expected".
             #
             # Keyed on the profile, NOT on `restricted` — plex.tv reports that for every Plex Home
             # account, profile or not. Since privacy.py now attempts the write for profile-less managed
@@ -562,6 +671,12 @@ def _privacy_sync_phase(
                     user.username,
                     remote_user.restriction_profile or "restricted, profile unknown",
                 )
+                # Measured here too, not just on the `not written` path above. The reachable cell is
+                # `restricted=0` with a profile set — the endpoint-disagreement case privacy.py
+                # deliberately allows through — which lands here instead, and was the one skip in the
+                # phase that reported nothing at all. (A profile-unknown account early-returns inside
+                # `_record_unhideable`, so this costs nothing for the other arm.)
+                _record_unhideable(ctx, user, remote_user, owned, collections_known, report)
             else:
                 sync_failed = True
                 report.promotion_blockers.append(f"{user.username} (plex account {user.plex_account_id}): {e}")
@@ -992,7 +1107,7 @@ def _promote_one(ctx: EngineContext, collection, spec: RowSpec | None, user_type
     )
 
 
-def _apply_order(ctx: EngineContext, report: RunReport, section, anchor, only_titles: set[str] | None) -> None:
+def _apply_order(ctx: EngineContext, report: RunReport, section, anchor, only_keys: set[int] | None) -> None:
     """One best-effort, gated reorder call + its audit. A shelf reorder is cosmetic and privacy-neutral
     (hubs are already promoted and browse-hidden; only position changes), so a failure never fails the
     run — next run re-applies. Only our hubs move; the anchor is read-only (Kometa coexistence)."""
@@ -1005,8 +1120,11 @@ def _apply_order(ctx: EngineContext, report: RunReport, section, anchor, only_ti
                 before=anchor.before,
                 to_top=anchor.to_top,
                 dry_run=ctx.config.dry_run,
-                only_titles=only_titles,
+                only_keys=only_keys,
             )
+        # Recorded when anything MOVED, verified or not. An unverified pass (Plex took the moves and
+        # dropped them) is exactly the case the report has to be able to show, so it is not filtered
+        # out here for looking like a failure.
         if result.get("moved") and not result.get("skipped"):
             report.hub_orderings.append({"library": section.title, **result})
     except Exception as e:
@@ -1037,14 +1155,21 @@ def _collection_order_phase(ctx: EngineContext, order_work: list[tuple]) -> None
     logger.info("ordered {} collection(s), {} move(s) total", len(deduped), total)
 
 
-def _row_titles_by_slug(report: RunReport) -> dict[str, set[str]]:
-    """slug -> the collection TITLES that row was delivered as this run (aggregated across users). The
-    only link from a managed hub back to its row is its title (rows share a per-user label, differ by
-    title), so this is how the per-row override knows which hubs belong to which row."""
-    out: dict[str, set[str]] = {}
-    for user_report in report.users:
-        for title, slug in user_report.placement_titles.items():
-            out.setdefault(slug, set()).add(title)
+def _row_keys_by_slug(ctx: EngineContext, section_key: str) -> dict[str, set[int]]:
+    """row slug -> the Plex ratingKeys that row's collections have in this library, from the DURABLE
+    delivery ledger.
+
+    The ledger, not this run's report, on purpose. This used to read `report.users[].placement_titles`,
+    which only ever holds rows delivered by THE RUN IN PROGRESS — so a `privacy.sync`
+    (`engine_run(ctx, [])`, which is what the nightly privacy-sync job and the "Fix privacy" button both
+    run) had an empty map, every group came out empty, and the whole ordering pass silently did nothing.
+    On SFLIX that was 31 runs in one day reaching this code and issuing not one move (2026-08-12).
+    The ledger is written by past runs, so it answers the same question for a run with no users at all.
+    """
+    out: dict[str, set[int]] = {}
+    for (_user_slug, row_slug, key), rating_key in ctx.delivered_keys.items():
+        if key == section_key and rating_key:
+            out.setdefault(row_slug, set()).add(rating_key)
     return out
 
 
@@ -1052,14 +1177,24 @@ def _order_phase(ctx: EngineContext, report: RunReport) -> None:
     """Place each library's Shortlist rows in its Recommended shelf per the configured anchors.
 
     Each row's effective anchor is its own per-library override (``RowSpec.hub_anchors``) if set, else
-    the global default (``EngineConfig.hub_anchors``). When no row in a library overrides, all of that
-    library's rows move together to the default (the simple, robust path). When some rows override,
-    rows are grouped by their effective anchor and each group moved as a unit."""
+    the global default (``EngineConfig.hub_anchors``). When every row in a library resolves to the SAME
+    anchor — which is every ordinary server, and every server with one row — they all move together in
+    one call that names no rows at all, so it works identically on a full run and on a `privacy.sync`
+    with no users. Only when rows genuinely disagree are they partitioned, by delivery-ledger ratingKey.
+    """
     if not ctx.config.manage_shelf_order:
         # The owner turned shelf ordering off (a co-managing tool like agregarr/Kometa owns the order),
         # so leave the Recommended shelf exactly as it is — deliver + hide + promote still ran above.
+        # The agregarr mirror is skipped with it: it exists to defend an order we placed, and we placed
+        # none, so writing one into agregarr would be overriding the tool the owner just deferred to.
         logger.debug("shelf ordering is off — leaving the Recommended shelf order to Plex / a co-managing tool")
         return
+    _apply_shelf_anchors(ctx, report)
+    _mirror_shelf_to_agregarr(ctx, report)
+
+
+def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
+    """The ordering itself: resolve each library's anchor and move our rows there."""
     global_anchors = ctx.config.hub_anchors
     any_override = any(spec.hub_anchors for spec in ctx.config.rows)
     if not global_anchors and not any_override:
@@ -1068,31 +1203,163 @@ def _order_phase(ctx: EngineContext, report: RunReport) -> None:
         # wherever Plex appends them, which looks broken (issue: some at top, some at bottom).
         for section in ctx.delivery_sections:
             default = HubAnchor(anchor_title="", before=False, to_top=True)
-            _apply_order(ctx, report, section, default, only_titles=None)
+            _apply_order(ctx, report, section, default, only_keys=None)
         return
-    titles_by_slug = _row_titles_by_slug(report) if any_override else {}
     for section in ctx.delivery_sections:
         key = str(section.key)
-        section_overridden = any(spec.hub_anchors.get(key) for spec in ctx.config.rows)
-        if not section_overridden:
-            # Global-only: move every owned row to the library default in one call (unchanged path).
-            default = global_anchors.get(key)
-            if default is not None:
-                _apply_order(ctx, report, section, default, only_titles=None)
-            continue
-        # Some rows override here: group each row by its effective anchor (override, else default).
-        groups: dict[tuple[bool, str, bool], set[str]] = {}
+        anchors_by_slug = {}
         for spec in ctx.config.rows:
             effective = spec.hub_anchors.get(key) or global_anchors.get(key)
-            if effective is None:
+            if effective is not None:
+                anchors_by_slug[spec.slug] = effective
+        if not anchors_by_slug:
+            # No ROW resolves to an anchor here — but the library may still have one, and rows of ours
+            # may still be sitting on its shelf: every row switched off or deleted leaves its retired
+            # collections behind, and `ctx.config.rows` is then empty while `rows.hub_anchor` is not.
+            # Falling through to `continue` skipped the library in silence, which is the same shape of
+            # quiet nothing this whole function was just fixed for.
+            default = global_anchors.get(key)
+            if default is not None:
+                _apply_order(ctx, report, section, default, only_keys=None)
+            else:
+                logger.debug("hub order: no anchor configured for {} — leaving its shelf alone", section.title)
+            continue
+        distinct = {(a.to_top, a.anchor_title, a.before) for a in anchors_by_slug.values()}
+        unanchored = [spec.slug for spec in ctx.config.rows if spec.slug not in anchors_by_slug]
+        if len(distinct) == 1 and not unanchored:
+            # Every row here wants the same slot, so there is nothing to tell apart: move ALL our rows
+            # in this library with one call. Naming no rows is what makes this independent of who was
+            # delivered tonight — the bug that left a run with no users ordering nothing at all.
+            _apply_order(ctx, report, section, next(iter(anchors_by_slug.values())), only_keys=None)
+            continue
+        # Rows genuinely disagree about where they belong (or some have no anchor at all), so ours have
+        # to be partitioned. The ledger is the only durable link from a collection back to its row.
+        keys_by_slug = _row_keys_by_slug(ctx, key)
+        groups: dict[tuple[bool, str, bool], set[int]] = {}
+        for slug, effective in anchors_by_slug.items():
+            keys = keys_by_slug.get(slug, set())
+            if not keys:
+                # Nothing delivered for this row here yet (a first run, or a row that has never
+                # reached this library). Said out loud rather than skipped in silence — silence here
+                # is exactly what made the original bug invisible. The next run places it.
+                logger.debug(
+                    "hub order: row '{}' has no delivered collection in {} yet — not ordering it this run",
+                    slug,
+                    section.title,
+                )
                 continue
-            titles = titles_by_slug.get(spec.slug, set())
-            if titles:
-                grp = (effective.to_top, effective.anchor_title, effective.before)
-                groups.setdefault(grp, set()).update(titles)
-        for (to_top, anchor_title, before), titles in groups.items():
+            groups.setdefault((effective.to_top, effective.anchor_title, effective.before), set()).update(keys)
+        for (to_top, anchor_title, before), keys in groups.items():
             anchor = HubAnchor(anchor_title=anchor_title, before=before, to_top=to_top)
-            _apply_order(ctx, report, section, anchor, only_titles=titles)
+            _apply_order(ctx, report, section, anchor, only_keys=keys)
+
+
+def _order_ids(items: list[dict]) -> list[str]:
+    """Config ids in sequence — the compact form of an agregarr ordering, for the audit event."""
+    return [str(item.get("id") or "?") for item in items]
+
+
+def _stored_rank(item: dict) -> float:
+    """An item's CURRENT rank in agregarr, so `order_before` reflects what it would push today."""
+    value = item.get("sortOrderHome")
+    return (
+        float(value) if isinstance(value, int | float) and not isinstance(value, bool) and value > 0 else float("inf")
+    )
+
+
+def _mirror_shelf_to_agregarr(ctx: EngineContext, report: RunReport) -> None:
+    """Store the shelf we just placed into a co-managing agregarr, so its next sync agrees with us.
+
+    Agregarr re-applies its OWN stored order every 30 minutes and persists rather than recomputes it,
+    so the two tools otherwise fight indefinitely: it scatters our rows, the next run puts them back.
+    Writing our order into agregarr ends that — its sync becomes a no-op instead of an undo.
+
+    Best-effort in exactly the sense `_apply_order` is: the rows are already delivered, hidden and
+    promoted, and this only changes what a THIRD-PARTY tool will do to their position later. A
+    failure — agregarr down, key rotated, API changed under us — is logged and audited, never fatal.
+    That is deliberate: agregarr's API is private and unversioned, and it must not be able to fail a
+    run that has already done its real work.
+    """
+    if ctx.agregarr is None:
+        return
+    # ONE fetch for the whole instance, not one per library: both endpoints return every config
+    # regardless of library, so per-library reads re-downloaded all 213 of them each time. It also
+    # means an unreachable agregarr costs one timeout for the run instead of one per library.
+    try:
+        items_by_library = ctx.agregarr.home_items_by_library()
+    except Exception as e:
+        detail = redact(f"{type(e).__name__}: {e}")
+        logger.warning("agregarr: could not read its shelf order ({}) — left it alone", detail)
+        report.agregarr_mirrors.append({"library": "*", "ok": False, "error": detail})
+        return
+    for section in ctx.delivery_sections:
+        library_id = str(section.key)
+        try:
+            hubs = list(section.managedHubs())
+            live = [ident for ident in (getattr(h, "identifier", "") for h in hubs) if ident]
+            # Only what is actually on the shared Home shelf counts towards the "our rows are one
+            # unbroken block" check — see `plan_home_order`.
+            visible = {
+                str(getattr(h, "identifier", ""))
+                for h in hubs
+                if getattr(h, "identifier", "") and getattr(h, "promotedToSharedHome", False)
+            }
+            plan = shelf_mirror.plan_home_order(
+                library_id,
+                live,
+                items_by_library.get(library_id, []),
+                owned_rating_keys={str(k) for keys in _row_keys_by_slug(ctx, library_id).values() for k in keys},
+                visible_identifiers=visible,
+            )
+        except Exception as e:
+            # Redacted before it reaches a log line or an `events` row: this also catches plexapi
+            # errors from `managedHubs()`, whose text embeds the full PMS request URL — X-Plex-Token
+            # and all (plex-safety rule 9).
+            detail = redact(f"{type(e).__name__}: {e}")
+            logger.warning("{}: could not read agregarr's shelf order ({}) — left it alone", section.title, detail)
+            report.agregarr_mirrors.append({"library": section.title, "ok": False, "error": detail})
+            continue
+        entry = {
+            "library": section.title,
+            "ok": True,
+            "changed": plan.changed,
+            "items": len(plan.ordered),
+            "moved": plan.moved,
+            "rows_placed": plan.owned_placed,
+            "rows_contiguous": plan.owned_contiguous,
+            "unknown_to_agregarr": len(plan.unknown_to_agregarr),
+            "unjoinable": plan.unjoinable,
+            "summary": plan.summary(),
+        }
+        if plan.changed:
+            # The DIFF, not just a tally (plex-safety rule 10). This renumbers the whole library,
+            # rows Shortlist does not own included, and there is no snapshot to restore from — so
+            # "what did agregarr's order look like before 03:31" has to be answerable from the event
+            # itself. Recorded only when something actually changes, to keep quiet nights small.
+            entry["order_before"] = _order_ids(sorted(items_by_library.get(library_id, []), key=_stored_rank))
+            entry["order_after"] = _order_ids(plan.ordered)
+        if not plan.changed:
+            logger.debug("agregarr: {}", plan.summary())
+            report.agregarr_mirrors.append(entry)
+            continue
+        if ctx.config.dry_run:
+            logger.info("agregarr (dry run): would store — {}", plan.summary())
+            report.agregarr_mirrors.append({**entry, "dry_run": True})
+            continue
+        try:
+            with ctx.write_lock:
+                ctx.agregarr.apply_home_order(library_id, plan.ordered)
+        except Exception as e:
+            detail = redact(f"{type(e).__name__}: {e}")
+            logger.warning(
+                "{}: could not store the shelf order in agregarr ({}) — it may reorder the shelf again",
+                section.title,
+                detail,
+            )
+            report.agregarr_mirrors.append({**entry, "ok": False, "error": detail})
+            continue
+        logger.info("agregarr: {}", plan.summary())
+        report.agregarr_mirrors.append(entry)
 
 
 def _request_phase(ctx: EngineContext, requests_on: bool, demand: requests_mod.DemandMap, report: RunReport) -> None:

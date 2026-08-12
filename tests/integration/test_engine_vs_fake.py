@@ -3,6 +3,12 @@
 Real plexapi and real httpx over real (loopback) HTTP — the only stand-ins are the servers
 themselves (tests/fakes/fake_plex.py plus a tiny TMDB app below). No mocks on the engine side.
 The per-user row hiding is asserted directly (each account's own Home shows only its own rows).
+
+Every roster built here filters out accounts with a parental restriction profile, because
+``context_builder.enabled_profiles`` does — Plex refuses a label filter for such an account, so it can
+never have a private row, and the server never hands one to the engine. Feeding one in would test an
+input the product does not produce. What DOES happen to those accounts is measured in the privacy
+phase, which reports the rows they can see but nothing can hide (#76).
 """
 
 from __future__ import annotations
@@ -181,6 +187,7 @@ def test_engine_run_end_to_end(fakes, tmp_path):
             user_type=UserType.MANAGED if u.home else UserType.SHARED,
         )
         for u in sorted(plextv.list_users(), key=lambda u: u.id)
+        if not u.restriction_profile  # the server never passes the engine a profiled account
     ]
     assert [u.username for u in users] == ["sarah", "mike", "canary"]
 
@@ -346,6 +353,7 @@ def test_a_row_builds_in_every_movie_library_with_that_librarys_own_rating_keys(
     users = [
         UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
         for u in sorted(plextv.list_users(), key=lambda u: u.id)
+        if not u.restriction_profile  # the server never passes the engine a profiled account
     ]
 
     report = engine_run(ctx, users)
@@ -422,6 +430,7 @@ def test_two_per_person_rows_share_one_label_and_are_both_hidden(fakes, tmp_path
     users = [
         UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
         for u in sorted(plextv.list_users(), key=lambda u: u.id)
+        if not u.restriction_profile  # the server never passes the engine a profiled account
     ]
 
     report = engine_run(ctx, users)
@@ -554,6 +563,7 @@ def _run(plex, plextv, tmp_path, rows, owner_token) -> tuple:
     users = [
         UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
         for u in sorted(plextv.list_users(), key=lambda u: u.id)
+        if not u.restriction_profile  # the server never passes the engine a profiled account
     ]
     return ctx, users, engine_run(ctx, users)
 
@@ -781,6 +791,7 @@ def test_a_run_heals_the_leaking_rows_a_previous_version_left_behind(fakes, tmp_
     users = [
         UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
         for u in sorted(plextv.list_users(), key=lambda u: u.id)
+        if not u.restriction_profile  # the server never passes the engine a profiled account
     ]
 
     # The broken state the old code produced: show-subtype collections sitting in the MOVIE
@@ -1461,6 +1472,7 @@ def test_each_users_row_contains_only_their_own_picks(fakes, tmp_path):
     users = [
         UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
         for u in sorted(plextv.list_users(), key=lambda u: u.id)
+        if not u.restriction_profile  # the server never passes the engine a profiled account
     ]
 
     report = engine_run(ctx, users)
@@ -1504,6 +1516,7 @@ def test_migration_night_rebuilds_every_shared_row_in_one_run(fakes, tmp_path):
     users = [
         UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
         for u in sorted(plextv.list_users(), key=lambda u: u.id)
+        if not u.restriction_profile  # the server never passes the engine a profiled account
     ]
 
     # The legacy state: every user's row titled the same, in the same library, sharing one tag.
@@ -1584,6 +1597,7 @@ def test_delivery_records_the_rating_key_of_the_collection_it_built(fakes, tmp_p
             user_type=UserType.MANAGED if u.home else UserType.SHARED,
         )
         for u in sorted(plextv.list_users(), key=lambda u: u.id)
+        if not u.restriction_profile  # the server never passes the engine a profiled account
     ]
 
     report = engine_run(ctx, users)
@@ -1645,6 +1659,7 @@ def test_a_scoped_run_never_rebuilds_another_row_as_itself(fakes, tmp_path):
     users = [
         UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
         for u in sorted(plextv.list_users(), key=lambda u: u.id)
+        if not u.restriction_profile  # the server never passes the engine a profiled account
     ]
 
     # Row A's own cron fires first — the ordinary state of a server with per-row schedules, where a
@@ -1709,6 +1724,7 @@ def test_a_muted_unrenderable_row_is_not_taken_over_by_another_row(fakes, tmp_pa
                 row_overrides=overrides or {},
             )
             for u in sorted(plextv.list_users(), key=lambda u: u.id)
+            if not u.restriction_profile  # the server never passes the engine a profiled account
         ]
 
     # Build the {top_seed} row, then mute it — its collection stays, because its title cannot be
@@ -1758,6 +1774,7 @@ def test_a_multi_row_user_gets_a_rename_in_place_that_counting_could_never_do(fa
     users = [
         UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
         for u in sorted(plextv.list_users(), key=lambda u: u.id)
+        if not u.restriction_profile  # the server never passes the engine a profiled account
     ]
     before_rows = [
         RowSpec(slug="picked", name_template="✨ {library_name} Picked for You", size=8),
@@ -1825,6 +1842,7 @@ def test_a_ledger_key_naming_another_row_cannot_hijack_it_mid_run(fakes, tmp_pat
     users = [
         UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
         for u in sorted(plextv.list_users(), key=lambda u: u.id)
+        if not u.restriction_profile  # the server never passes the engine a profiled account
     ]
     assert engine_run(ctx_for(rows), users).ok
 
@@ -1885,6 +1903,7 @@ def test_a_managed_user_with_a_parental_profile_is_left_out_of_the_filters(fakes
     users = [
         UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
         for u in sorted(plextv.list_users(), key=lambda u: u.id)
+        if not u.restriction_profile  # the server never passes the engine a profiled account
     ]
 
     report = engine_run(ctx, users)
@@ -1897,6 +1916,89 @@ def test_a_managed_user_with_a_parental_profile_is_left_out_of_the_filters(fakes
     others = [u for u in after.values() if u.id != kid.id and not u.restricted]
     assert any("label!=" in u.filters.get("filterMovies", "") for u in others)
     assert not report.promotion_blockers
+
+
+def test_a_profiled_account_that_can_see_other_peoples_rows_is_measured_and_reported(fakes, tmp_path):
+    """Issue #76 end to end: Plex refuses a hide-list for a profiled account, so the run has to look
+    AS them and report what they can actually see.
+
+    This is the cell nothing covered. `_record_unhideable` early-returns when `ctx.pms_for_user` is
+    None, and every other context here leaves it None — so the whole measurement was exercised by no
+    test at all, at either end of a feature whose entire purpose is to end a silence.
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    history = ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token)
+
+    kid = state.users[204]  # `older_kid` — the profile that DOES see collections on a real server
+    assert kid.restriction_profile == "older_kid"
+
+    ctx = EngineContext(
+        config=EngineConfig(
+            row_size=8,
+            min_history=5,
+            candidates_pre_rank=40,
+            max_seeds=12,
+            rows=[RowSpec(slug="picked", name_template="✨ {library_name} Picked for You", size=8)],
+            rows_defined=True,
+        ),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=history,
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+    # What the server always supplies: the PMS as ONE user sees it. Mirrors
+    # `ContextBuilder._pms_for_user`, including its canary fallback for a managed account that was
+    # never separately shared — which is precisely the archetype here.
+    ctx.pms_for_user = lambda profile: PlexClient(pms_url, token) if (token := history._token_for(profile)) else None
+
+    report = engine_run(ctx, _users(plextv))
+
+    # It looked — and that fact is recorded separately from the findings, so a run that never got
+    # here cannot publish an empty result and clear a live alert.
+    assert report.unhideable_measured is True
+    assert kid.username in report.unhideable_rows, "the profiled account's exposure was not reported"
+    assert report.unhideable_rows[kid.username], "reported the account but named no rows"
+    # Not a blocker: one account nothing can hide must not stop everyone else being served.
+    assert report.ok
+    assert not report.promotion_blockers
+
+
+def test_a_run_that_never_reaches_the_privacy_phase_is_not_recorded_as_having_measured(fakes, tmp_path):
+    """The other half of the guard, at the level that actually sets it."""
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(rows=[RowSpec(slug="picked", name_template="x", size=8)], rows_defined=True),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+    # Fail the PMS read the SWEEP makes, not the one `run()` makes before it — the sweep fails
+    # CLOSED and returns a report rather than raising, and that returned report is exactly the shape
+    # that used to publish an empty finding and clear a live alert.
+    real_sections = ctx.plex.sections
+    calls = {"n": 0}
+
+    def sections_failing_inside_the_sweep():
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise RuntimeError("PMS unreachable")
+        return real_sections()
+
+    ctx.plex.sections = sections_failing_inside_the_sweep
+
+    report = engine_run(ctx, [])
+
+    assert report.error and "sweep failed" in report.error
+    assert report.unhideable_measured is False
 
 
 def _rating_ctx(state, pms_url, tmp_path, *, dislike_threshold):
@@ -1931,6 +2033,7 @@ def _users(plextv):
             user_type=UserType.MANAGED if u.home else UserType.SHARED,
         )
         for u in sorted(plextv.list_users(), key=lambda u: u.id)
+        if not u.restriction_profile  # the server never passes the engine a profiled account
     ]
 
 
@@ -2152,6 +2255,7 @@ class TestPlexRatingsCannotReachSharedRows:
         users = [
             UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
             for u in sorted(plextv.list_users(), key=lambda u: u.id)
+            if not u.restriction_profile  # the server never passes the engine a profiled account
         ]
 
         report = engine_run(ctx, users)
@@ -2205,6 +2309,7 @@ class TestTrustIsJudgedPerPersonNotPerRow:
         users = [
             UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
             for u in sorted(plextv.list_users(), key=lambda u: u.id)
+            if not u.restriction_profile  # the server never passes the engine a profiled account
         ]
 
         report = engine_run(ctx, users)

@@ -14,6 +14,7 @@ from loguru import logger
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session, sessionmaker
 
+from shortlist.engine.clients.agregarr import AgregarrClient
 from shortlist.engine.clients.mdblist import MdbListClient
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.plextv import PlexTvClient
@@ -188,7 +189,28 @@ class ContextBuilder:
             # External web-search backend for the llm_web source; None when none is configured (the
             # native provider tools still work without it — only Ollama depends on it).
             search = make_search_client(store.get)
+            # A co-managing agregarr, if the owner connected one. Both halves are required: a URL
+            # without a key cannot read the ordering, and the mirror is skipped rather than half-run.
+            agregarr_url = (store.get("agregarr.url") or "").strip()
+            agregarr_key = store.get("agregarr.apikey") or ""
+            agregarr = AgregarrClient(agregarr_url, agregarr_key) if agregarr_url and agregarr_key else None
             history = ShareTokenWatchSource(plex, plextv, owner_token=plex_token)
+
+            def _pms_for_user(profile, _history=history, _url=plex_url):
+                """The server as ONE user sees it, for the privacy check on accounts Plex refuses a
+                hide-list for.
+
+                Reuses `ShareTokenWatchSource._token_for` rather than reading the shared-server list
+                directly, for two reasons. It has the CANARY fallback: a managed Home profile that was
+                never separately shared is absent from `shared_server_tokens()` — and that is exactly
+                the archetype this check exists for, so a bare lookup returned None and the account was
+                recorded as seeing nothing, which is the false all-clear the whole feature was written
+                to stop. It also memoises the roster behind a lock, so this does not re-fetch plex.tv
+                once per profiled account per run (rule 6).
+                """
+                token = _history._token_for(profile)
+                return PlexClient(_url, token, timeout=int(store.get("plex.timeout_s") or 45)) if token else None
+
             provider = store.get("curator.provider")
             curator = make_curator(provider, **curator_kwargs(store.get))
             # Build the poster studio only if a row actually renders a poster from text (built-in or
@@ -208,6 +230,14 @@ class ContextBuilder:
             # Every user Shortlist knows, enabled or not: the engine answers "whose row is this?"
             # by account id, because a name can change and two names can slugify alike.
             known_slugs = {u.plex_account_id: u.slug for u in session.query(User).all()}
+            # People our records say are GONE — plex.tv stopped listing them (`departed_at`, set and
+            # cleared by the roster sweep) or the owner filed them away (`removed_at`). This is the
+            # ONLY thing that lets a private-row exclude be pruned, so it has to be an assertion we
+            # made, not an inference from who happens to be in tonight's run.
+            departed_slugs = {
+                u.slug
+                for u in session.query(User).filter((User.departed_at.isnot(None)) | (User.removed_at.isnot(None)))
+            }
             # Whose rows are allowed on the owner's Home. Read from the DB rather than this run's
             # profiles, because the owner may be paused, disabled, or simply not in a scoped run —
             # and converge still has to know which single label is legitimately there.
@@ -244,6 +274,7 @@ class ContextBuilder:
                 trakt=trakt,
                 search=search,
                 poster_artist=poster_artist,
+                agregarr=agregarr,
                 # The engine reads each user's COMPLETE watched set by reading the PMS AS them, with the
                 # per-user server token plex.tv mints for every share. That set carries their own
                 # viewCount/viewedLeafCount — so a mark-as-watched (which the playback-history API never
@@ -258,8 +289,10 @@ class ContextBuilder:
                 previous_picks=previous,
                 previous_recipes=previous_recipes,
                 delivered_keys=delivered_keys,
+                pms_for_user=_pms_for_user,
                 disabled_account_ids=disabled_account_ids,
                 known_slugs=known_slugs,
+                departed_slugs=departed_slugs,
                 owner_slug=owner_slug,
                 paused_slugs=paused_slugs,
                 # The DB read above succeeded, so `known_slugs` lists every user Shortlist has — the
@@ -406,7 +439,7 @@ class ContextBuilder:
         This is deliberately a different source from `user_history`, which reads the PMS live. The
         cache is what every recommendation is filtered against, so showing it here means the page
         answers "why was this recommended when I've seen it?" instead of showing a second, unrelated
-        list. The cost is honesty about freshness, which is why `last_full_sync_at` and
+        list. The cost is honesty about staleness, which is why `last_full_sync_at` and
         `synced_titles` come back with the page and the UI states them.
 
         Args:
@@ -583,7 +616,7 @@ class ContextBuilder:
                     year=r.year,
                     # The settings fingerprint this pick was built under. Carried so the engine can
                     # tell "the owner changed the recipe" from "nothing changed" and rebuild rather
-                    # than wait out the freshness cadence.
+                    # than wait out the refresh cadence.
                     recipe=r.recipe or "",
                     collection_slug=r.collection_slug,
                     section_key=r.section_key,
@@ -622,10 +655,10 @@ class ContextBuilder:
             # A parental PROFILE, not the `restricted` flag: plex.tv sets that for every Plex Home
             # account. Keying on it dropped ordinary managed users from every run — while the Users
             # page now lets you enable them and the docs promise they get a row. An account with a
-            # profile still gets none: Plex hides every collection from it, so a row is invisible.
+            # profile still gets none: Plex usually hides collections from it, so a row is invisible.
             #
             # `restriction_profile` is "" until the next user sync backfills it, so immediately after
-            # an upgrade a profiled account is briefly eligible. Harmless — it sees no collections
+            # an upgrade a profiled account is briefly eligible. Harmless — Plex refuses its filter
             # either way, and the next sync settles it.
             #
             # BOTH flags, matching `privacy.py`'s skip exactly. They come from different endpoints
@@ -733,12 +766,13 @@ class ContextBuilder:
             manage_shelf_order=bool(store.get("rows.manage_shelf_order")),
             # The `or` fallbacks below are safe only because the validators exclude the falsy
             # value: `min_history` is bounded 1-100, `recent_count` 1-25, `max_seeds` 5-100
-            # (api/settings.py). For the three fractions the fallback IS the falsy value, so a
-            # stored 0.0 survives. Correct by coincidence of the bounds rather than by construction
-            # — lower any of those floors to 0 and several settings start silently reading as their
+            # (api/settings.py). Where 0 IS a legal value — the two fractions, and `refresh_days`,
+            # where it means "frozen, never rebuilt" — the fallback is that same 0, so the owner's
+            # zero survives. Correct by coincidence of the bounds rather than by construction —
+            # lower any of those floors to 0 and several settings start silently reading as their
             # default instead of as the zero the owner chose.
             watched_pct=float(store.get("recommendations.watched_pct") or 0.0),
-            freshness=float(store.get("recommendations.freshness") or 0.0),
+            refresh_days=int(store.get("recommendations.refresh_days") or 0),
             recency=float(store.get("recommendations.recency") or 0.0),
             recent_count=int(store.get("recommendations.recent_count") or 10),
             max_seeds=int(store.get("recommendations.max_seeds") or 30),
@@ -805,7 +839,7 @@ class ContextBuilder:
                     watched_pct=collection.watched_pct,  # None -> inherit the global watched cap
                     rewatch=bool(collection.rewatch),
                     unstarted_only=bool(collection.unstarted_only),
-                    freshness=collection.freshness,  # None -> inherit the global freshness
+                    refresh_days=collection.refresh_days,  # None -> inherit the global cadence
                     recency=collection.recency,  # None -> inherit the global recency
                     recent_count=collection.recent_count,  # None -> inherit the global recent_count
                     max_seeds=collection.max_seeds,  # None -> inherit the global recommendations.max_seeds

@@ -28,7 +28,7 @@ function collection(patch: Partial<Collection> = {}): Collection {
     candidate_sources: [],
     library_keys: [],
     watched_pct: null,
-    freshness: null,
+    refresh_days: null,
     placement: "both",
     placement_friends: "both",
     pin_top: false,
@@ -89,19 +89,19 @@ describe("rowOverrides", () => {
     );
   });
 
-  it("badges a row's own freshness override, but not when it inherits the global one", () => {
-    expect(rowOverrides(collection({ freshness: 0 }), LIBRARIES)).toContain(
-      "Freshness: frozen",
+  it("badges a row's own cadence override, but not when it inherits the global one", () => {
+    expect(rowOverrides(collection({ refresh_days: 0 }), LIBRARIES)).toContain(
+      "Rebuilds: never",
     );
-    expect(rowOverrides(collection({ freshness: 0.5 }), LIBRARIES)).toContain(
-      "Freshness: 50%",
+    expect(rowOverrides(collection({ refresh_days: 7 }), LIBRARIES)).toContain(
+      "Rebuilds: every 7 days",
     );
-    expect(rowOverrides(collection({ freshness: 1 }), LIBRARIES)).toContain(
-      "Freshness: nightly",
+    expect(rowOverrides(collection({ refresh_days: 1 }), LIBRARIES)).toContain(
+      "Rebuilds: nightly",
     );
-    expect(rowOverrides(collection({ freshness: null }), LIBRARIES)).toEqual(
-      [],
-    );
+    expect(
+      rowOverrides(collection({ refresh_days: null }), LIBRARIES),
+    ).toEqual([]);
   });
 
   it("badges a narrowed placement and a pinned row, but not the default both/unpinned", () => {
@@ -153,7 +153,7 @@ describe("rowOverrides", () => {
         candidate_sources: ["trakt"],
         library_keys: ["2"],
         watched_pct: 0,
-        freshness: 1,
+        refresh_days: 1,
       }),
       LIBRARIES,
     );
@@ -161,7 +161,7 @@ describe("rowOverrides", () => {
       "Sources: Trakt",
       "Libraries: 4K Movies",
       "Watched: all fresh",
-      "Freshness: nightly",
+      "Rebuilds: nightly",
     ]);
   });
 });

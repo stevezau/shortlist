@@ -216,6 +216,144 @@ def _failed_jobs(session: Session) -> dict | None:
     }
 
 
+def _rows_we_cannot_hide(session: Session) -> dict | None:
+    """An account exists that Plex refuses a hide-list for, and it can see other people's rows.
+
+    Plex declines label restrictions on a managed account while a parental Restriction Profile is set.
+    Shortlist skipped those accounts on the assumption that they see no collections anyway — true of
+    `little_kid`, false of `older_kid` (measured on a real server, 2026-08-11). So for those accounts
+    nothing hid other people's rows and nothing said so.
+
+    Nothing in Shortlist can fix it: changing someone's parental profile is not ours to do, and there
+    is no other way to hide one collection from one account. The owner has exactly ONE remedy —
+    clearing the Restriction Profile — and this says so. Disabling the account is deliberately NOT
+    offered: it removes that person's own row, while the exposure is their view of everyone else's,
+    which needs the very filter Plex is refusing. NOT dismissable while it is true — it is a live
+    privacy exposure, not a preference.
+    """
+    from shortlist.server.db.models import Run
+
+    # The latest run that actually RECORDED a measurement — not merely the latest that finished. A run
+    # that failed early, was aborted, or never reached the privacy phase carries no `unhideable_rows`
+    # key at all; treating that as "{}" would let one bad run clear a real finding from the alert while
+    # the exposure is untouched. That silence is the thing this whole check exists to end.
+    run = next(
+        (
+            r
+            for r in session.query(Run).filter(Run.finished_at.isnot(None)).order_by(Run.finished_at.desc()).limit(50)
+            if "unhideable_rows" in (r.stats or {})
+        ),
+        None,
+    )
+    exposed = ((run.stats or {}).get("unhideable_rows") or {}) if run else {}
+    if not exposed:
+        return None
+
+    # One paragraph, no markup: the bell renders `body` as a single unformatted <p>. So the order has
+    # to carry the meaning — who, how much, why nobody here can fix it, what the owner does instead.
+    names = sorted(exposed)
+    if len(names) == 1:
+        who = names[0]
+        count = len(exposed[who])
+        title = f"{who} can see other people's rows"
+        lead = f"{who} can see {count} {'row that belongs' if count == 1 else 'rows that belong'} to other people."
+        fix = who
+    else:
+        who = f"{', '.join(names[:-1])} and {names[-1]}"
+        title = f"{len(names)} accounts can see other people's rows"
+        lead = f"{who} can see rows that belong to other people."
+        fix = "those accounts"
+    return {
+        "id": f"unhideable-rows-{run.id}",
+        "severity": "error",
+        "title": title,
+        "body": (
+            f"{lead} Plex won't let Shortlist hide anything from an account with a parental profile "
+            f"set, so this can't be fixed from here. Clear the Restriction Profile for {fix} in Plex "
+            "(Settings → Users & Sharing) and the normal privacy filter starts applying again."
+        ),
+        "action_url": "/users",
+        "action_label": "Open Users",
+        "dismissable": False,
+    }
+
+
+#: How many times one row must be put back, inside `_CONTENTION_WINDOW`, before we call it a fight.
+#: A settled shelf re-orders NOTHING — an ordering pass returns "already in place" and writes no event
+#: at all — so any repeat is already abnormal. Three is chosen to clear the one legitimate way a row
+#: moves more than once: it was delivered, then re-delivered under a new title (a rename, a
+#: `{top_seed}` row) within the window. Nothing benign moves the same row three times in a day.
+_CONTENTION_REPEATS = 3
+_CONTENTION_WINDOW = timedelta(days=1)
+
+
+def _shelf_contention(session: Session) -> dict | None:
+    """Something OUTSIDE Shortlist is reordering the Recommended shelf, and we keep undoing each other.
+
+    This cannot be detected from a single ordering pass, which is why it went unnoticed for weeks on
+    the maintainer's server: each pass moved its rows, re-read the shelf, confirmed the new order and
+    reported success. It was right. Ten minutes later another tool moved them back. `verified` answers
+    "did our write land", and the answer was yes every time — the question that matters is "did it
+    STAY", and only the next pass can answer it.
+
+    So the signal is repetition: the same row needing to be put back, over and over. A settled shelf
+    produces no ordering events whatsoever, and a genuine one-off (a new user's row placed for the
+    first time) moves each row exactly once. A row that moves three times in a day is being moved
+    against us.
+
+    Deliberately says "something else", never names a culprit as fact: Plex does not report who moved
+    a hub, so the tools listed in the body are the likely suspects, not a finding.
+    """
+    since = datetime.now(UTC) - _CONTENTION_WINDOW
+    events = (
+        session.query(Event)
+        .filter(Event.scope.in_(("shelf.order", "run.hub_order")), Event.ts >= since)
+        .order_by(Event.ts.desc())
+        .limit(500)
+        .all()
+    )
+    # library -> {row title -> how many separate passes had to move it}
+    per_library: dict[str, dict[str, int]] = {}
+    for event in events:
+        message = event.message if isinstance(event.message, dict) else {}
+        if message.get("dry_run"):
+            continue  # a preview moved nothing, so it is no evidence of anything
+        library = message.get("library") or "a library"
+        moved = message.get("moved")
+        if not isinstance(moved, list):
+            continue
+        counts = per_library.setdefault(library, {})
+        for title in moved:
+            counts[title] = counts.get(title, 0) + 1
+
+    contended = {library: max(counts.values()) for library, counts in per_library.items() if counts}
+    contended = {lib: n for lib, n in contended.items() if n >= _CONTENTION_REPEATS}
+    if not contended:
+        return None
+
+    names = sorted(contended)
+    worst = max(contended.values())
+    where = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+    return {
+        # Keyed to the day so dismissing it hides today's, and a fight still running tomorrow says so
+        # again. Not keyed to the count, which changes every half hour and would re-surface constantly.
+        "id": f"shelf-contention-{datetime.now(UTC).date().isoformat()}",
+        "severity": "warning",
+        "title": f"Something else is reordering your {where} shelf",
+        "body": (
+            f"Shortlist has had to put the same row back on the Recommended shelf {worst} times in the "
+            f"last day in {where}, so something else is moving it. This is almost always another tool "
+            "that manages Plex recommendations — Kometa, agregarr, Plex-Meta-Manager. Tell it to leave "
+            "collections labelled shortlist_* alone, or turn off 'Let Shortlist order the Recommended "
+            "shelf' here so Shortlist stops competing with it. Your rows are still built, delivered "
+            "and kept private either way — only their position on the shelf is affected."
+        ),
+        "action_url": "/settings#placement",
+        "action_label": "Shelf settings",
+        "dismissable": True,
+    }
+
+
 def build_notifications(session: Session, store: SettingsStore, current_version: str) -> list[dict]:
     """Every currently-firing notification the owner hasn't dismissed, most severe first. Dismissal is
     by id, and each dismissable id encodes its state (the run id, the version), so a NEW failure or a
@@ -227,7 +365,9 @@ def build_notifications(session: Session, store: SettingsStore, current_version:
         _failed_jobs(session),
         _mdblist_quota(session),
         _recent_service_errors(session),
+        _rows_we_cannot_hide(session),
         _owner_sees_all_rows(session),
+        _shelf_contention(session),
     ]
     dismissed = set(store.get(DISMISSED_KEY) or [])
     order = {"error": 0, "warning": 1, "info": 2}

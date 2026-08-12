@@ -1076,3 +1076,46 @@ class TestTheTraceReportsRealSearchCounts:
         assert entry["searched"]["movie"] == len(seeds), (
             f"the trace under-reported searches: said {entry['searched']} for {len(seeds)} seeds"
         )
+
+
+class TestTheWebSourceCanFillTheLargestRow:
+    """`_LLM_WEB_K` was a flat 20 while a row may be 40 (`MAX_ROW_SIZE`).
+
+    It only bit in a non-default setup — `llm_web` enabled ALONE, on a row above 20 — but there it was
+    the same shape as every other finding in this sweep: an invisible number quietly capping a visible
+    one, with the row simply coming up short and nothing saying why.
+    """
+
+    def test_it_asks_for_enough_to_fill_the_largest_legal_row(self):
+        from shortlist.engine.candidates import _LLM_WEB_K
+        from shortlist.engine.models import MAX_ROW_SIZE
+
+        assert _LLM_WEB_K >= MAX_ROW_SIZE, "a row of MAX_ROW_SIZE must be fillable from this source alone"
+
+    def test_the_ask_reaches_the_provider(self, monkeypatch):
+        """The wiring, not the constant: `k` must actually arrive at the completion. It is asked for
+        in ONE call, so this is output tokens for extra titles — never extra requests."""
+        from shortlist.engine import candidates as candidates_mod
+        from shortlist.engine.models import MAX_ROW_SIZE
+
+        seen: dict[str, int] = {}
+
+        class Curator:
+            supports_native_web_search = True
+            last_tokens = 0
+
+            def recommend_web(self, profile, seeds, k):
+                seen["k"] = k
+                return []
+
+        candidates_mod.web_recommendations(
+            Curator(),
+            None,
+            "native",
+            object(),
+            [],
+            candidates_mod._LLM_WEB_K,
+            candidates_mod.GatherStats(),
+        )
+
+        assert seen["k"] >= MAX_ROW_SIZE

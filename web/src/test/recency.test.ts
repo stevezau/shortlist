@@ -116,7 +116,7 @@ describe("recencyDescription", () => {
 });
 
 describe("recencyBadgeLabel", () => {
-  it("reads as a release-date preference, never as freshness", () => {
+  it("reads as a release-date preference, never as a rebuild cadence", () => {
     // The two sit two blocks apart in the row editor; a badge saying "Fresh" would collapse them.
     expect(recencyBadgeLabel(0.8)).toMatch(/recent/i);
     expect(recencyBadgeLabel(0.8)).not.toMatch(/fresh/i);

@@ -68,6 +68,26 @@ faster than a list of questions: _"open /issue, switch the checks on, type the t
   didn't add), and confirm Plex Media Server is ≥ 1.43.2.10687 (older builds ignore the exclusion).
 - **Rows not appearing for anyone** — promoted rows land in Plex's hub order; users may
   need to scroll, or pin the row via "Manage Home Screen" on their client.
+- **Rows keep drifting to the bottom of the Recommended shelf** — something else on your server is
+  reordering that shelf. It is a shared, server-wide list, and any tool that manages Plex
+  recommendations (Kometa, agregarr, Plex-Meta-Manager) will move Shortlist's rows along with
+  everything else. Shortlist re-applies your chosen position at the end of every run, on every
+  privacy sync, and whenever you press **Check and fix rows on Plex** — but if the other tool runs
+  more often than that, or right after, it wins and the rows move back.
+
+  Shortlist notices this on its own: when the same row has to be put back three or more times in a
+  day, a **"Something else is reordering your shelf"** alert appears in the bell. You have two ways
+  out, and the right one depends on which tool you want in charge:
+  1. Tell the other tool to leave Shortlist's collections alone. Look for a per-collection
+     "active"/"managed" switch or an exclusion list, and exclude everything labeled `shortlist_*`.
+     Worth checking whether it can exclude by _label or pattern_ rather than per collection — a
+     per-collection exclusion has to be redone every time you add a Plex user, because that creates
+     a new row the other tool will discover and start managing.
+  2. Let the other tool own the shelf: Settings → Row placement → turn off **Let Shortlist order the
+     Recommended shelf**. Shortlist stops touching the order entirely and the two stop fighting.
+     Your rows are still built, delivered and kept private exactly as before — only their position
+     on the shelf is handed over.
+
 - **A watched title keeps getting recommended** — run the **"They keep seeing something they've
   watched"** check on the Have an issue? page; it names the cause. The three real ones, in order of
   how often they turn out to be it:
@@ -79,7 +99,7 @@ faster than a list of questions: _"open /issue, switch the checks on, type the t
   3. _Timing._ The watched set is read per run, so a title marked watched after the last run stays
      eligible until the next one. **Jobs → Sync history** re-reads everyone's set immediately
      (writes nothing to Plex); any run after that drops it. Note also that a row only re-picks its
-     titles on a refresh night — at the default freshness, roughly weekly — so a change can take
+     titles on a rebuild night — every 8 days by default — so a change can take
      until then to show. The **"When does each row next rebuild?"** check gives the date.
 
   Before 1.2 there was a fourth cause: a 0% row excluded only shows you had _finished_, so one you

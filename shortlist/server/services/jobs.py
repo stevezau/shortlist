@@ -141,8 +141,10 @@ CATALOG: tuple[JobKind, ...] = (
         description=(
             "Looks at every collection Shortlist has put on your Plex server and puts back the ones "
             "that ended up in the wrong place — somebody else's row left sitting on YOUR Home screen, "
-            "or a paused person's row that never came down. Press Check now and it tells you what it "
-            "would change without touching anything; the Fix button then makes those changes."
+            "a paused person's row that never came down, or rows that drifted to the bottom of a "
+            "library's Recommended shelf instead of sitting where you asked for them. Press Check now "
+            "and it tells you what it would change without touching anything; the Fix button then "
+            "makes those changes."
             "\n\nIt can also DELETE a collection, which is the one thing here you cannot undo. A "
             "collection labelled for somebody Shortlist no longer knows about can't be hidden from "
             "anyone, so the only way to clear it out of your Collections tab is to remove it. Only "
@@ -169,9 +171,12 @@ CATALOG: tuple[JobKind, ...] = (
             "Goes through every Plex account you share with and updates the filter that keeps other "
             "people's rows out of sight. That filter is the whole privacy system: each account is "
             "told to ignore the label Shortlist puts on everybody else's collections."
-            "\n\nIt only ever hides. It builds no rows, delivers nothing, puts nothing on anyone's "
-            "Home screen and deletes nothing, so the worst it can do is make your server more "
-            "private — which is why it is safe to press at any time."
+            "\n\nIt builds no rows, delivers nothing, puts nothing on anyone's Home screen and deletes "
+            "nothing, so the worst it can do to who-sees-what is make your server more private — which "
+            "is why it is safe to press at any time."
+            "\n\nThe one other thing it does is cosmetic: it puts your rows back where you asked for "
+            "them in each library's Recommended shelf, if something has shuffled them. That changes "
+            "the order they appear in, never who can see them."
             "\n\nRuns at 05:15 by default, after the two syncs above, so it works from a list of "
             "people that has just been refreshed."
         ),
@@ -352,7 +357,9 @@ async def queue_privacy_sync(state, reason: str) -> None:
     The one entry point for "something changed and somebody's `label!=` excludes are now wrong".
     `privacy.sync` is `engine_run(ctx, [])`: it merges every account's filter and creates, promotes
     and delivers nothing, so it can only ever make the server MORE private (plex-safety rule 1) —
-    which is what makes it safe to fire straight from a mutation handler.
+    which is what makes it safe to fire straight from a mutation handler. It does also reposition our
+    hubs on the Recommended shelf, which is a Plex WRITE but a position-only one: it cannot promote,
+    unhide, or change who sees anything.
     """
     enqueue(state.sessions, "privacy.sync", {"reason": reason})
     await drain_now(state, reason)
@@ -742,7 +749,7 @@ def _sync_check(state, payload: dict) -> dict:
     own-home is monotonically private, so this needs no privacy gate.
     """
     from shortlist.engine.models import RunReport
-    from shortlist.engine.pipeline import _converge_phase
+    from shortlist.engine.pipeline import _build_indexes, _converge_phase, _order_phase
 
     report = RunReport(started_at=datetime.now(UTC))
     requested = payload.get("dry_run", False)
@@ -761,6 +768,14 @@ def _sync_check(state, payload: dict) -> dict:
     # anything: `dry_run` is True only when `ctx.config.dry_run` is (it is one of the two terms it is
     # OR'd from), and converge checks that flag before every delete, logging the would-be removal.
     _converge_phase(ctx, set(), report, may_delete=confirmed or dry_run)
+    # A row stranded at the bottom of the Recommended shelf IS a row "in the wrong place", which is
+    # what this button says it fixes — so put the shelf right here too, not only on a full run. It is
+    # cosmetic and privacy-neutral (positions only, on hubs already promoted and browse-hidden), so it
+    # needs no privacy gate and `_apply_order` swallows its own failures. `_build_indexes` with no
+    # users names the libraries rows live in without reading a single item inside them.
+    _build_indexes(ctx, [], ctx.plex.sections())
+    _order_phase(ctx, report)
+    _audit_hub_orderings(state, report, dry_run)
     # Deletions are reported SEPARATELY and named first. Folding them into `fixed` would hide the one
     # irreversible thing this does behind a number, in the very preview an operator reads to decide
     # whether to run it for real.
@@ -772,6 +787,9 @@ def _sync_check(state, payload: dict) -> dict:
             if confirmed and not dry_run
             else f"; {len(removed)} orphaned collection(s) to remove"
         )
+    if report.hub_orderings:
+        libraries = ", ".join(entry.get("library", "?") for entry in report.hub_orderings)
+        detail += f"; {'would reposition' if dry_run else 'repositioned'} rows on the shelf in {libraries}"
     return {"fixed": report.converged, "orphans": removed, "detail": detail}
 
 
@@ -799,6 +817,57 @@ def _require_filters_merged(report, what: str) -> None:
         raise RuntimeError(f"share filters were not merged, so {what} is unsafe: {why}")
 
 
+def _audit_hub_orderings(state, report, dry_run: bool) -> None:
+    """Audit each library whose Recommended-shelf order we moved (plex-safety rule 10).
+
+    `run_persistence._emit_hub_ordering_events` only fires for a persisted RUN, and the two handlers
+    that now order — `privacy.sync` and `sync.check` — persist no run. Without this the `verified: False`
+    record exists only on the one path that never needed it, and a shelf we lost to another tool would
+    go unrecorded on both paths this was fixed for.
+    """
+    for entry in report.hub_orderings:
+        verified = entry.get("verified")
+        write_audit(
+            state,
+            "shelf.order",
+            "warning" if verified is False else "info",
+            library=entry.get("library"),
+            anchor=entry.get("anchor"),
+            moved=entry.get("moved", []),
+            verified=verified,
+            dry_run=dry_run,
+        )
+    _audit_agregarr_mirrors(state, report, dry_run)
+
+
+def _audit_agregarr_mirrors(state, report, dry_run: bool) -> None:
+    """Audit what we stored in a co-managing agregarr (plex-safety rule 10).
+
+    Recorded even when nothing was written: "agregarr already agreed" is what distinguishes a shelf
+    that moved because agregarr fought us from one that moved for some other reason, and only the
+    audit can answer that after the fact.
+    """
+    for entry in report.agregarr_mirrors:
+        write_audit(
+            state,
+            "shelf.agregarr",
+            "warning" if not entry.get("ok") else "info",
+            library=entry.get("library"),
+            changed=entry.get("changed"),
+            items=entry.get("items"),
+            moved=entry.get("moved"),
+            rows_placed=entry.get("rows_placed"),
+            rows_contiguous=entry.get("rows_contiguous"),
+            unknown_to_agregarr=entry.get("unknown_to_agregarr"),
+            unjoinable=entry.get("unjoinable"),
+            order_before=entry.get("order_before"),
+            order_after=entry.get("order_after"),
+            summary=entry.get("summary"),
+            error=entry.get("error"),
+            dry_run=dry_run or bool(entry.get("dry_run")),
+        )
+
+
 @handler("privacy.sync")
 def _privacy_sync(state, payload: dict) -> dict:
     """Merge every account's share filter without building anything.
@@ -811,6 +880,12 @@ def _privacy_sync(state, payload: dict) -> dict:
 
     That is what makes it safe to fire from a mutation (a user disabled, a
     shared row's audience narrowed) rather than waiting for the nightly run.
+
+    It DOES write one more thing to Plex: the Recommended-shelf position of our own hubs. That is a
+    real PUT, so it is named here rather than left to be discovered — but it is position-only, on hubs
+    already promoted and already covered by the excludes this pass merges, so it cannot make anything
+    visible to anyone. Before 2026-08-12 this pass ordered nothing at all, which is why a shelf left in
+    pieces could not be repaired by any job.
     """
     from shortlist.engine.pipeline import run as engine_run
 
@@ -819,6 +894,7 @@ def _privacy_sync(state, payload: dict) -> dict:
     dry_run = ctx.config.dry_run or requested
     report = engine_run(ctx, [])
     _require_filters_merged(report, "reporting the filters as merged")
+    _audit_hub_orderings(state, report, dry_run)
     swept = sum(len(titles) for titles in report.swept_rows.values())
     # The reason is carried through to the detail line so the Jobs page answers "why did this fire?"
     # — "someone was removed from a shared row" reads very differently from a nightly housekeeping
@@ -829,6 +905,13 @@ def _privacy_sync(state, payload: dict) -> dict:
         detail += f" after {reason}"
     if swept:
         detail += f"; swept {swept} unhidable row(s)"
+    # This job repositions rows on the shelf now, and its own description promises it does. Reported
+    # here in the same words `sync.check` uses, so the two jobs do not describe the same write
+    # differently — the audit event is written either way (`_audit_hub_orderings`, rule 10); this is
+    # the line an operator actually reads on the Jobs page.
+    if report.hub_orderings:
+        libraries = ", ".join(entry.get("library", "?") for entry in report.hub_orderings)
+        detail += f"; {'would reposition' if dry_run else 'repositioned'} rows on the shelf in {libraries}"
     return {"swept": swept, "converged": report.converged, "reason": reason, "dry_run": dry_run, "detail": detail}
 
 

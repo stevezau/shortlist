@@ -24,6 +24,8 @@ function user(id: number, username: string): User {
     avatar_url: "",
     plex_account_id: 0,
     restriction_profile: "",
+    unhidden_rows: 0,
+    departed: false,
     preview_titles: [],
     prefs: {},
   };

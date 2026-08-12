@@ -46,7 +46,7 @@ function collection(patch: Partial<Collection> = {}): Collection {
     candidate_sources: [],
     library_keys: [],
     watched_pct: null,
-    freshness: null,
+    refresh_days: null,
     placement: "both",
     pin_top: false,
     hub_anchor: {},

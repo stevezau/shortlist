@@ -358,6 +358,11 @@ def sync_user_restrictions(
     shared_labels: dict[str, set[int] | None] | None = None,
     hide_all_shared: bool = False,
     collections_known: bool = False,
+    departed_slugs: set[str] | None = None,
+    # Slugs whose collection is still on the server according to the TITLE MARKER — the second,
+    # independent source `dead_private` needs before it removes another account's private exclude
+    # (rule 4). None = "we could not read it", which never licenses a removal.
+    marker_present_slugs: set[str] | None = None,
     dry_run: bool = False,
 ) -> dict[str, tuple[str, str]] | None:
     """Merge the desired shortlist excludes into one user's share filters.
@@ -391,9 +396,14 @@ def sync_user_restrictions(
         # label restrictions outright while one is applied — its own docs: "For Managed users, the
         # restriction profile must be set to None if you wish to edit Rating and Label restrictions on
         # the library types" (support.plex.tv/articles/204232573-restricting-the-shares/). Live-confirmed
-        # 2026-07-29: the write comes back 422, and the account sees ZERO collections of any kind
-        # anyway, so there is nothing for an exclude to hide. Skipping is both necessary and harmless,
-        # and it is what keeps one such account from blocking promotion for the whole server (#14).
+        # 2026-07-29: the write comes back 422. Skipping is therefore NECESSARY — and it is what keeps
+        # one such account from blocking promotion for the whole server (#14).
+        #
+        # It is not, however, HARMLESS, which this comment claimed for a year: "the account sees ZERO
+        # collections of any kind anyway". True of `little_kid`, FALSE of `older_kid` — one listed
+        # three collections on a real server (2026-08-11, #76). Since Plex refuses the filter, nothing
+        # here can hide them; what the run does instead is MEASURE it (`unhidden_rows_visible_to`, and
+        # `pipeline._record_unhideable`) and tell the owner, who has two fixes we do not.
         #
         # Gated on the PROFILE, not on `restricted` alone. `/api/users` sets `restricted="1"` for every
         # managed account, preset or not — so keying on it also skipped managed users with NO age
@@ -404,8 +414,8 @@ def sync_user_restrictions(
         # enforces a relationship, so a `restricted="0"` account that somehow reports a profile keeps
         # its excludes rather than silently losing them.
         logger.debug(
-            "{}: managed account with a '{}' profile — Plex refuses label filters for these, and it "
-            "sees no collections regardless",
+            "{}: managed account with a '{}' profile — Plex refuses label filters for these, so it "
+            "is left out of them; what it can actually see is measured separately (#76)",
             user.username,
             remote.restriction_profile,
         )
@@ -419,11 +429,41 @@ def sync_user_restrictions(
         hide_all_shared=hide_all_shared,
     )
     # Converge SHARED-row excludes: drop any shortlist SHARED-row exclude the account should no longer
-    # have (re-enabled after a disable, or added to a subset row's audience). This is the ONE place an
-    # exclude is ever removed — un-hiding a *shared* row only ever reveals a public or in-audience row,
-    # never a private one. Private-row excludes are NEVER pruned (removing one is the leak direction),
-    # so they stay union-only and fail-safe. Foreign filters are untouched (both primitives
-    # byte-preserve them).
+    # have (re-enabled after a disable, or added to a subset row's audience). Un-hiding a *shared* row
+    # only ever reveals a public or in-audience row, so one gate is enough there.
+    #
+    # A PRIVATE-row exclude is the leak direction, and used to be exempt from pruning entirely for that
+    # reason. It no longer is — but only under THREE guards, because a departed person's exclude
+    # otherwise sits in every account's filter for ever (a real server reached 990-character filter
+    # strings, growing by one entry per departure). All three must agree the row is gone:
+    #
+    #   1. The SERVER, BY LABEL: a complete, non-empty enumeration in which no collection carries the
+    #      label (`existing_lower`, from `collection.labels`).
+    #   2. The SERVER, BY MARKER: no collection whose invisible title marker encodes that person's
+    #      account (`marker_present_slugs`, from `PlexClient.marked_account_ids`).
+    #   3. OUR OWN DATABASE: `departed_slugs` — people plex.tv has stopped listing, or whom the owner
+    #      has removed. POSITIVE evidence that this person is gone.
+    #
+    # 1 and 2 are two DIFFERENT reads of the same server, and that is the point. Rule 4: a label
+    # re-read that succeeds carrying no `<Label>` is indistinguishable from a genuinely unlabelled row,
+    # so guard 1 alone can be satisfied by a read that simply failed to see anything. The marker rides
+    # in the title, which the collections listing returns inline, so the two fail independently. Guard
+    # 2 was added 2026-08-12 after a review demonstrated the single-source version removing a live
+    # person's exclude from another account's filter on one label-less read.
+    #
+    # (In the assembled pipeline a single bad read was already survivable — `stored_labels` is a union
+    # of two enumerations and `sweep_broken_rows` deletes marker-carrying label-less rows first — but
+    # that was accidental, undocumented and one refactor away from being lost. This makes it explicit.)
+    #
+    # Guard 2 is deliberately an ASSERTION that someone left, not the ABSENCE of them from tonight's
+    # user list. The first version of this was the latter, and it was unsound: `engine_run(ctx, [])`
+    # is a real and frequent call — every `privacy.sync` job and `user.restore` — and a scoped or
+    # paused run is narrower still, so "not in tonight's users" is true of almost everybody almost all
+    # the time. That reduced the pair back to guard 1 alone, which is the one the code already says can
+    # lie. Absence of scope proves nothing; departure is a fact we recorded. `departed_slugs=None`
+    # means the caller could not say — and not knowing never licenses a removal.
+    #
+    # Foreign filters are untouched (both primitives byte-preserve them).
     #
     # EVERY removal below is gated on `existing_lower is not None` — a complete, non-empty enumeration
     # of what is on the server. `wanted` is derived from that same enumeration, so a PMS that answers
@@ -470,6 +510,45 @@ def sync_user_restrictions(
             )
             if dead_shared:
                 stale_shared = True
+            # A PRIVATE row's exclude whose collection is gone AND whose owner is nobody we still
+            # build for. This is the ONE prune that removes another account's private-row exclude, so
+            # it is the one pointed at the leak direction: get it wrong and a live row becomes visible
+            # to everyone, with no Privacy Check left to notice (removed 2026-07-16).
+            #
+            # It needs TWO INDEPENDENT sources agreeing the collection is gone, because rule 4 says one
+            # is not enough. `existing_lower` comes from `collection.labels`, i.e. plexapi's silent
+            # per-collection re-read, and a re-read that SUCCEEDS carrying no `<Label>` is
+            # indistinguishable from a genuinely unlabelled row — so on its own it can license
+            # un-hiding a row that is still there. `marker_present_slugs` is the second source: the
+            # 64-zero-width-char title marker, which arrives inline in the collections listing and is
+            # therefore not the read that can come back empty (`PlexClient.marked_account_ids`).
+            #
+            # `wanted_lower` is NOT a third source and never was: `wanted` is
+            # `desired_excludes(own_label, stored_labels, ...)`, built from the same `stored_labels`
+            # that produced `existing_lower`, so for another account's private label it is strictly
+            # implied by the `existing_lower` clause. It is kept because it costs nothing and reads as
+            # intent, not because it is independent — the comment here used to claim it was.
+            #
+            # None means "we could not read it", and not knowing must never license a removal — the
+            # same rule `existing_lower` follows.
+            #
+            # Compared with `_same_value` (unquote + casefold) like every other comparison in this
+            # module, NOT raw. Plex Web writes filter values percent-encoded, so the same label reaches
+            # us written both ways — and this is the only prune whose condition is NON-membership, so a
+            # raw compare that fails to recognise an encoded live label licenses its removal instead of
+            # preventing it. The slug is taken from the decoded label for the same reason.
+            decoded = unquote(lbl)
+            decoded_slug = decoded[len(label_prefix) + 1 :].lower()
+            dead_private = (
+                existing_lower is not None
+                and departed_slugs is not None
+                and marker_present_slugs is not None
+                and not decoded.lower().startswith(SHARED_LABEL_PREFIX.lower())
+                and not any(_same_value(lbl, e) for e in existing_lower)
+                and not any(_same_value(lbl, w) for w in wanted_lower)
+                and decoded_slug not in {m.lower() for m in marker_present_slugs}
+                and decoded_slug in {d.lower() for d in departed_slugs}
+            )
             # An account's OWN label must never sit in its own filter — that hides a person from
             # their own row permanently, because private-row excludes are otherwise union-only.
             # Reachable: delete a user's DB row while their collection still exists on Plex, so
@@ -477,7 +556,7 @@ def sync_user_restrictions(
             # re-adding them later never undid it. Un-hiding someone's OWN row cannot leak to anyone
             # else — the same reasoning that makes the shared case safe to prune.
             excluded_from_self = bool(own_label) and lbl.lower() == (own_label or "").lower()
-            if stale_shared or excluded_from_self:
+            if stale_shared or excluded_from_self or dead_private:
                 prunable.add(lbl)
 
     desired_fields = {}
@@ -581,3 +660,61 @@ def restore_user_restrictions(
             raise RuntimeError(f"{snapshot.username}: restore mismatch on {fieldname}")
     logger.info("{}: filters restored from snapshot", snapshot.username)
     return True
+
+
+def unhidden_rows_visible_to(pms_as_user, owned: dict[str, object], user_slug: str) -> list[int]:
+    """ratingKeys of OUR per-person rows this account can see that are not its own.
+
+    Answers, by measurement, the question the skip above only ever assumed: when Plex refuses a label
+    filter for an account, can that account actually see anyone else's row?
+
+    The justification for skipping profiled managed accounts is that they "see zero collections of any
+    kind anyway, so there is nothing for an exclude to hide". That was confirmed against a
+    ``little_kid`` account and generalised to every profile. Measured on a real server 2026-08-11, an
+    ``older_kid`` account saw three collections — so for that account we neither hid other people's
+    rows nor reported that we could not. Whether one actually leaks then depends on whether the row's
+    contents survive the parental content filter, which is luck rather than a guarantee.
+
+    Identity is the ratingKey, never the title: every row is named from the same template
+    (``✨ {library} Picked for You``) and tells them apart only by an invisible marker, so a title
+    comparison reports a person's OWN row as somebody else's. That mistake was made while
+    investigating this, which is why it is spelled out here.
+
+    Args:
+        pms_as_user: A PMS client authenticated AS the account under test — what it can see, not what
+            the owner can.
+        owned: ``PlexClient.owned_collections()``, label-slug -> row with ``rating_keys``. The FRESH
+            server read the privacy phase already performs, deliberately not the delivery ledger: the
+            ledger is loaded when the run's context is built, so on a first run it is empty, and an
+            empty set of ours makes every account read as clean — the exact silence this exists to
+            break.
+        user_slug: Whose account this is, so their own rows are not reported against them.
+
+    Returns:
+        Sorted ratingKeys of other people's rows visible to this account. Empty means genuinely clean.
+
+    Raises:
+        Whatever the PMS read raises. A failure must NOT read as "nothing visible" — an empty answer
+        from a failed read is the shape plex-safety rule 4 exists to refuse.
+    """
+    shared_marker = SHARED_LABEL_PREFIX[len(LABEL_PREFIX) + 1 :].lower()  # "_shared_" -> what the slug keeps
+    ours: set[int] = set()
+    theirs: set[int] = set()
+    for slug, row in owned.items():
+        # A shared row is one collection everybody is meant to see, subject to its own audience — not
+        # an exposure. Including it would fire this on every server that runs one.
+        if slug.lower().startswith(shared_marker):
+            continue
+        keys = {int(k) for k in getattr(row, "rating_keys", ())}
+        ours |= keys
+        if slug.lower() == user_slug.lower():
+            theirs |= keys
+    if not ours:
+        return []
+    visible: set[int] = set()
+    for section in pms_as_user.sections():
+        for collection in pms_as_user._section_collections(section):
+            key = getattr(collection, "rating_key", None) or getattr(collection, "ratingKey", None)
+            if key is not None:
+                visible.add(int(key))
+    return sorted((ours & visible) - theirs)

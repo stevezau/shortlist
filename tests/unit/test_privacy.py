@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
@@ -19,6 +21,7 @@ from shortlist.engine.privacy import (
     shortlist_labels_in,
     summarise_filter_diff,
     sync_user_restrictions,
+    unhidden_rows_visible_to,
 )
 from tests.conftest import make_profile, plextv_user
 
@@ -879,7 +882,18 @@ class TestDeadSharedRowExcludesArePruned:
 
         return UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED, slug="sarah")
 
-    def _sync(self, mock_plextv, *, stored, collections_known, filters):
+    def _sync(
+        self,
+        mock_plextv,
+        *,
+        stored,
+        collections_known,
+        filters,
+        departed_slugs=None,
+        # "The marker read succeeded and found nobody still present" — the default the pruning cases
+        # want. Passing None instead means "we could not read it", which blocks every private prune.
+        marker_present_slugs=frozenset(),
+    ):
         from shortlist.engine.privacy import sync_user_restrictions
         from tests.conftest import MemorySnapshotStore, plextv_user
 
@@ -892,6 +906,8 @@ class TestDeadSharedRowExcludesArePruned:
             own_label="Shortlist_sarah",
             shared_labels={},  # the row is no longer declared shared — that IS the scenario
             collections_known=collections_known,
+            departed_slugs=departed_slugs,
+            marker_present_slugs=marker_present_slugs,
         )
 
     def test_a_dead_shared_label_is_removed_once_we_know_it_is_gone(self, mock_plextv):
@@ -934,18 +950,122 @@ class TestDeadSharedRowExcludesArePruned:
         after = (written or {}).get("filterMovies", ("", "label!=shortlist__shared_popular"))[1]
         assert "shortlist__shared_popular" in after
 
-    def test_a_private_rows_exclude_is_never_pruned_even_when_its_collection_is_gone(self, mock_plextv):
-        """Only SHARED labels. A private row's exclude stays union-only: removing one is the leak
-        direction, and a missing collection may just be a row that failed to build tonight."""
+    def test_a_private_exclude_is_kept_unless_our_own_records_say_that_person_LEFT(self, mock_plextv):
+        """The leak direction, and the reason this needs TWO independent guards rather than one. A
+        missing collection may simply be a row that failed to build tonight — or a section that
+        answered 200 with nothing while really holding rows. Either way, while Shortlist's own records
+        say an ACTIVE person owns that label, the exclude is the only thing hiding their row and no
+        branch may take it away."""
         written = self._sync(
             mock_plextv,
             stored={"sarah": "Shortlist_sarah"},
             collections_known=True,
             filters={"filterMovies": "label!=Shortlist_canary"},
+            departed_slugs=set(),  # nobody has left, whatever the server said
         )
 
         after = (written or {}).get("filterMovies", ("", "label!=Shortlist_canary"))[1]
         assert "Shortlist_canary" in after
+
+    def test_a_private_exclude_goes_once_the_row_AND_its_owner_are_both_gone(self, mock_plextv):
+        """Both sources agree: no collection on the server carries the label, and nobody active owns
+        it. Nothing is left to reveal, so the exclude is dead weight — and dead weight that grows by
+        one entry per departure, on every account, for ever (a real server was at 990 characters)."""
+        written = self._sync(
+            mock_plextv,
+            stored={"sarah": "Shortlist_sarah"},
+            collections_known=True,
+            # NOT sarah's own label here: this account IS sarah, and an account's own label in its
+            # own filter is pruned by a different rule entirely (`excluded_from_self`), which would
+            # make this pass for the wrong reason.
+            filters={"filterMovies": "label!=Shortlist_mike,Shortlist_departed"},
+            departed_slugs={"departed"},  # our own records say this person left Plex
+        )
+
+        assert written is not None
+        after = written["filterMovies"][1]
+        assert "Shortlist_departed" not in after
+        assert "Shortlist_mike" in after, "a live person's exclude is untouched"
+
+    def test_a_userless_run_prunes_nothing_however_dead_the_label_looks(self, mock_plextv):
+        """The shape the first version of this guard got wrong. `engine_run(ctx, [])` is a REAL and
+        frequent call — every `privacy.sync` job and `user.restore` uses it (plex-safety rule 1 requires
+        such a run to still sweep and merge). The first guard was "this slug is not among tonight's
+        users", which such a run satisfies for EVERYBODY at once, leaving a partial PMS read as the only
+        thing between a live private row and having its exclude deleted from all 47 accounts.
+
+        Departure is positive evidence from our own database, so an empty user list proves nothing and
+        prunes nothing."""
+        written = self._sync(
+            mock_plextv,
+            stored={"sarah": "Shortlist_sarah"},
+            collections_known=True,
+            filters={"filterMovies": "label!=Shortlist_bob,Shortlist_mike"},
+            departed_slugs=set(),  # a userless run knows of no departures
+        )
+
+        after = (written or {}).get("filterMovies", ("", "label!=Shortlist_bob,Shortlist_mike"))[1]
+        assert "Shortlist_bob" in after
+        assert "Shortlist_mike" in after
+
+    def test_a_paused_persons_exclude_survives_a_partial_enumeration(self, mock_plextv):
+        """A paused or out-of-scope person is absent from tonight's user list but has NOT left, and
+        their collection may simply sit in a library this read missed. Their exclude is the only thing
+        hiding their row."""
+        written = self._sync(
+            mock_plextv,
+            stored={"sarah": "Shortlist_sarah"},  # a partial read: the other library is missing
+            collections_known=True,
+            filters={"filterMovies": "label!=Shortlist_paused"},
+            departed_slugs={"someone_else"},
+        )
+
+        after = (written or {}).get("filterMovies", ("", "label!=Shortlist_paused"))[1]
+        assert "Shortlist_paused" in after
+
+    def test_a_percent_encoded_label_for_a_live_row_is_never_pruned(self, mock_plextv):
+        """Plex Web writes filter values percent-encoded, so the same label reaches us both ways. Every
+        other comparison here goes through `_same_value` (unquote + casefold); a raw compare would make
+        an encoded LIVE label look absent — and this is the one prune whose condition is non-membership,
+        so a mismatch licenses removal instead of preventing it."""
+        written = self._sync(
+            mock_plextv,
+            stored={"sarah": "Shortlist_sarah", "bob": "Shortlist_bob"},
+            collections_known=True,
+            filters={"filterMovies": "label!=shortlist%5Fbob"},
+            departed_slugs={"someone_else"},
+        )
+
+        after = (written or {}).get("filterMovies", ("", "label!=shortlist%5Fbob"))[1]
+        assert "shortlist%5Fbob" in after, "bob's row is live — his exclude must survive in any encoding"
+
+    def test_not_knowing_who_departed_prunes_no_private_exclude(self, mock_plextv):
+        """`departed_slugs=None` means the caller could not say. Not knowing must never license the
+        removal — the same rule the enumeration gate already follows."""
+        written = self._sync(
+            mock_plextv,
+            stored={"sarah": "Shortlist_sarah"},
+            collections_known=True,
+            filters={"filterMovies": "label!=Shortlist_departed"},
+            departed_slugs=None,
+        )
+
+        after = (written or {}).get("filterMovies", ("", "label!=Shortlist_departed"))[1]
+        assert "Shortlist_departed" in after
+
+    def test_a_failed_enumeration_prunes_no_private_exclude_however_dead_it_looks(self, mock_plextv):
+        """The second guard does not replace the first. Both must agree, so an unreadable server keeps
+        every private exclude even for a slug nobody owns."""
+        written = self._sync(
+            mock_plextv,
+            stored={},
+            collections_known=False,
+            filters={"filterMovies": "label!=Shortlist_departed"},
+            departed_slugs={"departed"},
+        )
+
+        after = (written or {}).get("filterMovies", ("", "label!=Shortlist_departed"))[1]
+        assert "Shortlist_departed" in after
 
     def test_an_empty_but_successful_read_prunes_nothing(self, mock_plextv):
         """The exact hole the first version had. A PMS mid library-index rebuild answers 200 with no
@@ -982,3 +1102,145 @@ class TestDeadSharedRowExcludesArePruned:
 
         after = (written or {}).get("filterMovies", ("", "label!=shortlist__shared_popular"))[1]
         assert "shortlist__shared_popular" in after
+
+
+class TestRowsWeCannotHide:
+    """Plex refuses label filters on a managed account with a parental profile, so those accounts get
+    no excludes. The code skipped them on the stated grounds that they "see zero collections anyway".
+
+    Measured on a real server 2026-08-11: a `little_kid` account does see zero — but an `older_kid`
+    account saw three. The assumption was generalised from the strictest profile to all of them, so
+    for the others we neither hid the rows nor said we hadn't. This finds out instead of assuming.
+    """
+
+    class _Pms:
+        """A PMS as ONE account sees it: only the collections that account is allowed."""
+
+        def __init__(self, visible: dict[str, list[int]]):
+            self._visible = visible
+
+        def sections(self):
+            return [SimpleNamespace(key=k, title=k) for k in self._visible]
+
+        def _section_collections(self, section):
+            return [SimpleNamespace(rating_key=rk, title=f"row {rk}") for rk in self._visible[section.key]]
+
+    @staticmethod
+    def _owned():
+        """What `PlexClient.owned_collections` returns: label-slug -> the ratingKeys carrying it.
+
+        The FRESH server read, not the delivery ledger. The ledger is loaded when the run's context is
+        built, so on a first run it is empty — and an empty `ours` makes every account look clean,
+        which is precisely the silence this check exists to break. `owned` is read from the PMS inside
+        the privacy phase itself, so it describes the rows that exist right now.
+        """
+        return {
+            "sarah": SimpleNamespace(label="shortlist_sarah", rating_keys=[11, 12]),
+            "mike": SimpleNamespace(label="shortlist_mike", rating_keys=[21]),
+            "kid": SimpleNamespace(label="shortlist_kid", rating_keys=[31]),
+            # A SHARED row: everyone is meant to see it, subject to its audience. Counting it as an
+            # exposure would fire this alert on every server that has one.
+            "_shared_popular": SimpleNamespace(label="shortlist__shared_popular", rating_keys=[41]),
+        }
+
+    def test_reports_another_persons_row_that_the_account_can_see(self):
+        pms = self._Pms({"1": [21, 31, 99]})  # mike's row, their own, and something not ours
+        assert unhidden_rows_visible_to(pms, self._owned(), "kid") == [21]
+
+    def test_their_own_row_is_not_an_exposure(self):
+        pms = self._Pms({"1": [31]})
+        assert unhidden_rows_visible_to(pms, self._owned(), "kid") == []
+
+    def test_a_collection_that_is_not_ours_is_ignored(self):
+        """Kometa and friends share these libraries; only rows WE delivered are ours to judge."""
+        pms = self._Pms({"1": [99, 100]})
+        assert unhidden_rows_visible_to(pms, self._owned(), "kid") == []
+
+    def test_a_shared_row_is_not_an_exposure(self):
+        """A shared row is one collection everybody is meant to see. Flagging it would make this alert
+        fire on any server running a shared row, and an alert that is always on is ignored."""
+        pms = self._Pms({"1": [41]})
+        assert unhidden_rows_visible_to(pms, self._owned(), "kid") == []
+
+    def test_an_account_that_sees_nothing_is_clean(self):
+        """The `little_kid` case the original observation was true for — it must stay quiet."""
+        assert unhidden_rows_visible_to(self._Pms({"1": []}), self._owned(), "kid") == []
+
+    def test_every_foreign_row_is_listed_across_libraries(self):
+        pms = self._Pms({"1": [11, 21], "2": [12]})
+        assert unhidden_rows_visible_to(pms, self._owned(), "kid") == [11, 12, 21]
+
+    def test_a_read_that_fails_is_not_silently_clean(self):
+        """A failed read must never be reported as "nothing visible" — that is the empty-read bug
+        this codebase already has a rule about (plex-safety rule 4)."""
+
+        class _Broken:
+            def sections(self):
+                raise RuntimeError("PMS unreachable")
+
+        with pytest.raises(RuntimeError):
+            unhidden_rows_visible_to(_Broken(), self._owned(), "kid")
+
+
+class TestThePrivatePruneNeedsTwoSourcesNotOne:
+    """`dead_private` is the one prune pointed at the LEAK direction — it removes another account's
+    private-row exclude, and getting it wrong makes a live row visible to everyone, with no Privacy
+    Check left to notice (removed 2026-07-16).
+
+    Its label evidence comes from `collection.labels`, i.e. plexapi's silent per-collection re-read,
+    and plex-safety rule 4 is explicit that a re-read which SUCCEEDS carrying no `<Label>` is
+    indistinguishable from a genuinely unlabelled row. A review demonstrated the single-source version
+    removing `Shortlist_mike` from Sarah's filter while Mike's collection was still on the server.
+
+    The second source is the invisible title marker: it rides in the title, which the collections
+    listing returns inline, so it does not fail the way a label re-read fails.
+    """
+
+    def _user(self):
+        from shortlist.engine.models import UserProfile, UserType
+
+        return UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED, slug="sarah")
+
+    def _sync(self, mock_plextv, *, marker_present_slugs):
+        from shortlist.engine.privacy import sync_user_restrictions
+        from tests.conftest import MemorySnapshotStore, plextv_user
+
+        return sync_user_restrictions(
+            mock_plextv,
+            self._user(),
+            plextv_user(201, "sarah", filters={"filterMovies": "label!=Shortlist_mike"}),
+            # The label read came back WITHOUT mike — the failure mode rule 4 describes. Sarah's own
+            # row read fine, so the aggregate "was the enumeration empty" check passes trivially.
+            {"sarah": "Shortlist_sarah"},
+            MemorySnapshotStore(),
+            own_label="Shortlist_sarah",
+            shared_labels={},
+            collections_known=True,
+            departed_slugs={"mike"},
+            marker_present_slugs=marker_present_slugs,
+        )
+
+    def test_a_label_less_read_alone_never_un_hides_a_row_the_marker_says_is_there(self, mock_plextv):
+        """The exact case the review reproduced. Every other condition for pruning is satisfied —
+        departed, absent from the label enumeration, not wanted this pass — and the marker is the only
+        thing standing between Mike's live row and Sarah being able to see it."""
+        written = self._sync(mock_plextv, marker_present_slugs={"mike"})
+
+        after = (written or {}).get("filterMovies", ("", "label!=Shortlist_mike"))[1]
+        assert "Shortlist_mike" in after, "a row the marker still sees must stay hidden"
+
+    def test_both_sources_agreeing_it_is_gone_still_prunes(self, mock_plextv):
+        """The control. The guard must not simply freeze pruning — the exclude it removes otherwise
+        accumulates in every account's filter for ever (a real server hit 990 characters)."""
+        written = self._sync(mock_plextv, marker_present_slugs=set())
+
+        assert written is not None
+        assert "Shortlist_mike" not in written["filterMovies"][1]
+
+    def test_an_unreadable_marker_enumeration_licenses_nothing(self, mock_plextv):
+        """None means "we could not read it". Not knowing must never license a removal — the same rule
+        `collections_known` already follows for the label side."""
+        written = self._sync(mock_plextv, marker_present_slugs=None)
+
+        after = (written or {}).get("filterMovies", ("", "label!=Shortlist_mike"))[1]
+        assert "Shortlist_mike" in after

@@ -52,9 +52,32 @@ export function RestrictedBadge({ user }: { user: User }) {
   return (
     <Badge
       variant="destructive"
-      title={`Plex's ${profileName(user)} restriction profile is set on this account. Plex hides every collection from it, so no row is built — and Plex refuses privacy filters for profiled accounts. Set the Restriction Profile to None in Plex to give this person recommendations.`}
+      title={`Plex's ${profileName(user)} restriction profile is set on this account. Plex usually hides collections from it, so no row is built — and Plex refuses privacy filters for profiled accounts. Set the Restriction Profile to None in Plex to give this person recommendations.`}
     >
       {profileName(user)}
+    </Badge>
+  );
+}
+
+/**
+ * This account can see rows that belong to other people, and Shortlist cannot hide them.
+ *
+ * Only ever non-zero for an account Plex refuses a share filter for. Shortlist used to assume such an
+ * account saw no collections at all and skipped it silently; an `older_kid` account on a real server
+ * listed three (measured 2026-08-11). The run measures it now, and this is the scannable form of what
+ * it found — deliberately absent when the count is 0, so the badge means something when it appears.
+ */
+export function UnhiddenRowsBadge({ user }: { user: User }) {
+  const exposed = user.unhidden_rows ?? 0;
+  if (exposed < 1) return null;
+  return (
+    <Badge
+      variant="destructive"
+      // The remedy must match the rest of the feature: turning the person off removes THEIR row,
+      // not their view of everyone else's, so it is deliberately not offered here either.
+      title={`This account can see ${exposed} ${exposed === 1 ? "row" : "rows"} belonging to other people. Hiding a row means a Plex share filter, and Plex refuses to save one while a restriction profile is set — so Shortlist cannot hide ${exposed === 1 ? "it" : "them"}. Set this account's Restriction Profile to None in Plex; turning this person off in Shortlist does not fix it.`}
+    >
+      Sees {exposed} {exposed === 1 ? "row" : "rows"} of others&rsquo;
     </Badge>
   );
 }
@@ -95,5 +118,25 @@ export function UserBadges({
       <RestrictedBadge user={user} />
       <ColdStartBadge user={user} />
     </>
+  );
+}
+
+/**
+ * Plex no longer lists this account.
+ *
+ * `enabled=false` was carrying two unrelated meanings — the owner switched them off, or they lost
+ * access to the server — and the list rendered both identically, so a departed account was an
+ * unexplained row with no action attached to it. This is the difference, and it is what puts the
+ * Remove control beside them.
+ */
+export function DepartedBadge({ user }: { user: User }) {
+  if (!user.departed) return null;
+  return (
+    <Badge
+      variant="outline"
+      title="Plex no longer lists this account, so Shortlist switched them off and removed their rows. Remove them here to drop their pick history and clear them out of the list."
+    >
+      Left the server
+    </Badge>
   );
 }

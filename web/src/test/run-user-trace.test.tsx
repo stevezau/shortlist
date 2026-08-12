@@ -653,7 +653,6 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
     cut_cap: 40,
     carried: 0,
     new: 15,
-    freshness: 0.5,
     refresh_night: true,
     rebuild_every_days: 8,
     recency: 0.5,
@@ -678,8 +677,12 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
       />,
     );
     expect(screen.getByText(/not re-picked tonight/i)).toBeInTheDocument();
-    expect(screen.getByText(/rebuilds about every 8 days/i)).toBeInTheDocument();
-    expect(screen.getByText(/Raise Freshness/i)).toBeInTheDocument();
+    expect(screen.getByText(/rebuilds every 8 days/i)).toBeInTheDocument();
+    // Names the control that EXISTS, and the right direction — the cadence is a day count now, so
+    // you lower it to rebuild sooner. This asserted "Raise Freshness" for a control that was gone.
+    expect(
+      screen.getByText(/Lower .How often rows rebuild./i),
+    ).toBeInTheDocument();
   });
 
   it("names a settings change as the reason a row rebuilt early", () => {

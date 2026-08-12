@@ -5,8 +5,8 @@ sitemap: false
 {%- comment -%}
 The client-side search index. `strip_html` then `normalize_whitespace` turns each
 rendered page into one flat string the browser can substring-match; jsonify does
-the escaping. Six pages of prose is a few hundred KB, fetched only when someone
-actually opens search.
+the escaping. The whole site's prose is a few hundred KB, fetched only when
+someone actually opens search.
 {%- endcomment -%}
 [
 {%- assign pages = site.html_pages | where_exp: "p", "p.title" -%}

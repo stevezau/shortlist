@@ -371,6 +371,38 @@ class TestSettingsApi:
         # Both branches build their own dict, so both are checked against the response model.
         assert set(no_key) == {"ok", "message"} and set(ok) == {"ok", "message"}
 
+    def test_agregarr_key_is_encrypted_at_rest_and_redacted_in_the_api(self, client: TestClient):
+        """Agregarr's key is a credential like any other (rule 9) — it must never come back in the
+        clear, and the UI's redacted round-trip must not overwrite it with the placeholder."""
+        client.put("/api/settings", json={"values": {"agregarr.url": "http://ag:7171", "agregarr.apikey": "ag-key-1"}})
+
+        body = client.get("/api/settings").json()
+        assert body["agregarr.apikey"] == "•••••"
+        assert body["agregarr.url"] == "http://ag:7171"  # the address is not a secret
+        client.put("/api/settings", json={"values": {"agregarr.apikey": "•••••"}})  # UI round-trip
+        with client.app.state.sessions() as session:
+            from shortlist.server.settings_store import SettingsStore
+
+            assert SettingsStore(session, client.app.state.secrets).get("agregarr.apikey") == "ag-key-1"
+
+    def test_agregarr_test_connection_needs_both_halves(self, client: TestClient, monkeypatch):
+        # Neither half → a plain-English error, not a crash or a stack trace.
+        none = client.post("/api/settings/test/agregarr").json()
+        assert none["ok"] is False and "Agregarr" in none["message"]
+        # URL but no key is still unusable — every call is authenticated.
+        client.put("/api/settings", json={"values": {"agregarr.url": "http://ag:7171"}})
+        half = client.post("/api/settings/test/agregarr").json()
+        assert half["ok"] is False
+
+        client.put("/api/settings", json={"values": {"agregarr.apikey": "ag-key-1"}})
+        monkeypatch.setattr(
+            "shortlist.engine.clients.agregarr.AgregarrClient.ping", lambda self: "Connected — 3 collection(s) known"
+        )
+        ok = client.post("/api/settings/test/agregarr").json()
+
+        assert ok["ok"] is True and "3 collection(s)" in ok["message"]
+        assert set(none) == {"ok", "message"} and set(ok) == {"ok", "message"}
+
     def test_searxng_password_is_encrypted_at_rest_and_redacted_in_the_api(self, client: TestClient):
         """A reverse-proxy password in front of SearXNG is a credential like any other (rule 9). The
         URL and username are not secrets and stay readable, so the card can show what's configured."""

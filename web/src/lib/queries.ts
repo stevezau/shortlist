@@ -228,6 +228,15 @@ export function useImageProvider() {
   });
 }
 
+export function useRemoveUser() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.removeUser(id),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.users }),
+  });
+}
+
 export function usePatchUser() {
   const queryClient = useQueryClient();
   return useMutation({

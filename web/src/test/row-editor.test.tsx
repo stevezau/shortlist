@@ -53,7 +53,7 @@ function row(patch: Partial<Collection> = {}): Collection {
     watched_pct: null,
     rewatch: false,
     unstarted_only: false,
-    freshness: null,
+    refresh_days: null,
     recency: null,
     recent_count: null,
     max_seeds: null,
@@ -88,6 +88,8 @@ function user(patch: Partial<User> = {}): User {
     avatar_url: "",
     plex_account_id: 0,
     restriction_profile: "",
+    unhidden_rows: 0,
+    departed: false,
     preview_titles: [],
     prefs: {},
     ...patch,
@@ -115,7 +117,7 @@ describe("RowEditor — inherited globals", () => {
   it("names the global each inheriting field is actually following", async () => {
     settingsData.current = {
       "recommendations.watched_pct": 0.4,
-      "recommendations.freshness": 0.5,
+      "recommendations.refresh_days": 8,
       "recommendations.recent_count": 8,
       "candidates.sources": ["tmdb_similar", "llm_web"],
       "recommendations.max_seeds": 30,
@@ -123,7 +125,7 @@ describe("RowEditor — inherited globals", () => {
     renderEditor(
       row({
         watched_pct: null,
-        freshness: null,
+        refresh_days: null,
         recent_count: null,
         max_seeds: null,
       }),
@@ -133,9 +135,7 @@ describe("RowEditor — inherited globals", () => {
     expect(
       await screen.findByText(/40% — up to 40% already-watched/),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(/50% — refreshes about every 8 days/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/every 8 days/)).toBeInTheDocument();
     expect(screen.getByText("8 recent watches")).toBeInTheDocument();
     expect(screen.getByText("30 watches")).toBeInTheDocument();
   });
@@ -588,28 +588,30 @@ describe("RowEditor — placement on a shared row", () => {
   });
 });
 
-describe("RowEditor — freshness", () => {
+describe("RowEditor — rebuild cadence", () => {
   beforeEach(() => {
     updateCollection.mockClear();
   });
 
-  it("shows the freshness slider only when the row overrides the global default", () => {
-    renderEditor(row({ freshness: 0.25 }));
+  it("shows the cadence field only when the row overrides the global default", () => {
+    renderEditor(row({ refresh_days: 11 }));
     expect(
-      screen.getByRole("slider", { name: /how often the row refreshes/i }),
-    ).toHaveValue("25");
+      screen.getByRole("spinbutton", {
+        name: /how often the row rebuilds/i,
+      }),
+    ).toHaveValue(11);
     expect(
-      screen.getByRole("switch", { name: /global freshness default/i }),
+      screen.getByRole("switch", { name: /global rebuild cadence/i }),
     ).not.toBeChecked();
   });
 
   it("stops inheriting at the global's own value, not at zero", async () => {
     // Turning "use the global" OFF should stop TRACKING the global, not change what the row does.
     // It used to snap to 0 — i.e. silently froze the row — which reads as a broken switch.
-    renderEditor(row({ freshness: null }));
+    renderEditor(row({ refresh_days: null }));
 
     await userEvent.click(
-      screen.getByRole("switch", { name: /global freshness default/i }),
+      screen.getByRole("switch", { name: /global rebuild cadence/i }),
     );
     await userEvent.click(
       screen.getByRole("button", { name: /Save changes/i }),
@@ -617,8 +619,8 @@ describe("RowEditor — freshness", () => {
 
     await waitFor(() => expect(updateCollection).toHaveBeenCalled());
     expect(
-      (updateCollection.mock.calls.at(0)?.[1] as Collection).freshness,
-    ).toBe(0.5);
+      (updateCollection.mock.calls.at(0)?.[1] as Collection).refresh_days,
+    ).toBe(8);
   });
 });
 
@@ -806,9 +808,9 @@ describe("RowEditor — watches every source builds from", () => {
 });
 
 describe("RowEditor — how often it changes", () => {
-  const freshnessBlock = () => screen.queryByText(/How often it changes/i);
-  const freshnessToggle = () =>
-    screen.queryByRole("switch", { name: /global freshness default/i });
+  const cadenceBlock = () => screen.queryByText(/How often it changes/i);
+  const cadenceToggle = () =>
+    screen.queryByRole("switch", { name: /global rebuild cadence/i });
 
   it("drops the setting entirely on a row named after a watch", () => {
     // The engine runs these rows nightly whatever is stored, so there is no cadence to choose. It
@@ -818,20 +820,20 @@ describe("RowEditor — how often it changes", () => {
     // "refreshes nightly".
     renderEditor(row({ name_template: "Because you watched {top_seed}" }));
 
-    expect(freshnessBlock()).not.toBeInTheDocument();
-    expect(freshnessToggle()).not.toBeInTheDocument();
+    expect(cadenceBlock()).not.toBeInTheDocument();
+    expect(cadenceToggle()).not.toBeInTheDocument();
   });
 
   it("drops it for a cycling row too, named or not", () => {
     // The engine forces nightly for `_names_a_seed(spec) OR seed_window > 1`. Gating the UI on only
-    // the first left an unnamed cycling row showing a freshness slider — and reporting "frozen" in
+    // the first left an unnamed cycling row showing a cadence field — and reporting "frozen" in
     // the section summary — while the engine ran it every night.
     renderEditor(
       row({ name_template: "Tonight's pick", max_seeds: 2, seed_window: 3 }),
     );
 
-    expect(freshnessBlock()).not.toBeInTheDocument();
-    expect(freshnessToggle()).not.toBeInTheDocument();
+    expect(cadenceBlock()).not.toBeInTheDocument();
+    expect(cadenceToggle()).not.toBeInTheDocument();
   });
 
   it("keeps it for a row that follows no watch", () => {
@@ -839,8 +841,8 @@ describe("RowEditor — how often it changes", () => {
     // it would take away the only control over how often a row re-curates.
     renderEditor(row({ name_template: "{library_name} Picked for You" }));
 
-    expect(freshnessBlock()).toBeInTheDocument();
-    expect(freshnessToggle()).toBeInTheDocument();
+    expect(cadenceBlock()).toBeInTheDocument();
+    expect(cadenceToggle()).toBeInTheDocument();
   });
 });
 
@@ -1223,16 +1225,16 @@ describe("RowEditor — the outcome preview", () => {
   it("resolves an inheriting row's cadence against the real global", async () => {
     // "Whatever the global default is" names the setting instead of its effect, which is the one
     // answer this panel must never give — it exists to say what the row will DO.
-    settingsData.current = { "recommendations.freshness": 0.5 };
-    renderEditor(row({ freshness: null, name_template: "Popular here" }));
+    settingsData.current = { "recommendations.refresh_days": 8 };
+    renderEditor(row({ refresh_days: null, name_template: "Popular here" }));
 
-    expect(await screen.findByText("About every 8 days")).toBeInTheDocument();
+    expect(await screen.findByText("Every 8 days")).toBeInTheDocument();
   });
 
   it("says every night for a row that follows a watch, whatever is stored", () => {
-    settingsData.current = { "recommendations.freshness": 0.5 };
+    settingsData.current = { "recommendations.refresh_days": 8 };
     renderEditor(
-      row({ freshness: 0, name_template: "Because you watched {top_seed}" }),
+      row({ refresh_days: 0, name_template: "Because you watched {top_seed}" }),
     );
 
     expect(screen.getByText("Every night")).toBeInTheDocument();
@@ -1296,7 +1298,9 @@ describe("RowEditor — only series they haven't started", () => {
     renderEditor(row({ media: "both" }));
 
     expect(
-      screen.getByRole("switch", { name: /only series they have not started/i }),
+      screen.getByRole("switch", {
+        name: /only series they have not started/i,
+      }),
     ).toBeInTheDocument();
   });
 
@@ -1304,7 +1308,9 @@ describe("RowEditor — only series they haven't started", () => {
     renderEditor(row({ media: "movie" }));
 
     expect(
-      screen.queryByRole("switch", { name: /only series they have not started/i }),
+      screen.queryByRole("switch", {
+        name: /only series they have not started/i,
+      }),
     ).not.toBeInTheDocument();
   });
 
@@ -1314,7 +1320,9 @@ describe("RowEditor — only series they haven't started", () => {
     renderEditor(row({ media: "show" }));
 
     expect(
-      screen.getByText(/only changes anything if you.*allowed already-watched titles/i),
+      screen.getByText(
+        /only changes anything if you.*allowed already-watched titles/i,
+      ),
     ).toBeInTheDocument();
   });
 
@@ -1322,9 +1330,13 @@ describe("RowEditor — only series they haven't started", () => {
     renderEditor(row({ media: "both", unstarted_only: false }));
 
     await userEvent.click(
-      screen.getByRole("switch", { name: /only series they have not started/i }),
+      screen.getByRole("switch", {
+        name: /only series they have not started/i,
+      }),
     );
-    await userEvent.click(screen.getByRole("button", { name: /Save changes/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save changes/i }),
+    );
 
     await waitFor(() => expect(updateCollection).toHaveBeenCalled());
     const call = updateCollection.mock.calls.at(0);
@@ -1368,12 +1380,14 @@ describe("RowEditor — recent releases", () => {
     await userEvent.click(
       screen.getByRole("switch", { name: /global recent-releases default/i }),
     );
-    await userEvent.click(screen.getByRole("button", { name: /Save changes/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save changes/i }),
+    );
 
     await waitFor(() => expect(updateCollection).toHaveBeenCalled());
-    expect(
-      (updateCollection.mock.calls.at(0)?.[1] as Collection).recency,
-    ).toBe(0.6);
+    expect((updateCollection.mock.calls.at(0)?.[1] as Collection).recency).toBe(
+      0.6,
+    );
   });
 
   it("offers the control on a row that follows a watch, where freshness is withheld", async () => {
@@ -1384,7 +1398,7 @@ describe("RowEditor — recent releases", () => {
     );
 
     expect(
-      screen.queryByRole("switch", { name: /global freshness default/i }),
+      screen.queryByRole("switch", { name: /global rebuild cadence/i }),
     ).not.toBeInTheDocument();
     expect(
       screen.getByRole("slider", { name: /release date counts/i }),
@@ -1399,7 +1413,7 @@ describe("RowEditor — a shared row hides the dials that do not apply to it", (
 
   const perPersonOnly = [
     /global already-watched default/i,
-    /global freshness default/i,
+    /global rebuild cadence/i,
     /watch it again/i,
     /not started/i,
     /global setting for people without enough watch history/i,

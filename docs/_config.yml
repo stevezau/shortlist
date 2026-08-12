@@ -10,6 +10,12 @@ url: https://stevezau.github.io
 baseurl: /shortlist
 
 repo: https://github.com/stevezau/shortlist
+# NOT named `image` — that key is already taken further down by the social-preview card that
+# jekyll-seo-tag reads off each page. Two different meanings under one name would be a trap.
+# The Docker Hub namespace doubles the z and is NOT the GitHub username `stevezau`; the
+# single-z account was lost, so don't "correct" it. GHCR still gets the identical image.
+docker_image: stevezzau/shortlist
+docker_image_url: https://hub.docker.com/r/stevezzau/shortlist
 ghcr: ghcr.io/stevezau/shortlist
 
 # /getting-started/ rather than /getting-started.html. Worth the change while the
@@ -65,9 +71,20 @@ nav:
   - title: FAQ
     url: /faq/
     blurb: Privacy, Kometa, uninstall
-  - title: Per-user Plex collections
-    url: /plex-per-user-collections/
-    blurb: The label + share-filter mechanism
+  - title: Plex how-to
+    url: /plex-how-to/
+    blurb: What Plex itself can and can't do, and the manual methods
+    children:
+      - title: Recommendations from watch history
+        url: /plex-recommendations-watch-history/
+      - title: A home screen per user
+        url: /plex-per-user-home-screen/
+      - title: Per-user collections
+        url: /plex-per-user-collections/
+      - title: Netflix-style rows
+        url: /plex-netflix-style-recommendations/
+      - title: Tools compared
+        url: /plex-recommendation-tools/
 
 # theme: none — the site ships its own layouts. Cayman was the stock GitHub Pages
 # theme and looked nothing like the app it documents.

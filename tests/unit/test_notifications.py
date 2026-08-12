@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -333,3 +334,339 @@ class TestBuildNotifications:
         store.set(notif.DISMISSED_KEY, ["update-9.9.9"])
 
         assert not any(n["id"] == "update-9.9.9" for n in notif.build_notifications(session, store, "1.0.0"))
+
+
+class TestRowsWeCannotHide:
+    """Plex refuses a hide-list for a managed account with a parental profile. Shortlist skipped those
+    accounts assuming they see nothing — true of `little_kid`, false of `older_kid` (measured on a real
+    server). When one CAN see other people's rows, nothing in Shortlist can hide them, so the only
+    honest response is to say so and name the two things the owner can actually do."""
+
+    @staticmethod
+    def _run(session, stats: dict) -> None:
+        session.add(
+            Run(
+                id=1,
+                status="ok",
+                trigger="manual",
+                started_at=datetime.now(UTC) - timedelta(minutes=5),
+                finished_at=datetime.now(UTC),
+                stats=stats,
+            )
+        )
+        session.commit()
+
+    def test_names_the_person_and_what_they_can_see(self, session):
+        """The owner should not have to decode anything. Who, how many, and what to do — in that
+        order, in one paragraph, because the bell renders `body` as a single unformatted <p>."""
+        self._run(session, {"unhideable_rows": {"kid": [21, 22, 23]}})
+
+        alert = notif._rows_we_cannot_hide(session)
+
+        assert alert is not None
+        assert alert["severity"] == "error"
+        assert alert["title"] == "kid can see other people's rows"
+        assert "kid can see 3 rows that belong to other people" in alert["body"]
+        assert alert["action_url"] == "/users"
+        assert alert["action_label"]
+
+    def test_names_the_one_remedy_that_actually_works(self, session):
+        """The fix is not Shortlist's to make, so the alert is only useful if it says what the OWNER
+        does — in plain words, and only where it is TRUE."""
+        self._run(session, {"unhideable_rows": {"kid": [21]}})
+
+        body = notif._rows_we_cannot_hide(session)["body"]
+
+        assert "Restriction Profile" in body and "Plex" in body
+
+    def test_never_suggests_disabling_the_account_which_does_not_help(self, session):
+        """It reads like the in-app fix, and it is not one. Disabling removes THEIR row; the exposure
+        is their view of EVERYONE ELSE'S rows, and hiding those needs the share filter Plex is refusing
+        — `sync_user_restrictions` returns before it even builds one for a profiled account. Suggesting
+        it in a non-dismissable privacy alert would send the owner to do something that changes
+        nothing, and the same alert would fire again the next night."""
+        self._run(session, {"unhideable_rows": {"kid": [21]}})
+
+        body = notif._rows_we_cannot_hide(session)["body"].lower()
+
+        assert "turn kid off" not in body
+        assert "disabl" not in body
+
+    def test_counts_a_single_row_in_the_singular(self, session):
+        self._run(session, {"unhideable_rows": {"kid": [21]}})
+
+        assert "can see 1 row that belongs" in notif._rows_we_cannot_hide(session)["body"]
+
+    def test_leads_with_the_count_of_people_when_more_than_one_is_affected(self, session):
+        """Two names in a title reads as a list to scan; a count reads as a number to act on."""
+        self._run(session, {"unhideable_rows": {"kid": [21], "teen": [22]}})
+
+        alert = notif._rows_we_cannot_hide(session)
+
+        assert alert["title"] == "2 accounts can see other people's rows"
+        assert "kid and teen" in alert["body"]
+
+    def test_says_plainly_that_shortlist_cannot_fix_it(self, session):
+        """Without this the owner's first move is to look for a Shortlist setting that would fix it.
+        There isn't one — Plex refuses the write — and the alert has to say so, not imply it."""
+        self._run(session, {"unhideable_rows": {"kid": [21]}})
+
+        assert "can't be fixed from here" in notif._rows_we_cannot_hide(session)["body"]
+
+    def test_cannot_be_dismissed_while_it_is_true(self, session):
+        """A live privacy exposure is not a preference. Dismissing it would leave someone believing
+        rows are private when they are not."""
+        self._run(session, {"unhideable_rows": {"Kid": [21]}})
+        assert notif._rows_we_cannot_hide(session)["dismissable"] is False
+
+    def test_a_later_run_that_never_measured_does_not_clear_a_real_finding(self, session):
+        """A run that failed early, was aborted, or never reached the privacy phase records no
+        measurement at all. Reading that as "nobody is exposed" would silence a live privacy alert
+        while the exposure is untouched — the exact silence this check exists to end.
+
+        Run 2's stats come from the REAL `_finalize_run`, not a hand-built dict. Written by hand as
+        `{"error": ...}` this test passed for a shape production could not emit: `_finalize_run` used
+        to write `unhideable_rows` unconditionally, so a failed run really did publish an empty
+        finding and clear the alert, and this test never saw it.
+        """
+        from shortlist.engine.models import RunReport
+        from shortlist.server.services.run_persistence import _finalize_run
+
+        self._run(session, {"unhideable_rows": {"Kid": [21]}})
+        died_early = RunReport(started_at=datetime.now(UTC))  # never reached the privacy phase
+        died_early.error = "plex unreachable"
+        run2 = Run(
+            id=2,
+            status="error",
+            trigger="manual",
+            started_at=datetime.now(UTC),
+            finished_at=datetime.now(UTC) + timedelta(minutes=1),
+        )
+        session.add(run2)
+        _finalize_run(run2, died_early, None, "plex unreachable", ok=0, errors=1)
+        session.commit()
+
+        assert "unhideable_rows" not in (run2.stats or {}), "a run that never measured must not publish a finding"
+        alert = notif._rows_we_cannot_hide(session)
+
+        assert alert is not None and "Kid" in alert["body"]
+
+    def test_a_run_that_did_measure_and_found_nothing_does_clear_the_finding(self, session):
+        """The other half: once a real measurement comes back clean, the alert must go away."""
+        from shortlist.engine.models import RunReport
+        from shortlist.server.services.run_persistence import _finalize_run
+
+        self._run(session, {"unhideable_rows": {"Kid": [21]}})
+        measured = RunReport(started_at=datetime.now(UTC))
+        measured.unhideable_measured = True  # reached the privacy phase, nobody exposed
+        run2 = Run(
+            id=2,
+            status="ok",
+            trigger="manual",
+            started_at=datetime.now(UTC),
+            finished_at=datetime.now(UTC) + timedelta(minutes=1),
+        )
+        session.add(run2)
+        _finalize_run(run2, measured, None, None, ok=1, errors=0)
+        session.commit()
+
+        assert (run2.stats or {}).get("unhideable_rows") == {}
+        assert notif._rows_we_cannot_hide(session) is None
+
+    def test_silent_when_the_run_found_nothing(self, session):
+        self._run(session, {"unhideable_rows": {}})
+        assert notif._rows_we_cannot_hide(session) is None
+
+    def test_silent_on_a_run_recorded_before_the_check_existed(self, session):
+        self._run(session, {"users_ok": 3})
+        assert notif._rows_we_cannot_hide(session) is None
+
+    def test_silent_with_no_finished_run_at_all(self, session):
+        assert notif._rows_we_cannot_hide(session) is None
+
+
+class TestEveryNotificationIsRenderable:
+    """The dict a candidate returns is rendered by key, and an unknown key is simply ignored — so a
+    notification carrying `href` instead of `action_url` publishes as an alert with no link and no
+    error anywhere. Nothing caught that until it was noticed by eye; this does.
+
+    Written the boring way on purpose. The first version walked the module with `inspect` and called
+    every `_candidate(session)` it found — which passed with the `href` bug still in, because with no
+    state seeded not one candidate returned anything. A shape check over an empty list is worse than
+    no check: it reports green for the exact thing it exists to catch.
+    """
+
+    ALLOWED: ClassVar[set[str]] = {"id", "severity", "title", "body", "action_url", "action_label", "dismissable"}
+    REQUIRED: ClassVar[set[str]] = {"id", "severity", "title", "body", "dismissable"}
+
+    def _check(self, name: str, alert: dict | None) -> None:
+        assert alert is not None, f"{name} did not fire — seed the state that makes it fire, or drop it"
+        assert set(alert) <= self.ALLOWED, f"{name} carries keys nothing renders: {set(alert) - self.ALLOWED}"
+        assert set(alert) >= self.REQUIRED, f"{name} is missing: {self.REQUIRED - set(alert)}"
+        assert alert["severity"] in {"info", "warning", "error"}, f"{name} has an unrenderable severity"
+        # An alert that offers an action must offer both halves of it: a URL with no label renders an
+        # unlabelled control, a label with no URL renders a control that goes nowhere.
+        assert bool(alert.get("action_url")) == bool(alert.get("action_label")), f"{name} has half a link"
+
+    def test_the_privacy_alert_renders(self, session):
+        session.add(
+            Run(
+                status="ok",
+                trigger="manual",
+                started_at=datetime.now(UTC),
+                finished_at=datetime.now(UTC),
+                stats={"unhideable_rows": {"Kid": [21]}},
+            )
+        )
+        session.commit()
+
+        self._check("_rows_we_cannot_hide", notif._rows_we_cannot_hide(session))
+
+    def test_the_failed_run_alert_renders(self, session):
+        session.add(
+            Run(
+                status="error",
+                trigger="manual",
+                started_at=datetime.now(UTC),
+                finished_at=datetime.now(UTC),
+                stats={},
+            )
+        )
+        session.commit()
+
+        self._check("_last_run_problem", notif._last_run_problem(session))
+
+    def test_the_owner_shelf_alert_renders(self, session):
+        session.add(User(plex_account_id=1, username="owner", slug="owner", user_type="owner", enabled=True))
+        session.add(User(plex_account_id=2, username="mike", slug="mike", user_type="shared", enabled=True))
+        session.commit()  # the initial migration already seeds a per_person row on both shelves
+
+        self._check("_owner_sees_all_rows", notif._owner_sees_all_rows(session))
+
+
+class TestShelfContention:
+    """Another tool reordering the Recommended shelf — the case a single pass cannot see.
+
+    Each ordering pass on SFLIX moved its rows, re-read the shelf, confirmed the new order and
+    reported success. It was right every time; agregarr moved them back ten minutes later. So the
+    signal is not "did our write land" (it did) but "did it STAY", and only repetition answers that.
+    """
+
+    @staticmethod
+    def _ordered(session, library: str, moved: list[str], *, when=None, dry_run: bool = False) -> None:
+        session.add(
+            Event(
+                scope="shelf.order",
+                level="info",
+                ts=when or datetime.now(UTC),
+                message={"library": library, "moved": moved, "verified": True, "dry_run": dry_run},
+            )
+        )
+
+    def test_fires_when_the_same_row_keeps_being_put_back(self, session):
+        for _ in range(3):
+            self._ordered(session, "Movies", ["Picked for You"])
+        session.commit()
+
+        result = notif._shelf_contention(session)
+
+        assert result["severity"] == "warning"
+        assert "Movies" in result["title"]
+        assert "3 times" in result["body"]
+        # Names suspects, never asserts one — Plex does not report who moved a hub.
+        assert "Kometa" in result["body"] and "agregarr" in result["body"]
+        assert result["action_url"] == "/settings#placement"
+
+    def test_a_row_placed_once_is_not_a_fight(self, session):
+        """A new user's row is positioned for the first time. That is the system working."""
+        self._ordered(session, "Movies", ["Picked for You", "Another Row"])
+        session.commit()
+
+        assert notif._shelf_contention(session) is None
+
+    def test_two_passes_are_not_enough(self, session):
+        """A rename re-titles a row and it gets placed again — benign, and must stay silent."""
+        for _ in range(2):
+            self._ordered(session, "Movies", ["Picked for You"])
+        session.commit()
+
+        assert notif._shelf_contention(session) is None
+
+    def test_different_rows_moving_once_each_is_not_a_fight(self, session):
+        """A rollout places many rows, each exactly once. Counting EVENTS would misfire here."""
+        for i in range(6):
+            self._ordered(session, "Movies", [f"Row {i}"])
+        session.commit()
+
+        assert notif._shelf_contention(session) is None
+
+    def test_a_settled_shelf_says_nothing(self, session):
+        assert notif._shelf_contention(session) is None
+
+    def test_previews_are_not_evidence(self, session):
+        """A dry run moved nothing, so it cannot prove anyone is fighting us."""
+        for _ in range(5):
+            self._ordered(session, "Movies", ["Picked for You"], dry_run=True)
+        session.commit()
+
+        assert notif._shelf_contention(session) is None
+
+    def test_old_events_fall_out_of_the_window(self, session):
+        stale = datetime.now(UTC) - timedelta(days=2)
+        for _ in range(5):
+            self._ordered(session, "Movies", ["Picked for You"], when=stale)
+        session.commit()
+
+        assert notif._shelf_contention(session) is None
+
+    def test_both_libraries_are_named(self, session):
+        for _ in range(3):
+            self._ordered(session, "Movies", ["Picked for You"])
+            self._ordered(session, "TV Shows", ["Picked for You"])
+        session.commit()
+
+        result = notif._shelf_contention(session)
+
+        assert "Movies and TV Shows" in result["title"]
+
+    def test_the_run_scoped_event_counts_too(self, session):
+        """A full run audits under `run.hub_order`; the jobs use `shelf.order`. Both are the same fact,
+        and a fight split across the two must not read as two innocent halves."""
+        self._ordered(session, "Movies", ["Picked for You"])
+        for _ in range(2):
+            session.add(
+                Event(
+                    scope="run.hub_order",
+                    level="info",
+                    ts=datetime.now(UTC),
+                    message={"library": "Movies", "moved": ["Picked for You"]},
+                )
+            )
+        session.commit()
+
+        assert notif._shelf_contention(session) is not None
+
+    def test_it_is_dismissable_per_day(self, session):
+        """Dismissing hides today's; a fight still running tomorrow says so again."""
+        for _ in range(3):
+            self._ordered(session, "Movies", ["Picked for You"])
+        session.commit()
+
+        result = notif._shelf_contention(session)
+
+        assert result["dismissable"] is True
+        assert result["id"] == f"shelf-contention-{datetime.now(UTC).date().isoformat()}"
+
+    def test_it_is_wired_into_the_bell(self, session):
+        """Registered in `build_notifications`, not merely defined.
+
+        A detector nobody calls is the same silent nothing as the ordering bug it exists to report,
+        and every other test here calls `_shelf_contention` directly and would never notice.
+        """
+        for _ in range(3):
+            self._ordered(session, "Movies", ["Picked for You"])
+        session.commit()
+
+        items = notif.build_notifications(session, SettingsStore(session), "1.0.0")
+
+        assert any(n["id"].startswith("shelf-contention-") for n in items)

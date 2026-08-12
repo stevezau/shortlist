@@ -242,6 +242,7 @@ def _scrub(s: str) -> str:
 _LOCATION_KEYS = {
     "plex.url",
     "tautulli.url",
+    "agregarr.url",
     "requests.radarr.url",
     "requests.sonarr.url",
     "curator.ollama_url",
@@ -915,7 +916,7 @@ async def rows(request: Request) -> dict:
     with state.sessions() as session:
         store = SettingsStore(session, state.secrets)
         global_pct = float(store.get("recommendations.watched_pct") or 0.0)
-        global_fresh = float(store.get("recommendations.freshness") or 0.0)
+        global_days = int(store.get("recommendations.refresh_days") or 0)
         out: list[dict] = []
         for c in session.query(Collection).order_by(Collection.sort_order, Collection.id).all():
             cap, cap_from = _effective_cap(c, global_pct)
@@ -928,8 +929,8 @@ async def rows(request: Request) -> dict:
                     "size": c.size,
                     "watched_pct": cap,
                     "watched_pct_source": cap_from,
-                    "freshness": float(c.freshness) if c.freshness is not None else global_fresh,
-                    "freshness_source": "row" if c.freshness is not None else "global",
+                    "refresh_days": c.refresh_days if c.refresh_days is not None else global_days,
+                    "refresh_days_source": "row" if c.refresh_days is not None else "global",
                     "rewatch": bool(c.rewatch),
                     "unstarted_only": bool(c.unstarted_only),
                 }
@@ -1064,33 +1065,29 @@ def _people_worth_including(findings: dict[str, dict]) -> list[str]:
 async def row_schedule(request: Request) -> dict:
     """When each row last rebuilt, and when it is next due to.
 
-    The gap this closes: freshness is a CADENCE, not a nightly shuffle. At the 0.5 default a row
-    re-selects its titles roughly weekly and redelivers the same picks on every other night, and the
+    The gap this closes: the refresh cadence is exactly that — a cadence. At the 8-day default a row
+    re-selects its titles about weekly and redelivers the same picks on every other night, and the
     engine logs that decision NOWHERE. So "I changed the setting and nothing happened" has been
     unanswerable — the setting was fine, the row simply had not rebuilt yet.
     """
-    from shortlist.engine.rows import _refresh_period_days
-
     state = request.app.state
     with state.sessions() as session:
         store = SettingsStore(session, state.secrets)
-        global_fresh = float(store.get("recommendations.freshness") or 0.0)
+        global_days = int(store.get("recommendations.refresh_days") or 0)
         last_built = dict(
             session.query(PickRow.collection_slug, func.max(PickRow.created_at)).group_by(PickRow.collection_slug).all()
         )
         out: list[dict] = []
         for c in session.query(Collection).order_by(Collection.sort_order, Collection.id).all():
-            fresh = float(c.freshness) if c.freshness is not None else global_fresh
+            # 0 is "never refresh once built" — a frozen, pinned row, not a broken one.
+            period = max(0, c.refresh_days if c.refresh_days is not None else global_days)
             built = last_built.get(c.slug)
-            # Freshness 0 is "never refresh once built" — a frozen, pinned row, not a broken one.
-            period = 0 if fresh <= 0 else _refresh_period_days(fresh)
             days_since = (datetime.now(UTC) - built.replace(tzinfo=built.tzinfo or UTC)).days if built else None
             out.append(
                 {
                     "slug": c.slug,
                     "enabled": c.enabled,
-                    "freshness": fresh,
-                    "freshness_source": "row" if c.freshness is not None else "global",
+                    "refresh_days_source": "row" if c.refresh_days is not None else "global",
                     "rebuild_every_days": period,
                     "last_built_at": built.isoformat() if built else None,
                     "days_since_built": days_since,

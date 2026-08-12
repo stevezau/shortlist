@@ -1,7 +1,14 @@
 """Unit tests for PlexClient.order_owned_hubs — the Recommended-shelf placement of Shortlist rows.
 
-The Plex move mechanic itself is verified live on a real server; these pin the DECISION logic: only
-our hubs move, the anchor is read-only (Kometa coexistence), it's idempotent, and dry-run is inert.
+These pin the DECISION logic: only our hubs move, the anchor is read-only (Kometa coexistence), it's
+idempotent, dry-run is inert — and, since 2026-08-12, that it moves only hubs actually OUT OF PLACE
+and re-reads the shelf to verify rather than trusting Plex's 200.
+
+``FakeSection`` APPLIES each move to its own list, so the shelf a test reads back is the shelf the
+moves produced (testing rule: the fake must be no easier than the real server — one that ignored
+moves would make every assertion here about a shape Plex never returns). ``DroppingSection`` models
+a shelf we do not win: a move that returns 200 and leaves the order unchanged, which is what a
+co-managing tool (agregarr, Kometa) reordering the same shelf between our passes looks like from here.
 """
 
 from shortlist.engine.clients.plex_pms import PlexClient
@@ -10,16 +17,31 @@ _UNSET = "UNSET"  # sentinel: move() was never called on this hub
 
 
 class FakeHub:
-    def __init__(self, title: str, ident: str):
+    """A managed hub. Carries the three promotion flags a real ``managedHubs()`` entry has.
+
+    They default to promoted-on-shared-Home because that is what a row on the shelf looks like, and
+    because a fake WITHOUT these attributes would have hidden the fact that `managedHubs()` also
+    lists hubs promoted nowhere — which is exactly what `order_owned_hubs` was wasting moves on.
+    """
+
+    def __init__(self, title: str, ident: str, *, promoted: bool = True):
         self.title = title
         self.identifier = ident
+        self.promotedToSharedHome = promoted
+        self.promotedToOwnHome = False
+        self.promotedToRecommended = False
         self.moved_after = _UNSET
+        self.moves = 0  # how many times we asked Plex to move THIS hub
+        self.shelf = None
 
     def reload(self):
         return self
 
     def move(self, after=None):
         self.moved_after = after
+        self.moves += 1
+        if self.shelf is not None:
+            self.shelf.apply(self, after)
 
 
 class FakeLabel:
@@ -28,19 +50,38 @@ class FakeLabel:
 
 
 class FakeColl:
-    def __init__(self, title: str, tags: list[str]):
+    def __init__(self, title: str, tags: list[str], rating_key: int = 0):
         self.title = title
         self.labels = [FakeLabel(t) for t in tags]
+        self.ratingKey = rating_key
 
 
 class FakeSection:
+    """A managed shelf that really reorders when a hub is moved."""
+
     def __init__(self, hubs: list[FakeHub], title: str = "TV Shows", key: int = 2):
-        self._hubs = hubs
+        self._hubs = list(hubs)
         self.title = title
         self.key = key
+        for hub in self._hubs:
+            hub.shelf = self
 
     def managedHubs(self):
         return list(self._hubs)
+
+    def apply(self, hub: FakeHub, after) -> None:
+        self._hubs.remove(hub)
+        self._hubs.insert(0 if after is None else self._hubs.index(after) + 1, hub)
+
+    def titles(self) -> list[str]:
+        return [h.title for h in self._hubs]
+
+
+class DroppingSection(FakeSection):
+    """A shelf we never win: the move is accepted, and the order is unchanged when we look again."""
+
+    def apply(self, hub: FakeHub, after) -> None:
+        return None
 
 
 def _client(colls: list[FakeColl]) -> PlexClient:
@@ -172,7 +213,7 @@ def test_skips_when_our_rows_are_not_promoted_yet():
     assert result["reason"] == "rows not promoted yet"
 
 
-def test_only_titles_moves_just_that_subset_and_never_a_sibling_or_foreign_hub():
+def test_only_keys_moves_just_that_subset_and_never_a_sibling_or_foreign_hub():
     anchor = FakeHub("New Series", "a")
     sibling = FakeHub("Picked for You", "o1")  # ours, but NOT in the requested subset
     target_row = FakeHub("Hidden Gems", "o2")  # ours, IN the subset
@@ -180,15 +221,13 @@ def test_only_titles_moves_just_that_subset_and_never_a_sibling_or_foreign_hub()
     section = FakeSection([anchor, sibling, foreign, target_row])
     client = _client(
         [
-            FakeColl("Picked for You", ["shortlist_sarah"]),
-            FakeColl("Hidden Gems", ["shortlist_sarah"]),
-            FakeColl("Kometa Genre", ["kometa"]),
+            FakeColl("Picked for You", ["shortlist_sarah"], 101),
+            FakeColl("Hidden Gems", ["shortlist_sarah"], 202),
+            FakeColl("Kometa Genre", ["kometa"], 303),
         ]
     )
 
-    result = client.order_owned_hubs(
-        section, label_prefix="shortlist", anchor_title="New Series", only_titles={"Hidden Gems"}
-    )
+    result = client.order_owned_hubs(section, label_prefix="shortlist", anchor_title="New Series", only_keys={202})
 
     assert result["moved"] == ["Hidden Gems"]
     assert target_row.moved_after is anchor  # only the requested subset moves
@@ -196,16 +235,16 @@ def test_only_titles_moves_just_that_subset_and_never_a_sibling_or_foreign_hub()
     assert foreign.moved_after == _UNSET  # a foreign (Kometa) hub is never touched
 
 
-def test_only_titles_is_idempotent_when_the_subset_already_sits_after_the_anchor():
+def test_only_keys_is_idempotent_when_the_subset_already_sits_after_the_anchor():
     anchor = FakeHub("New Series", "a")
     target_row = FakeHub("Hidden Gems", "o2")  # already directly after the anchor
     sibling = FakeHub("Picked for You", "o1")
     section = FakeSection([anchor, target_row, sibling])
-    client = _client([FakeColl("Picked for You", ["shortlist_sarah"]), FakeColl("Hidden Gems", ["shortlist_sarah"])])
-
-    result = client.order_owned_hubs(
-        section, label_prefix="shortlist", anchor_title="New Series", only_titles={"Hidden Gems"}
+    client = _client(
+        [FakeColl("Picked for You", ["shortlist_sarah"], 101), FakeColl("Hidden Gems", ["shortlist_sarah"], 202)]
     )
+
+    result = client.order_owned_hubs(section, label_prefix="shortlist", anchor_title="New Series", only_keys={202})
 
     assert result["skipped"] is True and result["reason"] == "already in place"
     assert target_row.moved_after == _UNSET
@@ -215,23 +254,233 @@ def test_a_row_can_never_be_anchored_to_a_sibling_shortlist_hub():
     sibling = FakeHub("Picked for You", "o1")
     target_row = FakeHub("Hidden Gems", "o2")
     section = FakeSection([sibling, target_row])
-    client = _client([FakeColl("Picked for You", ["shortlist_sarah"]), FakeColl("Hidden Gems", ["shortlist_sarah"])])
+    client = _client(
+        [FakeColl("Picked for You", ["shortlist_sarah"], 101), FakeColl("Hidden Gems", ["shortlist_sarah"], 202)]
+    )
 
     # Naming our OWN sibling row as the anchor is refused (it's excluded from anchor candidates).
-    result = client.order_owned_hubs(
-        section, label_prefix="shortlist", anchor_title="Picked for You", only_titles={"Hidden Gems"}
-    )
+    result = client.order_owned_hubs(section, label_prefix="shortlist", anchor_title="Picked for You", only_keys={202})
 
     assert result["skipped"] is True and result["reason"] == "anchor not found"
     assert target_row.moved_after == _UNSET
 
 
-def _order_ctx(cfg, plex):
+def test_a_row_whose_label_read_comes_back_empty_is_still_ordered():
+    """A collection listing that returns no <Label> must not silently disable ordering for the library.
+
+    `collection.labels` is a per-collection re-read; one that succeeds carrying nothing looks exactly
+    like an unlabelled row. Ordering only changes a position, so the invisible title marker is enough
+    to recognise our own row here — otherwise the whole library is skipped, in silence.
+    """
+    marker = "​" * 64  # a real Shortlist marker: 64 zero-width chars
+    anchor = FakeHub("New Series", "a")
+    foreign = FakeHub("Kometa Genre", "g")
+    r1 = FakeHub("Picked for You" + marker, "o1")
+    section = FakeSection([anchor, foreign, r1])
+    client = _client([FakeColl("Picked for You" + marker, [], 101), FakeColl("Kometa Genre", ["kometa"], 9)])
+
+    result = client.order_owned_hubs(section, label_prefix="shortlist", anchor_title="New Series")
+
+    assert result["skipped"] is False and result["verified"] is True
+    assert r1.moves == 1 and foreign.moves == 0  # ours moved, the unlabelled foreign hub untouched
+    assert section.titles()[1] == "Picked for You" + marker
+
+
+def test_moves_only_the_hubs_that_are_out_of_place():
+    """One straggler must not re-move the rows already in position.
+
+    The old loop chained move() over every one of our hubs whenever ANY of them was misplaced, so a
+    single row at the bottom of the shelf cost one PUT per row — 47 of them in 344ms on SFLIX where
+    19 were needed. Fewer writes is the point; it also shrinks the window another tool can win.
+    """
+    anchor = FakeHub("New Series", "a")
+    r1, r2 = FakeHub("Picked A", "o1"), FakeHub("Picked B", "o2")  # already in place
+    foreign = FakeHub("Kometa Genre", "g")
+    straggler = FakeHub("Picked C", "o3")  # stranded at the bottom
+    section = FakeSection([anchor, r1, r2, foreign, straggler])
+    client = _client(
+        [
+            FakeColl("Picked A", ["shortlist_a"], 1),
+            FakeColl("Picked B", ["shortlist_b"], 2),
+            FakeColl("Picked C", ["shortlist_c"], 3),
+            FakeColl("Kometa Genre", ["kometa"], 9),
+        ]
+    )
+
+    result = client.order_owned_hubs(section, label_prefix="shortlist", anchor_title="New Series")
+
+    assert result["moved"] == ["Picked C"] and result["verified"] is True
+    assert (r1.moves, r2.moves, straggler.moves) == (0, 0, 1)  # only the straggler is written
+    assert foreign.moves == 0
+    assert section.titles() == ["New Series", "Picked A", "Picked B", "Picked C", "Kometa Genre"]
+
+
+def test_a_row_promoted_nowhere_is_left_where_it_is():
+    """A dormant row (paused/disabled user) is on no surface, so its position is invisible.
+
+    `managedHubs()` lists it anyway, and moving it was pure churn: 4 wasted writes per library per
+    pass on SFLIX, which also kept a reconciled shelf looking contested — a co-managing tool
+    (agregarr) correctly ignores rows promoted nowhere, so Shortlist alone kept shuffling them.
+    """
+    anchor = FakeHub("New Series", "a")
+    live = FakeHub("Picked A", "o1")
+    dormant = FakeHub("Picked B", "o2", promoted=False)  # on no surface at all
+    section = FakeSection([anchor, dormant, live])
+    client = _client([FakeColl("Picked A", ["shortlist_a"], 1), FakeColl("Picked B", ["shortlist_b"], 2)])
+
+    result = client.order_owned_hubs(section, label_prefix="shortlist", anchor_title="New Series")
+
+    assert live.moves == 1
+    assert dormant.moves == 0  # never written
+    assert result["moved"] == ["Picked A"]
+    assert section.titles() == ["New Series", "Picked A", "Picked B"]
+
+
+def test_a_row_on_the_owners_home_alone_is_still_ordered():
+    """Any single promotion flag counts — a row the owner can see has a position worth placing."""
+    anchor = FakeHub("New Series", "a")
+    owner_only = FakeHub("Picked A", "o1", promoted=False)
+    owner_only.promotedToOwnHome = True
+    section = FakeSection([anchor, FakeHub("Kometa Genre", "g"), owner_only])
+    client = _client([FakeColl("Picked A", ["shortlist_a"], 1)])
+
+    client.order_owned_hubs(section, label_prefix="shortlist", anchor_title="New Series")
+
+    assert owner_only.moves == 1
+
+
+def test_reports_unverified_when_plex_accepts_the_moves_without_applying_them():
+    """SFLIX 2026-08-12: 47 moves, 47 HTTP 200s, a shelf still in three blocks — reported as success.
+
+    The shelf was being reordered by another tool every 30 minutes; the moves were fine, the CLAIM was
+    not. The result must say `verified: False` rather than assert the rows were placed, because the run
+    report and the logs were the only place a lost shelf could ever have been noticed.
+    """
+    anchor = FakeHub("New Series", "a")
+    foreign = FakeHub("Kometa Genre", "g")
+    r1 = FakeHub("Picked for You", "o1")
+    section = DroppingSection([anchor, foreign, r1])
+    client = _client([FakeColl("Picked for You", ["shortlist_sarah"], 101)])
+
+    result = client.order_owned_hubs(section, label_prefix="shortlist", anchor_title="New Series", attempts=3)
+
+    assert result["skipped"] is False
+    assert result["verified"] is False  # never claims a shelf it could not confirm
+    assert result["moved"] == ["Picked for You"]  # audited once, not once per attempt
+    assert r1.moves == 3  # it really did retry, re-reading the shelf between each
+    assert section.titles() == ["New Series", "Kometa Genre", "Picked for You"]  # unchanged, and said so
+
+
+def test_a_shelf_that_converges_on_the_very_last_attempt_is_reported_as_verified():
+    """The final write must still be checked, or success gets reported as failure.
+
+    With `attempts=3` the loop wrote on attempt 3 and fell straight through to `verified: False` —
+    so a shelf this actually fixed on its last try was audited as a warning saying Plex had ignored
+    us. That is the same "assert an outcome you did not check" defect this function exists to remove,
+    pointed the other way. There is now one extra read that only verifies.
+    """
+
+    class LastChanceSection(FakeSection):
+        def __init__(self, hubs):
+            super().__init__(hubs)
+            self.drops = 2  # Plex takes the first two moves and does nothing
+
+        def apply(self, hub, after):
+            if self.drops:
+                self.drops -= 1
+                return None
+            super().apply(hub, after)
+
+    anchor = FakeHub("New Series", "a")
+    foreign = FakeHub("Kometa Genre", "g")
+    r1 = FakeHub("Picked for You", "o1")
+    section = LastChanceSection([anchor, foreign, r1])
+    client = _client([FakeColl("Picked for You", ["shortlist_sarah"], 101)])
+
+    result = client.order_owned_hubs(section, label_prefix="shortlist", anchor_title="New Series", attempts=3)
+
+    assert r1.moves == 3  # it took all three tries...
+    assert result["verified"] is True  # ...and the third is not assumed to have failed
+    assert section.titles() == ["New Series", "Picked for You", "Kometa Genre"]
+
+
+def test_giving_up_still_reports_the_moves_it_already_wrote():
+    """An early exit after real writes must not report `moved: []`.
+
+    `_apply_order` drops skipped results, so a bail-out that forgot its own writes put a real Plex
+    mutation outside the audit entirely (plex-safety rule 10). Here the anchor disappears between
+    attempts — Kometa deleting the collection we anchor to — after we have already moved a row.
+    """
+
+    class VanishingAnchorSection(FakeSection):
+        def apply(self, hub, after):
+            super().apply(hub, after)
+            self._hubs = [h for h in self._hubs if h.title != "New Series"]  # anchor gone
+
+    anchor = FakeHub("New Series", "a")
+    foreign = FakeHub("Kometa Genre", "g")
+    r1 = FakeHub("Picked for You", "o1")
+    section = VanishingAnchorSection([anchor, foreign, r1])
+    client = _client([FakeColl("Picked for You", ["shortlist_sarah"], 101)])
+
+    result = client.order_owned_hubs(section, label_prefix="shortlist", anchor_title="New Series")
+
+    assert result["reason"] == "anchor not found"
+    assert result["skipped"] is False  # a write happened, so this is NOT a no-op to be filtered out
+    assert result["moved"] == ["Picked for You"] and result["verified"] is False
+
+
+def test_retries_place_a_row_plex_dropped_on_the_first_attempt():
+    """A single dropped move self-heals within the run instead of waiting for the next one."""
+
+    class FlakySection(FakeSection):
+        def __init__(self, hubs):
+            super().__init__(hubs)
+            self.drops = 1
+
+        def apply(self, hub, after):
+            if self.drops:  # Plex takes the first move and quietly does nothing
+                self.drops -= 1
+                return None
+            super().apply(hub, after)
+
+    anchor = FakeHub("New Series", "a")
+    foreign = FakeHub("Kometa Genre", "g")
+    r1 = FakeHub("Picked for You", "o1")
+    section = FlakySection([anchor, foreign, r1])
+    client = _client([FakeColl("Picked for You", ["shortlist_sarah"], 101)])
+
+    result = client.order_owned_hubs(section, label_prefix="shortlist", anchor_title="New Series")
+
+    assert result["verified"] is True
+    assert r1.moves == 2  # first dropped, second stuck
+    assert section.titles() == ["New Series", "Picked for You", "Kometa Genre"]
+
+
+#: The delivery LEDGER — (user, row, section) -> ratingKey — which is what tells one row's hubs from
+#: another's now. Durable, so it answers the same on a run with no users at all.
+_LEDGER = {
+    ("a", "picked", "2"): 11,
+    ("b", "picked", "2"): 12,
+    ("a", "gems", "2"): 21,
+    ("b", "gems", "2"): 22,
+}
+
+
+def _order_ctx(cfg, plex, delivered_keys=None):
     import threading
     from types import SimpleNamespace
 
     section = SimpleNamespace(key=2, title="TV Shows")
-    return SimpleNamespace(config=cfg, delivery_sections=[section], plex=plex, write_lock=threading.Lock())
+    return SimpleNamespace(
+        config=cfg,
+        delivery_sections=[section],
+        plex=plex,
+        write_lock=threading.Lock(),
+        delivered_keys=_LEDGER if delivered_keys is None else delivered_keys,
+        # No co-managing agregarr connected: these tests are about the Plex-side ordering only.
+        agregarr=None,
+    )
 
 
 def _report_with_titles():
@@ -248,6 +497,15 @@ def _report_with_titles():
     )
 
 
+def _empty_report():
+    """What a `privacy.sync` produces: `engine_run(ctx, [])` — no users, and so no placement titles."""
+    from datetime import UTC, datetime
+
+    from shortlist.engine.models import RunReport
+
+    return RunReport(started_at=datetime.now(UTC), users=[])
+
+
 def test_order_phase_moves_all_rows_to_the_library_default_when_no_row_overrides():
     from unittest.mock import MagicMock
 
@@ -262,9 +520,9 @@ def test_order_phase_moves_all_rows_to_the_library_default_when_no_row_overrides
     )
     _order_phase(_order_ctx(cfg, plex), _report_with_titles())
 
-    # One call, whole library, no title subset (the robust global path).
+    # One call, whole library, no row subset (the robust global path).
     plex.order_owned_hubs.assert_called_once()
-    assert plex.order_owned_hubs.call_args.kwargs["only_titles"] is None
+    assert plex.order_owned_hubs.call_args.kwargs["only_keys"] is None
     assert plex.order_owned_hubs.call_args.kwargs["anchor_title"] == "Default Anchor"
 
 
@@ -285,14 +543,10 @@ def test_order_phase_groups_rows_by_effective_anchor_when_one_overrides():
     )
     _order_phase(_order_ctx(cfg, plex), _report_with_titles())
 
-    # Two groups: the default-anchored 'picked' rows and the overridden 'gems' rows, each its own subset.
-    groups = {
-        frozenset(c.kwargs["only_titles"]): c.kwargs["anchor_title"] for c in plex.order_owned_hubs.call_args_list
-    }
-    assert groups == {
-        frozenset({"Picked A", "Picked B"}): "Default Anchor",
-        frozenset({"Gems A", "Gems B"}): "Gems Anchor",
-    }
+    # Two groups: the default-anchored 'picked' rows and the overridden 'gems' rows, each its own subset,
+    # partitioned by the ledger's ratingKeys rather than by what this run happened to deliver.
+    groups = {frozenset(c.kwargs["only_keys"]): c.kwargs["anchor_title"] for c in plex.order_owned_hubs.call_args_list}
+    assert groups == {frozenset({11, 12}): "Default Anchor", frozenset({21, 22}): "Gems Anchor"}
 
 
 def test_order_phase_mixes_a_top_override_with_an_anchor_override():
@@ -314,9 +568,9 @@ def test_order_phase_mixes_a_top_override_with_an_anchor_override():
     )
     _order_phase(_order_ctx(cfg, plex), _report_with_titles())
 
-    calls = {frozenset(c.kwargs["only_titles"]): c.kwargs for c in plex.order_owned_hubs.call_args_list}
-    assert calls[frozenset({"Picked A", "Picked B"})]["to_top"] is True
-    gems = calls[frozenset({"Gems A", "Gems B"})]
+    calls = {frozenset(c.kwargs["only_keys"]): c.kwargs for c in plex.order_owned_hubs.call_args_list}
+    assert calls[frozenset({11, 12})]["to_top"] is True
+    gems = calls[frozenset({21, 22})]
     assert gems["to_top"] is False and gems["anchor_title"] == "New Series"
 
 
@@ -337,10 +591,19 @@ def test_order_phase_applies_a_before_override_with_no_global_default():
     plex.order_owned_hubs.assert_called_once()
     kwargs = plex.order_owned_hubs.call_args.kwargs
     assert kwargs["before"] is True and kwargs["anchor_title"] == "Gems Anchor"
-    assert set(kwargs["only_titles"]) == {"Gems A", "Gems B"}
+    # The one row here is the only one anchored, so there is nothing to tell apart: move them all.
+    assert kwargs["only_keys"] is None
 
 
-def test_order_phase_skips_an_overridden_row_with_no_delivered_titles():
+def test_order_phase_partitions_when_a_row_here_has_no_anchor_at_all():
+    """The matrix cell the neighbours miss: anchors that AGREE, plus a row with none.
+
+    `len(distinct) == 1` is true, so the cheap "move everything in one call" branch is one condition
+    away from firing — `unanchored` is the only thing forcing the ledger partition. That changes
+    `only_keys` from None (every owned row in the library) to a subset, which is a materially
+    different call: an unanchored row must be left where it is, not dragged to the anchored slot.
+    Every other test here has a single row, so `unanchored` is always empty and this arm never runs.
+    """
     from unittest.mock import MagicMock
 
     from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec
@@ -348,16 +611,132 @@ def test_order_phase_skips_an_overridden_row_with_no_delivered_titles():
 
     plex = MagicMock()
     plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"]}
-    # 'ghost' overrides but delivered no titles this run (absent from placement_titles) -> no move.
+    cfg = EngineConfig(
+        hub_anchors={},  # no global default, so 'loose' resolves to no anchor anywhere
+        rows=[
+            RowSpec(slug="picked", name_template="Picked", size=10, hub_anchors={"2": HubAnchor("", False, True)}),
+            RowSpec(slug="loose", name_template="Loose", size=10),
+        ],
+    )
+    _order_phase(_order_ctx(cfg, plex), _report_with_titles())
+
+    plex.order_owned_hubs.assert_called_once()
+    kwargs = plex.order_owned_hubs.call_args.kwargs
+    assert kwargs["only_keys"] == {11, 12}, "only the anchored row moves; the unanchored one stays put"
+    assert kwargs["to_top"] is True
+
+
+def test_order_phase_still_orders_on_a_run_with_no_users():
+    """The SFLIX bug: a `privacy.sync` reached the ordering phase 31 times in a day and moved nothing.
+
+    A per-library `hub_anchor` override sent this down a path that took the rows to move from
+    `report.users[].placement_titles` — only ever populated by the run in progress. `engine_run(ctx, [])`
+    has no users, so the set came out empty, no group was built, and NOT ONE move was issued, silently.
+    That is why "Fix privacy" and "Fix rows" could never repair a shelf.
+    """
+    from unittest.mock import MagicMock
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec
+    from shortlist.engine.pipeline import _order_phase
+
+    plex = MagicMock()
+    plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"], "verified": True}
+    cfg = EngineConfig(  # exactly SFLIX's shape: one row, a per-library override, no global default
+        hub_anchors={},
+        rows=[
+            RowSpec(
+                slug="picked",
+                name_template="",
+                size=10,
+                hub_anchors={"2": HubAnchor("Recently Added TV", False)},
+            )
+        ],
+    )
+
+    _order_phase(_order_ctx(cfg, plex), _empty_report())
+
+    plex.order_owned_hubs.assert_called_once()
+    kwargs = plex.order_owned_hubs.call_args.kwargs
+    assert kwargs["anchor_title"] == "Recently Added TV"
+    assert kwargs["only_keys"] is None  # every row, not "whoever ran tonight"
+
+
+def test_order_phase_orders_a_row_that_delivered_nothing_this_run():
+    """A row nobody was delivered tonight still owns hubs on the shelf, and they still need placing.
+
+    This used to be asserted the other way round ("skips an overridden row with no delivered titles"),
+    which is the bug written down as a requirement: a paused, errored or simply skipped user's row was
+    dropped from the ordering pass and drifted to the bottom of the shelf for good.
+    """
+    from unittest.mock import MagicMock
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec
+    from shortlist.engine.pipeline import _order_phase
+
+    plex = MagicMock()
+    plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"], "verified": True}
     cfg = EngineConfig(
         hub_anchors={"2": HubAnchor("Default", False)},
         rows=[
             RowSpec(slug="ghost", name_template="Ghost", size=10, hub_anchors={"2": HubAnchor("Ghost Anchor", False)})
         ],
     )
+
     _order_phase(_order_ctx(cfg, plex), _report_with_titles())
 
-    plex.order_owned_hubs.assert_not_called()  # empty title set -> nothing to move
+    plex.order_owned_hubs.assert_called_once()
+    assert plex.order_owned_hubs.call_args.kwargs["anchor_title"] == "Ghost Anchor"
+
+
+def test_order_phase_uses_the_library_default_when_no_row_is_left_to_ask():
+    """Every row deleted or switched off, but the library still has an anchor — and still has our rows.
+
+    Retired collections stay on the shelf, so skipping the library because `config.rows` is empty is
+    another silent do-nothing in the function whose whole bug was a silent do-nothing.
+    """
+    from unittest.mock import MagicMock
+
+    from shortlist.engine.models import EngineConfig, HubAnchor
+    from shortlist.engine.pipeline import _order_phase
+
+    plex = MagicMock()
+    plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"], "verified": True}
+    cfg = EngineConfig(hub_anchors={"2": HubAnchor("Recently Added TV", False)}, rows=[], rows_defined=True)
+
+    _order_phase(_order_ctx(cfg, plex), _empty_report())
+
+    plex.order_owned_hubs.assert_called_once()
+    kwargs = plex.order_owned_hubs.call_args.kwargs
+    assert kwargs["anchor_title"] == "Recently Added TV" and kwargs["only_keys"] is None
+
+
+def test_order_phase_leaves_a_diverging_row_alone_until_the_ledger_knows_it():
+    """When rows genuinely disagree they must be partitioned, and the ledger is the only handle.
+
+    A row with no delivered collection here yet cannot be told apart from its siblings, so it is left
+    for the next run rather than swept into another row's group.
+    """
+    from unittest.mock import MagicMock
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec
+    from shortlist.engine.pipeline import _order_phase
+
+    plex = MagicMock()
+    plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"], "verified": True}
+    cfg = EngineConfig(
+        hub_anchors={},
+        rows=[
+            RowSpec(slug="picked", name_template="", size=10, hub_anchors={"2": HubAnchor("Anchor A", False)}),
+            RowSpec(slug="ghost", name_template="Ghost", size=10, hub_anchors={"2": HubAnchor("Anchor B", False)}),
+        ],
+    )
+
+    _order_phase(_order_ctx(cfg, plex), _report_with_titles())
+
+    # 'picked' is in the ledger and gets placed; 'ghost' has never delivered here, so it is skipped.
+    plex.order_owned_hubs.assert_called_once()
+    kwargs = plex.order_owned_hubs.call_args.kwargs
+    assert kwargs["anchor_title"] == "Anchor A" and set(kwargs["only_keys"]) == {11, 12}
 
 
 def test_dry_run_reports_the_move_without_writing():

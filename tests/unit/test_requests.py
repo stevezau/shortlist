@@ -589,7 +589,7 @@ class TestRequestMissing:
         )
         cfg = _cfg(radarr=RADARR, rating_source="imdb", mdblist_api_key="k", max_per_run=5)
         requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
-        assert mdblist.calls <= requests_mod._IMDB_SHORTLIST  # daily-cap guard holds
+        assert mdblist.calls <= requests_mod._lookup_budget(5)  # daily-cap guard holds
 
     def test_non_tmdb_source_without_a_client_falls_back_to_tmdb(self, monkeypatch):
         fake = FakeArr()
@@ -914,3 +914,51 @@ class TestWhyATitleWasNotSent:
         title.excluded = True
         report = requests_mod.request_missing(cfg, FakeTmdb(), self._demand(title), dry_run=True)
         assert "exclusion list" in report.queued[0].detail
+
+
+class TestTheLookupBudgetFollowsTheOwnersRequestCap:
+    """`requests.max_per_run` is validated 0..100, so the MDBList shortlist must scale with it.
+
+    It was a flat 20. The TMDB gate filters the whole pool and has no limit, so an owner who set
+    `max_per_run` to 40 got 40 requests on TMDB and at most 20 on IMDb/Trakt/RT/Metacritic — the same
+    setting meaning two different things, with nothing anywhere saying so. This is the `_REORDER_TOP_N`
+    shape: a hidden number quietly overriding a visible one.
+    """
+
+    def test_the_default_cap_is_unchanged(self):
+        """5 x 4 = 20, exactly the old flat value — nobody on defaults sees any difference."""
+        assert requests_mod._lookup_budget(5) == 20
+
+    def test_a_raised_cap_raises_the_pool(self):
+        """The bug: at max_per_run=40 the old flat 20 could not even supply the run, let alone let
+        the rating floors reject anything."""
+        assert requests_mod._lookup_budget(40) > 40, "the pool must exceed the cap, or the run cannot fill"
+        assert requests_mod._lookup_budget(100) == 400
+
+    def test_a_small_cap_still_gets_a_real_pool(self):
+        """A floor, so max_per_run=1 inspects a sensible pool rather than 4 titles — the gate rejects
+        most of what it sees, so a pool of 4 would usually yield nothing at all."""
+        assert requests_mod._lookup_budget(1) == 20
+        assert requests_mod._lookup_budget(0) == 20
+
+    @staticmethod
+    def _demand(*titles: MissingTitle) -> requests_mod.DemandMap:
+        return {(t.tmdb_id, t.media_type): t for t in titles}
+
+    def test_the_gate_actually_looks_up_more_when_the_cap_is_raised(self, monkeypatch):
+        """The wiring, not just the arithmetic: removing the derivation must break this."""
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        mdblist = FakeMdbList({})  # every lookup misses, so nothing qualifies and nothing is sent
+        demand = self._demand(
+            *[
+                MissingTitle(i, f"t{i}", MediaType.MOVIE, 2020, rating=8.0, vote_count=900, demand=1)
+                for i in range(1, 121)
+            ]
+        )
+        cfg = _cfg(radarr=RADARR, rating_source="imdb", mdblist_api_key="k", max_per_run=40)
+
+        requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
+
+        assert mdblist.calls > 20, "a raised max_per_run must widen the MDBList shortlist past the old flat 20"
+        assert mdblist.calls <= requests_mod._lookup_budget(40)

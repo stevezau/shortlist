@@ -13,6 +13,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -1185,11 +1186,39 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
     (`test_pipeline.py::test_dry_run_reports_the_deletion_without_making_it`).
     """
 
-    def _state(self, *, forced_dry_run: bool = False):
-        def build_context(dry_run: bool, plex_only: bool = False):
-            return SimpleNamespace(config=SimpleNamespace(dry_run=dry_run or forced_dry_run))
+    def _state(self, *, forced_dry_run: bool = False, sections: list | None = None):
+        # A REAL EngineConfig and a plex client, because the handler now also places rows on the
+        # Recommended shelf and reads both. A namespace carrying only `dry_run` was a fake easier
+        # than the thing it stood for, and it hid the shelf pass from every test here.
+        import threading
 
-        return SimpleNamespace(run_service=SimpleNamespace(build_context=build_context))
+        built: list = []
+
+        def build_context(dry_run: bool, plex_only: bool = False):
+            plex = MagicMock()
+            plex.sections.return_value = list(sections or [])
+            plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["row"], "verified": True}
+            ctx = SimpleNamespace(
+                config=EngineConfig(
+                    dry_run=dry_run or forced_dry_run,
+                    rows=[RowSpec(slug="picked", name_template="Picked for You", size=10)],
+                    rows_defined=True,
+                ),
+                plex=plex,
+                delivery_sections=[],
+                delivered_keys={},
+                write_lock=threading.Lock(),
+                agregarr=None,  # no co-managing agregarr connected in these job tests
+            )
+            built.append(ctx)
+            return ctx
+
+        # `sessions` because the handler audits the shelf pass through `write_audit`, which opens one.
+        # A namespace without it is a fake thinner than the real `app.state` and would only ever prove
+        # the audit is unreachable.
+        return SimpleNamespace(
+            run_service=SimpleNamespace(build_context=build_context), contexts=built, sessions=MagicMock()
+        )
 
     def _converge_spy(self, monkeypatch) -> list[bool]:
         """Record the `may_delete` each call is given, and report one orphan when it is allowed."""
@@ -1209,13 +1238,85 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
 
     def test_a_preview_lists_the_orphans_it_would_remove(self, monkeypatch):
         seen = self._converge_spy(monkeypatch)
+        state = self._state(sections=[MagicMock(type="movie", key="1", title="Movies")])
 
-        result = jobs._HANDLERS["sync.check"](self._state(), {"dry_run": True})
+        result = jobs._HANDLERS["sync.check"](state, {"dry_run": True})
 
         assert seen == [True], "a preview must be allowed to REPORT what a real pass would delete"
         assert result["orphans"] == ["shortlist_ghost"]
         # Worded as a warning about the future, not a record of a deletion that happened.
         assert "1 orphaned collection(s) to remove" in result["detail"]
+        # "Press Check now and it tells you what it would change without touching anything" — the
+        # shelf pass is inside that promise too, so it must be asked for as a DRY RUN and worded so.
+        ctx = state.contexts[0]
+        assert ctx.plex.order_owned_hubs.call_args.kwargs["dry_run"] is True
+        assert "would reposition rows on the shelf in Movies" in result["detail"]
+
+    def test_it_also_puts_the_rows_back_in_place_on_the_shelf(self, monkeypatch):
+        """ "Check and fix rows on Plex" has to fix a row stranded at the bottom of the Recommended shelf.
+
+        That is the literal complaint this button is pressed for, and it did nothing about it: the
+        handler only converged. On SFLIX it was pressed against a shelf holding 14 rows at the bottom
+        and reported success without issuing a single move (2026-08-12).
+        """
+        self._converge_spy(monkeypatch)
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        state = self._state(sections=[movies])
+
+        result = jobs._HANDLERS["sync.check"](state, {"confirmed": True})
+
+        ctx = state.contexts[0]
+        # The library rows live in was named without reading a single item inside it...
+        assert [s.title for s in ctx.delivery_sections] == ["Movies"]
+        ctx.plex.build_library_index.assert_not_called()
+        # ...and the shelf placement really was asked for, not just reported.
+        ctx.plex.order_owned_hubs.assert_called_once()
+        assert ctx.plex.order_owned_hubs.call_args.kwargs["dry_run"] is False
+        assert "repositioned rows on the shelf in Movies" in result["detail"]
+
+    def test_the_shelf_pass_is_audited_even_though_no_run_is_persisted(self, monkeypatch):
+        """`run_persistence` only audits a PERSISTED run, and this handler persists none.
+
+        So without its own audit the `verified: False` record — the one thing that makes a shelf Plex
+        refused to reorder visible to anyone — exists only on the path that never needed it
+        (plex-safety rule 10).
+        """
+        self._converge_spy(monkeypatch)
+        audits: list[tuple] = []
+        monkeypatch.setattr(jobs, "write_audit", lambda st, scope, level, **f: audits.append((scope, level, f)))
+        state = self._state(sections=[MagicMock(type="movie", key="1", title="Movies")])
+
+        jobs._HANDLERS["sync.check"](state, {"confirmed": True})
+
+        shelf = [a for a in audits if a[0] == "shelf.order"]
+        assert len(shelf) == 1
+        _, level, fields = shelf[0]
+        assert level == "info" and fields["verified"] is True and fields["library"] == "Movies"
+
+    def test_an_unverified_shelf_pass_is_audited_as_a_warning(self, monkeypatch):
+        """A shelf we asked for and did not get has to reach the operator, not just the log."""
+        self._converge_spy(monkeypatch)
+        audits: list[tuple] = []
+        monkeypatch.setattr(jobs, "write_audit", lambda st, scope, level, **f: audits.append((scope, level, f)))
+        state = self._state(sections=[MagicMock(type="movie", key="1", title="Movies")])
+
+        jobs._HANDLERS["sync.check"](state, {"confirmed": True})
+        # Re-run with the client reporting the shelf as unconfirmed.
+        state.contexts.clear()
+        audits.clear()
+        original = state.run_service.build_context
+
+        def unverified_context(dry_run: bool, plex_only: bool = False):
+            ctx = original(dry_run, plex_only)
+            ctx.plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["row"], "verified": False}
+            return ctx
+
+        state.run_service.build_context = unverified_context
+        jobs._HANDLERS["sync.check"](state, {"confirmed": True})
+
+        shelf = [a for a in audits if a[0] == "shelf.order"]
+        assert [a[1] for a in shelf] == ["warning"]
+        assert shelf[0][2]["verified"] is False
 
     def test_the_unattended_nightly_pass_still_has_no_delete_authority(self, monkeypatch):
         """The scheduled pass sends neither flag. It must demote and report, never destroy — upgrading
@@ -1240,9 +1341,13 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
         """SHORTLIST_DRY_RUN forces the context dry, and the handler's `dry_run` picks that up — so
         Fix reports rather than removes, and the detail must not claim a deletion that never happened."""
         seen = self._converge_spy(monkeypatch)
+        state = self._state(forced_dry_run=True, sections=[MagicMock(type="movie", key="1", title="Movies")])
 
-        result = jobs._HANDLERS["sync.check"](self._state(forced_dry_run=True), {"confirmed": True})
+        result = jobs._HANDLERS["sync.check"](state, {"confirmed": True})
 
         assert seen == [True]
         assert "1 orphaned collection(s) to remove" in result["detail"]
         assert "removed" not in result["detail"]
+        # Safe mode has to reach the shelf pass too — it is a Plex write like any other here.
+        assert state.contexts[0].plex.order_owned_hubs.call_args.kwargs["dry_run"] is True
+        assert "would reposition" in result["detail"]

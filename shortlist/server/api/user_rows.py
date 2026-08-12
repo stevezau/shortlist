@@ -9,6 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from shortlist.engine.models import MAX_ROW_SIZE, MIN_ROW_SIZE
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.api.serializers import UserPickOut, pick_dict
 from shortlist.server.auth import require_owner
@@ -28,7 +29,7 @@ router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(requir
 
 class RowOverridePatch(BaseModel):
     muted: bool | None = None
-    row_size: int | None = Field(default=None, ge=5, le=40)
+    row_size: int | None = Field(default=None, ge=MIN_ROW_SIZE, le=MAX_ROW_SIZE)
     recent_count: int | None = Field(default=None, ge=1, le=25)
 
 

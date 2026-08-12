@@ -70,6 +70,8 @@ class UserOut(PassthroughModel):
     last_run_at: str | None
     hit_rate: float | None
     preview_titles: list[str]
+    unhidden_rows: int
+    departed: bool
 
 
 def pick_dict(pick: PickRow) -> dict:
@@ -108,6 +110,7 @@ def user_dict(
     last_run_at,
     hit_rate: float | None,
     preview_titles: list[str] | None = None,
+    unhidden_rows: int = 0,
 ) -> dict:
     """One person, as the Users list and the user-detail page render them.
 
@@ -117,6 +120,10 @@ def user_dict(
         last_run_at: When the most recent run that included them finished, or None.
         hit_rate: Watched-over-delivered across their whole history, or None with no picks yet.
         preview_titles: A few of their most recent pick titles, for the dashboard card.
+        unhidden_rows: How many of OTHER people's rows the last run measured this account as able to
+            see. Non-zero only for an account Plex refuses a hide-list for; 0 both when there is
+            nothing to see and when no run has measured yet, because the UI must not render an
+            unmeasured account as an exposed one.
 
     Returns:
         The serialized user.
@@ -135,8 +142,8 @@ def user_dict(
         "user_type": user.user_type,
         "restricted": user.restricted,
         # "" when no parental preset is set. A managed account WITHOUT one is an ordinary user that
-        # gets rows and privacy filters; one WITH a preset sees no collections at all and Plex refuses
-        # to filter it. The UI needs the difference to say anything true (#20).
+        # gets rows and privacy filters; one WITH a preset usually sees no collections and Plex refuses
+        # to filter it either way. The UI needs the difference to say anything true (#20).
         "restriction_profile": user.restriction_profile or "",
         "enabled": user.enabled,
         "cold_start": user.cold_start,
@@ -147,4 +154,9 @@ def user_dict(
         "hit_rate": hit_rate,
         # A few of their most recent pick titles, for a real preview strip on the dashboard card.
         "preview_titles": preview_titles or [],
+        "unhidden_rows": unhidden_rows,
+        # Plex no longer lists this account. Distinct from `enabled=False`, which the owner also sets
+        # by hand — without the difference the list cannot explain why somebody is switched off, nor
+        # offer the Remove that only makes sense for someone who has actually gone.
+        "departed": user.departed_at is not None,
     }

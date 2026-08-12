@@ -18,7 +18,7 @@ interface RecencySliderProps {
  * labels stay honest as the calendar moves.
  *
  * A native range input, so it is keyboard-accessible for free; the whole-percent value maps to a
- * 0..1 fraction at the call site, like the freshness and watched-cap sliders beside it.
+ * 0..1 fraction at the call site, like the watched-cap slider beside it.
  */
 export function RecencySlider({
   id,

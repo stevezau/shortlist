@@ -1,9 +1,13 @@
 /**
  * Row length (title count) bounds, shared by every place a row size is chosen (settings, rows,
- * wizard, per-user override). A free number in this range — the server enforces the same bounds
- * (`row.size` validator, `CollectionIn.size`, `UserRowOverride.row_size`). The ceiling matches the
- * engine's fixed per-media pre-rank cap (`EngineConfig.candidates_pre_rank`, 40), so even a
- * single-media row at the max can actually be filled rather than silently truncated.
+ * wizard, per-user override). A free number in this range — the server enforces the same bounds from
+ * `MIN_ROW_SIZE`/`MAX_ROW_SIZE` in shortlist/engine/models.py, which all three of its validators
+ * (`row.size`, `CollectionIn.size`, `RowOverridePatch.row_size`) import rather than restate.
+ *
+ * These two are the authority's mirror, not a second opinion: `tests/unit/test_web_constant_parity.py`
+ * reads this file and fails if either side moves alone. The ceiling used to be described as matching
+ * `EngineConfig.candidates_pre_rank` (then a flat 40) — that equality was the bug, not the design. The
+ * pool is now twice the ceiling, so a row at the maximum still has candidates to spare on a refresh.
  */
 export const ROW_SIZE_MIN = 5;
 export const ROW_SIZE_MAX = 40;
@@ -55,44 +59,47 @@ export function watchedBadgeLabel(pct: number): string {
 }
 
 /**
- * Freshness, as a whole percentage — the REFRESH CADENCE (how often a row rebuilds), not a nightly
- * shuffle. 0 = never refresh once built (frozen/pinned), 100 = rebuild every night, in between =
- * every N days (50 ≈ weekly). On a refresh the strongest ~two-thirds stay and the weakest third is
- * swapped for new picks; other nights the row is reused unchanged (no re-curation, no Plex write).
- * Default weekly so rows stay stable and evolve gradually. Stored as a 0..1 fraction; UI is percent.
+ * The REFRESH CADENCE, in days — how often a row re-picks its titles, not a nightly shuffle. 0 =
+ * never refresh once built (frozen/pinned), 1 = every night, N = every N days. On a refresh the
+ * strongest ~two-thirds stay and the weakest third is swapped for new picks; other nights the row is
+ * reused unchanged (no re-curation, no Plex write).
+ *
+ * 8 rather than 7 because 8 is exactly what the old `freshness` default of 50% resolved to, and
+ * migration 0065 must not shift the cadence of a server that never set it. MUST equal
+ * `recommendations.refresh_days` in settings_store.py — pinned by test_web_constant_parity.py.
+ *
+ * This was a 0..100 percent that a curve stretched onto 1..14 days, which is why the helper text
+ * below used to spend a sentence translating the number back for the reader.
  */
-export const FRESHNESS_DEFAULT = 50;
+export const REFRESH_DAYS_DEFAULT = 8;
 
-/** Roughly how many days between refreshes at a given whole-percent freshness (mirrors the engine's
- *  `_refresh_period_days`: 100 → nightly, lower → longer, capped near a fortnight). */
-function refreshEveryDays(pct: number): number {
-  const f = Math.min(100, Math.max(0, pct)) / 100;
-  if (f >= 1) return 1;
-  return Math.max(1, Math.round(1 + (1 - f) * 13));
+/**
+ * Slowest cadence the form accepts. A validation bound, not a behaviour cap — MUST equal
+ * `MAX_REFRESH_DAYS` in shortlist/engine/models.py. The old percent could not express anything
+ * slower than a fortnight; a monthly row is now simply "30".
+ */
+export const MAX_REFRESH_DAYS = 365;
+
+/** Clamp a typed cadence to the allowed range and to a whole number. */
+export function clampRefreshDays(value: number): number {
+  if (!Number.isFinite(value)) return REFRESH_DAYS_DEFAULT;
+  return Math.max(0, Math.min(MAX_REFRESH_DAYS, Math.round(value)));
 }
 
-/** Human sentence describing a given whole-percent freshness, for helper text under the control. */
-export function freshnessDescription(pct: number): string {
-  if (pct <= 0)
+/** Human sentence describing a cadence in days, for helper text under the control. */
+export function refreshDaysDescription(days: number): string {
+  if (days <= 0)
     return "Frozen — once built, the row never changes on its own. Pin a shelf you want to stay put.";
-  if (pct >= 100)
+  if (days === 1)
     return "Rebuilds every night — the strongest two-thirds stay, the rest are swapped for new picks. Most variety, most Plex writes.";
-  const days = refreshEveryDays(pct);
-  const every =
-    days <= 1
-      ? "every night"
-      : days >= 7
-        ? `about every ${days} days`
-        : `every ${days} days`;
-  return `Refreshes ${every}: keeps the strongest two-thirds and swaps the rest for new picks. Other nights the row stays exactly as it is. Higher = fresher; lower = stickier.`;
+  return `Rebuilds every ${days} days: keeps the strongest two-thirds and swaps the rest for new picks. On the other nights the row stays exactly as it is.`;
 }
 
-/** Terse label for a row card's "this row overrides the freshness" badge (fraction → percent). */
-export function freshnessBadgeLabel(pct: number): string {
-  const whole = Math.round(pct * 100);
-  if (whole <= 0) return "Freshness: frozen";
-  if (whole >= 100) return "Freshness: nightly";
-  return `Freshness: ${whole}%`;
+/** Terse label for a row card's "this row overrides the cadence" badge. */
+export function refreshDaysBadgeLabel(days: number): string {
+  if (days <= 0) return "Rebuilds: never";
+  if (days === 1) return "Rebuilds: nightly";
+  return `Rebuilds: every ${days} days`;
 }
 
 /**
@@ -100,8 +107,8 @@ export function freshnessBadgeLabel(pct: number): string {
  * percentage. 0 = ignore age (how ranking worked before this existed), 100 = every
  * RECENCY_HALF_LIFE_YEARS of age halves a title's weight. Stored as a 0..1 fraction; UI is percent.
  *
- * Not freshness, despite living beside it in the same card. Freshness is a CADENCE — how often a
- * row re-picks. This is a PREFERENCE — which titles win when it does. A row can rebuild nightly and
+ * Not the refresh cadence, despite living beside it in the same card. That is how OFTEN a row
+ * re-picks. This is a PREFERENCE — which titles win when it does. A row can rebuild nightly and
  * still fill with 1990s titles; that combination is what this setting is for.
  *
  * Defaults to 50 to match the server (`recommendations.recency`) — the seed used only until settings

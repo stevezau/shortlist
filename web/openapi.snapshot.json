@@ -481,19 +481,6 @@
             "title": "Enabled",
             "type": "boolean"
           },
-          "freshness": {
-            "anyOf": [
-              {
-                "maximum": 1.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Freshness"
-          },
           "hub_anchor": {
             "additionalProperties": {
               "$ref": "#/components/schemas/HubAnchorIn"
@@ -621,6 +608,19 @@
             ],
             "title": "Recent Count"
           },
+          "refresh_days": {
+            "anyOf": [
+              {
+                "maximum": 365.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Days"
+          },
           "request_tag": {
             "default": "",
             "maxLength": 64,
@@ -738,17 +738,6 @@
           "enabled": {
             "title": "Enabled",
             "type": "boolean"
-          },
-          "freshness": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Freshness"
           },
           "hub_anchor": {
             "additionalProperties": {
@@ -876,6 +865,17 @@
             ],
             "title": "Recent Count"
           },
+          "refresh_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Days"
+          },
           "request_tag": {
             "title": "Request Tag",
             "type": "string"
@@ -940,7 +940,7 @@
           "watched_pct",
           "rewatch",
           "unstarted_only",
-          "freshness",
+          "refresh_days",
           "recency",
           "recent_count",
           "max_seeds",
@@ -2776,6 +2776,31 @@
           "rejected"
         ],
         "title": "RejectedOut",
+        "type": "object"
+      },
+      "RemovedOut": {
+        "additionalProperties": true,
+        "description": "What `DELETE /users/{id}` dropped. `user_id` is still valid \u2014 the row is archived, not deleted.",
+        "properties": {
+          "picks_deleted": {
+            "title": "Picks Deleted",
+            "type": "integer"
+          },
+          "runs_deleted": {
+            "title": "Runs Deleted",
+            "type": "integer"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "user_id",
+          "picks_deleted",
+          "runs_deleted"
+        ],
+        "title": "RemovedOut",
         "type": "object"
       },
       "RenameRequest": {
@@ -4861,6 +4886,10 @@
             "title": "Cold Start",
             "type": "boolean"
           },
+          "departed": {
+            "title": "Departed",
+            "type": "boolean"
+          },
           "display_name": {
             "title": "Display Name",
             "type": "string"
@@ -4939,6 +4968,10 @@
             "title": "Slug",
             "type": "string"
           },
+          "unhidden_rows": {
+            "title": "Unhidden Rows",
+            "type": "integer"
+          },
           "user_type": {
             "$ref": "#/components/schemas/UserType"
           },
@@ -4966,7 +4999,9 @@
           "history_depth",
           "last_run_at",
           "hit_rate",
-          "preview_titles"
+          "preview_titles",
+          "unhidden_rows",
+          "departed"
         ],
         "title": "UserOut",
         "type": "object"
@@ -5597,7 +5632,7 @@
       },
       "WatchedPageOut": {
         "additionalProperties": true,
-        "description": "A page of the watched set, plus how complete the set behind it is.\n\nThe freshness fields travel WITH the page on purpose: this list is a cache, and a page that\ndoesn't say when it was last filled invites \"I watched that, why is it recommended?\" \u2014 the exact\nquestion this endpoint exists to answer.",
+        "description": "A page of the watched set, plus how complete the set behind it is.\n\nThe staleness fields travel WITH the page on purpose: this list is a cache, and a page that\ndoesn't say when it was last filled invites \"I watched that, why is it recommended?\" \u2014 the exact\nquestion this endpoint exists to answer.",
         "properties": {
           "dislike_threshold": {
             "anyOf": [
@@ -5821,7 +5856,7 @@
   },
   "info": {
     "title": "Shortlist",
-    "version": "1.3.0"
+    "version": "1.4.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -8419,7 +8454,7 @@
     },
     "/api/support/row-schedule": {
       "get": {
-        "description": "When each row last rebuilt, and when it is next due to.\n\nThe gap this closes: freshness is a CADENCE, not a nightly shuffle. At the 0.5 default a row\nre-selects its titles roughly weekly and redelivers the same picks on every other night, and the\nengine logs that decision NOWHERE. So \"I changed the setting and nothing happened\" has been\nunanswerable \u2014 the setting was fine, the row simply had not rebuilt yet.",
+        "description": "When each row last rebuilt, and when it is next due to.\n\nThe gap this closes: the refresh cadence is exactly that \u2014 a cadence. At the 8-day default a row\nre-selects its titles about weekly and redelivers the same picks on every other night, and the\nengine logs that decision NOWHERE. So \"I changed the setting and nothing happened\" has been\nunanswerable \u2014 the setting was fine, the row simply had not rebuilt yet.",
         "operationId": "row_schedule_api_support_row_schedule_get",
         "responses": {
           "200": {
@@ -9477,6 +9512,47 @@
       }
     },
     "/api/users/{user_id}": {
+      "delete": {
+        "description": "File away someone Plex no longer has: drop their picks and run history, hide them from the list.\n\nNOT a delete, and the difference is load-bearing. `restriction_snapshots` is keyed to `users.id`\nwith `ON DELETE RESTRICT` (migration 0055) and holds the only copy of this account's share filters\nas they were BEFORE Shortlist touched them \u2014 what uninstall restores from (plex-safety rule 2).\nUninstall skips any snapshot whose user row has gone, so deleting the row would quietly cost that\nperson their restore. The row stays as the snapshot's anchor and leaves the UI instead.\n\nRefused for anyone still on the share (409): on an active account this would read as \"delete this\nuser\", dropping their history while the nightly run keeps rebuilding their row.\n\nTheir share-filter excludes are not touched here. Once their collection is gone, the next privacy\npass prunes the dead label on its own \u2014 under both guards in `sync_user_restrictions`, which is a\nsafer place for that decision than a button.",
+        "operationId": "remove_departed_user_api_users__user_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovedOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Departed User",
+        "tags": [
+          "users"
+        ]
+      },
       "patch": {
         "operationId": "patch_user_api_users__user_id__patch",
         "parameters": [

@@ -38,7 +38,7 @@ first change and restored exactly on uninstall.
 - Coexists with Kometa: only collections Shortlist created (labelled `shortlist_*`) are ever modified.
 - Plex-only. There is no Jellyfin or Emby support, because the privacy model depends on Plex's
   label-based share filters.
-- Status: public beta, running in production.
+- Status: 1.0, running in production.
 
 ## Docs
 
@@ -47,9 +47,16 @@ first change and restored exactly on uninstall.
 - [Guides]({{ '/guides' | absolute_url }}): the web interface, rows, schedules, per-user overrides, troubleshooting, AI cost control
 - [Reference]({{ '/reference' | absolute_url }}): every configuration key, REST API endpoint, environment variable and default
 - [FAQ]({{ '/faq' | absolute_url }}): privacy model, what the owner can see, Kometa coexistence, uninstalling
+- [Plex how-to]({{ '/plex-how-to' | absolute_url }}): what Plex itself can and cannot do about recommendations and per-user rows
 - [How to make a Plex collection visible to only one user]({{ '/plex-per-user-collections' | absolute_url }}): the label + share-filter mechanism, the manual steps, and the ordering mistake that leaks
+- [Plex recommendations based on watch history]({{ '/plex-recommendations-watch-history' | absolute_url }}): what Plex does with watch history, why smart collections are not personal, how to build rows that are
+- [A different Plex home screen for each user]({{ '/plex-per-user-home-screen' | absolute_url }}): pinned sources, managed users, published collections, and why none of them give per-user rows
+- [Netflix-style recommendations for your Plex library]({{ '/plex-netflix-style-recommendations' | absolute_url }}): the four properties that make rows feel personal, and which of them Plex can reproduce
+- [Plex recommendation tools compared]({{ '/plex-recommendation-tools' | absolute_url }}): Shortlist, Immaculaterr, Curatarr, SeekAndWatch and others — and the personal-vs-private distinction that separates them
 
 ## Source
 
 - [GitHub repository](https://github.com/stevezau/shortlist)
-- [Container image](https://github.com/stevezau/shortlist/pkgs/container/shortlist): `ghcr.io/stevezau/shortlist:latest`
+- [Container image](https://hub.docker.com/r/stevezzau/shortlist): `stevezzau/shortlist:latest` (note
+  the doubled z — the Docker Hub namespace is `stevezzau`, not the GitHub username `stevezau`). The
+  identical image is also on GHCR as `ghcr.io/stevezau/shortlist:latest`.

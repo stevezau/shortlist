@@ -573,12 +573,12 @@ class TestRowSchedule:
     """The tool that answers "I changed the setting and nothing happened"."""
 
     def test_reports_the_rebuild_cadence_and_how_stale_the_row_is(self, client):
-        """Freshness is a CADENCE, not a nightly shuffle, and the engine logs that decision nowhere.
-        At the 0.5 default a row re-selects about weekly and redelivers unchanged in between — so a
-        correct setting genuinely does nothing until the row next rebuilds."""
+        """The cadence is a cadence, and the engine logs that decision nowhere. At the 8-day default
+        a row re-selects about weekly and redelivers unchanged in between — so a correct setting
+        genuinely does nothing until the row next rebuilds."""
         with client.app.state.sessions() as session:
             row = session.query(Collection).filter(Collection.slug == "picked").one()
-            row.freshness = 0.5
+            row.refresh_days = 8
             user = session.query(User).filter(User.slug == "sarah").one()
             session.add(
                 PickRow(
@@ -602,10 +602,10 @@ class TestRowSchedule:
         assert row["due"] is True
 
     def test_a_frozen_row_reads_as_frozen_not_as_broken(self, client):
-        """Freshness 0 means "never refresh once built" — a deliberate pinned row. Reporting it as
-        overdue for ever would send someone hunting a bug that is a setting."""
+        """0 means "never refresh once built" — a deliberate pinned row. Reporting it as overdue for
+        ever would send someone hunting a bug that is a setting."""
         with client.app.state.sessions() as session:
-            session.query(Collection).filter(Collection.slug == "picked").one().freshness = 0.0
+            session.query(Collection).filter(Collection.slug == "picked").one().refresh_days = 0
             session.commit()
         _enable(client)
 

@@ -20,18 +20,18 @@ vi.mock("sonner", () => ({
   },
 }));
 
-const { getUsers, patchUser, setAllUsersEnabled, syncUsers } = vi.hoisted(
-  () => ({
+const { getUsers, patchUser, removeUser, setAllUsersEnabled, syncUsers } =
+  vi.hoisted(() => ({
     getUsers: vi.fn(),
     patchUser: vi.fn(),
+    removeUser: vi.fn(),
     syncUsers: vi.fn(() =>
       Promise.resolve({ added: 1, updated: 48, total: 49, queued: false }),
     ),
     setAllUsersEnabled: vi.fn((_enabled: boolean) =>
       Promise.resolve({ updated: 1, cleaned: 0, enabled: true }),
     ),
-  }),
-);
+  }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>();
@@ -40,6 +40,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     api: {
       getUsers: () => getUsers(),
       patchUser: (id: number, patch: UserPatch) => patchUser(id, patch),
+      removeUser: (id: number) => removeUser(id),
       setAllUsersEnabled: (enabled: boolean) => setAllUsersEnabled(enabled),
       syncUsers: () => syncUsers(),
     },
@@ -64,9 +65,13 @@ const SARAH: User = {
   avatar_url: "",
   plex_account_id: 0,
   restriction_profile: "",
+  unhidden_rows: 0,
+  departed: false,
   preview_titles: [],
   prefs: {},
 };
+
+const MIKE: User = { ...SARAH, id: 5, username: "mike", slug: "mike" };
 
 function renderPage() {
   const client = new QueryClient({
@@ -312,6 +317,73 @@ describe("UsersPage — Plex Home accounts", () => {
     restricted: true,
     restriction_profile,
     enabled: false,
+  });
+
+  it("says an account LEFT rather than just showing it switched off", async () => {
+    // `enabled: false` means two unrelated things — the owner turned them off, or Plex no longer has
+    // them. Rendered identically, a departed account is an unexplained row with no action attached.
+    getUsers.mockResolvedValue([
+      { ...SARAH, enabled: false, departed: true },
+      { ...MIKE, enabled: false, departed: false },
+    ]);
+    renderPage();
+
+    expect(await screen.findByText(/left the server/i)).toBeInTheDocument();
+    // Exactly one — the manually-disabled account must not be labelled as gone.
+    expect(screen.getAllByText(/left the server/i)).toHaveLength(1);
+  });
+
+  it("offers Remove only for someone who actually left", async () => {
+    // On an active account this control would read as "delete this user", dropping their whole
+    // history while the nightly run keeps rebuilding their row.
+    getUsers.mockResolvedValue([
+      { ...SARAH, enabled: false, departed: true },
+      { ...MIKE, enabled: true, departed: false },
+    ]);
+    renderPage();
+
+    await screen.findByText(/left the server/i);
+    expect(screen.getAllByRole("button", { name: /remove/i })).toHaveLength(1);
+  });
+
+  it("removes the person and says what it dropped", async () => {
+    getUsers.mockResolvedValue([{ ...SARAH, enabled: false, departed: true }]);
+    removeUser.mockResolvedValue({
+      user_id: SARAH.id,
+      picks_deleted: 60,
+      runs_deleted: 4,
+    });
+    renderPage();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /remove/i }),
+    );
+    const confirm = await screen.findByRole("button", { name: /^remove$/i });
+    await userEvent.click(confirm);
+
+    await waitFor(() => expect(removeUser).toHaveBeenCalledWith(SARAH.id));
+  });
+
+  it("flags an account the last run measured seeing other people's rows", async () => {
+    // The Users list is where an owner scans, so the one account with a live privacy exposure has to
+    // be distinguishable HERE — not only after clicking into it. Plex refuses a share filter for a
+    // profiled account, so nothing Shortlist does can hide those rows; saying so is all it can do.
+    getUsers.mockResolvedValue([{ ...managed("older_kid"), unhidden_rows: 3 }]);
+    renderPage();
+
+    expect(await screen.findByText(/sees 3 rows/i)).toBeInTheDocument();
+  });
+
+  it("does not flag a profiled account that sees nothing", async () => {
+    // `little_kid` genuinely sees no collections. A badge on every profiled account would train the
+    // owner to ignore the one that matters.
+    getUsers.mockResolvedValue([
+      { ...managed("little_kid"), unhidden_rows: 0 },
+    ]);
+    renderPage();
+
+    await screen.findByText("Younger Kid");
+    expect(screen.queryByText(/sees \d+ row/i)).toBeNull();
   });
 
   it("names the actual restriction profile rather than a bare 'Restricted'", async () => {

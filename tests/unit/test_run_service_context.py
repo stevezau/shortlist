@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import shortlist.server.services.context_builder as context_builder_mod
+from shortlist.engine.clients.agregarr import AgregarrClient
 from shortlist.engine.clients.search import ExaClient, SearxngClient
 from shortlist.engine.history import ShareTokenWatchSource
 from shortlist.engine.models import MediaType
@@ -113,6 +114,47 @@ class TestWebSearchBackendChoice:
     def test_searxng_without_credentials_sends_no_auth(self):
         client = make_search_client(self._get("searxng", url="http://searx:8080"))
         assert client._auth is None
+
+
+class TestAgregarrConnection:
+    """Whether a run gets an agregarr client, across the (url x key) matrix.
+
+    Both halves are required. A URL with no key cannot read the ordering — every call is
+    authenticated — so a half-configured connection must produce NO client rather than one that
+    fails on every run and warns each night.
+    """
+
+    @staticmethod
+    def _configure(sessions, box, *, url: str = "", key: str = "") -> None:
+        with sessions() as session:
+            store = SettingsStore(session, box)
+            store.set("agregarr.url", url)
+            store.set("agregarr.apikey", key)
+
+    def test_no_client_when_nothing_is_configured(self, service, configured):
+        assert service.build_context(dry_run=True).agregarr is None
+
+    def test_a_client_when_both_halves_are_set(self, service, configured, sessions):
+        self._configure(sessions, configured, url="http://ag:7171", key="ag-key")
+
+        agregarr = service.build_context(dry_run=True).agregarr
+
+        assert isinstance(agregarr, AgregarrClient)
+
+    def test_no_client_from_a_url_alone(self, service, configured, sessions):
+        self._configure(sessions, configured, url="http://ag:7171")
+
+        assert service.build_context(dry_run=True).agregarr is None
+
+    def test_no_client_from_a_key_alone(self, service, configured, sessions):
+        self._configure(sessions, configured, key="ag-key")
+
+        assert service.build_context(dry_run=True).agregarr is None
+
+    def test_a_whitespace_only_url_is_not_a_connection(self, service, configured, sessions):
+        self._configure(sessions, configured, url="   ", key="ag-key")
+
+        assert service.build_context(dry_run=True).agregarr is None
 
 
 class TestBuildContext:
@@ -262,8 +304,14 @@ class TestBuildContext:
         assert [p.slug for p in profiles] == ["kid"]
 
     def test_a_managed_user_WITH_a_profile_is_still_skipped(self, service, sessions, configured):
-        """Plex hides every collection from a profiled account, so a row would be invisible — and Plex
-        refuses the share filters that would make it private anyway."""
+        """Plex refuses the share filters that would make a profiled account's row private, so no row
+        is built for one.
+
+        Phrased around the REFUSAL, not around visibility. This docstring used to say "Plex hides every
+        collection from a profiled account" — the same claim that justified skipping those accounts in
+        `privacy.py`, and false for `older_kid`, which listed three collections on a real server (#76).
+        The skip is still right; only the reason was wrong, and a test that restates the wrong reason is
+        how the next person re-derives it."""
         with sessions() as session:
             session.add(
                 User(

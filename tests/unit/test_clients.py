@@ -873,25 +873,38 @@ class TestPlexClient:
         assert mock_plex.order_collection(collection, [1, 2, 3]) == 0
         collection.moveItem.assert_not_called()
 
-    def test_order_collection_only_orders_the_visible_top(self, mock_plex: PlexClient):
-        """The cap: only the top _REORDER_TOP_N (the visible head) are ordered — the tail below the fold
-        is left alone, so a big row doesn't cost a move per item."""
-        from shortlist.engine.clients.plex_pms import _REORDER_TOP_N
+    def test_order_collection_orders_the_whole_row_not_just_the_head(self, mock_plex: PlexClient):
+        """The WHOLE row is ordered, tail included. This ordered only the top 15, so a 30-pick row read
+        as ranked-then-alphabetical and the ranking looked broken to the person it was built for.
 
-        item = self._item
-        n = _REORDER_TOP_N
-        # Live order is fully reversed vs wanted, so every position is out of place.
-        live = [item(i) for i in range(2 * n, 0, -1)]
+        40 items — the largest a row may be (``row.size`` is validated 5..40) — fully reversed, so every
+        position is out of place.
+
+        Replays each ``moveItem(item, after=...)`` against a model of the collection and asserts the
+        ORDER that results, because the order is the entire point. Asserting only WHICH items moved
+        cannot see it: a SUT degraded to ``after=None`` on every call produces a byte-identical move
+        list (39 moves, all of them past the old cap) and leaves the row in exactly the wrong order.
+        ``after`` is the one kwarg this function is responsible for, so it is the one to assert
+        (tests/testing.md: if removing a parameter wouldn't break the test, it isn't covered).
+        """
+        size = 40
+        live = [self._item(i) for i in range(size, 0, -1)]
         collection = MagicMock()
         collection.items.return_value = live
-        wanted = list(range(1, 2 * n + 1))  # 1..2n in order
+        wanted = list(range(1, size + 1))
 
         mock_plex.order_collection(collection, wanted)
 
-        # Never more than the cap of moves, and never a move for an item past the visible head.
+        order = [i.ratingKey for i in live]
+        for call in collection.moveItem.call_args_list:
+            key = call.args[0].ratingKey
+            after = call.kwargs.get("after")
+            order.remove(key)
+            order.insert(0 if after is None else order.index(after.ratingKey) + 1, key)
+
+        assert order == wanted, f"the collection must end up in ranked order, got {order}"
         moved = [c.args[0].ratingKey for c in collection.moveItem.call_args_list]
-        assert len(moved) <= n
-        assert all(k <= n for k in moved), f"only the top {n} should move, got {moved}"
+        assert [k for k in moved if k > 15], "items past the old cap of 15 must move, not sit in the tail"
 
     def test_sections_by_type_maps_each_media_type_to_its_library(self, mock_plex: PlexClient):
         movies, shows = MagicMock(), MagicMock()

@@ -484,15 +484,54 @@ def _emit_hub_ordering_events(session: Session, run_id: int, report) -> None:
     # server-wide shelf that a co-managing tool (Kometa) also cares about, so each library we
     # actually moved rows in is audited — "what changed on the shelf at 03:31" (plex-safety rule 10).
     for entry in report.hub_orderings:
+        # `verified` is the whole point of the record. "We asked" and "it happened" are different
+        # facts — a co-managing tool (agregarr, Kometa) reorders the same shelf on its own clock — and an
+        # audit that only ever said the first is how a shelf owned by another tool was reported as a
+        # successful reorder for weeks (SFLIX 2026-08-12). A dry run asked for nothing, so it is neither
+        # verified nor a warning.
+        verified = entry.get("verified")
         _add_event(
             session,
             "run.hub_order",
-            "info",
+            "warning" if verified is False else "info",
             run_id,
             dry_run=report.dry_run,
             library=entry.get("library"),
             anchor=entry.get("anchor"),
             moved=entry.get("moved", []),
+            verified=verified,
+        )
+    _emit_agregarr_mirror_events(session, run_id, report)
+
+
+def _emit_agregarr_mirror_events(session: Session, run_id: int, report) -> None:
+    # What we stored in a co-managing agregarr so its own sync stops undoing our shelf. Emitted from
+    # HERE as well as `jobs._audit_agregarr_mirrors`, because the two paths that audit are not the
+    # same: `sync.check`/`privacy.sync` persist no run and audit themselves, while the nightly run —
+    # the one that actually does this every night — persists a run and emits its shelf events only
+    # through this function. Auditing in one place would have left the main path silent.
+    for entry in report.agregarr_mirrors:
+        _add_event(
+            session,
+            "run.agregarr_order",
+            "warning" if not entry.get("ok") else "info",
+            run_id,
+            dry_run=report.dry_run or bool(entry.get("dry_run")),
+            library=entry.get("library"),
+            changed=entry.get("changed"),
+            items=entry.get("items"),
+            moved=entry.get("moved"),
+            rows_placed=entry.get("rows_placed"),
+            rows_contiguous=entry.get("rows_contiguous"),
+            unknown_to_agregarr=entry.get("unknown_to_agregarr"),
+            unjoinable=entry.get("unjoinable"),
+            # The before/after sequences, present only on a run that changed something. There is no
+            # snapshot of agregarr's ordering and uninstall does not restore it, so this event is
+            # the only record of what its order was before we renumbered it.
+            order_before=entry.get("order_before"),
+            order_after=entry.get("order_after"),
+            summary=entry.get("summary"),
+            error=entry.get("error"),
         )
 
 
@@ -603,7 +642,7 @@ def _finalize_run(
     # the runs list can show at a glance how much actually changed on Plex.
     titles_added = sum(len(u.diff.added) for u in report.users if u.diff)
     titles_removed = sum(len(u.diff.removed) for u in report.users if u.diff)
-    run.stats = {
+    stats = {
         "users_ok": ok,
         "users_error": errors,
         # Built nothing, but nothing went wrong — see RunUser.reason for which case it was.
@@ -627,3 +666,16 @@ def _finalize_run(
         # was promoted, so the UI can say so instead of leaving "Failed" unexplained (issue #1).
         "promotion_blockers": list(report.promotion_blockers),
     }
+    # Accounts Plex refuses a hide-list for that can nonetheless SEE other people's rows. Not a
+    # blocker — nothing we do hides them — so the run succeeds and this is how the owner finds out.
+    #
+    # Present ONLY when the run reached the privacy phase and actually looked. Both readers pick the
+    # latest run carrying this key and treat it as the truth, so writing it unconditionally meant a
+    # run that died in the sweep phase published an empty finding and silently cleared a live alert
+    # and every badge. Absent now means "this run did not measure", which is what they already
+    # assumed it meant.
+    if report.unhideable_measured:
+        stats["unhideable_rows"] = {name: list(keys) for name, keys in report.unhideable_rows.items()}
+    # Assigned whole rather than mutated in place: `stats` is a JSON column, and an in-place edit
+    # after assignment would not reliably mark it dirty.
+    run.stats = stats

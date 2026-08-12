@@ -1,6 +1,8 @@
 services:
   shortlist:
-    image: ghcr.io/stevezau/shortlist:latest
+    # Same image is on GHCR as ghcr.io/stevezau/shortlist:latest — swap this line for that
+    # one to avoid Docker Hub's anonymous pull limits.
+    image: stevezzau/shortlist:latest
     container_name: shortlist
     ports:
       - "5959:5959"

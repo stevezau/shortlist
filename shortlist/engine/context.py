@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 
 from loguru import logger
 
+from shortlist.engine.clients.agregarr import AgregarrClient
 from shortlist.engine.clients.mdblist import MdbListClient
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.plextv import PlexTvClient
@@ -45,8 +46,12 @@ class EngineContext:
     # Optional image-generation backend for generate-mode row posters, built from the AI curator's
     # provider/key. None when the curator provider can't make images (Anthropic, Ollama) or none is set.
     poster_artist: PosterArtist | None = None
+    # Optional agregarr instance co-managing the same Recommended shelf; None when not connected.
+    # Used only at the very end of the run, to store our shelf order in agregarr so its own 30-minute
+    # sync stops undoing it (see `shelf_mirror`).
+    agregarr: AgregarrClient | None = None
     # (owner_slug, row_slug, section_key) -> last run's delivered picks for that row+library, newest
-    # first. Carried forward so a row is REUSED unchanged on non-refresh nights (freshness is the
+    # first. Carried forward so a row is REUSED unchanged on non-refresh nights (`refresh_days` is the
     # refresh CADENCE) instead of re-curated from scratch every night — the fix for the nightly
     # full-row churn that staleness_runs=3 used to force (SFLIX 2026-07-20). Empty -> every row
     # bootstraps by curating fresh, exactly like a first run.
@@ -60,6 +65,16 @@ class EngineContext:
     # Empty for direct engine runs and for rows delivered before the ledger existed — the count-based
     # fallback still covers those.
     delivered_keys: dict[tuple[str, str, str], int] = field(default_factory=dict)
+    # Build a PMS client that sees the server AS one user, or None when no token can be had. Used to
+    # CHECK what an account Plex refuses a hide-list for can actually see, rather than assume. None on
+    # direct engine runs, where the check is simply skipped.
+    pms_for_user: Callable[[UserProfile], object] | None = None
+    #: Slugs of people our own database says are GONE from Plex — plex.tv stopped listing them, or the
+    #: owner removed them. The second of the two guards that let a private-row exclude be pruned (see
+    #: `privacy.sync_user_restrictions`). Positive evidence on purpose: it must be something a partial
+    #: PMS read cannot manufacture, which "absent from tonight's user list" is not — a `privacy.sync`
+    #: runs with NO users at all. None means the adapter could not say, and nothing is pruned.
+    departed_slugs: set[str] | None = None
     # plex_account_ids of DISABLED (opted-out) Shortlist users. With config.hide_shared_from_disabled,
     # the privacy sync hides even public shared rows from these accounts, so disabling a user removes
     # them from Shortlist entirely. A non-Shortlist account that merely shares the server is NOT here,
@@ -123,9 +138,9 @@ class EngineContext:
     # (user_slug, row_slug, section_key) -> the `row_recipe` the stored picks were built under.
     # Absent for a row never built, and for picks written before recipes were recorded — both read
     # as "unknown", which deliberately does NOT force a rebuild: a one-off rebuild of every row on
-    # every server at upgrade is exactly the churn freshness exists to prevent.
+    # every server at upgrade is exactly the churn the refresh cadence exists to prevent.
     previous_recipes: dict[tuple[str, str, str], str] = field(default_factory=dict)
-    # Day number of this run (date.toordinal()), the phase for freshness rotation so a row shifts
+    # Day number of this run (date.toordinal()), the phase for refresh rotation so a row shifts
     # day to day but is reproducible within a day. Set at the start of run(); 0 disables rotation.
     run_day: int = 0
     # How many users to process concurrently. 1 = fully sequential (the safe engine/test default).
