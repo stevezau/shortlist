@@ -288,6 +288,7 @@ class Run(Base):
     stats: Mapped[dict] = mapped_column(JSON, default=dict)
 
     users: Mapped[list[RunUser]] = relationship(back_populates="run", cascade="all, delete-orphan")
+    shared_rows: Mapped[list[RunSharedRow]] = relationship(back_populates="run", cascade="all, delete-orphan")
 
 
 class RunUser(Base):
@@ -317,9 +318,58 @@ class RunUser(Base):
     # Full per-user pipeline trace (seeds, per-source queries+returns, web-search/RAG prompts) so the
     # UI can show "exactly what happened for this person". {} on legacy rows and skipped/cold users.
     trace: Mapped[dict] = mapped_column(JSON, default=dict)
+    # What this run decided about each per-person row FOR THIS PERSON:
+    # {row_slug: "due" | "not_due" | "muted" | "not_in_audience"}. `reason` is one sentence about the
+    # PERSON and cannot be attributed to a row, so without this a rows-first view had nowhere to put
+    # a skipped user — and on a run where nothing was due, that is everybody. {} on legacy rows and
+    # on a cold-start skip, which never reaches the decision; the UI must render that as "not
+    # recorded", never as "no rows were considered".
+    rows_considered: Mapped[dict] = mapped_column(JSON, default=dict)
 
     run: Mapped[Run] = relationship(back_populates="users")
     user: Mapped[User] = relationship(back_populates="run_users")
+
+
+class RunSharedRow(Base):
+    """One SHARED row's outcome in one run — the per-row twin of `RunUser`.
+
+    A shared row is built once for the whole server from pooled history, so it belongs to no user and
+    could not have a `run_users` row. It therefore had NO run record at all: `persist_report` files
+    reports by user slug, a shared row's is `shared_<slug>`, and the lookup miss `continue`d. Its
+    trace, breakdown, token spend and picks were all discarded, leaving only the `run.shared` audit
+    event's status and diff-titles — so "why did this row pick that" was unanswerable, and a run whose
+    only work was a shared row showed nothing but a wall of skipped people.
+
+    Picks are JSON here rather than `picks` rows. `PickRow.user_id` is non-nullable and RESTRICT-keyed
+    to a real account (see `User`'s cascade policy), and inventing nullable-user pick rows would put
+    rows nobody watched into every per-user hit-rate and history query.
+
+    Cascades with its run, unlike `run_users`: there is no irreplaceable account record on the other
+    end of this key, so the policy that makes a user's history un-deletable does not apply.
+    """
+
+    __tablename__ = "run_shared_rows"
+
+    run_id: Mapped[int] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), primary_key=True)
+    #: The COLLECTION's own slug, not the `shared_`-prefixed report slug the engine files under.
+    collection_slug: Mapped[str] = mapped_column(String(255), primary_key=True)
+    #: As rendered at run time — a row renamed later must not rewrite what a past run says it built.
+    row_title: Mapped[str] = mapped_column(String(512), default="")
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Why a non-failing outcome happened, same meaning as `RunUser.reason` (issue #3).
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    llm_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    llm_tokens_by_step: Mapped[dict] = mapped_column(JSON, default=dict)
+    exa_searches: Mapped[int] = mapped_column(Integer, default=0)
+    diff: Mapped[dict] = mapped_column(JSON, default=dict)
+    breakdown: Mapped[list] = mapped_column(JSON, default=list)
+    trace: Mapped[dict] = mapped_column(JSON, default=dict)
+    #: The delivered picks, same field set the API renders for a user's picks.
+    picks: Mapped[list] = mapped_column(JSON, default=list)
+
+    run: Mapped[Run] = relationship(back_populates="shared_rows")
 
 
 class PickRow(Base):

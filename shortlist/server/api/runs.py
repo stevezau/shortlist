@@ -18,7 +18,7 @@ from shortlist.server.api.schemas_runs import (
     RunUserTraceOut,
 )
 from shortlist.server.auth import require_owner
-from shortlist.server.db.models import PickRow, RequestCandidate, Run, RunUser, iso_utc
+from shortlist.server.db.models import PickRow, RequestCandidate, Run, RunSharedRow, RunUser, iso_utc
 
 router = APIRouter(prefix="/runs", tags=["runs"], dependencies=[Depends(require_owner)])
 
@@ -104,6 +104,10 @@ async def clear_runs(request: Request) -> dict:
             {PickRow.run_id: None}, synchronize_session=False
         )
         session.query(RunUser).delete(synchronize_session=False)
+        # Same reason the log lines are explicit above: a bulk ORM delete does not cascade in
+        # Python, so leaving this to the FK would either strand the rows or fail the whole clear
+        # once `PRAGMA foreign_keys` is on (it is — see `db/session.py`).
+        session.query(RunSharedRow).delete(synchronize_session=False)
         session.query(Run).delete(synchronize_session=False)
         session.commit()
     return {"deleted": deleted}
@@ -253,6 +257,9 @@ async def get_run(run_id: int, request: Request) -> dict:
                     # Whether a full pipeline trace was recorded for this user (fetched on demand from
                     # the trace endpoint — the blob is large, so it stays out of the detail payload).
                     "has_trace": bool(run_user.trace),
+                    # Which per-person rows this run considered for them, and what it decided. `{}` on
+                    # a legacy run — "not recorded", which the UI must not render as "none".
+                    "rows_considered": run_user.rows_considered or {},
                 }
             )
         # Users who haven't finished yet show as "pending" so the UI can pre-populate the list
@@ -275,11 +282,47 @@ async def get_run(run_id: int, request: Request) -> dict:
                 "picks": [],
                 "breakdown": [],
                 "has_trace": False,
+                "rows_considered": {},
             }
             for u in expected
             if u["slug"] not in completed_slugs
         ]
-        return {**_run_summary(run), "users": users + pending}
+        shared_rows = [
+            {
+                "collection_slug": row.collection_slug,
+                "row_title": row.row_title or row.collection_slug,
+                "status": row.status,
+                "error": row.error,
+                "reason": row.reason,
+                "duration_ms": row.duration_ms,
+                "llm_tokens": row.llm_tokens,
+                "llm_tokens_by_step": row.llm_tokens_by_step or {},
+                "exa_searches": row.exa_searches,
+                "diff": row.diff or {},
+                # Normalized on READ. Unlike a user's picks these come from a JSON column, so nothing
+                # in the database enforces `PickOut`'s shape — and a blob missing one key would fail
+                # response validation and 500 the ENTIRE run page, not just this row.
+                "picks": [
+                    {
+                        "rank": p.get("rank", 0),
+                        "title": p.get("title", ""),
+                        "reason": p.get("reason", ""),
+                        "seed_title": p.get("seed_title"),
+                        "sources": p.get("sources") or [],
+                        "affinity": p.get("affinity", 1.0),
+                        "year": p.get("year"),
+                        "rating": p.get("rating"),
+                    }
+                    for p in (row.picks or [])
+                ],
+                # A shared row's picks live on the row itself, not in `picks`, so there is nothing to
+                # join provenance from — the breakdown already carries its own per-library picks.
+                "breakdown": row.breakdown or [],
+                "has_trace": bool(row.trace),
+            }
+            for row in sorted(run.shared_rows, key=lambda r: r.collection_slug)
+        ]
+        return {**_run_summary(run), "users": users + pending, "shared_rows": shared_rows}
 
 
 @router.get("/{run_id}/users/{user_id}/trace", response_model=RunUserTraceOut)
@@ -314,6 +357,36 @@ async def get_run_user_trace(run_id: int, user_id: int, request: Request) -> dic
             # overlay the outcome onto that fate. Run-WIDE state (a title is requested once for the
             # whole server, whoever wanted it) — the overlay is scoped by only matching this user's
             # missing titles. Empty on a deployment with requests off.
+            "requests": _request_outcomes(session, _tmdb_ids_in(trace) | _tmdb_ids_in(breakdown)),
+        }
+
+
+@router.get("/{run_id}/rows/{collection_slug}/trace", response_model=RunUserTraceOut)
+async def get_run_shared_row_trace(run_id: int, collection_slug: str, request: Request) -> dict:
+    """The full pipeline trace for one SHARED row in one run — the per-row twin of the user trace.
+
+    Same response model, because a shared row runs the same pipeline minus the per-person history
+    stage (it is built from pooled watching, so it records `gathers` and no `history`). The row's
+    TITLE is served as `username`/`display_name` so a single trace view renders both without forking.
+
+    Empty `{}` on a run recorded before shared rows were persisted — the UI reads that as "no trace
+    for this run", not an error, exactly as it does for a user.
+    """
+    with request.app.state.sessions() as session:
+        row = session.get(RunSharedRow, (run_id, collection_slug))
+        if row is None:
+            raise HTTPException(status_code=404, detail="no such shared row in this run")
+        trace = row.trace or {}
+        breakdown = row.breakdown or []
+        title = row.row_title or row.collection_slug
+        return {
+            "username": title,
+            "display_name": title,
+            "status": row.status,
+            "error": row.error,
+            "reason": row.reason,
+            "trace": trace,
+            "breakdown": breakdown,
             "requests": _request_outcomes(session, _tmdb_ids_in(trace) | _tmdb_ids_in(breakdown)),
         }
 

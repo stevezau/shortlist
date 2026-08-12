@@ -26,6 +26,7 @@ from shortlist.server.db.models import (
     RequestCandidate,
     Run,
     RunLogLine,
+    RunSharedRow,
     RunUser,
     User,
 )
@@ -251,6 +252,10 @@ def persist_report(
                         errors += 1
                     elif user_report.status == "skipped":
                         skipped += 1
+                    # The event is the AUDIT record (rule 10) and stays. The row beside it is the
+                    # queryable one: the event carries status and diff titles, but not the trace,
+                    # breakdown, token spend or picks, so "why did this row pick that" had no answer.
+                    _persist_shared_row_report(session, run_id, user_report, report.dry_run)
                     _emit_shared_row_event(session, run_id, user_report, report.dry_run)
                 continue
             if user_report.status == "error":
@@ -330,6 +335,7 @@ def prune_runs(session: Session, retention_months: int) -> int:
     # Explicit, not left to the FK's ON DELETE CASCADE: SQLite only enforces foreign keys when
     # `PRAGMA foreign_keys` is on, and a bulk ORM delete does not cascade in Python either.
     session.query(RunLogLine).filter(RunLogLine.run_id.in_(old_ids)).delete(synchronize_session=False)
+    session.query(RunSharedRow).filter(RunSharedRow.run_id.in_(old_ids)).delete(synchronize_session=False)
     return session.query(Run).filter(Run.id.in_(old_ids)).delete(synchronize_session=False)
 
 
@@ -377,6 +383,64 @@ def _emit_shared_row_event(session: Session, run_id: int, user_report, dry_run: 
     )
 
 
+def _pick_dicts(user_report) -> list[dict]:
+    """A shared row's picks as JSON, matching the field set `get_run` renders for a user's picks.
+
+    Kept out of the `picks` TABLE on purpose: `PickRow.user_id` is non-nullable and RESTRICT-keyed to
+    a real account, and nullable-user pick rows would leak titles nobody watched into every per-user
+    hit-rate and history query.
+    """
+    return [
+        {
+            "rank": p.rank,
+            "title": p.title,
+            "reason": p.reason,
+            "seed_title": p.seed_title,
+            "sources": list(p.sources),
+            "affinity": p.affinity,
+            "year": p.year,
+            "rating": p.rating,
+        }
+        for p in user_report.picks
+    ]
+
+
+def _persist_shared_row_report(session: Session, run_id: int, user_report, dry_run: bool) -> None:
+    """One shared row's `run_shared_rows` record, and its delivery-ledger entries.
+
+    The ledger write is not incidental. `_record_deliveries` was only ever called from
+    `_persist_user_report`, which a shared row never reached — so a shared row's collections were
+    absent from the ledger entirely, and a later reconcile had no ratingKey to find a row whose title
+    it cannot re-derive. `delivery.py` already files them under this same `shared_<slug>` key.
+    """
+    slug = user_report.slug.removeprefix(f"{SHARED_SLUG_PREFIX}_")
+    breakdown = user_report.breakdown or []
+    # As RENDERED this run, from what was actually delivered — a row renamed later must not rewrite
+    # what a past run says it built. Falls back to the slug when nothing was delivered (a skip).
+    row_title = next((entry.get("row_title") or "" for entry in breakdown if entry.get("row_title")), slug)
+    # Upsert: `persist_report` is a backstop that can run over a row a live path already wrote, and a
+    # second INSERT on the same (run_id, collection_slug) would raise and cost the whole persist.
+    row = session.get(RunSharedRow, (run_id, slug))
+    if row is None:
+        row = RunSharedRow(run_id=run_id, collection_slug=slug)
+        session.add(row)
+    row.row_title = row_title
+    row.status = user_report.status
+    row.error = user_report.error
+    row.reason = user_report.reason
+    row.duration_ms = int(user_report.duration_s * 1000)
+    row.llm_tokens = user_report.llm_tokens
+    row.llm_tokens_by_step = dict(user_report.llm_tokens_by_step)
+    row.exa_searches = user_report.exa_searches
+    row.diff = user_report.diff.__dict__ if user_report.diff else {}
+    row.breakdown = breakdown
+    row.trace = user_report.trace
+    row.picks = _pick_dicts(user_report)
+    if not dry_run:
+        _forget_removed_deliveries(session, user_report.slug, user_report.removed_deliveries)
+        _record_deliveries(session, user_report.slug, breakdown)
+
+
 def _persist_user_report(session: Session, run_id: int, user: User, user_report, dry_run: bool) -> None:
     """One user's RunUser row, their picks (non-dry-run only), and their run.user audit event."""
     user.cold_start = user_report.status == "cold_start"
@@ -394,6 +458,7 @@ def _persist_user_report(session: Session, run_id: int, user: User, user_report,
             diff=user_report.diff.__dict__ if user_report.diff else {},
             breakdown=user_report.breakdown,
             trace=user_report.trace,
+            rows_considered=user_report.rows_considered or {},
         )
     )
     if not dry_run:

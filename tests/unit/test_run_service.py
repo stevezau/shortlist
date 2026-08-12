@@ -378,6 +378,88 @@ class TestRunExecution:
             assert events[0].message["picks"] == 1
         assert run.status == "ok"
 
+    def test_a_shared_row_gets_a_queryable_run_record_not_just_an_event(self, sessions, tmp_path, monkeypatch):
+        """The audit event carries status and diff TITLES and nothing else — no trace, no breakdown,
+        no token spend, no picks. So a run whose only work was a shared row could show a wall of
+        skipped people and never say what it built, and "why did this row pick that" was answerable
+        from the container log alone. Recorded from run #37 on a live server: 46 skipped users beside
+        a shared row that had just built 40 picks."""
+        from shortlist.server.db.models import RunSharedRow
+
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+        shared = UserRunReport(
+            username="Shared · popular",
+            slug="shared_popular",
+            status="ok",
+            picks=[Pick(tmdb_id=7, rating_key=70, title="Dune", rank=1, reason="r", media_type=MediaType.MOVIE)],
+            counts=StageCounts(picks=1),
+            diff=CollectionDiff(added=["Dune"]),
+            duration_s=0.5,
+            llm_tokens=120,
+            trace={"gathers": [{"source": "popular"}]},
+            breakdown=[{"row_slug": "popular", "row_title": "👥 Popular on SFLIX", "library_key": "1"}],
+        )
+        report = RunReport(started_at=datetime.now(UTC), finished_at=datetime.now(UTC), users=[shared])
+        monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: report)
+
+        async def scenario():
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        run = asyncio.run(scenario())
+
+        with sessions() as session:
+            row = session.get(RunSharedRow, (run.id, "popular"))
+            assert row is not None, "a shared row must have a run record, not only an audit event"
+            assert row.collection_slug == "popular", "keyed on the COLLECTION slug, not the shared_ report slug"
+            assert row.row_title == "👥 Popular on SFLIX", "the title AS RENDERED this run"
+            assert row.status == "ok"
+            assert row.trace == {"gathers": [{"source": "popular"}]}, "the trace is the whole point"
+            assert row.llm_tokens == 120
+            assert [p["title"] for p in row.picks] == ["Dune"], "its picks are on the row — never in `picks`"
+            assert session.query(PickRow).filter_by(run_id=run.id).count() == 0, (
+                "PickRow.user_id is RESTRICT-keyed to a real account; a shared row must not invent one"
+            )
+
+    def test_a_shared_rows_collections_reach_the_delivery_ledger(self, sessions, tmp_path, monkeypatch):
+        """`_record_deliveries` was only ever called from `_persist_user_report`, which a shared row
+        never reached — so its collections were absent from the ledger, and a later reconcile had no
+        ratingKey for a row whose title it cannot re-derive. `delivery.py` files them under this same
+        `shared_<slug>` key, so the ledger and the deliverer must agree on it."""
+        from shortlist.server.db.models import Delivery
+
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+        shared = UserRunReport(
+            username="Shared · popular",
+            slug="shared_popular",
+            status="ok",
+            counts=StageCounts(),
+            diff=CollectionDiff(added=["Dune"]),
+            breakdown=[
+                {
+                    "row_slug": "popular",
+                    "row_title": "👥 Popular on SFLIX",
+                    "library_key": "1",
+                    "rating_key": 9001,
+                }
+            ],
+        )
+        report = RunReport(started_at=datetime.now(UTC), finished_at=datetime.now(UTC), users=[shared])
+        monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: report)
+
+        async def scenario():
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        asyncio.run(scenario())
+
+        with sessions() as session:
+            entry = session.get(Delivery, ("popular", "shared_popular", "1"))
+            assert entry is not None, "a shared row's collection never entered the delivery ledger"
+            assert entry.rating_key == 9001
+
     def test_a_skipped_shared_row_is_counted_as_skipped_and_still_audited(self, sessions, tmp_path, monkeypatch):
         """A shared row has no RunUser row, so this event is the only record of its outcome (rule 10)
         — and a row that built nothing must not inflate the run's success count."""

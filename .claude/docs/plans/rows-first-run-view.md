@@ -1,6 +1,8 @@
 # Plan: make the run view rows-first, and give a shared row a run record
 
-**Status:** not started. Design chosen by the owner 2026-08-12 ("rebuild around rows").
+**Status:** Phases 1, 2 and 4-backend DONE. Phase 3 (the frontend) is what remains.
+Design chosen by the owner 2026-08-12 ("rebuild around rows"), and the open question below was
+resolved in favour of option (b): `rows_considered` now exists on `run_users`.
 
 ## The problem, from the live server
 
@@ -75,20 +77,15 @@ Tabs become **Rows** / **Log**. The Rows tab lists every row the run touched:
   trace page.
 - Shared rows: straight from `shared_rows`, linking to the new trace endpoint.
 
-**Open question, decide before building the tree.** Steve's chosen mockup shows "46 not due" under
-_each_ per-person row. That attribution does not exist today: a skipped user's `reason` is one
-per-user string, and a skipped user has an empty `breakdown`, so nothing says WHICH rows they were
-skipped for. Two ways out:
+**RESOLVED — option (b) is built.** `run_users.rows_considered` is
+`{row_slug: "due" | "not_due" | "muted" | "not_in_audience"}`, written for EVERY user (not just
+skipped ones) from the three conditions `_run_user` already applies. `"due"` is intent, not outcome —
+the person's own `status` says what became of it, and calling it `"built"` would claim a success a
+later pipeline error can still take away. `{}` on a legacy run and on a cold-start skip (which never
+reaches the decision); the UI must render that as "not recorded", never as "no rows considered".
 
-- **(a) Honest with today's data** — list under each row only the people with a breakdown entry for
-  it, and put skipped people in one run-level group ("46 people skipped — no per-person row was due").
-  No extra backend work.
-- **(b) Match the mockup** — add `rows_considered` JSON to `run_users`
-  (`{row_slug: built|not_due|muted|not_in_audience}`), written from the data `_why_no_rows` already
-  computes. A second migration, and it makes the tree exact.
-
-Recommend (b) — the whole point of the rework is that a row is the unit you reason about, and (a)
-leaves the largest group of people outside the tree. But it is a second migration, so confirm first.
+So the tree is: for each per-person row, the people whose `rows_considered` names it, grouped by that
+value and by their own status. Shared rows come straight from `shared_rows`.
 
 ## Phase 4 — tests
 

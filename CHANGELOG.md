@@ -26,10 +26,13 @@ All notable changes to this project are documented here. This project follows
   deleted from Plex stayed in the Users list looking like an ordinary disabled account — with nothing
   to say why, and no way to clear them out, because **Remove** only offers itself for someone Plex no
   longer lists. Deleted Home users were the common case (one real server had five of them stuck).
-  They are now badged **Left the server** and offer **Remove** like anyone else. Nothing is touched on
-  Plex for them: an account that was already off has no rows to take down, so this only writes the
-  badge. The partial-read protection that refuses a sweep when half the server appears to vanish at
-  once now covers the badge as well as the switch-off.
+  They are now badged **Left the server** and offer **Remove** like anyone else. Nothing is created
+  or promoted on Plex for them — an account that was already off has no rows to take down — though
+  the stale rule hiding their old row does become eligible for tidying out of everyone else's share
+  filter on the next run, which is the point. The protection that refuses to act when half the server
+  seems to vanish at once now covers the badge as well as the switch-off, and the two are judged
+  separately, so a server carrying old departures nobody cleared can't block a real one from being
+  handled today.
 
 ## [1.4.0] - 2026-08-12
 

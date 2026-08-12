@@ -753,8 +753,11 @@ class TestUserSync:
         assert not any(removed), "a suspected partial read must delete no collections"
         with client.app.state.sessions() as session:
             refusals = session.query(Event).filter_by(scope="user.departed.refused").all()
-            assert len(refusals) == 1, "silently doing nothing would hide a real mass removal"
-            assert refusals[0].level == "error"
+            assert refusals, "silently doing nothing would hide a real mass removal"
+            assert all(r.level == "error" for r in refusals)
+            # One per DECISION declined. The two are guarded independently — a marking refusal must
+            # never be able to veto the row takedown — so the audit has to say which one was refused.
+            assert {r.message["half"] for r in refusals} == {"mark", "disable"}
 
     def test_removing_a_departed_person_clears_their_history_but_keeps_the_snapshot(
         self, client: TestClient, plextv, monkeypatch
@@ -864,6 +867,43 @@ class TestUserSync:
         listed = self._users(client)
         assert listed["sarah"]["departed"] is True
         assert listed["teen"]["departed"] is False
+
+    def test_an_old_unfiled_departure_cannot_veto_todays_real_one(self, client: TestClient, plextv, monkeypatch):
+        """The regression that made the two guards one `or`-ed check.
+
+        `gone` is a STOCK, not a rate: an account marked on an earlier sync stays in the population
+        until the owner presses Remove, so it never leaves `gone`. Measured against everyone known,
+        that ratio only ever climbs — and because it also gated the destructive half, a couple of old
+        departures nobody had filed away could permanently refuse to take down the rows of someone
+        who left today. Silent, self-perpetuating, and it re-creates the exact condition the sweep
+        exists to end: they stay enabled, every run keeps trying their dead share token, and their
+        collection sits promoted to Shared Home.
+        """
+        from shortlist.server.services import user_sync
+
+        removed: list[list[str]] = []
+
+        async def spy(state, slugs):
+            removed.append(list(slugs))
+
+        monkeypatch.setattr(user_sync, "remove_users_rows", spy)
+        client.post("/api/users/sync")
+        self._enable_everyone(client)
+
+        # An old departure nobody filed away: 'kid' left a while ago and is already marked gone.
+        plextv.roster.mock(return_value=httpx.Response(200, text=self._roster_without("kid")))
+        client.post("/api/users/sync")
+        assert self._users(client)["kid"]["departed"] is True
+        removed.clear()
+
+        # Today, ONE more person genuinely leaves. The enabled ratio alone would act immediately.
+        plextv.roster.mock(return_value=httpx.Response(200, text=self._roster_without("kid", "sarah")))
+        client.post("/api/users/sync")
+
+        after = self._users(client)
+        assert after["sarah"]["enabled"] is False, "an old, already-filed departure must not veto a new one"
+        assert any("sarah" in batch for batch in removed), "their rows must still come down"
+        assert after["sarah"]["departed"] is True
 
     def test_someone_who_left_while_switched_off_is_still_marked_as_gone(self, client: TestClient, plextv, monkeypatch):
         """Being switched off does not make somebody present.
