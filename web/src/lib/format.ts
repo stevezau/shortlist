@@ -251,3 +251,25 @@ export function jobStatusLabel(job: {
   if (job.status === "running") return "Running…";
   return job.attempts > 0 ? `Retrying (attempt ${job.attempts})` : "Queued";
 }
+
+/**
+ * The sidebar footer's build line: `Shortlist · 1.4.0 · dev · ba891f5`.
+ *
+ * The version alone cannot identify a `:dev` build — every push between two releases reports the
+ * same number — so the branch and short commit are what answer "which build am I actually running".
+ * A source checkout carries neither and shows the version on its own.
+ */
+export function buildLabel(
+  info?: {
+    current_version?: string;
+    git_branch?: string;
+    git_sha?: string;
+  } | null,
+): string {
+  const parts = [
+    info?.current_version,
+    info?.git_branch,
+    info?.git_sha?.slice(0, 7),
+  ].filter((part): part is string => Boolean(part));
+  return ["Shortlist", ...parts].join(" · ");
+}

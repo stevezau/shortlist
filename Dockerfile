@@ -54,6 +54,16 @@ ENV SHORTLIST_CONFIG=/config \
     PUID=1000 \
     PGID=1000
 
+# Build provenance. `docker/metadata-action` already stamps the same facts as OCI LABELs, but nothing
+# INSIDE the container can read its own labels — so `version_check` read these env vars from the day
+# it was written and always got nothing, reporting every Docker install as a source checkout. CI
+# passes them as build-args; a plain `docker build` leaves them empty, which is the honest answer.
+# Last, because the sha changes on every commit and everything above it should stay cached.
+ARG GIT_SHA=""
+ARG GIT_BRANCH=""
+ENV GIT_SHA=$GIT_SHA \
+    GIT_BRANCH=$GIT_BRANCH
+
 VOLUME /config
 EXPOSE 5959
 

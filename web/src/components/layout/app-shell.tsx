@@ -27,6 +27,7 @@ import { NotificationBell } from "@/components/layout/notification-bell";
 import { SettingsSubNav } from "@/components/settings/settings-nav";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { buildLabel } from "@/lib/format";
 import { useSession, useVersion } from "@/lib/queries";
 import { GITHUB_REPO } from "@/lib/support";
 import { Toaster } from "sonner";
@@ -112,11 +113,12 @@ function SessionFooter() {
         {!logout.isPending && <LogOut aria-hidden="true" />}
         Sign out
       </Button>
-      <p className="px-1 text-xs text-muted-foreground">
-        Shortlist
-        {version.data?.current_version
-          ? ` · ${version.data.current_version}`
-          : ""}
+      {/* The full commit on hover — the short one fits the sidebar, but a bug report wants all of it. */}
+      <p
+        className="px-1 text-xs break-all text-muted-foreground"
+        title={version.data?.git_sha || undefined}
+      >
+        {buildLabel(version.data)}
       </p>
     </div>
   );

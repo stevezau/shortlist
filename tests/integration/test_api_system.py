@@ -201,7 +201,14 @@ class TestSystemResponseShapes:
 
         body = client.get("/api/system/version").json()
 
-        assert set(body) == {"current_version", "latest_version", "update_available", "install_type"}
+        assert set(body) == {
+            "current_version",
+            "latest_version",
+            "update_available",
+            "install_type",
+            "git_sha",
+            "git_branch",
+        }
         assert body["latest_version"] == "9.9.9"  # the "v" is stripped for display
         assert body["update_available"] is True
 
@@ -215,7 +222,14 @@ class TestSystemResponseShapes:
 
         body = client.get("/api/system/version").json()
 
-        assert set(body) == {"current_version", "latest_version", "update_available", "install_type"}
+        assert set(body) == {
+            "current_version",
+            "latest_version",
+            "update_available",
+            "install_type",
+            "git_sha",
+            "git_branch",
+        }
         assert body["latest_version"] is None and body["update_available"] is False
 
     def test_syncs_reports_each_schedule_with_its_nested_shape(self, client: TestClient):

@@ -88,13 +88,20 @@ def current_version() -> str:
     return shortlist.__version__
 
 
-def _install_type() -> str:
-    """How this build was installed: ``dev_docker``, ``docker``, or ``source``.
+def build_provenance() -> tuple[str, str]:
+    """The commit and ref this build was made from: ``(git_sha, git_branch)``, empty from source.
 
-    Read from the build args the image bakes in — a source checkout has neither.
+    Baked into the image as build args by CI (`docker/build-push-action`'s `build-args`). The values
+    were read here long before anything set them, so every Docker install reported itself as a source
+    checkout — the image carried the same facts as OCI labels, which nothing inside the container can
+    read. Empty from a `pip install -e .` checkout, which is exactly how the two are told apart.
     """
-    git_sha = os.environ.get("GIT_SHA", "")
-    git_branch = os.environ.get("GIT_BRANCH", "")
+    return os.environ.get("GIT_SHA", ""), os.environ.get("GIT_BRANCH", "")
+
+
+def _install_type() -> str:
+    """How this build was installed: ``dev_docker``, ``docker``, or ``source``."""
+    git_sha, git_branch = build_provenance()
     if git_sha and git_branch == "dev":
         return "dev_docker"
     if git_sha:
@@ -107,12 +114,19 @@ def version_info() -> dict:
 
     ``update_available`` is `check_for_update`'s answer, not a second comparison — the About panel and
     the notification bell must never be able to disagree about the same build.
+
+    ``git_sha``/``git_branch`` are the FULL values; the footer shortens the sha itself. A version
+    number alone cannot identify a `:dev` build — every push between two releases reports the same
+    one — so "which build is this" had no answer without shelling into the container.
     """
     current = current_version()
     latest = _latest_release()
+    git_sha, git_branch = build_provenance()
     return {
         "current_version": current,
         "latest_version": str(latest["tag"]).lstrip("vV") if latest else None,
         "update_available": check_for_update(current) is not None,
         "install_type": _install_type(),
+        "git_sha": git_sha,
+        "git_branch": git_branch,
     }

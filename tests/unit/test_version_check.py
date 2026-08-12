@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -105,3 +106,38 @@ class TestVersionInfo:
         assert version_check._install_type() == "docker"
         monkeypatch.setenv("GIT_BRANCH", "dev")
         assert version_check._install_type() == "dev_docker"
+
+    def test_version_info_says_which_build_is_running(self, monkeypatch):
+        """A `:dev` image reports the same version number for every push between two releases, so
+        the version alone cannot identify a build. Without the commit, "which code is this" is only
+        answerable by shelling into the container."""
+        _stub_latest(monkeypatch, None)
+        monkeypatch.setenv("GIT_SHA", "ba891f571edd4f1c4a17b02a40369e3af92ceb53")
+        monkeypatch.setenv("GIT_BRANCH", "dev")
+        info = version_check.version_info()
+        assert info["git_sha"] == "ba891f571edd4f1c4a17b02a40369e3af92ceb53", "the FULL sha — the UI shortens it"
+        assert info["git_branch"] == "dev"
+
+    def test_version_info_is_honest_about_a_source_checkout(self, monkeypatch):
+        """Empty, not a guess. A checkout has no build args, and inventing a sha from `git rev-parse`
+        would report the developer's working tree rather than what is running."""
+        _stub_latest(monkeypatch, None)
+        monkeypatch.delenv("GIT_SHA", raising=False)
+        monkeypatch.delenv("GIT_BRANCH", raising=False)
+        info = version_check.version_info()
+        assert (info["git_sha"], info["git_branch"], info["install_type"]) == ("", "", "source")
+
+    def test_the_image_bakes_the_build_args_this_module_reads(self):
+        """The regression this pair of fields exists for. `_install_type` read `GIT_SHA`/`GIT_BRANCH`
+        from the day it was written, and NOTHING ever set them: the Dockerfile declared no ARG and CI
+        passed no `build-args`, so every Docker install reported itself as a source checkout. The
+        facts were in the image the whole time as OCI labels, which nothing inside a container can
+        read. Runtime and build have to be asserted together or they drift apart again silently.
+        """
+        root = Path(__file__).resolve().parents[2]
+        dockerfile = (root / "Dockerfile").read_text()
+        workflow = (root / ".github" / "workflows" / "ci.yml").read_text()
+        for var in ("GIT_SHA", "GIT_BRANCH"):
+            assert f"ARG {var}=" in dockerfile, f"the image must declare {var} as a build arg"
+            assert f"{var}=${var}" in dockerfile, f"{var} must reach the runtime as an env var, not just a build arg"
+            assert f"{var}=${{{{ github." in workflow, f"CI must pass {var} to the build"
