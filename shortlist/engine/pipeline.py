@@ -1280,12 +1280,21 @@ def _mirror_shelf_to_agregarr(ctx: EngineContext, report: RunReport) -> None:
     for section in ctx.delivery_sections:
         library_id = str(section.key)
         try:
-            live = [ident for ident in (getattr(h, "identifier", "") for h in section.managedHubs()) if ident]
+            hubs = list(section.managedHubs())
+            live = [ident for ident in (getattr(h, "identifier", "") for h in hubs) if ident]
+            # Only what is actually on the shared Home shelf counts towards the "our rows are one
+            # unbroken block" check — see `plan_home_order`.
+            visible = {
+                str(getattr(h, "identifier", ""))
+                for h in hubs
+                if getattr(h, "identifier", "") and getattr(h, "promotedToSharedHome", False)
+            }
             plan = shelf_mirror.plan_home_order(
                 library_id,
                 live,
                 items_by_library.get(library_id, []),
                 owned_rating_keys={str(k) for keys in _row_keys_by_slug(ctx, library_id).values() for k in keys},
+                visible_identifiers=visible,
             )
         except Exception as e:
             # Redacted before it reaches a log line or an `events` row: this also catches plexapi

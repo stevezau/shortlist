@@ -17,9 +17,19 @@ _UNSET = "UNSET"  # sentinel: move() was never called on this hub
 
 
 class FakeHub:
-    def __init__(self, title: str, ident: str):
+    """A managed hub. Carries the three promotion flags a real ``managedHubs()`` entry has.
+
+    They default to promoted-on-shared-Home because that is what a row on the shelf looks like, and
+    because a fake WITHOUT these attributes would have hidden the fact that `managedHubs()` also
+    lists hubs promoted nowhere — which is exactly what `order_owned_hubs` was wasting moves on.
+    """
+
+    def __init__(self, title: str, ident: str, *, promoted: bool = True):
         self.title = title
         self.identifier = ident
+        self.promotedToSharedHome = promoted
+        self.promotedToOwnHome = False
+        self.promotedToRecommended = False
         self.moved_after = _UNSET
         self.moves = 0  # how many times we asked Plex to move THIS hub
         self.shelf = None
@@ -303,6 +313,40 @@ def test_moves_only_the_hubs_that_are_out_of_place():
     assert (r1.moves, r2.moves, straggler.moves) == (0, 0, 1)  # only the straggler is written
     assert foreign.moves == 0
     assert section.titles() == ["New Series", "Picked A", "Picked B", "Picked C", "Kometa Genre"]
+
+
+def test_a_row_promoted_nowhere_is_left_where_it_is():
+    """A dormant row (paused/disabled user) is on no surface, so its position is invisible.
+
+    `managedHubs()` lists it anyway, and moving it was pure churn: 4 wasted writes per library per
+    pass on SFLIX, which also kept a reconciled shelf looking contested — a co-managing tool
+    (agregarr) correctly ignores rows promoted nowhere, so Shortlist alone kept shuffling them.
+    """
+    anchor = FakeHub("New Series", "a")
+    live = FakeHub("Picked A", "o1")
+    dormant = FakeHub("Picked B", "o2", promoted=False)  # on no surface at all
+    section = FakeSection([anchor, dormant, live])
+    client = _client([FakeColl("Picked A", ["shortlist_a"], 1), FakeColl("Picked B", ["shortlist_b"], 2)])
+
+    result = client.order_owned_hubs(section, label_prefix="shortlist", anchor_title="New Series")
+
+    assert live.moves == 1
+    assert dormant.moves == 0  # never written
+    assert result["moved"] == ["Picked A"]
+    assert section.titles() == ["New Series", "Picked A", "Picked B"]
+
+
+def test_a_row_on_the_owners_home_alone_is_still_ordered():
+    """Any single promotion flag counts — a row the owner can see has a position worth placing."""
+    anchor = FakeHub("New Series", "a")
+    owner_only = FakeHub("Picked A", "o1", promoted=False)
+    owner_only.promotedToOwnHome = True
+    section = FakeSection([anchor, FakeHub("Kometa Genre", "g"), owner_only])
+    client = _client([FakeColl("Picked A", ["shortlist_a"], 1)])
+
+    client.order_owned_hubs(section, label_prefix="shortlist", anchor_title="New Series")
+
+    assert owner_only.moves == 1
 
 
 def test_reports_unverified_when_plex_accepts_the_moves_without_applying_them():

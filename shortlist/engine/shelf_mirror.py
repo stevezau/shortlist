@@ -69,6 +69,7 @@ def plan_home_order(
     live_identifiers: list[str],
     items: list[dict[str, Any]],
     owned_rating_keys: set[str] | None = None,
+    visible_identifiers: set[str] | None = None,
 ) -> MirrorPlan:
     """Work out the ordering to store in agregarr so its next sync reproduces the live shelf.
 
@@ -79,6 +80,10 @@ def plan_home_order(
         items: Configs from ``AgregarrClient.home_items`` for the same library.
         owned_rating_keys: Rating keys of the Shortlist rows, as strings — used only for the
             reporting fields, never to decide placement.
+        visible_identifiers: Identifiers actually on the shared Home shelf. Only these count
+            towards ``owned_contiguous``: a row promoted nowhere sits at the bottom of the managed
+            list where no user can see it, and letting it drag the flag to False would report a
+            healthy shelf as broken every night. None means "treat everything as visible".
 
     Returns:
         A ``MirrorPlan``. ``plan.changed`` is False when agregarr already agrees, in which case
@@ -124,12 +129,21 @@ def plan_home_order(
     ordered.extend(sorted(leftovers, key=_sort_key))
 
     owned_positions = [i for i, item in enumerate(ordered) if str(item.get("collectionRatingKey") or "") in owned]
+
+    # Contiguity is a statement about what USERS see, so it is measured over the rows on the shared
+    # Home shelf only. A row promoted nowhere is invisible to everyone and sits at the bottom of the
+    # managed list, so counting it reported a perfectly healthy shelf as "not contiguous" every night.
+    def is_visible(item: dict[str, Any]) -> bool:
+        return visible_identifiers is None or (_identifier_of(item, library_id) or "") in visible_identifiers
+
+    visible = [item for item in ordered if is_visible(item)]
+    visible_owned = [i for i, item in enumerate(visible) if str(item.get("collectionRatingKey") or "") in owned]
     return MirrorPlan(
         library_id=str(library_id),
         ordered=ordered,
         moved=_rank_changes(ordered, items),
         owned_placed=len(owned_positions),
-        owned_contiguous=_is_contiguous(owned_positions),
+        owned_contiguous=_is_contiguous(visible_owned),
         unknown_to_agregarr=unknown,
         unjoinable=unjoinable,
     )
@@ -172,15 +186,20 @@ def _rank_changes(ordered: list[dict[str, Any]], items: list[dict[str, Any]]) ->
     when it happens to fall where we want it. Its position then rests on a tie-break between equal
     keys — the order agregarr's own GET happened to return — rather than on anything stored, and
     "it is already right by luck" is not a reason to leave a shelf's order unpinned.
+
+    Counts each item AT MOST ONCE, so the result can never exceed the number of items sent. Adding
+    the two conditions together instead produced "131 of 125 items reordered" in a live log line,
+    because an item that was both out of position and unplaced was counted twice.
     """
     if not ordered:
         return 0
-    unpinned = sum(1 for item in ordered if _sort_key(item) == _UNPLACED)
-    desired = [id(item) for item in ordered]
     placed = {id(item) for item in ordered}
     current = [id(item) for item in sorted((i for i in items if id(i) in placed), key=_sort_key)]
-    mismatches = sum(1 for a, b in zip(desired, current, strict=False) if a != b)
-    return mismatches + abs(len(desired) - len(current)) + unpinned
+    return sum(
+        1
+        for index, item in enumerate(ordered)
+        if _sort_key(item) == _UNPLACED or index >= len(current) or current[index] != id(item)
+    )
 
 
 def _is_contiguous(positions: list[int]) -> bool:

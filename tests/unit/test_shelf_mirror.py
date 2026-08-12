@@ -236,6 +236,58 @@ class TestOddSortKeys:
         assert all(i["id"] != "cfg-900" for i in plan.ordered)
 
 
+class TestMovedCount:
+    def test_never_exceeds_the_number_of_items_sent(self):
+        """A live run logged "131 of 125 items reordered": an item both out of position AND unplaced
+        was counted twice. The number is read by a human, so it has to mean something."""
+        # Every row here is unplaced AND in the wrong order — the double-count case.
+        items = [row("100", 0), row("200", 0), row("300", 0), hub("movie.recentlyadded", 9)]
+        live = ["movie.recentlyadded", ident("300"), ident("200"), ident("100")]
+
+        plan = plan_home_order(LIB, live, items, owned_rating_keys={"100", "200", "300"})
+
+        assert plan.moved <= len(plan.ordered)
+        assert plan.changed is True
+
+
+class TestVisibilityAwareContiguity:
+    """`owned_contiguous` answers "do users see one unbroken block?", so it counts only the rows
+    actually on shared Home. SFLIX has 4 rows promoted nowhere sitting at the bottom of the managed
+    list; counting them reported a perfectly healthy shelf as broken every single night."""
+
+    def test_rows_promoted_nowhere_do_not_break_the_block(self):
+        # Arrange — two visible rows on top, a foreign row, then a dormant row of ours at the end.
+        items = [row("100", 2), row("200", 3), row("900", 4, "Foreign"), row("300", 5)]
+        live = [ident("100"), ident("200"), ident("900"), ident("300")]
+        visible = {ident("100"), ident("200"), ident("900")}  # 300 is on no surface
+
+        # Act
+        plan = plan_home_order(LIB, live, items, owned_rating_keys={"100", "200", "300"}, visible_identifiers=visible)
+
+        # Assert — the dormant row is still counted as placed, but cannot break contiguity.
+        assert plan.owned_placed == 3
+        assert plan.owned_contiguous is True
+
+    def test_a_visible_foreign_row_inside_the_block_still_breaks_it(self):
+        # The flag must not become useless: a foreign row users CAN see between two of ours is
+        # exactly the failure it exists to report.
+        items = [row("100", 2), row("900", 3, "Foreign"), row("200", 4)]
+        live = [ident("100"), ident("900"), ident("200")]
+        visible = {ident("100"), ident("900"), ident("200")}
+
+        plan = plan_home_order(LIB, live, items, owned_rating_keys={"100", "200"}, visible_identifiers=visible)
+
+        assert plan.owned_contiguous is False
+
+    def test_everything_counts_when_visibility_is_unknown(self):
+        items = [row("100", 2), row("900", 3, "Foreign"), row("200", 4)]
+        live = [ident("100"), ident("900"), ident("200")]
+
+        plan = plan_home_order(LIB, live, items, owned_rating_keys={"100", "200"})
+
+        assert plan.owned_contiguous is False
+
+
 class TestOwnedBlock:
     def test_flags_our_rows_as_split_when_a_foreign_row_interleaves(self):
         # Arrange — the shelf itself has a foreign row between two of ours.

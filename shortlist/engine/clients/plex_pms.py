@@ -72,6 +72,19 @@ def _has_shortlist_marker(title: str) -> bool:
     return len(suffix) == 64 and all(c in _MARKER_CHARS for c in suffix)
 
 
+def _is_promoted(hub) -> bool:
+    """Whether a managed hub is on ANY surface — shared Home, the owner's Home, or Recommended.
+
+    ``managedHubs()`` lists every managed hub, promoted or not. A hub with all three flags off is
+    invisible to everyone, so its position on the shelf is meaningless and moving it is pure churn.
+    Any single flag is enough: a row on the owner's Home alone still has a visible position.
+    """
+    return any(
+        bool(getattr(hub, flag, False))
+        for flag in ("promotedToSharedHome", "promotedToOwnHome", "promotedToRecommended")
+    )
+
+
 def _marker_account(title: str) -> int | None:
     """The Plex account id this title's marker encodes, or None if it carries no marker.
 
@@ -825,7 +838,12 @@ class PlexClient:
         # remove, pointed the other way.
         for attempt in range(1, attempts + 2):
             order = list(section.managedHubs())  # the live shelf order, re-read each attempt
-            ours = [h for h in order if (getattr(h, "title", "") or "") in owned_titles]
+            # Rows promoted NOWHERE are skipped. `managedHubs()` lists every managed hub, promoted or
+            # not, so a paused/disabled user's dormant row was being moved into place on every pass —
+            # a position nobody can see, since all three promotion flags are off. On SFLIX that was 4
+            # wasted moves per library per pass, and it kept a reconciled shelf looking contested: a
+            # co-managing tool (agregarr) rightly ignores those rows, so we alone kept shuffling them.
+            ours = [h for h in order if (getattr(h, "title", "") or "") in owned_titles and _is_promoted(h)]
             if not ours:
                 return outcome("rows not promoted yet")
 
