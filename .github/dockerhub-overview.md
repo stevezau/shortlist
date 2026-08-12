@@ -8,9 +8,8 @@ Self-hosted, one Docker container, no AI key required.
 [Documentation](https://stevezau.github.io/shortlist/) ·
 [Report a bug](https://github.com/stevezau/shortlist/issues/new/choose)
 
-> **GHCR is the recommended registry.** Docker Hub rate-limits anonymous pulls and GHCR doesn't, so
-> `ghcr.io/stevezau/shortlist` is the one to use if you have no preference. This mirror carries the
-> identical image — same build, same manifest, same tags.
+> The identical image is also published to GHCR as `ghcr.io/stevezau/shortlist` — same build, same
+> manifest, same tags. Pull from there if you'd rather not hit Docker Hub's anonymous pull limits.
 
 ## The problem
 
@@ -44,16 +43,6 @@ docker run -d --name shortlist \
   -p 5959:5959 \
   -e PUID=1000 -e PGID=1000 -e TZ=Etc/UTC \
   -v /path/to/config:/config \
-  ghcr.io/stevezau/shortlist:latest
-```
-
-Or from this mirror:
-
-```bash
-docker run -d --name shortlist \
-  -p 5959:5959 \
-  -e PUID=1000 -e PGID=1000 -e TZ=Etc/UTC \
-  -v /path/to/config:/config \
   stevezzau/shortlist:latest
 ```
 
@@ -68,7 +57,7 @@ exactly what it _would_ do and write nothing to Plex.
 ```yaml
 services:
   shortlist:
-    image: ghcr.io/stevezau/shortlist:latest
+    image: stevezzau/shortlist:latest
     container_name: shortlist
     restart: unless-stopped
     ports:

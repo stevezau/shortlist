@@ -275,11 +275,12 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # Docker Hub is a MIRROR, not a second home: GHCR stays the registry the docs tell people
-      # to pull from, because Docker Hub rate-limits anonymous pulls and GHCR doesn't. It exists
-      # because hub.docker.com repository pages get indexed by Google and ghcr.io pages don't,
-      # so it is a discovery surface rather than a distribution one.
+      # Docker Hub is what the docs tell people to pull from (owner decision 2026-08-12): its
+      # repository pages get indexed by Google where ghcr.io pages don't, and it reports a pull
+      # count, which GHCR doesn't expose. GHCR keeps publishing the identical manifest and is
+      # documented as the alternative for anyone avoiding Docker Hub's anonymous pull limits.
       # The namespace is `stevezzau` (two z's) — it is NOT the GitHub username, which is stevezau.
+      # The old single-z account was lost; do not "correct" this to match GitHub.
       - uses: docker/login-action@v4
         with:
           username: stevezzau

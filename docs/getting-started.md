@@ -49,12 +49,11 @@ docker run -d --name shortlist \
   -e TZ=Etc/UTC -e PUID=1000 -e PGID=1000 \
   -v /path/to/shortlist/config:/config \
   --restart unless-stopped \
-  ghcr.io/stevezau/shortlist:latest
+  stevezzau/shortlist:latest
 ```
 
-The same image is mirrored to Docker Hub as `stevezzau/shortlist` if you'd rather pull from
-there. **GHCR is the one to use if you have no preference** — Docker Hub rate-limits anonymous
-pulls and GHCR doesn't.
+The identical image is also on GHCR as `ghcr.io/stevezau/shortlist`, with the same tags. Use that
+one if you'd rather not hit Docker Hub's anonymous pull limits.
 
 Open `http://your-host:5959`. A fresh install goes straight into the wizard. There is
 nothing to sign in to yet. Step 1 connects your Plex account (that's the sign-in, and it's

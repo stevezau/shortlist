@@ -7,6 +7,8 @@
 [![CI](https://github.com/stevezau/shortlist/actions/workflows/ci.yml/badge.svg)](https://github.com/stevezau/shortlist/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/codecov/c/github/stevezau/shortlist)](https://codecov.io/gh/stevezau/shortlist)
 [![Latest release](https://img.shields.io/github/v/release/stevezau/shortlist?include_prereleases&label=release)](https://github.com/stevezau/shortlist/releases)
+[![Docker pulls](https://img.shields.io/docker/pulls/stevezzau/shortlist)](https://hub.docker.com/r/stevezzau/shortlist)
+[![Image size](https://img.shields.io/docker/image-size/stevezzau/shortlist/latest)](https://hub.docker.com/r/stevezzau/shortlist)
 [![Stars](https://img.shields.io/github/stars/stevezau/shortlist)](https://github.com/stevezau/shortlist/stargazers)
 [![Forks](https://img.shields.io/github/forks/stevezau/shortlist)](https://github.com/stevezau/shortlist/network/members)
 [![Open issues](https://img.shields.io/github/issues/stevezau/shortlist)](https://github.com/stevezau/shortlist/issues)
@@ -156,11 +158,11 @@ docker run -d --name shortlist \
   -e PUID=1000 -e PGID=1000 \
   -v /path/to/shortlist/config:/config \
   --restart unless-stopped \
-  ghcr.io/stevezau/shortlist:latest
+  stevezzau/shortlist:latest
 ```
 
-Mirrored to Docker Hub as [`stevezzau/shortlist`](https://hub.docker.com/r/stevezzau/shortlist) —
-same image, same tags. **Prefer GHCR**: Docker Hub rate-limits anonymous pulls and GHCR doesn't.
+Also on GHCR as `ghcr.io/stevezau/shortlist` — the identical image, same tags, no pull limits if
+you'd rather avoid Docker Hub's.
 
 Then open **http://your-host:5959** and follow the setup wizard — it connects your Plex account,
 picks your server, and walks you to your first rows (about 10 minutes).

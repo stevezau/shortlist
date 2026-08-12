@@ -57,4 +57,6 @@ first change and restored exactly on uninstall.
 ## Source
 
 - [GitHub repository](https://github.com/stevezau/shortlist)
-- [Container image](https://github.com/stevezau/shortlist/pkgs/container/shortlist): `ghcr.io/stevezau/shortlist:latest`
+- [Container image](https://hub.docker.com/r/stevezzau/shortlist): `stevezzau/shortlist:latest` (note
+  the doubled z — the Docker Hub namespace is `stevezzau`, not the GitHub username `stevezau`). The
+  identical image is also on GHCR as `ghcr.io/stevezau/shortlist:latest`.
