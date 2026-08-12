@@ -2363,88 +2363,75 @@ def _shared_row(
 
     # A shared row cycles off the row alone — its "owner" is the audience, not a person, so there is no
     # user slug to stagger by. Everyone sees the same shared row, so there is nothing to stagger.
-    shared_window = effective_seed_window(spec)
-    # No `disliked` here, on purpose — the same reasoning that keeps per-person BLOCKS out of a
-    # shared row (see `EngineConfig.blocked_shared_seeds`). `agg_history` is several people's watches
-    # pooled, so honouring one person's rating would let them quietly delete a title from a row
-    # everyone else sees, with no way for anyone to know why. Server-wide exclusions for shared rows
-    # go through `blocked_shared_seeds`, which the owner sets deliberately.
+    # "Popular on this server" is a COUNT, not a recommendation — so nothing is searched for and no
+    # LLM is asked.
     #
-    # Pinned by `TestPlexRatingsEndToEnd::test_a_shared_row_ignores_one_persons_rating` — adding the
-    # kwarg here used to leave the whole suite green.
-    seeds = derive_seeds(
-        agg_history,
-        resolve,
-        max_seeds=effective_max_seeds(spec, cfg),
-        blocked=agg.blocked_seeds,
-        window=shared_window,
-        cycle_offset=seed_cycle_offset(spec.slug, "", ctx.run_day) if shared_window > 1 else 0,
+    # It used to derive SEEDS from the pooled history and run the same TMDB-similar + web-search
+    # pipeline a per-person row uses. `_candidate_pool` excludes the seeds from its own results (a
+    # recommendation you have already watched is the thing a row shouldn't surface), and here the
+    # seeds ARE the popular titles — so the most-watched titles on the server were structurally
+    # barred from the row named after them, and every pick was a similar-title suggestion hard-stamped
+    # "Popular on this server". On a live server that cost ~10k AI tokens and a minute a night to
+    # produce a list this `sorted()` answers exactly (owner decision, 2026-08-13).
+    # The owner's server-wide block list still applies. It used to act at seed derivation only, which
+    # meant a blocked title could reappear via another seed's similar-titles; with no search left
+    # there is one place to apply it and blocking now simply keeps the title out — which is what the
+    # setting has always claimed to do.
+    blocked = set(cfg.blocked_shared_seeds)
+    ranked_titles = sorted(
+        ((key, len(who)) for key, who in watchers.items() if len(who) >= threshold and key[0] not in blocked),
+        # Watcher count, then title as a stable tiebreak so a re-run reproduces the same row rather
+        # than reshuffling everything that drew level.
+        key=lambda kv: (-kv[1], example[kv[0]].title.lower()),
     )
-    # Same three narrowings a per-person row gets: its sources, its media, its libraries. Routed
-    # through the same module-level helpers as the per-person path (not re-inlined) so the two never
-    # drift apart — `effective_row_sources` also sorts, so a shared row and a per-person row with the
-    # same configured sources share one gather instead of paying for two.
-    (_pool, _in_library, ranked), gather_stats = _candidate_pool(
-        ctx,
-        seeds,
-        row_library_index(ctx, spec, library_index),
-        excluded_genres=set(),
-        profile=agg,
-        sources=list(effective_row_sources(spec, cfg.candidate_sources)),
-        media=spec.media,
-        recent_count=effective_recent_count(spec, cfg),
-        recency=effective_recency(spec, cfg),
-    )
-    _record_gather(user_report, gather_stats)  # shared-row gather AI cost (llm_web + Exa)
     k = spec.size
-    # Build PER LIBRARY, exactly like a per-person row: each targeted library gets its own full k
-    # from its own contents. One mixed pool over a now media-segregated pool would let a 'both'
-    # shared row come back all-movies-no-shows.
     targets = target_sections(ctx.delivery_sections, spec)
+    library_names = {section.key: getattr(section, "title", "") or "" for section in targets}
+    # Built PER LIBRARY, exactly like a per-person row: each targeted library gets its own full k from
+    # its own contents, so a 'both' row can never come back all-movies-no-shows.
     section_picks: dict[str, list[Pick]] = {}
     for section in targets:
         kind = section_kind(section)
         sec_idx = ctx.section_index.get(section.key, {})
-        sub = [c for c in ranked if c.media_type is kind and c.tmdb_id in sec_idx]
-        if not sub:
-            continue
-        # NOTE: shared-row picks aren't persisted per-user (they file under `shared_<slug>`), so they
-        # can't carry forward like per-person rows yet — they rebuild each run. They're few (1-2) and
-        # aggregate history changes slowly, so churn here is minor. See [[perf-work-state]] follow-up.
-        sec_picks = picker.build_picks(sub, k)
-        if len(sec_picks) < k:
-            # Backfill from this library's ranked pool so a thin build never SHRINKS the row.
-            sec_picks = _pad_picks(sec_picks, sub, k)
-        # Rank from the SELECTION order, then apply the row's display order — the same two steps, in
-        # the same order, as the per-person path. Shipped missing entirely: every dial that lives in
-        # `_build_section_picks` is invisible to a shared row, so "Shuffled" and "Highest rated" did
-        # nothing at all while the editor went on offering them. `pick_order` is the one that both
-        # applies to an aggregate row and needs no per-user state, so it is honoured here; the rest
-        # (`watched_pct`, `rewatch`, `unstarted_only`, `cold_start`, `refresh_days`) are hidden in the
-        # editor instead, because they have no coherent meaning for a row nobody owns.
-        sec_picks = [replace(p, rank=i + 1) for i, p in enumerate(sec_picks[:k])]
-        section_picks[section.key] = _apply_order(
-            sec_picks, spec.pick_order, row_slug=spec.slug, user_slug="", run_day=ctx.run_day
-        )
-    # Force aggregate framing: a shared row is nobody's "because you watched", and the seed is
-    # dropped so a {top_seed} name template can never surface one person's title.
-    # Stamp the library too, so a shared row spanning >1 library splits per library in the report.
-    library_names = {section.key: getattr(section, "title", "") or "" for section in targets}
-    section_picks = {
-        key: [
-            replace(
-                p,
-                reason="Popular on this server",
-                seed_title=None,
-                seed_tmdb_id=None,
-                collection_slug=spec.slug,
-                section_key=key,
-                library=library_names.get(key, ""),
+        sec_picks: list[Pick] = []
+        for (tmdb_id, media_type), count in ranked_titles:
+            if media_type is not kind:
+                continue
+            # In THIS library, or it is not on offer: the row is what the server has and people
+            # watched, never something it would have to acquire.
+            rating_key = sec_idx.get(tmdb_id)
+            if rating_key is None:
+                continue
+            item = example[(tmdb_id, media_type)]
+            sec_picks.append(
+                Pick(
+                    tmdb_id=tmdb_id,
+                    rating_key=rating_key,
+                    title=item.title,
+                    rank=len(sec_picks) + 1,
+                    # The real number, not a fixed label. It is the entire reason the title is here,
+                    # and the old constant "Popular on this server" was untrue of every pick it sat on.
+                    reason=f"{count} people watched it",
+                    media_type=media_type,
+                    collection_slug=spec.slug,
+                    section_key=section.key,
+                    library=library_names.get(section.key, ""),
+                    # No seed and no search: `watched` is the provenance, and a {top_seed} name
+                    # template still has nothing to surface (seed_* stay None), so a shared row can
+                    # never be titled after one person's viewing.
+                    sources=["watched"],
+                    year=item.year,
+                )
             )
-            for p in sp
-        ]
-        for key, sp in section_picks.items()
-    }
+            if len(sec_picks) >= k:
+                break
+        if sec_picks:
+            # `pick_order` is presentation and still applies. "Highest rated" has no score to sort on
+            # here — no TMDB lookup happens — so it leaves the popularity order alone, which is the
+            # honest fallback for a row whose ranking IS the count.
+            section_picks[section.key] = _apply_order(
+                sec_picks, spec.pick_order, row_slug=spec.slug, user_slug="", run_day=ctx.run_day
+            )
     picks = [pick for sp in section_picks.values() for pick in sp]
 
     user_report.picks = picks

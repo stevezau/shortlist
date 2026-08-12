@@ -308,6 +308,7 @@ export function RunDetailPage() {
                   run={run}
                   titles={rowTitles}
                   idBySlug={idBySlug}
+                  liveLog={liveLog}
                 />
               )}
 

@@ -2197,35 +2197,31 @@ class TestPerRowOverrides:
         assert shared_report.breakdown, "the shared row records a breakdown"
         assert all(e["row_slug"] == "popular" for e in shared_report.breakdown)
 
-    def test_a_shared_row_honours_the_server_wide_block_list(self, ctx: EngineContext, mock_plextv, monkeypatch):
-        """The shared path called `derive_seeds` with no `blocked` at all, so blocks simply did not
-        apply to public rows.
+    def test_a_shared_row_honours_the_server_wide_block_list(self, ctx: EngineContext, mock_plextv):
+        """A blocked title must not appear in a public row.
 
-        Asserted on the ARGUMENT rather than on the resulting picks: the picks depend on what TMDB
-        returns for the surviving seeds, so a "no picks" assertion passes for a dozen reasons that
-        have nothing to do with blocking (verified — it passed with the fix removed).
+        Asserted on the PICKS now, not on the argument to `derive_seeds`. The old test had to spy on
+        the call because the picks depended on what TMDB returned for the surviving seeds, so "no
+        picks" passed for a dozen unrelated reasons. A shared row is the server's most-watched titles
+        now — no search, no seeds — so the outcome is directly assertable, and the block does what
+        the setting always claimed: it keeps the title out.
         """
-        import shortlist.engine.rows as rows_mod
-
-        captured: list[set[int] | None] = []
-        real = rows_mod.derive_seeds
-
-        def spy(*args, **kwargs):
-            captured.append(kwargs.get("blocked"))
-            return real(*args, **kwargs)
-
-        monkeypatch.setattr(rows_mod, "derive_seeds", spy)
-
+        ctx.plex.build_library_index.return_value = {4242: 999, 77: 777}
         ctx.config.rows = [RowSpec(slug="popular", name_template="Popular", size=5, shared=True, min_watchers=2)]
         ctx.config.blocked_shared_seeds = {4242}
-        sarah = make_profile("sarah", account_id=100)
-        mike = make_profile("mike", account_id=200)
         mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
-        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999, tmdb_id=4242)]
+        watched = [
+            make_watched("Fargo", days_ago=1, rating_key=999, tmdb_id=4242),
+            make_watched("Heat", days_ago=2, rating_key=777, tmdb_id=77),
+        ]
+        ctx.history_source.fetch.return_value = watched
 
-        pipeline_mod.run(ctx, [sarah, mike])
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
 
-        assert {4242} in captured, "the shared row derived its seeds without the server-wide block list"
+        titles = {p.title for u in report.users for p in u.picks if p.collection_slug == "popular"}
+        assert titles, "the shared row delivered nothing — fixture problem, not the feature"
+        assert "Fargo" not in titles, "a blocked title reached a row everyone can see"
+        assert "Heat" in titles, "blocking one title must not empty the row"
 
     def test_one_persons_block_does_not_reshape_the_shared_row(self, ctx: EngineContext, mock_plextv):
         ctx.config.rows = [RowSpec(slug="popular", name_template="Popular", size=5, shared=True, min_watchers=2)]
@@ -4142,19 +4138,19 @@ class TestRecencySweep:
                 seen.append(pick.year)
         return seen
 
-    def test_a_SHARED_row_honours_its_own_setting(self, ctx: EngineContext, mock_plextv):
-        """The matrix cell the per-person tests cannot reach — `build: shared` takes a different
-        code path (`_run_shared_row`) that resolves every dial separately. The editor offers this
-        control on a shared row and the card badges the override, so it has to mean something."""
-        assert self._shared_years(ctx, mock_plextv, 1.0, 0.0) == [2025, 2018, 2012, 2006, 2000]
+    def test_a_SHARED_row_ignores_recency_because_its_ranking_is_the_watch_count(self, ctx: EngineContext, mock_plextv):
+        """Recency weights a title's release date inside a SCORED CANDIDATE POOL. A shared row no
+        longer has one — it is the server's most-watched titles, ranked by how many people watched
+        them (owner decision, 2026-08-13) — so there is nothing for the weight to act on, and it
+        joins `watched_pct`/`rewatch`/`cold_start` as a dial with no meaning for a row nobody owns.
 
-    def test_a_SHARED_row_pinned_to_zero_is_not_overridden_by_a_high_global(self, ctx: EngineContext, mock_plextv):
-        """The other direction, which a truthiness check would break: an explicit 0.0 on a shared
-        row must survive a server-wide 1.0."""
-        assert self._shared_years(ctx, mock_plextv, 0.0, 1.0) == [1970, 1976, 1982, 1988, 1994]
-
-    def test_a_SHARED_row_that_sets_nothing_follows_the_global(self, ctx: EngineContext, mock_plextv):
-        assert self._shared_years(ctx, mock_plextv, None, 1.0) == [2025, 2018, 2012, 2006, 2000]
+        Asserted rather than deleted: the three tests this replaces proved the shared path resolved
+        the dial independently, and silently dropping them would leave "does recency still do
+        something here?" answered nowhere.
+        """
+        assert self._shared_years(ctx, mock_plextv, 0.0, 1.0) == self._shared_years(ctx, mock_plextv, 1.0, 0.0), (
+            "release-date weighting must not change a row ordered by watch count"
+        )
 
     def test_two_rows_at_different_settings_each_get_their_own_cut(self, ctx: EngineContext, mock_plextv):
         """One person, one shared gather, two rows disagreeing about release date — each must get
@@ -4503,15 +4499,11 @@ class TestSharedRowHonoursPickOrder:
         movies = MagicMock(type="movie", key="1", title="Movies")
         ctx.plex.sections.return_value = [movies]
         ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
-        ctx.plex.build_library_index.return_value = {900: 999, 10: 2010, 20: 2020}
-        ctx.tmdb.suggestions.return_value = [
-            ({"id": 10, "title": "Old", "genre_ids": [], "vote_average": 9.0, "release_date": "1990-01-01"}, 1.0),
-            ({"id": 20, "title": "New", "genre_ids": [], "vote_average": 7.0, "release_date": "2024-01-01"}, 0.9),
-        ]
-        ctx.history_source.fetch.return_value = [
-            make_watched("Fargo", days_ago=1, rating_key=999),
-            make_watched("Fargo", days_ago=2, rating_key=999),
-        ]
+        ctx.plex.build_library_index.return_value = {10: 2010, 20: 2020}
+        # A shared row is the server's most-watched titles, so the fixture is the WATCHING. Three
+        # people watched "Old" and two watched "New", so the popularity order is unambiguously
+        # Old-then-New and any run that leads with "New" did so because of `pick_order` alone.
+        ctx.history_source.fetch.return_value = []
         ctx.config.rows = [
             RowSpec(
                 slug="popular",
@@ -4527,8 +4519,18 @@ class TestSharedRowHonoursPickOrder:
         ctx.run_day = self.RUN_DAY
 
     def _delivered(self, ctx, mock_plextv):
-        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
-        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike"), plextv_user(300, "amy")]
+        old = make_watched("Old", days_ago=2, rating_key=2010, tmdb_id=10, year=1990)
+        new = make_watched("New", days_ago=1, rating_key=2020, tmdb_id=20, year=2024)
+        profiles = [
+            make_profile("sarah", account_id=100),
+            make_profile("mike", account_id=200),
+            make_profile("amy", account_id=300),
+        ]
+        # Everyone watched "Old"; only two watched "New" — 3 watchers against 2.
+        for profile, history in zip(profiles, ([old, new], [old, new], [old]), strict=True):
+            profile.history = history
+        report = pipeline_mod.run(ctx, profiles)
         # DELIVERED order, i.e. list order — never sorted by rank. Rank is the selection order and
         # `_apply_order` deliberately leaves it alone, so re-sorting on it would undo the very thing
         # under test.

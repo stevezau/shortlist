@@ -151,8 +151,8 @@ describe("groupRunByRow", () => {
     );
 
     const picked = groups.find((g) => g.slug === "picked")!;
-    expect(picked.people[0]!.breakdown).toHaveLength(1);
-    expect(picked.people[0]!.breakdown[0]!.row_slug).toBe("picked");
+    expect(picked.people[0]!.result.breakdown).toHaveLength(1);
+    expect(picked.people[0]!.result.breakdown[0]!.row_slug).toBe("picked");
   });
 
   it("carries a shared row alongside the people, never among them", () => {
@@ -235,7 +235,7 @@ describe("groupRunByRow", () => {
     );
 
     expect(rowSummary(groups[0]!)).toBe("1 of 2 built · 1 failed");
-    expect(groups[0]!.people[1]!.error).toBe("TMDB 401");
+    expect(groups[0]!.people[1]!.result.error).toBe("TMDB 401");
   });
 
   it("still places a legacy run's rows from what it delivered", () => {

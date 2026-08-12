@@ -628,99 +628,100 @@ export function RowEditor({
                 row may be things they have already seen" has no answer for a row nobody owns. A
                 control the engine ignores is worse than no control: it promises a behaviour. */}
             {!isSharedRow && (
-            <InheritableField
-              label="Already-watched titles"
-              labelFor="row-watched-pct"
-              description="How much of this row can be things they have already finished watching. At 0 the row is all new suggestions. Leave it on the global default to use the figure from Settings → Finding titles, where you set it once for every row."
-              ariaLabel="Use the global already-watched default"
-              inheriting={input.watched_pct === null}
-              globalValue={watchedPctGlobal(settings.data)}
-              onToggle={(on) =>
-                set({ watched_pct: on ? null : watchedPctSeed(settings.data) })
-              }
-              after={
-                <>
-                  {/* The percentage above is a CEILING — it permits finished titles, it never prefers
+              <InheritableField
+                label="Already-watched titles"
+                labelFor="row-watched-pct"
+                description="How much of this row can be things they have already finished watching. At 0 the row is all new suggestions. Leave it on the global default to use the figure from Settings → Finding titles, where you set it once for every row."
+                ariaLabel="Use the global already-watched default"
+                inheriting={input.watched_pct === null}
+                globalValue={watchedPctGlobal(settings.data)}
+                onToggle={(on) =>
+                  set({
+                    watched_pct: on ? null : watchedPctSeed(settings.data),
+                  })
+                }
+                after={
+                  <>
+                    {/* The percentage above is a CEILING — it permits finished titles, it never prefers
                     them, so on a library with plenty of unwatched candidates even 100% yields an
                     unwatched row. This switch is what actually makes a rewatch shelf, which is why
                     it is named after the row someone wants rather than after its effect on the
                     setting above: "lead with things they've seen" could only be understood by
                     someone who had already understood the ceiling. */}
-                  <div className="flex items-start justify-between gap-4 rounded-md border p-3">
-                    <div className="space-y-1">
-                      <Label htmlFor="row-rewatch">
-                        Make this a &ldquo;watch it again&rdquo; row
-                      </Label>
-                      <p className="text-sm text-muted-foreground">
-                        Films and shows they&rsquo;ve already finished lead the
-                        row, and new suggestions fill whatever is left. Turning
-                        this on also lets already-watched titles into the row,
-                        so there is nothing else to set.
-                      </p>
+                    <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+                      <div className="space-y-1">
+                        <Label htmlFor="row-rewatch">
+                          Make this a &ldquo;watch it again&rdquo; row
+                        </Label>
+                        <p className="text-sm text-muted-foreground">
+                          Films and shows they&rsquo;ve already finished lead
+                          the row, and new suggestions fill whatever is left.
+                          Turning this on also lets already-watched titles into
+                          the row, so there is nothing else to set.
+                        </p>
+                      </div>
+                      <Switch
+                        id="row-rewatch"
+                        aria-label="Make this a watch it again row"
+                        checked={input.rewatch}
+                        onCheckedChange={(rewatch) =>
+                          set({
+                            rewatch,
+                            // A rewatch row needs finished titles in its pool at all, so lift a 0% cap
+                            // off the global default in the same click — otherwise the switch silently
+                            // does nothing.
+                            ...(rewatch && input.watched_pct === 0
+                              ? { watched_pct: 1 }
+                              : {}),
+                            // Mutually exclusive: the two ask for opposite things, and the API refuses
+                            // the pair. Clearing it here means the owner never meets that error.
+                            ...(rewatch ? { unstarted_only: false } : {}),
+                          })
+                        }
+                      />
                     </div>
-                    <Switch
-                      id="row-rewatch"
-                      aria-label="Make this a watch it again row"
-                      checked={input.rewatch}
-                      onCheckedChange={(rewatch) =>
-                        set({
-                          rewatch,
-                          // A rewatch row needs finished titles in its pool at all, so lift a 0% cap
-                          // off the global default in the same click — otherwise the switch silently
-                          // does nothing.
-                          ...(rewatch && input.watched_pct === 0
-                            ? { watched_pct: 1 }
-                            : {}),
-                          // Mutually exclusive: the two ask for opposite things, and the API refuses
-                          // the pair. Clearing it here means the owner never meets that error.
-                          ...(rewatch ? { unstarted_only: false } : {}),
-                        })
-                      }
-                    />
-                  </div>
 
-                  {/* Anything that can hold shows, which is what the API accepts — it refuses this
+                    {/* Anything that can hold shows, which is what the API accepts — it refuses this
                     only on a movies-only row. It used to be gated on `=== "show"`, which hid it from
                     every "films and shows" row even though the engine honours it there, so the one
                     row most installs have could never turn it on. Cleared when the row narrows to
                     movies: an invisible setting the API then refuses is a save that fails for no
                     visible reason. */}
-                  {input.media !== "movie" && (
-                    <div className="flex items-start justify-between gap-4 rounded-md border p-3">
-                      <div className="space-y-1">
-                        <Label htmlFor="row-unstarted">
-                          Only series they haven&rsquo;t started
-                        </Label>
-                        <p className="text-sm text-muted-foreground">
-                          Drops any show they&rsquo;ve watched even one episode
-                          of. This only changes anything if you&rsquo;ve allowed
-                          already-watched titles above — at 0% those are already
-                          left out.
-                        </p>
+                    {input.media !== "movie" && (
+                      <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+                        <div className="space-y-1">
+                          <Label htmlFor="row-unstarted">
+                            Only series they haven&rsquo;t started
+                          </Label>
+                          <p className="text-sm text-muted-foreground">
+                            Drops any show they&rsquo;ve watched even one
+                            episode of. This only changes anything if
+                            you&rsquo;ve allowed already-watched titles above —
+                            at 0% those are already left out.
+                          </p>
+                        </div>
+                        <Switch
+                          id="row-unstarted"
+                          aria-label="Only series they have not started"
+                          checked={input.unstarted_only}
+                          onCheckedChange={(unstarted_only) =>
+                            set({
+                              unstarted_only,
+                              ...(unstarted_only ? { rewatch: false } : {}),
+                            })
+                          }
+                        />
                       </div>
-                      <Switch
-                        id="row-unstarted"
-                        aria-label="Only series they have not started"
-                        checked={input.unstarted_only}
-                        onCheckedChange={(unstarted_only) =>
-                          set({
-                            unstarted_only,
-                            ...(unstarted_only ? { rewatch: false } : {}),
-                          })
-                        }
-                      />
-                    </div>
-                  )}
-                </>
-              }
-            >
-              <WatchedSlider
-                id="row-watched-pct"
-                value={Math.round((input.watched_pct ?? 0) * 100)}
-                onChange={(pct) => set({ watched_pct: pct / 100 })}
-              />
-            </InheritableField>
-
+                    )}
+                  </>
+                }
+              >
+                <WatchedSlider
+                  id="row-watched-pct"
+                  value={Math.round((input.watched_pct ?? 0) * 100)}
+                  onChange={(pct) => set({ watched_pct: pct / 100 })}
+                />
+              </InheritableField>
             )}
 
             {/* Nothing at all for a row that follows a watch, nor for a shared one: the cadence is
@@ -748,26 +749,34 @@ export function RowEditor({
               </InheritableField>
             )}
 
-            {/* Shown for EVERY row, including one that follows a watch — unlike the cadence above,
-                whose cadence those rows have forced. Which titles win is still a free choice there:
-                "Because you watched X" can lean modern or not, independently of rebuilding nightly. */}
-            <InheritableField
-              label="Recent releases"
-              labelFor="row-recency"
-              description="How much a title’s release date counts when ranking it for this row — turn it up for a “new and notable” shelf, or all the way down for one that digs up older films. Old titles are never excluded; they just have to be a better match. Leave it on the global default to use the figure from Settings → Finding titles."
-              ariaLabel="Use the global recent-releases default"
-              inheriting={input.recency === null}
-              globalValue={recencyGlobal(settings.data)}
-              onToggle={(on) =>
-                set({ recency: on ? null : recencySeed(settings.data) })
-              }
-            >
-              <RecencySlider
-                id="row-recency"
-                value={Math.round((input.recency ?? 0) * 100)}
-                onChange={(pct) => set({ recency: pct / 100 })}
-              />
-            </InheritableField>
+            {/* Every row EXCEPT a shared one, including one that follows a watch — unlike the cadence
+                above, whose cadence those rows have forced. Which titles win is still a free choice
+                there: "Because you watched X" can lean modern or not, independently of rebuilding
+                nightly.
+
+                A shared row has no scored candidate pool for a release-date weight to act on — it is
+                the server's most-watched titles, ranked by how many people watched them — so it joins
+                `watched_pct`/`rewatch`/`cold_start` as a dial hidden rather than offered and ignored.
+                Order a shared row by release date with "Newest first" instead. */}
+            {!isSharedRow && (
+              <InheritableField
+                label="Recent releases"
+                labelFor="row-recency"
+                description="How much a title’s release date counts when ranking it for this row — turn it up for a “new and notable” shelf, or all the way down for one that digs up older films. Old titles are never excluded; they just have to be a better match. Leave it on the global default to use the figure from Settings → Finding titles."
+                ariaLabel="Use the global recent-releases default"
+                inheriting={input.recency === null}
+                globalValue={recencyGlobal(settings.data)}
+                onToggle={(on) =>
+                  set({ recency: on ? null : recencySeed(settings.data) })
+                }
+              >
+                <RecencySlider
+                  id="row-recency"
+                  value={Math.round((input.recency ?? 0) * 100)}
+                  onChange={(pct) => set({ recency: pct / 100 })}
+                />
+              </InheritableField>
+            )}
 
             {usesWebSearch && (
               <InheritableField
@@ -855,57 +864,57 @@ export function RowEditor({
             </InheritableField>
 
             {!isSharedRow && (
-            <InheritableField
-              label="When someone hasn’t watched enough"
-              labelFor="row-cold-start"
-              description={
-                <>
-                  Some people have too little watch history to recommend from
-                  &mdash; someone new, or someone who barely watches. This row
-                  can still show them the server&rsquo;s highest-rated titles,
-                  or not appear for them at all until they&rsquo;ve watched
-                  enough. Set where the line is in Settings &rarr; Finding
-                  titles.
-                </>
-              }
-              ariaLabel="Use the global setting for people without enough watch history"
-              inheriting={input.cold_start === null}
-              globalValue={coldStartGlobal(settings.data)}
-              // Turning the toggle OFF seeds "skip", not the global: the only reason to reach for
-              // this control is to differ from the global, and the global is one flip away again.
-              onToggle={(on) => set({ cold_start: on ? null : "skip" })}
-              // A row named after one watch is the case this exists for — it has no favourite to
-              // name itself after, so it silently renders as the plain default title instead.
-              before={
-                namesASeed &&
-                input.cold_start !== "skip" && (
-                  <p className="rounded-md bg-muted/60 p-3 text-sm text-muted-foreground">
-                    This row is named after a title they watched. With too
-                    little history there is no such title, so the row falls back
-                    to a plain name — worth skipping it for those people
-                    instead.
-                  </p>
-                )
-              }
-            >
-              <select
-                id="row-cold-start"
-                value={input.cold_start ?? "popular"}
-                onChange={(e) =>
-                  set({ cold_start: asColdStart(e.target.value) })
+              <InheritableField
+                label="When someone hasn’t watched enough"
+                labelFor="row-cold-start"
+                description={
+                  <>
+                    Some people have too little watch history to recommend from
+                    &mdash; someone new, or someone who barely watches. This row
+                    can still show them the server&rsquo;s highest-rated titles,
+                    or not appear for them at all until they&rsquo;ve watched
+                    enough. Set where the line is in Settings &rarr; Finding
+                    titles.
+                  </>
                 }
-                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                ariaLabel="Use the global setting for people without enough watch history"
+                inheriting={input.cold_start === null}
+                globalValue={coldStartGlobal(settings.data)}
+                // Turning the toggle OFF seeds "skip", not the global: the only reason to reach for
+                // this control is to differ from the global, and the global is one flip away again.
+                onToggle={(on) => set({ cold_start: on ? null : "skip" })}
+                // A row named after one watch is the case this exists for — it has no favourite to
+                // name itself after, so it silently renders as the plain default title instead.
+                before={
+                  namesASeed &&
+                  input.cold_start !== "skip" && (
+                    <p className="rounded-md bg-muted/60 p-3 text-sm text-muted-foreground">
+                      This row is named after a title they watched. With too
+                      little history there is no such title, so the row falls
+                      back to a plain name — worth skipping it for those people
+                      instead.
+                    </p>
+                  )
+                }
               >
-                {COLD_STARTS.map((choice) => (
-                  <option key={choice} value={choice}>
-                    {COLD_START_LABELS[choice]}
-                  </option>
-                ))}
-              </select>
-              <p className="text-sm text-muted-foreground">
-                {COLD_START_HINTS[asColdStart(input.cold_start)]}
-              </p>
-            </InheritableField>
+                <select
+                  id="row-cold-start"
+                  value={input.cold_start ?? "popular"}
+                  onChange={(e) =>
+                    set({ cold_start: asColdStart(e.target.value) })
+                  }
+                  className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                >
+                  {COLD_STARTS.map((choice) => (
+                    <option key={choice} value={choice}>
+                      {COLD_START_LABELS[choice]}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-sm text-muted-foreground">
+                  {COLD_START_HINTS[asColdStart(input.cold_start)]}
+                </p>
+              </InheritableField>
             )}
 
             {/* Only for a row that builds from one or two watches. Above that it is blending a whole

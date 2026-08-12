@@ -130,26 +130,45 @@ describe("RunRowsTab", () => {
 
   it("opens a single-row run and shows the picks, not just the names", () => {
     // The regression this replaces: expanding a row gave 46 names, a status and a Trace link, so
-    // you could see WHO ran but never what they got without leaving the page.
+    // you could see WHO ran but never what they got without leaving the page. It now renders through
+    // the People tab's own panel, so the libraries are TABS and the first one's picks are showing.
     renderTab();
 
     expect(screen.getByText("Sarah")).toBeInTheDocument();
     expect(screen.getByText("Sicario")).toBeInTheDocument();
-    expect(screen.getByText("The Bear")).toBeInTheDocument();
-    // Per library, with that library's own diff.
-    expect(screen.getByText("Movies")).toBeInTheDocument();
-    expect(screen.getByText("TV Shows")).toBeInTheDocument();
+    // The libraries are a segmented control in the reused panel, so only the first one's picks are
+    // on screen and the other is one click away.
+    const libraries = screen.getByRole("group", { name: /librar/i });
+    expect(
+      within(libraries).getByRole("button", { name: /TV Shows/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("gives the person list the search the People tab has, once there are enough people", () => {
+    // Reusing `UserTabs` rather than a thinner list of names is what keeps the two tabs one design —
+    // and it only offers a search box above ten people, which is the case that needs it.
+    renderTab(
+      run({
+        users: Array.from({ length: 12 }, (_, i) =>
+          user({ slug: `p${i}`, display_name: `Person ${i}` }),
+        ),
+      }),
+    );
+
+    expect(
+      screen.getByLabelText(/Search users in this run/i),
+    ).toBeInTheDocument();
   });
 
   it("switches the picks panel when another person is chosen", async () => {
     renderTab();
     expect(screen.getByText("Sicario")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: /Mike/ }));
+    await userEvent.click(screen.getByText("Mike"));
 
-    // Mike built nothing for this row, so the panel says so rather than showing Sarah's picks.
+    // Mike built nothing for this row, so Sarah's picks must not linger under his name — and his
+    // own `picks` are dropped, because the API cannot split them per row.
     expect(screen.queryByText("Sicario")).not.toBeInTheDocument();
-    expect(screen.getByText(/delivered nothing here/i)).toBeInTheDocument();
   });
 
   it("gives a shared row the same panel, minus the person picker", async () => {
