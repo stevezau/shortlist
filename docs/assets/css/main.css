@@ -1218,6 +1218,12 @@ figcaption {
   text-decoration: none;
 }
 
+/* Sub-pages sit under their section rather than reading as siblings of it. */
+.footer__kid {
+  padding-left: 0.75rem;
+  font-size: 0.9em;
+}
+
 .footer a:hover {
   color: var(--accent-text);
 }

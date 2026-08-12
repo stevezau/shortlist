@@ -138,6 +138,10 @@ Set `-e SHORTLIST_DRY_RUN=1` to see every change it _would_ make to your server 
 
 ## Related
 
+- [A different home screen per user](plex-per-user-home-screen.md) — what Plex controls per account, and what it costs at scale
+- [Recommendations from watch history](plex-recommendations-watch-history.md) — where the titles in the row come from
+- [Netflix-style rows for your own library](plex-netflix-style-recommendations.md) — reasons, refresh and the rest of the feel
+- [Plex recommendation tools compared](plex-recommendation-tools.md) — which project fits which server
 - [FAQ — How is this private?](faq.md#how-is-this-private-plex-doesnt-have-per-user-collections)
 - [Getting started](getting-started.md) — install and the setup wizard
 - [Reference](reference.md) — settings, API, environment variables

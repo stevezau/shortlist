@@ -15,8 +15,16 @@
       <div>
         <h4>Documentation</h4>
         <ul>
+          {%- comment -%}
+            Children are listed too, not just the top-level sections. Every docs page then
+            carries a link to every other, which is how the deeper pages get crawled at all —
+            the sitemap alone was not enough to get them indexed.
+          {%- endcomment -%}
           {%- for item in site.nav -%}
             <li><a href="{{ item.url | relative_url }}">{{ item.title }}</a></li>
+            {%- for kid in item.children -%}
+              <li class="footer__kid"><a href="{{ kid.url | relative_url }}">{{ kid.title }}</a></li>
+            {%- endfor -%}
           {%- endfor -%}
         </ul>
       </div>

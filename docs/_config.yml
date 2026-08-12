@@ -65,9 +65,20 @@ nav:
   - title: FAQ
     url: /faq/
     blurb: Privacy, Kometa, uninstall
-  - title: Per-user Plex collections
-    url: /plex-per-user-collections/
-    blurb: The label + share-filter mechanism
+  - title: Plex how-to
+    url: /plex-how-to/
+    blurb: What Plex itself can and can't do, and the manual methods
+    children:
+      - title: Recommendations from watch history
+        url: /plex-recommendations-watch-history/
+      - title: A home screen per user
+        url: /plex-per-user-home-screen/
+      - title: Per-user collections
+        url: /plex-per-user-collections/
+      - title: Netflix-style rows
+        url: /plex-netflix-style-recommendations/
+      - title: Tools compared
+        url: /plex-recommendation-tools/
 
 # theme: none — the site ships its own layouts. Cayman was the stock GitHub Pages
 # theme and looked nothing like the app it documents.

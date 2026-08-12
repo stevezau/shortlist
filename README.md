@@ -14,6 +14,8 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![AI-Assisted](https://img.shields.io/badge/AI-assisted%20development-8A2BE2)
 
+📖 **[Documentation](https://stevezau.github.io/shortlist/)** · [Getting started](https://stevezau.github.io/shortlist/getting-started/) · [How Plex per-user rows work](https://stevezau.github.io/shortlist/plex-per-user-collections/) · [Tools compared](https://stevezau.github.io/shortlist/plex-recommendation-tools/)
+
 > [!IMPORTANT]
 > **Shortlist 1.0.** It modifies other people's Plex views and share permissions, so it is built to
 > be careful: every write is previewed by `--dry-run`, your share filters are snapshotted before
@@ -73,13 +75,13 @@ account is told to hide that label, so only its owner ever sees it.
 **Make it yours**
 
 - 🎞️ **Multiple rows per person + shared rows** — e.g. a personal row, a "New this week" shared
-  row, per-library rows — each with its own sources, size, libraries, freshness, and audience.
+  row, per-library rows — each with its own sources, size, libraries, rebuild cadence, and audience.
   **Start from a template** — _Because you watched…_, _Happy to see again_, _Fresh finds_, _Popular on
   this server_ and more — rather than a blank form, then change anything you like.
 - 🚫 **Block a bad seed** — a film someone put on for a friend shouldn't shape their picks. Block it
   from a run's "How we picked" page; the watch stays in their history, it just stops seeding.
-- 🗓️ **Freshness you control** — rows stay stable and refresh on a cadence you set (nightly →
-  fortnightly), so people aren't shown a totally reshuffled row every day.
+- 🗓️ **A rebuild cadence you control** — set it in days (nightly, weekly, monthly, or never), so
+  people aren't shown a totally reshuffled row every day.
 - 📍 **Row placement** — choose which Plex shelf each row lands on (Home, the library's Recommended
   tab, or both) and where it sits, per row.
 - 🎨 **Custom row posters (optional)** — upload artwork or generate it from text, reusing your AI key.
@@ -174,8 +176,18 @@ picks your server, and walks you to your first rows (about 10 minutes).
 | [Reference](docs/reference.md)             | Settings, API, env vars                             |
 | [FAQ](docs/faq.md)                         | Privacy model, Kometa, uninstall                    |
 
-**Background:** [How to make a Plex collection visible to only one user](docs/plex-per-user-collections.md)
-— the label + share-filter mechanism this is built on, and the ordering mistake that leaks.
+### How Plex itself works
+
+Background on the server, not on Shortlist — worth reading before you build anything on this
+yourself, because most advice on the subject predates Plex's 2026 fixes and quietly leaks.
+
+|                                                                                  |                                                                        |
+| -------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [Per-user collections](docs/plex-per-user-collections.md)                        | The label + share-filter mechanism, and the order that leaks           |
+| [Recommendations from watch history](docs/plex-recommendations-watch-history.md) | What Plex does with history, and why smart collections aren't personal |
+| [A home screen per user](docs/plex-per-user-home-screen.md)                      | Pinned sources, managed users, and what none of them do                |
+| [Netflix-style rows](docs/plex-netflix-style-recommendations.md)                 | The four properties that make rows feel personal                       |
+| [Tools compared](docs/plex-recommendation-tools.md)                              | Shortlist, Immaculaterr, Curatarr, SeekAndWatch and others             |
 
 ## License
 
