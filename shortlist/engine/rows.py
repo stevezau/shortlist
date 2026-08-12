@@ -2416,10 +2416,10 @@ def _shared_row(
                     collection_slug=spec.slug,
                     section_key=section.key,
                     library=library_names.get(section.key, ""),
-                    # No seed and no search: `watched` is the provenance, and a {top_seed} name
-                    # template still has nothing to surface (seed_* stay None), so a shared row can
-                    # never be titled after one person's viewing.
-                    sources=["watched"],
+                    # No `sources`: the reason already says "19 people watched it", which IS the
+                    # provenance, and a second line reading "suggested by watched" only repeated it
+                    # more clumsily. seed_* stay None too, so a {top_seed} name template still has
+                    # nothing to surface and a shared row can never be titled after one person.
                     year=item.year,
                 )
             )
