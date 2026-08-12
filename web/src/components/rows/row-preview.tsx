@@ -191,6 +191,7 @@ export function RowPreview({
 
   const sources = effectiveSources(input.candidate_sources, settings);
   const builtFrom = builtFromLine(input);
+  const isSharedRow = input.build === "shared";
 
   // The heading lives in the PAGE, above this card, not inside it — so it lines up with "Row
   // settings" over the left column and both columns start at the same y. A heading inside the card
@@ -214,20 +215,48 @@ export function RowPreview({
           label="How many"
           value={`Up to ${input.size} title${input.size === 1 ? "" : "s"}`}
         />
-        <Fact label="Contents" value={watchedLine(input, globalWatchedPct)} />
-        {builtFrom && <Fact label="Built from" value={builtFrom} />}
-        <Fact
-          label="Order"
-          value={ORDER_WORDS[input.pick_order] ?? "Best match first"}
-        />
-        <Fact
-          label="Found via"
-          value={
-            sources.length
-              ? sources.map(sourceShortLabel).join(", ")
-              : "The global default sources"
-          }
-        />
+        {/* A shared row is a straight tally of the server's most-watched titles, so four of these
+            lines described a row it no longer is: it shows what people HAVE watched (not what they
+            haven't), pools everyone's viewing (not one person's recent), searches nothing at all,
+            and is ordered by watcher count rather than a match score. Naming the wrong behaviour in
+            the panel that exists to explain the row is worse than leaving the line out. */}
+        {isSharedRow ? (
+          <>
+            <Fact label="Contents" value="What people here have watched most" />
+            <Fact
+              label="Built from"
+              value="Everyone's viewing, pooled — no search, no AI"
+            />
+            <Fact
+              label="Order"
+              value={
+                input.pick_order === "best"
+                  ? "Most watched first"
+                  : (ORDER_WORDS[input.pick_order] ?? "Most watched first")
+              }
+            />
+          </>
+        ) : (
+          <>
+            <Fact
+              label="Contents"
+              value={watchedLine(input, globalWatchedPct)}
+            />
+            {builtFrom && <Fact label="Built from" value={builtFrom} />}
+            <Fact
+              label="Order"
+              value={ORDER_WORDS[input.pick_order] ?? "Best match first"}
+            />
+            <Fact
+              label="Found via"
+              value={
+                sources.length
+                  ? sources.map(sourceShortLabel).join(", ")
+                  : "The global default sources"
+              }
+            />
+          </>
+        )}
         <Fact
           label="Updates"
           value={updateFrequency(input, followsAWatch, globalRefreshDays)}
