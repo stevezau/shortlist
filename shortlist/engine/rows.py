@@ -2384,6 +2384,27 @@ def _shared_row(
         # than reshuffling everything that drew level.
         key=lambda kv: (-kv[1], example[kv[0]].title.lower()),
     )
+    # Record WHY the row looks like this. The trace used to come from `_record_gather`, which was
+    # part of the search — deleting the search deleted the trace with it, and nothing failed because
+    # no test asserted a trace still existed. A tally has plenty to show, and it is all right here.
+    user_report.trace["history"] = {
+        "total": len(agg_history),
+        "recent": [
+            {
+                "title": f"{example[key].title} — {n} people watched it",
+                "media": key[1].value,
+                "library": "",
+                "year": example[key].year,
+                "watched_at": None,
+                "rating": None,
+                "rating_blocked": False,
+            }
+            for key, n in ranked_titles[:_TRACE_HISTORY_SAMPLE]
+        ],
+        "watched_movies": sum(1 for key, _ in ranked_titles if key[1] is MediaType.MOVIE),
+        "watched_shows": sum(1 for key, _ in ranked_titles if key[1] is MediaType.SHOW),
+        "watched_by_library": {},
+    }
     k = spec.size
     targets = target_sections(ctx.delivery_sections, spec)
     library_names = {section.key: getattr(section, "title", "") or "" for section in targets}

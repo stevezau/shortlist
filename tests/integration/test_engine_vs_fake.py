@@ -614,6 +614,11 @@ def test_shared_row_is_public_built_from_aggregate_and_never_excluded(fakes, tmp
     assert all(re.fullmatch(r"\d+ people watched it", pick.reason) for pick in shared_report.picks), [
         pick.reason for pick in shared_report.picks
     ]
+    # The regression guard the suite lacked: the trace came from the SEARCH, so removing the search
+    # silently emptied it and the row's Trace button vanished — no test noticed, because they all
+    # asserted what the trace page renders when GIVEN one.
+    assert shared_report.trace.get("history"), "a shared row must still record why it picked what it did"
+    assert shared_report.trace["history"]["total"] > 0
     assert all(pick.seed_title is None for pick in shared_report.picks), (
         "a shared row must never surface one person's title as its seed"
     )

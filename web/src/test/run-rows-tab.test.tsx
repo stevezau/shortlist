@@ -278,3 +278,30 @@ describe("RunRowsTab", () => {
     expect(screen.getByText("This run built no rows")).toBeInTheDocument();
   });
 });
+
+describe("RunRowsTab — a run that is still going", () => {
+  it("says it is working, not that the run is too old to show rows", () => {
+    // A running run has nothing persisted yet, so it lands in the empty state — which used to blame
+    // a legacy run for a run that had started seconds earlier.
+    renderTab(
+      run({
+        users: [],
+        shared_rows: [],
+        finished_at: null,
+      } as unknown as Partial<RunDetail>),
+    );
+
+    expect(
+      screen.getByText(/rows appear as they finish/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/before this view existed/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("still explains a finished run that genuinely built nothing", () => {
+    renderTab(run({ users: [], shared_rows: [] }));
+
+    expect(screen.getByText("This run built no rows")).toBeInTheDocument();
+  });
+});
