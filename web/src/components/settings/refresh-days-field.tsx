@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import {
   MAX_REFRESH_DAYS,
@@ -41,10 +41,16 @@ export function RefreshDaysField({
   className,
 }: RefreshDaysFieldProps) {
   const [text, setText] = useState(String(value));
-
-  useEffect(() => {
+  // Re-sync the buffer when the value changes from elsewhere — a preset button here, or the row
+  // editor's inherit toggle seeding the global. Adjusted during render rather than in an effect, the
+  // same way `row-size-field` does it: React re-runs the component immediately without committing
+  // the discarded render, so the input never paints the stale text. An effect paints stale first,
+  // then corrects on the next frame — and `react-hooks/set-state-in-effect` rejects it outright.
+  const [syncedValue, setSyncedValue] = useState(value);
+  if (syncedValue !== value) {
+    setSyncedValue(value);
     setText(String(value));
-  }, [value]);
+  }
 
   const commit = (raw: string) => {
     const parsed = Number(raw);

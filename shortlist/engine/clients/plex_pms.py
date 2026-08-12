@@ -173,12 +173,6 @@ _PMS_TIMEOUTS = (
     requests.exceptions.ConnectionError,
 )
 
-# How many times `order_owned_hubs` will re-read the managed shelf and re-place whatever Plex did not
-# actually move. Plex answers 200 to a hub move it then drops, so one pass cannot be trusted; each
-# retry re-reads first, which both paces the writes and makes the next pass move only what is still
-# wrong. Three is enough for a shelf that converges and cheap for one that doesn't (one extra read).
-_HUB_ORDER_ATTEMPTS = 3
-
 
 def _retry_idempotent(operation: Callable[[], None], *, label: str, attempts: int = 4) -> None:
     """Retry an IDEMPOTENT PMS mutation (promotion, or a delivery collection upsert) on a read/connect
@@ -711,140 +705,89 @@ class PlexClient:
         anchor_title: str = "",
         before: bool = False,
         dry_run: bool = False,
-        only_keys: set[int] | None = None,
+        only_titles: set[str] | None = None,
         to_top: bool = False,
-        attempts: int = _HUB_ORDER_ATTEMPTS,
     ) -> dict:
         """Place this section's Shortlist rows in Plex's Managed Recommendations shelf: at the very TOP
         (``to_top``) or right after/before the ``anchor_title`` collection, so a co-managing tool
         (Kometa) can't bury them.
 
-        Only OUR hubs (``label_prefix``-labelled) are moved; the anchor is read-only. ``only_keys``
-        restricts the move to the rows with those collection ratingKeys (used when different rows anchor
-        to different collections) — ``None`` moves them all. Returns an audit dict:
-        ``{anchor, moved: [titles], skipped: bool, verified: bool, reason?}``.
-
-        Moves ONLY hubs actually out of place, and VERIFIES by re-reading the shelf — both learned from
-        a real failure (SFLIX, 2026-08-12). The old loop chained ``move(after=previous)`` over every one
-        of our hubs whenever any single one was out of place: 47 unpaced PUTs in 344ms, of which ~27 were
-        no-ops re-asserting rows that were already in position. Plex answered 200 to all 47 and applied
-        barely half — the shelf was left in three disjoint blocks, 14 rows stranded at the bottom — and
-        this then reported ``moved 47`` because it counted requests ISSUED and never looked at the
-        result. Both halves matter: fewer moves is what keeps Plex honest, re-reading is what stops us
-        claiming a shelf is ordered when it is not. ``order_collection`` orders items the same way.
+        Only OUR hubs (``label_prefix``-labelled) are moved; the anchor is read-only. ``only_titles``
+        restricts the move to that subset of our rows (used when different rows anchor to different
+        collections) — ``None`` moves them all. Idempotent — if our rows already sit contiguously in
+        the target slot, nothing is written (no nightly churn). Returns an audit dict:
+        ``{anchor, moved: [titles], skipped: bool, reason?}``.
         """
         prefix = f"{label_prefix}_".lower()
-        # title -> ratingKey for every row of ours here. Titles carry the invisible per-account marker,
-        # so within one section they are unique per user; the key is what `only_keys` partitions on.
-        key_by_title = {
-            c.title: c.ratingKey
+        owned_all = {
+            c.title
             for c in self._section_collections(section)
             if any(label.tag.lower().startswith(prefix) for label in c.labels)
         }
-        owned_all = set(key_by_title)
-        # The subset to MOVE (restricted by only_keys); the anchor is never any of our OWN rows —
+        # The subset to MOVE (restricted by only_titles); the anchor is never any of our OWN rows —
         # excluded via owned_all, not the subset, so a row can't be anchored to a sibling Shortlist row.
-        owned_titles = owned_all if only_keys is None else {t for t, key in key_by_title.items() if key in only_keys}
+        owned_titles = owned_all & only_titles if only_titles is not None else set(owned_all)
         if not owned_titles:
             return {"anchor": anchor_title, "moved": [], "skipped": True, "reason": "no rows in this library"}
 
-        where = "to the top" if to_top else f"{'before' if before else 'after'} {anchor_title!r}"
-        moved_titles: list[str] = []
-        for attempt in range(1, attempts + 1):
-            order = list(section.managedHubs())  # the live shelf order, re-read each attempt
-            ours = [h for h in order if (getattr(h, "title", "") or "") in owned_titles]
-            if not ours:
-                return {"anchor": anchor_title, "moved": [], "skipped": True, "reason": "rows not promoted yet"}
+        order = list(section.managedHubs())  # the live shelf order
+        ours = [h for h in order if (getattr(h, "title", "") or "") in owned_titles]
+        if not ours:
+            return {"anchor": anchor_title, "moved": [], "skipped": True, "reason": "rows not promoted yet"}
 
-            if to_top:
-                target = None  # move(after=None) -> the very top of the shelf
-            else:
-                anchor = next(
-                    (
-                        h
-                        for h in order
-                        if (getattr(h, "title", "") or "") == anchor_title
-                        and (getattr(h, "title", "") or "") not in owned_all
-                    ),
+        if to_top:
+            target = None  # move(after=None) -> the very top of the shelf
+        else:
+            anchor = next(
+                (
+                    h
+                    for h in order
+                    if (getattr(h, "title", "") or "") == anchor_title
+                    and (getattr(h, "title", "") or "") not in owned_all
+                ),
+                None,
+            )
+            if anchor is None:
+                logger.warning(
+                    "hub order: anchor {!r} not found in {} — leaving the shelf order unchanged",
+                    anchor_title,
+                    section.title,
+                )
+                return {"anchor": anchor_title, "moved": [], "skipped": True, "reason": "anchor not found"}
+            # 'after anchor' -> the anchor; 'before anchor' -> the hub just before it that isn't one of
+            # ours (None -> the very top of the shelf).
+            if before:
+                anchor_idx = order.index(anchor)
+                target = next(
+                    (h for h in reversed(order[:anchor_idx]) if (getattr(h, "title", "") or "") not in owned_all),
                     None,
                 )
-                if anchor is None:
-                    logger.warning(
-                        "hub order: anchor {!r} not found in {} — leaving the shelf order unchanged",
-                        anchor_title,
-                        section.title,
-                    )
-                    return {"anchor": anchor_title, "moved": [], "skipped": True, "reason": "anchor not found"}
-                # 'after anchor' -> the anchor; 'before anchor' -> the hub just before it that isn't one
-                # of ours (None -> the very top of the shelf).
-                if before:
-                    anchor_idx = order.index(anchor)
-                    target = next(
-                        (h for h in reversed(order[:anchor_idx]) if (getattr(h, "title", "") or "") not in owned_all),
-                        None,
-                    )
-                else:
-                    target = anchor
+            else:
+                target = anchor
 
-            idents = [h.identifier for h in order]
-            by_ident = {h.identifier: h for h in order}
-            our_idents = [h.identifier for h in ours]
-            start = idents.index(target.identifier) + 1 if target is not None else 0
-            if idents[start : start + len(our_idents)] == our_idents:
-                if not moved_titles:
-                    return {"anchor": anchor_title, "moved": [], "skipped": True, "reason": "already in place"}
-                logger.info(
-                    "hub order: placed {} row(s) {} in {} ({} move(s), attempt {})",
-                    len(ours),
-                    where,
-                    section.title,
-                    len(moved_titles),
-                    attempt - 1,
-                )
-                return {
-                    "anchor": "top" if to_top else anchor_title,
-                    "moved": moved_titles,
-                    "skipped": False,
-                    "verified": True,
-                }
+        idents = [h.identifier for h in order]
+        our_idents = [h.identifier for h in ours]
+        start = idents.index(target.identifier) + 1 if target is not None else 0
+        if idents[start : start + len(our_idents)] == our_idents:
+            return {"anchor": anchor_title, "moved": [], "skipped": True, "reason": "already in place"}
 
-            if dry_run:
-                logger.info("[dry-run] hub order: would move {} row(s) {} in {}", len(ours), where, section.title)
-                return {
-                    "anchor": "top" if to_top else anchor_title,
-                    "moved": [h.title for h in ours],
-                    "skipped": False,
-                    "dry_run": True,
-                }
+        where = "to the top" if to_top else f"{'before' if before else 'after'} {anchor_title!r}"
+        moved_titles = [h.title for h in ours]
+        if dry_run:
+            logger.info("[dry-run] hub order: would move {} row(s) {} in {}", len(ours), where, section.title)
+            return {
+                "anchor": "top" if to_top else anchor_title,
+                "moved": moved_titles,
+                "skipped": False,
+                "dry_run": True,
+            }
 
-            # `idents` is our model of the live order, kept in sync as we move — so a hub already in
-            # its wanted slot costs nothing. Same shape as `order_collection`.
-            previous = target
-            for ident in our_idents:
-                want = 0 if previous is None else idents.index(previous.identifier) + 1
-                if idents.index(ident) != want:
-                    by_ident[ident].reload().move(after=previous)  # after=None -> top of the shelf
-                    idents.remove(ident)
-                    idents.insert(0 if previous is None else idents.index(previous.identifier) + 1, ident)
-                    moved_titles.append(by_ident[ident].title)
-                previous = by_ident[ident]
-
-        # Every attempt issued moves Plex accepted and did not apply. Cosmetic, so the run carries on —
-        # but it is reported as unverified rather than as success, which is how this hid for weeks.
-        logger.warning(
-            "hub order: {} in {} still is not {} after {} attempts — Plex accepted the moves without "
-            "applying them; leaving the shelf as it is",
-            "the Shortlist rows",
-            section.title,
-            where,
-            attempts,
-        )
-        return {
-            "anchor": "top" if to_top else anchor_title,
-            "moved": moved_titles,
-            "skipped": False,
-            "verified": False,
-        }
+        prev = target
+        for hub in ours:
+            hub.reload().move(after=prev)  # after=None -> top of the shelf
+            prev = hub
+        logger.info("hub order: moved {} row(s) {} in {}", len(ours), where, section.title)
+        return {"anchor": "top" if to_top else anchor_title, "moved": moved_titles, "skipped": False}
 
     def set_items(self, collection: Collection, existing_items: list, add_items: list, wanted_keys: list[int]) -> None:
         """Add/remove to make the collection exactly ``wanted_keys``, and pin it to custom sort — but do
