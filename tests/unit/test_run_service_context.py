@@ -262,8 +262,14 @@ class TestBuildContext:
         assert [p.slug for p in profiles] == ["kid"]
 
     def test_a_managed_user_WITH_a_profile_is_still_skipped(self, service, sessions, configured):
-        """Plex hides every collection from a profiled account, so a row would be invisible — and Plex
-        refuses the share filters that would make it private anyway."""
+        """Plex refuses the share filters that would make a profiled account's row private, so no row
+        is built for one.
+
+        Phrased around the REFUSAL, not around visibility. This docstring used to say "Plex hides every
+        collection from a profiled account" — the same claim that justified skipping those accounts in
+        `privacy.py`, and false for `older_kid`, which listed three collections on a real server (#76).
+        The skip is still right; only the reason was wrong, and a test that restates the wrong reason is
+        how the next person re-derives it."""
         with sessions() as session:
             session.add(
                 User(
