@@ -1010,7 +1010,7 @@ function ReportSection() {
       <div className="flex flex-wrap gap-2">
         <Button asChild>
           <a
-            href={newBugReportUrl(version.data?.current_version ?? "")}
+            href={newBugReportUrl(version.data)}
             target="_blank"
             rel="noopener noreferrer"
           >
