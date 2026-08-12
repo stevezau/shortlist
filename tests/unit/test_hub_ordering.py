@@ -549,6 +549,37 @@ def test_order_phase_applies_a_before_override_with_no_global_default():
     assert kwargs["only_keys"] is None
 
 
+def test_order_phase_partitions_when_a_row_here_has_no_anchor_at_all():
+    """The matrix cell the neighbours miss: anchors that AGREE, plus a row with none.
+
+    `len(distinct) == 1` is true, so the cheap "move everything in one call" branch is one condition
+    away from firing — `unanchored` is the only thing forcing the ledger partition. That changes
+    `only_keys` from None (every owned row in the library) to a subset, which is a materially
+    different call: an unanchored row must be left where it is, not dragged to the anchored slot.
+    Every other test here has a single row, so `unanchored` is always empty and this arm never runs.
+    """
+    from unittest.mock import MagicMock
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec
+    from shortlist.engine.pipeline import _order_phase
+
+    plex = MagicMock()
+    plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"]}
+    cfg = EngineConfig(
+        hub_anchors={},  # no global default, so 'loose' resolves to no anchor anywhere
+        rows=[
+            RowSpec(slug="picked", name_template="Picked", size=10, hub_anchors={"2": HubAnchor("", False, True)}),
+            RowSpec(slug="loose", name_template="Loose", size=10),
+        ],
+    )
+    _order_phase(_order_ctx(cfg, plex), _report_with_titles())
+
+    plex.order_owned_hubs.assert_called_once()
+    kwargs = plex.order_owned_hubs.call_args.kwargs
+    assert kwargs["only_keys"] == {11, 12}, "only the anchored row moves; the unanchored one stays put"
+    assert kwargs["to_top"] is True
+
+
 def test_order_phase_still_orders_on_a_run_with_no_users():
     """The SFLIX bug: a `privacy.sync` reached the ordering phase 31 times in a day and moved nothing.
 

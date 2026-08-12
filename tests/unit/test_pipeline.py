@@ -3071,7 +3071,7 @@ class TestLibraryScoping:
 
         These are two questions and this used to answer both with one list: with no users
         `delivery_sections` came back EMPTY, so the shelf-ordering phase iterated nothing and every
-        `privacy.sync` — the half-hourly job and the "Fix privacy" button — silently reordered nothing
+        `privacy.sync` — the nightly job and the "Fix privacy" button — silently reordered nothing
         at all, whatever else it was asked to do (SFLIX, 2026-08-12). Indexing stays gated on users
         because that is the part that costs thousands of PMS reads.
         """

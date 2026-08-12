@@ -870,7 +870,7 @@ alone was enough to guarantee the loss. This is why "Fix privacy" and "Fix rows"
 **1. `delivery_sections` was empty on every run with no users.** `_build_indexes` answered two
 different questions with one list: WHICH libraries rows live in, and WHETHER to walk their contents.
 With no users it returned `[]` for both, so `ctx.delivery_sections` was empty and `_order_phase`
-iterated nothing. Every `privacy.sync` — the half-hourly job, and the "Fix privacy" button — was
+iterated nothing. Every `privacy.sync` — the nightly job, and the "Fix privacy" button — was
 structurally incapable of ordering anything. Naming the sections is in-memory filtering of a list
 already held; only the INDEXING costs thousands of PMS reads, and that is what stays gated on users.
 
@@ -884,12 +884,18 @@ no rows at all, so it cannot depend on who ran. Only genuinely diverging rows ar
 durable ledger's ratingKeys. A test asserted the bug as a requirement
 (`test_order_phase_skips_an_overridden_row_with_no_delivered_titles`); it is now inverted.
 
-With both fixed, `privacy.sync` and `sync.check` order the shelf too — so Shortlist now re-applies
-every 30 minutes instead of once a night. **That makes it an even fight, not a win.** Two tools on
-the same 30-minute cadence means last-writer-wins and rows that move under the owner. The resolution
-is a CONFIGURATION decision, not a code one: exclude Shortlist's hubs from agregarr's randomiser,
-stop that job, or turn `manage_shelf_order` off and let agregarr place our rows. This is recorded so
-the next person does not go looking for a third bug.
+With both fixed, `privacy.sync` and `sync.check` order the shelf too — so Shortlist re-applies at the
+end of every run, at `privacy.sync_cron` (05:15 by default), at `sync.check_cron` (05:45, and
+off-able), and whenever a change to who-sees-what triggers a privacy sync.
+
+**That is roughly three passes a night against agregarr's forty-eight, so it is still a loss.** An
+earlier draft of this section said "every 30 minutes instead of once a night — an even fight"; there
+is no half-hourly Shortlist job and there never was. The only sub-hour timers in the app are
+`jobs.drain` (60s) and `jobs.sweep` (5m), and neither enqueues a privacy sync (`scheduler.py:47,51`).
+Getting this wrong matters because it changes the advice: the CONFIGURATION change below is not a
+tie-break for owners who care about ordering, it is **the only thing that fixes the shelf**. Exclude
+Shortlist's hubs from agregarr's randomiser, stop that job, or turn `manage_shelf_order` off and let
+agregarr place our rows. This is recorded so the next person does not go looking for a third bug.
 
 ### `order_owned_hubs` counted requests, not results
 

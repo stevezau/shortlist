@@ -503,11 +503,18 @@ def _privacy_sync_phase(
     # Read in a DRY RUN too. The enumeration is read-only, and skipping it made `--dry-run` report the
     # merges while silently omitting the exclude REMOVALS a live run would make — a preview that is
     # missing the only destructive half is worse than no preview (rule 8).
+    # The SECOND source `dead_private` needs before it removes another account's private-row exclude:
+    # which accounts still have a collection here according to the TITLE MARKER, which is not read
+    # through `collection.labels` and so cannot fail the same way (rule 4). None until proven —
+    # not knowing must never license a removal. Mapped to slugs once `own_slugs` exists, below.
+    marked_accounts: set[int] | None = None
     try:
         ctx.plex.invalidate_collections_cache()
         owned = ctx.plex.owned_collections(LABEL_PREFIX)
         stored_labels.update({slug: row.label for slug, row in owned.items()})
         collections_known = True
+        # Same cached listing the enumeration above walked, so this costs no extra PMS reads.
+        marked_accounts = ctx.plex.marked_account_ids()
         if not owned:
             # A successful read that returned NOTHING. Correct to carry on — nothing is promoted that
             # shouldn't be, and the prune declines to act on it (privacy.py) — but silent otherwise,
@@ -552,6 +559,11 @@ def _privacy_sync_phase(
     # records); `known_slugs` covers everyone else Shortlist knows but isn't processing tonight. An
     # account in neither owns no row, and is therefore excluded from every one of them.
     own_slugs = {**ctx.known_slugs, **{u.plex_account_id: u.slug for u in users}}
+    # Marker evidence, keyed the way the prune compares: slug, not account id. Stays None when the
+    # enumeration failed, which is what stops `dead_private` acting on an unknown.
+    marker_present_slugs = (
+        None if marked_accounts is None else {slug for account, slug in own_slugs.items() if account in marked_accounts}
+    )
 
     audience = _server_audience(users, roster, own_slugs)
     # Every CONFIGURED shared row: label -> its audience (None = public, seen by all). This is the
@@ -582,6 +594,7 @@ def _privacy_sync_phase(
                 shared_labels=shared_labels,
                 collections_known=collections_known,
                 departed_slugs=ctx.departed_slugs,
+                marker_present_slugs=marker_present_slugs,
                 # A disabled (opted-out) Shortlist account gets even public shared rows hidden, so
                 # disabling someone removes them from Shortlist entirely. Non-Shortlist accounts that
                 # merely share the server aren't in disabled_account_ids, so they still see public rows.
@@ -607,8 +620,17 @@ def _privacy_sync_phase(
                 _record_unhideable(ctx, user, roster.get(user.plex_account_id), owned, collections_known, report)
         except FilterWriteRefused as e:
             # plex.tv permanently refused the write (422). Safe to skip ONLY for an account with a
-            # parental PROFILE: Plex declines label restrictions while one is set, and such an account
-            # sees zero collections anyway, so there is nothing an exclude would have hidden.
+            # parental PROFILE: Plex declines label restrictions while one is set.
+            #
+            # It used to add "and such an account sees zero collections anyway, so there is nothing an
+            # exclude would have hidden". That is FALSE and `privacy.py` says so with a measurement:
+            # true of `little_kid`, not of `older_kid`, one of which listed three collections on a real
+            # server (2026-08-11, #76). The sentence mattered because it was the load-bearing
+            # justification for skipping an account on a privacy path while promotion proceeds for the
+            # whole server. What actually makes the skip acceptable is narrower: nothing we can write
+            # would hide these rows, so blocking the run would punish everyone else permanently for one
+            # account's Plex settings. So skip, but MEASURE — `_record_unhideable` below reports what
+            # the account can really see, which is the only honest version of "expected".
             #
             # Keyed on the profile, NOT on `restricted` — plex.tv reports that for every Plex Home
             # account, profile or not. Since privacy.py now attempts the write for profile-less managed
@@ -632,6 +654,12 @@ def _privacy_sync_phase(
                     user.username,
                     remote_user.restriction_profile or "restricted, profile unknown",
                 )
+                # Measured here too, not just on the `not written` path above. The reachable cell is
+                # `restricted=0` with a profile set — the endpoint-disagreement case privacy.py
+                # deliberately allows through — which lands here instead, and was the one skip in the
+                # phase that reported nothing at all. (A profile-unknown account early-returns inside
+                # `_record_unhideable`, so this costs nothing for the other arm.)
+                _record_unhideable(ctx, user, remote_user, owned, collections_known, report)
             else:
                 sync_failed = True
                 report.promotion_blockers.append(f"{user.username} (plex account {user.plex_account_id}): {e}")
@@ -1116,7 +1144,7 @@ def _row_keys_by_slug(ctx: EngineContext, section_key: str) -> dict[str, set[int
 
     The ledger, not this run's report, on purpose. This used to read `report.users[].placement_titles`,
     which only ever holds rows delivered by THE RUN IN PROGRESS — so a `privacy.sync`
-    (`engine_run(ctx, [])`, which is what the nightly half-hourly job and the "Fix privacy" button both
+    (`engine_run(ctx, [])`, which is what the nightly privacy-sync job and the "Fix privacy" button both
     run) had an empty map, every group came out empty, and the whole ordering pass silently did nothing.
     On SFLIX that was 31 runs in one day reaching this code and issuing not one move (2026-08-12).
     The ledger is written by past runs, so it answers the same question for a run with no users at all.

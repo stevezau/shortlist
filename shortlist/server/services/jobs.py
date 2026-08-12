@@ -876,6 +876,13 @@ def _privacy_sync(state, payload: dict) -> dict:
         detail += f" after {reason}"
     if swept:
         detail += f"; swept {swept} unhidable row(s)"
+    # This job repositions rows on the shelf now, and its own description promises it does. Reported
+    # here in the same words `sync.check` uses, so the two jobs do not describe the same write
+    # differently — the audit event is written either way (`_audit_hub_orderings`, rule 10); this is
+    # the line an operator actually reads on the Jobs page.
+    if report.hub_orderings:
+        libraries = ", ".join(entry.get("library", "?") for entry in report.hub_orderings)
+        detail += f"; {'would reposition' if dry_run else 'repositioned'} rows on the shelf in {libraries}"
     return {"swept": swept, "converged": report.converged, "reason": reason, "dry_run": dry_run, "detail": detail}
 
 

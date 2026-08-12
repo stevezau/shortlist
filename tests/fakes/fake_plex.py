@@ -91,7 +91,6 @@ class FakeCollection:
     promoted_recommended: bool = False
     promoted_own_home: bool = False
     promoted_shared_home: bool = False
-    pinned_top: bool = False  # moved to the front of this library's Managed Recommendations
 
 
 @dataclass
@@ -755,7 +754,6 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
         # after=None (no query) -> pinned to the top of the Managed Recommendations shelf.
         key = int(identifier.rsplit(".", 1)[-1])
         after = request.query_params.get("after")
-        _collection(key).pinned_top = after is None
         # And REALLY reorder. `manage_hubs` serves `state.collections` in insertion order, so this
         # used to answer 200 while the shelf never moved — which is precisely the misbehaviour a real
         # PMS was caught in (2026-08-12), and which `order_owned_hubs` now retries and reports as

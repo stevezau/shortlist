@@ -882,7 +882,18 @@ class TestDeadSharedRowExcludesArePruned:
 
         return UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED, slug="sarah")
 
-    def _sync(self, mock_plextv, *, stored, collections_known, filters, departed_slugs=None):
+    def _sync(
+        self,
+        mock_plextv,
+        *,
+        stored,
+        collections_known,
+        filters,
+        departed_slugs=None,
+        # "The marker read succeeded and found nobody still present" — the default the pruning cases
+        # want. Passing None instead means "we could not read it", which blocks every private prune.
+        marker_present_slugs=frozenset(),
+    ):
         from shortlist.engine.privacy import sync_user_restrictions
         from tests.conftest import MemorySnapshotStore, plextv_user
 
@@ -896,6 +907,7 @@ class TestDeadSharedRowExcludesArePruned:
             shared_labels={},  # the row is no longer declared shared — that IS the scenario
             collections_known=collections_known,
             departed_slugs=departed_slugs,
+            marker_present_slugs=marker_present_slugs,
         )
 
     def test_a_dead_shared_label_is_removed_once_we_know_it_is_gone(self, mock_plextv):
@@ -1168,3 +1180,67 @@ class TestRowsWeCannotHide:
 
         with pytest.raises(RuntimeError):
             unhidden_rows_visible_to(_Broken(), self._owned(), "kid")
+
+
+class TestThePrivatePruneNeedsTwoSourcesNotOne:
+    """`dead_private` is the one prune pointed at the LEAK direction — it removes another account's
+    private-row exclude, and getting it wrong makes a live row visible to everyone, with no Privacy
+    Check left to notice (removed 2026-07-16).
+
+    Its label evidence comes from `collection.labels`, i.e. plexapi's silent per-collection re-read,
+    and plex-safety rule 4 is explicit that a re-read which SUCCEEDS carrying no `<Label>` is
+    indistinguishable from a genuinely unlabelled row. A review demonstrated the single-source version
+    removing `Shortlist_mike` from Sarah's filter while Mike's collection was still on the server.
+
+    The second source is the invisible title marker: it rides in the title, which the collections
+    listing returns inline, so it does not fail the way a label re-read fails.
+    """
+
+    def _user(self):
+        from shortlist.engine.models import UserProfile, UserType
+
+        return UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED, slug="sarah")
+
+    def _sync(self, mock_plextv, *, marker_present_slugs):
+        from shortlist.engine.privacy import sync_user_restrictions
+        from tests.conftest import MemorySnapshotStore, plextv_user
+
+        return sync_user_restrictions(
+            mock_plextv,
+            self._user(),
+            plextv_user(201, "sarah", filters={"filterMovies": "label!=Shortlist_mike"}),
+            # The label read came back WITHOUT mike — the failure mode rule 4 describes. Sarah's own
+            # row read fine, so the aggregate "was the enumeration empty" check passes trivially.
+            {"sarah": "Shortlist_sarah"},
+            MemorySnapshotStore(),
+            own_label="Shortlist_sarah",
+            shared_labels={},
+            collections_known=True,
+            departed_slugs={"mike"},
+            marker_present_slugs=marker_present_slugs,
+        )
+
+    def test_a_label_less_read_alone_never_un_hides_a_row_the_marker_says_is_there(self, mock_plextv):
+        """The exact case the review reproduced. Every other condition for pruning is satisfied —
+        departed, absent from the label enumeration, not wanted this pass — and the marker is the only
+        thing standing between Mike's live row and Sarah being able to see it."""
+        written = self._sync(mock_plextv, marker_present_slugs={"mike"})
+
+        after = (written or {}).get("filterMovies", ("", "label!=Shortlist_mike"))[1]
+        assert "Shortlist_mike" in after, "a row the marker still sees must stay hidden"
+
+    def test_both_sources_agreeing_it_is_gone_still_prunes(self, mock_plextv):
+        """The control. The guard must not simply freeze pruning — the exclude it removes otherwise
+        accumulates in every account's filter for ever (a real server hit 990 characters)."""
+        written = self._sync(mock_plextv, marker_present_slugs=set())
+
+        assert written is not None
+        assert "Shortlist_mike" not in written["filterMovies"][1]
+
+    def test_an_unreadable_marker_enumeration_licenses_nothing(self, mock_plextv):
+        """None means "we could not read it". Not knowing must never license a removal — the same rule
+        `collections_known` already follows for the label side."""
+        written = self._sync(mock_plextv, marker_present_slugs=None)
+
+        after = (written or {}).get("filterMovies", ("", "label!=Shortlist_mike"))[1]
+        assert "Shortlist_mike" in after

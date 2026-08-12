@@ -72,6 +72,19 @@ def _has_shortlist_marker(title: str) -> bool:
     return len(suffix) == 64 and all(c in _MARKER_CHARS for c in suffix)
 
 
+def _marker_account(title: str) -> int | None:
+    """The Plex account id this title's marker encodes, or None if it carries no marker.
+
+    The local twin of ``delivery.marker_account`` — same reason ``_MARKER_CHARS`` is duplicated above:
+    ``delivery`` imports from this module, so importing it back is a cycle. Kept as one function
+    rather than inlined twice; ``log_title`` reads it too.
+    """
+    if not _has_shortlist_marker(title):
+        return None
+    suffix = title[-64:]
+    return sum((1 << bit) for bit, c in enumerate(suffix) if c == _MARKER_CHARS[1])
+
+
 def log_title(title: str) -> str:
     """A collection title fit for a LOG LINE — never for matching or writing to Plex.
 
@@ -83,10 +96,9 @@ def log_title(title: str) -> str:
     Strip the marker and print the account id it encodes instead. Same information, legible, and
     actually more useful: you can now see whose row a line is about.
     """
-    if not _has_shortlist_marker(title):
+    account = _marker_account(title)
+    if account is None:
         return title
-    suffix = title[-64:]
-    account = sum((1 << bit) for bit, c in enumerate(suffix) if c == _MARKER_CHARS[1])
     return f"{title[:-64]} [acct {account}]"
 
 
@@ -432,6 +444,33 @@ class PlexClient:
                         row = owned.setdefault(slug, OwnedRow(label=label.tag))
                         row.rating_keys.append(collection.ratingKey)
         return owned
+
+    def marked_account_ids(self) -> set[int]:
+        """Plex account ids that still have a marker-carrying collection on this server.
+
+        A SECOND, INDEPENDENT answer to "does this person's row still exist", deliberately not derived
+        from ``collection.labels``. ``owned_collections`` above reads labels, and plex-safety rule 4 is
+        explicit that a label re-read which SUCCEEDS carrying no ``<Label>`` is indistinguishable from
+        a genuinely unlabelled row — so a prune that removes an exclude on the strength of that one
+        read can un-hide a live row (see ``privacy.dead_private``, which now requires both sources to
+        agree before it removes anything).
+
+        Independent because the marker travels in the TITLE, which arrives inline in the collections
+        listing that a real PMS returns — no per-collection re-read, and therefore not the read that
+        can come back silently empty. Costs no extra PMS calls either: ``_section_collections`` is
+        cached for the run.
+
+        Not a replacement for the label read: a marked row with no label is exactly the orphan
+        ``sweep_broken_rows`` deletes, and only the label is what a ``label!=`` exclude can match on.
+        This is here to make the pair disagree loudly rather than to be believed alone.
+        """
+        accounts: set[int] = set()
+        for section in self.sections():
+            for collection in self._section_collections(section):
+                account = _marker_account(collection.title)
+                if account is not None:
+                    accounts.add(account)
+        return accounts
 
     def list_owned_collections(self, label_prefix: str = "shortlist") -> list[dict]:
         """Every shortlist-owned collection currently on the server — one entry each (NOT collapsed by
