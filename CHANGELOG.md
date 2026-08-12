@@ -4,7 +4,7 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.4.0] - 2026-08-12
 
 ### Added
 
@@ -39,7 +39,31 @@ All notable changes to this project are documented here. This project follows
   `shortlist_*` collections in that tool, or turn off **Let Shortlist order the Recommended shelf** and
   hand the order over. Your rows are still built, delivered and kept private either way.
 
+- **Shortlist and Agregarr stop fighting over the Recommended shelf.** If you also run
+  [Agregarr](https://github.com/agregarr/agregarr), both tools arrange the same shelf and each
+  undoes the other: Shortlist puts the rows up top, Agregarr re-applies its own stored order within
+  half an hour, and around it goes — on one real server 35 of 91 rows were left below position 21.
+  Connect Agregarr under **Settings → Connections** (its address plus the API key from Agregarr's own
+  Settings → General) and the end of each run tells Agregarr where the rows ended up, so its next
+  sync reproduces the shelf instead of undoing it.
+
+  It stores the shelf **as Plex is already showing it**, never an order of its own invention, so your
+  other Agregarr rows keep their order relative to each other and simply move down to make room.
+  Nothing else about them is touched — not posters, visibility, titles or summaries. The connection
+  is entirely optional: without it nothing changes and not one extra call is made. If Agregarr is
+  unreachable the run finishes normally with a warning rather than failing, and gives up in about
+  twenty seconds rather than stalling. Every attempt is recorded — `run.agregarr_order` for a nightly
+  run, `shelf.agregarr` for the **Fix privacy** and **Check server** buttons — each carrying the
+  before and after ordering, since Agregarr's previous order is not otherwise recoverable.
+
 ### Fixed
+
+- **Rows promoted nowhere are no longer shuffled around the shelf.** A row belonging to a paused or
+  disabled person sits on no surface at all, so its position is invisible to everyone — but it is
+  still listed among the managed hubs, and every ordering pass moved it back into place. That was
+  four pointless Plex writes per library per pass, and it made a settled shelf look contested: a
+  co-managing tool rightly ignores those rows, so Shortlist alone kept moving them. A row on any
+  surface — including the owner's own Home — is still placed as before.
 
 - **Rows no longer get stranded at the bottom of the Recommended shelf.** Three separate faults, each
   enough on its own to make it unfixable. A run with no users — which is what every privacy sync is —
