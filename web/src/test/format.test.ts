@@ -183,24 +183,37 @@ describe("small formatters", () => {
 });
 
 describe("buildLabel", () => {
-  it("names the exact build when the image carries one", () => {
-    // The point of the field: on `:dev` the version is identical for every push between releases,
-    // so version alone cannot tell two builds apart.
+  it("names the commit and drops the version on a pre-release build", () => {
+    // `current_version` is the last RELEASED version, so on :dev it names the release this build
+    // came after — printing it claims a version the running code is not. The commit is the identity
+    // there anyway: every push between two releases reports the same version number.
     expect(
       buildLabel({
         current_version: "1.4.0",
         git_branch: "dev",
-        git_sha: "ba891f571edd4f1c4a17b02a40369e3af92ceb53",
+        git_sha: "2ee14f8c43954588eb720d4b0d1fab4fa50f7013",
       }),
-    ).toBe("Shortlist · 1.4.0 · dev · ba891f5");
+    ).toBe("Shortlist · dev · 2ee14f8");
+  });
+
+  it("shows the version alone on a release build", () => {
+    // CI passes the TAG as the branch on a release, and there the tag IS the version — so the sha
+    // would be noise rather than information.
+    expect(
+      buildLabel({
+        current_version: "1.4.1",
+        git_branch: "v1.4.1",
+        git_sha: "abcdef1234567890",
+      }),
+    ).toBe("Shortlist · 1.4.1");
   });
 
   it("falls back cleanly on a source checkout", () => {
-    // A checkout has no build args. Empty strings must drop out entirely rather than render as
-    // trailing separators against nothing.
-    expect(buildLabel({ current_version: "1.4.0", git_branch: "", git_sha: "" })).toBe(
-      "Shortlist · 1.4.0",
-    );
+    // A checkout has no build args at all. Empty strings must drop out entirely rather than render
+    // as trailing separators against nothing.
+    expect(
+      buildLabel({ current_version: "1.4.0", git_branch: "", git_sha: "" }),
+    ).toBe("Shortlist · 1.4.0");
     expect(buildLabel(undefined)).toBe("Shortlist");
   });
 });

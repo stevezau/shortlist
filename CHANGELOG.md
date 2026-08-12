@@ -21,11 +21,14 @@ All notable changes to this project are documented here. This project follows
   watch history a shared row doesn't use — so "why did it pick that" is answerable for a shared row
   for the first time.
 
-- **The sidebar now names the exact build you're running** — version, branch, and commit
-  (`Shortlist · 1.4.0 · dev · ba891f5`), with the full commit on hover and in the debug bundle. On
-  `:dev` the version number is identical for every push between two releases, so it could never tell
-  two builds apart; "is my container actually on the fix?" had no answer short of shelling in. A
-  source checkout shows the version alone, as before.
+- **The sidebar now names the exact build you're running.** A release shows its version
+  (`Shortlist · 1.4.0`); a `:dev` build shows the branch and commit instead
+  (`Shortlist · dev · 2ee14f8`), with the full commit on hover and in the debug bundle. The version
+  is deliberately absent on `:dev`: it is the last RELEASED version, so on a dev build it names the
+  release you came after rather than what you are running — five commits ago, in the case that
+  prompted this. The commit is the only thing that tells two dev builds apart anyway, since every
+  push between two releases carries the same version number, so "is my container actually on the
+  fix?" had no answer short of shelling in.
 
 ### Fixed
 
