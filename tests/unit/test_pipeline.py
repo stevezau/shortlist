@@ -3066,6 +3066,30 @@ class TestLibraryScoping:
         assert scanned == ["1"]  # Movies only — Sports and TV Shows never read
         assert [str(s.key) for s in ctx.delivery_sections] == ["1"]
 
+    def test_a_run_with_no_users_names_the_libraries_without_scanning_them(self, ctx: EngineContext):
+        """`engine_run(ctx, [])` still has to know WHERE rows live — it just must not read their contents.
+
+        These are two questions and this used to answer both with one list: with no users
+        `delivery_sections` came back EMPTY, so the shelf-ordering phase iterated nothing and every
+        `privacy.sync` — the half-hourly job and the "Fix privacy" button — silently reordered nothing
+        at all, whatever else it was asked to do (SFLIX, 2026-08-12). Indexing stays gated on users
+        because that is the part that costs thousands of PMS reads.
+        """
+        from shortlist.engine.models import RowSpec
+
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        sports = MagicMock(type="movie", key="2", title="Sports")  # no row targets it
+        ctx.config.rows = [RowSpec(slug="m", name_template="Movies", size=5, media="movie", library_keys=["1"])]
+        ctx.config.rows_defined = True
+        ctx.plex.section_signature.return_value = None
+        scanned: list[str] = []
+        ctx.plex.build_library_index.side_effect = lambda sec: scanned.append(str(sec.key)) or {}
+
+        pipeline_mod._build_indexes(ctx, [], [movies, sports])
+
+        assert [str(s.key) for s in ctx.delivery_sections] == ["1"]  # the shelf phase has a library
+        assert scanned == []  # and not one item was read
+
     def test_unconfigured_run_still_reads_every_library(self, ctx: EngineContext):
         """No rows configured -> the synthesized default row targets everything, so all libraries read."""
         movies = MagicMock(type="movie", key="1", title="Movies")

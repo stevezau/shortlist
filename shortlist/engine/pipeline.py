@@ -251,26 +251,30 @@ def _build_indexes(
     seed_index: dict[int, int] = {}
     library_index: dict[MediaType, dict[int, int]] = {MediaType.MOVIE: {}, MediaType.SHOW: {}}
     section_index: dict[str, dict[int, int]] = {}
-    # Only when there is someone to recommend to. The indexes walk every item in every TARGETED
-    # library, and are read only inside _run_user — so with no users this is thousands of PMS reads
-    # thrown away, in front of the sweep, on the one path (a closed gate) where the sweep is the entire
-    # point and must not be preceded by anything that can fail.
-    #
     # Read only the libraries some row targets (media type + library_keys). Retired rows are included
     # so a disabled row is still curated/indexed where it lives; the mute/retire CLEANUP scans every
     # library independently (rows._remove_muted_and_retired), and the leak sweep covers everything else
     # independently too. A library no row uses (e.g. a Sports library) is skipped entirely.
-    if users:
-        # The EFFECTIVE specs — per_person_rows() synthesizes the legacy default row when rows aren't
-        # managed, so an unconfigured run still reads every library (it targets them all).
-        wanted_keys = {
-            str(section.key)
-            for spec in (*ctx.config.per_person_rows(), *ctx.config.shared_rows(), *ctx.config.retired_rows)
-            for section in target_sections(sections, spec)
-        }
-        index_sections = [section for section in sections if str(section.key) in wanted_keys]
-    else:
-        index_sections = []
+    #
+    # The EFFECTIVE specs — per_person_rows() synthesizes the legacy default row when rows aren't
+    # managed, so an unconfigured run still reads every library (it targets them all).
+    wanted_keys = {
+        str(section.key)
+        for spec in (*ctx.config.per_person_rows(), *ctx.config.shared_rows(), *ctx.config.retired_rows)
+        for section in target_sections(sections, spec)
+    }
+    # WHICH libraries rows live in, and WHETHER to walk their contents, are two different questions.
+    # This used to answer both with one list, so a run with no users — `engine_run(ctx, [])`, i.e. every
+    # `privacy.sync` — got `delivery_sections = []` and the shelf-ordering phase then iterated nothing
+    # at all. That is the second, independent reason the SFLIX shelf could never be repaired by a job:
+    # even with the right rows to move, there were no libraries to move them in (2026-08-12).
+    # Naming the sections is pure in-memory filtering of a list we already hold; it is the INDEXING
+    # below that costs thousands of PMS reads, and that is what stays gated on there being users.
+    ctx.delivery_sections = [section for section in sections if str(section.key) in wanted_keys]
+    # Only when there is someone to recommend to. The indexes are read only inside _run_user, so with
+    # no users they are thousands of PMS reads thrown away, in front of the sweep, on the one path (a
+    # closed gate) where the sweep is the entire point and must not be preceded by anything that can fail.
+    index_sections = ctx.delivery_sections if users else []
     for section in index_sections:
         kind = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
         index = _library_index(ctx, section)
@@ -280,7 +284,6 @@ def _build_indexes(
         library_index[kind].update(index)
         section_index[section.key] = index
     ctx.section_index = section_index
-    ctx.delivery_sections = index_sections
     return seed_index, library_index
 
 
@@ -1059,7 +1062,7 @@ def _promote_one(ctx: EngineContext, collection, spec: RowSpec | None, user_type
     )
 
 
-def _apply_order(ctx: EngineContext, report: RunReport, section, anchor, only_titles: set[str] | None) -> None:
+def _apply_order(ctx: EngineContext, report: RunReport, section, anchor, only_keys: set[int] | None) -> None:
     """One best-effort, gated reorder call + its audit. A shelf reorder is cosmetic and privacy-neutral
     (hubs are already promoted and browse-hidden; only position changes), so a failure never fails the
     run — next run re-applies. Only our hubs move; the anchor is read-only (Kometa coexistence)."""
@@ -1072,8 +1075,11 @@ def _apply_order(ctx: EngineContext, report: RunReport, section, anchor, only_ti
                 before=anchor.before,
                 to_top=anchor.to_top,
                 dry_run=ctx.config.dry_run,
-                only_titles=only_titles,
+                only_keys=only_keys,
             )
+        # Recorded when anything MOVED, verified or not. An unverified pass (Plex took the moves and
+        # dropped them) is exactly the case the report has to be able to show, so it is not filtered
+        # out here for looking like a failure.
         if result.get("moved") and not result.get("skipped"):
             report.hub_orderings.append({"library": section.title, **result})
     except Exception as e:
@@ -1104,14 +1110,21 @@ def _collection_order_phase(ctx: EngineContext, order_work: list[tuple]) -> None
     logger.info("ordered {} collection(s), {} move(s) total", len(deduped), total)
 
 
-def _row_titles_by_slug(report: RunReport) -> dict[str, set[str]]:
-    """slug -> the collection TITLES that row was delivered as this run (aggregated across users). The
-    only link from a managed hub back to its row is its title (rows share a per-user label, differ by
-    title), so this is how the per-row override knows which hubs belong to which row."""
-    out: dict[str, set[str]] = {}
-    for user_report in report.users:
-        for title, slug in user_report.placement_titles.items():
-            out.setdefault(slug, set()).add(title)
+def _row_keys_by_slug(ctx: EngineContext, section_key: str) -> dict[str, set[int]]:
+    """row slug -> the Plex ratingKeys that row's collections have in this library, from the DURABLE
+    delivery ledger.
+
+    The ledger, not this run's report, on purpose. This used to read `report.users[].placement_titles`,
+    which only ever holds rows delivered by THE RUN IN PROGRESS — so a `privacy.sync`
+    (`engine_run(ctx, [])`, which is what the nightly half-hourly job and the "Fix privacy" button both
+    run) had an empty map, every group came out empty, and the whole ordering pass silently did nothing.
+    On SFLIX that was 31 runs in one day reaching this code and issuing not one move (2026-08-12).
+    The ledger is written by past runs, so it answers the same question for a run with no users at all.
+    """
+    out: dict[str, set[int]] = {}
+    for (_user_slug, row_slug, key), rating_key in ctx.delivered_keys.items():
+        if key == section_key and rating_key:
+            out.setdefault(row_slug, set()).add(rating_key)
     return out
 
 
@@ -1119,9 +1132,11 @@ def _order_phase(ctx: EngineContext, report: RunReport) -> None:
     """Place each library's Shortlist rows in its Recommended shelf per the configured anchors.
 
     Each row's effective anchor is its own per-library override (``RowSpec.hub_anchors``) if set, else
-    the global default (``EngineConfig.hub_anchors``). When no row in a library overrides, all of that
-    library's rows move together to the default (the simple, robust path). When some rows override,
-    rows are grouped by their effective anchor and each group moved as a unit."""
+    the global default (``EngineConfig.hub_anchors``). When every row in a library resolves to the SAME
+    anchor — which is every ordinary server, and every server with one row — they all move together in
+    one call that names no rows at all, so it works identically on a full run and on a `privacy.sync`
+    with no users. Only when rows genuinely disagree are they partitioned, by delivery-ledger ratingKey.
+    """
     if not ctx.config.manage_shelf_order:
         # The owner turned shelf ordering off (a co-managing tool like agregarr/Kometa owns the order),
         # so leave the Recommended shelf exactly as it is — deliver + hide + promote still ran above.
@@ -1135,31 +1150,55 @@ def _order_phase(ctx: EngineContext, report: RunReport) -> None:
         # wherever Plex appends them, which looks broken (issue: some at top, some at bottom).
         for section in ctx.delivery_sections:
             default = HubAnchor(anchor_title="", before=False, to_top=True)
-            _apply_order(ctx, report, section, default, only_titles=None)
+            _apply_order(ctx, report, section, default, only_keys=None)
         return
-    titles_by_slug = _row_titles_by_slug(report) if any_override else {}
     for section in ctx.delivery_sections:
         key = str(section.key)
-        section_overridden = any(spec.hub_anchors.get(key) for spec in ctx.config.rows)
-        if not section_overridden:
-            # Global-only: move every owned row to the library default in one call (unchanged path).
-            default = global_anchors.get(key)
-            if default is not None:
-                _apply_order(ctx, report, section, default, only_titles=None)
-            continue
-        # Some rows override here: group each row by its effective anchor (override, else default).
-        groups: dict[tuple[bool, str, bool], set[str]] = {}
+        anchors_by_slug = {}
         for spec in ctx.config.rows:
             effective = spec.hub_anchors.get(key) or global_anchors.get(key)
-            if effective is None:
+            if effective is not None:
+                anchors_by_slug[spec.slug] = effective
+        if not anchors_by_slug:
+            # No ROW resolves to an anchor here — but the library may still have one, and rows of ours
+            # may still be sitting on its shelf: every row switched off or deleted leaves its retired
+            # collections behind, and `ctx.config.rows` is then empty while `rows.hub_anchor` is not.
+            # Falling through to `continue` skipped the library in silence, which is the same shape of
+            # quiet nothing this whole function was just fixed for.
+            default = global_anchors.get(key)
+            if default is not None:
+                _apply_order(ctx, report, section, default, only_keys=None)
+            else:
+                logger.debug("hub order: no anchor configured for {} — leaving its shelf alone", section.title)
+            continue
+        distinct = {(a.to_top, a.anchor_title, a.before) for a in anchors_by_slug.values()}
+        unanchored = [spec.slug for spec in ctx.config.rows if spec.slug not in anchors_by_slug]
+        if len(distinct) == 1 and not unanchored:
+            # Every row here wants the same slot, so there is nothing to tell apart: move ALL our rows
+            # in this library with one call. Naming no rows is what makes this independent of who was
+            # delivered tonight — the bug that left a run with no users ordering nothing at all.
+            _apply_order(ctx, report, section, next(iter(anchors_by_slug.values())), only_keys=None)
+            continue
+        # Rows genuinely disagree about where they belong (or some have no anchor at all), so ours have
+        # to be partitioned. The ledger is the only durable link from a collection back to its row.
+        keys_by_slug = _row_keys_by_slug(ctx, key)
+        groups: dict[tuple[bool, str, bool], set[int]] = {}
+        for slug, effective in anchors_by_slug.items():
+            keys = keys_by_slug.get(slug, set())
+            if not keys:
+                # Nothing delivered for this row here yet (a first run, or a row that has never
+                # reached this library). Said out loud rather than skipped in silence — silence here
+                # is exactly what made the original bug invisible. The next run places it.
+                logger.debug(
+                    "hub order: row '{}' has no delivered collection in {} yet — not ordering it this run",
+                    slug,
+                    section.title,
+                )
                 continue
-            titles = titles_by_slug.get(spec.slug, set())
-            if titles:
-                grp = (effective.to_top, effective.anchor_title, effective.before)
-                groups.setdefault(grp, set()).update(titles)
-        for (to_top, anchor_title, before), titles in groups.items():
+            groups.setdefault((effective.to_top, effective.anchor_title, effective.before), set()).update(keys)
+        for (to_top, anchor_title, before), keys in groups.items():
             anchor = HubAnchor(anchor_title=anchor_title, before=before, to_top=to_top)
-            _apply_order(ctx, report, section, anchor, only_titles=titles)
+            _apply_order(ctx, report, section, anchor, only_keys=keys)
 
 
 def _request_phase(ctx: EngineContext, requests_on: bool, demand: requests_mod.DemandMap, report: RunReport) -> None:

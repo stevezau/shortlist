@@ -753,8 +753,25 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
     @app.put("/hubs/sections/{section_id}/manage/{identifier}/move")
     def move_hub(section_id: int, identifier: str, request: Request) -> Response:
         # after=None (no query) -> pinned to the top of the Managed Recommendations shelf.
-        collection = _collection(int(identifier.rsplit(".", 1)[-1]))
-        collection.pinned_top = request.query_params.get("after") is None
+        key = int(identifier.rsplit(".", 1)[-1])
+        after = request.query_params.get("after")
+        _collection(key).pinned_top = after is None
+        # And REALLY reorder. `manage_hubs` serves `state.collections` in insertion order, so this
+        # used to answer 200 while the shelf never moved — which is precisely the misbehaviour a real
+        # PMS was caught in (2026-08-12), and which `order_owned_hubs` now retries and reports as
+        # unverified. A fake that behaves like the bug makes every shelf-order assertion vacuous and
+        # would have had e2e re-issuing moves three times and finishing on a warning. Testing rule:
+        # the fake must be no easier than the real server.
+        order = [k for k in state.collections if k != key]
+        if after is None:
+            index = 0
+        else:
+            after_key = int(after.rsplit(".", 1)[-1])
+            index = order.index(after_key) + 1 if after_key in order else len(order)
+        order.insert(index, key)
+        reordered = {k: state.collections[k] for k in order}
+        state.collections.clear()
+        state.collections.update(reordered)
         return Response(status_code=200)
 
     @app.put("/hubs/sections/{section_id}/manage/{identifier}")

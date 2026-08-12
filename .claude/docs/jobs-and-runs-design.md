@@ -831,3 +831,99 @@ their own Home by `_promote_one`'s no-spec branch, swept by nothing.
 elements and every lookup silently misses, which is a full regression with a green suite. Plus the
 ambiguity drop, the multi-row rename, and the hijack (a poisoned ledger pointing one row at another's
 collections, with the row renamed so it reaches the key branch). All four fail on the old code.
+
+## 19. The Recommended shelf: a co-managing tool owned it, and we only fought back once a night (2026-08-12)
+
+SFLIX's owner opened Manage Recommendations and found the "✨ Movies Picked for You" rows in three
+disjoint blocks — 27 at the top, 5 in the middle, 14 stranded at the bottom, out of 46. Pressing
+"Privacy sync" and "Check and fix rows on Plex" changed nothing. Nothing was orphaned: all 46 rows
+were correctly labelled, marker-verified, in the delivery ledger, owned by enabled users, and
+carrying identical promotion flags to the ones at the top.
+
+### The cause is another tool, on a faster clock
+
+`agregarr` (a container on the same host) runs a **"Randomize Home Order" job every 30 minutes** that
+selectively reorders EVERY managed hub in both libraries — 33–57 moves per library per run. Its own
+logs name our hubs explicitly and give them target slots:
+
+```
+Moving item custom.collection.1.576695 after predecessor recent.library.playlists
+  {"sectionId":"1","currentPosition":43,"expectedPosition":69}
+```
+
+Position 69 is exactly where the "stranded" bottom block began. **The rows were not drifting; they
+were being placed.** In one sampled window agregarr issued 441 moves against Shortlist hubs.
+
+Shortlist re-applied its anchor **once per night**. agregarr re-applied its order **48 times per
+night**. The nightly run at 03:49 did order the shelf; agregarr undid it at 04:00 and every half hour
+after. What the owner saw at 11:20 was agregarr's layout, and always would be.
+
+This is the scenario `EngineConfig.manage_shelf_order` was added for — it is the master switch that
+hands the shelf to a co-managing tool. It was ON, so the two tools were competing, and the one with
+the faster clock won every round but one.
+
+### Two real bugs meant we could only ever fight back once a night
+
+Both are the §12 shape — **a state change reported as done that never reached Plex** — and either
+alone was enough to guarantee the loss. This is why "Fix privacy" and "Fix rows" changed nothing.
+
+**1. `delivery_sections` was empty on every run with no users.** `_build_indexes` answered two
+different questions with one list: WHICH libraries rows live in, and WHETHER to walk their contents.
+With no users it returned `[]` for both, so `ctx.delivery_sections` was empty and `_order_phase`
+iterated nothing. Every `privacy.sync` — the half-hourly job, and the "Fix privacy" button — was
+structurally incapable of ordering anything. Naming the sections is in-memory filtering of a list
+already held; only the INDEXING costs thousands of PMS reads, and that is what stays gated on users.
+
+**2. The rows to move came from the run in progress.** A per-library `hub_anchor` override sent
+`_order_phase` down a branch that took its rows from `report.users[].placement_titles`, which only
+ever holds what THIS run delivered. A no-user run produced an empty map, so no group was built and no
+move was issued — silently, with no log line. It also dropped any paused, errored or skipped user's
+row from the ordering pass on a full run. Now: when every row in a library resolves to the same
+anchor — every ordinary server, and every server with one row — they all move in one call that names
+no rows at all, so it cannot depend on who ran. Only genuinely diverging rows are partitioned, by the
+durable ledger's ratingKeys. A test asserted the bug as a requirement
+(`test_order_phase_skips_an_overridden_row_with_no_delivered_titles`); it is now inverted.
+
+With both fixed, `privacy.sync` and `sync.check` order the shelf too — so Shortlist now re-applies
+every 30 minutes instead of once a night. **That makes it an even fight, not a win.** Two tools on
+the same 30-minute cadence means last-writer-wins and rows that move under the owner. The resolution
+is a CONFIGURATION decision, not a code one: exclude Shortlist's hubs from agregarr's randomiser,
+stop that job, or turn `manage_shelf_order` off and let agregarr place our rows. This is recorded so
+the next person does not go looking for a third bug.
+
+### `order_owned_hubs` counted requests, not results
+
+Independent of the above, and a real defect: whenever any one row was out of place the loop chained
+`move(after=previous)` over EVERY row — 47 unpaced PUTs in 344ms, of which ~27 re-asserted rows
+already in position — then logged `moved 47 row(s)` **without ever re-reading the shelf**. It counted
+calls issued. A function that cannot tell "we asked" from "it happened" is precisely what let a shelf
+owned by another tool look like a shelf we were successfully managing.
+
+It now plans against a local model of the live order and moves only what is out of place (19 moves,
+not 47), then RE-READS to verify and retries what did not take, up to `_HUB_ORDER_ATTEMPTS`. The last
+attempt is followed by a verify-only pass, so a shelf fixed on the final try is not reported as a
+failure. It returns `verified`, and the audit records it at `warning` level when false — emitted by
+`run_persistence` for runs and by `_audit_hub_orderings` for the two job handlers, which persist no
+run and would otherwise have no record at all.
+
+**What was NOT established:** that Plex drops hub moves it answers 200 to. That was the first reading
+of the evidence and it is unproven — agregarr explains the observed shelf completely. Live on SFLIX
+the 19 planned moves converged and verified on the FIRST attempt, and the next pass returned "already
+in place". The retry/verify machinery is justified by honesty, not by a known Plex fault. Do not cite
+a Plex bug here without new evidence.
+
+### Ownership for ordering accepts the marker
+
+`collection.labels` is a per-collection re-read, and one that succeeds carrying no `<Label>` is
+indistinguishable from a genuinely unlabelled row (plex-safety rule 4). Here that emptied the map and
+skipped the whole library in silence. Ordering only ever changes a POSITION, so the invisible title
+marker alone is accepted as proof of ownership — rule 4's two guards exist because a wrong answer
+there DELETES, and nothing in this path can.
+
+### The lesson
+
+Both bugs were **silent**: no log line, no event, no report entry. §12's register is about whether a
+change reaches Plex; this adds that a pass which does nothing must say so, and that a pass which
+cannot check its own work must not claim success. It also adds a question worth asking early: **is
+something else writing to the same thing?** Three hours went into Shortlist's code before anyone read
+another container's logs, and the answer was in the first line of them.

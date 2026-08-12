@@ -484,15 +484,22 @@ def _emit_hub_ordering_events(session: Session, run_id: int, report) -> None:
     # server-wide shelf that a co-managing tool (Kometa) also cares about, so each library we
     # actually moved rows in is audited — "what changed on the shelf at 03:31" (plex-safety rule 10).
     for entry in report.hub_orderings:
+        # `verified` is the whole point of the record. "We asked" and "it happened" are different
+        # facts — a co-managing tool (agregarr, Kometa) reorders the same shelf on its own clock — and an
+        # audit that only ever said the first is how a shelf owned by another tool was reported as a
+        # successful reorder for weeks (SFLIX 2026-08-12). A dry run asked for nothing, so it is neither
+        # verified nor a warning.
+        verified = entry.get("verified")
         _add_event(
             session,
             "run.hub_order",
-            "info",
+            "warning" if verified is False else "info",
             run_id,
             dry_run=report.dry_run,
             library=entry.get("library"),
             anchor=entry.get("anchor"),
             moved=entry.get("moved", []),
+            verified=verified,
         )
 
 
