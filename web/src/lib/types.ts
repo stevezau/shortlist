@@ -737,6 +737,7 @@ export type TestableService =
   | "plex"
   | "tautulli"
   | "tmdb"
+  | "agregarr"
   | "llm"
   | "radarr"
   | "sonarr"

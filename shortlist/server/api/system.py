@@ -323,6 +323,7 @@ async def debug_bundle(request: Request) -> str:
             "plex": bool(store.get("plex.url")),
             "tautulli": bool(store.get("tautulli.url")),
             "tmdb": bool(store.get("tmdb.apikey")),
+            "agregarr": bool(store.get("agregarr.url")),
             "curator": store.get("curator.provider"),
             "requests": bool(store.get("requests.enabled")),
             "radarr": bool(store.get("requests.radarr.url")),

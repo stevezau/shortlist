@@ -1208,6 +1208,7 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
                 delivery_sections=[],
                 delivered_keys={},
                 write_lock=threading.Lock(),
+                agregarr=None,  # no co-managing agregarr connected in these job tests
             )
             built.append(ctx)
             return ctx

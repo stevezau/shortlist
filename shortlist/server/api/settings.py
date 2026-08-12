@@ -285,6 +285,7 @@ def _check(key: str, value: object) -> str | None:
 _FETCHED_URL_KEYS = (
     "plex.url",
     "tautulli.url",
+    "agregarr.url",  # fetched by the Test button and by the shelf mirror at the end of every run
     "requests.radarr.url",
     "requests.sonarr.url",
     "curator.ollama_url",
@@ -475,7 +476,20 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
 _PROBE_PROFILE = SimpleNamespace(history=[])
 
 _TESTABLE_SERVICES = frozenset(
-    {"plex", "tautulli", "tmdb", "radarr", "sonarr", "mdblist", "trakt", "exa", "searxng", "native_search", "llm"}
+    {
+        "plex",
+        "tautulli",
+        "tmdb",
+        "agregarr",
+        "radarr",
+        "sonarr",
+        "mdblist",
+        "trakt",
+        "exa",
+        "searxng",
+        "native_search",
+        "llm",
+    }
 )
 
 
@@ -514,6 +528,14 @@ async def test_connection(service: str, request: Request) -> dict:
                 if not TmdbClient(get("tmdb.apikey")).ping():
                     raise RuntimeError("TMDB rejected the key")
                 return "TMDB key works"
+            if service == "agregarr":
+                from shortlist.engine.clients.agregarr import AgregarrClient
+
+                url = (get("agregarr.url") or "").strip()
+                api_key = get("agregarr.apikey") or ""
+                if not url or not api_key:
+                    raise RuntimeError("Agregarr URL and API key are both required")
+                return AgregarrClient(url, api_key).ping()
             if service in ("radarr", "sonarr"):
                 from shortlist.engine.clients.arr import make_arr_client
                 from shortlist.engine.models import ArrTarget

@@ -434,6 +434,8 @@ def _order_ctx(cfg, plex, delivered_keys=None):
         plex=plex,
         write_lock=threading.Lock(),
         delivered_keys=_LEDGER if delivered_keys is None else delivered_keys,
+        # No co-managing agregarr connected: these tests are about the Plex-side ordering only.
+        agregarr=None,
     )
 
 

@@ -205,6 +205,32 @@ can't re-bury the rows), only ever moves its own rows, and never touches the col
 to. It works with or without Kometa. Kometa is only _why_ this matters, because it fills the shelf, not
 _how_ it works; the anchor can be any collection, Kometa's or one of Plex's own.
 
+### If you also run Agregarr
+
+Agregarr arranges the same shelf, and it re-applies its own stored order roughly every 30 minutes. So
+on its own, re-applying at the end of a run isn't enough: Shortlist puts the rows in place tonight,
+Agregarr puts them back where it thinks they go within the half hour, and the two keep swapping.
+
+Connect Agregarr under Settings → **Connections** (its address plus the API key from Agregarr's own
+Settings → General) and that stops. At the end of each run Shortlist stores the order it just applied
+into Agregarr, so Agregarr's next sync reproduces the shelf instead of undoing it — the two agree
+rather than take turns.
+
+Two things worth knowing before you switch it on:
+
+- **It renumbers your other Agregarr rows in those libraries** to make room at the top, but keeps
+  their order relative to each other — it takes the order from the shelf as it stands, so nothing of
+  Agregarr's gets rearranged, only shifted down.
+- **It never fails a run.** If Agregarr is down or the key is wrong, the run finishes normally and
+  you get a warning; the shelf just stays contested until the next run re-applies it. It also gives
+  up quickly — an Agregarr that accepts connections but never answers costs about 20 seconds per
+  library, not minutes. Every attempt is recorded under Events, including the runs where nothing
+  needed changing: a nightly run logs `run.agregarr_order`, while the "Fix privacy" and "Check
+  server" buttons log `shelf.agregarr`.
+
+If **Row placement** is set to "Wherever Plex puts them", this does nothing at all — Shortlist isn't
+ordering the shelf, so it has no order to hand over.
+
 ## Row posters
 
 Each row can have its own artwork on Plex. In the **Row editor** → **Artwork**, pick one of:

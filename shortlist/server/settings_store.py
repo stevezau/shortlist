@@ -18,6 +18,8 @@ from shortlist.server.scheduler import DEFAULT_CRONS as _DEFAULT_CRONS
 DEFAULTS: dict[str, Any] = {
     "plex.url": "",
     "tautulli.url": "",
+    # Agregarr co-manages the same Recommended shelf. Blank = not connected = the mirror never runs.
+    "agregarr.url": "",
     "tmdb.apikey": "",
     "curator.provider": "none",
     "curator.model": "",
@@ -216,6 +218,7 @@ SECRET_KEYS = {
     "requests.sonarr.apikey",
     "requests.mdblist.apikey",  # MDBList key for IMDb/Trakt/RT/Metacritic rating gating
     "trakt.client_id",
+    "agregarr.apikey",  # agregarr's own API key, from ITS settings.json (main.apiKey)
     "exa.apikey",  # Exa web-search API key for the llm_web source
     "searxng.password",  # reverse-proxy password guarding a self-hosted SearXNG
     "api.token",  # our own programmatic API token (encrypted at rest so the owner can reveal it)

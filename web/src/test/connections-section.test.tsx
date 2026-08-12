@@ -9,7 +9,9 @@ import type { Settings } from "@/lib/types";
 
 const { putSettings, testConnection, getRuns } = vi.hoisted(() => ({
   putSettings: vi.fn((v: Settings) => Promise.resolve(v)),
-  testConnection: vi.fn((_service: string) => Promise.resolve({ ok: true, message: "ok" })),
+  testConnection: vi.fn((_service: string) =>
+    Promise.resolve({ ok: true, message: "ok" }),
+  ),
   getRuns: vi.fn(() => Promise.resolve([] as unknown[])),
 }));
 
@@ -58,21 +60,35 @@ describe("ConnectionsSection", () => {
     it("shows only the chosen backend's fields", async () => {
       renderSection({ "llm_web.search_provider": "searxng" });
       const card = screen.getByTestId("connection-websearch");
-      await userEvent.click(within(card).getByRole("button", { name: /edit|set up/i }));
+      await userEvent.click(
+        within(card).getByRole("button", { name: /edit|set up/i }),
+      );
 
-      expect(within(card).getByLabelText(/SearXNG address/i)).toBeInTheDocument();
-      expect(within(card).queryByLabelText(/Exa API key/i)).not.toBeInTheDocument();
+      expect(
+        within(card).getByLabelText(/SearXNG address/i),
+      ).toBeInTheDocument();
+      expect(
+        within(card).queryByLabelText(/Exa API key/i),
+      ).not.toBeInTheDocument();
     });
 
     it("swaps the fields when the backend is switched", async () => {
       renderSection({ "llm_web.search_provider": "exa" });
       const card = screen.getByTestId("connection-websearch");
-      await userEvent.click(within(card).getByRole("button", { name: /edit|set up/i }));
+      await userEvent.click(
+        within(card).getByRole("button", { name: /edit|set up/i }),
+      );
       expect(within(card).getByLabelText(/Exa API key/i)).toBeInTheDocument();
 
-      await userEvent.click(within(card).getByRole("button", { name: /SearXNG/i }));
-      expect(within(card).getByLabelText(/SearXNG address/i)).toBeInTheDocument();
-      expect(within(card).queryByLabelText(/Exa API key/i)).not.toBeInTheDocument();
+      await userEvent.click(
+        within(card).getByRole("button", { name: /SearXNG/i }),
+      );
+      expect(
+        within(card).getByLabelText(/SearXNG address/i),
+      ).toBeInTheDocument();
+      expect(
+        within(card).queryByLabelText(/Exa API key/i),
+      ).not.toBeInTheDocument();
     });
 
     it("asks for one backend's fields, never both", () => {
@@ -83,7 +99,9 @@ describe("ConnectionsSection", () => {
       return userEvent
         .click(within(card).getByRole("button", { name: /edit|set up/i }))
         .then(() => {
-          expect(within(card).getByLabelText(/Exa API key/i)).toBeInTheDocument();
+          expect(
+            within(card).getByLabelText(/Exa API key/i),
+          ).toBeInTheDocument();
           expect(
             within(card).queryByLabelText(/SearXNG address/i),
           ).not.toBeInTheDocument();
@@ -108,7 +126,9 @@ describe("ConnectionsSection", () => {
         within(card).getByLabelText(/SearXNG address/i),
         "http://searx.local:8080",
       );
-      await userEvent.click(within(card).getByRole("button", { name: /^save$/i }));
+      await userEvent.click(
+        within(card).getByRole("button", { name: /^save$/i }),
+      );
 
       // What the real page does once the save invalidates the settings query.
       refresh({
@@ -131,9 +151,9 @@ describe("ConnectionsSection", () => {
         "llm_web.search_provider": "native",
       });
       await waitFor(() => expect(getRuns).toHaveBeenCalled());
-      expect(
-        testConnection.mock.calls.map((c) => c[0]),
-      ).not.toContain("native_search");
+      expect(testConnection.mock.calls.map((c) => c[0])).not.toContain(
+        "native_search",
+      );
     });
 
     it("does auto-probe an external backend, which is cheap", async () => {
@@ -151,7 +171,9 @@ describe("ConnectionsSection", () => {
         "llm_web.search_provider": "searxng",
         "searxng.url": "http://searx.local:8080",
       });
-      expect(screen.getByText(/SearXNG · http:\/\/searx.local:8080/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/SearXNG · http:\/\/searx.local:8080/),
+      ).toBeInTheDocument();
     });
   });
 
@@ -176,6 +198,79 @@ describe("ConnectionsSection", () => {
     expect(
       within(card).getByRole("link", { name: /get a key/i }),
     ).toHaveAttribute("href", "https://www.themoviedb.org/settings/api");
+  });
+
+  describe("the Agregarr card", () => {
+    it("asks for the address and the key, and hides the key", async () => {
+      renderSection({});
+      const card = screen.getByTestId("connection-agregarr");
+
+      await userEvent.click(
+        within(card).getByRole("button", { name: /set up/i }),
+      );
+
+      expect(within(card).getByLabelText(/address/i)).toBeInTheDocument();
+      // The key is a credential — the field must not render it as readable text.
+      expect(within(card).getByLabelText(/api key/i)).toHaveAttribute(
+        "type",
+        "password",
+      );
+    });
+
+    it("saves both halves and tests the connection", async () => {
+      renderSection({});
+      const card = screen.getByTestId("connection-agregarr");
+      await userEvent.click(
+        within(card).getByRole("button", { name: /set up/i }),
+      );
+
+      await userEvent.type(
+        within(card).getByLabelText(/address/i),
+        "http://ag:7171",
+      );
+      await userEvent.type(within(card).getByLabelText(/api key/i), "ag-key");
+      await userEvent.click(
+        within(card).getByRole("button", { name: /save/i }),
+      );
+
+      await waitFor(() => expect(putSettings).toHaveBeenCalled());
+      // Assert the VALUES sent, not just that a save happened — a card wired to the wrong setting
+      // keys would save cleanly and never connect.
+      expect(putSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          "agregarr.url": "http://ag:7171",
+          "agregarr.apikey": "ag-key",
+        }),
+      );
+    });
+
+    it("says what it will change in Agregarr before you connect it", () => {
+      // This writes to a tool the owner set up themselves, so the card has to be upfront about
+      // what it touches — and it must be readable WITHOUT expanding the form, since that is the
+      // point at which someone decides whether to connect at all.
+      renderSection({});
+      const card = screen.getByTestId("connection-agregarr");
+
+      const text = card.textContent ?? "";
+      expect(text).toMatch(/only changes the running order/i);
+      expect(text).toMatch(/stay in the same order as each other/i);
+      expect(text).toMatch(/never touched/i);
+      // And that a failure is survivable, so nobody reads this as risky.
+      expect(text).toMatch(/run still finishes normally/i);
+    });
+
+    it("summarises a configured instance by its address", () => {
+      renderSection({
+        "agregarr.url": "http://ag:7171",
+        "agregarr.apikey": "•••••",
+      });
+
+      expect(
+        within(screen.getByTestId("connection-agregarr")).getByText(
+          "http://ag:7171",
+        ),
+      ).toBeInTheDocument();
+    });
   });
 
   it("shows the last run's web-search count, without claiming it was billed", async () => {

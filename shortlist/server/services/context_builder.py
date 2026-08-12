@@ -14,6 +14,7 @@ from loguru import logger
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session, sessionmaker
 
+from shortlist.engine.clients.agregarr import AgregarrClient
 from shortlist.engine.clients.mdblist import MdbListClient
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.plextv import PlexTvClient
@@ -188,6 +189,11 @@ class ContextBuilder:
             # External web-search backend for the llm_web source; None when none is configured (the
             # native provider tools still work without it — only Ollama depends on it).
             search = make_search_client(store.get)
+            # A co-managing agregarr, if the owner connected one. Both halves are required: a URL
+            # without a key cannot read the ordering, and the mirror is skipped rather than half-run.
+            agregarr_url = (store.get("agregarr.url") or "").strip()
+            agregarr_key = store.get("agregarr.apikey") or ""
+            agregarr = AgregarrClient(agregarr_url, agregarr_key) if agregarr_url and agregarr_key else None
             history = ShareTokenWatchSource(plex, plextv, owner_token=plex_token)
 
             def _pms_for_user(profile, _history=history, _url=plex_url):
@@ -268,6 +274,7 @@ class ContextBuilder:
                 trakt=trakt,
                 search=search,
                 poster_artist=poster_artist,
+                agregarr=agregarr,
                 # The engine reads each user's COMPLETE watched set by reading the PMS AS them, with the
                 # per-user server token plex.tv mints for every share. That set carries their own
                 # viewCount/viewedLeafCount — so a mark-as-watched (which the playback-history API never
