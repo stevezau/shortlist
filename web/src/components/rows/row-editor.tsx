@@ -1,7 +1,5 @@
-import { ListChecks } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { Link } from "react-router";
 
 import { AudiencePicker } from "@/components/rows/audience-picker";
 import { GlobalDefaultToggle } from "@/components/rows/global-default-row";
@@ -12,7 +10,6 @@ import { RowScheduleField } from "@/components/rows/row-schedule-field";
 import { RowDestructiveActions } from "@/components/rows/row-destructive-actions";
 import { RowEffectivenessPanel } from "@/components/rows/row-effectiveness";
 import { RowPreview } from "@/components/rows/row-preview";
-import { RowRunAction } from "@/components/rows/row-run-action";
 import { SettingsGroup } from "@/components/rows/settings-group";
 import { RowShelfPlacement } from "@/components/rows/row-shelf-placement";
 import {
@@ -42,7 +39,7 @@ import {
   COLD_START_LABELS,
   COLD_STARTS,
 } from "@/lib/cold-start";
-import { blankInput, hasUnsavedChanges, toInput } from "@/lib/collections";
+import { blankInput, toInput } from "@/lib/collections";
 import {
   useCollectionEffectiveness,
   useLibraries,
@@ -305,9 +302,6 @@ export function RowEditor({
   const savedName = collection?.name_template || collection?.name || "";
   const [renameDraft, setRenameDraft] = useState(savedName);
   const renamePending = renameDraft.trim() !== savedName.trim();
-  // Drives only the note beside Run — Save is never gated on it, because a form that refuses to
-  // save what it thinks is unchanged is unfixable when the comparison is the thing that is wrong.
-  const unsaved = hasUnsavedChanges(input, collection);
 
   const set = (patch: Partial<CollectionInput>) =>
     setInput((prev) => ({ ...prev, ...patch }));
@@ -416,46 +410,15 @@ export function RowEditor({
     // permanently beside the setting they concern, and there is room for the preview panel that
     // turns each abstract setting into "here is what Sarah will see tonight".
     <div className="mx-auto w-full max-w-6xl space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
-        <div>
-          <h1 className="text-2xl font-semibold">
-            {collection ? "Edit row" : "Add a row"}
-          </h1>
-          <p className="mt-1 text-muted-foreground">
-            A row is a strip of “Picked for You”-style recommendations on your
-            users’ Plex home screens.
-          </p>
-        </div>
-
-        {/* The two things you reach for repeatedly while tuning a row: rebuild it, and look at what
-            the last rebuild did. Both existed already — one behind a dialog on the Runs page that
-            made you re-pick the row you were editing, the other only on the Rows CARD, which this
-            page replaced. Neither was reachable from here at all.
-            Removing and deleting are deliberately NOT up here. They reach into other people's Plex
-            and are not undone by Cancel, so they stay fenced off at the bottom of the form rather
-            than sitting one pixel from "rebuild this row". */}
-        {collection && (
-          <div className="flex flex-wrap items-center gap-2">
-            <RowRunAction collection={collection} variant="outline" />
-            <Button asChild variant="outline" size="sm">
-              <Link to={`/runs?row=${encodeURIComponent(collection.slug)}`}>
-                <ListChecks aria-hidden="true" />
-                Runs
-              </Link>
-            </Button>
-          </div>
-        )}
-      </div>
-
-      {/* Run rebuilds the row AS SAVED, which is a trap next to a form you have been editing —
-          nothing about the button says the changes on screen won't be in it. */}
-      {collection && unsaved && (
-        <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-foreground">
-          You have unsaved changes. Running now rebuilds this row as it was last
-          saved — press <strong>Save changes</strong> first if you want these
-          settings in it.
+      <div>
+        <h1 className="text-2xl font-semibold">
+          {collection ? "Edit row" : "Add a row"}
+        </h1>
+        <p className="mt-1 text-muted-foreground">
+          A row is a strip of “Picked for You”-style recommendations on your
+          users’ Plex home screens.
         </p>
-      )}
+      </div>
 
       {/* Purely informational — nothing about the template is stored on the row, and every
           field it filled is editable below. It's here so a prefilled form doesn't read as
@@ -655,23 +618,10 @@ export function RowEditor({
               }
             />
 
-            {isSharedRow ? (
-              // A shared row IS the count: the titles the most people on this server have watched,
-              // in that order. There is no search to configure — no sources, no seed budget, no AI —
-              // so offering those controls would promise behaviour the engine no longer has. Every
-              // one of them was inert here the moment the row became a straight tally.
-              <p className="text-sm text-muted-foreground">
-                A shared row is simply your server’s most-watched titles, most
-                watched first — so there is nothing to choose about where its
-                picks come from. Set how many people must have watched a title
-                below, and pick its libraries above.
-              </p>
-            ) : (
-              <RowSourcesField
-                value={input.candidate_sources}
-                onChange={(candidate_sources) => set({ candidate_sources })}
-              />
-            )}
+            <RowSourcesField
+              value={input.candidate_sources}
+              onChange={(candidate_sources) => set({ candidate_sources })}
+            />
 
             {/* Hidden for a shared row, like the request tag below. `_shared_row` never calls
                 `_apply_watched_cap` or `_prefer_watched` — and more to the point, "how much of this
@@ -828,7 +778,7 @@ export function RowEditor({
               </InheritableField>
             )}
 
-            {usesWebSearch && !isSharedRow && (
+            {usesWebSearch && (
               <InheritableField
                 label={RECENT_COUNT_LABEL}
                 description={`AI web search looks up one watch at a time — “what to watch if you liked X”. This is how many of their most recent watches it asks about: the front slice of the same list “${MAX_SEEDS_LABEL}” sets. More gives wider results and takes more searches. It changes nothing for the other sources.`}
@@ -849,71 +799,69 @@ export function RowEditor({
               </InheritableField>
             )}
 
-            {!isSharedRow && (
-              <InheritableField
-                label={MAX_SEEDS_LABEL}
-                description={
-                  <>
-                    How many recent watches this row is built from. Every source
-                    works from these. A high number blends their whole recent
-                    viewing, which suits a general &ldquo;Picked for you&rdquo;
-                    row. A low number makes the row about one or two specific
-                    things they watched.
-                  </>
-                }
-                ariaLabel="Use the default number of watches every source builds from"
-                inheriting={input.max_seeds === null}
-                globalValue={maxSeedsGlobal(settings.data)}
-                // Turning this OFF seeds the NAMED-row value (1 or 2), not the global — someone
-                // reaching for this control almost always wants a row about one specific watch, and
-                // the global is one switch-flip away again.
-                //
-                // Turning it ON also drops the cycle back to 1. The cycle control only renders for a
-                // 1..2-seed row, so leaving the window set here would hide it while the engine went on
-                // cycling the row AND forcing it to nightly rebuilds, with nothing in the editor to
-                // explain it or undo it.
-                onToggle={(on) =>
+            <InheritableField
+              label={MAX_SEEDS_LABEL}
+              description={
+                <>
+                  How many recent watches this row is built from. Every source
+                  works from these. A high number blends their whole recent
+                  viewing, which suits a general &ldquo;Picked for you&rdquo;
+                  row. A low number makes the row about one or two specific
+                  things they watched.
+                </>
+              }
+              ariaLabel="Use the default number of watches every source builds from"
+              inheriting={input.max_seeds === null}
+              globalValue={maxSeedsGlobal(settings.data)}
+              // Turning this OFF seeds the NAMED-row value (1 or 2), not the global — someone
+              // reaching for this control almost always wants a row about one specific watch, and
+              // the global is one switch-flip away again.
+              //
+              // Turning it ON also drops the cycle back to 1. The cycle control only renders for a
+              // 1..2-seed row, so leaving the window set here would hide it while the engine went on
+              // cycling the row AND forcing it to nightly rebuilds, with nothing in the editor to
+              // explain it or undo it.
+              onToggle={(on) =>
+                set(
+                  on
+                    ? { max_seeds: null, seed_window: 1 }
+                    : { max_seeds: namedRowSeeds(input.media) },
+                )
+              }
+              // The advice has to read the CURRENT value, not assume the global. Static copy told
+              // someone already sitting on 1 that their row "fills itself from the other 29", which
+              // is only true while it inherits the 30-watch default — so the one hint meant to make
+              // this setting clear was describing a row they didn't have.
+              before={
+                namesASeed && (
+                  <p
+                    role={seedBudgetMismatch ? "status" : undefined}
+                    className={
+                      seedBudgetMismatch
+                        ? "rounded-md border border-warning/40 bg-warning/5 p-3 text-sm"
+                        : "rounded-md bg-muted/60 p-3 text-sm text-muted-foreground"
+                    }
+                  >
+                    {seedAdvice(input.max_seeds, input.media)}
+                  </p>
+                )
+              }
+            >
+              <MaxSeedsField
+                label=""
+                value={input.max_seeds ?? 0}
+                // Typing a wider budget hides the cycle control too, so it has to reset the window
+                // for the same reason the inherit toggle above does — otherwise the row keeps
+                // cycling with no way to see or stop it.
+                onChange={(next) =>
                   set(
-                    on
-                      ? { max_seeds: null, seed_window: 1 }
-                      : { max_seeds: namedRowSeeds(input.media) },
+                    next > 2
+                      ? { max_seeds: next, seed_window: 1 }
+                      : { max_seeds: next },
                   )
                 }
-                // The advice has to read the CURRENT value, not assume the global. Static copy told
-                // someone already sitting on 1 that their row "fills itself from the other 29", which
-                // is only true while it inherits the 30-watch default — so the one hint meant to make
-                // this setting clear was describing a row they didn't have.
-                before={
-                  namesASeed && (
-                    <p
-                      role={seedBudgetMismatch ? "status" : undefined}
-                      className={
-                        seedBudgetMismatch
-                          ? "rounded-md border border-warning/40 bg-warning/5 p-3 text-sm"
-                          : "rounded-md bg-muted/60 p-3 text-sm text-muted-foreground"
-                      }
-                    >
-                      {seedAdvice(input.max_seeds, input.media)}
-                    </p>
-                  )
-                }
-              >
-                <MaxSeedsField
-                  label=""
-                  value={input.max_seeds ?? 0}
-                  // Typing a wider budget hides the cycle control too, so it has to reset the window
-                  // for the same reason the inherit toggle above does — otherwise the row keeps
-                  // cycling with no way to see or stop it.
-                  onChange={(next) =>
-                    set(
-                      next > 2
-                        ? { max_seeds: next, seed_window: 1 }
-                        : { max_seeds: next },
-                    )
-                  }
-                />
-              </InheritableField>
-            )}
+              />
+            </InheritableField>
 
             {!isSharedRow && (
               <InheritableField
