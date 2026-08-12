@@ -572,6 +572,24 @@ export function useRequests(wantedBy: string[] = []) {
 const ARR_IN_FLIGHT = new Set(["queued", "downloading"]);
 
 /**
+ * How often to re-ask the Arrs, given what they last said. `false` = don't.
+ *
+ * Exported so the rule itself is testable. One fetch is a WHOLE-LIBRARY read from each Arr
+ * (`RadarrClient.status_by_tmdb` pulls `/api/v3/movie` entire), so the difference between "poll
+ * while something is moving" and "poll forever" is megabytes a minute on a large library for as
+ * long as a tab happens to be open.
+ */
+export function arrStatusInterval(
+  statuses: Record<string, string | null> | undefined,
+): number | false {
+  return (
+    Object.values(statuses ?? {}).some(
+      (status) => status && ARR_IN_FLIGHT.has(status),
+    ) && 10_000
+  );
+}
+
+/**
  * Live Sonarr/Radarr state for the inbox's badges.
  *
  * It POLLS. It used to fetch once on mount with a 30s `staleTime` and no interval, so a title that
@@ -579,23 +597,23 @@ const ARR_IN_FLIGHT = new Set(["queued", "downloading"]);
  * which is exactly the "it takes ages to say Downloaded" the inbox was reported for. Nothing
  * invalidated this key either, so a title you had just sent showed no status at all.
  *
- * Fast while something is moving, slow when nothing is — never off. A settled inbox still checks,
- * because the Arrs are changed by things other than this app (a manual add, a completed grab), and
- * a page that only refreshes on reload cannot show that. The endpoint reads whole-library maps —
- * one call per app whatever the inbox holds (`requests.get_arr_status`) — which is what makes even
- * the fast pace cheap. React Query holds the interval to mounted components and pauses it while the
- * tab is hidden, so this costs nothing when the page isn't open.
+ * Polls ONLY while a title is actually moving. One fetch is a whole-library read from each Arr
+ * (`RadarrClient.status_by_tmdb` pulls `/api/v3/movie` entire), which is the right shape for asking
+ * about a whole inbox at once and the wrong thing to repeat on a timer forever: an inbox where
+ * everything has already downloaded has no reason to re-read the library every 30 seconds for as
+ * long as the tab happens to be open, and on a large library that is megabytes a minute for nothing.
+ *
+ * So the timer exists exactly while it can change something — a title `queued` or `downloading` —
+ * and stops once everything has settled. The two other ways the answer moves are both covered
+ * without polling: sending a title invalidates this key outright (`useSendRequests`), and coming
+ * back to the tab refetches on focus, which is when a title someone added to Radarr by hand shows
+ * up. React Query also holds the interval to mounted components, so a closed page costs nothing.
  */
 export function useArrStatus() {
   return useQuery({
     queryKey: queryKeys.arrStatus,
     queryFn: api.getArrStatus,
-    refetchInterval: (query) =>
-      Object.values(query.state.data?.statuses ?? {}).some(
-        (status) => status && ARR_IN_FLIGHT.has(status),
-      )
-        ? 10_000
-        : 30_000,
+    refetchInterval: (query) => arrStatusInterval(query.state.data?.statuses),
   });
 }
 
