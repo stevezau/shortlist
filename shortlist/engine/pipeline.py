@@ -460,6 +460,16 @@ def _record_unhideable(ctx, user, remote, owned, collections_known, report) -> N
     try:
         as_them = ctx.pms_for_user(user)
         if as_them is None:
+            # No token could be minted for this account, so we cannot look AS them. Said out loud
+            # for the same reason as the failed-collections-read above: silence here is read
+            # downstream as "sees none of ours". Not a rare cell — `canary_server_token` refuses a
+            # PIN-protected Home user, which is the archetype of a parental-profile account.
+            logger.warning(
+                "{}: could not check what this '{}' account can see — no token could be obtained for "
+                "it, so this run reports nothing rather than a false all-clear",
+                user.username,
+                remote.restriction_profile,
+            )
             return
         exposed = unhidden_rows_visible_to(as_them, owned, user.slug)
     except Exception as e:
@@ -577,6 +587,11 @@ def _privacy_sync_phase(
     # account_id -> {field: expected} for every write this run, verified in ONE roster read after the
     # loop (below) instead of a full GET /api/users per write (which was O(A²) on a change night).
     to_verify: dict[int, dict[str, str]] = {}
+    # Reaching this loop IS the measurement: every profiled account in the audience gets checked
+    # inside it. Recorded before the loop rather than after, so a crash part-way still counts as
+    # having looked — what must never be recorded as a measurement is a run that died BEFORE here
+    # (in the sweep or delivery), because its empty findings would otherwise clear a live alert.
+    report.unhideable_measured = True
     # One plex.tv write per account, throttled and backing off on a 429 (rule 6) — minutes on a
     # 40-account server. Counted out loud so the feed shows it moving rather than sitting on
     # "filters" for the duration.

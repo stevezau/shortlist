@@ -941,6 +941,12 @@ class RunReport:
     # the run would punish everyone for one account. It is reported instead, because an exposure the
     # owner is not told about is the actual failure (see privacy.unhidden_rows_visible_to).
     unhideable_rows: dict[str, list[int]] = field(default_factory=dict)
+    # Whether this run actually GOT AS FAR AS looking. An empty `unhideable_rows` is ambiguous on its
+    # own — "we checked and nobody is exposed" and "we died in the sweep phase" produce the same
+    # dict — and the readers treat the latest measuring run as the truth. Without this flag a run
+    # that failed early cleared a live exposure alert and every "Sees N rows of others'" badge while
+    # the exposure was untouched, which is the exact silence the check exists to end.
+    unhideable_measured: bool = False
 
     @property
     def ok(self) -> bool:

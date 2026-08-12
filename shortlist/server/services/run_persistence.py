@@ -642,7 +642,7 @@ def _finalize_run(
     # the runs list can show at a glance how much actually changed on Plex.
     titles_added = sum(len(u.diff.added) for u in report.users if u.diff)
     titles_removed = sum(len(u.diff.removed) for u in report.users if u.diff)
-    run.stats = {
+    stats = {
         "users_ok": ok,
         "users_error": errors,
         # Built nothing, but nothing went wrong — see RunUser.reason for which case it was.
@@ -665,7 +665,17 @@ def _finalize_run(
         # Every account whose share filter Plex refused this run. These are the reason nothing
         # was promoted, so the UI can say so instead of leaving "Failed" unexplained (issue #1).
         "promotion_blockers": list(report.promotion_blockers),
-        # Accounts Plex refuses a hide-list for that can nonetheless SEE other people's rows. Not a
-        # blocker — nothing we do hides them — so the run succeeds and this is how the owner finds out.
-        "unhideable_rows": {name: list(keys) for name, keys in report.unhideable_rows.items()},
     }
+    # Accounts Plex refuses a hide-list for that can nonetheless SEE other people's rows. Not a
+    # blocker — nothing we do hides them — so the run succeeds and this is how the owner finds out.
+    #
+    # Present ONLY when the run reached the privacy phase and actually looked. Both readers pick the
+    # latest run carrying this key and treat it as the truth, so writing it unconditionally meant a
+    # run that died in the sweep phase published an empty finding and silently cleared a live alert
+    # and every badge. Absent now means "this run did not measure", which is what they already
+    # assumed it meant.
+    if report.unhideable_measured:
+        stats["unhideable_rows"] = {name: list(keys) for name, keys in report.unhideable_rows.items()}
+    # Assigned whole rather than mutated in place: `stats` is a JSON column, and an in-place edit
+    # after assignment would not reliably mark it dirty.
+    run.stats = stats

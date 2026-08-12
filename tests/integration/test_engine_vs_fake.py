@@ -1918,6 +1918,89 @@ def test_a_managed_user_with_a_parental_profile_is_left_out_of_the_filters(fakes
     assert not report.promotion_blockers
 
 
+def test_a_profiled_account_that_can_see_other_peoples_rows_is_measured_and_reported(fakes, tmp_path):
+    """Issue #76 end to end: Plex refuses a hide-list for a profiled account, so the run has to look
+    AS them and report what they can actually see.
+
+    This is the cell nothing covered. `_record_unhideable` early-returns when `ctx.pms_for_user` is
+    None, and every other context here leaves it None — so the whole measurement was exercised by no
+    test at all, at either end of a feature whose entire purpose is to end a silence.
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    history = ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token)
+
+    kid = state.users[204]  # `older_kid` — the profile that DOES see collections on a real server
+    assert kid.restriction_profile == "older_kid"
+
+    ctx = EngineContext(
+        config=EngineConfig(
+            row_size=8,
+            min_history=5,
+            candidates_pre_rank=40,
+            max_seeds=12,
+            rows=[RowSpec(slug="picked", name_template="✨ {library_name} Picked for You", size=8)],
+            rows_defined=True,
+        ),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=history,
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+    # What the server always supplies: the PMS as ONE user sees it. Mirrors
+    # `ContextBuilder._pms_for_user`, including its canary fallback for a managed account that was
+    # never separately shared — which is precisely the archetype here.
+    ctx.pms_for_user = lambda profile: PlexClient(pms_url, token) if (token := history._token_for(profile)) else None
+
+    report = engine_run(ctx, _users(plextv))
+
+    # It looked — and that fact is recorded separately from the findings, so a run that never got
+    # here cannot publish an empty result and clear a live alert.
+    assert report.unhideable_measured is True
+    assert kid.username in report.unhideable_rows, "the profiled account's exposure was not reported"
+    assert report.unhideable_rows[kid.username], "reported the account but named no rows"
+    # Not a blocker: one account nothing can hide must not stop everyone else being served.
+    assert report.ok
+    assert not report.promotion_blockers
+
+
+def test_a_run_that_never_reaches_the_privacy_phase_is_not_recorded_as_having_measured(fakes, tmp_path):
+    """The other half of the guard, at the level that actually sets it."""
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(rows=[RowSpec(slug="picked", name_template="x", size=8)], rows_defined=True),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+    # Fail the PMS read the SWEEP makes, not the one `run()` makes before it — the sweep fails
+    # CLOSED and returns a report rather than raising, and that returned report is exactly the shape
+    # that used to publish an empty finding and clear a live alert.
+    real_sections = ctx.plex.sections
+    calls = {"n": 0}
+
+    def sections_failing_inside_the_sweep():
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise RuntimeError("PMS unreachable")
+        return real_sections()
+
+    ctx.plex.sections = sections_failing_inside_the_sweep
+
+    report = engine_run(ctx, [])
+
+    assert report.error and "sweep failed" in report.error
+    assert report.unhideable_measured is False
+
+
 def _rating_ctx(state, pms_url, tmp_path, *, dislike_threshold):
     plex = PlexClient(pms_url, state.owner_token)
     plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)

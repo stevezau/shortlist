@@ -422,23 +422,56 @@ class TestRowsWeCannotHide:
     def test_a_later_run_that_never_measured_does_not_clear_a_real_finding(self, session):
         """A run that failed early, was aborted, or never reached the privacy phase records no
         measurement at all. Reading that as "nobody is exposed" would silence a live privacy alert
-        while the exposure is untouched — the exact silence this check exists to end."""
+        while the exposure is untouched — the exact silence this check exists to end.
+
+        Run 2's stats come from the REAL `_finalize_run`, not a hand-built dict. Written by hand as
+        `{"error": ...}` this test passed for a shape production could not emit: `_finalize_run` used
+        to write `unhideable_rows` unconditionally, so a failed run really did publish an empty
+        finding and clear the alert, and this test never saw it.
+        """
+        from shortlist.engine.models import RunReport
+        from shortlist.server.services.run_persistence import _finalize_run
+
         self._run(session, {"unhideable_rows": {"Kid": [21]}})
-        session.add(
-            Run(
-                id=2,
-                status="error",
-                trigger="manual",
-                started_at=datetime.now(UTC),
-                finished_at=datetime.now(UTC) + timedelta(minutes=1),
-                stats={"error": "plex unreachable"},  # no `unhideable_rows` key at all
-            )
+        died_early = RunReport(started_at=datetime.now(UTC))  # never reached the privacy phase
+        died_early.error = "plex unreachable"
+        run2 = Run(
+            id=2,
+            status="error",
+            trigger="manual",
+            started_at=datetime.now(UTC),
+            finished_at=datetime.now(UTC) + timedelta(minutes=1),
         )
+        session.add(run2)
+        _finalize_run(run2, died_early, None, "plex unreachable", ok=0, errors=1)
         session.commit()
 
+        assert "unhideable_rows" not in (run2.stats or {}), "a run that never measured must not publish a finding"
         alert = notif._rows_we_cannot_hide(session)
 
         assert alert is not None and "Kid" in alert["body"]
+
+    def test_a_run_that_did_measure_and_found_nothing_does_clear_the_finding(self, session):
+        """The other half: once a real measurement comes back clean, the alert must go away."""
+        from shortlist.engine.models import RunReport
+        from shortlist.server.services.run_persistence import _finalize_run
+
+        self._run(session, {"unhideable_rows": {"Kid": [21]}})
+        measured = RunReport(started_at=datetime.now(UTC))
+        measured.unhideable_measured = True  # reached the privacy phase, nobody exposed
+        run2 = Run(
+            id=2,
+            status="ok",
+            trigger="manual",
+            started_at=datetime.now(UTC),
+            finished_at=datetime.now(UTC) + timedelta(minutes=1),
+        )
+        session.add(run2)
+        _finalize_run(run2, measured, None, None, ok=1, errors=0)
+        session.commit()
+
+        assert (run2.stats or {}).get("unhideable_rows") == {}
+        assert notif._rows_we_cannot_hide(session) is None
 
     def test_silent_when_the_run_found_nothing(self, session):
         self._run(session, {"unhideable_rows": {}})

@@ -117,7 +117,16 @@ def fake_report(dry_run: bool = False) -> RunReport:
                 privacy_synced=status == "ok",
             )
         )
-    return RunReport(started_at=datetime.now(UTC), finished_at=datetime.now(UTC), dry_run=dry_run, users=users)
+    return RunReport(
+        started_at=datetime.now(UTC),
+        finished_at=datetime.now(UTC),
+        dry_run=dry_run,
+        users=users,
+        # A run that got as far as persisting reached the privacy phase, so it DID look. Without
+        # this the stats carry no `unhideable_rows` key at all, which is the deliberate signal for
+        # "this run never measured" — see `_finalize_run`.
+        unhideable_measured=True,
+    )
 
 
 async def _wait_for_run(sessions, run_id: int, timeout_s: float = 3.0) -> Run:

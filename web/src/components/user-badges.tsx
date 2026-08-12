@@ -73,7 +73,9 @@ export function UnhiddenRowsBadge({ user }: { user: User }) {
   return (
     <Badge
       variant="destructive"
-      title={`This account can see ${exposed} ${exposed === 1 ? "row" : "rows"} belonging to other people. Hiding a row means a Plex share filter, and Plex refuses to save one while a restriction profile is set — so Shortlist cannot hide ${exposed === 1 ? "it" : "them"}. Set this account's Restriction Profile to None in Plex, or turn this person off in Shortlist.`}
+      // The remedy must match the rest of the feature: turning the person off removes THEIR row,
+      // not their view of everyone else's, so it is deliberately not offered here either.
+      title={`This account can see ${exposed} ${exposed === 1 ? "row" : "rows"} belonging to other people. Hiding a row means a Plex share filter, and Plex refuses to save one while a restriction profile is set — so Shortlist cannot hide ${exposed === 1 ? "it" : "them"}. Set this account's Restriction Profile to None in Plex; turning this person off in Shortlist does not fix it.`}
     >
       Sees {exposed} {exposed === 1 ? "row" : "rows"} of others&rsquo;
     </Badge>
