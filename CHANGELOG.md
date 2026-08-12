@@ -8,6 +8,23 @@ All notable changes to this project are documented here. This project follows
 
 ### Added
 
+- **Run one row, from the row.** Rebuilding a single row was already possible — it was behind a
+  dialog on the Runs page that made you pick, from a list, the row you were already looking at.
+  **Run now** sits on each row's card and at the top of its editor, and takes you to the run it
+  started so you can watch it happen. A row that is switched off can't be run, because a run doesn't
+  build a disabled row, it takes it off Plex — and a button called "Run" doing that is the opposite
+  of what the word promises. The editor also gains a **Runs** link to that row's own history, which
+  until now only existed on the card the editor replaced. If you press Run with unsaved changes on
+  screen, it says so first: a run rebuilds the row as it was last saved.
+
+- **"Where is each row actually showing?"** — a new check on the Have an issue? page, and the only
+  one that can see your OWN Home screen. Every other row-visibility check reads the share filters
+  that hide a row from other people, and you, as the server owner, don't have one — so the flag that
+  keeps somebody else's row off your Home was the one thing nothing could report on. It also
+  separates a real fault from a Plex limitation: another person's row on your Home is always a bug,
+  while their row on your Recommended shelf is what showing rows on friends' library shelves does,
+  and is a setting rather than a defect.
+
 - **Runs are now shown by row, not by person.** A run's unit of work is a row, but the run page
   listed people — so a **shared row**, built once for the whole server and belonging to nobody, had
   nowhere to appear at all. On a night when no per-person row was due, the page was 46 lines of
@@ -38,6 +55,29 @@ All notable changes to this project are documented here. This project follows
 
 ### Changed
 
+- **The Have an issue? page now answers the question you picked.** Choosing a problem ran one check;
+  three of the cards named two or three things in their description and then opened only the first —
+  "checks the queue, the schedule and the clocks" checked the queue. Each card now runs every check
+  it promises, the answers stack up on the page instead of replacing one another so you can gather
+  several into one report, and eleven more checks state their finding as a sentence rather than
+  leaving you to read a table. A check that fails now offers its failure to copy — previously the one
+  moment you had nothing to send. Filing a bug no longer needs the checks switched on at all; only
+  attaching the diagnostics does.
+
+- **The Jobs page's row schedules read as schedules.** Rows that build at the same time were joined
+  into one line of comma-separated names, truncated, with the time as its subtitle and a single Edit
+  button that could only take you to the rows list — there was no one row it could mean. The time
+  now leads, with how many rows it builds, and each row is its own link to its own editor.
+
+- **The dashboard's "Recently watched" says how much it is showing** and folds the rest away, rather
+  than silently stopping. **"N more people watched something"** under By person is now "Show N more",
+  because it was never a separate finding — it is the rest of the list above it, which now says it is
+  ordered by watches.
+
+- **The Logs page drops the paragraph explaining its own buttons.** What mattered in it — that
+  everything down to DEBUG is recorded whatever level you are viewing — moved to the line at the
+  bottom that already tells you the full history is in the download.
+
 - **A "Popular on this server" row now actually shows what's popular on this server.** It was built
   the same way a personal row is: your server's most-watched titles became the *starting point* for a
   TMDB similar-titles search and an AI web search — and that search deliberately excludes the titles
@@ -58,6 +98,25 @@ All notable changes to this project are documented here. This project follows
   title out of a shared row entirely, rather than only stopping it being a search starting point.
 
 ### Fixed
+
+- **The watches-per-week chart tells you the numbers.** The count was on a tooltip attached to each
+  bar, so on a quiet week the only place you could hover was a three-pixel sliver at the bottom of
+  the chart and most of the column did nothing at all. Hovering anywhere in a week's column now
+  reads it out, and the chart is dated at both ends — sixteen unlabelled bars never said *when*.
+
+- **A downloading request updates itself.** The Sonarr/Radarr status on the Requests page was
+  fetched once when the page opened and never again, so a title that finished downloading while you
+  were looking at it went on saying "Searching" until you reloaded, and a title you had just sent
+  showed nothing at all. It now checks while you watch and says **Checking…** while it does.
+
+- **A Sonarr or Radarr that can't be reached says so.** A failed lookup is deliberately ignored so
+  that one app being down doesn't blank the other's titles — but that left an unreachable app
+  looking exactly like one that simply isn't tracking anything, and the inbox showed no badges for
+  ever with nothing anywhere explaining why. Each title now says which app couldn't be reached.
+
+- **A background job waiting to be retried no longer shows how long it took.** After a failure the
+  job goes back in the queue keeping the timestamps of the attempt that failed, so the Jobs page
+  displayed that attempt's duration beside "Retrying" — a time for work that had not started.
 
 - **A shared row's result is kept.** It was thrown away at the end of every run: the row was built,
   labelled and promoted on Plex, but only a one-line audit note survived — no trace, no per-library
