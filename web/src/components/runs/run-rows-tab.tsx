@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 
 import { PickList } from "@/components/pick-list";
+import { Segmented } from "@/components/segmented";
 import { UserPanel } from "@/components/runs/user-panel";
 import { UserTabs } from "@/components/runs/user-tabs";
 import { Badge } from "@/components/ui/badge";
@@ -30,17 +31,26 @@ function diffLabel(entry: RunLibraryBreakdown): string {
   return parts.join(" · ");
 }
 
-/** A shared row's result: the same per-library shape a person's panel uses, with nobody to choose. */
+/**
+ * A shared row's result — the same shape a person's panel uses, minus the person.
+ *
+ * Libraries are TABS, not stacked sections. A shared row targeting two libraries is 40 picks, and
+ * printing them one after the other made the card scroll for pages; the per-person panel has always
+ * shown one library at a time, so stacking here was both longer and inconsistent with it.
+ */
 function SharedRowPanel({ group }: { group: RunRowGroup }) {
   const shared = group.shared;
+  const breakdown = shared?.breakdown ?? [];
+  const [active, setActive] = useState(breakdown[0]?.library_key ?? "");
   if (!shared) return null;
-  const libraries = libraryLabel(group);
-  const breakdown = shared.breakdown ?? [];
+  const current =
+    breakdown.find((entry) => entry.library_key === active) ?? breakdown[0];
+
   return (
-    <div className="space-y-5 p-5">
+    <div className="space-y-4 p-5">
       <p className="text-sm text-muted-foreground">
-        Built once for the whole server from what several people have watched
-        {libraries ? ` · ${libraries}` : ""}
+        Built once for the whole server from what several people have watched —
+        most watched first.
       </p>
       {breakdown.length === 0 ? (
         shared.picks.length > 0 ? (
@@ -51,19 +61,29 @@ function SharedRowPanel({ group }: { group: RunRowGroup }) {
           </p>
         )
       ) : (
-        breakdown.map((entry) => (
-          <div
-            key={`${entry.row_slug}:${entry.library_key}`}
-            className="space-y-2.5"
-          >
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="font-medium">{entry.library_title}</span>
-              <Badge variant="outline">{diffLabel(entry)}</Badge>
-              {entry.created && <Badge variant="outline">new row</Badge>}
+        <>
+          {breakdown.length > 1 && (
+            <Segmented
+              value={current?.library_key ?? ""}
+              onChange={setActive}
+              ariaLabel="Libraries in this row"
+              options={breakdown.map((entry) => ({
+                value: entry.library_key,
+                label: `${entry.library_title} · ${entry.picks.length}`,
+              }))}
+            />
+          )}
+          {current && (
+            <div className="space-y-2.5">
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="font-medium">{current.library_title}</span>
+                <Badge variant="outline">{diffLabel(current)}</Badge>
+                {current.created && <Badge variant="outline">new row</Badge>}
+              </div>
+              <PickList picks={current.picks} collapseAfter={10} />
             </div>
-            <PickList picks={entry.picks} collapseAfter={10} />
-          </div>
-        ))
+          )}
+        </>
       )}
     </div>
   );

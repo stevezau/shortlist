@@ -50,10 +50,12 @@ All notable changes to this project are documented here. This project follows
   seconds. Your existing shared rows will change contents on their next run — this is the row you
   were asking for the whole time.
 
-  Two consequences worth knowing. **Recent releases** no longer applies to a shared row and is hidden
-  in its editor: that dial weights a title's release date when *scoring* search results, and there is
-  no search left to score — order by **Newest first** instead. And your **Don't seed** list now keeps
-  a title out of a shared row entirely, rather than only stopping it being a search starting point.
+  A shared row's editor drops every control that only made sense for a search — where the picks come
+  from, how many recent watches to build on, the AI web-search dials and **Recent releases** — because
+  a tally has nothing to point them at, and a control the app ignores is worse than no control. What
+  is left is what still decides the row: its libraries, how many people must have watched a title, its
+  size, and its order (use **Newest first** to lean modern). Your **Don't seed** list now keeps a
+  title out of a shared row entirely, rather than only stopping it being a search starting point.
 
 ### Fixed
 

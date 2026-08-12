@@ -209,6 +209,8 @@ describe("RunRowsTab", () => {
     );
 
     expect(screen.getByText("👥 Popular on SFLIX")).toBeInTheDocument();
+    // One library here, so no tab strip — with two it switches instead of stacking, which is what
+    // kept a 40-pick row from scrolling for pages.
     expect(screen.getByText("Dune")).toBeInTheDocument();
     // No person picker — there is nobody to choose.
     expect(screen.queryByText("Sarah")).not.toBeInTheDocument();
