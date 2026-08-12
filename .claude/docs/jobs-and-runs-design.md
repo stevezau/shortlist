@@ -484,6 +484,23 @@ collections — unattended, on the daily sync. It is bounded twice:
 Both mirror `_converge_phase`, which gates orphan DELETION on `bool(known)` for the same reason. Caught
 in review, 2026-07-29 — the happy-path test passed throughout.
 
+The sweep has two halves, and only one of them is destructive:
+
+- **Mark** — stamp `departed_at` on every non-removed, non-owner account missing from the roster. No
+  Plex write of any kind; it records what plex.tv just said. Scoped to enabled users only until
+  2026-08-12, which left an account that was already switched off when it was deleted from Plex
+  permanently unexplainable (no badge) AND unremovable (`DELETE /users/{id}` 409s on anyone not
+  departed). Deleted Home users hit this every time, because they are typically never enabled.
+- **Act** — switch them off and queue `user.cleanup` + a privacy pass. Still restricted to accounts
+  that were ENABLED, because they are the only ones with rows on Plex to take down.
+
+So the floor check is two ratios, and either one refuses the whole sweep. The enabled ratio guards the
+destructive half and stays measured against the enabled population — widening its denominator to
+everyone would let a partial read through on a server whose accounts are mostly switched off. The
+second covers marking, which writes nothing to Plex but UNLOCKS Remove, and Remove drops picks and run
+history for good. `owner` is excluded from both by TYPE rather than by id: `/api/users` never returns
+the account owning the server, so an owner row is off-roster by construction.
+
 ### Safe mode is per call site, not per client
 
 `SHORTLIST_DRY_RUN=1` makes `build_context` OR the flag into `ctx.config.dry_run` — but neither
