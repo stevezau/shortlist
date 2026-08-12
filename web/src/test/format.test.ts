@@ -13,6 +13,7 @@ import {
   settingString,
   timeAgo,
   timeFromCron,
+  weekStarting,
 } from "@/lib/format";
 
 describe("cronFromTime / timeFromCron", () => {
@@ -125,6 +126,41 @@ describe("setting narrowers", () => {
     expect(settingBool(settings, "bool")).toBe(true);
     expect(settingBool(settings, "str")).toBe(false);
     expect(settingBool(settings, "missing", true)).toBe(true);
+  });
+});
+
+describe("weekStarting", () => {
+  // Every expectation below was taken from SQLite itself, which is what cuts these buckets:
+  //   select strftime('%Y-%W', '2026-07-13')  ->  2026-28
+  // Asserted as day + month separately rather than as one string: `toLocaleDateString` orders them
+  // by the runner's locale ("13 Jul" here, "Jul 13" under en-US in CI), and the ORDER is not the
+  // thing under test.
+  const on = (week: string) => weekStarting(week);
+
+  it("names the Monday that starts a week bucket", () => {
+    // 2026's first Monday is 5 Jan (1 Jan is a Thursday), so week 01 starts there.
+    expect(on("2026-01")).toMatch(/\b5\b/);
+    expect(on("2026-01")).toMatch(/Jan/);
+    expect(on("2026-28")).toMatch(/\b13\b/);
+    expect(on("2026-28")).toMatch(/Jul/);
+    expect(on("2026-32")).toMatch(/\b10\b/);
+    expect(on("2026-32")).toMatch(/Aug/);
+  });
+
+  it("counts from each year's own first Monday, not a fixed offset", () => {
+    // 2025 starts on a Wednesday, so its first Monday is 6 Jan — a different offset to 2026's.
+    expect(on("2025-01")).toMatch(/\b6\b/);
+    expect(on("2025-01")).toMatch(/Jan/);
+  });
+
+  it("treats week 00 as the part-week before the first Monday", () => {
+    expect(on("2026-00")).toMatch(/\b1\b/);
+    expect(on("2026-00")).toMatch(/Jan/);
+  });
+
+  it("returns an unparseable bucket verbatim rather than guessing", () => {
+    expect(on("")).toBe("");
+    expect(on("not-a-week")).toBe("not-a-week");
   });
 });
 

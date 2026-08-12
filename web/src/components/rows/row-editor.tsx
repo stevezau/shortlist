@@ -1,5 +1,7 @@
+import { ListChecks } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
+import { Link } from "react-router";
 
 import { AudiencePicker } from "@/components/rows/audience-picker";
 import { GlobalDefaultToggle } from "@/components/rows/global-default-row";
@@ -10,6 +12,7 @@ import { RowScheduleField } from "@/components/rows/row-schedule-field";
 import { RowDestructiveActions } from "@/components/rows/row-destructive-actions";
 import { RowEffectivenessPanel } from "@/components/rows/row-effectiveness";
 import { RowPreview } from "@/components/rows/row-preview";
+import { RowRunAction } from "@/components/rows/row-run-action";
 import { SettingsGroup } from "@/components/rows/settings-group";
 import { RowShelfPlacement } from "@/components/rows/row-shelf-placement";
 import {
@@ -39,7 +42,7 @@ import {
   COLD_START_LABELS,
   COLD_STARTS,
 } from "@/lib/cold-start";
-import { blankInput, toInput } from "@/lib/collections";
+import { blankInput, hasUnsavedChanges, toInput } from "@/lib/collections";
 import {
   useCollectionEffectiveness,
   useLibraries,
@@ -302,6 +305,9 @@ export function RowEditor({
   const savedName = collection?.name_template || collection?.name || "";
   const [renameDraft, setRenameDraft] = useState(savedName);
   const renamePending = renameDraft.trim() !== savedName.trim();
+  // Drives only the note beside Run — Save is never gated on it, because a form that refuses to
+  // save what it thinks is unchanged is unfixable when the comparison is the thing that is wrong.
+  const unsaved = hasUnsavedChanges(input, collection);
 
   const set = (patch: Partial<CollectionInput>) =>
     setInput((prev) => ({ ...prev, ...patch }));
@@ -410,15 +416,46 @@ export function RowEditor({
     // permanently beside the setting they concern, and there is room for the preview panel that
     // turns each abstract setting into "here is what Sarah will see tonight".
     <div className="mx-auto w-full max-w-6xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">
-          {collection ? "Edit row" : "Add a row"}
-        </h1>
-        <p className="mt-1 text-muted-foreground">
-          A row is a strip of “Picked for You”-style recommendations on your
-          users’ Plex home screens.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+        <div>
+          <h1 className="text-2xl font-semibold">
+            {collection ? "Edit row" : "Add a row"}
+          </h1>
+          <p className="mt-1 text-muted-foreground">
+            A row is a strip of “Picked for You”-style recommendations on your
+            users’ Plex home screens.
+          </p>
+        </div>
+
+        {/* The two things you reach for repeatedly while tuning a row: rebuild it, and look at what
+            the last rebuild did. Both existed already — one behind a dialog on the Runs page that
+            made you re-pick the row you were editing, the other only on the Rows CARD, which this
+            page replaced. Neither was reachable from here at all.
+            Removing and deleting are deliberately NOT up here. They reach into other people's Plex
+            and are not undone by Cancel, so they stay fenced off at the bottom of the form rather
+            than sitting one pixel from "rebuild this row". */}
+        {collection && (
+          <div className="flex flex-wrap items-center gap-2">
+            <RowRunAction collection={collection} variant="outline" />
+            <Button asChild variant="outline" size="sm">
+              <Link to={`/runs?row=${encodeURIComponent(collection.slug)}`}>
+                <ListChecks aria-hidden="true" />
+                Runs
+              </Link>
+            </Button>
+          </div>
+        )}
       </div>
+
+      {/* Run rebuilds the row AS SAVED, which is a trap next to a form you have been editing —
+          nothing about the button says the changes on screen won't be in it. */}
+      {collection && unsaved && (
+        <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-foreground">
+          You have unsaved changes. Running now rebuilds this row as it was last
+          saved — press <strong>Save changes</strong> first if you want these
+          settings in it.
+        </p>
+      )}
 
       {/* Purely informational — nothing about the template is stored on the row, and every
           field it filled is editable below. It's here so a prefilled form doesn't read as

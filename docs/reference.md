@@ -186,7 +186,7 @@ GET  /api/runs?limit=&collection=&before_id= (newest first; `before_id` pages ba
 ### Requests
 
 ```
-GET  /api/requests?wanted_by=&wanted_by= (the inbox, pending first then sent then rejected, capped at 500 rows; `wanted_by` repeats one `wanters` username per value and keeps a title any of them wanted — applied BEFORE the cap, so picking a name searches the whole history rather than the 500 the page loaded; omitted = everyone) · GET /api/requests/status -> {request_id: "downloaded"|"downloading"|"queued"|"unmonitored"|null} (live Sonarr/Radarr status for WAITING and SENT items — rejected are skipped; null = neither app tracks it; fetched separately so the list itself makes no Arr calls, and read from whole-library maps so the cost doesn't scale with inbox size) · POST /api/requests/send {ids, dry_run?} · POST /api/requests/reject {ids} (permanent) · POST /api/requests/restore {ids} (un-reject → back to Waiting) · POST /api/requests/delete {ids} (removable; can re-surface) · POST /api/requests/clear {ids} (hide SENT items from the log without un-sending — the tombstone stays so the title isn't re-requested)
+GET  /api/requests?wanted_by=&wanted_by= (the inbox, pending first then sent then rejected, capped at 500 rows; `wanted_by` repeats one `wanters` username per value and keeps a title any of them wanted — applied BEFORE the cap, so picking a name searches the whole history rather than the 500 the page loaded; omitted = everyone) · GET /api/requests/status -> {statuses: {request_id: "downloaded"|"downloading"|"queued"|"unmonitored"|null}, radarr: "ok"|"unreachable"|"off", sonarr: same} (live Sonarr/Radarr status for WAITING and SENT items — rejected are skipped; null = the app is fine and doesn't track it, which is why `radarr`/`sonarr` report reachability separately: an app that never answered would otherwise be indistinguishable from one with nothing to say. Fetched separately so the list itself makes no Arr calls, and read from whole-library maps so the cost doesn't scale with inbox size — which is what makes the inbox's 10–30s poll cheap) · POST /api/requests/send {ids, dry_run?} · POST /api/requests/reject {ids} (permanent) · POST /api/requests/restore {ids} (un-reject → back to Waiting) · POST /api/requests/delete {ids} (removable; can re-surface) · POST /api/requests/clear {ids} (hide SENT items from the log without un-sending — the tombstone stays so the title isn't re-requested)
 ```
 
 ### Events and notifications
@@ -239,7 +239,7 @@ GET  /api/setup/servers (Plex server picker during onboarding) · GET /api/setup
 
 ### Support checks ("Have an issue?")
 
-Nineteen read-only diagnostics behind `/issue` in the UI. **Nothing here writes** — not to Plex, not
+Twenty-two read-only diagnostics behind `/issue` in the UI. **Nothing here writes** — not to Plex, not
 to plex.tv, not to the settings a run reads. The only mutations are the mode's own switch and the
 audit rows it leaves.
 

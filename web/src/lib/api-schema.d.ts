@@ -623,7 +623,7 @@ export interface paths {
         };
         /**
          * Get Arr Status
-         * @description Arr download status for every request row. Returns {request_id: 'downloaded' | 'downloading' | ...}.
+         * @description Arr download status for every request row, keyed by request id, plus per-app reachability.
          *
          *     Covers waiting rows as well as sent ones. A waiting title is normally absent from the Arrs — the
          *     nightly pass drops anything they already track — so a status there means the owner (or another
@@ -631,8 +631,8 @@ export interface paths {
          *     an answer. Rejected rows are skipped: nothing is going to happen to them.
          *
          *     Whole-library maps, not per-title lookups, so the cost is a handful of calls no matter how long
-         *     the inbox is. Runs in an executor since the Arr clients are sync. A title neither app tracks
-         *     appears as None.
+         *     the inbox is — which is what makes it cheap enough for the inbox to poll. Runs in an executor
+         *     since the Arr clients are sync. A title neither app tracks appears as None.
          */
         get: operations["get_arr_status_api_requests_status_get"];
         put?: never;
@@ -2468,6 +2468,33 @@ export interface components {
             quality_profiles: components["schemas"]["QualityProfileOut"][];
             /** Root Folders */
             root_folders: components["schemas"]["RootFolderOut"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ArrStatusOut
+         * @description Per-row download status, plus whether each app actually answered.
+         *
+         *     ``reach`` is the half this used to omit. A failed Arr lookup is swallowed on purpose (one app
+         *     being down must not blank the other), so an unreachable Radarr produced an all-``null`` map —
+         *     byte-identical to "Radarr is fine and tracks none of these". The inbox therefore showed no
+         *     badges, for ever, with nothing anywhere saying why.
+         */
+        ArrStatusOut: {
+            /**
+             * Radarr
+             * @enum {string}
+             */
+            radarr: "ok" | "unreachable" | "off";
+            /**
+             * Sonarr
+             * @enum {string}
+             */
+            sonarr: "ok" | "unreachable" | "off";
+            /** Statuses */
+            statuses: {
+                [key: string]: string | null;
+            };
         } & {
             [key: string]: unknown;
         };
@@ -5880,9 +5907,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string | null;
-                    };
+                    "application/json": components["schemas"]["ArrStatusOut"];
                 };
             };
         };

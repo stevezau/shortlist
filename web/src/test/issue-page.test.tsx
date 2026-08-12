@@ -33,6 +33,11 @@ const {
   supportPerson,
   getSupportBundle,
   supportSuggestions,
+  supportSurfaces,
+  supportJobs,
+  supportRowSchedule,
+  supportClocks,
+  supportTimeline,
 } = vi.hoisted(() => ({
   supportStatus: vi.fn(),
   enableSupport: vi.fn(),
@@ -44,6 +49,11 @@ const {
   supportPerson: vi.fn(),
   getSupportBundle: vi.fn(),
   supportSuggestions: vi.fn(),
+  supportSurfaces: vi.fn(),
+  supportJobs: vi.fn(),
+  supportRowSchedule: vi.fn(),
+  supportClocks: vi.fn(),
+  supportTimeline: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -63,6 +73,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
       supportReportZipUrl: () => "/api/support/report.zip",
       getSupportBundle: () => getSupportBundle(),
       supportSuggestions: () => supportSuggestions(),
+      supportSurfaces: () => supportSurfaces(),
+      supportJobs: () => supportJobs(),
+      supportRowSchedule: () => supportRowSchedule(),
+      supportClocks: () => supportClocks(),
+      supportTimeline: (user: string) => supportTimeline(user),
     },
   };
 });
@@ -136,6 +151,26 @@ beforeEach(() => {
   } satisfies SupportRows);
   supportLibraries.mockResolvedValue({ libraries: [], error: null, text: "l" });
   supportTitle.mockResolvedValue(TEACUP_BUG);
+  supportSurfaces.mockResolvedValue({
+    rows: [],
+    on_owner_home: [],
+    on_owner_shelf: [],
+    unlabelled: [],
+    owner_label: "shortlist_steve",
+    error: null,
+    text: "surfaces",
+  });
+  supportJobs.mockResolvedValue({ jobs: [], counts: {}, failed: 0, text: "j" });
+  supportRowSchedule.mockResolvedValue({ rows: [], text: "s" });
+  supportClocks.mockResolvedValue({
+    tz: "Australia/Sydney",
+    local_now: "2026-08-13T18:00:00+10:00",
+    utc_now: "2026-08-13T08:00:00Z",
+    offset_hours: 10,
+    scheduled: [{ kind: "sync.users", at: "2026-08-14T03:30:00+10:00" }],
+    text: "c",
+  });
+  supportTimeline.mockResolvedValue({ entries: [], text: "t" });
   supportSuggestions.mockResolvedValue({
     people: [
       { slug: "chris35352", display_name: "Chris", enabled: true },
@@ -305,12 +340,12 @@ describe("IssuePage — sending a long report", () => {
 });
 
 describe("IssuePage — every check is reachable", () => {
-  it("lists all nineteen checks behind one disclosure, not just the six shortcuts", async () => {
+  it("lists every check behind one disclosure, not just the seven shortcuts", async () => {
     // The six problem cards are the front door; the rest still have to be reachable, or building
     // them was pointless.
     renderPage();
     const toggle = await screen.findByRole("button", {
-      name: /show all 21 checks/i,
+      name: /show all 22 checks/i,
     });
     await userEvent.click(toggle);
 
@@ -555,7 +590,7 @@ describe("IssuePage — an opened check appears where you clicked", () => {
     // ABOVE that list — off-screen upward — so the click looked like it had done nothing at all.
     renderPage();
     await userEvent.click(
-      await screen.findByRole("button", { name: /show all 21 checks/i }),
+      await screen.findByRole("button", { name: /show all 22 checks/i }),
     );
     await userEvent.click(
       screen.getByRole("button", { name: /what did the ai do/i }),
@@ -566,7 +601,7 @@ describe("IssuePage — an opened check appears where you clicked", () => {
       level: 2,
     });
     const grid = screen.getByRole("button", {
-      name: /^hide all 21 checks$/i,
+      name: /^hide all 22 checks$/i,
     });
     // DOCUMENT_POSITION_FOLLOWING: the panel comes after the disclosure in document order.
     expect(
@@ -585,7 +620,7 @@ describe("IssuePage — an opened check appears where you clicked", () => {
       level: 2,
     });
     const disclosure = screen.getByRole("button", {
-      name: /show all 21 checks/i,
+      name: /show all 22 checks/i,
     });
     // The panel sits BEFORE the "show all" disclosure — i.e. next to the cards it was opened from.
     expect(
@@ -615,5 +650,222 @@ describe("IssuePage — an opened check appears where you clicked", () => {
         level: 2,
       }),
     ).toBeNull();
+  });
+});
+
+describe("IssuePage — a problem runs every check it promises", () => {
+  // Three of the seven cards were writing cheques one check couldn't cash: the blurb named the
+  // queue, the schedule AND the clocks, and the wiring opened the queue alone.
+  it("opens all three checks behind 'rows aren't updating at all'", async () => {
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /rows aren't updating at all/i }),
+    );
+
+    for (const heading of [
+      /is background work stuck/i,
+      /when does each row next rebuild/i,
+      /are the clocks right/i,
+    ]) {
+      expect(
+        await screen.findByRole("heading", { name: heading, level: 2 }),
+      ).toBeTruthy();
+    }
+  });
+
+  it("reaches the owner's own Home screen for a row-visibility question", async () => {
+    // `sharing` reads the share filters that hide a row from other people. The OWNER has no share
+    // filter (plex-safety rule 5), so nothing but the row's own promotion flag keeps someone
+    // else's row off their Home — and only `surfaces` can see that. It existed on the server for
+    // issue #75 and was wired to nothing, leaving this question answerable in half.
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /someone can see another person's row/i,
+      }),
+    );
+
+    expect(
+      await screen.findByRole("heading", {
+        name: /who can see whose rows/i,
+        level: 2,
+      }),
+    ).toBeTruthy();
+    expect(
+      await screen.findByRole("heading", {
+        name: /where is each row actually showing/i,
+        level: 2,
+      }),
+    ).toBeTruthy();
+  });
+
+  it("keeps earlier answers on screen when another check is opened", async () => {
+    // A bug report takes three or four answers. Opening the second used to destroy the first, so
+    // each had to be copied before moving on or it was gone.
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /show all 22 checks/i }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /which libraries can shortlist see/i }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /which setting actually applied/i }),
+    );
+
+    expect(
+      screen.getByRole("heading", {
+        name: /which libraries can shortlist see/i,
+        level: 2,
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("heading", {
+        name: /which setting actually applied/i,
+        level: 2,
+      }),
+    ).toBeTruthy();
+  });
+});
+
+describe("IssuePage — reporting without the checks switched on", () => {
+  it("still offers the GitHub link, and says how to attach diagnostics", async () => {
+    // The whole page used to render nothing below the toggle until Support Mode was on — including
+    // the report section. Someone who only wanted to file a bug was shown a lone switch and no way
+    // to report anything.
+    supportStatus.mockResolvedValue(OFF);
+    renderPage();
+
+    const link = await screen.findByRole("link", {
+      name: /report a bug on github/i,
+    });
+    expect(link.getAttribute("href")).toContain("github.com");
+    expect(screen.getByText(/switch the checks on above first/i)).toBeTruthy();
+    // The two buttons that read the GATED endpoints are absent rather than present and 403ing.
+    expect(screen.queryByRole("button", { name: /copy the summary/i })).toBeNull();
+  });
+});
+
+describe("IssuePage — every check states a verdict", () => {
+  // The page's own promise is that each check answers in a SENTENCE, because the operator can't
+  // read a table and the maintainer isn't there to read it for them. Ten of the checks had no
+  // verdict case at all and rendered only the raw copy blob.
+  it("says in words what the row settings check found", async () => {
+    supportRows.mockResolvedValue({
+      rows: [
+        { slug: "picked", enabled: true },
+        { slug: "faves", enabled: false },
+      ],
+      global_watched_pct: 0,
+      text: "rows",
+    });
+    renderPage();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /show all 22 checks/i }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /which setting actually applied/i }),
+    );
+
+    expect(await screen.findByText(/1 of 2 rows are on/i)).toBeTruthy();
+  });
+
+  it("flags a server where every row is switched off", async () => {
+    supportRows.mockResolvedValue({
+      rows: [{ slug: "picked", enabled: false }],
+      global_watched_pct: 0,
+      text: "rows",
+    });
+    renderPage();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /show all 22 checks/i }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /which setting actually applied/i }),
+    );
+
+    expect(
+      await screen.findByText(/all 1 rows are switched off/i),
+    ).toBeTruthy();
+  });
+});
+
+describe("IssuePage — the owner's own Home screen", () => {
+  it("calls someone else's row on the owner's Home a bug, in words", async () => {
+    // An INVARIANT, not a preference: no configuration makes that correct. This is the check the
+    // page's highest-stakes question needed and could not reach.
+    supportSurfaces.mockResolvedValue({
+      rows: [],
+      on_owner_home: [{ title: "✨ Picked for Sarah", label: "shortlist_sarah" }],
+      on_owner_shelf: [],
+      unlabelled: [],
+      owner_label: "shortlist_steve",
+      error: null,
+      text: "surfaces",
+    });
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /someone can see another person's row/i,
+      }),
+    );
+
+    expect(
+      await screen.findByText(/on your own Home screen/i),
+    ).toBeTruthy();
+    expect(screen.getByText(/No setting makes that correct/i)).toBeTruthy();
+  });
+
+  it("explains the Recommended shelf as a Plex limitation, not a fault", async () => {
+    // A CONSEQUENCE: the shelf is one flag per collection and the owner has no filter, so a row
+    // shown on friends' library shelves lands on the owner's too. The fix is a setting, not code —
+    // colouring it red would send someone hunting a bug that isn't there.
+    supportSurfaces.mockResolvedValue({
+      rows: [],
+      on_owner_home: [],
+      on_owner_shelf: [{ title: "✨ Picked for Sarah", label: "shortlist_sarah" }],
+      unlabelled: [],
+      owner_label: "shortlist_steve",
+      error: null,
+      text: "surfaces",
+    });
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /someone can see another person's row/i,
+      }),
+    );
+
+    expect(
+      await screen.findByText(/that is a Plex limitation/i),
+    ).toBeTruthy();
+  });
+});
+
+describe("IssuePage — the timeline can be narrowed to one person", () => {
+  it("runs without a name, and passes one when given", async () => {
+    // The server has always taken a person here; the page hardcoded "" and could never ask for one,
+    // so half the endpoint was unreachable.
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /show all 22 checks/i }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /what has been happening/i }),
+    );
+
+    // The button is live with the field empty — the whole-server timeline is the common case.
+    const run = screen.getByRole("button", { name: /^check$/i });
+    expect(run.hasAttribute("disabled")).toBe(false);
+    await userEvent.click(run);
+    await waitFor(() => expect(supportTimeline).toHaveBeenCalledWith(""));
+
+    await userEvent.type(screen.getByLabelText(/plex username/i), "chris35352");
+    await userEvent.click(screen.getByRole("button", { name: /^check$/i }));
+    await waitFor(() =>
+      expect(supportTimeline).toHaveBeenCalledWith("chris35352"),
+    );
   });
 });

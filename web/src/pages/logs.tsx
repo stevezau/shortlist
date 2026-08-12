@@ -136,15 +136,6 @@ export function LogsPage() {
         }
       />
 
-      {/* The file sink is opened at DEBUG whatever Settings → Advanced is set to, so this control
-          filters what is SHOWN, never what was recorded. Worth saying: the Advanced control is named
-          for the console, and people reasonably assume the two are the same knob. */}
-      <p className="mb-2 text-sm text-muted-foreground">
-        Everything down to DEBUG is always recorded. These buttons choose how
-        much of it to show &mdash; ERROR for just the failures, DEBUG for the
-        full narration of a run.
-      </p>
-
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <Segmented<Level>
           value={level}
@@ -199,12 +190,18 @@ export function LogsPage() {
                 <div ref={endRef} />
               </div>
             </div>
+            {/* The recording-vs-showing point lives HERE rather than in a paragraph above the
+                buttons. The file sink is opened at DEBUG whatever Settings → Advanced says (that
+                control is named for the console, and the two read as one knob), so the level
+                buttons filter what is shown and never what was kept — which is only worth saying
+                next to the line that already distinguishes this view from the download. */}
             <p className="text-xs text-muted-foreground">
               {page.truncated
                 ? `Showing the newest ${page.lines.length} of ${page.total_matched} matching lines`
                 : `${page.lines.length} ${page.lines.length === 1 ? "line" : "lines"}`}
-              {page.file ? ` · ${page.file}` : ""} · the full history is in the
-              download
+              {page.file ? ` · ${page.file}` : ""} · everything down to DEBUG is
+              recorded whatever level you pick &mdash; the full history is in
+              the download
             </p>
           </div>
         )}

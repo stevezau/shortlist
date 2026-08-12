@@ -48,6 +48,31 @@ export function formatDate(
   });
 }
 
+/**
+ * The Monday a `%Y-%W` week bucket starts on, as "6 Jul" — the trend chart's x-axis.
+ *
+ * `%W` (SQLite's, via `report_service`) counts from the year's FIRST MONDAY: week 01 begins there,
+ * and the days before it are week 00. The buckets are cut in UTC while this renders in the reader's
+ * own calendar, so at a timezone boundary a label can sit a day off the bucket's true edge — it is
+ * a "week commencing" caption, not a timestamp. An unparseable bucket is returned verbatim rather
+ * than guessed at.
+ */
+export function weekStarting(week: string): string {
+  const match = /^(\d{4})-(\d{1,2})$/.exec(week);
+  if (!match) return week;
+  const year = Number(match[1]);
+  const index = Number(match[2]);
+  // Sunday is 0 in JS, so `(8 - day) % 7` is the distance to the first Monday from any start day.
+  const toFirstMonday = (8 - new Date(year, 0, 1).getDay()) % 7;
+  // Built from date COMPONENTS, not by adding milliseconds: a week that spans a DST change is 23 or
+  // 25 hours long, and arithmetic on the epoch drifts the label onto the wrong day twice a year.
+  const dayOfYear = index === 0 ? 1 : 1 + toFirstMonday + (index - 1) * 7;
+  return new Date(year, 0, dayOfYear).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+  });
+}
+
 /** Bytes → "512 B" / "48 KB" / "1.2 MB", for a backup file listing. */
 export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

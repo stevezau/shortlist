@@ -216,7 +216,11 @@ export function useRunUserTrace(runId: number, userId: number, enabled = true) {
 
 /** A SHARED row's trace. Same response shape as a user's — a shared row runs the same pipeline
  *  minus the per-person history stage — so one view renders both. */
-export function useRunSharedRowTrace(runId: number, slug: string, enabled = true) {
+export function useRunSharedRowTrace(
+  runId: number,
+  slug: string,
+  enabled = true,
+) {
   return useQuery({
     queryKey: queryKeys.runSharedRowTrace(runId, slug),
     queryFn: () => api.getRunSharedRowTrace(runId, slug),
@@ -564,11 +568,34 @@ export function useRequests(wantedBy: string[] = []) {
   });
 }
 
+/** Statuses a title is still moving through — the ones worth watching for a change. */
+const ARR_IN_FLIGHT = new Set(["queued", "downloading"]);
+
+/**
+ * Live Sonarr/Radarr state for the inbox's badges.
+ *
+ * It POLLS. It used to fetch once on mount with a 30s `staleTime` and no interval, so a title that
+ * finished downloading while you watched the page went on reading "Searching" until you reloaded —
+ * which is exactly the "it takes ages to say Downloaded" the inbox was reported for. Nothing
+ * invalidated this key either, so a title you had just sent showed no status at all.
+ *
+ * Fast while something is moving, slow when nothing is — never off. A settled inbox still checks,
+ * because the Arrs are changed by things other than this app (a manual add, a completed grab), and
+ * a page that only refreshes on reload cannot show that. The endpoint reads whole-library maps —
+ * one call per app whatever the inbox holds (`requests.get_arr_status`) — which is what makes even
+ * the fast pace cheap. React Query holds the interval to mounted components and pauses it while the
+ * tab is hidden, so this costs nothing when the page isn't open.
+ */
 export function useArrStatus() {
   return useQuery({
     queryKey: queryKeys.arrStatus,
     queryFn: api.getArrStatus,
-    staleTime: 30_000, // status changes slowly, cache 30s
+    refetchInterval: (query) =>
+      Object.values(query.state.data?.statuses ?? {}).some(
+        (status) => status && ARR_IN_FLIGHT.has(status),
+      )
+        ? 10_000
+        : 30_000,
   });
 }
 
@@ -636,8 +663,13 @@ export function useSendRequests() {
   return useMutation({
     mutationFn: ({ ids, dryRun }: { ids: number[]; dryRun?: boolean }) =>
       api.sendRequests(ids, dryRun ?? false),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: queryKeys.requests }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.requests });
+      // The moment anything is worth asking the Arrs about is the moment you sent them something.
+      // Nothing invalidated this key at all before, so a title you had just sent sat with no badge
+      // until the next poll came round — or, with no poll, until a reload.
+      queryClient.invalidateQueries({ queryKey: queryKeys.arrStatus });
+    },
   });
 }
 

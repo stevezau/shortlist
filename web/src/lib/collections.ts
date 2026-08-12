@@ -95,6 +95,43 @@ export function toInput(collection: Collection): CollectionInput {
   };
 }
 
+/** Value equality over the JSON the editor form holds — objects, arrays and primitives. */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((item, i) => sameValue(item, b[i]));
+  }
+  if (
+    typeof a === "object" &&
+    typeof b === "object" &&
+    a !== null &&
+    b !== null
+  ) {
+    const left = a as Record<string, unknown>;
+    const right = b as Record<string, unknown>;
+    const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+    return [...keys].every((key) => sameValue(left[key], right[key]));
+  }
+  return false;
+}
+
+/**
+ * Does the editor form differ from the row as last saved?
+ *
+ * Compared by VALUE, not by `JSON.stringify`. Every field goes through nested objects (`poster`,
+ * `hub_anchor`) that the form rebuilds wholesale as you edit, and stringify is sensitive to the key
+ * order those rebuilds happen to produce — which would report a row as edited for having been
+ * looked at. This drives the editor's "you have unsaved changes" note beside Run, where a false
+ * positive is a warning about nothing.
+ */
+export function hasUnsavedChanges(
+  input: CollectionInput,
+  collection: Collection | null,
+): boolean {
+  if (!collection) return false; // an unsaved new row has nothing to differ from
+  return !sameValue(input, toInput(collection));
+}
+
 /** One-line "who sees this row" summary for a row card. */
 export function audienceSummary(collection: Collection, users: User[]): string {
   if (collection.audience === "everyone") return "Everyone";

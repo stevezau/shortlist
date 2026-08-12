@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router";
-import { describe, expect, it, vi } from "vitest";
+import { MemoryRouter, Route, Routes } from "react-router";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RowCard } from "@/components/rows/row-card";
 import type { Collection, User } from "@/lib/types";
@@ -10,6 +10,7 @@ import type { Collection, User } from "@/lib/types";
 const updateCollection = vi.fn((_id: number, _body: unknown) =>
   Promise.resolve({}),
 );
+const startRun = vi.fn((_body: unknown) => Promise.resolve({ run_id: 42 }));
 
 vi.mock("@/lib/api", () => ({
   apiErrorMessage: (_error: unknown, fallback: string) => fallback,
@@ -22,6 +23,7 @@ vi.mock("@/lib/api", () => ({
         { key: "2", title: "4K Movies", type: "movie" },
       ]),
     updateCollection: (id: number, body: unknown) => updateCollection(id, body),
+    startRun: (body: unknown) => startRun(body),
   },
 }));
 
@@ -61,13 +63,56 @@ function renderCard(value: Collection) {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <RowCard collection={value} users={USERS} onEdit={() => {}} />
+        {/* A real route table, so "Run lands you on the run it started" is asserted as navigation
+            rather than as a mocked callback that could point anywhere. */}
+        <Routes>
+          <Route
+            path="/"
+            element={
+              <RowCard collection={value} users={USERS} onEdit={() => {}} />
+            }
+          />
+          <Route path="/runs/:id" element={<p>run detail</p>} />
+        </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
 describe("RowCard", () => {
+  beforeEach(() => {
+    startRun.mockClear();
+    updateCollection.mockClear();
+  });
+
+  it("runs just this row, and lands on the run it started", async () => {
+    // `collection_ids` has always been part of POST /api/runs; the only way to reach it was the
+    // "Run selected rows…" dialog on the Runs page, where you re-picked the row you were looking at.
+    renderCard(collection());
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Run Hidden Gems now/i }),
+    );
+
+    // The ids are the whole contract of this button — asserting only that a run started would pass
+    // just as happily for "rebuild every row on the server".
+    expect(startRun).toHaveBeenCalledWith({ collection_ids: [1] });
+    expect(await screen.findByText("run detail")).toBeInTheDocument();
+  });
+
+  it("won't run a row that is switched off", async () => {
+    // A run SKIPS a disabled row and then takes it off Plex, so "Run" there does the opposite of
+    // what the word promises.
+    renderCard(collection({ enabled: false }));
+
+    const run = await screen.findByRole("button", {
+      name: /Run Hidden Gems now/i,
+    });
+    expect(run).toBeDisabled();
+    await userEvent.click(run, { pointerEventsCheck: 0 });
+    expect(startRun).not.toHaveBeenCalled();
+  });
+
   it("offers Delete on the default row, same as every other row", async () => {
     // The default row used to hide this button, so the first card in the list lacked the control
     // every card below it had, with nothing on screen explaining why. Disabling it is still the
@@ -140,7 +185,9 @@ describe("RowCard", () => {
 
     await user.click(screen.getByRole("button", { name: /Turn it off/i }));
     await waitFor(() => expect(updateCollection).toHaveBeenCalledTimes(1));
-    expect(updateCollection.mock.calls[0]?.[1]).toMatchObject({ enabled: false });
+    expect(updateCollection.mock.calls[0]?.[1]).toMatchObject({
+      enabled: false,
+    });
   });
 
   it("keeps the row on if you back out of the confirmation", async () => {
@@ -162,7 +209,9 @@ describe("RowCard", () => {
     await user.click(await screen.findByRole("switch"));
 
     await waitFor(() => expect(updateCollection).toHaveBeenCalledTimes(1));
-    expect(updateCollection.mock.calls[0]?.[1]).toMatchObject({ enabled: true });
+    expect(updateCollection.mock.calls[0]?.[1]).toMatchObject({
+      enabled: true,
+    });
   });
 
   it("does not offer Rename — that lives in the editor, beside the name it changes", () => {

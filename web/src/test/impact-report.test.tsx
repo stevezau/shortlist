@@ -343,6 +343,34 @@ describe("ImpactReport", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("reads out a week's count on hover, and names the latest one before you hover anything", async () => {
+    // The count used to hang off a native `title` on the BAR, so a quiet week's target was a ~3px
+    // sliver at the bottom of an 80px box and most of the column hit nothing at all.
+    getReport.mockResolvedValue({
+      ...REPORT,
+      trend: [
+        { week: "2026-27", watched: 9 },
+        { week: "2026-28", watched: 2 },
+        { week: "2026-32", watched: 5 },
+      ],
+    });
+    renderReport();
+
+    // Nothing hovered: the readout names the LATEST week, so a touch screen — which has no hover to
+    // give — still gets a number rather than a blank line.
+    const readout = await screen.findByText(/watched in the week of/i);
+    expect(readout).toHaveTextContent(/5/);
+    expect(readout).toHaveTextContent(/latest/i);
+
+    // The whole column is the target, including the empty space above a two-watch bar.
+    const columns = screen.getAllByTestId("trend-week");
+    expect(columns).toHaveLength(3);
+    await userEvent.hover(columns[1] as HTMLElement);
+    expect(readout).toHaveTextContent(/2/);
+    expect(readout).toHaveTextContent(/Jul/);
+    expect(readout).not.toHaveTextContent(/latest/i);
+  });
+
   it("shows a count and a way to see active watchers past the first 10, instead of silently hiding them", async () => {
     // Issue 7.3: `active.slice(0, 10)` used to just drop everyone past the tenth, with no count and
     // no way to see them — unlike the IDLE half of this same list, which already got a disclosure.
@@ -360,9 +388,11 @@ describe("ImpactReport", () => {
     // The 11th and 12th are not silently dropped...
     expect(screen.queryByText("user10")).toBeNull();
     expect(screen.queryByText("user11")).toBeNull();
-    // ...they're named and offered, the same way idle people already were.
+    // ...they're named and offered, the same way idle people already were. The label is POSITIONAL
+    // ("show 2 more"), not a second claim — "2 more people watched something" reused the section's
+    // own verb and read as a separate finding rather than the tail of the list above it.
     const toggle = screen.getByRole("button", {
-      name: /2 more people watched something/i,
+      name: /Show 2 more people/i,
     });
     await userEvent.click(toggle);
     expect(screen.getByText("user10")).toBeInTheDocument();
@@ -537,5 +567,63 @@ describe("the window selector on a young install", () => {
 
     await screen.findByText("Watched");
     expect(screen.queryByText(/only been recording since/i)).toBeNull();
+  });
+});
+
+describe("ImpactReport — recently watched", () => {
+  beforeEach(() => {
+    getReport.mockReset();
+    syncWatched.mockClear();
+    getDeletedRows.mockResolvedValue([]);
+  });
+
+  it("caps the list and offers the rest, instead of dropping them silently", async () => {
+    // The server sends up to 20 (`report_service._recent_watches`) and the page sliced to 12, so
+    // eight were dropped with no count and no disclosure — a bounded feed reading as a full history.
+    const many = Array.from({ length: 20 }, (_, i) => ({
+      username: `user${i}`,
+      display_name: `User ${i}`,
+      title: `Title ${i}`,
+      media_type: "movie" as const,
+      row: "✨ Picked for You",
+      library: "Movies",
+      seed_title: "Arrival",
+      watched_at: new Date(Date.now() - i * 3600_000).toISOString(),
+    }));
+    getReport.mockResolvedValue({ ...REPORT, recent: many });
+    renderReport();
+
+    expect(await screen.findByText("Title 0")).toBeInTheDocument();
+    expect(screen.getByText("Title 11")).toBeInTheDocument();
+    // The 13th onwards are folded, not discarded...
+    expect(screen.queryByText("Title 12")).toBeNull();
+    expect(screen.queryByText("Title 19")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: /Show 8 more/i }));
+
+    expect(screen.getByText("Title 12")).toBeInTheDocument();
+    expect(screen.getByText("Title 19")).toBeInTheDocument();
+  });
+
+  it("says how many watches the feed holds, so it doesn't read as everything", async () => {
+    getReport.mockResolvedValue({
+      ...REPORT,
+      recent: [
+        {
+          username: "sarah",
+          display_name: "Sarah",
+          title: "Dune",
+          media_type: "movie" as const,
+          row: "✨ Picked for You",
+          library: "Movies",
+          seed_title: "Arrival",
+          watched_at: new Date().toISOString(),
+        },
+      ],
+    });
+    renderReport();
+
+    expect(await screen.findByText(/newest watch/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Show .* more/i })).toBeNull();
   });
 });

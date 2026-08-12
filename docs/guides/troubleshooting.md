@@ -7,7 +7,7 @@ nav_order: 7
 
 ## Start here: "Have an issue?"
 
-Before working through the list below, open **Have an issue?** in the sidebar. It runs twenty-one
+Before working through the list below, open **Have an issue?** in the sidebar. It runs twenty-two
 read-only checks against your own server and, for most of these problems, tells you the answer
 outright — which library refused someone's token, which setting actually applied, why a row is
 short, whether Plex matches what Shortlist thinks it delivered.
@@ -18,9 +18,14 @@ Three things worth knowing:
 
 - **The checks are off until you switch them on**, and they switch themselves off after 24 hours.
   They read share filters and per-user tokens, so they stay closed on an install that isn't
-  currently debugging something.
+  currently debugging something. Filing a bug does not need them on — only attaching the
+  diagnostics does.
+- **Pick the problem, not the check.** Each card at the top runs every check that question needs,
+  and several answers stack up on the page rather than replacing each other, so you can copy them
+  all into one report.
 - **Every check has a "Copy for support" button.** What it copies is shown on screen first, so
-  there is nothing to be surprised by after pasting.
+  there is nothing to be surprised by after pasting. A check that fails to run offers its failure
+  to copy instead.
 - **The last section files the report.** It opens a pre-filled GitHub issue and gives you the full
   diagnostic to attach — as a paste, or as a file when a chat app would truncate it.
 
