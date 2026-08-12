@@ -58,6 +58,16 @@ All notable changes to this project are documented here. This project follows
 
 ### Fixed
 
+- **A failed run no longer clears the "can see other people's rows" alert.** The alert and the
+  **Sees N rows of others'** badges are driven by the most recent run that actually checked — but
+  every run recorded itself as having checked, including one that died before it got anywhere near
+  the check. So a single failed run silently removed the alert, zeroed every badge and switched the
+  person's page to its reassuring wording, while the exposure itself was untouched. Runs now record
+  whether they got as far as looking, and only a run that did can clear a finding. The same silence
+  in two other places is fixed with it: an account whose token could not be obtained was counted as
+  seeing nothing rather than as unchecked, and the badge suggested turning the person off — which
+  removes their own row, not their view of everyone else's, as the rest of the feature already said.
+
 - **Rows promoted nowhere are no longer shuffled around the shelf.** A row belonging to a paused or
   disabled person sits on no surface at all, so its position is invisible to everyone — but it is
   still listed among the managed hubs, and every ordering pass moved it back into place. That was
