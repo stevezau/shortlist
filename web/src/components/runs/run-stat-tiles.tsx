@@ -1,6 +1,7 @@
 import {
   Clock,
   Download,
+  Layers,
   Search,
   Shuffle,
   Sparkles,
@@ -24,6 +25,27 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
   const tokens = s.llm_tokens ?? 0;
   const exa = s.exa_searches ?? 0;
   const exaCacheHits = s.exa_cache_hits ?? 0;
+  // Shared rows belong to nobody, so the people counters cannot see them — and a run whose only
+  // work was a shared row therefore reported "0 · 46 skipped, built nothing" directly above the row
+  // that had just placed 40 picks. Rows built is the honest headline for what a run DID.
+  const sharedRows = run.shared_rows ?? [];
+  const sharedBuilt = sharedRows.filter((row) => row.status === "ok").length;
+  const perPersonRows = new Set<string>();
+  for (const user of run.users) {
+    for (const [slug, decision] of Object.entries(user.rows_considered ?? {})) {
+      if (decision === "due") perPersonRows.add(slug);
+    }
+    for (const entry of user.breakdown ?? []) {
+      if (entry.row_slug) perPersonRows.add(entry.row_slug);
+    }
+  }
+  const rowsBuilt = perPersonRows.size + sharedBuilt;
+  const rowsHint = [
+    perPersonRows.size > 0 ? `${perPersonRows.size} per-person` : "",
+    sharedBuilt > 0 ? `${sharedBuilt} shared` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
   // "web search 467,463 · final picks 52,625 tokens" — the trailing unit makes clear these are token
   // counts, not the (separate) Exa search count shown in its own tile below.
   const stepInline = tokenStepBreakdown(s.llm_tokens_by_step);
@@ -32,13 +54,13 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
   // something that failed to load. Full class strings — Tailwind cannot see an interpolated one.
   const showTokens = tokens > 0;
   const showExa = exa > 0 || exaCacheHits > 0;
-  const tiles = 4 + (showTokens ? 1 : 0) + (showExa ? 1 : 0);
+  const tiles = 5 + (showTokens ? 1 : 0) + (showExa ? 1 : 0);
   const columns =
-    tiles === 6
-      ? "sm:grid-cols-3 lg:grid-cols-6"
-      : tiles === 5
-        ? "sm:grid-cols-3 lg:grid-cols-5"
-        : "sm:grid-cols-2 lg:grid-cols-4";
+    tiles === 7
+      ? "sm:grid-cols-3 lg:grid-cols-7"
+      : tiles === 6
+        ? "sm:grid-cols-3 lg:grid-cols-6"
+        : "sm:grid-cols-3 lg:grid-cols-5";
   return (
     <div className={`grid grid-cols-2 gap-3 ${columns}`}>
       <StatTile
@@ -48,6 +70,13 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
         hint="start → finish"
       />
       <StatTile
+        icon={Layers}
+        label="Rows built"
+        value={rowsBuilt}
+        hint={rowsHint || "nothing was due"}
+        tone={rowsBuilt > 0 ? "success" : undefined}
+      />
+      <StatTile
         icon={Users}
         label="People"
         value={s.users_ok ?? 0}
@@ -55,7 +84,12 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
           failed > 0
             ? `${failed} failed${skipped > 0 ? `, ${skipped} skipped` : ""}`
             : skipped > 0
-              ? `${skipped} skipped, built nothing`
+              ? // Only a WARNING when the run built nothing at all. A shared-row run skips every
+                // person by design, and flagging that amber said "something went wrong" about the
+                // normal outcome of the thing the operator asked for.
+                sharedBuilt > 0
+                ? `${skipped} skipped — no per-person row was due`
+                : `${skipped} skipped, built nothing`
               : // Everyone can succeed while the RUN fails (a refused share filter belongs to no
                 // person) — "all succeeded" under a "Failed" badge is how that looked before.
                 run.status === "error"
@@ -65,15 +99,17 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
         tone={
           failed > 0
             ? "destructive"
-            : skipped > 0 || run.status === "error"
+            : (skipped > 0 && sharedBuilt === 0) || run.status === "error"
               ? "warning"
-              : "success"
+              : skipped > 0
+                ? undefined
+                : "success"
         }
       />
       <StatTile
         icon={Shuffle}
         label="Titles changed"
-        value={`+${s.titles_added ?? 0}/−${s.titles_removed ?? 0}`}
+        value={`+${s.titles_added ?? 0} / −${s.titles_removed ?? 0}`}
         hint="added / rotated out"
       />
       <StatTile

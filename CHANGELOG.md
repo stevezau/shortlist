@@ -8,14 +8,20 @@ All notable changes to this project are documented here. This project follows
 
 ### Added
 
-- **Runs are now shown by row, not by person.** A run's unit of work is a row, but the run page listed
-  people — so a **shared row**, which is built once for the whole server and belongs to nobody, had
+- **Runs are now shown by row, not by person.** A run's unit of work is a row, but the run page
+  listed people — so a **shared row**, built once for the whole server and belonging to nobody, had
   nowhere to appear at all. On a night when no per-person row was due, the page was 46 lines of
-  "skipped" with the run's only real output — a shared row of 40 picks — nowhere on screen. Runs open
-  on a **Rows** tab listing every row the run touched: per-person rows expand to the people under
-  them, each saying whether their row was built, not due, muted, or not theirs; shared rows sit
-  alongside as peers with their own picks, diff and **Trace**. The People tab is still there for
-  reading one person's picks and errors.
+  "skipped" with the run's only real output, a shared row of 40 picks, nowhere on screen.
+
+  Runs now open on a **Rows** tab showing the rows that run actually built. Each row expands to what
+  it produced: a per-person row puts a person picker in front of the picks, a shared row shows them
+  directly, and that is the only difference between the two kinds. Rows the run didn't touch are one
+  quiet line at the bottom rather than a card each, so a run of one row looks like a run of one row.
+
+  A row is named once, by its own name, with the libraries it delivered to beside it — a row that
+  builds both Movies and TV Shows reads "✨ Picked for You · Movies · TV Shows" instead of taking one
+  library's title and hiding the other. The People tab is still there for reading everything one
+  person got across every row.
 
 - **Shared rows have a trace.** The same view a per-person row has always had, minus the per-person
   watch history a shared row doesn't use — so "why did it pick that" is answerable for a shared row

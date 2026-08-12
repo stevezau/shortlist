@@ -204,7 +204,7 @@ describe("RunDetailPage — grouped by library", () => {
     expect(screen.getByText("6m 0s")).toBeInTheDocument();
     expect(screen.getByText("People")).toBeInTheDocument();
     expect(screen.getByText("1 failed")).toBeInTheDocument(); // 1 of the 3 users errored
-    expect(screen.getByText("+5/−3")).toBeInTheDocument();
+    expect(screen.getByText("+5 / −3")).toBeInTheDocument();
     expect(screen.getByText("377,428")).toBeInTheDocument();
     expect(screen.getByText(/final picks 251,295/)).toBeInTheDocument();
     expect(screen.getByText("Web searches")).toBeInTheDocument();
