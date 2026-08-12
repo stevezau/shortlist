@@ -783,3 +783,30 @@ describe("TraceView — why a title won or lost", () => {
     expect(screen.queryByText(/age ×/)).not.toBeInTheDocument();
   });
 });
+
+describe("TraceView for a shared row", () => {
+  // A shared row belongs to nobody, so every "they / their" in this view is wrong for it — and it
+  // records no per-person history stage at all, by design.
+  const sharedData = {
+    username: "👥 Popular Movies on SFLIX",
+    display_name: "👥 Popular Movies on SFLIX",
+    status: "ok",
+    error: null,
+    reason: null,
+    requests: {},
+    trace: { gathers: [{ library: "Movies", media: "movie", sources: [] }] },
+    breakdown: [],
+  } as unknown as RunUserTraceResponse;
+
+  it("drops the person framing and names the row as the run page does", () => {
+    render(
+      <TraceView data={sharedData} rowName="👥 Popular on SFLIX" sharedRow />,
+    );
+
+    expect(
+      screen.getByText(/How we picked for 👥 Popular on SFLIX/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/for this shared row/i)).toBeInTheDocument();
+    expect(screen.queryByText(/for this person/i)).not.toBeInTheDocument();
+  });
+});
