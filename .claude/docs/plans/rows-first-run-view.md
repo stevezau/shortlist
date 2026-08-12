@@ -107,3 +107,33 @@ value and by their own status. Shared rows come straight from `shared_rows`.
 - Adds an Alembic migration and changes a Plex-adjacent audit path → **Architecture Review is
   mandatory** before the commit lands (`.claude/CLAUDE.md`, Conventions).
 - Full `pytest`, `pnpm test`, `pnpm build`, and `-m e2e` before committing.
+
+## Open defects (found on live runs 43–45, 2026-08-13)
+
+All three are the same shape as the ones this plan already fixed: the UI stating something the
+engine no longer does. Fix in this order.
+
+1. **A shared row records no trace at all.** `_shared_row`'s trace was populated by
+   `_record_gather` — the search stage — and the popularity rework deleted the search. Live: run 42
+   trace 98,998 bytes, runs 43/44 trace `2` (`{}`). `has_trace` is therefore false and the Trace
+   button correctly hides, so the shared-row trace built earlier the same day is gone. A popularity
+   row SHOULD trace, and every input already exists in the function: the watcher counts, the floor
+   (`threshold`), which titles cleared it, which were dropped for not being in the target library,
+   and which `blocked_shared_seeds` removed. Write that into `user_report.trace` and give the trace
+   page a branch that renders a ranking rather than a search.
+
+2. **A RUNNING run renders "This run built no rows".** `groupRunByRow` scopes to rows with a `due`
+   decision or a delivery, and mid-run nothing is persisted — so a live run hits the empty state,
+   which then explains itself with "Runs from before this view existed", a confidently wrong reason
+   for a run that started seconds ago. The empty state needs to split three ways: still running
+   (say what it is doing — the phase line already exists), genuinely built nothing, and legacy.
+   Consider defaulting a live run to the People tab, which populates as each person finishes.
+
+3. **Confirm the shared row's library tabs.** `run_shared_rows.breakdown` has 2 entries on runs 43–45
+   so the tab strip should render, but a live page showed the pre-tabs copy — most likely a stale JS
+   bundle. Hard-refresh first; only investigate if it still stacks.
+
+**Why these were missed:** each was found by the owner looking at a screen, not by the suite. The
+tests assert what the components do with fixtures; none of them exercise a run that is still
+running, and none asserted that a trace still EXISTS after the engine changed. A test that a shared
+row's trace is non-empty would have caught #1 the moment it was introduced.
