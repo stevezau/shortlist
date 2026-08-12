@@ -655,10 +655,23 @@ export function RowEditor({
               }
             />
 
-            <RowSourcesField
-              value={input.candidate_sources}
-              onChange={(candidate_sources) => set({ candidate_sources })}
-            />
+            {isSharedRow ? (
+              // A shared row IS the count: the titles the most people on this server have watched,
+              // most watched first. There is no search to configure — no sources, no seed budget, no
+              // AI — so these controls were inert the moment the row became a straight tally, and a
+              // control the engine ignores is worse than none: it promises a behaviour.
+              <p className="text-sm text-muted-foreground">
+                A shared row is simply your server’s most-watched titles, most
+                watched first — so there is nothing to choose about where its
+                picks come from. Set how many people must have watched a title
+                below, and pick its libraries above.
+              </p>
+            ) : (
+              <RowSourcesField
+                value={input.candidate_sources}
+                onChange={(candidate_sources) => set({ candidate_sources })}
+              />
+            )}
 
             {/* Hidden for a shared row, like the request tag below. `_shared_row` never calls
                 `_apply_watched_cap` or `_prefer_watched` — and more to the point, "how much of this
@@ -815,7 +828,7 @@ export function RowEditor({
               </InheritableField>
             )}
 
-            {usesWebSearch && (
+            {usesWebSearch && !isSharedRow && (
               <InheritableField
                 label={RECENT_COUNT_LABEL}
                 description={`AI web search looks up one watch at a time — “what to watch if you liked X”. This is how many of their most recent watches it asks about: the front slice of the same list “${MAX_SEEDS_LABEL}” sets. More gives wider results and takes more searches. It changes nothing for the other sources.`}
@@ -836,69 +849,71 @@ export function RowEditor({
               </InheritableField>
             )}
 
-            <InheritableField
-              label={MAX_SEEDS_LABEL}
-              description={
-                <>
-                  How many recent watches this row is built from. Every source
-                  works from these. A high number blends their whole recent
-                  viewing, which suits a general &ldquo;Picked for you&rdquo;
-                  row. A low number makes the row about one or two specific
-                  things they watched.
-                </>
-              }
-              ariaLabel="Use the default number of watches every source builds from"
-              inheriting={input.max_seeds === null}
-              globalValue={maxSeedsGlobal(settings.data)}
-              // Turning this OFF seeds the NAMED-row value (1 or 2), not the global — someone
-              // reaching for this control almost always wants a row about one specific watch, and
-              // the global is one switch-flip away again.
-              //
-              // Turning it ON also drops the cycle back to 1. The cycle control only renders for a
-              // 1..2-seed row, so leaving the window set here would hide it while the engine went on
-              // cycling the row AND forcing it to nightly rebuilds, with nothing in the editor to
-              // explain it or undo it.
-              onToggle={(on) =>
-                set(
-                  on
-                    ? { max_seeds: null, seed_window: 1 }
-                    : { max_seeds: namedRowSeeds(input.media) },
-                )
-              }
-              // The advice has to read the CURRENT value, not assume the global. Static copy told
-              // someone already sitting on 1 that their row "fills itself from the other 29", which
-              // is only true while it inherits the 30-watch default — so the one hint meant to make
-              // this setting clear was describing a row they didn't have.
-              before={
-                namesASeed && (
-                  <p
-                    role={seedBudgetMismatch ? "status" : undefined}
-                    className={
-                      seedBudgetMismatch
-                        ? "rounded-md border border-warning/40 bg-warning/5 p-3 text-sm"
-                        : "rounded-md bg-muted/60 p-3 text-sm text-muted-foreground"
-                    }
-                  >
-                    {seedAdvice(input.max_seeds, input.media)}
-                  </p>
-                )
-              }
-            >
-              <MaxSeedsField
-                label=""
-                value={input.max_seeds ?? 0}
-                // Typing a wider budget hides the cycle control too, so it has to reset the window
-                // for the same reason the inherit toggle above does — otherwise the row keeps
-                // cycling with no way to see or stop it.
-                onChange={(next) =>
+            {!isSharedRow && (
+              <InheritableField
+                label={MAX_SEEDS_LABEL}
+                description={
+                  <>
+                    How many recent watches this row is built from. Every source
+                    works from these. A high number blends their whole recent
+                    viewing, which suits a general &ldquo;Picked for you&rdquo;
+                    row. A low number makes the row about one or two specific
+                    things they watched.
+                  </>
+                }
+                ariaLabel="Use the default number of watches every source builds from"
+                inheriting={input.max_seeds === null}
+                globalValue={maxSeedsGlobal(settings.data)}
+                // Turning this OFF seeds the NAMED-row value (1 or 2), not the global — someone
+                // reaching for this control almost always wants a row about one specific watch, and
+                // the global is one switch-flip away again.
+                //
+                // Turning it ON also drops the cycle back to 1. The cycle control only renders for a
+                // 1..2-seed row, so leaving the window set here would hide it while the engine went on
+                // cycling the row AND forcing it to nightly rebuilds, with nothing in the editor to
+                // explain it or undo it.
+                onToggle={(on) =>
                   set(
-                    next > 2
-                      ? { max_seeds: next, seed_window: 1 }
-                      : { max_seeds: next },
+                    on
+                      ? { max_seeds: null, seed_window: 1 }
+                      : { max_seeds: namedRowSeeds(input.media) },
                   )
                 }
-              />
-            </InheritableField>
+                // The advice has to read the CURRENT value, not assume the global. Static copy told
+                // someone already sitting on 1 that their row "fills itself from the other 29", which
+                // is only true while it inherits the 30-watch default — so the one hint meant to make
+                // this setting clear was describing a row they didn't have.
+                before={
+                  namesASeed && (
+                    <p
+                      role={seedBudgetMismatch ? "status" : undefined}
+                      className={
+                        seedBudgetMismatch
+                          ? "rounded-md border border-warning/40 bg-warning/5 p-3 text-sm"
+                          : "rounded-md bg-muted/60 p-3 text-sm text-muted-foreground"
+                      }
+                    >
+                      {seedAdvice(input.max_seeds, input.media)}
+                    </p>
+                  )
+                }
+              >
+                <MaxSeedsField
+                  label=""
+                  value={input.max_seeds ?? 0}
+                  // Typing a wider budget hides the cycle control too, so it has to reset the window
+                  // for the same reason the inherit toggle above does — otherwise the row keeps
+                  // cycling with no way to see or stop it.
+                  onChange={(next) =>
+                    set(
+                      next > 2
+                        ? { max_seeds: next, seed_window: 1 }
+                        : { max_seeds: next },
+                    )
+                  }
+                />
+              </InheritableField>
+            )}
 
             {!isSharedRow && (
               <InheritableField

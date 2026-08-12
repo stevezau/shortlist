@@ -1478,6 +1478,33 @@ describe("RowEditor — a shared row hides the dials that do not apply to it", (
     }
   });
 
+  it("hides every search control, because a shared row does not search", () => {
+    // A shared row is a straight tally of the server's most-watched titles. Sources, the seed budget
+    // and the AI web-search dials were all inert here the moment it stopped searching, and a control
+    // the engine ignores is worse than no control — it promises a behaviour.
+    renderEditor(row({ build: "shared", min_watchers: 2 }));
+
+    expect(
+      screen.queryByText(/sources you enabled in Settings/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/most-watched titles, most watched first/i),
+    ).toBeInTheDocument();
+  });
+
+  it("still offers those controls on a PER-PERSON row", () => {
+    // The matrix cell that keeps the fix honest: hiding them for everyone would gut the per-person
+    // row, which is where they all still do something.
+    renderEditor(row({ build: "per_person" }));
+
+    expect(
+      screen.queryByText(/most-watched titles, most watched first/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/sources you enabled in Settings/i),
+    ).toBeInTheDocument();
+  });
+
   it("keeps the controls a shared row DOES honour", () => {
     // Sources, libraries and display order all work on the shared path — hiding those would remove
     // real function.
