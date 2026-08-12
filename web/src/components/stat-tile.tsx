@@ -51,7 +51,7 @@ export function StatTile({
         {label}
         {to && <ArrowRight className="h-3 w-3 shrink-0" aria-hidden="true" />}
       </div>
-      <div className="mt-1.5 text-2xl font-semibold tracking-tight tabular-nums">
+      <div className="mt-1.5 text-2xl font-semibold tracking-tight tabular-nums break-words">
         {value}
       </div>
       {hint && (
