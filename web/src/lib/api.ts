@@ -380,6 +380,13 @@ export const api = {
   ): Promise<RunUserTraceResponse> =>
     request(`/api/runs/${runId}/users/${userId}/trace`),
 
+  /** The same for a SHARED row, which belongs to no user and is keyed by its collection slug. */
+  getRunSharedRowTrace: (
+    runId: number,
+    slug: string,
+  ): Promise<RunUserTraceResponse> =>
+    request(`/api/runs/${runId}/rows/${encodeURIComponent(slug)}/trace`),
+
   /** Totals for the Runs page header (count, succeeded/failed, last run). */
   getRunsSummary: (): Promise<RunsSummary> => request("/api/runs/summary"),
 

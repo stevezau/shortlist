@@ -1,8 +1,15 @@
 # Plan: make the run view rows-first, and give a shared row a run record
 
-**Status:** Phases 1, 2 and 4-backend DONE. Phase 3 (the frontend) is what remains.
-Design chosen by the owner 2026-08-12 ("rebuild around rows"), and the open question below was
-resolved in favour of option (b): `rows_considered` now exists on `run_users`.
+**Status:** DONE — all four phases shipped 2026-08-12. Kept as the record of why the run view is
+shaped this way. Design chosen by the owner ("rebuild around rows"); the open question below was
+resolved in favour of option (b), so `rows_considered` exists on `run_users`.
+
+**One deliberate deviation from the chosen mockup.** It showed the tabs as `[ Rows ] [ Log ]`, i.e.
+People deleted. People was KEPT as a secondary tab: `Rows` is the default and the primary axis, which
+is what the choice was about, but the People tab carries the failures-first nav, one person's picks,
+their error bucket and token breakdown — none of which the row tree reproduces. Deleting working UI
+to match a sketch is the irreversible half of the decision, so it was left in. Say the word and it
+goes.
 
 ## The problem, from the live server
 

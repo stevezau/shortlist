@@ -55,6 +55,7 @@ vi.stubGlobal("EventSource", FakeEventSource);
 function run(breakdown: RunDetail["users"][number]["breakdown"]): RunDetail {
   return {
     id: 2,
+    shared_rows: [],
     trigger: "manual",
     status: "ok",
     started_at: "2026-07-15T04:18:00Z",
@@ -68,6 +69,7 @@ function run(breakdown: RunDetail["users"][number]["breakdown"]): RunDetail {
         username: "MooHouse",
         slug: "moohouse",
         status: "ok",
+        rows_considered: {},
         display_name: "MooHouse",
         error: null,
         reason: null,
@@ -502,6 +504,7 @@ describe("RunDetailPage — grouped by library", () => {
           username: "MooHouse",
           display_name: "MooHouse",
           slug: "moohouse",
+          rows_considered: {},
           status: "ok",
           error: null,
           reason: null,
@@ -797,7 +800,8 @@ describe("RunDetail — 'N people failed with the same problem' (issue 7.1)", ()
     ] as unknown as RunDetail["users"];
     getRun.mockResolvedValue(r);
 
-    renderDetail("");
+    // Explicitly the People tab: `rows` is the default now, and this banner is the People tab's.
+    renderDetail("?tab=users");
 
     // Scoped to the banner itself: the selected (first) failed person's own panel repeats the same
     // friendly sentence below it, so an unscoped query matches both and proves nothing about the

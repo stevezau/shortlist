@@ -12,6 +12,7 @@ import {
 import { RunLogPanel } from "@/components/runs/run-log-panel";
 import { RunPhaseTimeline } from "@/components/runs/run-phase-timeline";
 import { RunStatTiles } from "@/components/runs/run-stat-tiles";
+import { RunRowsTab } from "@/components/runs/run-rows-tab";
 import { RunUsersTab } from "@/components/runs/run-users-tab";
 import { Segmented } from "@/components/segmented";
 import { Badge } from "@/components/ui/badge";
@@ -24,7 +25,13 @@ import {
   runStatusVariant,
   triggerLabel,
 } from "@/lib/format";
-import { queryKeys, useCancelRun, useRun, useUsers } from "@/lib/queries";
+import {
+  queryKeys,
+  useCancelRun,
+  useCollections,
+  useRun,
+  useUsers,
+} from "@/lib/queries";
 import { mergeRunLog, stageBelongsToRun } from "@/lib/run-log";
 import { currentPhase } from "@/lib/run-format";
 import { useSSE } from "@/lib/sse";
@@ -65,9 +72,14 @@ function RunFailureBanner({ run }: { run: RunDetail }) {
   );
 }
 
-/** The two things that differ per tab. The metrics and the failure banner are NOT tabbed: they are
- *  the answer to "how did this run go", which you want regardless of which detail you came for. */
-type RunTab = "users" | "log";
+/** The things that differ per tab. The metrics and the failure banner are NOT tabbed: they are
+ *  the answer to "how did this run go", which you want regardless of which detail you came for.
+ *
+ *  `rows` is the default and the primary axis, because a ROW is what a run builds. People-first left
+ *  a SHARED row — which belongs to nobody — with nowhere to appear at all, so a run whose only work
+ *  was a shared row rendered as a wall of "skipped" with its actual output off screen. People stays
+ *  as a secondary tab: it is still the right shape for reading one person's picks and errors. */
+type RunTab = "rows" | "users" | "log";
 
 export function RunDetailPage() {
   const { id } = useParams();
@@ -84,11 +96,11 @@ export function RunDetailPage() {
   // Tab and the deep-linked person both live in the URL, so a refresh, a bookmark, and the link
   // from a person's Runs tab all land exactly where they said they would.
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab = (searchParams.get("tab") as RunTab | null) ?? "users";
+  const tab = (searchParams.get("tab") as RunTab | null) ?? "rows";
   const linkedUser = searchParams.get("user") ?? "";
   const setTab = (next: RunTab) => {
     const params = new URLSearchParams(searchParams);
-    if (next === "users") params.delete("tab");
+    if (next === "rows") params.delete("tab");
     else params.set("tab", next);
     setSearchParams(params, { replace: true });
   };
@@ -97,6 +109,12 @@ export function RunDetailPage() {
   // its user page. Users removed from Plex since the run won't be in the map — those stay plain text.
   const idBySlug = new Map(
     (usersQuery.data ?? []).map((user) => [user.slug, user.id]),
+  );
+  // Row slug → current name, for rows this run delivered no title for. A run where every person was
+  // skipped has no `row_title` anywhere in its results, so without this the tree would show slugs.
+  const collectionsQuery = useCollections();
+  const rowTitles = Object.fromEntries(
+    (collectionsQuery.data ?? []).map((row) => [row.slug, row.name]),
   );
 
   // The activity log: seed from the server's in-memory buffer, then top it up live from the SSE
@@ -246,6 +264,7 @@ export function RunDetailPage() {
                 onChange={setTab}
                 ariaLabel="Run detail sections"
                 options={[
+                  { value: "rows", label: "Rows" },
                   { value: "users", label: `People (${run.users.length})` },
                   {
                     value: "log",
@@ -282,6 +301,14 @@ export function RunDetailPage() {
                     </p>
                   </div>
                 </div>
+              )}
+
+              {tab === "rows" && (
+                <RunRowsTab
+                  run={run}
+                  titles={rowTitles}
+                  idBySlug={idBySlug}
+                />
               )}
 
               {tab === "users" &&
