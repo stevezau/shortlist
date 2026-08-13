@@ -1609,6 +1609,100 @@ class TestCollectionsApi:
         assert client.post("/api/collections", json={"name": "Movie Night"}).status_code == 422
 
 
+class TestNoTwoRowsShareATitle:
+    """Every door that sets a row's title refuses one another row already renders.
+
+    Two rows resolving to one template become ONE collection on Plex: per-person rows all carry the
+    `shortlist_<userslug>` label and `_find_this_rows_collection` tells them apart by title alone, so
+    the second row to deliver overwrites the first's picks, both lose their ledger key to
+    `_delivered_keys`'s ambiguity drop, and removing either deletes the collection the other uses.
+
+    The guard used to compare the `name` COLUMN, which is not what a row is titled from. Every test
+    here fails against that version.
+    """
+
+    #: What the row-template gallery's "Picked for You" tile posts, and what Settings → Defaults holds
+    #: for the default row. The same string reached both by two different fields, which is the bug.
+    DEFAULT_TEMPLATE = "✨ {library_name} Picked for You"
+
+    def test_a_new_row_cannot_take_the_default_rows_title(self, client: TestClient):
+        """The reported bug. The default row's `name` column is "✨ Picked for You" (migration 0001)
+        while its TITLE is the global template — so a column-level check saw no clash, and the
+        row-template gallery's "Picked for You" tile (which posted exactly this string) added a second
+        row that shared one collection per user per library with the row every install ships.
+
+        The tile now posts a distinct name; this asserts the DOOR is shut, not just that one caller
+        stopped walking through it."""
+        clash = client.post("/api/collections", json={"name": self.DEFAULT_TEMPLATE})
+
+        assert clash.status_code == 422, "the gallery's first tile duplicated the row every install ships"
+        assert "default row" in clash.json()["detail"], clash.json()["detail"]
+
+    def test_a_name_template_takes_another_rows_title(self, client: TestClient):
+        """`name_template` WINS over `name` when a row is titled, so the check has to run on the merged
+        pair. The old one ran on `body.name` alone, which here is this row's own unchanged name — no
+        clash, 200, and two rows titled "Friday Films".
+
+        `name` is sent alongside because `CollectionIn.name` is required, which is also how the editor
+        PATCHes. Omitting it 422s on schema validation, so a test that sent only `name_template` would
+        pass against the bug for the wrong reason."""
+        client.post("/api/collections", json={"name": "Friday Films"})
+        other = client.post("/api/collections", json={"name": "Sunday Films"}).json()
+
+        clash = client.patch(
+            f"/api/collections/{other['id']}",
+            json={"name": "Sunday Films", "name_template": "Friday Films"},
+        )
+
+        assert clash.status_code == 422, "a row took another's title through the field titles come from"
+        assert "Friday Films" in clash.json()["detail"], clash.json()["detail"]
+
+    def test_renaming_the_default_row_cannot_take_another_rows_title(self, client: TestClient):
+        """The mirror of the first case: the collision is reachable from either side, and renaming the
+        default row writes the global template rather than a column, so it skipped the check entirely."""
+        client.post("/api/collections", json={"name": "Friday Films"})
+        default = next(c for c in client.get("/api/collections").json() if c["slug"] == "picked")
+
+        clash = client.patch(f"/api/collections/{default['id']}", json={"name": "Friday Films"})
+
+        assert clash.status_code == 422
+        assert client.get("/api/settings").json()["row.name_template"] != "Friday Films", (
+            "the refused rename must not have been written"
+        )
+
+    def test_settings_defaults_cannot_take_another_rows_title(self, client: TestClient):
+        """Settings → Defaults writes the same global template, so it is a fifth door onto the same
+        collision — and a settings PUT carries other keys, which must not half-apply behind a refusal."""
+        client.post("/api/collections", json={"name": "Friday Films"})
+
+        clash = client.put("/api/settings", json={"values": {"row.name_template": "Friday Films", "row.size": 27}})
+
+        assert clash.status_code == 422
+        settings = client.get("/api/settings").json()
+        assert settings["row.name_template"] != "Friday Films"
+        assert settings["row.size"] != 27, "the refusal must leave the whole request unwritten"
+
+    def test_a_row_with_its_own_template_may_share_a_name(self, client: TestClient):
+        """The deliberate relaxation. A row carrying its own `name_template` is titled from THAT, so its
+        `name` — a label on the Rows page — collides with nothing. The old column-level check refused
+        this pair even though their Plex titles differ."""
+        client.post("/api/collections", json={"name": "Films", "name_template": "🍿 Friday Films"})
+
+        allowed = client.post("/api/collections", json={"name": "Films", "name_template": "📺 Sunday Films"})
+
+        assert allowed.status_code == 201, allowed.text
+
+    def test_a_row_still_saves_under_its_own_unchanged_title(self, client: TestClient):
+        """The self-clash guard: editing any other setting re-sends the name, which must not read as a
+        row colliding with itself."""
+        row = client.post("/api/collections", json={"name": "Friday Films"}).json()
+
+        same = client.patch(f"/api/collections/{row['id']}", json={"name": "Friday Films", "size": 12})
+
+        assert same.status_code == 200, same.text
+        assert same.json()["size"] == 12
+
+
 class TestRowEditsReachPlexDurably:
     """Editing a row is a Plex write, not just a config change — and it has to survive Plex being down.
 
