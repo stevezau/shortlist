@@ -236,12 +236,26 @@ export function RunDetailPage() {
                   )}
                 </div>
                 {/* A slim provenance line; the numbers moved into the tiles below so they read at a glance. */}
+                {/* `runs.started_at` is stamped at INSERT — when the run was ASKED for, not when it
+                    began — so a run still waiting on the writer lock read "started 03:30 · still
+                    running" directly under a badge saying "Queued". This is also the page the Rows
+                    page's Run button lands on, which made it the first thing you saw after pressing
+                    it. Same rule as RunDuration: don't claim it started until it has. */}
                 <p className="text-sm text-muted-foreground">
-                  {triggerLabel(run.trigger)} · started{" "}
-                  {formatDate(run.started_at)}
-                  {run.finished_at
-                    ? ` · finished ${formatDate(run.finished_at)}`
-                    : " · still running"}
+                  {run.status === "queued" ? (
+                    <>
+                      {triggerLabel(run.trigger)} · queued{" "}
+                      {formatDate(run.started_at)} · waiting to start
+                    </>
+                  ) : (
+                    <>
+                      {triggerLabel(run.trigger)} · started{" "}
+                      {formatDate(run.started_at)}
+                      {run.finished_at
+                        ? ` · finished ${formatDate(run.finished_at)}`
+                        : " · still running"}
+                    </>
+                  )}
                 </p>
                 {/* The direct fix for "all users finished but it still says running": say WHAT it
                     is doing. Everything after the last person is server-wide and used to be silent. */}

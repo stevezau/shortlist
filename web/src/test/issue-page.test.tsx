@@ -659,7 +659,9 @@ describe("IssuePage — a problem runs every check it promises", () => {
   it("opens all three checks behind 'rows aren't updating at all'", async () => {
     renderPage();
     await userEvent.click(
-      await screen.findByRole("button", { name: /rows aren't updating at all/i }),
+      await screen.findByRole("button", {
+        name: /rows aren't updating at all/i,
+      }),
     );
 
     for (const heading of [
@@ -707,7 +709,9 @@ describe("IssuePage — a problem runs every check it promises", () => {
       await screen.findByRole("button", { name: /show all 22 checks/i }),
     );
     await userEvent.click(
-      screen.getByRole("button", { name: /which libraries can shortlist see/i }),
+      screen.getByRole("button", {
+        name: /which libraries can shortlist see/i,
+      }),
     );
     await userEvent.click(
       screen.getByRole("button", { name: /which setting actually applied/i }),
@@ -742,7 +746,9 @@ describe("IssuePage — reporting without the checks switched on", () => {
     expect(link.getAttribute("href")).toContain("github.com");
     expect(screen.getByText(/switch the checks on above first/i)).toBeTruthy();
     // The two buttons that read the GATED endpoints are absent rather than present and 403ing.
-    expect(screen.queryByRole("button", { name: /copy the summary/i })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /copy the summary/i }),
+    ).toBeNull();
   });
 });
 
@@ -798,7 +804,9 @@ describe("IssuePage — the owner's own Home screen", () => {
     // page's highest-stakes question needed and could not reach.
     supportSurfaces.mockResolvedValue({
       rows: [],
-      on_owner_home: [{ title: "✨ Picked for Sarah", label: "shortlist_sarah" }],
+      on_owner_home: [
+        { title: "✨ Picked for Sarah", label: "shortlist_sarah" },
+      ],
       on_owner_shelf: [],
       unlabelled: [],
       owner_label: "shortlist_steve",
@@ -812,9 +820,7 @@ describe("IssuePage — the owner's own Home screen", () => {
       }),
     );
 
-    expect(
-      await screen.findByText(/on your own Home screen/i),
-    ).toBeTruthy();
+    expect(await screen.findByText(/on your own Home screen/i)).toBeTruthy();
     expect(screen.getByText(/No setting makes that correct/i)).toBeTruthy();
   });
 
@@ -825,7 +831,9 @@ describe("IssuePage — the owner's own Home screen", () => {
     supportSurfaces.mockResolvedValue({
       rows: [],
       on_owner_home: [],
-      on_owner_shelf: [{ title: "✨ Picked for Sarah", label: "shortlist_sarah" }],
+      on_owner_shelf: [
+        { title: "✨ Picked for Sarah", label: "shortlist_sarah" },
+      ],
       unlabelled: [],
       owner_label: "shortlist_steve",
       error: null,
@@ -838,9 +846,7 @@ describe("IssuePage — the owner's own Home screen", () => {
       }),
     );
 
-    expect(
-      await screen.findByText(/that is a Plex limitation/i),
-    ).toBeTruthy();
+    expect(await screen.findByText(/that is a Plex limitation/i)).toBeTruthy();
   });
 });
 
@@ -867,5 +873,117 @@ describe("IssuePage — the timeline can be narrowed to one person", () => {
     await waitFor(() =>
       expect(supportTimeline).toHaveBeenCalledWith("chris35352"),
     );
+  });
+});
+
+describe("IssuePage — the surfaces verdict cannot say all-clear over a real finding", () => {
+  it("calls an UNLABELLED row what the server calls it: a bug everyone can see", async () => {
+    // The worst finding this check has, and the banner was reading straight past it. No `label!=`
+    // exclude can hide a row carrying no label, so it is visible to every person on the server —
+    // and `sweep_broken_rows` deletes it as an orphan. The server prints "BUG:" in the copy text
+    // below; the sentence above it was saying "Every row is showing exactly where it should".
+    supportSurfaces.mockResolvedValue({
+      rows: [
+        {
+          title: "✨ Picked for Sarah",
+          label: "shortlist_sarah",
+          own_home: false,
+        },
+        {
+          title: "✨ Picked for Mike",
+          label: "",
+          marked: true,
+          own_home: false,
+        },
+      ],
+      on_owner_home: [],
+      on_owner_shelf: [],
+      unlabelled: [{ title: "✨ Picked for Mike", library: "Movies" }],
+      owner_label: "shortlist_steve",
+      error: null,
+      text: "BUG: 1 collection(s) are ours but carry NO label.",
+    });
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /someone can see another person's row/i,
+      }),
+    );
+
+    // Matched on the VERDICT's own wording, not on "carry NO label" — that phrase also appears in
+    // the server's copy blob below, which was never the thing at fault here.
+    expect(
+      await screen.findByText(/Nothing can hide an unlabelled row/i),
+    ).toBeTruthy();
+    expect(screen.queryByText(/showing exactly where it should/i)).toBeNull();
+  });
+
+  it("treats EVERY row reading unlabelled as a failed read, not a server full of leaks", async () => {
+    // plex-safety rule 4's own lesson: if not one row reads as labelled, that is a label read that
+    // failed. Reporting it as N separate leaks sends someone hunting rows that are probably fine.
+    supportSurfaces.mockResolvedValue({
+      rows: [
+        { title: "A", label: "" },
+        { title: "B", label: "" },
+      ],
+      on_owner_home: [],
+      on_owner_shelf: [],
+      unlabelled: [{ title: "A" }, { title: "B" }],
+      owner_label: "shortlist_steve",
+      error: null,
+      text: "…",
+    });
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /someone can see another person's row/i,
+      }),
+    );
+
+    expect(
+      await screen.findByText(/more likely to be a failed read/i),
+    ).toBeTruthy();
+  });
+
+  it("refuses to call it clean when the rows could not be read at all", async () => {
+    // `owned_row_surfaces` attaches an `error` to a row whose hub read raised and emits NO surface
+    // flags for it — so a server where every read failed produced exactly the same empty
+    // `on_owner_home` as a server where nothing was wrong. An empty read is not proof (rule 4).
+    supportSurfaces.mockResolvedValue({
+      rows: [
+        { title: "A", label: "shortlist_a", error: "BadRequest: 500" },
+        { title: "B", label: "shortlist_b", error: "BadRequest: 500" },
+      ],
+      on_owner_home: [],
+      on_owner_shelf: [],
+      unlabelled: [],
+      owner_label: "shortlist_steve",
+      error: null,
+      text: "…",
+    });
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /someone can see another person's row/i,
+      }),
+    );
+
+    expect(
+      await screen.findByText(/could not be read from Plex/i),
+    ).toBeTruthy();
+    expect(screen.queryByText(/showing exactly where it should/i)).toBeNull();
+  });
+
+  it("still says all-clear when the reads succeeded and nothing is wrong", async () => {
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /someone can see another person's row/i,
+      }),
+    );
+
+    expect(
+      await screen.findByText(/showing exactly where it should/i),
+    ).toBeTruthy();
   });
 });

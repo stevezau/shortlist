@@ -745,10 +745,43 @@ function verdictFor(
     }
     case "surfaces": {
       if (data.error) return { bad: true, text: String(data.error) };
-      // An INVARIANT, not a preference: a per-person row that isn't the owner's must never claim the
-      // owner's Home. No setting makes that correct, so any hit is a bug.
       const home = count("on_owner_home");
       const shelf = count("on_owner_shelf");
+      const unlabelled = count("unlabelled");
+      // An UNLABELLED row of ours is the worst finding this check has, and it was being read past
+      // entirely: no `label!=` exclude can hide a row that carries no label, so it is visible to
+      // everyone, and `sweep_broken_rows` deletes it as an orphan. The server already calls it a
+      // BUG in the copy text below — the banner above it must not say the opposite.
+      const ours = count("rows");
+      if (unlabelled) {
+        // Rule 4's own lesson, applied to the reading rather than to a delete: if NOT ONE of our
+        // rows reads as labelled, that is a label read that failed, not a server full of orphans.
+        // Reporting it as N separate leaks would send someone hunting rows that are probably fine.
+        return unlabelled === ours && ours > 1
+          ? {
+              bad: true,
+              text: `Not one of your ${ours} rows reads as having a label, which is far more likely to be a failed read from Plex than ${ours} unlabelled rows. Check the connection and run this again before acting on it.`,
+            }
+          : {
+              bad: true,
+              text: `${unlabelled} of our collections carry NO label. Nothing can hide an unlabelled row — every person on your server can see ${unlabelled === 1 ? "it" : "them"}. The copy text below names ${unlabelled === 1 ? "it" : "them"}; a run relabels and re-hides them.`,
+            };
+      }
+      // An empty answer is not proof (plex-safety rule 4). `owned_row_surfaces` attaches an `error`
+      // to a row whose hub read raised and emits NO surface flags for it, so a server where every
+      // read failed produces exactly the same empty `on_owner_home` as a server where nothing is
+      // wrong. Saying "everything is where it should be" off the back of reads that never happened
+      // is the one thing this check must never do.
+      const rows = (Array.isArray(data.rows) ? data.rows : []) as {
+        error?: string;
+      }[];
+      const unread = rows.filter((row) => row.error).length;
+      if (unread) {
+        return {
+          bad: true,
+          text: `${unread} of ${rows.length} rows could not be read from Plex, so this cannot say where they are showing. Fix the connection and check again — an empty answer here is not the same as a clean one.`,
+        };
+      }
       if (home) {
         return {
           bad: true,
