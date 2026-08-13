@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -377,6 +378,25 @@ class TestRunExecution:
             assert events[0].message["diff"]["added"] == ["Dune"]
             assert events[0].message["picks"] == 1
         assert run.status == "ok"
+
+    def test_cancelling_a_QUEUED_run_stops_it_without_waiting_for_the_one_ahead(self, sessions, tmp_path):
+        """Runs serialise on the Plex writer lock, and the cancel flag is only read BETWEEN users —
+        which a queued run has not reached. So pressing Cancel on a queued run did nothing until the
+        run in front finished: on a real server, half an hour of "Stopping…" on four runs at once.
+
+        Nothing has been built at that point, so there is nothing to unwind."""
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        run_id = self._new_run(sessions)
+        # Queued: the cancel Event exists from the moment `start_run` arms it.
+        service._cancels[run_id] = threading.Event()
+        assert service.cancel_run(run_id) is True
+
+        asyncio.run(service._run_locked(run_id, False, None, None, asyncio.new_event_loop()))
+
+        with sessions() as session:
+            run = session.get(Run, run_id)
+            assert run.status == "aborted", "a cancelled queued run must not sit in the queue"
+            assert run.finished_at is not None, "it has to stop being 'in flight' or the UI waits for ever"
 
     def test_a_shared_row_gets_a_queryable_run_record_not_just_an_event(self, sessions, tmp_path, monkeypatch):
         """The audit event carries status and diff TITLES and nothing else — no trace, no breakdown,

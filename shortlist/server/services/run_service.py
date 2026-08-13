@@ -218,8 +218,24 @@ class RunService:
         loop: asyncio.AbstractEventLoop,
     ) -> None:
         async with self._lock:
-            self._bus.publish("run.progress", {"run_id": run_id, "status": "running"})
             cancel = self._cancels.get(run_id)
+            # Cancelled while it sat in the QUEUE, behind another run holding this lock. The flag is
+            # only ever read between users, which this run has not reached — so pressing Cancel on a
+            # queued run did nothing visible until the run ahead of it finished, which on a real
+            # server is half an hour of "Stopping…". Nothing has been built yet, so there is nothing
+            # to unwind: mark it aborted and give the lock straight back.
+            if cancel is not None and cancel.is_set():
+                with self._sessions() as session:
+                    run = session.get(Run, run_id)
+                    if run is not None:
+                        run.status = "aborted"
+                        run.finished_at = datetime.now(UTC)
+                        session.commit()
+                logger.info("run {} was cancelled before it started — nothing was built", run_id)
+                self._bus.publish("run.progress", {"run_id": run_id, "status": "aborted"})
+                self._bus.publish("run.finished", {"run_id": run_id, "status": "aborted"})
+                return
+            self._bus.publish("run.progress", {"run_id": run_id, "status": "running"})
             try:
                 # Inside the try so a failure here (e.g. reading users) still marks the run errored
                 # AND runs the finally that frees the cancel Event — never leaves a run stuck "running".
