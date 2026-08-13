@@ -5,25 +5,13 @@
 > Self-hosted, one Docker container, no AI key required.
 
 [![CI](https://github.com/stevezau/shortlist/actions/workflows/ci.yml/badge.svg)](https://github.com/stevezau/shortlist/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/codecov/c/github/stevezau/shortlist)](https://codecov.io/gh/stevezau/shortlist)
 [![Latest release](https://img.shields.io/github/v/release/stevezau/shortlist?include_prereleases&label=release)](https://github.com/stevezau/shortlist/releases)
 [![Docker pulls](https://img.shields.io/docker/pulls/stevezzau/shortlist)](https://hub.docker.com/r/stevezzau/shortlist)
 [![Image size](https://img.shields.io/docker/image-size/stevezzau/shortlist/latest)](https://hub.docker.com/r/stevezzau/shortlist)
-[![Stars](https://img.shields.io/github/stars/stevezau/shortlist)](https://github.com/stevezau/shortlist/stargazers)
-[![Forks](https://img.shields.io/github/forks/stevezau/shortlist)](https://github.com/stevezau/shortlist/network/members)
-[![Open issues](https://img.shields.io/github/issues/stevezau/shortlist)](https://github.com/stevezau/shortlist/issues)
-[![Contributors](https://img.shields.io/github/contributors/stevezau/shortlist)](https://github.com/stevezau/shortlist/graphs/contributors)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![AI-Assisted](https://img.shields.io/badge/AI-assisted%20development-8A2BE2)
 
 📖 **[Documentation](https://stevezau.github.io/shortlist/)** · [Getting started](https://stevezau.github.io/shortlist/getting-started/) · [How Plex per-user rows work](https://stevezau.github.io/shortlist/plex-per-user-collections/) · [Tools compared](https://stevezau.github.io/shortlist/plex-recommendation-tools/)
-
-> [!IMPORTANT]
-> **Shortlist 1.0.** It modifies other people's Plex views and share permissions, so it is built to
-> be careful: every write is previewed by `--dry-run`, your share filters are snapshotted before
-> they're touched, and a full uninstall puts everything back. **Please report bugs** — the
-> **Have an issue?** page runs twenty-two read-only checks that often name the cause outright, and
-> then opens a pre-filled issue with a secrets-free diagnostic to attach.
 
 ## The problem: "what should I watch next?"
 
@@ -109,10 +97,9 @@ account is told to hide that label, so only its owner ever sees it.
 
 ## Screenshots
 
-|                                                                     |                                                             |
-| ------------------------------------------------------------------- | ----------------------------------------------------------- |
-| ![A user's picks and why](docs/images/user-detail.png)              | ![A run in progress](docs/images/run-detail.png)            |
-| **Each person's row, and _why_ each pick** — "Because you watched…" | **Watch every run** — history → candidates → rank → deliver |
+| Each person's row, and _why_ each pick | Watch every run, step by step |
+| ------------------------------------------------------ | ----------------------------------------------- |
+| ![A user's picks and why](docs/images/user-detail.png) | ![A run in progress](docs/images/run-detail.png) |
 
 <sub>App screenshots use placeholder titles (a test library); the Plex row above is a real server.</sub>
 
@@ -123,6 +110,9 @@ each person and keep it private, inside Plex. It's designed to sit alongside wha
 
 - **It never touches what it didn't make.** Only collections carrying Shortlist's own `shortlist_*`
   label are ever modified — Kometa's collections, and anything you built by hand, are skipped.
+- **It can be told to stand aside.** Every row also carries a plain `shortlist` label, so a tool that
+  reorders the same shelf can exclude all of them with one entry — Agregarr's _Exclude from Ordering
+  (Plex Label)_, for instance. Or turn Shortlist's own shelf ordering off entirely.
 - **It merges share filters, never rebuilds them.** Existing conditions are left byte-for-byte
   identical, and the originals are snapshotted before the first change.
 - **It connects rather than duplicates.** Tautulli for richer history, Radarr/Sonarr for gaps, Trakt
@@ -174,7 +164,7 @@ picks your server, and walks you to your first rows (about 10 minutes).
 
 📖 **[stevezau.github.io/shortlist](https://stevezau.github.io/shortlist/)** — the docs as a website.
 
-|                                            |                                                     |
+| Page                                       | What's in it                                        |
 | ------------------------------------------ | --------------------------------------------------- |
 | [Getting started](docs/getting-started.md) | Install, wizard, first run                          |
 | [Guides](docs/guides.md)                   | Rows, schedules, requests, AI cost, troubleshooting |
@@ -186,7 +176,7 @@ picks your server, and walks you to your first rows (about 10 minutes).
 Background on the server, not on Shortlist — worth reading before you build anything on this
 yourself, because most advice on the subject predates Plex's 2026 fixes and quietly leaks.
 
-|                                                                                  |                                                                        |
+| Page                                                                             | What's in it                                                           |
 | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | [Per-user collections](docs/plex-per-user-collections.md)                        | The label + share-filter mechanism, and the order that leaks           |
 | [Improving Plex's recommendations](docs/improve-plex-recommendations.md)         | What Manage Recommendations really changes, and where it stops         |
@@ -195,6 +185,15 @@ yourself, because most advice on the subject predates Plex's 2026 fixes and quie
 | [Netflix-style rows](docs/plex-netflix-style-recommendations.md)                 | The four properties that make rows feel personal                       |
 | [AI recommendations](docs/plex-ai-recommendations.md)                            | Where a model helps, and where it invents films you don't own          |
 | [Tools compared](docs/plex-recommendation-tools.md)                              | Shortlist, Immaculaterr, Curatarr, SeekAndWatch and others             |
+
+## Support the project
+
+Shortlist is free and MIT-licensed, and built in evenings. If it saved you some, you can
+[sponsor it on GitHub](https://github.com/sponsors/stevezau) — entirely optional, and it buys time
+rather than features on request.
+
+Bug reports are worth just as much. The **Have an issue?** page runs read-only checks that often name
+the cause outright, then opens a pre-filled issue with a secrets-free diagnostic to attach.
 
 ## License
 
