@@ -2206,6 +2206,17 @@ def _run_user(
                 title = render_row_name(title_template, user, sp, library_name=library_names.get(section_key, ""))
                 user_report.placement_titles[title + marker] = spec.slug
         picks = [pick for sp in section_picks.values() for pick in sp]
+        # Cancelled while this person was mid-delivery: stop before the NEXT row is written.
+        #
+        # Checking only before a person's first row is not enough at concurrency 8 — eight people are
+        # mid-delivery when Cancel is pressed, and each finishing all of their rows on a PMS
+        # answering in ~17s is minutes of a run that was asked to stop. A ROW is the real boundary:
+        # it is delivered whole, so stopping between rows leaves nothing half-written and no
+        # collection un-hidden. Within a row is where walking away would be unsafe, and that is
+        # untouched.
+        if ctx.cancelled():
+            logger.info("{}: cancelled — stopping before '{}', rows already written are intact", user.slug, spec.slug)
+            break
         all_picks.extend(picks)
         _emit(ctx, user.slug, "delivering", {"picks": len(picks), "row": spec.name_template or spec.slug})
         _deliver_row(

@@ -2301,16 +2301,16 @@ class TestPerRowOverrides:
         delivered row visible to the wrong person."""
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
         mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
-        # Cancel becomes true once sarah has cleared BOTH of her checks — the one at the top of her
-        # turn and the one just before her rows are written — so she delivers and mike (and the
-        # shared row) skip. Counting calls rather than flipping a real flag means this number tracks
+        # Cancel becomes true once sarah has cleared ALL THREE of her checks — the top of her turn,
+        # the one before her rows are written, and the one before each row — so she delivers and mike
+        # (and the shared row) skip. Counting calls rather than flipping a real flag means this number tracks
         # how many times the engine asks; the real `cancelled` is an Event and answers the same
         # every time.
         seen = {"n": 0}
 
         def cancelled() -> bool:
             seen["n"] += 1
-            return seen["n"] > 2
+            return seen["n"] > 3
 
         ctx.cancelled = cancelled
 
@@ -4860,3 +4860,46 @@ class TestTheTraceShowsWhyATitleWonOrLost:
 
         assert rets[10]["age_weight"] == 1.0
         assert rets[20]["age_weight"] == 1.0
+
+
+class TestCancelStopsWritingPromptly:
+    """Cancel must actually stop, not finish everything already in flight.
+
+    Measured on a live server: with `run.concurrency` at 8, eight people are mid-delivery when
+    Cancel is pressed, and each one finishing ALL of its rows on a PMS answering in ~17s left the
+    run writing for minutes after the operator asked it to stop.
+    """
+
+    def test_a_person_mid_delivery_stops_before_their_next_row(self, ctx: EngineContext, mock_plextv):
+        """A ROW is the boundary: delivered whole, so stopping between rows leaves nothing
+        half-written. Within a row is where walking away would be unsafe, and that is untouched."""
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, 10: 2010, 20: 2020}
+        ctx.tmdb.suggestions.return_value = [
+            ({"id": 10, "title": "A", "genre_ids": [], "vote_average": 8.0, "release_date": "2020-01-01"}, 1.0),
+            ({"id": 20, "title": "B", "genre_ids": [], "vote_average": 7.0, "release_date": "2021-01-01"}, 0.9),
+        ]
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        # Two rows for one person: the first is written, then Cancel lands, so the second must not be.
+        ctx.config.rows = [
+            RowSpec(slug="one", name_template="One", size=2, media="movie"),
+            RowSpec(slug="two", name_template="Two", size=2, media="movie"),
+        ]
+        ctx.config.min_history = 1
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        seen = {"n": 0}
+
+        def cancelled() -> bool:
+            seen["n"] += 1
+            # Clear the top-of-turn and pre-delivery checks, plus the first row's — then cancel.
+            return seen["n"] > 3
+
+        ctx.cancelled = cancelled
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        rows_built = {e["row_slug"] for u in report.users for e in u.breakdown}
+        assert rows_built == {"one"}, "the second row must not be written after a cancel"
