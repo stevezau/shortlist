@@ -114,26 +114,32 @@ function SessionFooter() {
         {!logout.isPending && <LogOut aria-hidden="true" />}
         Sign out
       </Button>
-      {/* The full commit on hover — the short one fits the sidebar, but a bug report wants all of it. */}
-      <p
-        className="px-1 text-xs break-all text-muted-foreground"
-        title={version.data?.git_sha || undefined}
-      >
-        {buildLabel(version.data)}
-      </p>
-      {/* In the chrome, under the build string — deliberately NOT among the nav items and not
-          floating over the page. People self-host to get away from being sold to, and a donate
-          prompt that follows them around every screen costs more goodwill than it raises. Anyone
-          inclined to give goes looking; this only has to be findable. */}
-      <a
-        href={SPONSOR_URL}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground hover:text-foreground"
-      >
-        <Heart className="h-3 w-3 shrink-0" aria-hidden="true" />
-        Support this project
-      </a>
+      {/* The build and the support link read as one quiet block: same size, same colour, a hairline
+          above them separating both from the account controls. Sitting flush under "Sign out" made
+          the support line look like a third button that had lost its padding.
+
+          In the chrome deliberately — NOT among the nav items, and not floating over the page.
+          People self-host to get away from being sold to, and a donate prompt that follows them
+          around every screen costs more goodwill than it raises. Anyone inclined to give goes
+          looking; this only has to be findable. */}
+      <div className="mt-1 space-y-1.5 border-t pt-3">
+        {/* The full commit on hover — the short one fits the sidebar, a bug report wants all of it. */}
+        <p
+          className="px-1 text-xs break-all text-muted-foreground"
+          title={version.data?.git_sha || undefined}
+        >
+          {buildLabel(version.data)}
+        </p>
+        <a
+          href={SPONSOR_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2 rounded-md px-1 py-0.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <Heart className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          Support this project
+        </a>
+      </div>
     </div>
   );
 }
