@@ -141,7 +141,9 @@ function RowCard({
             </span>
             <span className="text-xs text-muted-foreground">
               {group.kind === "shared" ? "Shared" : "Per-person"} ·{" "}
-              {rowSummary(group)}
+              {group.kind === "shared" && !shared
+                ? "waiting to build"
+                : rowSummary(group)}
               {shared?.duration_ms
                 ? ` · ${formatDuration(shared.duration_ms)}`
                 : ""}

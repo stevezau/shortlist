@@ -33,6 +33,8 @@ export type RunRowPerson = {
 export type RunRowGroup = {
   slug: string;
   title: string;
+  /** How many people this row still has to get through — 0 once everyone is done. */
+  pending: number;
   /** The libraries this row actually delivered to, e.g. ["Movies", "TV Shows"]. */
   libraries: string[];
   kind: "per_person" | "shared";
@@ -122,6 +124,7 @@ export function groupRunByRow(
       group = {
         slug,
         title: nameFor(slug),
+        pending: 0,
         libraries: [],
         kind,
         people: [],
@@ -178,6 +181,7 @@ export function groupRunByRow(
     }
     return {
       slug: row.collection_slug,
+      pending: 0,
       title:
         rowDisplayName(titles[row.collection_slug] ?? row.row_title ?? "") ||
         row.collection_slug,
@@ -187,6 +191,28 @@ export function groupRunByRow(
       shared: row,
     };
   });
+
+  // Rows the run said it would build, drawn even before anyone has finished. `rows_considered` only
+  // lands per user AS EACH COMPLETES, so without this a running run had no rows to show at all.
+  // `stats` is an open blob, so these are read defensively rather than typed — a run recorded before
+  // either field existed simply has neither.
+  const stats = (run.stats ?? {}) as {
+    expected_rows?: { slug?: string; title?: string; build?: string }[];
+    expected_users?: unknown[];
+  };
+  const expected = stats.expected_rows ?? [];
+  const expectedPeople = (stats.expected_users ?? []).length;
+  for (const row of expected) {
+    if (!row?.slug) continue;
+    ran.add(row.slug);
+    const group = ensure(row.slug, row.build === "shared" ? "shared" : "per_person");
+    if (row.title && group.title === row.slug) group.title = rowDisplayName(row.title) || row.slug;
+  }
+  for (const group of groups.values()) {
+    if (group.kind === "per_person") {
+      group.pending = Math.max(0, expectedPeople - group.people.length);
+    }
+  }
 
   const notInRun = [...considered]
     .filter((slug) => !ran.has(slug))
@@ -244,6 +270,13 @@ export function rowSummary(group: RunRowGroup): string {
     return parts.join(" · ");
   }
   const c = rowCounts(group);
+  // Mid-run the row is still working through people, and the count of who is LEFT is the thing you
+  // are watching. Once nobody is pending this collapses back to the finished summary.
+  if (group.pending > 0) {
+    const done = c.people;
+    const total = done + group.pending;
+    return `building — ${done} of ${total} done`;
+  }
   const parts = [`${c.built} of ${c.people} built`];
   if (c.failed) parts.push(`${c.failed} failed`);
   if (c.muted) parts.push(`${c.muted} muted`);

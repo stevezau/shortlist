@@ -225,6 +225,26 @@ class RunService:
                     log_sink=self._new_run_log(run_id),
                     collection_ids=collection_ids,
                 )
+                # Which rows this run will build, recorded UP FRONT — the row twin of
+                # `expected_users` above. Without it the page cannot know a run's SCOPE until the
+                # first person finishes, because scope only exists in `rows_considered`, which is
+                # written per user as each completes. A running run therefore had nothing to draw
+                # and said so, which is no way to watch a run that takes half an hour.
+                with self._sessions() as session:
+                    run = session.get(Run, run_id)
+                    run.stats = {
+                        **(run.stats or {}),
+                        "expected_rows": [
+                            {
+                                "slug": spec.slug,
+                                "title": spec.name_template,
+                                "build": "shared" if spec.shared else "per_person",
+                            }
+                            for spec in (*ctx.config.per_person_rows(), *ctx.config.shared_rows())
+                            if ctx.config.should_build(spec)
+                        ],
+                    }
+                    session.commit()
                 # Cooperative cancel: the engine checks this before each user and skips the rest. An
                 # in-flight user still finishes (per-user transactional), and the privacy merge +
                 # promote still run for who was delivered, so a cancel leaves a consistent server.

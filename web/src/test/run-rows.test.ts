@@ -262,3 +262,49 @@ describe("groupRunByRow", () => {
     expect(notInRun).toEqual([]);
   });
 });
+
+describe("a run that is still going", () => {
+  it("draws every row the run said it would build, before anyone has finished", () => {
+    // The blocker this fixes: scope only exists in `rows_considered`, which lands per user AS EACH
+    // COMPLETES — so before the first person finished there was nothing to draw and the page said
+    // "this run built no rows" about a run seconds old.
+    const { groups } = groupRunByRow(
+      run({
+        users: [],
+        stats: {
+          expected_rows: [
+            { slug: "picked", title: CONFIG_NAMES.picked, build: "per_person" },
+            { slug: "popular", title: CONFIG_NAMES.popular, build: "shared" },
+          ],
+          expected_users: [{ slug: "a" }, { slug: "b" }, { slug: "c" }],
+        },
+      } as unknown as Partial<RunDetail>),
+      CONFIG_NAMES,
+    );
+
+    expect(groups.map((g) => g.title)).toEqual([
+      "✨ Picked for You",
+      "👥 Popular on SFLIX",
+    ]);
+    // Nobody done yet, so all three are still to come.
+    expect(groups[0]!.pending).toBe(3);
+    expect(rowSummary(groups[0]!)).toBe("building — 0 of 3 done");
+  });
+
+  it("counts down as people finish, then reports the finished summary", () => {
+    const { groups } = groupRunByRow(
+      run({
+        users: [user({ slug: "a", rows_considered: { picked: "due" } })],
+        stats: {
+          expected_rows: [
+            { slug: "picked", title: CONFIG_NAMES.picked, build: "per_person" },
+          ],
+          expected_users: [{ slug: "a" }, { slug: "b" }, { slug: "c" }],
+        },
+      } as unknown as Partial<RunDetail>),
+      CONFIG_NAMES,
+    );
+
+    expect(rowSummary(groups[0]!)).toBe("building — 1 of 3 done");
+  });
+});
