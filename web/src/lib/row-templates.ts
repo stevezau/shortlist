@@ -28,9 +28,24 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     title: "Picked for You",
     blurb:
       "The everyday row. Blends someone's whole recent history into a general set of suggestions.",
-    highlights: ["One row each", "Follows your global defaults"],
+    // "15 picks" rather than the "follows your global defaults" this used to claim. Size is the one
+    // setting a row can NEVER inherit: `RowSpec.size` is a plain int with no None, and only the
+    // DEFAULT row reads the global (`context_builder`: `size=store.get("row.size") if is_default`).
+    // So a server whose global row size is 25 still got a 15 from this tile, under a chip promising
+    // otherwise. Everything else here really is null and really does inherit.
+    highlights: [
+      "One row each",
+      "15 picks",
+      "Other settings from your defaults",
+    ],
     values: {
-      name: "✨ {library_name} Picked for You",
+      // NOT "✨ {library_name} Picked for You". That is the DEFAULT row's title — the global
+      // `row.name_template` every install ships with — so this tile used to add a second row that
+      // rendered the identical Plex title, under the identical per-user label, and the two silently
+      // shared one collection. `reconcile.row_titled_from` now refuses that pair, which would leave
+      // this tile 422-ing on every server that still has its default row. A distinct name is what
+      // makes it savable, and it stays editable in the form underneath.
+      name: "✨ {library_name} Picks",
       build: "per_person",
       size: 15,
     },
@@ -119,9 +134,14 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     id: "from-the-vault",
     emoji: "🕰️",
     title: "From the vault",
+    // "Never re-picks on a schedule" is the honest form of what `refresh_days: 0` buys. The row is
+    // frozen against the CADENCE, not against everything: it inherits the global `watched_pct`, which
+    // defaults to 0, and a 0% row drops any pick the person has since watched (`_reusable_prior`) —
+    // the carry-forward branch then pads the gap from that night's pool. So the shelf does move, for
+    // exactly the people watching from it, and the old "set it once, it stays" promised otherwise.
     blurb:
-      "Built once and left alone. A shelf that stays put, for a curated set you don't want reshuffled.",
-    highlights: ["Never rebuilds on its own", "Set it once, it stays"],
+      "Built once and never re-picked on a schedule. A shelf that stays put apart from titles they've watched, which are replaced.",
+    highlights: ["Never rebuilds on its own", "Only moves as they watch it"],
     values: {
       name: "🕰️ {library_name} from the vault",
       build: "per_person",
@@ -174,6 +194,11 @@ export const ROW_TEMPLATES: RowTemplate[] = [
       name: "📺 More {library_name} to watch",
       build: "per_person",
       media: "show",
+      // Redundant TODAY and kept deliberately: at `watched_pct: 0` below, `zero_pct_exclusions`
+      // already unions the started shows in, so this flag changes no candidate (the `pool_key`
+      // comment in rows.py says so, and is why the two don't even split the pool). It is what makes
+      // the "Never started" claim survive the owner raising the watched cap on this row — the one
+      // edit that would otherwise turn the tile's promise off silently. Don't delete it as dead.
       unstarted_only: true,
       watched_pct: 0,
       size: 10,

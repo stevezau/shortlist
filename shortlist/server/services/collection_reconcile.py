@@ -72,6 +72,42 @@ def row_template(session, slug: str, secrets=None) -> str:
     return (collection.name_template or collection.name) if collection else ""
 
 
+def row_titled_from(session, template: str, *, secrets=None, exclude_slug: str = "") -> Collection | None:
+    """The row (if any) whose collections are ALREADY titled from ``template``, or None.
+
+    The clash test for every path that sets a row title. Two rows resolving to one template render to
+    one title, and `delivery._find_this_rows_collection` matches a per-person row by title alone (they
+    all share the `shortlist_<userslug>` label) — so the second row to deliver finds the first's
+    collection and overwrites its picks, `context_builder._delivered_keys` drops the ratingKey both now
+    claim, and removing either row deletes the collection the other is still using.
+
+    Compares the EFFECTIVE template via `row_template`, never the `name` column, because for the
+    DEFAULT row those are two different strings: its column reads "✨ Picked for You" (migration 0001)
+    while its title comes from the global `row.name_template`, "✨ {library_name} Picked for You". A
+    column-level check therefore saw no clash when the row-template gallery's "Picked for You" tile —
+    which writes that global string into `name` — was added to a server that still had the default row,
+    and the two silently shared one collection per user per library.
+
+    ``exclude_slug`` is the row being edited, which must not clash with itself.
+
+    What this cannot see: the per-user `row_name_tpl` override, which `resolve_row_template` places
+    between a row's own template and the global one. It applies only to the default row, and only for
+    the one user who set it, so a clash through that door is per-user and invisible to a server-wide
+    check. Rendering is not compared either — two different templates that happen to render alike in
+    one library ("{library_name} Picks" vs "Movies Picks") would need the library list, i.e. a Plex
+    read, on every row write.
+    """
+    wanted = (template or "").strip().casefold()
+    if not wanted:
+        return None
+    for other in session.query(Collection).all():
+        if other.slug == exclude_slug:
+            continue
+        if row_template(session, other.slug, secrets).strip().casefold() == wanted:
+            return other
+    return None
+
+
 def _ledger_keys(session, slug: str) -> dict[str, set[int]]:
     """{user slug -> the Plex ratingKeys the ledger says this row built for them}.
 

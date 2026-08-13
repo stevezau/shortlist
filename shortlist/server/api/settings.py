@@ -400,6 +400,20 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
         # than the ones you are reading" is invisible without this — reconstructing one such change
         # took a full forensic pass over settings timestamps vs run times (2026-08-01).
         changed = _settings_diff(store, update.values)
+        # The default row's TITLE is this setting, so writing it renames that row on Plex — the same
+        # act as renaming any other row, and it owes the same clash check. Before the write loop, so a
+        # refusal leaves every setting in this request unwritten rather than half-applied.
+        proposed_row_name = str(update.values.get("row.name_template") or "").strip()
+        if proposed_row_name and proposed_row_name != old_row_name:
+            clash = reconcile.row_titled_from(
+                session, proposed_row_name, secrets=request.app.state.secrets, exclude_slug=DEFAULT_SLUG
+            )
+            if clash is not None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{proposed_row_name!r} is already the title of the row {clash.name!r} — two rows "
+                    "with the same title become a single collection on Plex, so pick a different name",
+                )
         for key, value in update.values.items():
             if key in SECRET_KEYS and value == REDACTED_PLACEHOLDER:
                 continue  # redacted placeholder round-tripped from the UI — no change
