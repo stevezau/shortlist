@@ -118,13 +118,15 @@ explanation pass over candidates already drawn from your library.
 ```bash
 docker run -d --name shortlist -p 5959:5959 \
   -v /path/to/config:/config \
-  ghcr.io/stevezau/shortlist:latest
+  stevezzau/shortlist:latest
 ```
 
 Set `-e SHORTLIST_DRY_RUN=1` to preview every change without writing one.
 
 ## Related
 
+- [How to improve Plex recommendations](improve-plex-recommendations.md) — the settings to change first
+- [AI recommendations for Plex](plex-ai-recommendations.md) — where a model helps, and where it invents films
 - [Recommendations from watch history](plex-recommendations-watch-history.md) — where picks come from
 - [A different home screen per user](plex-per-user-home-screen.md) — the surfaces rows land on
 - [Per-user collections](plex-per-user-collections.md) — the privacy mechanism in full

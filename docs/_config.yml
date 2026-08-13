@@ -75,6 +75,8 @@ nav:
     url: /plex-how-to/
     blurb: What Plex itself can and can't do, and the manual methods
     children:
+      - title: Improving Plex's recommendations
+        url: /improve-plex-recommendations/
       - title: Recommendations from watch history
         url: /plex-recommendations-watch-history/
       - title: A home screen per user
@@ -83,6 +85,8 @@ nav:
         url: /plex-per-user-collections/
       - title: Netflix-style rows
         url: /plex-netflix-style-recommendations/
+      - title: AI recommendations
+        url: /plex-ai-recommendations/
       - title: Tools compared
         url: /plex-recommendation-tools/
 

@@ -49,7 +49,9 @@ first change and restored exactly on uninstall.
 - [FAQ]({{ '/faq' | absolute_url }}): privacy model, what the owner can see, Kometa coexistence, uninstalling
 - [Plex how-to]({{ '/plex-how-to' | absolute_url }}): what Plex itself can and cannot do about recommendations and per-user rows
 - [How to make a Plex collection visible to only one user]({{ '/plex-per-user-collections' | absolute_url }}): the label + share-filter mechanism, the manual steps, and the ordering mistake that leaks
+- [How to improve Plex recommendations]({{ '/improve-plex-recommendations' | absolute_url }}): what the Manage Recommendations menu really changes, which settings help, and where the built-in tools stop
 - [Plex recommendations based on watch history]({{ '/plex-recommendations-watch-history' | absolute_url }}): what Plex does with watch history, why smart collections are not personal, how to build rows that are
+- [AI recommendations for Plex]({{ '/plex-ai-recommendations' | absolute_url }}): why asking a model for titles hallucinates, the candidates-from-library-then-rank shape that works, local models, cost
 - [A different Plex home screen for each user]({{ '/plex-per-user-home-screen' | absolute_url }}): pinned sources, managed users, published collections, and why none of them give per-user rows
 - [Netflix-style recommendations for your Plex library]({{ '/plex-netflix-style-recommendations' | absolute_url }}): the four properties that make rows feel personal, and which of them Plex can reproduce
 - [Plex recommendation tools compared]({{ '/plex-recommendation-tools' | absolute_url }}): Shortlist, Immaculaterr, Curatarr, SeekAndWatch and others — and the personal-vs-private distinction that separates them

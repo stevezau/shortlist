@@ -131,13 +131,14 @@ it never modifies a collection it didn't create (so Kometa keeps working alongsi
 ```bash
 docker run -d --name shortlist -p 5959:5959 \
   -v /path/to/config:/config \
-  ghcr.io/stevezau/shortlist:latest
+  stevezzau/shortlist:latest
 ```
 
 Set `-e SHORTLIST_DRY_RUN=1` to see every change it _would_ make to your server without writing one.
 
 ## Related
 
+- [How to improve Plex recommendations](improve-plex-recommendations.md) — the settings to change first
 - [A different home screen per user](plex-per-user-home-screen.md) — what Plex controls per account, and what it costs at scale
 - [Recommendations from watch history](plex-recommendations-watch-history.md) — where the titles in the row come from
 - [Netflix-style rows for your own library](plex-netflix-style-recommendations.md) — reasons, refresh and the rest of the feel
