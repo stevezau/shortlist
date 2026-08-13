@@ -1702,6 +1702,90 @@ class TestNoTwoRowsShareATitle:
         assert same.status_code == 200, same.text
         assert same.json()["size"] == 12
 
+    def test_the_rename_endpoint_cannot_take_another_rows_title(self, client: TestClient):
+        """The sixth door, and the only one that retitles the collections on Plex itself. It documents
+        standalone use without the dialog PATCH, so the SPA's PATCH-first flow does not cover it."""
+        client.post("/api/collections", json={"name": "Friday Films"})
+        other = client.post("/api/collections", json={"name": "Sunday Films"}).json()
+
+        clash = client.post(
+            f"/api/collections/{other['id']}/rename",
+            json={"name_template": "Friday Films", "dry_run": True},
+        )
+
+        assert clash.status_code == 422, "a rename took another row's title and went on to retitle Plex"
+        reloaded = next(c for c in client.get("/api/collections").json() if c["id"] == other["id"])
+        assert reloaded["name_template"] != "Friday Films", "the refused rename must not have been saved"
+
+    def test_the_rename_endpoint_cannot_take_the_default_rows_title(self, client: TestClient):
+        """Its default-row branch writes the GLOBAL template — the same write PATCH and PUT /settings
+        both refuse, and the one that renames every user's collection."""
+        client.post("/api/collections", json={"name": "Friday Films"})
+        default = next(c for c in client.get("/api/collections").json() if c["slug"] == "picked")
+
+        clash = client.post(f"/api/collections/{default['id']}/rename", json={"name_template": "Friday Films"})
+
+        assert clash.status_code == 422
+        assert client.get("/api/settings").json()["row.name_template"] != "Friday Films"
+
+    def test_two_top_seed_rows_cannot_both_collapse_onto_the_default_title(self, client: TestClient):
+        """`render_row_name` returns DEFAULT_ROW_NAME for a `{top_seed}` template with no seed, so for
+        every cold-start user these two are one collection — invisible to a raw-template comparison."""
+        client.post("/api/collections", json={"name": "Because you watched {top_seed}"})
+
+        clash = client.post("/api/collections", json={"name": "More like {top_seed}"})
+
+        assert clash.status_code == 422, "two rows that both render '✨ Picked for You' were allowed"
+
+    def test_a_blank_global_template_is_refused(self, client: TestClient):
+        """A blank one renders to DEFAULT_ROW_NAME, silently retitling the default row onto any row
+        literally named that — the reported bug, reachable in two ordinary requests."""
+        blank = client.put("/api/settings", json={"values": {"row.name_template": "   "}})
+
+        assert blank.status_code == 422
+        assert client.get("/api/settings").json()["row.name_template"].strip()
+
+    def test_whitespace_only_differences_still_collide(self, client: TestClient):
+        """`render_row_name` collapses runs of whitespace in a `{library_name}` template, so these two
+        render the identical title."""
+        client.post("/api/collections", json={"name": "{library_name} Picks"})
+
+        clash = client.post("/api/collections", json={"name": "{library_name}  Picks"})
+
+        assert clash.status_code == 422, "two templates rendering the identical title were allowed"
+
+    def test_a_shared_row_may_share_a_title_with_a_per_person_row(self, client: TestClient):
+        """They cannot become one collection: different invisible markers (`row_marker(0)` vs the
+        account's) and different label namespaces, and `_find_this_rows_collection` only searches
+        within one label. Refusing the pair was a false positive asserting a collision that can't
+        happen."""
+        client.post("/api/collections", json={"name": "Friday Films"})
+
+        allowed = client.post("/api/collections", json={"name": "Friday Films", "build": "shared"})
+
+        assert allowed.status_code == 201, allowed.text
+
+    def test_an_existing_clash_does_not_block_an_unrelated_edit(self, client: TestClient):
+        """A row that already clashes — made before this guard, or restored from a backup — must stay
+        editable. The rule is "no NEW clashes", not "a clashing row may never be touched"; the editor
+        re-sends `name` on every save, so otherwise a size change is refused for the wrong reason."""
+        first = client.post("/api/collections", json={"name": "Friday Films"}).json()
+        second = client.post("/api/collections", json={"name": "Sunday Films"}).json()
+        # Force the clash the way a pre-guard install carries one, bypassing the API.
+        from shortlist.server.db.models import Collection
+
+        with client.app.state.sessions() as session:
+            session.get(Collection, second["id"]).name = "Friday Films"
+            session.commit()
+
+        edit = client.patch(f"/api/collections/{second['id']}", json={"name": "Friday Films", "size": 12})
+
+        assert edit.status_code == 200, f"an unrelated edit was refused on an existing clash: {edit.text}"
+        assert edit.json()["size"] == 12
+        # And the door is still shut for a NEW clash onto that same title.
+        assert client.post("/api/collections", json={"name": "Friday Films"}).status_code == 422
+        assert first["id"]
+
 
 class TestRowEditsReachPlexDurably:
     """Editing a row is a Plex write, not just a config change — and it has to survive Plex being down.

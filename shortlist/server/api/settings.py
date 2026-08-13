@@ -158,6 +158,18 @@ def _url_without_credentials(value: object) -> str | None:
     return None
 
 
+def _non_blank_row_template(value: object) -> str | None:
+    """The default row's title may not be blank — a blank one collapses onto every other row.
+
+    `render_row_name` returns DEFAULT_ROW_NAME for a blank or whitespace-only template, so storing one
+    here silently retitles the default row to "✨ Picked for You" in every library, where it collides
+    with any row literally named that and with every `{top_seed}` row a cold-start user has. Nothing
+    refused it, which made the collision this settings guard exists to prevent reachable in two
+    ordinary requests.
+    """
+    return None if str(value or "").strip() else "cannot be empty — it is the title of your default row"
+
+
 def _one_of(*allowed: str):
     def check(value: object) -> str | None:
         return None if str(value) in allowed else f"must be one of {', '.join(allowed)}"
@@ -266,6 +278,7 @@ VALIDATORS = {
     "requests.max_per_run": _bounded_int(0, 100),
     "requests.radarr.quality_profile_id": _bounded_int(0, 1_000_000),
     "requests.sonarr.quality_profile_id": _bounded_int(0, 1_000_000),
+    "row.name_template": _non_blank_row_template,
 }
 
 
@@ -406,13 +419,19 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
         proposed_row_name = str(update.values.get("row.name_template") or "").strip()
         if proposed_row_name and proposed_row_name != old_row_name:
             clash = reconcile.row_titled_from(
-                session, proposed_row_name, secrets=request.app.state.secrets, exclude_slug=DEFAULT_SLUG
+                session,
+                proposed_row_name,
+                secrets=request.app.state.secrets,
+                exclude_slug=DEFAULT_SLUG,
+                # The default row is per-person, and only a per-person row can share its collection.
+                build="per_person",
             )
             if clash is not None:
                 raise HTTPException(
                     status_code=422,
-                    detail=f"{proposed_row_name!r} is already the title of the row {clash.name!r} — two rows "
-                    "with the same title become a single collection on Plex, so pick a different name",
+                    detail=f"{proposed_row_name!r} is already the title of the row {clash.name!r} "
+                    f"({clash.slug}) — two rows with the same title become a single collection on Plex, "
+                    "so pick a different name",
                 )
         for key, value in update.values.items():
             if key in SECRET_KEYS and value == REDACTED_PLACEHOLDER:
