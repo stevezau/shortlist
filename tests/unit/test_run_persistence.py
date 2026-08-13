@@ -1,3 +1,34 @@
+from shortlist.engine.models import UserRunReport
+from shortlist.server.services.run_persistence import _cost_blob
+
+
+class TestCostBlob:
+    def test_seconds_become_integer_milliseconds(self):
+        report = UserRunReport(username="alex", slug="alex")
+        report.setup_s = 421.0
+        report.row_timing = {"picked-for-you": {"duration_s": 12.04, "blocked_s": 0.31}}
+        report.pool_costs = [
+            {
+                "label": "movie · tmdb, llm_web",
+                "tokens": 15917,
+                "exa_searches": 3,
+                "duration_s": 398.0,
+                "rows": ["picked-for-you"],
+            }
+        ]
+        blob = _cost_blob(report)
+        assert blob["setup_ms"] == 421000
+        assert blob["rows"]["picked-for-you"] == {"duration_ms": 12040, "blocked_ms": 310}
+        assert blob["pools"][0]["duration_ms"] == 398000
+        assert blob["pools"][0]["tokens"] == 15917
+        assert "duration_s" not in blob["pools"][0]
+
+    def test_a_report_that_measured_nothing_persists_null(self):
+        """Not `{}`: an empty blob would render as a real measurement of zero. A user who never
+        reached the gather (no rows due) genuinely has nothing recorded."""
+        assert _cost_blob(UserRunReport(username="alex", slug="alex")) is None
+
+
 class TestARealFailureOutlivesAThresholdReason:
     """A queued title now always carries a reason, so the merge had to learn which one matters.
 
