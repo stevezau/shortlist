@@ -4007,6 +4007,8 @@ export interface components {
          * @description A run plus every person in it, and every shared row it built.
          */
         RunDetailOut: {
+            /** Began At */
+            began_at: string | null;
             /** Dry Run */
             dry_run: boolean;
             /** Error */
@@ -4185,6 +4187,8 @@ export interface components {
          * @description One run, as the Runs list shows it.
          */
         RunSummaryOut: {
+            /** Began At */
+            began_at: string | null;
             /** Dry Run */
             dry_run: boolean;
             /** Error */

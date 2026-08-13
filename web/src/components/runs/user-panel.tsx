@@ -1,12 +1,20 @@
-import { Check, CircleSlash, Copy } from "lucide-react";
+import { Check, CircleSlash, Clock, Copy, Telescope } from "lucide-react";
 import { useState } from "react";
+import { Link } from "react-router";
 
 import { PickList } from "@/components/pick-list";
 import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
 import { provenanceLabel } from "@/lib/pick-provenance";
 import { titleLinks } from "@/lib/title-links";
-import { friendlyError, rankClass } from "@/lib/run-format";
+import {
+  friendlyError,
+  rankClass,
+  tokenStepBreakdown,
+  webSearchSummary,
+} from "@/lib/run-format";
+import { formatDuration, runStatusLabel, runStatusVariant } from "@/lib/format";
+import { Badge } from "@/components/ui/badge";
 import { githubIssueSnippet } from "@/lib/github";
 import { STAGE_LABELS } from "@/lib/run-stages";
 import { useCopy } from "@/lib/use-copy";
@@ -246,7 +254,91 @@ function ResultsLegend() {
 }
 
 /** The selected user's result: an error, or their rows grouped from the per-(row, library) breakdown. */
+/**
+ * One person's result, with their trace button.
+ *
+ * The button lives HERE and not on the tab that renders the panel. It used to sit in the People
+ * tab's own header; when that tab was removed the Rows tab inherited the panel but not the button,
+ * and a per-person trace became unreachable from anywhere in the app — while a comment in the Rows
+ * tab claimed the panel carried it. Owning it here is what makes that true.
+ */
 export function UserPanel({
+  run,
+  result,
+  liveLog,
+  userId,
+}: {
+  run: RunDetail;
+  result: RunUserResult;
+  liveLog?: RunLogEntry[];
+  /** This person's user id, for the trace link. Null when the run predates the user being known. */
+  userId?: number | null;
+}) {
+  // The per-step split ("gather 900, curate 2.1k") came with the header from the People tab. It was
+  // that tab's only consumer, so dropping it here would have retired the breakdown from the whole app.
+  const steps = tokenStepBreakdown(result.llm_tokens_by_step);
+  const tokens =
+    result.llm_tokens > 0
+      ? ` · ${result.llm_tokens.toLocaleString()} AI tokens${steps ? ` (${steps})` : ""}`
+      : "";
+  return (
+    <div className="space-y-3">
+      {/* WHOSE result this is, and what it cost — the header the People tab had. Hoisting only the
+          trace button out of that tab left it floating above the picks with nothing to belong to,
+          and left the panel never naming the person whose row you were reading. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b pb-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="truncate font-medium">
+            {userId !== null && userId !== undefined ? (
+              <Link
+                to={`/users/${userId}`}
+                className="rounded-sm hover:text-primary hover:underline"
+              >
+                {result.display_name || result.username}
+              </Link>
+            ) : (
+              result.display_name || result.username
+            )}
+          </span>
+          <Badge
+            variant={
+              result.error !== null
+                ? "destructive"
+                : runStatusVariant(result.status)
+            }
+          >
+            {runStatusLabel(result.status)}
+          </Badge>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
+          {(result.duration_ms ?? 0) > 0 && (
+            <p className="text-right text-sm text-muted-foreground">
+              {formatDuration(result.duration_ms)}
+              {tokens}
+              {webSearchSummary(result.exa_searches)}
+            </p>
+          )}
+          {result.has_trace && userId !== null && userId !== undefined && (
+            <Button
+              asChild
+              variant="secondary"
+              size="sm"
+              className="shrink-0 gap-1.5 border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20"
+            >
+              <Link to={`/runs/${run.id}/trace/${userId}`}>
+                <Telescope className="h-3.5 w-3.5" aria-hidden="true" />
+                How we picked
+              </Link>
+            </Button>
+          )}
+        </div>
+      </div>
+      <UserPanelBody run={run} result={result} liveLog={liveLog} />
+    </div>
+  );
+}
+
+function UserPanelBody({
   run,
   result,
   liveLog,
@@ -306,6 +398,31 @@ export function UserPanel({
         <p className="text-sm text-muted-foreground">
           No changes — this person’s rows were already up to date.
         </p>
+      );
+    }
+    // Not started. It used to fall through to the live-log stage below and render a bare "queued…",
+    // which reads like a fragment of a log rather than an answer — and it is the state most of the
+    // roster is in for most of a run, so it is the panel people see most.
+    // "pending" is not only "not started": a person mid-build carries it too, because a `run_users`
+    // row is written only when they FINISH. So this branch has to defer to the live log the moment
+    // there is one, or the panel tells you nothing on their Plex has changed while the engine is
+    // writing their collection — a false claim on the screen whose job is "what changed at 03:31".
+    const started = liveLog?.some((e) => e.user === result.slug) ?? false;
+    if (result.status === "pending" && !started) {
+      return (
+        <div className="flex gap-3 rounded-md bg-muted/40 p-3 text-sm">
+          <Clock
+            className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <div>
+            <p className="font-medium text-foreground">Waiting their turn</p>
+            <p className="mt-1 text-muted-foreground">
+              A run builds people a few at a time. Nothing on their Plex has
+              changed yet — their rows appear here as soon as they are built.
+            </p>
+          </div>
+        </div>
       );
     }
     // Show the latest stage from the live log for this user.

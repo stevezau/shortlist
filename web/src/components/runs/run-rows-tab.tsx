@@ -153,11 +153,14 @@ function RowCard({
   run,
   liveLog,
   defaultOpen,
+  idBySlug,
 }: {
   group: RunRowGroup;
   run: RunDetail;
   liveLog?: RunLogEntry[];
   defaultOpen: boolean;
+  /** person slug -> user id, so their panel can link to their own trace. */
+  idBySlug: Map<string, number>;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [picked, setPicked] = useState("");
@@ -221,8 +224,10 @@ function RowCard({
             </Badge>
           )
         )}
-        {/* Trace sits on the thing it traces: the row when the row is shared, the person otherwise
-            (each person's panel carries their own "How we picked"). */}
+        {/* Trace sits on the thing it traces: the row when the row is SHARED (one build for the whole
+            server), and the PERSON otherwise — `UserPanel` renders their own "How we picked" button.
+            This comment used to claim the latter while nothing rendered it: the per-person button had
+            gone with the People tab, so a per-person trace was unreachable from the whole app. */}
         {shared?.has_trace && (
           <Button asChild variant="ghost" size="sm" className="shrink-0">
             <Link to={`/runs/${run.id}/trace/row/${group.slug}`}>
@@ -258,6 +263,8 @@ function RowCard({
               results={results}
               selected={chosen?.slug ?? ""}
               onSelect={setPicked}
+              // The card header two lines above already says "10 of 46 done".
+              showSummary={false}
             />
             <div className="min-w-0">
               {decision && decision !== "due" && (
@@ -267,7 +274,12 @@ function RowCard({
                 </p>
               )}
               {chosen && (
-                <UserPanel run={run} result={chosen} liveLog={liveLog} />
+                <UserPanel
+                  run={run}
+                  result={chosen}
+                  liveLog={liveLog}
+                  userId={idBySlug.get(chosen.slug) ?? null}
+                />
               )}
             </div>
           </div>
@@ -332,6 +344,7 @@ export function RunRowsTab({
           group={group}
           run={run}
           liveLog={liveLog}
+          idBySlug={idBySlug}
           // One row is the whole story of a scoped run — open it on arrival rather than making the
           // operator click to see the only thing that happened.
           defaultOpen={groups.length === 1}

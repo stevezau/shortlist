@@ -803,3 +803,77 @@ class TestFreshnessBecomesADayCount:
         run_migrations(tmp_path)
 
         assert self._days(tmp_path) == 0
+
+
+class TestRunsBeganAt:
+    """0068 splits "when the run was asked for" from "when it actually started".
+
+    The backfill is the load-bearing half. Without it every run already in the database reads NULL,
+    which the Runs page renders as "never ran" — so the fix for one run reporting nine minutes it
+    never worked would have told the same lie about the entire history, including last night's
+    successful nightly.
+    """
+
+    @staticmethod
+    def _seed_at_0067(config_dir: Path) -> None:
+        command.upgrade(_alembic(config_dir), "0067")
+        con = sqlite3.connect(config_dir / "shortlist.db")
+
+        def insert(table: str, **values) -> None:
+            row = dict(values)
+            for _cid, name, type_, notnull, default, pk in con.execute(f"PRAGMA table_info({table})"):
+                if notnull and default is None and not pk and name not in row:
+                    row[name] = 0 if type_.upper().startswith(("INT", "BOOL", "FLOAT", "NUM")) else ""
+            columns = ", ".join(row)
+            con.execute(f"INSERT INTO {table} ({columns}) VALUES ({', '.join('?' * len(row))})", list(row.values()))
+
+        # One of each status a finished run can carry, all from before the column existed.
+        insert("runs", id=1, trigger="schedule", started_at="2026-01-02 03:04:05", status="ok", stats="{}")
+        insert("runs", id=2, trigger="manual", started_at="2026-01-02 04:04:05", status="error", stats="{}")
+        insert("runs", id=3, trigger="manual", started_at="2026-01-02 05:04:05", status="aborted", stats="{}")
+        con.commit()
+        con.close()
+
+    def _began(self, config_dir: Path) -> dict[int, str | None]:
+        con = sqlite3.connect(config_dir / "shortlist.db")
+        rows = dict(con.execute("SELECT id, began_at FROM runs").fetchall())
+        con.close()
+        return rows
+
+    def test_the_column_really_did_not_exist_before_0068(self, tmp_path: Path):
+        """Or the backfill test could pass against a schema that already had it — how this repo once
+        shipped a migration that was a no-op on every real database."""
+        self._seed_at_0067(tmp_path)
+
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        columns = {row[1] for row in con.execute("PRAGMA table_info(runs)")}
+        con.close()
+        assert "began_at" not in columns
+
+    def test_runs_that_finished_keep_a_duration_and_aborted_ones_do_not(self, tmp_path: Path):
+        self._seed_at_0067(tmp_path)
+
+        run_migrations(tmp_path)
+
+        began = self._began(tmp_path)
+        assert began[1] == "2026-01-02 03:04:05", "a completed run must not start reading 'never ran'"
+        assert began[2] == "2026-01-02 04:04:05", "an errored run reached the engine too"
+        assert began[3] is None, (
+            "'aborted' covers both cancelled-while-queued and cancelled-mid-run; claiming the queue "
+            "wait as work for those is the bug this migration exists to fix"
+        )
+
+    def test_the_backfill_never_overwrites_a_real_stamp_on_a_replay(self, tmp_path: Path):
+        """`test_every_revision_is_re_runnable_after_a_crash` replays 0068, and by then real runs may
+        have stamped themselves. `WHERE began_at IS NULL` is what keeps a replay a no-op."""
+        self._seed_at_0067(tmp_path)
+        run_migrations(tmp_path)
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        con.execute("UPDATE runs SET began_at = '2026-05-05 05:05:05' WHERE id = 1")
+        con.commit()
+        con.close()
+
+        command.stamp(_alembic(tmp_path), "0067")
+        run_migrations(tmp_path)
+
+        assert self._began(tmp_path)[1] == "2026-05-05 05:05:05"

@@ -936,6 +936,46 @@ class TestCancellingAQueuedRunIsImmediate:
             assert run.status == "aborted", "a queued run must not wait on the run ahead of it"
             assert run.finished_at is not None, "it has to stop being in-flight or the UI waits for ever"
 
+    def test_a_queued_run_that_is_cancelled_never_gets_a_start_time(self, sessions, tmp_path):
+        """NULL `began_at` is what makes the Runs page say "never ran" instead of billing the queue
+        wait as work. Three runs queued together and cancelled nine minutes later each reported
+        "9m 26s" (SFLIX, 2026-08-13) — measured from `started_at`, which is stamped at INSERT."""
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        with sessions() as session:
+            run = Run(trigger="manual", status="queued", stats={})
+            session.add(run)
+            session.commit()
+            run_id = run.id
+        service._cancels[run_id] = threading.Event()
+
+        service.cancel_run(run_id)
+
+        with sessions() as session:
+            run = session.get(Run, run_id)
+            assert run.status == "aborted"
+            assert run.began_at is None, "it never executed, so it has no duration to report"
+
+    def test_a_run_that_executes_is_stamped_with_when_it_actually_began(self, sessions, tmp_path):
+        """The stamp has no other coverage, and `run.status = "running"` has already been moved once
+        in this file (the cancel-while-queued fix). Move it again without this and every run on the
+        page reads "never ran", with nothing failing."""
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        with sessions() as session:
+            run = Run(trigger="manual", status="queued", stats={})
+            session.add(run)
+            session.commit()
+            run_id, queued_at = run.id, run.started_at
+
+        service._mark_started(run_id)
+
+        with sessions() as session:
+            run = session.get(Run, run_id)
+            assert run.status == "running"
+            assert run.began_at is not None, "a run that starts must say when, or it reads as never having run"
+            began = run.began_at if run.began_at.tzinfo else run.began_at.replace(tzinfo=UTC)
+            queued = queued_at if queued_at.tzinfo else queued_at.replace(tzinfo=UTC)
+            assert began >= queued, "it cannot have begun before it was asked for"
+
     def test_a_running_run_is_still_only_signalled(self, sessions, tmp_path):
         """The cooperative path is unchanged: a running run is mid-write, so it is asked to stop
         rather than declared stopped — finishing the row in hand is what keeps Plex consistent."""

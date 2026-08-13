@@ -36,6 +36,9 @@ def _run_summary(run: Run) -> dict:
         "id": run.id,
         "trigger": run.trigger,
         "started_at": iso_utc(run.started_at),
+        # When the engine actually began. NULL on a run that never got out of the queue — the page
+        # needs to tell "waited nine minutes then cancelled" apart from "worked for nine minutes".
+        "began_at": iso_utc(run.began_at),
         "finished_at": iso_utc(run.finished_at),
         "status": run.status,
         "dry_run": run.dry_run,

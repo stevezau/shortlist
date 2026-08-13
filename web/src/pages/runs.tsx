@@ -106,7 +106,8 @@ export function RunDuration({ run }: { run: Run }) {
     );
   }
   if (running) {
-    const started = Date.parse(run.started_at ?? "");
+    // Tick from when it BEGAN. A run still waiting its turn has not begun, so it counts nothing.
+    const started = Date.parse(run.began_at ?? "");
     const elapsed = Number.isNaN(started) ? null : Math.max(0, now - started);
     return (
       <span className="tabular-nums text-muted-foreground" title="Running…">
@@ -114,7 +115,17 @@ export function RunDuration({ run }: { run: Run }) {
       </span>
     );
   }
-  const ms = runElapsedMs(run.started_at, run.finished_at);
+  // A run cancelled while still queued never executed, so it has no duration. It used to be measured
+  // from `started_at`, which is set when the row is CREATED — so three runs queued together and
+  // cancelled nine minutes later each claimed nine minutes of work none of them had done.
+  if (!run.began_at) {
+    return (
+      <span className="text-muted-foreground" title="This run never started">
+        never ran
+      </span>
+    );
+  }
+  const ms = runElapsedMs(run.began_at, run.finished_at);
   return (
     <span className="tabular-nums" title="How long this run took">
       {ms != null ? formatDuration(ms) : "—"}

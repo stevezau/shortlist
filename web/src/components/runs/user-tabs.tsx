@@ -77,10 +77,14 @@ export function UserTabs({
   results,
   selected,
   onSelect,
+  showSummary = true,
 }: {
   results: RunUserResult[];
   selected: string;
   onSelect: (slug: string) => void;
+  /** False where the caller already states the progress — the Rows tab's card header says
+   *  "10 of 46 done" two lines above, so repeating it here in different words was noise. */
+  showSummary?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "failed" | "ok">("all");
@@ -134,19 +138,28 @@ export function UserTabs({
             ]}
           />
         ) : (
-          <p className="text-sm text-muted-foreground">
-            {pendingTotal > 0 && okTotal === 0 && failedTotal === 0 ? (
-              `${pendingTotal} pending…`
-            ) : failedTotal > 0 ? (
-              <span className="font-medium text-destructive-text">
-                {failedTotal} failed
-              </span>
-            ) : okTotal === 0 && skippedTotal > 0 ? (
-              `${skippedTotal} skipped — nothing was built`
-            ) : (
-              `${okTotal} succeeded${skippedTotal > 0 ? `, ${skippedTotal} skipped` : ""}${pendingTotal > 0 ? `, ${pendingTotal} pending` : ""}`
-            )}
-          </p>
+          // Only the plain progress tally is suppressed by `showSummary`. Failures and skips are an
+          // EXPLANATION, not a restatement — "3 skipped — nothing was built" answers a question the
+          // card header's "10 of 46 done" does not, so it shows either way.
+          (() => {
+            const line =
+              pendingTotal > 0 && okTotal === 0 && failedTotal === 0 ? (
+                showSummary ? (
+                  `${pendingTotal} waiting to start`
+                ) : null
+              ) : failedTotal > 0 ? (
+                <span className="font-medium text-destructive-text">
+                  {failedTotal} failed
+                </span>
+              ) : okTotal === 0 && skippedTotal > 0 ? (
+                `${skippedTotal} skipped — nothing was built`
+              ) : showSummary ? (
+                `${okTotal} succeeded${skippedTotal > 0 ? `, ${skippedTotal} skipped` : ""}${pendingTotal > 0 ? `, ${pendingTotal} pending` : ""}`
+              ) : null;
+            return line === null ? null : (
+              <p className="text-sm text-muted-foreground">{line}</p>
+            );
+          })()
         )}
         {many && (
           <input
@@ -164,7 +177,9 @@ export function UserTabs({
           came for. A vertical list reads far better than a wrapped grid of 48 near-identical pills. */}
       <div className="overflow-hidden rounded-lg border">
         <div className="max-h-96 divide-y divide-border/50 overflow-y-auto">
-          {bothGroups && <GroupLabel>Failed · {failed.length}</GroupLabel>}
+          {bothGroups && failed.length > 0 && (
+            <GroupLabel>Failed · {failed.length}</GroupLabel>
+          )}
           {failed.map((result) => (
             <UserRow
               key={result.slug}
@@ -195,7 +210,7 @@ export function UserTabs({
               onSelect={onSelect}
             />
           ))}
-          {bothGroups && pending.length > 0 && (
+          {pending.length > 0 && (
             <GroupLabel>Pending · {pending.length}</GroupLabel>
           )}
           {pending.map((result) => (

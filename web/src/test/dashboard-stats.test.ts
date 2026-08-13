@@ -35,6 +35,7 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     id: 1,
     trigger: "manual",
     started_at: "2026-07-14T11:00:00Z",
+    began_at: "2026-07-14T11:00:00Z",
     finished_at: "2026-07-14T11:05:00Z",
     status: "ok",
     dry_run: false,
@@ -83,6 +84,7 @@ describe("dashboardStats", () => {
       [
         makeRun({
           started_at: "2026-07-14T11:00:00Z",
+          began_at: "2026-07-14T11:00:00Z",
           stats: { users_ok: 4, users_error: 2 },
         }),
       ],

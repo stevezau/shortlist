@@ -16,7 +16,7 @@ import type { RunDetail } from "@/lib/types";
 /** The finished-run stats as at-a-glance tiles (Dashboard style) rather than one dense text line. */
 export function RunStatTiles({ run }: { run: RunDetail }) {
   const s = run.stats;
-  const elapsed = runElapsedMs(run.started_at, run.finished_at);
+  const elapsed = runElapsedMs(run.began_at, run.finished_at);
   const failed = s.users_error ?? 0;
   // Skipped is neither a success nor a failure — a run where everyone was skipped used to read
   // "3 · all succeeded" above three rows badged "Skipped".
