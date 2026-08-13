@@ -13,7 +13,6 @@ import { RunLogPanel } from "@/components/runs/run-log-panel";
 import { RunPhaseTimeline } from "@/components/runs/run-phase-timeline";
 import { RunStatTiles } from "@/components/runs/run-stat-tiles";
 import { RunRowsTab } from "@/components/runs/run-rows-tab";
-import { RunUsersTab } from "@/components/runs/run-users-tab";
 import { Segmented } from "@/components/segmented";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -79,7 +78,7 @@ function RunFailureBanner({ run }: { run: RunDetail }) {
  *  a SHARED row — which belongs to nobody — with nowhere to appear at all, so a run whose only work
  *  was a shared row rendered as a wall of "skipped" with its actual output off screen. People stays
  *  as a secondary tab: it is still the right shape for reading one person's picks and errors. */
-type RunTab = "rows" | "users" | "log";
+type RunTab = "rows" | "log";
 
 export function RunDetailPage() {
   const { id } = useParams();
@@ -97,7 +96,6 @@ export function RunDetailPage() {
   // from a person's Runs tab all land exactly where they said they would.
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = (searchParams.get("tab") as RunTab | null) ?? "rows";
-  const linkedUser = searchParams.get("user") ?? "";
   const setTab = (next: RunTab) => {
     const params = new URLSearchParams(searchParams);
     if (next === "rows") params.delete("tab");
@@ -170,14 +168,6 @@ export function RunDetailPage() {
   // whenever that person isn't in the run (first load, or a refetch that dropped them). The effect
   // version had to list selectedSlug in its own deps to re-check itself, which is the shape that
   // makes cascading renders easy to introduce.
-  const [pickedSlug, setSelectedSlug] = useState("");
-  const runUsers = runQuery.data?.users ?? [];
-  // `?user=` wins on first load — it is how a person's own Runs tab links here — but only until
-  // something else is clicked, which is what `pickedSlug` records.
-  const requested = pickedSlug || linkedUser;
-  const selectedSlug = runUsers.some((u) => u.slug === requested)
-    ? requested
-    : ((runUsers.find((u) => u.error !== null) ?? runUsers[0])?.slug ?? "");
 
   // Computed once per render rather than called twice (header line + phase text below it).
   const phase = currentPhase(liveLog);
@@ -279,7 +269,6 @@ export function RunDetailPage() {
                 ariaLabel="Run detail sections"
                 options={[
                   { value: "rows", label: "Rows" },
-                  { value: "users", label: `People (${run.users.length})` },
                   {
                     value: "log",
                     label: liveLog.length ? `Log (${liveLog.length})` : "Log",
@@ -325,30 +314,6 @@ export function RunDetailPage() {
                   liveLog={liveLog}
                 />
               )}
-
-              {tab === "users" &&
-                (run.users.length === 0 ? (
-                  <EmptyState
-                    title={
-                      run.finished_at
-                        ? "No per-user results"
-                        : "Working — results appear as each user finishes"
-                    }
-                    hint={
-                      run.finished_at
-                        ? "This run didn't process any users."
-                        : "Each person's picks land here when they finish; the Log tab shows live progress."
-                    }
-                  />
-                ) : (
-                  <RunUsersTab
-                    run={run}
-                    selectedSlug={selectedSlug}
-                    onSelect={setSelectedSlug}
-                    idBySlug={idBySlug}
-                    liveLog={liveLog}
-                  />
-                ))}
 
               {tab === "log" &&
                 (logFailed ? (

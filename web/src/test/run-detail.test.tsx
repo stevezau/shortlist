@@ -8,7 +8,10 @@ import type * as ApiModule from "@/lib/api";
 import { RunDetailPage } from "@/pages/run-detail";
 import type { RunLogEntry, RunDetail } from "@/lib/types";
 
-const { getRun, getUsers, getRunLog } = vi.hoisted(() => ({
+const { getRun, getUsers, getRunLog, listCollections } = vi.hoisted(() => ({
+  // The Rows tab names a row from the collections config. Unmocked, that query never settles and no
+  // row finishes rendering — which looks exactly like a row needing to be expanded.
+  listCollections: vi.fn(),
   getRun: vi.fn(),
   getUsers: vi.fn(),
   getRunLog: vi.fn(),
@@ -21,6 +24,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     api: {
       getRun: (id: number) => getRun(id),
       getUsers: () => getUsers(),
+      listCollections: () => listCollections(),
       getRunLog: (id: number) => getRunLog(id),
     },
   };
@@ -69,7 +73,7 @@ function run(breakdown: RunDetail["users"][number]["breakdown"]): RunDetail {
         username: "MooHouse",
         slug: "moohouse",
         status: "ok",
-        rows_considered: {},
+        rows_considered: { picked: "due" },
         display_name: "MooHouse",
         error: null,
         reason: null,
@@ -88,7 +92,25 @@ function run(breakdown: RunDetail["users"][number]["breakdown"]): RunDetail {
 
 /** `query` deep-links a tab (`?tab=users`) — the same URL a person's Runs tab links to, so these
  *  tests exercise the real entry point rather than a state the UI can't reach. */
-function renderDetail(query = "?tab=users") {
+/** Open every closed row card. A person's picks live inside the row that built them, and a row with
+ *  siblings starts collapsed, so a test that wants picks opens the row first.
+ *
+ *  `findAllByRole`, not `queryAllByRole`: the tab strip renders before the run data arrives, so a
+ *  query resolves against a page with no rows yet and clicks nothing. The catch covers a run that
+ *  genuinely has no rows — a real case, not a failure. */
+async function expandRows() {
+  let toggles: HTMLElement[];
+  try {
+    toggles = await screen.findAllByRole("button", { expanded: false });
+  } catch {
+    return;
+  }
+  for (const toggle of toggles) {
+    await userEvent.click(toggle);
+  }
+}
+
+function renderDetail(query = "") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -109,6 +131,7 @@ describe("RunDetailPage — grouped by library", () => {
     getUsers.mockReset();
     getRunLog.mockReset();
     getUsers.mockResolvedValue([]);
+    listCollections.mockResolvedValue([]);
     getRunLog.mockResolvedValue([]);
   });
 
@@ -162,6 +185,8 @@ describe("RunDetailPage — grouped by library", () => {
 
     renderDetail();
 
+    await expandRows();
+
     // A row spanning two libraries shows them as TABS — the selected library's picks only, so the
     // page stays short. Movies is selected first; TV Shows appears when you click it.
     expect(
@@ -199,6 +224,8 @@ describe("RunDetailPage — grouped by library", () => {
 
     renderDetail("");
 
+    await expandRows();
+
     // Duration is computed from started_at → finished_at (04:18 → 04:24 = 6 minutes).
     expect(await screen.findByText("Duration")).toBeInTheDocument();
     expect(screen.getByText("6m 0s")).toBeInTheDocument();
@@ -227,6 +254,8 @@ describe("RunDetailPage — grouped by library", () => {
 
     renderDetail("");
 
+    await expandRows();
+
     expect(await screen.findByText("Web searches")).toBeInTheDocument();
     expect(screen.getByText("1")).toBeInTheDocument(); // actually searched
     expect(screen.getByText(/793 from cache/)).toBeInTheDocument();
@@ -247,6 +276,8 @@ describe("RunDetailPage — grouped by library", () => {
 
     renderDetail("");
 
+    await expandRows();
+
     expect(await screen.findByText("all succeeded")).toBeInTheDocument();
     // No AI this run → those tiles don't render at all (0-value tiles would be noise).
     expect(screen.queryByText("AI tokens")).not.toBeInTheDocument();
@@ -259,6 +290,8 @@ describe("RunDetailPage — grouped by library", () => {
     getRun.mockResolvedValue(r);
 
     renderDetail("");
+
+    await expandRows();
 
     expect(await screen.findByText("9,000")).toBeInTheDocument();
     expect(screen.getByText("curate + AI sources")).toBeInTheDocument();
@@ -315,6 +348,8 @@ describe("RunDetailPage — grouped by library", () => {
     );
 
     renderDetail();
+
+    await expandRows();
 
     expect(
       await screen.findByText("Movies Picked for You"),
@@ -377,6 +412,8 @@ describe("RunDetailPage — grouped by library", () => {
     );
 
     renderDetail();
+
+    await expandRows();
 
     // Each row shows as its own group header — not collapsed into one.
     expect(await screen.findByText("✨ Picked for You")).toBeInTheDocument();
@@ -487,6 +524,8 @@ describe("RunDetailPage — grouped by library", () => {
 
     renderDetail("");
 
+    await expandRows();
+
     expect(await screen.findByText(/Finishing up/)).toBeInTheDocument();
     // Named in the header AND in Overview's latest-activity panel — both answer "what is it
     // doing right now", so both carry it.
@@ -504,7 +543,7 @@ describe("RunDetailPage — grouped by library", () => {
           username: "MooHouse",
           display_name: "MooHouse",
           slug: "moohouse",
-          rows_considered: {},
+          rows_considered: { picked: "due" },
           status: "ok",
           error: null,
           reason: null,
@@ -530,6 +569,8 @@ describe("RunDetailPage — grouped by library", () => {
     } as RunDetail);
 
     renderDetail();
+
+    await expandRows();
 
     expect(await screen.findByText("Old Title")).toBeInTheDocument();
   });
@@ -562,6 +603,8 @@ describe("RunDetailPage — grouped by library", () => {
     );
 
     renderDetail();
+
+    await expandRows();
     await screen.findByText("Fresh One");
 
     // The key explains every visual cue the results use, so nothing needs a hover to decode.
@@ -620,6 +663,8 @@ describe("RunDetail — a skipped person is not a success", () => {
 
     renderDetail();
 
+    await expandRows();
+
     expect(await screen.findByText(/Succeeded · 1/i)).toBeInTheDocument();
     expect(screen.getByText(/Skipped · 1/i)).toBeInTheDocument();
     expect(screen.getByText(/Failed · 1/i)).toBeInTheDocument();
@@ -642,6 +687,8 @@ describe("RunDetail — a skipped person is not a success", () => {
 
     renderDetail("");
 
+    await expandRows();
+
     // The Overview tile's hint — one of the two surfaces that used to say "succeeded".
     expect(
       await screen.findByText(/3 skipped, built nothing/i),
@@ -662,7 +709,9 @@ describe("RunDetail — a skipped person is not a success", () => {
     ) as unknown as RunDetail["users"];
     getRun.mockResolvedValue(r);
 
-    renderDetail("?tab=users");
+    renderDetail("");
+
+    await expandRows();
 
     expect(
       await screen.findByText(/3 skipped — nothing was built/i),
@@ -694,7 +743,9 @@ describe("RunDetail — a skipped person is not a success", () => {
     ] as unknown as RunDetail["users"];
     getRun.mockResolvedValue(r);
 
-    renderDetail("?tab=users");
+    renderDetail("");
+
+    await expandRows();
 
     expect(
       await screen.findByText(/not enough watch history yet/i),
@@ -722,6 +773,8 @@ describe("RunDetail — shows the display name, not the bare username", () => {
 
     renderDetail();
 
+    await expandRows();
+
     // The name now appears in both the user sidebar row and the panel header (the sidebar shows
     // even for a single user), so assert it's present rather than unique — the point is the bare
     // Plex login "moohouse" never renders as text (it's kept only for the avatar + search).
@@ -746,6 +799,8 @@ describe("RunDetail — a failed run says why", () => {
 
     renderDetail("");
 
+    await expandRows();
+
     expect(
       await screen.findByText(/Plex wouldn’t accept a share filter/i),
     ).toBeInTheDocument();
@@ -760,6 +815,7 @@ describe("RunDetail — a failed run says why", () => {
   it("stays quiet on a clean run", async () => {
     getRun.mockResolvedValue(run([]));
     renderDetail("");
+    await expandRows();
     // The tiles only render once a run has finished — wait for one, then assert no alarm.
     expect(await screen.findByText("all succeeded")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
@@ -770,6 +826,7 @@ function failedUser(username: string, error: string) {
   return {
     username,
     slug: username,
+    rows_considered: { picked: "due" },
     status: "error",
     error,
     reason: null,
@@ -787,6 +844,7 @@ describe("RunDetail — 'N people failed with the same problem' (issue 7.1)", ()
     getUsers.mockReset();
     getRunLog.mockReset();
     getUsers.mockResolvedValue([]);
+    listCollections.mockResolvedValue([]);
     getRunLog.mockResolvedValue([]);
   });
 
@@ -801,7 +859,8 @@ describe("RunDetail — 'N people failed with the same problem' (issue 7.1)", ()
     getRun.mockResolvedValue(r);
 
     // Explicitly the People tab: `rows` is the default now, and this banner is the People tab's.
-    renderDetail("?tab=users");
+    renderDetail("");
+    await expandRows();
 
     // Scoped to the banner itself: the selected (first) failed person's own panel repeats the same
     // friendly sentence below it, so an unscoped query matches both and proves nothing about the
@@ -828,6 +887,8 @@ describe("RunDetail — 'N people failed with the same problem' (issue 7.1)", ()
 
     renderDetail("");
 
+    await expandRows();
+
     await screen.findAllByText(/failed/i);
     expect(screen.queryByText(/failed with the same problem/i)).toBeNull();
   });
@@ -839,6 +900,7 @@ describe("RunDetail — where the phase breakdown lives", () => {
     getUsers.mockReset();
     getRunLog.mockReset();
     getUsers.mockResolvedValue([]);
+    listCollections.mockResolvedValue([]);
     // Real TAIL_STAGES with a gap between them — the breakdown renders nothing without them.
     getRunLog.mockResolvedValue([
       {
@@ -870,7 +932,9 @@ describe("RunDetail — where the phase breakdown lives", () => {
     // answers a question you're asking while reading the log — not while scanning people.
     getRun.mockResolvedValue(run([]));
 
-    renderDetail("?tab=users");
+    renderDetail("");
+
+    await expandRows();
 
     await screen.findByRole("button", { name: /Log/i });
     expect(screen.queryByText(/Where the time went/i)).toBeNull();
@@ -918,6 +982,7 @@ describe("RunDetail — SSE stage events only refetch THIS run (issue 7.6)", () 
     getUsers.mockReset();
     getRunLog.mockReset();
     getUsers.mockResolvedValue([]);
+    listCollections.mockResolvedValue([]);
     getRunLog.mockResolvedValue([]);
     FakeEventSource.instances = [];
   });
@@ -928,6 +993,7 @@ describe("RunDetail — SSE stage events only refetch THIS run (issue 7.6)", () 
     // `onRunFinished` right below it, which correctly checked `event.run_id === runId`.
     getRun.mockResolvedValue(run([]));
     renderDetail("");
+    await expandRows();
     await screen.findByText("all succeeded");
 
     const callsBefore = getRun.mock.calls.length;
@@ -947,6 +1013,7 @@ describe("RunDetail — SSE stage events only refetch THIS run (issue 7.6)", () 
   it("does refetch on a stage event for this run", async () => {
     getRun.mockResolvedValue(run([]));
     renderDetail("");
+    await expandRows();
     await screen.findByText("all succeeded");
 
     const callsBefore = getRun.mock.calls.length;
@@ -979,6 +1046,7 @@ describe("RunDetailPage — a queued run has not started", () => {
       stats: {},
     });
     renderDetail();
+    await expandRows();
 
     expect(await screen.findByText(/waiting to start/i)).toBeInTheDocument();
     expect(screen.queryByText(/still running/i)).toBeNull();
@@ -991,6 +1059,7 @@ describe("RunDetailPage — a queued run has not started", () => {
       finished_at: null,
     });
     renderDetail();
+    await expandRows();
 
     expect(await screen.findByText(/still running/i)).toBeInTheDocument();
     expect(screen.queryByText(/waiting to start/i)).toBeNull();
