@@ -288,23 +288,25 @@ class TestSystemResponseShapes:
         assert [set(x) for x in body] == [{"key", "title", "type"}]
         assert body == [{"key": "1", "title": "Movies", "type": "movie"}]
 
-    def test_library_collections_offers_anchors_and_skips_our_own_rows(self, client: TestClient, monkeypatch):
+    def test_library_collections_offers_only_foreign_anchors(self, client: TestClient, monkeypatch):
+        """Our own collections are never title-anchors: a per-person row is one collection PER PERSON,
+        so a title names one account's copy and would place the row for that account alone. Anchoring
+        to another Shortlist row is done by row slug instead (issue #81).
+
+        The fake serves a MARKED title, because that is what a real PMS returns for a collection we
+        wrote, and the exclusion is marker-based for a reason: the old label-based filter went through
+        `collection.labels`, whose re-read can come back empty (plex-safety rule 4), and on those page
+        loads every Shortlist row appeared here as a selectable anchor that then placed nothing.
+        """
         from types import SimpleNamespace
 
         from shortlist.engine.delivery import row_marker
 
         self._connect_plex(client)
-        ours = SimpleNamespace(title="Picked for You", labels=[SimpleNamespace(tag="shortlist_sarah")])
-        theirs = SimpleNamespace(title="New Series (Unwatched)", labels=[])
         section = SimpleNamespace(
             key=1,
             title="Movies",
             type="movie",
-            collections=lambda: [ours, theirs],
-            # WITH the marker, because that is what a real PMS returns for a collection we wrote: the
-            # ledger stores the human display name and Plex stores it with the invisible 64-char
-            # ownership marker appended. Marker-free fixtures made a raw title comparison look
-            # correct, and on SFLIX the exclusion matched nothing at all.
             managedHubs=lambda: [
                 SimpleNamespace(title="Picked for You" + row_marker(100)),
                 SimpleNamespace(title="New Series (Unwatched)"),
@@ -320,31 +322,43 @@ class TestSystemResponseShapes:
 
         monkeypatch.setattr("shortlist.engine.clients.plex_pms.PlexClient", FakePlex)
 
-        # Another Shortlist row is a legitimate anchor — "put Because you watched right after Picked
-        # for You" is the obvious thing to want, and dropping every Shortlist-labelled collection made
-        # it impossible while rendering a saved anchor as "(not found)" (issue #81).
         body = client.get("/api/system/libraries/1/collections").json()
-        assert body == [{"title": "Picked for You" + row_marker(100)}, {"title": "New Series (Unwatched)"}]
 
-        # Only the row being EDITED is excluded, and it is found through the delivery ledger: labels
-        # cannot do it, because a per-person row is labelled by USER, not by row.
-        from shortlist.server.db.models import Delivery
-
-        with client.app.state.sessions() as session:
-            session.add(
-                Delivery(
-                    collection_slug="picked",
-                    user_slug="sarah",
-                    library_key="1",
-                    rating_key=9001,
-                    title="Picked for You",
-                )
-            )
-            session.commit()
-
-        scoped = client.get("/api/system/libraries/1/collections?row=picked").json()
-        assert scoped == [{"title": "New Series (Unwatched)"}], "a row must not be able to anchor to itself"
+        assert body == [{"title": "New Series (Unwatched)"}]
         assert set(body[0]) == {"title"}
+
+    def test_library_collections_excludes_our_rows_even_when_plex_reports_no_labels(
+        self, client: TestClient, monkeypatch
+    ):
+        """The flicker that produced issue #81, pinned. A collection of ours carrying NO labels at all
+        must still be excluded — the marker in the title is proof enough, and it is the only proof
+        that cannot come back empty."""
+        from types import SimpleNamespace
+
+        from shortlist.engine.delivery import row_marker
+
+        self._connect_plex(client)
+        section = SimpleNamespace(
+            key=1,
+            title="Movies",
+            type="movie",
+            collections=lambda: [SimpleNamespace(title="Picked for You" + row_marker(100), labels=[])],
+            managedHubs=lambda: [
+                SimpleNamespace(title="Picked for You" + row_marker(100)),
+                SimpleNamespace(title="Kometa Genre"),
+            ],
+        )
+
+        class FakePlex:
+            def __init__(self, *a, **k):
+                pass
+
+            def sections(self):
+                return [section]
+
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.PlexClient", FakePlex)
+
+        assert client.get("/api/system/libraries/1/collections").json() == [{"title": "Kometa Genre"}]
 
     def test_the_library_list_is_read_from_plex_once_not_once_per_page_load(self, client: TestClient, monkeypatch):
         """`/libraries` backs every row card, the library picker and the placement settings, and each

@@ -37,7 +37,7 @@ import shortlist
 from shortlist.logging_config import normalize_level
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import API_TOKEN_KEY, API_TOKEN_PREFIX, require_owner
-from shortlist.server.db.models import Collection, Delivery, Event, RestrictionSnapshotRow, User, iso_utc
+from shortlist.server.db.models import Collection, Event, RestrictionSnapshotRow, User, iso_utc
 from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.scheduler import rebuild_schedule
 from shortlist.server.services import log_reader
@@ -471,27 +471,24 @@ class LibraryCollectionOut(PassthroughModel):
 
 
 @_authed.get("/libraries/{key}/collections", response_model=list[LibraryCollectionOut])
-async def library_collections(key: str, request: Request, row: str | None = None) -> list[dict]:
-    """A library's managed (orderable) collections — the candidate ANCHORS for placing Shortlist rows
-    in the Recommended shelf.
+async def library_collections(key: str, request: Request) -> list[dict]:
+    """A library's FOREIGN managed (orderable) collections — the candidate anchors for placing
+    Shortlist rows in the Recommended shelf that are not themselves ours.
 
-    Only the row BEING EDITED is excluded (`row`, a collection slug), because you cannot anchor a row
-    to itself. Every other Shortlist row is a legitimate anchor: "put Because you watched right after
-    Picked for You" is the obvious thing to want, and issue #81 is exactly that — the picker dropped
-    every Shortlist-labelled collection, so a saved anchor rendered as "(not found)" and no new one
-    could be chosen.
+    Our own collections are excluded, because a Shortlist row is never anchored by TITLE: it is one
+    collection PER PERSON, so a title names one account's copy and would place the row for that one
+    account and nobody else. Anchoring to another Shortlist row is done by row slug instead
+    (`hub_anchor[library].row`), which the editor offers alongside this list — that is issue #81, and
+    forty identical-looking "Picked for You" entries in this list was the symptom.
 
-    The row's own collections are found through the delivery ledger, which is what maps a row slug to
-    the titles it actually wrote per library — labels cannot do it, because a per-person row is
-    labelled by USER (`shortlist_<userslug>`), not by row.
-
-    Matched with the marker STRIPPED off Plex's title: the ledger records the human display name,
-    while every collection we wrote carries the invisible 64-char ownership marker on the end. Compared
-    raw the two never match, so the exclusion silently did nothing and a row still listed its own 40
-    collections (SFLIX, verified live).
+    Excluded by the invisible title MARKER, never by reading labels. `collection.labels` makes plexapi
+    silently re-read each collection and a read that comes back carrying no <Label> is
+    indistinguishable from an unlabelled row (plex-safety rule 4) — on those page loads the old
+    label-based filter emptied and every Shortlist row appeared here as a selectable anchor. That is
+    how the reporter came to have one saved: the option was a flicker, and it never placed anything.
+    The marker is in the title we already have, so it cannot fail that way.
     """
-    from shortlist.engine.clients.plex_pms import PlexClient
-    from shortlist.engine.delivery import strip_marker
+    from shortlist.engine.clients.plex_pms import PlexClient, has_shortlist_marker
     from shortlist.server.settings_store import SettingsStore
 
     state = request.app.state
@@ -506,27 +503,15 @@ async def library_collections(key: str, request: Request, row: str | None = None
         section = next((s for s in client.sections() if str(s.key) == key), None)
         if section is None:
             raise HTTPException(status_code=404, detail="library not found")
-        ours: set[str] = set()
-        if row:
-            with state.sessions() as session:
-                ours = {
-                    d.title
-                    for d in session.query(Delivery).filter(
-                        Delivery.collection_slug == row, Delivery.library_key == str(key)
-                    )
-                    if d.title
-                }
         titles: list[str] = []
         for hub in section.managedHubs():
             title = getattr(hub, "title", "") or ""
-            if title and strip_marker(title) not in ours and title not in titles:
+            if title and not has_shortlist_marker(title) and title not in titles:
                 titles.append(title)
         return [{"title": t} for t in titles]
 
     return await asyncio.get_running_loop().run_in_executor(
-        None,  # The row is part of the cache key: each row excludes a DIFFERENT set (its own), so one shared
-        # entry served the first caller's answer to everybody.
-        lambda: _cached_plex_read(state, f"collections:{key}:{row or ''}", read),
+        None, lambda: _cached_plex_read(state, f"collections:{key}", read)
     )
 
 

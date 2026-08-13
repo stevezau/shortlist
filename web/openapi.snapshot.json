@@ -1395,7 +1395,7 @@
         "type": "object"
       },
       "HubAnchorIn": {
-        "description": "A per-library shelf placement for one row: the very TOP (``top``), or after/before a collection\nby title. ``top`` needs no anchor; otherwise ``anchor`` must be a non-empty title.",
+        "description": "A per-library shelf placement for one row: the very TOP (``top``), or after/before either\nanother Shortlist ROW (``row``, a row slug) or a foreign collection (``anchor``, a title).\n``top`` needs neither; otherwise exactly one of ``row``/``anchor`` must be set.\n\n``row`` is a slug rather than a title because a per-person row is one Plex collection PER PERSON:\na title names one account's copy and is meaningless for everyone else, which is what made the\npicker offer forty identical-looking options and place none of them (issue #81).",
         "properties": {
           "anchor": {
             "default": "",
@@ -1407,6 +1407,12 @@
             "default": false,
             "title": "Before",
             "type": "boolean"
+          },
+          "row": {
+            "default": "",
+            "maxLength": 255,
+            "title": "Row",
+            "type": "string"
           },
           "top": {
             "default": false,
@@ -1430,6 +1436,11 @@
             "default": false,
             "title": "Before",
             "type": "boolean"
+          },
+          "row": {
+            "default": "",
+            "title": "Row",
+            "type": "string"
           },
           "top": {
             "default": false,
@@ -9339,7 +9350,7 @@
     },
     "/api/system/libraries/{key}/collections": {
       "get": {
-        "description": "A library's managed (orderable) collections \u2014 the candidate ANCHORS for placing Shortlist rows\nin the Recommended shelf.\n\nOnly the row BEING EDITED is excluded (`row`, a collection slug), because you cannot anchor a row\nto itself. Every other Shortlist row is a legitimate anchor: \"put Because you watched right after\nPicked for You\" is the obvious thing to want, and issue #81 is exactly that \u2014 the picker dropped\nevery Shortlist-labelled collection, so a saved anchor rendered as \"(not found)\" and no new one\ncould be chosen.\n\nThe row's own collections are found through the delivery ledger, which is what maps a row slug to\nthe titles it actually wrote per library \u2014 labels cannot do it, because a per-person row is\nlabelled by USER (`shortlist_<userslug>`), not by row.\n\nMatched with the marker STRIPPED off Plex's title: the ledger records the human display name,\nwhile every collection we wrote carries the invisible 64-char ownership marker on the end. Compared\nraw the two never match, so the exclusion silently did nothing and a row still listed its own 40\ncollections (SFLIX, verified live).",
+        "description": "A library's FOREIGN managed (orderable) collections \u2014 the candidate anchors for placing\nShortlist rows in the Recommended shelf that are not themselves ours.\n\nOur own collections are excluded, because a Shortlist row is never anchored by TITLE: it is one\ncollection PER PERSON, so a title names one account's copy and would place the row for that one\naccount and nobody else. Anchoring to another Shortlist row is done by row slug instead\n(`hub_anchor[library].row`), which the editor offers alongside this list \u2014 that is issue #81, and\nforty identical-looking \"Picked for You\" entries in this list was the symptom.\n\nExcluded by the invisible title MARKER, never by reading labels. `collection.labels` makes plexapi\nsilently re-read each collection and a read that comes back carrying no <Label> is\nindistinguishable from an unlabelled row (plex-safety rule 4) \u2014 on those page loads the old\nlabel-based filter emptied and every Shortlist row appeared here as a selectable anchor. That is\nhow the reporter came to have one saved: the option was a flicker, and it never placed anything.\nThe marker is in the title we already have, so it cannot fail that way.",
         "operationId": "library_collections_api_system_libraries__key__collections_get",
         "parameters": [
           {
@@ -9349,22 +9360,6 @@
             "schema": {
               "title": "Key",
               "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "row",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Row"
             }
           }
         ],

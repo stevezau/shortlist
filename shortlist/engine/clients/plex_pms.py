@@ -67,7 +67,7 @@ class SectionNotShared(RuntimeError):
 _MARKER_CHARS = ("​", "‌")
 
 
-def _has_shortlist_marker(title: str) -> bool:
+def has_shortlist_marker(title: str) -> bool:
     suffix = title[-64:]
     return len(suffix) == 64 and all(c in _MARKER_CHARS for c in suffix)
 
@@ -92,7 +92,7 @@ def _marker_account(title: str) -> int | None:
     ``delivery`` imports from this module, so importing it back is a cycle. Kept as one function
     rather than inlined twice; ``log_title`` reads it too.
     """
-    if not _has_shortlist_marker(title):
+    if not has_shortlist_marker(title):
         return None
     suffix = title[-64:]
     return sum((1 << bit) for bit, c in enumerate(suffix) if c == _MARKER_CHARS[1])
@@ -561,7 +561,7 @@ class PlexClient:
         for section in self.sections():
             for collection in self._section_collections(section):
                 label = next((lbl.tag for lbl in collection.labels if lbl.tag.lower().startswith(prefix)), None)
-                marked = _has_shortlist_marker(collection.title)
+                marked = has_shortlist_marker(collection.title)
                 if label is None and not marked:
                     continue
                 row = {
@@ -761,6 +761,8 @@ class PlexClient:
         *,
         label_prefix: str,
         anchor_title: str = "",
+        anchor_keys: set[int] | None = None,
+        anchor_label: str = "",
         before: bool = False,
         dry_run: bool = False,
         only_keys: set[int] | None = None,
@@ -772,9 +774,20 @@ class PlexClient:
         (Kometa) can't bury them.
 
         Only OUR hubs are moved — those labelled ``label_prefix``_* OR carrying the Shortlist title
-        marker; the anchor is read-only. ``only_keys`` restricts the move to the rows with those
+        marker; a FOREIGN anchor is read-only. ``only_keys`` restricts the move to the rows with those
         collection ratingKeys (used when different rows anchor to different collections) — ``None``
-        moves them all. Returns an audit dict ``{anchor, moved: [titles], skipped: bool, reason?}``,
+        moves them all.
+
+        ``anchor_keys`` anchors to one of OUR OWN rows instead of a foreign collection: the ratingKeys
+        of that row's collections in this section, from the delivery ledger. The anchor hub is then the
+        last of them in current shelf order (or the first, for ``before``) rather than a title match —
+        a per-person row has one collection per person, so no single title names it. Passing it lifts
+        the "never one of ours" rule for exactly those keys, which is safe only because the caller
+        places that row's block FIRST; anchoring to a row not yet in position would chase a moving
+        target. ``only_keys`` and ``anchor_keys`` must not overlap — a row cannot follow itself.
+        ``anchor_label`` is what the audit and logs CALL the anchor, since a row anchor has no title.
+
+        Returns an audit dict ``{anchor, moved: [titles], skipped: bool, reason?}``,
         plus ``verified: bool`` once anything has actually been written (a dry run returns
         ``dry_run: True`` and no ``verified``: it asked for nothing, so there is nothing to confirm).
 
@@ -801,16 +814,31 @@ class PlexClient:
         key_by_title = {
             c.title: c.ratingKey
             for c in self._section_collections(section)
-            if _has_shortlist_marker(c.title) or any(label.tag.lower().startswith(prefix) for label in c.labels)
+            if has_shortlist_marker(c.title) or any(label.tag.lower().startswith(prefix) for label in c.labels)
         }
         owned_all = set(key_by_title)
-        # The subset to MOVE (restricted by only_keys); the anchor is never any of our OWN rows —
-        # excluded via owned_all, not the subset, so a row can't be anchored to a sibling Shortlist row.
+        # What the audit and the logs CALL this anchor. A row anchor has no title of its own — one
+        # collection per person — so without a label every ordering record for one would read
+        # 'anchor: ""', which is not an answer to "what moved where" (rule 10).
+        audit_anchor = anchor_label or anchor_title or ("another Shortlist row" if anchor_keys else "")
+        # The subset to MOVE (restricted by only_keys).
         owned_titles = owned_all if only_keys is None else {t for t, key in key_by_title.items() if key in only_keys}
         if not owned_titles:
-            return {"anchor": anchor_title, "moved": [], "skipped": True, "reason": "no rows in this library"}
+            return {"anchor": audit_anchor, "moved": [], "skipped": True, "reason": "no rows in this library"}
+        # The titles a ROW anchor resolves to here — its collections, one per person. Everything else
+        # of ours stays barred from being an anchor: without `anchor_keys` this set is empty and the
+        # rule is exactly what it was. A row that named ITSELF would be asked to move relative to its
+        # own hubs, which is meaningless and would thrash the shelf; the caller rejects that, and the
+        # subtraction here means a slip cannot reach Plex.
+        anchor_titles = {t for t, key in key_by_title.items() if anchor_keys and key in anchor_keys} - owned_titles
+        if anchor_keys and not anchor_titles:
+            # Named row has nothing on this shelf (never delivered here, or its collections are gone).
+            # Leaving the shelf alone beats falling back to a different slot: a silent reinterpretation
+            # of where someone asked their row to go is worse than not moving it, and the next run
+            # places it once the row exists.
+            return {"anchor": audit_anchor, "moved": [], "skipped": True, "reason": "anchor row not on this shelf"}
 
-        where = "to the top" if to_top else f"{'before' if before else 'after'} {anchor_title!r}"
+        where = "to the top" if to_top else f"{'before' if before else 'after'} {audit_anchor!r}"
         # Hub identifier -> title, so a row re-moved on a later attempt is audited once, not once per
         # attempt. Titles are unique per section (the marker), the identifier more so.
         moved: dict[str, str] = {}
@@ -823,9 +851,9 @@ class PlexClient:
             `report.hub_orderings` never saw it (plex-safety rule 10).
             """
             if not moved:
-                return {"anchor": anchor_title, "moved": [], "skipped": True, "reason": reason}
+                return {"anchor": audit_anchor, "moved": [], "skipped": True, "reason": reason}
             return {
-                "anchor": "top" if to_top else anchor_title,
+                "anchor": "top" if to_top else audit_anchor,
                 "moved": list(moved.values()),
                 "skipped": False,
                 "verified": False,
@@ -849,6 +877,43 @@ class PlexClient:
 
             if to_top:
                 target = None  # move(after=None) -> the very top of the shelf
+            elif anchor_titles:
+                # A ROW anchor is a BLOCK of hubs — one collection per person — not a single
+                # collection, so it has two edges: sit after its LAST hub, or before its FIRST.
+                # Re-resolved every attempt because that block was itself placed moments ago.
+                #
+                # PROMOTED hubs only, exactly like `ours` above. A paused or disabled person's copy of
+                # the anchor row is still on the shelf and still in the ledger, but we never move it —
+                # so it sits wherever Plex appended it, at the bottom. Anchoring to it dragged the
+                # follower down there with it, underneath the co-managing tool's hubs: precisely the
+                # burial this whole function exists to undo, reported as a verified success.
+                block = [h for h in order if (getattr(h, "title", "") or "") in anchor_titles and _is_promoted(h)]
+                if not block:
+                    # Every copy of the anchor row here is dormant. Same answer as "not on this shelf":
+                    # there is no position to be relative to, and inventing one puts the follower
+                    # somewhere nobody asked for.
+                    logger.warning(
+                        "hub order: anchor row has no promoted hub in {} — {}",
+                        section.title,
+                        f"stopping after {len(moved)} move(s)" if moved else "leaving the shelf order unchanged",
+                    )
+                    return outcome("anchor row not on this shelf")
+                if before:
+                    # Skip only the hubs we are ABOUT TO MOVE: their current position is about to
+                    # change, so landing on one aims at a slot that is disappearing. Other rows of ours
+                    # are already in place and are legitimate landmarks — which only matters here,
+                    # because a row anchor is the one case where our own hubs are the neighbourhood.
+                    anchor_idx = order.index(block[0])
+                    target = next(
+                        (
+                            h
+                            for h in reversed(order[:anchor_idx])
+                            if (getattr(h, "title", "") or "") not in owned_titles
+                        ),
+                        None,
+                    )
+                else:
+                    target = block[-1]
             else:
                 anchor = next(
                     (
@@ -884,7 +949,7 @@ class PlexClient:
             start = idents.index(target.identifier) + 1 if target is not None else 0
             if idents[start : start + len(our_idents)] == our_idents:
                 if not moved:
-                    return {"anchor": anchor_title, "moved": [], "skipped": True, "reason": "already in place"}
+                    return {"anchor": audit_anchor, "moved": [], "skipped": True, "reason": "already in place"}
                 logger.info(
                     "hub order: placed {} row(s) {} in {} — {} move(s) over {} attempt(s), verified",
                     len(ours),
@@ -894,7 +959,7 @@ class PlexClient:
                     attempt - 1,
                 )
                 return {
-                    "anchor": "top" if to_top else anchor_title,
+                    "anchor": "top" if to_top else audit_anchor,
                     "moved": list(moved.values()),
                     "skipped": False,
                     "verified": True,
@@ -926,7 +991,7 @@ class PlexClient:
                     section.title,
                 )
                 return {
-                    "anchor": "top" if to_top else anchor_title,
+                    "anchor": "top" if to_top else audit_anchor,
                     "moved": [by_ident[ident].title for ident, _ in planned],
                     "skipped": False,
                     "dry_run": True,
@@ -950,7 +1015,7 @@ class PlexClient:
             len(moved),
         )
         return {
-            "anchor": "top" if to_top else anchor_title,
+            "anchor": "top" if to_top else audit_anchor,
             "moved": list(moved.values()),
             "skipped": False,
             "verified": False,
@@ -1085,7 +1150,7 @@ class PlexClient:
         leaks to every user, and the label-only check used to refuse to clean it up. The marker (a
         64-char zero-width suffix no other tool produces) still identifies it as ours."""
         labelled = any(label.tag.lower().startswith(f"{label_prefix}_") for label in collection.labels)
-        if not labelled and not _has_shortlist_marker(collection.title):
+        if not labelled and not has_shortlist_marker(collection.title):
             raise PermissionError(f"refusing to delete {collection.title!r}: no {label_prefix}_* label — not ours")
         collection.visibility().updateVisibility(recommended=False, home=False, shared=False)
         collection.delete()

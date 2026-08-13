@@ -522,14 +522,10 @@ export const api = {
     request("/api/report/sync", { method: "POST" }),
 
   /** A library's managed collections — the candidate anchors for placing rows in the shelf. */
-  getLibraryCollections: (
-    key: string,
-    row?: string,
-  ): Promise<{ title: string }[]> =>
-    request(
-      `/api/system/libraries/${encodeURIComponent(key)}/collections` +
-        (row ? `?row=${encodeURIComponent(row)}` : ""),
-    ),
+  /** A library's FOREIGN collections — ours are excluded server-side, because a Shortlist row is
+   *  anchored by row slug rather than by title (a per-person row is one collection per person). */
+  getLibraryCollections: (key: string): Promise<{ title: string }[]> =>
+    request(`/api/system/libraries/${encodeURIComponent(key)}/collections`),
 
   /** Cleanup audit: every shortlist-labelled collection on Plex, with drift/orphan flags. */
   getOwnedCollections: (): Promise<OwnedCollectionsAudit> =>

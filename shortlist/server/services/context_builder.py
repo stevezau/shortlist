@@ -929,9 +929,15 @@ class ContextBuilder:
 
     @staticmethod
     def _parse_hub_anchors(raw: object) -> dict[str, HubAnchor]:
-        """`{sectionKey: {"top": true} | {"anchor": title, "before": bool}}` -> section key -> HubAnchor.
-        A `top` entry moves the row to the very top; otherwise a non-empty `anchor` places it relative
-        to that collection. Blank/invalid entries are dropped, so the engine only moves real placements."""
+        """`{sectionKey: {"top": true} | {"row": slug, "before": bool} | {"anchor": title, "before": bool}}`
+        -> section key -> HubAnchor.
+
+        A `top` entry moves the row to the very top; a `row` entry places it relative to another
+        Shortlist ROW (by slug — a per-person row is one collection per person, so no single title
+        names it); otherwise a non-empty `anchor` places it relative to that foreign collection.
+        `row` is read before `anchor` so a saved foreign title left behind by an earlier setting can
+        never override the row the owner actually chose. Blank/invalid entries are dropped, so the
+        engine only moves real placements."""
         anchors: dict[str, HubAnchor] = {}
         if isinstance(raw, dict):
             for key, entry in raw.items():
@@ -939,6 +945,11 @@ class ContextBuilder:
                     continue
                 if entry.get("top"):
                     anchors[str(key)] = HubAnchor(to_top=True)
+                elif str(entry.get("row") or "").strip():
+                    anchors[str(key)] = HubAnchor(
+                        anchor_row=str(entry["row"]).strip(),
+                        before=bool(entry.get("before", False)),
+                    )
                 elif str(entry.get("anchor") or "").strip():
                     anchors[str(key)] = HubAnchor(
                         anchor_title=str(entry["anchor"]).strip(),
@@ -948,8 +959,20 @@ class ContextBuilder:
 
     @classmethod
     def _build_hub_anchors(cls, store: SettingsStore) -> dict[str, HubAnchor]:
-        """The GLOBAL per-library Recommended-shelf default from `rows.hub_anchor`."""
-        return cls._parse_hub_anchors(store.get("rows.hub_anchor") or {})
+        """The GLOBAL per-library Recommended-shelf default from `rows.hub_anchor`.
+
+        A ROW anchor is dropped here, not honoured. The global default applies to every row, so "all
+        rows go after row X" includes X itself; and the paths that use this default pass no
+        `anchor_keys`, so a row anchor would reach the client's FOREIGN branch with an empty title and
+        match any hub whose title is empty. `_hub_anchors` in the settings API rejects it on the way
+        in — this is the second guard, so a future relaxation there cannot open that door silently.
+        """
+        anchors = cls._parse_hub_anchors(store.get("rows.hub_anchor") or {})
+        dropped = [key for key, anchor in anchors.items() if anchor.anchor_row]
+        for key in dropped:
+            logger.warning("rows.hub_anchor[{}] names a row — only a per-ROW placement can do that; ignoring it", key)
+            del anchors[key]
+        return anchors
 
     @staticmethod
     def _build_requests(store: SettingsStore) -> RequestConfig | None:

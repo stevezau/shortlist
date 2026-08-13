@@ -55,7 +55,7 @@ describe("hasUnsavedChanges", () => {
     const row = collection({
       library_keys: ["1", "2"],
       hub_anchor: {
-        "1": { anchor: "recentlyAdded", before: true, top: false },
+        "1": { anchor: "recentlyAdded", row: "", before: true, top: false },
       },
     });
     const saved = toInput(row);
@@ -63,7 +63,7 @@ describe("hasUnsavedChanges", () => {
       ...saved,
       library_keys: [...saved.library_keys],
       hub_anchor: {
-        "1": { top: false, before: true, anchor: "recentlyAdded" },
+        "1": { top: false, before: true, row: "", anchor: "recentlyAdded" },
       },
       poster: {
         style: saved.poster.style,

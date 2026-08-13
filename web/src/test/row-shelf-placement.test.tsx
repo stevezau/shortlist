@@ -8,10 +8,13 @@ import { RowShelfPlacement } from "@/components/rows/row-shelf-placement";
 import type * as ApiModule from "@/lib/api";
 import type { HubAnchorMap } from "@/lib/types";
 
-const { getLibraries, getLibraryCollections } = vi.hoisted(() => ({
-  getLibraries: vi.fn(),
-  getLibraryCollections: vi.fn(),
-}));
+const { getLibraries, getLibraryCollections, listCollections } = vi.hoisted(
+  () => ({
+    getLibraries: vi.fn(),
+    getLibraryCollections: vi.fn(),
+    listCollections: vi.fn(),
+  }),
+);
 
 // Preserve the real module (notably the `ApiError` export QueryBoundary's ErrorState relies on for
 // `error instanceof ApiError`); override only the `api` client. A bare `{ api }` mock drops ApiError
@@ -23,6 +26,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     api: {
       getLibraries: () => getLibraries(),
       getLibraryCollections: (key: string) => getLibraryCollections(key),
+      listCollections: () => listCollections(),
     },
   };
 });
@@ -45,6 +49,7 @@ function Harness({
       value={value}
       libraryKeys={[]}
       media="both"
+      rowSlug="because"
       pinnedTop={pinnedTop}
       onConsumePin={onConsumePin}
       onChange={(next) => {
@@ -80,6 +85,15 @@ describe("RowShelfPlacement", () => {
       { title: "New Series" },
       { title: "Trending" },
     ]);
+    // The row being edited ("because") plus two siblings — only the siblings may be offered.
+    listCollections.mockResolvedValue([
+      { slug: "because", name: "Because you watched", media: "both", library_keys: [] },
+      { slug: "picked", name: "Picked for You", media: "both", library_keys: [] },
+      { slug: "popular", name: "Popular on SFLIX", media: "both", library_keys: [] },
+      // Movies-only: it builds nothing in the TV library this control renders, so it must not be
+      // offered there — saving it would look fine and then be skipped every run, silently.
+      { slug: "movie-only", name: "Movie Nights", media: "movie", library_keys: [] },
+    ]);
   });
 
   it("defaults each targeted library to inheriting the global setting (no entry)", async () => {
@@ -94,17 +108,78 @@ describe("RowShelfPlacement", () => {
 
     await userEvent.selectOptions(screen.getByLabelText("Position"), "before");
     await userEvent.selectOptions(
-      await screen.findByLabelText("Collection"),
-      "New Series",
+      await screen.findByLabelText("Before"),
+      "coll:New Series",
     );
     await waitFor(() =>
       expect(latest.value).toEqual({
-        "2": { anchor: "New Series", before: true },
+        "2": { anchor: "New Series", row: "", before: true },
       }),
     );
 
     await userEvent.selectOptions(screen.getByLabelText("Position"), "default");
     await waitFor(() => expect(latest.value).toEqual({}));
+  });
+
+  it("offers the OTHER Shortlist rows as anchors, and never the row being edited", async () => {
+    // Issue #81. The picker used to offer forty identical-looking "Picked for You" entries — one
+    // Plex collection per person, all rendering the same — and placing any of them did nothing. A
+    // row is chosen as a ROW, so there is exactly one entry for it whatever the roster size.
+    renderControl();
+    await screen.findByText("TV Shows");
+    await userEvent.selectOptions(screen.getByLabelText("Position"), "after");
+
+    const select = await screen.findByLabelText("After");
+    const labels = Array.from(select.querySelectorAll("option")).map(
+      (o) => o.textContent,
+    );
+    expect(labels).toContain("Picked for You");
+    expect(labels).toContain("Popular on SFLIX");
+    expect(labels).not.toContain("Because you watched");
+  });
+
+  it("never offers a row that builds nothing in this library", async () => {
+    renderControl();
+    await screen.findByText("TV Shows");
+    await userEvent.selectOptions(screen.getByLabelText("Position"), "after");
+
+    const select = await screen.findByLabelText("After");
+    const labels = Array.from(select.querySelectorAll("option")).map(
+      (o) => o.textContent,
+    );
+    expect(labels).toContain("Picked for You");
+    expect(labels).not.toContain("Movie Nights");
+  });
+
+  it("saves a row anchor as a slug, not a title", async () => {
+    // A title names ONE account's copy of a per-person row, so it can only ever place the row for
+    // that one account. The slug names the row itself, and each library resolves it to that row's
+    // own collections.
+    const latest = renderControl();
+    await screen.findByText("TV Shows");
+
+    await userEvent.selectOptions(screen.getByLabelText("Position"), "after");
+    await userEvent.selectOptions(
+      await screen.findByLabelText("After"),
+      "row:picked",
+    );
+
+    await waitFor(() =>
+      expect(latest.value).toEqual({
+        "2": { row: "picked", anchor: "", before: false },
+      }),
+    );
+  });
+
+  it("keeps showing a saved row anchor whose row is gone, rather than reading as unset", async () => {
+    const latest = renderControl({ "2": { row: "deleted-row", before: false } });
+    await screen.findByText("TV Shows");
+
+    const select = await screen.findByLabelText("After");
+    expect(
+      Array.from(select.querySelectorAll("option")).map((o) => o.textContent),
+    ).toContain("deleted-row (row not found)");
+    expect(latest.value).toEqual({ "2": { row: "deleted-row", before: false } });
   });
 
   it("sets a per-row 'Top' with no collection needed", async () => {

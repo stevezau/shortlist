@@ -657,7 +657,7 @@ class TestPlexClient:
         # The orphan-ownership check is duplicated in plex_pms (to avoid an import cycle); if the two
         # marker definitions ever drift, the sweep would find an orphan but delete_owned_collection
         # would refuse it and abort the run. Pin them together so drift can't ship silently.
-        from shortlist.engine.clients.plex_pms import _has_shortlist_marker
+        from shortlist.engine.clients.plex_pms import has_shortlist_marker
         from shortlist.engine.delivery import has_marker, row_marker
 
         for title in (
@@ -666,7 +666,7 @@ class TestPlexClient:
             "x" + "​" * 63,  # 63 trailing marker chars — one short of a marker
             "x" + "‌" * 65,  # 65 — a valid 64 marker preceded by another zero-width char
         ):
-            assert _has_shortlist_marker(title) == has_marker(title), title
+            assert has_shortlist_marker(title) == has_marker(title), title
 
     def test_delete_demotes_then_deletes_owned(self, mock_plex: PlexClient):
         owned = MagicMock()

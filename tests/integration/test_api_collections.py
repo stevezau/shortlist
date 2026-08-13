@@ -524,6 +524,106 @@ class TestCollectionsSeed:
         assert spec.show_owner_library and not spec.show_friends_library
         assert spec.show_home and spec.show_friends_home
 
+    def test_a_row_can_be_anchored_to_another_row_and_bad_ones_are_refused(self, client: TestClient):
+        """Issue #81. The anchor is a row SLUG, because a per-person row is one Plex collection per
+        person and a title only ever names one account's copy.
+
+        Every refusal here is refused at SAVE time on purpose. The engine's only sane response to a
+        cycle is to leave those rows where they are — silently, once a night, in a log nobody reads.
+        The moment to say "these two point at each other" is while someone is looking at the screen
+        that created it.
+        """
+        first = client.post("/api/collections", json={"name": "Picked Row"})
+        assert first.status_code == 201
+        picked = first.json()["slug"]
+
+        ok = client.post(
+            "/api/collections",
+            json={"name": "Because Row", "hub_anchor": {"2": {"row": picked}}},
+        )
+        assert ok.status_code == 201
+        assert ok.json()["hub_anchor"]["2"] == {"anchor": "", "row": picked, "before": False, "top": False}
+        because = ok.json()["slug"]
+
+        missing = client.post(
+            "/api/collections", json={"name": "Ghost Row", "hub_anchor": {"2": {"row": "no-such-row"}}}
+        )
+        assert missing.status_code == 422 and "no row called" in missing.json()["detail"]
+
+        both = client.post(
+            "/api/collections",
+            json={"name": "Both Row", "hub_anchor": {"2": {"row": picked, "anchor": "New Series"}}},
+        )
+        assert both.status_code == 422, "row wins in the engine, so accepting both would hide one of them"
+
+        itself = client.patch(
+            f"/api/collections/{first.json()['id']}", json={"name": "Picked Row", "hub_anchor": {"2": {"row": picked}}}
+        )
+        assert itself.status_code == 422 and "after itself" in itself.json()["detail"]
+
+        # 'because' already follows 'picked'; pointing 'picked' at 'because' closes the loop.
+        loop = client.patch(
+            f"/api/collections/{first.json()['id']}",
+            json={"name": "Picked Row", "hub_anchor": {"2": {"row": because}}},
+        )
+        assert loop.status_code == 422 and "loop" in loop.json()["detail"]
+
+        # The same pair in a DIFFERENT library is not a loop — anchors are per library.
+        other_library = client.patch(
+            f"/api/collections/{first.json()['id']}",
+            json={"name": "Picked Row", "hub_anchor": {"3": {"row": because}}},
+        )
+        assert other_library.status_code == 200
+
+    def test_a_loop_further_down_the_chain_does_not_block_an_unrelated_edit(self, client: TestClient):
+        """Only a loop THIS edit closes is the editor's problem.
+
+        The chain walk revisits nodes, so a tangle that already exists further along (a direct DB
+        edit, a restore, an import) would otherwise 422 an innocent save with "that would make a
+        loop" — untrue of their edit, and nothing they can act on. The engine already declines to
+        place a cycle; this save is genuinely fine.
+        """
+        a = client.post("/api/collections", json={"name": "Row A"}).json()
+        b = client.post("/api/collections", json={"name": "Row B"}).json()
+        c = client.post("/api/collections", json={"name": "Row C"}).json()
+
+        # Plant B <-> C directly, the way a restore or a hand-edited DB would.
+        from shortlist.server.db.models import Collection
+
+        with client.app.state.sessions() as session:
+            session.get(Collection, b["id"]).hub_anchor = {"2": {"row": c["slug"], "before": False}}
+            session.get(Collection, c["id"]).hub_anchor = {"2": {"row": b["slug"], "before": False}}
+            session.commit()
+
+        # A, which is in no loop, points at B. That edit creates nothing and must be allowed.
+        saved = client.patch(
+            f"/api/collections/{a['id']}",
+            json={"name": "Row A", "hub_anchor": {"2": {"row": b["slug"]}}},
+        )
+        assert saved.status_code == 200, saved.json()
+
+    def test_deleting_a_row_clears_the_anchors_that_pointed_at_it(self, client: TestClient):
+        """Otherwise the rows that followed it point at nothing forever.
+
+        The engine skips an anchor row it cannot resolve — right for a row that simply has not
+        delivered into that library yet, wrong for one that no longer exists — and from inside a run
+        those two look identical. So the reference is cleared here, and those rows fall back to the
+        library default, which is where a row with no placement of its own belongs.
+        """
+        picked = client.post("/api/collections", json={"name": "Anchor Row"})
+        assert picked.status_code == 201
+        follower = client.post(
+            "/api/collections",
+            json={"name": "Follower Row", "hub_anchor": {"2": {"row": picked.json()["slug"]}}},
+        )
+        assert follower.status_code == 201
+
+        assert client.delete(f"/api/collections/{picked.json()['id']}").status_code in (200, 204)
+
+        after = client.get("/api/collections").json()
+        still = next(r for r in after if r["id"] == follower.json()["id"])
+        assert still["hub_anchor"] == {}, "the dangling anchor must be gone, not left pointing at a ghost"
+
     def test_per_row_hub_anchor_round_trips_and_reaches_the_spec(self, client: TestClient):
         from shortlist.engine.models import HubAnchor
         from shortlist.server.services.context_builder import ContextBuilder
@@ -532,7 +632,7 @@ class TestCollectionsSeed:
         body = {"name": "Gems Row", "hub_anchor": {"2": {"anchor": "New Series", "before": True}}}
         created = client.post("/api/collections", json=body)
         assert created.status_code == 201
-        assert created.json()["hub_anchor"] == {"2": {"anchor": "New Series", "before": True, "top": False}}
+        assert created.json()["hub_anchor"] == {"2": {"anchor": "New Series", "row": "", "before": True, "top": False}}
         # A blank anchor with no top is rejected by the shape.
         blank = client.post("/api/collections", json={"name": "X", "hub_anchor": {"2": {"anchor": ""}}})
         assert blank.status_code == 422
@@ -547,6 +647,34 @@ class TestCollectionsSeed:
             "2": HubAnchor(anchor_title="New Series", before=True)
         }
         assert next(s for s in specs if s.slug == "top_gems").hub_anchors == {"2": HubAnchor(to_top=True)}
+
+    def test_a_row_anchor_survives_the_save_and_reaches_the_engine_as_a_slug(self, client: TestClient):
+        """The link between the two halves of issue #81: the API stores it and the engine receives it.
+
+        Both ends are covered elsewhere — the API refuses bad anchors, and the engine places a row
+        after another row's block — but nothing proved the middle. `_parse_hub_anchors` reads `row`
+        BEFORE `anchor`, and a parse that dropped it would leave every save looking correct while the
+        engine silently fell back to the library default.
+        """
+        from shortlist.engine.models import HubAnchor
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        first = client.post("/api/collections", json={"name": "Anchor Target"})
+        target = first.json()["slug"]
+        follower = client.post(
+            "/api/collections",
+            json={"name": "Follows It", "hub_anchor": {"2": {"row": target, "before": True}}},
+        )
+        assert follower.status_code == 201
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+
+        assert next(s for s in specs if s.slug == follower.json()["slug"]).hub_anchors == {
+            "2": HubAnchor(anchor_row=target, before=True)
+        }
 
     def test_a_disabled_row_becomes_a_retired_row_for_cleanup(self, client: TestClient):
         """A row switched off is not delivered (dropped from _build_rows) AND handed to the engine as

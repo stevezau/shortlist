@@ -609,16 +609,29 @@ class RequestReport:
 @dataclass(frozen=True)
 class HubAnchor:
     """Where a library's Shortlist rows should sit in Plex's managed-recommendation shelf: the very
-    TOP (``to_top=True``), or right after (``before=False``) / before (``before=True``) an existing
-    collection matched by ``anchor_title``. ``to_top`` ignores ``anchor_title``.
+    TOP (``to_top=True``), or right after (``before=False``) / before (``before=True``) either a
+    foreign collection (``anchor_title``) or another Shortlist ROW (``anchor_row``, a row slug).
+    ``to_top`` ignores both; ``anchor_row`` wins over ``anchor_title`` when both are set.
+
+    ``anchor_row`` is a slug and not a title on purpose. A per-person row is one Plex collection PER
+    PERSON — forty accounts means forty collections whose titles differ only by the invisible
+    per-account marker — so a title can only ever name ONE person's copy, which is meaningless as
+    "put my row after Picked for You". The slug names the row itself, and each library resolves it to
+    whichever of its collections are that row's (issue #81).
 
     Re-applied at the end of every run so a co-managing tool (e.g. Kometa, which can push our rows to
-    the bottom of the shelf) can't leave them buried. Only OUR hubs are moved; the anchor is read-only.
+    the bottom of the shelf) can't leave them buried. Only OUR hubs are moved; a FOREIGN anchor is
+    read-only. A row anchor is one of ours and therefore also moves — which is why the rows of a
+    library are placed in dependency order, never in one block.
     """
 
     anchor_title: str = ""
     before: bool = False
     to_top: bool = False
+    # LAST, and it must stay last: `HubAnchor(title, before, to_top)` is constructed positionally in
+    # places, so a new field anywhere earlier silently re-binds their arguments — inserting this one
+    # second turned `HubAnchor("Gems Anchor", False)` into a row anchor of `False`.
+    anchor_row: str = ""
 
 
 # The seeded default row title. ``{library_name}`` renders each library's own name at delivery, so a

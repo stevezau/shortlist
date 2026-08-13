@@ -274,7 +274,8 @@ export function rowOverrides(
   const anchors = Object.values(collection.hub_anchor ?? {});
   if (collection.pin_top || anchors.some((a) => a.top))
     parts.push("Pinned to top");
-  else if (anchors.some((a) => a.anchor)) parts.push("Custom shelf position");
+  else if (anchors.some((a) => a.anchor || a.row))
+    parts.push("Custom shelf position");
 
   return parts;
 }

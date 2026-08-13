@@ -13,6 +13,7 @@ from fastapi.concurrency import run_in_threadpool
 from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy import func
+from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
 
 from shortlist.engine.candidates import KNOWN_SOURCES
@@ -84,10 +85,16 @@ def _closed_set_out(values: set[str], description: str) -> Field:
 
 
 class HubAnchorIn(BaseModel):
-    """A per-library shelf placement for one row: the very TOP (``top``), or after/before a collection
-    by title. ``top`` needs no anchor; otherwise ``anchor`` must be a non-empty title."""
+    """A per-library shelf placement for one row: the very TOP (``top``), or after/before either
+    another Shortlist ROW (``row``, a row slug) or a foreign collection (``anchor``, a title).
+    ``top`` needs neither; otherwise exactly one of ``row``/``anchor`` must be set.
+
+    ``row`` is a slug rather than a title because a per-person row is one Plex collection PER PERSON:
+    a title names one account's copy and is meaningless for everyone else, which is what made the
+    picker offer forty identical-looking options and place none of them (issue #81)."""
 
     anchor: str = Field(default="", max_length=255)
+    row: str = Field(default="", max_length=255)
     before: bool = False
     top: bool = False
 
@@ -162,6 +169,7 @@ class HubAnchorOut(PassthroughModel):
     `HubAnchorIn` would have written is what those rows already mean."""
 
     anchor: str = ""
+    row: str = ""
     before: bool = False
     top: bool = False
 
@@ -260,9 +268,84 @@ def _validate(body: CollectionIn) -> None:
                 status_code=422, detail=f"invalid schedule — needs a 5-field cron (e.g. '30 3 * * *'): {e}"
             ) from e
     for lib, anchor in body.hub_anchor.items():
-        if not anchor.top and not anchor.anchor.strip():
-            raise HTTPException(status_code=422, detail=f"hub_anchor[{lib}]: needs 'top' or a non-empty 'anchor'")
+        if not anchor.top and not anchor.anchor.strip() and not anchor.row.strip():
+            raise HTTPException(
+                status_code=422, detail=f"hub_anchor[{lib}]: needs 'top', a 'row' slug, or a non-empty 'anchor'"
+            )
+        if anchor.row.strip() and anchor.anchor.strip():
+            # The engine resolves `row` first, so accepting both would silently ignore one of them and
+            # leave the editor showing a placement that is not the one in force.
+            raise HTTPException(status_code=422, detail=f"hub_anchor[{lib}]: set either 'row' or 'anchor', not both")
     _validate_pairing(rewatch=body.rewatch, unstarted_only=body.unstarted_only, media=body.media)
+
+
+def _validate_anchor_rows(session: Session, body: CollectionIn, editing_slug: str) -> None:
+    """Refuse a row anchor that names a row which doesn't exist, itself, or a cycle.
+
+    Checked HERE and not only in the engine because the engine's only sane response to a cycle is to
+    leave those rows where they are — silently, once a night, in a log nobody is reading. The moment
+    to say "these two rows point at each other" is while someone is looking at the screen that
+    created it.
+
+    ``editing_slug`` is "" when creating: a brand-new row has no slug yet and nothing can point at it,
+    so it cannot be part of a cycle — only its own outgoing edges need checking.
+    """
+    wanted = {lib: a.row.strip() for lib, a in body.hub_anchor.items() if a.row.strip()}
+    if not wanted:
+        return
+    rows = {c.slug: (c.hub_anchor or {}) for c in session.query(Collection).all()}
+    for lib, target in wanted.items():
+        if target == editing_slug:
+            raise HTTPException(status_code=422, detail=f"hub_anchor[{lib}]: a row can't be positioned after itself")
+        if target not in rows:
+            raise HTTPException(status_code=422, detail=f"hub_anchor[{lib}]: there's no row called '{target}'")
+        # Walk the chain this edge would create. Every row's own anchor for THIS library is the next
+        # hop; landing back on the row being edited means the chain closes on itself.
+        seen, hop = set(), target
+        while hop:
+            if hop == editing_slug:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"hub_anchor[{lib}]: that would make a loop — '{target}' already leads back here",
+                )
+            if hop in seen:
+                # A loop further down the chain that this edit did not create. Refusing here would
+                # blame the person for someone else's tangle and give them nothing to act on; the
+                # engine already declines to place a cycle, and this edit is genuinely fine.
+                logger.warning(
+                    "row placement: library {} already contains a loop at '{}' — leaving it to the engine "
+                    "to skip; the row being saved is not part of it",
+                    lib,
+                    hop,
+                )
+                break
+            seen.add(hop)
+            entry = rows.get(hop, {})
+            hop = str(entry.get(lib, {}).get("row") or "").strip() if isinstance(entry.get(lib), dict) else ""
+
+
+def _forget_anchor_row(session: Session, gone: str) -> list[str]:
+    """Drop every placement that positioned a row relative to ``gone``. Returns the slugs changed.
+
+    Called when a row is deleted. Without it those rows keep pointing at a row that no longer exists,
+    and the engine — which skips an anchor it cannot resolve, correctly, because a row may simply not
+    have delivered into that library yet — would leave them unplaced every night from then on. That
+    is the right response to a TRANSIENT miss and the wrong one to a permanent one, and the
+    difference is invisible from inside the run. Clearing the reference falls them back to the
+    library default, which is where a row with no placement of its own belongs.
+    """
+    changed: list[str] = []
+    for row in session.query(Collection).all():
+        anchors = row.hub_anchor or {}
+        kept = {
+            lib: entry
+            for lib, entry in anchors.items()
+            if not (isinstance(entry, dict) and str(entry.get("row") or "").strip() == gone)
+        }
+        if len(kept) != len(anchors):
+            row.hub_anchor = kept
+            changed.append(row.slug)
+    return changed
 
 
 def _validate_pairing(*, rewatch: bool, unstarted_only: bool, media: str) -> None:
@@ -435,6 +518,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
     _validate(body)
     with request.app.state.sessions() as session:
         _reject_duplicate_name(session, body.name)
+        _validate_anchor_rows(session, body, editing_slug="")
         slug = _unique_slug(session, slugify(body.name))
         collection = Collection(
             slug=slug,
@@ -581,6 +665,7 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
         collection = session.get(Collection, collection_id)
         if collection is None:
             raise HTTPException(status_code=404, detail="collection not found")
+        _validate_anchor_rows(session, body, editing_slug=collection.slug)
         before = _snapshot(session, collection)
         is_default = collection.slug == DEFAULT_SLUG
         # A rename only matters for a NON-default per-person row (the default row's title follows the
@@ -782,6 +867,15 @@ async def delete_collection(collection_id: int, request: Request) -> None:
         if collection is not None:
             session.query(CollectionAudience).filter_by(collection_id=collection.id).delete()
             session.delete(collection)
+            orphaned = _forget_anchor_row(session, slug)
+            if orphaned:
+                logger.info(
+                    "row '{}' was deleted — {} row(s) positioned relative to it now follow the library "
+                    "default instead: {}",
+                    slug,
+                    len(orphaned),
+                    ", ".join(orphaned),
+                )
             session.commit()
     if build == "shared":
         # The row's own `shortlist__shared_<slug>` label is no longer declared shared by the config, so
