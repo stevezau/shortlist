@@ -349,7 +349,8 @@ describe("IssuePage — sending a long report", () => {
       expect.stringContaining("/api/support/report.zip"),
       expect.objectContaining({ credentials: "same-origin" }),
     );
-    release(new Response(new Blob(["zip"])));
+    // String body: a Blob body is rejected by CI's Node ("object.stream is not a function").
+    release(new Response("zip", { headers: { "content-type": "application/zip" } }));
     vi.unstubAllGlobals();
   });
 });
