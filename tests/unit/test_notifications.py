@@ -574,8 +574,38 @@ class TestShelfContention:
         assert "Movies" in result["title"]
         assert "3 times" in result["body"]
         # Names suspects, never asserts one — Plex does not report who moved a hub.
-        assert "Kometa" in result["body"] and "agregarr" in result["body"]
+        assert "Kometa" in result["body"] and "Agregarr" in result["body"]
         assert result["action_url"] == "/settings#placement"
+
+    def test_points_agregarr_users_at_the_maintained_fork(self, session):
+        """Shortlist no longer connects to agregarr, so this notification is where an owner is told
+        that the widely-run version re-promotes rows onto their OWN Home — a privacy problem, not
+        just an ordering one.
+
+        Asserting the fork's address specifically: "there is a fork" is not actionable, and the whole
+        point of the paragraph is that the owner can go and swap the image.
+        """
+        for _ in range(3):
+            self._ordered(session, "Movies", ["Picked for You"])
+        session.commit()
+
+        body = notif._shelf_contention(session)["body"]
+
+        # The repo and the IMAGE are separate facts and a reader needs both — asserting the repo
+        # alone would pass with the "(Docker: …)" clause deleted, since one is a substring of the
+        # other. The closing paren is what pins the image name.
+        assert "github.com/bitr8/agregarr-dev" in body
+        assert "Docker: bitr8/agregarr)" in body
+        assert "owner" in body.lower()
+        # It fixes the visibility bug, NOT the reordering this notification is about. Promising
+        # otherwise would send someone to swap images expecting a settled shelf.
+        assert "still reorders" in body
+        # And it must not overstate the exposure: converge clears promotedToOwnHome on every run
+        # (pipeline.py `_converge_phase`), so this is a window between runs, not a permanent leak.
+        assert "clears that on every run" in body
+        # No hardcoded date about someone else's release cadence — it rots on every server running
+        # the image the day they cut a release.
+        assert "2026" not in body
 
     def test_a_row_placed_once_is_not_a_fight(self, session):
         """A new user's row is positioned for the first time. That is the system working."""

@@ -932,10 +932,6 @@ class RunReport:
     # anchor + the row titles moved). Empty when no anchors are configured or everything was already
     # in place — a run-level audit of a server-wide Plex write (plex-safety rule 10).
     hub_orderings: list[dict] = field(default_factory=list)
-    # Shelf order stored back into a co-managing agregarr, one entry per library considered. Present
-    # even when nothing was written (`changed: False`) — "we checked and agregarr already agreed" is
-    # the answer the owner needs when a shelf moves anyway, so it is audited too (rule 10).
-    agregarr_mirrors: list[dict] = field(default_factory=list)
     # Sonarr/Radarr requests made (or, in dry-run, that would be made) for picks the library lacks.
     # None when the feature is off — distinct from an empty report (on, but nothing qualified).
     requests: RequestReport | None = None

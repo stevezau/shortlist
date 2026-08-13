@@ -621,3 +621,21 @@ Rank vs display order is cleanly separated everywhere (`render_row_name` uses `m
 watched cap never contradicts ranking and cannot exceed its cap. `_pad_picks` respects ranking.
 Precedence is user -> row -> global throughout, with `is not None` wherever 0/0.0/"" is legitimate.
 No setting is orphaned at the settings->engine seam. Leak-safe ordering intact.
+
+## Agregarr removal review (2026-08-13)
+
+No HIGH findings. The migration, the Plex-side ordering, leak-safe write ordering and rule 10 were
+all cleared empirically. Everything found was fixed in the same commit EXCEPT one pre-existing item:
+
+### LOW — `pipeline.py` lost its only `redact()` call site, and two raw `{e}` logs remain
+
+Removing the agregarr mirror took `pipeline.py`'s only `redact()` use with it, and with it the
+comment recording that plexapi error text can embed the full PMS request URL, `X-Plex-Token` and all
+(rule 9). Two raw `{e}` logs of plexapi exceptions remain at `pipeline.py:1129` and `pipeline.py:1152`.
+
+Both are PRE-EXISTING and neither is proven to leak: plexapi's `query()` sends the token as a header,
+and `PlexServer.url()` only appends it when `includeToken`/`show_secrets` is set. But
+`plex_pms.py:150` asserts the OPPOSITE belief in its own rule-9 comment — so one of the two comments
+is wrong, and nothing in `pipeline.py` guards the assumption any more. Resolve which, then either
+re-wrap those two logs in `redact()` or correct `plex_pms.py:150`. Do not close this by picking the
+comfortable reading; capture what plexapi actually puts in the exception text.

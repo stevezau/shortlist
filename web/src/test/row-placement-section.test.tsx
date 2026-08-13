@@ -124,4 +124,23 @@ describe("RowPlacementSection", () => {
       }),
     );
   });
+
+  it("names the maintained Agregarr fork even with shelf ordering switched off", async () => {
+    // This is the ONLY place a "Wherever Plex puts them" owner sees it. The shelf-contention
+    // notification carries the same advice, but that notification only fires while Shortlist is
+    // ordering the shelf — and switching that off is the fix it recommends. Owners who take that
+    // advice would otherwise never be told the version they run re-promotes rows onto their own
+    // Home, which no share filter can cover.
+    renderSection({ "rows.manage_shelf_order": false });
+
+    const text = (await screen.findByText(/no longer actively released/i))
+      .textContent;
+    expect(text).toMatch(/re-promotes collections/i);
+    // The claim must stay hedged: converge clears the flag every run, so this is a gap between
+    // runs, not a standing leak. Overstating it in copy we ship is what the review caught.
+    expect(text).toMatch(/gap between runs/i);
+    expect(
+      screen.getByRole("link", { name: /bitr8\/agregarr-dev/i }),
+    ).toHaveAttribute("href", "https://github.com/bitr8/agregarr-dev");
+  });
 });

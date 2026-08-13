@@ -140,3 +140,64 @@ class TestUnsetIsNotTheSameAsStoringABlank:
 
             assert store.unset("sync.check_cron") is False
             assert store.has_row("sync.check_cron") is False
+
+
+class TestADroppedSecretStaysInLegacyKeys:
+    """Removing a key from SECRET_KEYS while a row for it survives LEAKS it.
+
+    `all_public()` iterates the settings ROWS and redacts by looking each key up in SECRET_KEYS, so
+    a key dropped from that set is no longer recognised as a secret and comes back in the clear —
+    the exact opposite of what retiring it was meant to do (plex-safety rule 9). Migration 0067
+    deletes the two agregarr rows, but a database restored from an older backup, or one that
+    downgraded, still carries them; `purge_legacy()` at boot is what makes the guarantee independent
+    of whether any particular migration ran.
+
+    Written against agregarr because that is the removal that exposed it, but the property is about
+    LEGACY_KEYS as a rule: this test should be extended, not replaced, the next time a secret goes.
+    """
+
+    @staticmethod
+    def _orphan(session: Session, key: str, value: str) -> None:
+        """A row for a key the code no longer declares — what an upgraded database actually holds."""
+        session.add(Setting(key=key, value={"v": value}))
+        session.commit()
+
+    def test_an_orphaned_agregarr_key_is_purged_at_boot(self, sessions, tmp_path: Path):
+        with sessions() as session:
+            store = SettingsStore(session, SecretBox(tmp_path))
+            self._orphan(session, "agregarr.apikey", "ag-key-1")
+            self._orphan(session, "agregarr.url", "http://ag:7171")
+
+            store.purge_legacy()
+
+            public = store.all_public()
+            assert "agregarr.apikey" not in public
+            assert "agregarr.url" not in public
+
+    def test_the_purge_is_what_stops_the_leak(self, sessions, tmp_path: Path):
+        """The teeth: BEFORE the purge the orphan really is served in the clear.
+
+        Without this half the test above would pass just as well if `all_public()` had never
+        returned the key at all, and would not notice LEGACY_KEYS being emptied.
+        """
+        with sessions() as session:
+            store = SettingsStore(session, SecretBox(tmp_path))
+            self._orphan(session, "agregarr.apikey", "ag-key-1")
+
+            assert store.all_public()["agregarr.apikey"] == "ag-key-1"  # unredacted, on purpose
+
+            store.purge_legacy()
+
+            assert "agregarr.apikey" not in store.all_public()
+
+    def test_a_live_secret_is_redacted_rather_than_purged(self, sessions, tmp_path: Path):
+        """The purge must not take real keys with it — LEGACY_KEYS is an exact-match set, and a
+        prefix or substring match would delete `plex.token` the day someone adds `plex.` to it."""
+        with sessions() as session:
+            store = SettingsStore(session, SecretBox(tmp_path))
+            store.set("plex.token", "live-token")
+
+            store.purge_legacy()
+
+            assert store.all_public()["plex.token"] == "•••••"
+            assert store.get("plex.token") == "live-token"

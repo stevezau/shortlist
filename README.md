@@ -101,9 +101,6 @@ account is told to hide that label, so only its owner ever sees it.
 - 📊 **Know if it's working** — a dashboard tracks what was delivered versus what people actually
   watched (hit rate), per user and per row.
 - 🧹 **Kometa-friendly** — never touches collections it didn't create.
-- 🤝 **Agregarr-friendly** — connect an [Agregarr](https://github.com/agregarr/agregarr) instance and
-  the two stop fighting over the shelf: after each run Shortlist tells Agregarr where the rows ended
-  up, so Agregarr's next sync keeps them there instead of scattering them.
 - ↩️ **Provable uninstall** — one flow restores your server exactly as Shortlist found it.
 - 🧪 **Safe mode** — set `SHORTLIST_DRY_RUN=1` to try it against your real server without writing a
   single change, until you're happy.

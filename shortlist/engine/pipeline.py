@@ -18,8 +18,6 @@ from loguru import logger
 
 import shortlist.engine.rows as rows
 from shortlist.engine import requests as requests_mod
-from shortlist.engine import shelf_mirror
-from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.clients.plextv import FilterWriteRefused
 from shortlist.engine.context import EngineContext, _emit
 from shortlist.engine.delivery import (
@@ -1185,12 +1183,9 @@ def _order_phase(ctx: EngineContext, report: RunReport) -> None:
     if not ctx.config.manage_shelf_order:
         # The owner turned shelf ordering off (a co-managing tool like agregarr/Kometa owns the order),
         # so leave the Recommended shelf exactly as it is — deliver + hide + promote still ran above.
-        # The agregarr mirror is skipped with it: it exists to defend an order we placed, and we placed
-        # none, so writing one into agregarr would be overriding the tool the owner just deferred to.
         logger.debug("shelf ordering is off — leaving the Recommended shelf order to Plex / a co-managing tool")
         return
     _apply_shelf_anchors(ctx, report)
-    _mirror_shelf_to_agregarr(ctx, report)
 
 
 def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
@@ -1252,114 +1247,6 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
         for (to_top, anchor_title, before), keys in groups.items():
             anchor = HubAnchor(anchor_title=anchor_title, before=before, to_top=to_top)
             _apply_order(ctx, report, section, anchor, only_keys=keys)
-
-
-def _order_ids(items: list[dict]) -> list[str]:
-    """Config ids in sequence — the compact form of an agregarr ordering, for the audit event."""
-    return [str(item.get("id") or "?") for item in items]
-
-
-def _stored_rank(item: dict) -> float:
-    """An item's CURRENT rank in agregarr, so `order_before` reflects what it would push today."""
-    value = item.get("sortOrderHome")
-    return (
-        float(value) if isinstance(value, int | float) and not isinstance(value, bool) and value > 0 else float("inf")
-    )
-
-
-def _mirror_shelf_to_agregarr(ctx: EngineContext, report: RunReport) -> None:
-    """Store the shelf we just placed into a co-managing agregarr, so its next sync agrees with us.
-
-    Agregarr re-applies its OWN stored order every 30 minutes and persists rather than recomputes it,
-    so the two tools otherwise fight indefinitely: it scatters our rows, the next run puts them back.
-    Writing our order into agregarr ends that — its sync becomes a no-op instead of an undo.
-
-    Best-effort in exactly the sense `_apply_order` is: the rows are already delivered, hidden and
-    promoted, and this only changes what a THIRD-PARTY tool will do to their position later. A
-    failure — agregarr down, key rotated, API changed under us — is logged and audited, never fatal.
-    That is deliberate: agregarr's API is private and unversioned, and it must not be able to fail a
-    run that has already done its real work.
-    """
-    if ctx.agregarr is None:
-        return
-    # ONE fetch for the whole instance, not one per library: both endpoints return every config
-    # regardless of library, so per-library reads re-downloaded all 213 of them each time. It also
-    # means an unreachable agregarr costs one timeout for the run instead of one per library.
-    try:
-        items_by_library = ctx.agregarr.home_items_by_library()
-    except Exception as e:
-        detail = redact(f"{type(e).__name__}: {e}")
-        logger.warning("agregarr: could not read its shelf order ({}) — left it alone", detail)
-        report.agregarr_mirrors.append({"library": "*", "ok": False, "error": detail})
-        return
-    for section in ctx.delivery_sections:
-        library_id = str(section.key)
-        try:
-            hubs = list(section.managedHubs())
-            live = [ident for ident in (getattr(h, "identifier", "") for h in hubs) if ident]
-            # Only what is actually on the shared Home shelf counts towards the "our rows are one
-            # unbroken block" check — see `plan_home_order`.
-            visible = {
-                str(getattr(h, "identifier", ""))
-                for h in hubs
-                if getattr(h, "identifier", "") and getattr(h, "promotedToSharedHome", False)
-            }
-            plan = shelf_mirror.plan_home_order(
-                library_id,
-                live,
-                items_by_library.get(library_id, []),
-                owned_rating_keys={str(k) for keys in _row_keys_by_slug(ctx, library_id).values() for k in keys},
-                visible_identifiers=visible,
-            )
-        except Exception as e:
-            # Redacted before it reaches a log line or an `events` row: this also catches plexapi
-            # errors from `managedHubs()`, whose text embeds the full PMS request URL — X-Plex-Token
-            # and all (plex-safety rule 9).
-            detail = redact(f"{type(e).__name__}: {e}")
-            logger.warning("{}: could not read agregarr's shelf order ({}) — left it alone", section.title, detail)
-            report.agregarr_mirrors.append({"library": section.title, "ok": False, "error": detail})
-            continue
-        entry = {
-            "library": section.title,
-            "ok": True,
-            "changed": plan.changed,
-            "items": len(plan.ordered),
-            "moved": plan.moved,
-            "rows_placed": plan.owned_placed,
-            "rows_contiguous": plan.owned_contiguous,
-            "unknown_to_agregarr": len(plan.unknown_to_agregarr),
-            "unjoinable": plan.unjoinable,
-            "summary": plan.summary(),
-        }
-        if plan.changed:
-            # The DIFF, not just a tally (plex-safety rule 10). This renumbers the whole library,
-            # rows Shortlist does not own included, and there is no snapshot to restore from — so
-            # "what did agregarr's order look like before 03:31" has to be answerable from the event
-            # itself. Recorded only when something actually changes, to keep quiet nights small.
-            entry["order_before"] = _order_ids(sorted(items_by_library.get(library_id, []), key=_stored_rank))
-            entry["order_after"] = _order_ids(plan.ordered)
-        if not plan.changed:
-            logger.debug("agregarr: {}", plan.summary())
-            report.agregarr_mirrors.append(entry)
-            continue
-        if ctx.config.dry_run:
-            logger.info("agregarr (dry run): would store — {}", plan.summary())
-            report.agregarr_mirrors.append({**entry, "dry_run": True})
-            continue
-        try:
-            with ctx.write_lock:
-                ctx.agregarr.apply_home_order(library_id, plan.ordered)
-        except Exception as e:
-            detail = redact(f"{type(e).__name__}: {e}")
-            logger.warning(
-                "{}: could not store the shelf order in agregarr ({}) — it may reorder the shelf again",
-                section.title,
-                detail,
-            )
-            report.agregarr_mirrors.append({**entry, "ok": False, "error": detail})
-            continue
-        logger.info("agregarr: {}", plan.summary())
-        report.agregarr_mirrors.append(entry)
 
 
 def _request_phase(ctx: EngineContext, requests_on: bool, demand: requests_mod.DemandMap, report: RunReport) -> None:

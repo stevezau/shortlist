@@ -99,4 +99,26 @@ describe("NotificationBell", () => {
       expect(dismissNotification).toHaveBeenCalledWith("update-9.9.9"),
     );
   });
+
+  it("keeps the paragraph break in a multi-paragraph body", async () => {
+    // The server writes some bodies as two paragraphs separated by a blank line — the shelf
+    // contention one carries the "which Agregarr are you running" advice that way. HTML collapses
+    // that to a single space by default, which turns the longest notification we send into a wall
+    // of text, so the renderer has to honour the break.
+    getNotifications.mockResolvedValue({
+      notifications: [
+        { ...UPDATE, body: "First paragraph.\n\nSecond paragraph." },
+      ],
+    });
+    renderBell();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Notifications/ }),
+    );
+
+    const body = screen.getByText(/First paragraph/);
+    expect(body).toHaveClass("whitespace-pre-line");
+    // The newlines must survive into the DOM, not just be styled — a body the server sent with a
+    // break and the UI stored without one would render identically to a collapsed single paragraph.
+    expect(body.textContent).toBe("First paragraph.\n\nSecond paragraph.");
+  });
 });

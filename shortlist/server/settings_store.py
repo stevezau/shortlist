@@ -18,8 +18,6 @@ from shortlist.server.scheduler import DEFAULT_CRONS as _DEFAULT_CRONS
 DEFAULTS: dict[str, Any] = {
     "plex.url": "",
     "tautulli.url": "",
-    # Agregarr co-manages the same Recommended shelf. Blank = not connected = the mirror never runs.
-    "agregarr.url": "",
     "tmdb.apikey": "",
     "curator.provider": "none",
     "curator.model": "",
@@ -218,7 +216,6 @@ SECRET_KEYS = {
     "requests.sonarr.apikey",
     "requests.mdblist.apikey",  # MDBList key for IMDb/Trakt/RT/Metacritic rating gating
     "trakt.client_id",
-    "agregarr.apikey",  # agregarr's own API key, from ITS settings.json (main.apiKey)
     "exa.apikey",  # Exa web-search API key for the llm_web source
     "searxng.password",  # reverse-proxy password guarding a self-hosted SearXNG
     "api.token",  # our own programmatic API token (encrypted at rest so the owner can reveal it)
@@ -243,7 +240,22 @@ PRIVATE_KEYS = {
 }
 
 # Dropped keys purged from the settings table on boot, so stale rows don't linger.
-LEGACY_KEYS = {"api.token_hash", "api.token_hint", "requests.omdb.apikey", "staleness_runs", "requests.auto_user_tag"}
+#
+# A dropped SECRET has to stay listed here even after a migration deletes it. `all_public()` iterates
+# the settings ROWS and redacts by looking each key up in SECRET_KEYS, so a key removed from that set
+# while a row survives is returned in the CLEAR — the exact opposite of what dropping it intended
+# (rule 9). Migration 0067 deletes the two agregarr rows, but a DB restored from an older backup, or
+# one that downgraded, still carries them; this purge is what makes the guarantee independent of
+# whether any particular migration ran.
+LEGACY_KEYS = {
+    "api.token_hash",
+    "api.token_hint",
+    "requests.omdb.apikey",
+    "staleness_runs",
+    "requests.auto_user_tag",
+    "agregarr.url",
+    "agregarr.apikey",
+}
 
 ENV_SEEDS = {
     "PLEX_URL": "plex.url",

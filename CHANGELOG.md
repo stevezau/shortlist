@@ -53,6 +53,36 @@ All notable changes to this project are documented here. This project follows
   push between two releases carries the same version number, so "is my container actually on the
   fix?" had no answer short of shelling in.
 
+### Removed
+
+- **The Agregarr connection is gone**, and with it the Agregarr card under **Settings →
+  Connections**. It existed for one job: after each run it wrote Shortlist's shelf order back into
+  Agregarr so Agregarr's own half-hourly sync would reproduce it instead of undoing it. Maintaining a
+  client against a private, unversioned API to stop one third-party tool fighting us over hub
+  positions was not worth carrying.
+
+  **If you had it connected**, the Recommended shelf goes back to being contested — Agregarr reorders
+  it on its clock, Shortlist puts its rows back on the next run. Two ways to settle that, both
+  configuration: exclude collections labelled `shortlist_*` in Agregarr (or stop its "Randomize Home
+  Order" job), or set **Row placement** to "Wherever Plex puts them" and let Agregarr own the order
+  outright. Your rows are still built, delivered and kept private either way — only their position on
+  the shelf changes. Shortlist still tells you when it is happening: the "Something else is
+  reordering your shelf" notification is unchanged, and now also names the maintained Agregarr fork.
+
+  Your stored Agregarr address and API key are **deleted** on upgrade (migration `0067`) rather than
+  left behind — the key was held encrypted and there is no longer a screen to remove it from. Past
+  `run.agregarr_order` and `shelf.agregarr` events stay in your history; they record writes that
+  really happened.
+
+- **A note for Agregarr users, wherever Shortlist mentions it.** The original at `agregarr/agregarr`
+  is no longer actively released, and reordering a shelf on it re-promotes collections with Plex's
+  defaults — which puts other people's rows on the **server owner's** Home, the one place no share
+  filter can cover. Shortlist already clears that on every run, so it is a gap between runs rather
+  than a standing leak. The maintained fork at
+  [bitr8/agregarr-dev](https://github.com/bitr8/agregarr-dev) (image `bitr8/agregarr`) fixes it at
+  the source and is a drop-in swap. It still reorders the shelf, so the placement advice above
+  applies either way.
+
 ### Changed
 
 - **The Have an issue? page now answers the question you picked.** Choosing a problem ran one check;
@@ -79,7 +109,7 @@ All notable changes to this project are documented here. This project follows
   bottom that already tells you the full history is in the download.
 
 - **A "Popular on this server" row now actually shows what's popular on this server.** It was built
-  the same way a personal row is: your server's most-watched titles became the *starting point* for a
+  the same way a personal row is: your server's most-watched titles became the _starting point_ for a
   TMDB similar-titles search and an AI web search — and that search deliberately excludes the titles
   it started from, so the most-watched titles on your server were the one thing the row could never
   contain. Every pick was a suggestion captioned "Popular on this server", which was untrue of all of
@@ -102,7 +132,7 @@ All notable changes to this project are documented here. This project follows
 - **The watches-per-week chart tells you the numbers.** The count was on a tooltip attached to each
   bar, so on a quiet week the only place you could hover was a three-pixel sliver at the bottom of
   the chart and most of the column did nothing at all. Hovering anywhere in a week's column now
-  reads it out, and the chart is dated at both ends — sixteen unlabelled bars never said *when*.
+  reads it out, and the chart is dated at both ends — sixteen unlabelled bars never said _when_.
 
 - **A downloading request updates itself.** The Sonarr/Radarr status on the Requests page was
   fetched once when the page opened and never again, so a title that finished downloading while you
@@ -122,11 +152,11 @@ All notable changes to this project are documented here. This project follows
   nothing can hide, so everyone on the server can see it — and rows Plex refused to answer for at
   all. Both produced the same empty result as a healthy server, and the banner said so. It now names
   an unlabelled row as the bug the server calls it, refuses to call anything clean when the reads
-  failed, and — following the same rule the delete path uses — treats *every* row reading unlabelled
+  failed, and — following the same rule the delete path uses — treats _every_ row reading unlabelled
   as a failed read rather than as a server full of leaks.
 
 - **A run that is only queued no longer counts a duration up.** `started_at` is stamped the moment
-  a run is *asked for*, not the moment it begins, so a run still waiting for the Plex writer lock
+  a run is _asked for_, not the moment it begins, so a run still waiting for the Plex writer lock
   ticked a stopwatch up from the button press — under a tooltip reading "Running…" beside a badge
   reading "queued". It now shows nothing until it actually starts, and the Started column says
   "queued 5m ago" rather than claiming it began then. The run's own page said "started … · still

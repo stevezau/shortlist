@@ -2,7 +2,6 @@ import {
   Compass,
   Film,
   Globe,
-  ListOrdered,
   Sparkles,
   TriangleAlert,
   Tv,
@@ -139,43 +138,6 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
             },
             { key: "tautulli.apikey", label: "API key", kind: "password" },
           ]}
-        />
-        <ConnectionCard
-          service="agregarr"
-          title="Agregarr"
-          purpose="Agregarr arranges your Plex home screen too — the same shelf Shortlist puts its rows on. So the two take turns moving them: Shortlist puts the rows up top overnight, Agregarr shuffles them back down within half an hour."
-          next="Connect it and that stops: after each run Shortlist tells Agregarr where the rows ended up, so Agregarr’s next sync keeps them there instead of undoing it. It only changes the running order of your home-screen rows — your other Agregarr rows stay in the same order as each other and just move down to make room. Posters, visibility and titles are never touched."
-          settings={settings}
-          summary={settingString(settings, "agregarr.url")}
-          glyph={<ListOrdered className="size-5" aria-hidden />}
-          fields={[
-            {
-              key: "agregarr.url",
-              label: "Address",
-              kind: "text",
-              placeholder: "http://your-host:7171",
-            },
-            {
-              key: "agregarr.apikey",
-              label: "API key",
-              kind: "password",
-              placeholder: "Agregarr → Settings → General → API key",
-            },
-          ]}
-          footnote={
-            <>
-              <span className="block">
-                Shortlist never invents an order — it reads the shelf exactly as
-                Plex is showing it and hands Agregarr that, so both tools then
-                want the same thing.
-              </span>
-              <span className="mt-1 block">
-                If Agregarr is unreachable the run still finishes normally and
-                you get a warning; the shelf just stays contested until the next
-                run.
-              </span>
-            </>
-          }
         />
         <ConnectionCard
           service="tmdb"

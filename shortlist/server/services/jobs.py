@@ -837,35 +837,6 @@ def _audit_hub_orderings(state, report, dry_run: bool) -> None:
             verified=verified,
             dry_run=dry_run,
         )
-    _audit_agregarr_mirrors(state, report, dry_run)
-
-
-def _audit_agregarr_mirrors(state, report, dry_run: bool) -> None:
-    """Audit what we stored in a co-managing agregarr (plex-safety rule 10).
-
-    Recorded even when nothing was written: "agregarr already agreed" is what distinguishes a shelf
-    that moved because agregarr fought us from one that moved for some other reason, and only the
-    audit can answer that after the fact.
-    """
-    for entry in report.agregarr_mirrors:
-        write_audit(
-            state,
-            "shelf.agregarr",
-            "warning" if not entry.get("ok") else "info",
-            library=entry.get("library"),
-            changed=entry.get("changed"),
-            items=entry.get("items"),
-            moved=entry.get("moved"),
-            rows_placed=entry.get("rows_placed"),
-            rows_contiguous=entry.get("rows_contiguous"),
-            unknown_to_agregarr=entry.get("unknown_to_agregarr"),
-            unjoinable=entry.get("unjoinable"),
-            order_before=entry.get("order_before"),
-            order_after=entry.get("order_after"),
-            summary=entry.get("summary"),
-            error=entry.get("error"),
-            dry_run=dry_run or bool(entry.get("dry_run")),
-        )
 
 
 @handler("privacy.sync")
