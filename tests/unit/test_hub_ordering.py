@@ -980,6 +980,31 @@ def test_order_phase_places_the_anchor_row_before_the_row_that_follows_it():
     assert calls[1].kwargs["anchor_label"] == "the 'Picked' row", "the audit names the row, not its slug"
 
 
+def test_the_audit_names_the_default_row_by_its_title_not_its_slug():
+    """The default row carries no template of its own — its title is the global one — so it is the one
+    row whose name would fall through to a bare internal slug. It is also the likeliest anchor of all
+    ("put this after Picked for You"), so that is the audit line most people would ever read."""
+    from unittest.mock import MagicMock
+
+    from shortlist.engine.models import HubAnchor, RowSpec
+    from shortlist.engine.pipeline import _order_phase
+
+    plex = MagicMock()
+    plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"]}
+    cfg = _anchor_cfg(
+        [
+            RowSpec(slug="picked", name_template="", size=10, hub_anchors={"2": HubAnchor("New Series", False)}),
+            RowSpec(slug="gems", name_template="Gems", size=10, hub_anchors={"2": HubAnchor(anchor_row="picked")}),
+        ]
+    )
+    cfg.row_name_template = "✨ {library_name} Picked for You"
+
+    _order_phase(_order_ctx(cfg, plex), _report_with_titles())
+
+    follower = next(c for c in plex.order_owned_hubs.call_args_list if c.kwargs["only_keys"] == {21, 22})
+    assert follower.kwargs["anchor_label"] == "the '✨ {library_name} Picked for You' row"
+
+
 def test_order_phase_moves_nothing_when_two_rows_anchor_to_each_other():
     """A cycle has no right answer. Placing half of it produces a shelf order that flips run to run
     depending on which half won — and with another tool reordering the same shelf, that is
