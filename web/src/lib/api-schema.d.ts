@@ -1943,6 +1943,11 @@ export interface paths {
          *     The row's own collections are found through the delivery ledger, which is what maps a row slug to
          *     the titles it actually wrote per library — labels cannot do it, because a per-person row is
          *     labelled by USER (`shortlist_<userslug>`), not by row.
+         *
+         *     Matched with the marker STRIPPED off Plex's title: the ledger records the human display name,
+         *     while every collection we wrote carries the invisible 64-char ownership marker on the end. Compared
+         *     raw the two never match, so the exclusion silently did nothing and a row still listed its own 40
+         *     collections (SFLIX, verified live).
          */
         get: operations["library_collections_api_system_libraries__key__collections_get"];
         put?: never;
