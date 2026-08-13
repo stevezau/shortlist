@@ -232,15 +232,26 @@ class RunService:
             # server is half an hour of "Stopping…". Nothing has been built yet, so there is nothing
             # to unwind: mark it aborted and give the lock straight back.
             if cancel is not None and cancel.is_set():
-                with self._sessions() as session:
-                    run = session.get(Run, run_id)
-                    if run is not None:
-                        run.status = "aborted"
-                        run.finished_at = datetime.now(UTC)
-                        session.commit()
-                logger.info("run {} was cancelled before it started — nothing was built", run_id)
-                self._bus.publish("run.progress", {"run_id": run_id, "status": "aborted"})
-                self._bus.publish("run.finished", {"run_id": run_id, "status": "aborted"})
+                try:
+                    with self._sessions() as session:
+                        run = session.get(Run, run_id)
+                        if run is not None:
+                            run.status = "aborted"
+                            run.finished_at = datetime.now(UTC)
+                            session.commit()
+                    logger.info("run {} was cancelled before it started — nothing was built", run_id)
+                    self._bus.publish("run.progress", {"run_id": run_id, "status": "aborted"})
+                    self._bus.publish("run.finished", {"run_id": run_id, "status": "aborted"})
+                finally:
+                    # The SAME cleanup the main path's `finally` does, and it is not optional here.
+                    # `is_running()` is `bool(self._cancels)`, and the job worker reads it to decide
+                    # whether to claim WRITER jobs — so returning without dropping the Event left this
+                    # run in flight for the life of the process, and `privacy.sync`, `user.disable`,
+                    # `user.remove` and the roster syncs were never claimed again. Silently: the queue
+                    # looks backed up rather than broken, and on a Watchtower host a departed user's
+                    # `label!=` excludes simply stop being pruned until someone restarts the container.
+                    self._cancels.pop(run_id, None)
+                    self.flush_run_log(run_id)
                 return
             self._bus.publish("run.progress", {"run_id": run_id, "status": "running"})
             try:
