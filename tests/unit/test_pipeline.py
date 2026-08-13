@@ -99,6 +99,28 @@ def ctx(engine_config: EngineConfig, mock_plextv, mock_tmdb, mock_curator) -> En
     )
 
 
+def _run_two_row_user(ctx: EngineContext, mock_plextv) -> UserRunReport:
+    """Two per-person rows sharing one pool (same media/sources/seeds), with enough watch history
+    to skip a cold start. Runs the real pipeline — which calls `_run_user` per person — and returns
+    this user's report."""
+    ctx.config.rows = [
+        RowSpec(slug="picked-for-you", name_template="Picked for You", size=5),
+        RowSpec(slug="because-you-watched", name_template="Because You Watched", size=5),
+    ]
+
+    def slow_fetch(*_args, **_kwargs) -> list:
+        # Keeps setup_s deterministically non-zero — round(x, 3) in _run_user collapses a sub-ms
+        # span to exactly 0.0, which would make `report.setup_s > 0` fail by rounding accident.
+        time.sleep(0.01)
+        return [make_watched(f"Film{i}", days_ago=i + 1, rating_key=999) for i in range(5)]
+
+    ctx.history_source.fetch.side_effect = slow_fetch
+    mock_plextv.users = [plextv_user(100, "sarah")]
+
+    report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+    return report.users[0]
+
+
 class TestRun:
     def test_happy_path_delivers_syncs_then_promotes(self, ctx: EngineContext, mock_plextv):
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
@@ -5034,6 +5056,18 @@ class TestCancelStopsWritingPromptly:
             "the delivery ledger loses the ratingKey and the next run builds a second collection "
             "beside the orphan"
         )
+
+
+class TestRunUserCost:
+    def test_setup_and_every_entered_row_are_timed(self, ctx: EngineContext, mock_plextv):
+        """Every row the loop ENTERS gets an entry — including one whose sources were down, which
+        `continue`s. Without it the UI cannot tell 'finished fast' from 'not recorded'."""
+        report = _run_two_row_user(ctx, mock_plextv)
+        assert report.setup_s > 0
+        assert set(report.row_timing) == {"picked-for-you", "because-you-watched"}
+        for cost in report.row_timing.values():
+            assert cost["duration_s"] >= 0.0
+            assert cost["blocked_s"] >= 0.0
 
 
 class TestRowTiming:

@@ -2158,6 +2158,7 @@ def _run_user(
         user_report.status = "skipped"
         user_report.reason = _why_no_rows(user, cfg)
         return False
+    setup_started = time.monotonic()
     _emit(ctx, user.slug, "history", {})
     # Reuse a history the CALLER already filled, exactly as the shared-row path does. The server
     # pre-fills it from its watched-title cache, which turns the run's second complete per-user read
@@ -2203,6 +2204,10 @@ def _run_user(
     else:
         _warm_start(policy, demand, library_of_watch, library_of_seed)
 
+    # Everything above is shared by every row this person has — the history read and the candidate
+    # gather, which is where all AI spend happens. Closed here, before the first row is touched.
+    user_report.setup_s = round(time.monotonic() - setup_started, 3)
+
     if not ctx.plex.sections_by_type():
         raise RuntimeError("no movie or show library found for delivery")
 
@@ -2230,88 +2235,92 @@ def _run_user(
     delivered_any = False
 
     for spec in specs:
-        # A per-row override lets this one person resize or restyle this one row; each field falls
-        # through to the row's own setting when unset. Row beats global — the same direction the
-        # name template and the curation recipe resolve in.
-        override = user.row_overrides.get(spec.slug)
-        k = (override.size if override and override.size else None) or spec.size or cfg.row_size
-        targets = target_sections(ctx.delivery_sections, spec)
-        pool_for_row: list[Candidate] = []
-        if not cold:
-            # This row's own pool: its sources, its media and its libraries — already narrowed to
-            # all three BEFORE the pre-rank truncation, so nothing this row could show was cut by
-            # candidates it could never show.
-            pools = policy.pools_for(spec)
-            if pools is None:
-                continue  # every source this row uses is down; its siblings still deliver
-            _pool, in_library, pool_for_row = pools
-            # A row that overrides the server's release-date weight needs its OWN truncation, not
-            # just its own ordering: the cut decides which candidates a row may select from at all,
-            # so re-ordering what the global's cut left would cap the setting at whatever survived
-            # it. Re-taken from `in_library` — the cached pre-cut list — so this costs a sort, never
-            # another gather. A row that inherits reuses the pool's cut untouched.
-            recency = policy.effective_recency(spec)
-            if recency != ctx.config.recency:
-                pool_for_row = policy.cut_at_recency(spec, in_library, recency)
-            row_label = spec.name_template or spec.slug
-            _emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row), "row": row_label})
-        section_picks = _build_section_picks(
-            policy, spec, targets, k, cold=cold, base_cold=base_cold, pool_for_row=pool_for_row
-        )
-        # Stamp each pick with the row AND the library it belongs to, so the user page can group picks
-        # per row and the effectiveness report can split a multi-library row into one line per library.
-        library_names = {section.key: getattr(section, "title", "") or "" for section in targets}
-        section_picks = {
-            key: [
-                replace(p, collection_slug=spec.slug, section_key=key, library=library_names.get(key, "")) for p in sp
-            ]
-            for key, sp in section_picks.items()
-        }
-        # Record the exact title delivery will write for EACH library, so the promote phase can apply
-        # this row's placement/pin. Per library, because a {top_seed} OR {library_name} title differs
-        # library to library. Must match delivery's `render_row_name(..., library_name) + marker` — same
-        # section title in, or promote would look for a row delivery never wrote (it'd stay unhidden).
-        #
-        # Stamped BEFORE the write, and deliberately not rolled back when a cancel stops that write.
-        # The two directions are not symmetric: an entry for a row we did not write is inert (no
-        # collection on the server carries that title), while a MISSING one for a row that IS there
-        # from a previous run drops it to `_promote_one`'s no-spec branch, which forces
-        # `recommended=False` whatever the row's placement says — flipping a visibility flag against
-        # the owner's configuration. Withholding it is the more dangerous of the two.
-        title_template = resolve_row_template(spec, user, cfg)
-        marker = row_marker(user.plex_account_id)
-        for section_key, sp in section_picks.items():
-            if sp:
-                title = render_row_name(title_template, user, sp, library_name=library_names.get(section_key, ""))
-                user_report.placement_titles[title + marker] = spec.slug
-        picks = [pick for sp in section_picks.values() for pick in sp]
-        # Cancelled while this person was mid-delivery: stop before the NEXT row is written.
-        #
-        # Checking only before a person's first row is not enough at concurrency 8 — eight people are
-        # mid-delivery when Cancel is pressed, and each finishing all of their rows on a PMS
-        # answering in ~17s is minutes of a run that was asked to stop. A ROW is the real boundary:
-        # it is delivered whole, so stopping between rows leaves nothing half-written and no
-        # collection un-hidden. Within a row is where walking away would be unsafe, and that is
-        # untouched.
-        if ctx.cancelled():
-            logger.info("{}: cancelled — stopping before '{}', rows already written are intact", user.slug, spec.slug)
-            break
-        _emit(ctx, user.slug, "delivering", {"picks": len(picks), "row": spec.name_template or spec.slug})
-        if not _deliver_row(
-            policy,
-            spec,
-            picks,
-            section_picks,
-            sole_row=len(owned) == 1,
-            stored_labels=stored_labels,
-            order_work=order_work,
-        ):
-            # Cancelled while this row waited its turn for the write-lock — see `_deliver_row`.
-            break
-        # Only once the row is on the server: `picks` is the record of what this person was actually
-        # recommended, and a row a cancel stopped is not that.
-        all_picks.extend(picks)
-        delivered_any = delivered_any or bool(picks)
+        with _row_timer(user_report, spec.slug):
+            # A per-row override lets this one person resize or restyle this one row; each field falls
+            # through to the row's own setting when unset. Row beats global — the same direction the
+            # name template and the curation recipe resolve in.
+            override = user.row_overrides.get(spec.slug)
+            k = (override.size if override and override.size else None) or spec.size or cfg.row_size
+            targets = target_sections(ctx.delivery_sections, spec)
+            pool_for_row: list[Candidate] = []
+            if not cold:
+                # This row's own pool: its sources, its media and its libraries — already narrowed to
+                # all three BEFORE the pre-rank truncation, so nothing this row could show was cut by
+                # candidates it could never show.
+                pools = policy.pools_for(spec)
+                if pools is None:
+                    continue  # every source this row uses is down; its siblings still deliver
+                _pool, in_library, pool_for_row = pools
+                # A row that overrides the server's release-date weight needs its OWN truncation, not
+                # just its own ordering: the cut decides which candidates a row may select from at all,
+                # so re-ordering what the global's cut left would cap the setting at whatever survived
+                # it. Re-taken from `in_library` — the cached pre-cut list — so this costs a sort, never
+                # another gather. A row that inherits reuses the pool's cut untouched.
+                recency = policy.effective_recency(spec)
+                if recency != ctx.config.recency:
+                    pool_for_row = policy.cut_at_recency(spec, in_library, recency)
+                row_label = spec.name_template or spec.slug
+                _emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row), "row": row_label})
+            section_picks = _build_section_picks(
+                policy, spec, targets, k, cold=cold, base_cold=base_cold, pool_for_row=pool_for_row
+            )
+            # Stamp each pick with the row AND the library it belongs to, so the user page can group picks
+            # per row and the effectiveness report can split a multi-library row into one line per library.
+            library_names = {section.key: getattr(section, "title", "") or "" for section in targets}
+            section_picks = {
+                key: [
+                    replace(p, collection_slug=spec.slug, section_key=key, library=library_names.get(key, ""))
+                    for p in sp
+                ]
+                for key, sp in section_picks.items()
+            }
+            # Record the exact title delivery will write for EACH library, so the promote phase can apply
+            # this row's placement/pin. Per library, because a {top_seed} OR {library_name} title differs
+            # library to library. Must match delivery's `render_row_name(..., library_name) + marker` — same
+            # section title in, or promote would look for a row delivery never wrote (it'd stay unhidden).
+            #
+            # Stamped BEFORE the write, and deliberately not rolled back when a cancel stops that write.
+            # The two directions are not symmetric: an entry for a row we did not write is inert (no
+            # collection on the server carries that title), while a MISSING one for a row that IS there
+            # from a previous run drops it to `_promote_one`'s no-spec branch, which forces
+            # `recommended=False` whatever the row's placement says — flipping a visibility flag against
+            # the owner's configuration. Withholding it is the more dangerous of the two.
+            title_template = resolve_row_template(spec, user, cfg)
+            marker = row_marker(user.plex_account_id)
+            for section_key, sp in section_picks.items():
+                if sp:
+                    title = render_row_name(title_template, user, sp, library_name=library_names.get(section_key, ""))
+                    user_report.placement_titles[title + marker] = spec.slug
+            picks = [pick for sp in section_picks.values() for pick in sp]
+            # Cancelled while this person was mid-delivery: stop before the NEXT row is written.
+            #
+            # Checking only before a person's first row is not enough at concurrency 8 — eight people are
+            # mid-delivery when Cancel is pressed, and each finishing all of their rows on a PMS
+            # answering in ~17s is minutes of a run that was asked to stop. A ROW is the real boundary:
+            # it is delivered whole, so stopping between rows leaves nothing half-written and no
+            # collection un-hidden. Within a row is where walking away would be unsafe, and that is
+            # untouched.
+            if ctx.cancelled():
+                logger.info(
+                    "{}: cancelled — stopping before '{}', rows already written are intact", user.slug, spec.slug
+                )
+                break
+            _emit(ctx, user.slug, "delivering", {"picks": len(picks), "row": spec.name_template or spec.slug})
+            if not _deliver_row(
+                policy,
+                spec,
+                picks,
+                section_picks,
+                sole_row=len(owned) == 1,
+                stored_labels=stored_labels,
+                order_work=order_work,
+            ):
+                # Cancelled while this row waited its turn for the write-lock — see `_deliver_row`.
+                break
+            # Only once the row is on the server: `picks` is the record of what this person was actually
+            # recommended, and a row a cancel stopped is not that.
+            all_picks.extend(picks)
+            delivered_any = delivered_any or bool(picks)
 
     user_report.picks = all_picks
     user_report.counts.picks = len(all_picks)
