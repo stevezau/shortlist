@@ -13,7 +13,9 @@ import { DownloadButton } from "@/components/download-button";
  * have agreed.
  */
 function zip(body = "PK", headers: Record<string, string> = {}) {
-  return new Response(new Blob([body]), {
+  // String body, NOT a Blob: CI's Node rejects a Blob as a Response body with
+  // "object.stream is not a function", while a newer local Node accepts it.
+  return new Response(body, {
     status: 200,
     headers: { "content-type": "application/zip", ...headers },
   });
