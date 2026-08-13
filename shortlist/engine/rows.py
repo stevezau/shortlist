@@ -2028,7 +2028,10 @@ def _deliver_row(
     def _deliver_locked() -> None:
         nonlocal cancelled
         lock_wait_start = time.monotonic()
-        with ctx.write_lock:
+        # Timed, not bare: this is the ONLY write lock taken inside the per-row loop, so it is the
+        # only one whose wait can make one row look slower than its sibling. The three setup-time
+        # locks stay bare — their wait is already inside `setup_s`.
+        with _timed_lock(ctx, policy.report):
             # THE boundary a cancel actually needs. Every user's writes serialize on this one lock, so
             # at concurrency 8 seven people are parked right here when Cancel is pressed — already past
             # the caller's check, each one still writing a full row as its turn comes. On a PMS

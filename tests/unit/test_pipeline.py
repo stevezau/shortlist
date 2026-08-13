@@ -3,6 +3,7 @@ and the leak-safe ordering (deliver unpromoted → sync filters → promote last
 
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import replace
 from datetime import UTC, date, datetime
@@ -5066,3 +5067,40 @@ class TestRowTiming:
             pass
         assert report.row_timing["picked-for-you"]["duration_s"] > 0
         assert report.lock_bucket is None
+
+    def test_timed_lock_charges_wait_to_the_current_row(self):
+        from shortlist.engine.context import EngineContext
+
+        ctx = EngineContext.__new__(EngineContext)
+        ctx.write_lock = threading.Lock()
+        report = UserRunReport(username="alex", slug="alex")
+
+        holder_has_lock = threading.Event()
+
+        def hold() -> None:
+            with ctx.write_lock:
+                holder_has_lock.set()
+                # Holds the lock for a fixed span instead of an event-signalled release: releasing
+                # right as the requester attempts to acquire raced the wait below to sub-millisecond,
+                # which `round(..., 3)` in `_timed_lock` then collapsed to exactly 0.0.
+                time.sleep(0.05)
+
+        t = threading.Thread(target=hold)
+        t.start()
+        holder_has_lock.wait(timeout=2)
+        with rows_mod._row_timer(report, "picked-for-you"), rows_mod._timed_lock(ctx, report):
+            pass
+        t.join(timeout=2)
+
+        assert report.row_timing["picked-for-you"]["blocked_s"] > 0
+
+    def test_timed_lock_charges_nothing_during_setup(self):
+        """lock_bucket is None before the row loop — that wait belongs to setup_s, not to a row."""
+        from shortlist.engine.context import EngineContext
+
+        ctx = EngineContext.__new__(EngineContext)
+        ctx.write_lock = threading.Lock()
+        report = UserRunReport(username="alex", slug="alex")
+        with rows_mod._timed_lock(ctx, report):
+            pass
+        assert report.row_timing == {}
