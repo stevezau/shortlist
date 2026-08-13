@@ -2134,6 +2134,21 @@ def _run_user(
     if not ctx.plex.sections_by_type():
         raise RuntimeError("no movie or show library found for delivery")
 
+    # Cancelled while this person was still GATHERING — stop before writing anything to Plex.
+    #
+    # The only other check is at the top of `process`, which is enough at concurrency 1 but not at
+    # 8: `pool.map` keeps eight people in flight, and each ran every Plex write to completion no
+    # matter when Cancel was pressed. On a server answering a collection DELETE in ~17s that was
+    # eight full row-writes — minutes of "Stopping…" with rows still being written. Here is the last
+    # safe boundary before the writes begin: gathering is reads and LLM calls only, so stopping
+    # costs nothing and leaves nothing half-applied. A person who has STARTED delivering still
+    # finishes every row, which is the per-user transactionality a cancel must not break.
+    if ctx.cancelled():
+        user_report.status = "skipped"
+        user_report.reason = "The run was cancelled before this person's rows were written."
+        logger.info("{}: run cancelled before delivery — nothing written", user.slug)
+        return False
+
     # One diff and label map for the whole user, accumulated across their rows (already holding any
     # muted-row deletions from above). Handed to delivery rather than returned from it: a row can
     # half-succeed across libraries, and a row that was created and labelled must reach
