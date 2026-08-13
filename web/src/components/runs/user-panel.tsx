@@ -80,9 +80,11 @@ function ratingLabel(pick: Pick): string {
 function sharedPoolsNote(pools: RunPoolCost[]): string {
   const shared = pools.filter((pool) => pool.rows.length > 1);
   if (shared.length === 0) return "";
-  if (shared.length === 1)
-    return ` (one pool, shared by ${shared[0].rows.length} rows)`;
-  return ` (shared across ${shared.length} pools)`;
+  if (shared.length > 1) return ` (shared across ${shared.length} pools)`;
+  // Exactly one shared pool: `reduce` reads its row count without an indexed
+  // access, which `noUncheckedIndexedAccess` would otherwise type as possibly `undefined`.
+  const rowCount = shared.reduce((n, pool) => n + pool.rows.length, 0);
+  return ` (one pool, shared by ${rowCount} rows)`;
 }
 
 /** One ranked pick: rank, a status dot (green = new this run), title + reason, and where it
