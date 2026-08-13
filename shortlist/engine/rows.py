@@ -1953,8 +1953,11 @@ def _deliver_row(
     sole_row: bool,
     stored_labels: dict[str, str],
     order_work: list[tuple] | None,
-) -> None:
+) -> bool:
     """Write one row's collections to Plex, under the write-lock and with an idempotent retry.
+
+    Returns False when the run was cancelled while this row was QUEUED for the write-lock, in which
+    case nothing was written for it and the caller stops this person here.
 
     write_lock: the Plex collection writes AND the shared stored_labels mutation inside deliver_rows
     must be serial across users — the leak-safe half of Stage 3 parallelism. Timed on both sides so a
@@ -1976,11 +1979,28 @@ def _deliver_row(
     # attempt so the audit stays idempotent too, not just the Plex writes (rule 10). user_report.diff
     # needs no reset: it is None during delivery (only populated from swept rows after _run_user).
     breakdown_mark = len(user_report.breakdown)
+    cancelled = False
 
     def _deliver_locked() -> None:
+        nonlocal cancelled
         del user_report.breakdown[breakdown_mark:]  # drop any entries a prior failed attempt appended
         lock_wait_start = time.monotonic()
         with ctx.write_lock:
+            # THE boundary a cancel actually needs. Every user's writes serialize on this one lock, so
+            # at concurrency 8 seven people are parked right here when Cancel is pressed — already past
+            # the caller's check, each one still writing a full row as its turn comes. On a PMS
+            # answering in ~17s that is the minutes of "Stopping…" the checks above could not explain,
+            # because the code that would have stopped them ran before they started queuing.
+            #
+            # Safe because we hold the lock and have written nothing for this row: returning here is
+            # indistinguishable from never having been called. `_retry_idempotent` retries on
+            # exceptions only, so a clean return is final.
+            if ctx.cancelled():
+                cancelled = True
+                logger.info(
+                    "{}: cancelled while '{}' waited for the write-lock — nothing written for it", user.slug, spec.slug
+                )
+                return
             work_start = time.monotonic()
             claimed_this_run = _claimed_this_run(user_report)
             deliver_rows(
@@ -2023,6 +2043,7 @@ def _deliver_row(
             )
 
     _retry_idempotent(_deliver_locked, label=f"{user.username} delivery of {spec.slug!r}")
+    return not cancelled
 
 
 def _run_user(
@@ -2195,16 +2216,20 @@ def _run_user(
             ]
             for key, sp in section_picks.items()
         }
-        # Record the exact title delivery will write for EACH library, so the promote phase can apply
-        # this row's placement/pin. Per library, because a {top_seed} OR {library_name} title differs
+        # The exact title delivery will write for EACH library, so the promote phase can apply this
+        # row's placement/pin. Per library, because a {top_seed} OR {library_name} title differs
         # library to library. Must match delivery's `render_row_name(..., library_name) + marker` — same
         # section title in, or promote would look for a row delivery never wrote (it'd stay unhidden).
+        # Held aside until the row is actually on the server: promote must never be handed the title
+        # of a row a cancel stopped us writing.
         title_template = resolve_row_template(spec, user, cfg)
         marker = row_marker(user.plex_account_id)
-        for section_key, sp in section_picks.items():
-            if sp:
-                title = render_row_name(title_template, user, sp, library_name=library_names.get(section_key, ""))
-                user_report.placement_titles[title + marker] = spec.slug
+        row_titles = {
+            render_row_name(title_template, user, sp, library_name=library_names.get(section_key, ""))
+            + marker: spec.slug
+            for section_key, sp in section_picks.items()
+            if sp
+        }
         picks = [pick for sp in section_picks.values() for pick in sp]
         # Cancelled while this person was mid-delivery: stop before the NEXT row is written.
         #
@@ -2217,9 +2242,8 @@ def _run_user(
         if ctx.cancelled():
             logger.info("{}: cancelled — stopping before '{}', rows already written are intact", user.slug, spec.slug)
             break
-        all_picks.extend(picks)
         _emit(ctx, user.slug, "delivering", {"picks": len(picks), "row": spec.name_template or spec.slug})
-        _deliver_row(
+        if not _deliver_row(
             policy,
             spec,
             picks,
@@ -2227,7 +2251,11 @@ def _run_user(
             sole_row=len(owned) == 1,
             stored_labels=stored_labels,
             order_work=order_work,
-        )
+        ):
+            # Cancelled while this row waited its turn for the write-lock — see `_deliver_row`.
+            break
+        user_report.placement_titles.update(row_titles)
+        all_picks.extend(picks)
         delivered_any = delivered_any or bool(picks)
 
     user_report.picks = all_picks
