@@ -395,6 +395,23 @@ class RunService:
             with self._sessions() as session:
                 run = session.get(Run, run_id)
                 if run is not None:
+                    # A QUEUED run is finished here and now. It has not started, holds nothing and has
+                    # written nothing, so there is nothing to unwind and nothing to be careful about.
+                    #
+                    # It used to be marked aborted only once it ACQUIRED the Plex writer lock — which
+                    # is exactly what it is waiting for. Queue two runs, cancel both, and the second
+                    # sat on "Stopping…" until the FIRST one finished, because the code meant to stop
+                    # it could not run until the thing it was queued behind got out of the way. The
+                    # flag is still set below, so if it is already mid-start it bails there too.
+                    if run.status == "queued":
+                        run.status = "aborted"
+                        run.finished_at = datetime.now(UTC)
+                        run.stats = {**(run.stats or {}), "cancel_requested": True}
+                        session.commit()
+                        logger.info("run {} cancelled while queued — it never started", run_id)
+                        self._bus.publish("run.progress", {"run_id": run_id, "status": "aborted"})
+                        self._bus.publish("run.finished", {"run_id": run_id, "status": "aborted"})
+                        return True
                     run.stats = {**(run.stats or {}), "cancel_requested": True}
                     session.commit()
         except Exception as e:
