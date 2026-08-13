@@ -76,15 +76,35 @@ function ratingLabel(pick: Pick): string {
  *  A server with more than one library (Movies, TV Shows, …) commonly has more than one shared
  *  pool — one per library type — each drawn on by a different set of rows. Naming only the FIRST
  *  shared pool's row count would misstate the others whenever their counts differ, so this only
- *  claims what holds for all of them: that pools were shared, and how many there were. */
+ *  claims what holds for all of them: that pools were shared, and how many there were.
+ *
+ *  The token figure this annotates is summed over EVERY pool, not just the shared ones — a row that
+ *  overrides its sources gets its own single-row pool alongside a sibling pool the rest of the
+ *  person's rows share, and that solo pool's tokens are still setup spend (computed before the
+ *  per-row loop even starts), just not spend any OTHER row drew from. Claiming "shared by N rows"
+ *  for the whole total in that case credits the shared pool with tokens it never spent, so the
+ *  count and the total have to agree on whether they're describing all of it or only part. */
 function sharedPoolsNote(pools: RunPoolCost[]): string {
   const shared = pools.filter((pool) => pool.rows.length > 1);
   if (shared.length === 0) return "";
+  if (shared.length < pools.length) {
+    // A mix of shared and single-row pools: the total includes both, so naming only the shared
+    // subset's row count would overclaim it. Say how many of the pools were shared instead of
+    // how many rows — that stays true of the WHOLE figure above it.
+    return ` (${shared.length} of ${pools.length} pools shared)`;
+  }
   if (shared.length > 1) return ` (shared across ${shared.length} pools)`;
-  // Exactly one shared pool: `reduce` reads its row count without an indexed
+  // Exactly one pool, and it's shared: `reduce` reads its row count without an indexed
   // access, which `noUncheckedIndexedAccess` would otherwise type as possibly `undefined`.
   const rowCount = shared.reduce((n, pool) => n + pool.rows.length, 0);
   return ` (one pool, shared by ${rowCount} rows)`;
+}
+
+/** Total Exa/web searches across every pool behind a person's shared-setup line — the searches ran
+ *  during the candidate gather, which is shared setup, so they're summed the same way the tokens
+ *  are rather than attributed to whichever row happened to trigger the gather first. */
+function sharedPoolsExaSearches(pools: RunPoolCost[]): number {
+  return pools.reduce((n, pool) => n + pool.exa_searches, 0);
 }
 
 /** One ranked pick: rank, a status dot (green = new this run), title + reason, and where it
@@ -337,16 +357,24 @@ export function UserPanel({
             ) : (
               <p className="text-right text-sm text-muted-foreground">
                 {formatDuration(cost.duration_ms - cost.blocked_ms)}
-                {cost.blocked_ms >= cost.duration_ms * 0.1 &&
+                {/* `blocked_ms > 0` first: a row whose every source `continue`s in microseconds
+                    truncates BOTH numbers to 0, and 0 >= 0 * 0.1 would otherwise read as "waiting"
+                    for a row that did no work at all. */}
+                {cost.blocked_ms > 0 &&
+                  cost.blocked_ms >= cost.duration_ms * 0.1 &&
                   ` · ${formatDuration(cost.blocked_ms)} waiting`}
                 {setup && setup.setup_ms > 0 && (
                   <>
                     {" · shared setup "}
                     {formatDuration(setup.setup_ms)}
-                    {setup.pools.length > 0 &&
-                      ` · ${setup.pools
-                        .reduce((n, p) => n + p.tokens, 0)
-                        .toLocaleString()} AI tokens${sharedPoolsNote(setup.pools)}`}
+                    {setup.pools.length > 0 && (
+                      <>
+                        {` · ${setup.pools
+                          .reduce((n, p) => n + p.tokens, 0)
+                          .toLocaleString()} AI tokens${sharedPoolsNote(setup.pools)}`}
+                        {webSearchSummary(sharedPoolsExaSearches(setup.pools))}
+                      </>
+                    )}
                   </>
                 )}
               </p>

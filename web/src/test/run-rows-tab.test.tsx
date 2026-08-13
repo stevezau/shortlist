@@ -429,6 +429,81 @@ describe("RunRowsTab — per-row cost", () => {
     ],
   });
 
+  /** A row whose every candidate source was down: `pools_for` returns `None`, the row loop
+   *  `continue`s in microseconds, and `_row_timer` still stamps it — with both `duration_s` and
+   *  `blocked_s` rounded down to exactly 0. */
+  const runWithZeroCostRow = run({
+    users: [
+      user({
+        duration_ms: PERSON_WHOLE_RUN_MS,
+        rows_considered: { picked: "due", because: "due" },
+        breakdown: rowBreakdown(),
+        has_trace: false,
+        cost: {
+          setup_ms: 421000,
+          rows: {
+            picked: { duration_ms: 0, blocked_ms: 0 },
+            because: { duration_ms: 9120, blocked_ms: 880 },
+          },
+          pools: [],
+        },
+      }),
+    ],
+  });
+
+  /** One shared pool ("picked"/"because" draw from it) plus one SOLO pool for a third row that
+   *  overrode its own sources ("solo" — its own `pool_key`, so it can never land in the shared one).
+   *  The token figure sums both; the annotation must not credit the shared pool with the solo pool's
+   *  spend just because it happens to be the only OTHER pool this person has. */
+  const runWithMixedSharedAndSoloPools = run({
+    users: [
+      user({
+        duration_ms: PERSON_WHOLE_RUN_MS,
+        rows_considered: { picked: "due", because: "due", solo: "due" },
+        breakdown: [
+          ...rowBreakdown(),
+          {
+            row_slug: "solo",
+            row_title: "🍿 Solo Pick",
+            library_key: "1",
+            library_title: "Movies",
+            added: [],
+            removed: [],
+            kept: [],
+            deleted: [],
+            created: false,
+            picks: [],
+          },
+        ],
+        has_trace: false,
+        cost: {
+          setup_ms: 421000,
+          rows: {
+            picked: { duration_ms: 72300, blocked_ms: 300 },
+            because: { duration_ms: 9120, blocked_ms: 880 },
+            solo: { duration_ms: 5000, blocked_ms: 0 },
+          },
+          pools: [
+            {
+              label: "movie · tmdb_similar",
+              tokens: 15917,
+              exa_searches: 3,
+              duration_ms: 398000,
+              rows: ["picked", "because"],
+            },
+            {
+              label: "movie · tmdb_discover",
+              tokens: 500,
+              exa_searches: 0,
+              duration_ms: 4000,
+              rows: ["solo"],
+            },
+          ],
+        },
+      }),
+    ],
+  });
+
   it("shows this row's own time, not the person's whole-run total", async () => {
     render(
       <RunRowsTab run={runWithPerRowCost} titles={{}} idBySlug={new Map()} />,
@@ -493,6 +568,56 @@ describe("RunRowsTab — per-row cost", () => {
     expect(screen.queryByText(/one pool, shared by/i)).not.toBeInTheDocument();
     // Both pools' tokens are still summed into the one figure shown.
     expect(screen.getByText(/20,117/)).toBeInTheDocument();
+  });
+
+  it("shows the shared setup's web-search count beside its tokens", async () => {
+    render(
+      <RunRowsTab run={runWithPerRowCost} titles={{}} idBySlug={new Map()} />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Picked for You/ }),
+    );
+    // The old whole-person header called `webSearchSummary(result.exa_searches)`; the row-scoped
+    // panel dropped it with no replacement, so a run's Exa spend became visible only on the People
+    // tab. It belongs beside the tokens on the shared-setup line — Exa searches happen during the
+    // candidate gather, which is shared setup, same as the tokens.
+    expect(screen.getByText(/3 web searches/i)).toBeInTheDocument();
+  });
+
+  it("does not credit a shared pool with a solo pool's tokens when a row overrides its sources", async () => {
+    // The bug this guards: the annotation counted only pools with more than one row, but the token
+    // figure it sits beside is summed over EVERY pool — so a person with one shared pool plus a row
+    // that overrides its sources (and so gets its own single-row pool) read as "one pool, shared by
+    // 2 rows" for a total that included tokens the shared pool never spent.
+    render(
+      <RunRowsTab
+        run={runWithMixedSharedAndSoloPools}
+        titles={{}}
+        idBySlug={new Map()}
+      />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Picked for You/ }),
+    );
+    // The total is still the honest sum of both pools (15,917 + 500).
+    expect(screen.getByText(/16,417/)).toBeInTheDocument();
+    // But the claim beside it must be scoped to what's actually shared — not "shared by N rows" for
+    // a total that includes a pool only one row ever drew from.
+    expect(screen.getByText(/1 of 2 pools shared/i)).toBeInTheDocument();
+    expect(screen.queryByText(/shared by \d+ rows?/i)).not.toBeInTheDocument();
+  });
+
+  it("does not show a waiting clause for a row that did no work (0ms · 0ms)", async () => {
+    // A row whose every candidate source is down `continue`s in microseconds, so `duration_ms` and
+    // `blocked_ms` both truncate to 0 — and the old guard (`blocked_ms >= duration_ms * 0.1`) reads
+    // TRUE when both are 0, printing "0ms waiting" for a row that never waited on anything.
+    render(
+      <RunRowsTab run={runWithZeroCostRow} titles={{}} idBySlug={new Map()} />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Picked for You/ }),
+    );
+    expect(screen.queryByText(/waiting/i)).not.toBeInTheDocument();
   });
 
   it("says timing was not recorded for a legacy run instead of showing 0s", async () => {
