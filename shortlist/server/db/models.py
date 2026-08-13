@@ -330,6 +330,15 @@ class RunUser(Base):
     # on a cold-start skip, which never reaches the decision; the UI must render that as "not
     # recorded", never as "no rows were considered".
     rows_considered: Mapped[dict] = mapped_column(JSON, default=dict)
+    # What each ROW cost this person, and what the shared setup cost:
+    # {"setup_ms": int, "rows": {slug: {"duration_ms": int, "blocked_ms": int}},
+    #  "pools": [{"label", "tokens", "exa_searches", "duration_ms", "rows": [slug, ...]}]}.
+    #
+    # NULL on a legacy run — "not recorded", which the UI must never render as 0s. `duration_ms` is
+    # wall clock INCLUDING `blocked_ms` (time waiting on the shared Plex write lock); work time is
+    # the difference. Tokens live on the POOL, never on a row: pools are shared between rows, so a
+    # per-row token figure would be an allocation invented by the UI rather than a measurement.
+    cost: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
 
     run: Mapped[Run] = relationship(back_populates="users")
     user: Mapped[User] = relationship(back_populates="run_users")

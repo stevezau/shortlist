@@ -877,3 +877,15 @@ class TestRunsBeganAt:
         run_migrations(tmp_path)
 
         assert self._began(tmp_path)[1] == "2026-05-05 05:05:05"
+
+
+class TestRunUsersCost:
+    def test_0069_adds_nullable_cost_to_run_users(self, tmp_path: Path):
+        """Nullable with NO backfill: a legacy run has no per-row cost and must read 'not recorded'.
+        Backfilling 0 would claim every historical row took no time — the same class of confidently
+        wrong answer this feature exists to remove."""
+        run_migrations(tmp_path)
+
+        flags = _not_null(tmp_path, "run_users")
+        assert "cost" in flags
+        assert flags["cost"] is False
