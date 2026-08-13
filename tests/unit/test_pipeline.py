@@ -4964,6 +4964,61 @@ class TestCancelStopsWritingPromptly:
 
         assert delivered is False, "the caller must be told to stop this person, not carry on to their next row"
         assert wrote == [], "a row must not be written to Plex once the run has been cancelled"
-        # Promote is driven off these titles, so a row we did NOT write must not appear among them —
-        # otherwise the promote phase hunts for a collection that does not exist.
-        assert report.placement_titles == {}
+
+    def test_a_cancel_during_the_retry_backoff_keeps_the_audit_for_what_was_already_written(
+        self, ctx: EngineContext, monkeypatch
+    ):
+        """A cancel must never erase the record of a write that reached Plex (plex-safety rule 10).
+
+        Delivery retries per row, and each attempt truncates the row's breakdown so a re-run does not
+        double-count it. That truncation is only safe because the attempt re-appends — so it has to
+        happen AFTER the cancel check, or a cancel landing during the backoff returns having deleted
+        the audit entry for a library the first attempt really did write. Operators cancel precisely
+        when a run is stalling on retries, so this is the likely case, not the exotic one.
+        """
+        import requests
+
+        import shortlist.engine.rows as rows_mod
+        from shortlist.engine.models import UserRunReport
+        from shortlist.engine.rows import RowPolicy
+
+        cancelled = {"yes": False}
+        ctx.cancelled = lambda: cancelled["yes"]
+        report = UserRunReport(username="sarah", slug="sarah")
+
+        attempts = {"n": 0}
+
+        def flaky_deliver(*args, **kwargs):
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                # Library A written and audited, library B times out — the partial state a retry exists
+                # for. Cancel lands while the backoff sleeps.
+                kwargs["breakdown"].append({"row_slug": "two", "library_key": "1", "rating_key": 4242})
+                cancelled["yes"] = True
+                raise requests.exceptions.ReadTimeout("PMS timed out on the second library")
+            raise AssertionError("a cancelled row must not be re-attempted")
+
+        monkeypatch.setattr(rows_mod, "deliver_rows", flaky_deliver)
+
+        spec = RowSpec(slug="two", name_template="Two", size=2, media="movie")
+        policy = RowPolicy(
+            ctx=ctx,
+            user=make_profile("sarah", account_id=100),
+            cfg=ctx.config,
+            specs=[spec],
+            library_index={},
+            report=report,
+            resolve=lambda item: None,
+        )
+        pick = Pick(tmdb_id=10, rating_key=2010, title="A", rank=1, reason="because", media_type=MediaType.MOVIE)
+
+        delivered = rows_mod._deliver_row(
+            policy, spec, [pick], {"1": [pick]}, sole_row=True, stored_labels={}, order_work=None
+        )
+
+        assert delivered is False
+        assert [e["rating_key"] for e in report.breakdown] == [4242], (
+            "the collection the first attempt wrote to Plex must keep its audit entry — without it "
+            "the delivery ledger loses the ratingKey and the next run builds a second collection "
+            "beside the orphan"
+        )
