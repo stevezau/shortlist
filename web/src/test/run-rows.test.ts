@@ -308,3 +308,57 @@ describe("a run that is still going", () => {
     expect(rowSummary(groups[0]!)).toBe("building — 1 of 3 done");
   });
 });
+
+describe("people are visible before they finish", () => {
+  it("lists everyone as pending on a queued run, so the row is never empty", () => {
+    // The complaint this fixes: a queued or mid-run row opened onto "0 succeeded" and an empty
+    // list. A run records who it will build for when it is QUEUED, so the people are known long
+    // before any of them report.
+    const { groups } = groupRunByRow(
+      run({
+        users: [],
+        stats: {
+          expected_rows: [
+            { slug: "picked", title: CONFIG_NAMES.picked, build: "per_person" },
+          ],
+          expected_users: [
+            { slug: "a", username: "a", display_name: "Alex" },
+            { slug: "b", username: "b", display_name: "Bea" },
+          ],
+        },
+      } as unknown as Partial<RunDetail>),
+      CONFIG_NAMES,
+    );
+
+    expect(groups[0]!.people.map((p) => p.result.display_name)).toEqual([
+      "Alex",
+      "Bea",
+    ]);
+    expect(groups[0]!.people.every((p) => p.result.status === "pending")).toBe(
+      true,
+    );
+    expect(rowSummary(groups[0]!)).toBe("building — 0 of 2 done");
+  });
+
+  it("replaces a person's pending entry with their real result as it lands", () => {
+    const { groups } = groupRunByRow(
+      run({
+        users: [user({ slug: "a", rows_considered: { picked: "due" } })],
+        stats: {
+          expected_rows: [
+            { slug: "picked", title: CONFIG_NAMES.picked, build: "per_person" },
+          ],
+          expected_users: [
+            { slug: "a", username: "a", display_name: "Alex" },
+            { slug: "b", username: "b", display_name: "Bea" },
+          ],
+        },
+      } as unknown as Partial<RunDetail>),
+      CONFIG_NAMES,
+    );
+
+    // Alex reported; Bea is still waiting. Nobody appears twice.
+    expect(groups[0]!.people).toHaveLength(2);
+    expect(rowSummary(groups[0]!)).toBe("building — 1 of 2 done");
+  });
+});

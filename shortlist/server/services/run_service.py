@@ -174,10 +174,17 @@ class RunService:
                 dry_run=dry_run,
                 status="queued",
                 stats={
+                    # Who it will build for, recorded here for the same reason as the rows below: a
+                    # QUEUED run is exactly when someone is watching the page, and without this its
+                    # rows opened onto "0 succeeded" and an empty list.
+                    "expected_users": [
+                        {"slug": p.slug, "username": p.username, "display_name": p.nickname or p.username}
+                        for p in self.enabled_profiles(session, user_ids)
+                    ],
                     "expected_rows": [
                         {"slug": row.slug, "title": row.name_template or row.name, "build": row.build}
                         for row in wanted.order_by(Collection.sort_order, Collection.id).all()
-                    ]
+                    ],
                 },
             )
             session.add(run)
