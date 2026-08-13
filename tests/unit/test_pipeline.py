@@ -2301,12 +2301,16 @@ class TestPerRowOverrides:
         delivered row visible to the wrong person."""
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
         mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
-        # Cancel becomes true after the first per-user check: sarah delivers, mike (and shared) skip.
+        # Cancel becomes true once sarah has cleared BOTH of her checks — the one at the top of her
+        # turn and the one just before her rows are written — so she delivers and mike (and the
+        # shared row) skip. Counting calls rather than flipping a real flag means this number tracks
+        # how many times the engine asks; the real `cancelled` is an Event and answers the same
+        # every time.
         seen = {"n": 0}
 
         def cancelled() -> bool:
             seen["n"] += 1
-            return seen["n"] > 1
+            return seen["n"] > 2
 
         ctx.cancelled = cancelled
 
