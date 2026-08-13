@@ -4,6 +4,19 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **One label for co-managing tools.** Every row now carries a constant `shortlist` label (Plex
+  stores it as `Shortlist`) alongside its per-person one. Tools that share your Recommended shelf —
+  Agregarr's **Exclude from Ordering (Plex Label)**, Kometa's equivalents — take a list of labels to
+  leave alone, and Shortlist's per-person labels were no use there: a 46-account server has 46 of
+  them plus one per shared row, and the list goes stale the moment somebody joins or leaves. One
+  entry now covers every row, for good. It hides nothing and changes nothing about who sees what —
+  privacy still runs entirely off the per-person label. Existing rows pick it up the next time they
+  are built; there is nothing to run.
+
 ## [1.5.0] - 2026-08-13
 
 ### Added

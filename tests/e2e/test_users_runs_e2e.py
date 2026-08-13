@@ -196,7 +196,11 @@ class TestUsers:
         assert built == {"mike", "canary"}, "a paused user must not be rebuilt"
 
         labels = {label.lower() for c in state.collections.values() for label in c.labels}
-        assert labels == {"shortlist_mike", "shortlist_canary"}
+        # sarah's OWNER label is the one that must be absent — that is what "not rebuilt" looks like
+        # on the server. The constant `shortlist` label is on every row we write and names nobody, so
+        # it is expected here and says nothing about who was built.
+        assert "shortlist_sarah" not in labels, "a paused user must not be rebuilt"
+        assert labels == {"shortlist", "shortlist_mike", "shortlist_canary"}
         assert "shortlist_sarah" not in labels
 
 

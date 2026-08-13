@@ -548,6 +548,13 @@ def remove_row_collections(
     refuses anything without a ``shortlist_`` label, so a foreign (Kometa) collection is never touched.
     Returns the display titles removed (or, in a dry run, that would be).
     """
+    if not label.startswith(f"{LABEL_PREFIX}_"):
+        # This function DELETES, and `find_owned_collections` matches a tag exactly — so the bare
+        # `shortlist` label every row now carries would select every Shortlist collection on the
+        # server and remove the lot. No caller builds that label today; this is the guard that keeps
+        # it that way, and it is the one place where getting it wrong is unrecoverable.
+        logger.warning("refusing to remove collections under a non-row label {!r}", label)
+        return []
     removed: list[str] = []
     for section in plex.sections():
         if in_sections is not None and str(section.key) not in in_sections:
@@ -588,8 +595,11 @@ def rename_row_collections(
     foreign (Kometa) collection never carries our label and ``find_owned_collections`` only returns
     ours. Returns the library titles renamed (or, in a dry run, that would be).
     """
-    if not label.startswith(LABEL_PREFIX):
-        # Belt-and-suspenders (rule 4): only ever retitle under one of OUR labels, matching the delete
+    if not label.startswith(f"{LABEL_PREFIX}_"):
+        # The UNDERSCORE matters (rule 4): every row now also carries the bare `shortlist` label, and
+        # `find_owned_collections` matches a tag exactly — so a caller passing the constant label
+        # would select every Shortlist collection on the server rather than one row's.
+        # Belt-and-suspenders: only ever retitle under one of OUR labels, matching the delete
         # path's ownership re-check. find_owned_collections already scopes to this label, so this only
         # guards against a caller ever passing a foreign one.
         logger.warning("refusing to rename under a non-Shortlist label {!r}", label)
@@ -622,8 +632,10 @@ def reset_row_posters(
     promotion are untouched). Matches only OUR-labelled collections; ``displays`` limits to those
     marker-stripped titles (per-person rows), or ``None`` resets every collection under ``label``
     (a shared row's single membership). Returns the library titles reset (or that would be)."""
-    if not label.startswith(LABEL_PREFIX):
-        logger.warning("refusing to reset posters under a non-Shortlist label {!r}", label)
+    if not label.startswith(f"{LABEL_PREFIX}_"):
+        # Underscore-scoped for the same reason as the rename guard: the bare constant label matches
+        # every Shortlist collection on the server, not one row's.
+        logger.warning("refusing to reset posters under a non-Shortlist row label {!r}", label)
         return []
     reset: list[str] = []
     for section in plex.sections():
@@ -650,6 +662,62 @@ def _rating_key(collection) -> int:
         return int(getattr(collection, "ratingKey", 0) or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _apply_shortlist_label(plex: PlexClient, collection, username: str) -> None:
+    """Add the constant ``shortlist`` label, alongside the row's own ``shortlist_<user>`` one.
+
+    One label a co-managing tool can be pointed at. Agregarr and Kometa both take a list of labels to
+    leave alone, and ours are per PERSON — a 46-account server has 46 of them, plus one per shared
+    row, and the list goes stale the moment somebody joins or leaves. This one never changes.
+
+    **`addLabel` is not additive on the wire.** plexapi builds the new tag list as
+    ``getattr(self, "labels", []) + items`` (``mixins/edit.py:294``) and PUTs it as an ABSOLUTE set.
+    The owner label therefore survives only because it is re-sent from the client's in-memory
+    ``collection.labels``. If that list were empty — rule 4's read that succeeds carrying no
+    ``<Label>`` — this call would PUT exactly ``shortlist`` and DELETE ``shortlist_<user>``. No
+    ``label!=shortlist_<user>`` exclude would match the row any more, so it would be visible to every
+    shared account until the next run's sweep removed it, and nothing verifies hiding after the fact.
+
+    Hence the guard: the collection must already show its owner label in memory. That is a free
+    check — the caller has just run `stored_label` on the same object, which guarantees it — and it
+    turns a silent leak into a skipped cosmetic label if that ever stops being true.
+
+    Never fatal. A row is found, hidden and managed entirely through ``shortlist_<user>``; without
+    THIS one all that happens is a co-managing tool keeps reordering this one row. Swallowing is not
+    about the create path's delete-on-failure (this runs outside that ``try``) — it is that a label
+    which only affects shelf tidiness must never fail a delivery that already reached Plex.
+    """
+    owner_prefix = f"{LABEL_PREFIX}_".lower()
+    known = [t.tag for t in getattr(collection, "labels", []) or []]
+    if not any(t.lower().startswith(owner_prefix) for t in known):
+        # Either a genuinely unlabelled collection (which we never create) or an empty label read.
+        # Both mean the PUT below would drop whatever is really on the row.
+        logger.warning(
+            "{}: not adding the '{}' label to '{}' — its owner label is not in the labels Plex "
+            "returned, and the write would replace the label set rather than add to it",
+            username,
+            LABEL_PREFIX,
+            getattr(collection, "title", "?"),
+        )
+        return
+    if any(t.lower() == LABEL_PREFIX.lower() for t in known):
+        return  # already there — no write, and no log line every run for every row
+    try:
+        plex.stored_label(collection, LABEL_PREFIX)
+        # Said out loud because the FIRST run after upgrading applies this to every existing
+        # collection, one write each. On a PMS answering writes in ~17s that is a materially longer
+        # night, and an unexplained slow run is its own bug report.
+        logger.info("{}: added the '{}' label to '{}'", username, LABEL_PREFIX, getattr(collection, "title", "?"))
+    except Exception as e:
+        logger.warning(
+            "{}: could not add the '{}' label to '{}' ({}) — the row is fine, but a co-managing "
+            "tool may keep reordering it",
+            username,
+            LABEL_PREFIX,
+            getattr(collection, "title", "?"),
+            type(e).__name__,
+        )
 
 
 def _create_labelled_collection(
@@ -696,6 +764,7 @@ def _create_labelled_collection(
                 section.title,
             )
         raise
+    _apply_shortlist_label(plex, collection, profile.username)
     if order_work is not None:
         order_work.append((collection, [p.rating_key for p in picks]))
     apply_poster(plex, collection, poster, profile, picks, library_name=section.title, artist=artist, dry_run=False)
@@ -943,6 +1012,7 @@ def _deliver_one(
             order_work.append((collection, wanted_keys))
         apply_poster(plex, collection, poster, profile, picks, library_name=section.title, artist=artist, dry_run=False)
         stored = plex.stored_label(collection, label)
+        _apply_shortlist_label(plex, collection, profile.username)
         diff.rating_key = _rating_key(collection)
         logger.info(
             "{}: '{}' in '{}' unchanged ({} items) — no membership write",
@@ -963,6 +1033,7 @@ def _deliver_one(
     apply_poster(plex, collection, poster, profile, picks, library_name=section.title, artist=artist, dry_run=False)
 
     stored = plex.stored_label(collection, label)
+    _apply_shortlist_label(plex, collection, profile.username)
     diff.rating_key = _rating_key(collection)
     # Promotion is deliberately NOT done here: the pipeline promotes only after every user's
     # share filters have been merged, so a new row is never visible before its exclusions exist.

@@ -3697,6 +3697,37 @@ class TestOrphanDeletion:
         _converge_phase(ctx, set(), report)
         return report
 
+    def test_the_constant_label_does_not_turn_a_live_row_into_an_orphan(self, ctx: EngineContext):
+        """Every row now carries a constant `Shortlist` label beside its `Shortlist_<user>` one.
+
+        Orphan detection chops the owner's slug off the front of the label. It matches on
+        `shortlist_` WITH the underscore, so the constant label is skipped and `Shortlist_sarah` is
+        found — but if that prefix were ever loosened to `shortlist`, the constant label would match
+        first and yield an EMPTY slug. Empty is in nobody's roster, so every row on the server would
+        classify as an orphan, and orphans are the one thing this phase DELETES.
+
+        This is the blast radius of a one-character edit, so it is pinned against the real function
+        rather than against the string prefix alone.
+        """
+        collection = self._collection(1, "Shortlist")
+        collection.labels = [MagicMock(tag="Shortlist"), MagicMock(tag="Shortlist_sarah")]
+
+        report = self._run(ctx, [collection], known={100: "sarah"}, may_delete=True)
+
+        assert report.orphans_removed == [], "a row whose owner is known must never be deleted"
+        collection.delete.assert_not_called()
+
+    def test_a_row_carrying_ONLY_the_constant_label_is_left_alone(self, ctx: EngineContext):
+        """Belt and braces: a collection with the constant label and no owner label is not something
+        this app creates — delivery applies the owner label first and deletes the row if it fails. It
+        must not be read as an orphan on the strength of a label that names nobody."""
+        collection = self._collection(1, "Shortlist")
+
+        report = self._run(ctx, [collection], known={100: "sarah"}, may_delete=True)
+
+        assert report.orphans_removed == []
+        collection.delete.assert_not_called()
+
     def test_a_user_less_run_never_deletes_however_complete_the_picture(self, ctx: EngineContext):
         """`engine_run(ctx, [])` is the privacy-sync shape, and it fires from routine mutations —
         disabling one person, narrowing a shared row's audience. It documents itself as creating and

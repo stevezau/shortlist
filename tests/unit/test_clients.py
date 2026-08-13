@@ -617,6 +617,34 @@ class TestPlexClient:
         assert mock_plex.stored_label(collection, "shortlist_sarah") == "Shortlist_sarah"
         collection.addLabel.assert_not_called()
 
+    def test_stored_label_keeps_the_labels_already_there(self, mock_plex: PlexClient):
+        """Adding the constant `shortlist` label must not cost a row its OWNER label.
+
+        `addLabel` is not additive on the wire: plexapi builds the new tag list as
+        `collection.labels + [new]` (mixins/edit.py:294) and PUTs it as an ABSOLUTE set. So what
+        protects `Shortlist_sarah` is that it is re-sent from the in-memory list — and a row that
+        lost it would match no `label!=shortlist_sarah` exclude and be visible to every shared
+        account. This asserts the surviving set, which is the thing that actually matters.
+        """
+        collection = MagicMock()
+        collection.labels = [SimpleNamespace(tag="Shortlist_sarah")]
+        added: list[str] = []
+
+        def add(label):
+            added.append(label)
+            # What a real PUT does: the union, written back as the whole set.
+            collection.labels = [*collection.labels, SimpleNamespace(tag=label.replace("s", "S", 1))]
+
+        collection.addLabel.side_effect = add
+
+        stored = mock_plex.stored_label(collection, "shortlist")
+
+        assert stored == "Shortlist"
+        assert added == ["shortlist"]
+        assert [t.tag for t in collection.labels] == ["Shortlist_sarah", "Shortlist"], (
+            "the owner label must still be on the collection — it is the only thing hiding this row"
+        )
+
     def test_stored_label_adds_and_reads_back_when_missing(self, mock_plex: PlexClient):
         collection = MagicMock()
         collection.labels = []

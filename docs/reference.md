@@ -566,6 +566,13 @@ this leak-safe: a run delivers rows **unpromoted**, merges all the exclusions, a
 promotes rows onto Home, so a new row is never visible before the exclusion that hides it exists. Rows
 Plex cannot hide (wrong media type for their library) are swept away first, before anything else.
 
+Every row also carries a second, constant label — `shortlist` (Plex stores it title-cased, as
+`Shortlist`). It hides nothing and excludes nothing; it exists so a co-managing tool can be told to
+leave Shortlist's rows alone in **one** entry. Agregarr's *Exclude from Ordering (Plex Label)* and
+Kometa's equivalents take a list of labels, and the per-person ones are no use there: a 46-account
+server has 46 of them plus one per shared row, and the list goes stale the moment somebody joins or
+leaves. Existing rows pick the label up the next time they are built — there is nothing to run.
+
 Before Shortlist first edits an account's filters it snapshots them (`restriction_snapshots`), so
 **Uninstall** restores every share exactly as it found it. The one hard requirement is a Plex Media Server
 **≥ 1.43.2.10687** (older builds ignore the label exclusion).
