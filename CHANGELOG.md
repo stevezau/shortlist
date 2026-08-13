@@ -4,9 +4,21 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.5.1] - 2026-08-14
 
 ### Added
+
+- **What a row actually cost, per row.** A run page showed one number per person — their whole
+  night — so a row that took four minutes and a row that took four seconds looked identical, and the
+  shared work every row depends on was billed to whichever row happened to be first. Each row now
+  reports its own time and its own AI spend, with the shared setup shown separately and the pools
+  that fed more than one row named. Waiting for the Plex write-lock is charged to the row that
+  waited, so a slow night points at what was slow rather than at whoever was unlucky.
+
+- **A download that says it is working.** The Logs page's **Download .zip** and Have an issue?'s
+  **Download everything** were plain links: the browser fetched them in silence while the server
+  gathered and zipped the logs, which takes seconds, so nothing on screen changed and the natural
+  reading was that the click had missed. Both now say **Preparing…** while the file is built.
 
 - **One label for co-managing tools.** Every row now carries a constant `shortlist` label (Plex
   stores it as `Shortlist`) alongside its per-person one. Tools that share your Recommended shelf —
@@ -17,7 +29,19 @@ All notable changes to this project are documented here. This project follows
   privacy still runs entirely off the per-person label. Existing rows pick it up the next time they
   are built; there is nothing to run.
 
-## [1.5.0] - 2026-08-13
+### Fixed
+
+- **"Remove or delete" looks like what it does.** In a row's editor it was grey text that did not
+  read as a control at all, let alone one that ends in deleting a row. It now matches the Delete on
+  the Rows page — red, outlined, with a bin. It still only takes you to the section at the bottom of
+  the page rather than acting, because removing and deleting reach into other people's Plex and
+  Cancel does not undo them.
+
+## [1.5.0] - 2026-08-13 — withdrawn
+
+Tagged and published for about half an hour, then pulled before anyone was told about it. Everything
+in it ships in 1.5.1; the notes are kept here because the images were briefly public.
+
 
 ### Added
 
