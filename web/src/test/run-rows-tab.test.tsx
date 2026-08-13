@@ -381,6 +381,42 @@ describe("RunRowsTab — per-row cost", () => {
     ],
   });
 
+  /** Two shared pools with DIFFERENT row counts — the shape a server with both a Movies and a TV
+   *  Shows library produces. Naming only the first pool's row count here would misstate the second. */
+  const runWithTwoSharedPools = run({
+    users: [
+      user({
+        duration_ms: PERSON_WHOLE_RUN_MS,
+        rows_considered: { picked: "due", because: "due" },
+        breakdown: rowBreakdown(),
+        has_trace: false,
+        cost: {
+          setup_ms: 421000,
+          rows: {
+            picked: { duration_ms: 72300, blocked_ms: 300 },
+            because: { duration_ms: 9120, blocked_ms: 880 },
+          },
+          pools: [
+            {
+              label: "movie · tmdb, llm_web",
+              tokens: 15917,
+              exa_searches: 3,
+              duration_ms: 398000,
+              rows: ["picked", "because"],
+            },
+            {
+              label: "show · tmdb, llm_web",
+              tokens: 4200,
+              exa_searches: 1,
+              duration_ms: 23000,
+              rows: ["picked", "popular"],
+            },
+          ],
+        },
+      }),
+    ],
+  });
+
   const legacyRun = run({
     users: [
       user({
@@ -436,6 +472,27 @@ describe("RunRowsTab — per-row cost", () => {
     );
     expect(screen.getByText(/shared setup/i)).toBeInTheDocument();
     expect(screen.getByText(/15,917/)).toBeInTheDocument();
+  });
+
+  it("says how many pools were shared, not 'one pool', when more than one contributed", async () => {
+    // The bug this guards: the panel used to find only the FIRST pool with more than one row and
+    // report that pool's row count, so a server with two shared pools of different sizes (Movies and
+    // TV Shows, here 2 rows and 2 rows but drawn from different row sets) read as "one pool" — wrong
+    // about the second pool whenever its count differs from the first.
+    render(
+      <RunRowsTab
+        run={runWithTwoSharedPools}
+        titles={{}}
+        idBySlug={new Map()}
+      />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Picked for You/ }),
+    );
+    expect(screen.getByText(/shared across 2 pools/i)).toBeInTheDocument();
+    expect(screen.queryByText(/one pool, shared by/i)).not.toBeInTheDocument();
+    // Both pools' tokens are still summed into the one figure shown.
+    expect(screen.getByText(/20,117/)).toBeInTheDocument();
   });
 
   it("says timing was not recorded for a legacy run instead of showing 0s", async () => {

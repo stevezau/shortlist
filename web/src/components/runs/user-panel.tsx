@@ -70,6 +70,21 @@ function ratingLabel(pick: Pick): string {
   return pick.rating ? `TMDB ${pick.rating.toFixed(1)}` : "";
 }
 
+/** The parenthetical after a person's shared-setup AI-token figure, explaining why the tokens
+ *  aren't this row's own.
+ *
+ *  A server with more than one library (Movies, TV Shows, …) commonly has more than one shared
+ *  pool — one per library type — each drawn on by a different set of rows. Naming only the FIRST
+ *  shared pool's row count would misstate the others whenever their counts differ, so this only
+ *  claims what holds for all of them: that pools were shared, and how many there were. */
+function sharedPoolsNote(pools: RunPoolCost[]): string {
+  const shared = pools.filter((pool) => pool.rows.length > 1);
+  if (shared.length === 0) return "";
+  if (shared.length === 1)
+    return ` (one pool, shared by ${shared[0].rows.length} rows)`;
+  return ` (shared across ${shared.length} pools)`;
+}
+
 /** One ranked pick: rank, a status dot (green = new this run), title + reason, and where it
  *  came from. */
 function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
@@ -329,9 +344,7 @@ export function UserPanel({
                     {setup.pools.length > 0 &&
                       ` · ${setup.pools
                         .reduce((n, p) => n + p.tokens, 0)
-                        .toLocaleString()} AI tokens`}
-                    {setup.pools.some((p) => p.rows.length > 1) &&
-                      ` (one pool, shared by ${setup.pools.find((p) => p.rows.length > 1)!.rows.length} rows)`}
+                        .toLocaleString()} AI tokens${sharedPoolsNote(setup.pools)}`}
                   </>
                 )}
               </p>
