@@ -35,11 +35,14 @@ export function DownloadButton({
 }) {
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
-  let href: string | null = null;
 
   const start = async () => {
     setBusy(true);
     setFailed(false);
+    // Declared INSIDE the handler, never at component scope: a `let` declared during render and
+    // mutated afterwards is what React Compiler's lint rules reject, and it would be shared across
+    // renders besides.
+    let href: string | null = null;
     try {
       const response = await fetch(url, { credentials: "same-origin" });
       if (!response.ok) throw new Error(String(response.status));
@@ -74,7 +77,10 @@ export function DownloadButton({
       // Paired with the create in a `finally` so a throw in between cannot leak it. Seconds rather
       // than a tick: a next-tick revoke has been seen to race a queued large download into a
       // "Failed - Network error" in Chrome.
-      if (href) setTimeout(() => URL.revokeObjectURL(href as string), 5_000);
+      if (href) {
+        const created = href;
+        setTimeout(() => URL.revokeObjectURL(created), 5_000);
+      }
     }
   };
 
