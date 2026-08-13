@@ -181,9 +181,10 @@ function RowCard({
     results.find((r) => r.slug === picked) ??
     results.find((r) => r.error !== null) ??
     results[0];
-  const decision = group.people.find(
+  const chosenPerson = group.people.find(
     (person) => person.result.slug === chosen?.slug,
-  )?.decision;
+  );
+  const decision = chosenPerson?.decision;
 
   return (
     <div className="rounded-lg border">
@@ -268,7 +269,7 @@ function RowCard({
               results={results}
               selected={chosen?.slug ?? ""}
               onSelect={setPicked}
-              // The card header two lines above already says "10 of 46 done".
+              // The card header two lines above already says "10 of 46 people done".
               showSummary={false}
             />
             <div className="min-w-0">
@@ -284,6 +285,8 @@ function RowCard({
                   result={chosen}
                   liveLog={liveLog}
                   userId={idBySlug.get(chosen.slug) ?? null}
+                  cost={chosenPerson?.cost ?? null}
+                  setup={chosenPerson?.setup ?? null}
                 />
               )}
             </div>

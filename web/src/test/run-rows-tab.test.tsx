@@ -323,6 +323,108 @@ describe("RunRowsTab — a run that is still going", () => {
   });
 });
 
+describe("RunRowsTab — per-row cost", () => {
+  const rowBreakdown = () => [
+    {
+      row_slug: "picked",
+      row_title: "✨ Picked for You",
+      library_key: "1",
+      library_title: "Movies",
+      added: [],
+      removed: [],
+      kept: [],
+      deleted: [],
+      created: false,
+      picks: [],
+    },
+    {
+      row_slug: "because",
+      row_title: "🎯 Because you watched",
+      library_key: "1",
+      library_title: "Movies",
+      added: [],
+      removed: [],
+      kept: [],
+      deleted: [],
+      created: false,
+      picks: [],
+    },
+  ];
+
+  const PERSON_WHOLE_RUN_MS = 442000; // "7m 22s" — must never appear on this row's panel
+
+  /** Two rows sharing one gather/curate pool — the shape `RunUserOut.cost` sends. */
+  const runWithPerRowCost = run({
+    users: [
+      user({
+        duration_ms: PERSON_WHOLE_RUN_MS,
+        rows_considered: { picked: "due", because: "due" },
+        breakdown: rowBreakdown(),
+        has_trace: false,
+        cost: {
+          setup_ms: 421000,
+          rows: {
+            picked: { duration_ms: 72300, blocked_ms: 300 },
+            because: { duration_ms: 9120, blocked_ms: 880 },
+          },
+          pools: [
+            {
+              label: "movie · tmdb, llm_web",
+              tokens: 15917,
+              exa_searches: 3,
+              duration_ms: 398000,
+              rows: ["picked", "because"],
+            },
+          ],
+        },
+      }),
+    ],
+  });
+
+  const legacyRun = run({
+    users: [
+      user({
+        duration_ms: PERSON_WHOLE_RUN_MS,
+        rows_considered: { picked: "due", because: "due" },
+        breakdown: rowBreakdown(),
+        has_trace: false,
+        cost: null,
+      }),
+    ],
+  });
+
+  it("shows this row's own time, not the person's whole-run total", async () => {
+    render(
+      <RunRowsTab run={runWithPerRowCost} titles={{}} idBySlug={new Map()} />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Picked for You/ }),
+    );
+    expect(screen.getByText(/12s/)).toBeInTheDocument();
+    expect(screen.queryByText(/7m 22s/)).not.toBeInTheDocument();
+  });
+
+  it("attributes AI tokens to the shared setup, naming both rows that used the pool", async () => {
+    render(
+      <RunRowsTab run={runWithPerRowCost} titles={{}} idBySlug={new Map()} />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Picked for You/ }),
+    );
+    expect(screen.getByText(/shared setup/i)).toBeInTheDocument();
+    expect(screen.getByText(/15,917/)).toBeInTheDocument();
+  });
+
+  it("says timing was not recorded for a legacy run instead of showing 0s", async () => {
+    render(<RunRowsTab run={legacyRun} titles={{}} idBySlug={new Map()} />);
+    await userEvent.click(
+      screen.getByRole("button", { name: /Picked for You/ }),
+    );
+    expect(screen.getByText(/not recorded/i)).toBeInTheDocument();
+    expect(screen.queryByText(/^0s$/)).not.toBeInTheDocument();
+  });
+});
+
 describe("RunRowsTab — a shared row that hasn't built yet", () => {
   it("says it is pending and explains why, instead of an empty box", async () => {
     // A shared row builds LAST, after every person, so this is the state it sits in for most of a

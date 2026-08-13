@@ -24,6 +24,8 @@ import type {
   RunDetail,
   RunLibraryBreakdown,
   RunLogEntry,
+  RunPoolCost,
+  RunRowCost,
   RunUserResult,
 } from "@/lib/types";
 
@@ -97,7 +99,10 @@ function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
               asked while reading the name, and the Recent releases setting is judged on it. Absent
               on a cold-start pick, which comes from the library rather than a TMDB candidate. */}
           {pick.year != null && (
-            <span className="text-muted-foreground tabular-nums"> ({pick.year})</span>
+            <span className="text-muted-foreground tabular-nums">
+              {" "}
+              ({pick.year})
+            </span>
           )}
           {pick.reason && (
             <span className="text-muted-foreground"> — {pick.reason}</span>
@@ -187,25 +192,16 @@ function RowSection({ entries }: { entries: RunLibraryBreakdown[] }) {
   const [libKey, setLibKey] = useState(entries[0]?.library_key ?? "");
   const active =
     entries.find((entry) => entry.library_key === libKey) ?? entries[0];
-  // Title, new-count and tokens all follow the SELECTED library, so a `{library_name}` row title
-  // renders for the tab you're viewing (e.g. "Movies Picked for You" ↔ "TV Shows Picked for You")
-  // instead of being stuck on the first library's rendering.
+  // Title and new-count follow the SELECTED library, so a `{library_name}` row title renders for
+  // the tab you're viewing (e.g. "Movies Picked for You" ↔ "TV Shows Picked for You") instead of
+  // being stuck on the first library's rendering.
   const added = active?.added.length ?? 0;
-  const rowTokens = active?.llm_tokens ?? 0;
   return (
     <div className="space-y-3">
       <div className="flex items-baseline gap-2">
         <h3 className="text-sm font-semibold">{active?.row_title}</h3>
         {added > 0 && (
           <span className="text-xs text-success">+{added} new</span>
-        )}
-        {rowTokens > 0 && (
-          <span
-            className="text-xs text-muted-foreground"
-            title="AI tokens the curator spent choosing this row's picks."
-          >
-            {rowTokens.toLocaleString()} AI tokens
-          </span>
         )}
       </div>
       {entries.length > 1 && (
@@ -267,12 +263,17 @@ export function UserPanel({
   result,
   liveLog,
   userId,
+  cost,
+  setup,
 }: {
   run: RunDetail;
   result: RunUserResult;
   liveLog?: RunLogEntry[];
   /** This person's user id, for the trace link. Null when the run predates the user being known. */
   userId?: number | null;
+  /** THIS row's cost when the panel is rendered inside a row. Omitted on a whole-person view. */
+  cost?: RunRowCost | null;
+  setup?: { setup_ms: number; pools: RunPoolCost[] } | null;
 }) {
   // The per-step split ("gather 900, curate 2.1k") came with the header from the People tab. It was
   // that tab's only consumer, so dropping it here would have retired the breakdown from the whole app.
@@ -311,12 +312,38 @@ export function UserPanel({
           </Badge>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
-          {(result.duration_ms ?? 0) > 0 && (
-            <p className="text-right text-sm text-muted-foreground">
-              {formatDuration(result.duration_ms)}
-              {tokens}
-              {webSearchSummary(result.exa_searches)}
-            </p>
+          {cost !== undefined ? (
+            cost === null ? (
+              <p className="text-right text-sm text-muted-foreground">
+                Timing not recorded for this run
+              </p>
+            ) : (
+              <p className="text-right text-sm text-muted-foreground">
+                {formatDuration(cost.duration_ms - cost.blocked_ms)}
+                {cost.blocked_ms >= cost.duration_ms * 0.1 &&
+                  ` · ${formatDuration(cost.blocked_ms)} waiting`}
+                {setup && setup.setup_ms > 0 && (
+                  <>
+                    {" · shared setup "}
+                    {formatDuration(setup.setup_ms)}
+                    {setup.pools.length > 0 &&
+                      ` · ${setup.pools
+                        .reduce((n, p) => n + p.tokens, 0)
+                        .toLocaleString()} AI tokens`}
+                    {setup.pools.some((p) => p.rows.length > 1) &&
+                      ` (one pool, shared by ${setup.pools.find((p) => p.rows.length > 1)!.rows.length} rows)`}
+                  </>
+                )}
+              </p>
+            )
+          ) : (
+            (result.duration_ms ?? 0) > 0 && (
+              <p className="text-right text-sm text-muted-foreground">
+                {formatDuration(result.duration_ms)}
+                {tokens}
+                {webSearchSummary(result.exa_searches)}
+              </p>
+            )
           )}
           {result.has_trace && userId !== null && userId !== undefined && (
             <Button

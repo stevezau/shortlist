@@ -4,7 +4,6 @@ import { useState } from "react";
 
 import { Segmented } from "@/components/segmented";
 import { UserAvatar } from "@/components/user-avatar";
-import { formatDuration } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { RunUserResult } from "@/lib/types";
 
@@ -62,8 +61,11 @@ function UserRow({
           <CircleSlash className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
       ) : (
+        // No duration here: this list sits inside ONE row's page, and `result.duration_ms` is the
+        // person's WHOLE-run time — showing it beside every name would repeat the exact number this
+        // work exists to stop duplicating (the row panel now shows THIS row's own time instead).
         <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-          {formatDuration(result.duration_ms)}
+          Done
           <Check className="h-3.5 w-3.5 text-success" aria-hidden="true" />
         </span>
       )}
