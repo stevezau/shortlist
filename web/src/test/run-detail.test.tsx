@@ -963,3 +963,36 @@ describe("RunDetail — SSE stage events only refetch THIS run (issue 7.6)", () 
     );
   });
 });
+
+describe("RunDetailPage — a queued run has not started", () => {
+  it("says it is waiting, not that it started and is still running", async () => {
+    // `runs.started_at` is the INSERT default — stamped when the run was ASKED for. The header read
+    // "started <time> · still running" directly under a badge saying "Queued", and because the Rows
+    // page's Run button navigates straight here, that contradiction was the first thing you saw
+    // after pressing it.
+    getRun.mockResolvedValue({
+      ...run([]),
+      status: "queued",
+      started_at: "2026-07-15T04:18:00Z",
+      finished_at: null,
+      users: [],
+      stats: {},
+    });
+    renderDetail();
+
+    expect(await screen.findByText(/waiting to start/i)).toBeInTheDocument();
+    expect(screen.queryByText(/still running/i)).toBeNull();
+  });
+
+  it("still says 'still running' for a run that genuinely is", async () => {
+    getRun.mockResolvedValue({
+      ...run([]),
+      status: "running",
+      finished_at: null,
+    });
+    renderDetail();
+
+    expect(await screen.findByText(/still running/i)).toBeInTheDocument();
+    expect(screen.queryByText(/waiting to start/i)).toBeNull();
+  });
+});

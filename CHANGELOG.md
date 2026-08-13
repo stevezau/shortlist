@@ -116,11 +116,22 @@ All notable changes to this project are documented here. This project follows
   looking exactly like one that simply isn't tracking anything, and the inbox showed no badges for
   ever with nothing anywhere explaining why. Each title now says which app couldn't be reached.
 
+- **"Where is each row actually showing?" no longer reports all-clear over a real leak.** Its
+  headline sentence looked only at rows claiming the owner's Home screen, so two findings the check
+  itself had already made were read straight past: a collection of ours carrying **no label** — which
+  nothing can hide, so everyone on the server can see it — and rows Plex refused to answer for at
+  all. Both produced the same empty result as a healthy server, and the banner said so. It now names
+  an unlabelled row as the bug the server calls it, refuses to call anything clean when the reads
+  failed, and — following the same rule the delete path uses — treats *every* row reading unlabelled
+  as a failed read rather than as a server full of leaks.
+
 - **A run that is only queued no longer counts a duration up.** `started_at` is stamped the moment
   a run is *asked for*, not the moment it begins, so a run still waiting for the Plex writer lock
   ticked a stopwatch up from the button press — under a tooltip reading "Running…" beside a badge
   reading "queued". It now shows nothing until it actually starts, and the Started column says
-  "queued 5m ago" rather than claiming it began then.
+  "queued 5m ago" rather than claiming it began then. The run's own page said "started … · still
+  running" for the same reason, which — since **Run now** takes you straight there — was the first
+  thing you saw after pressing it.
 
 - **A background job waiting to be retried no longer shows how long it took.** After a failure the
   job goes back in the queue keeping the timestamps of the attempt that failed, so the Jobs page

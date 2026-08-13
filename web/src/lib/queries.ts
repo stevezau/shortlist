@@ -8,6 +8,7 @@ import {
 import { api } from "./api";
 import { useSSE } from "./sse";
 import type {
+  ArrStatus,
   CollectionInput,
   ReportWindow,
   Run,
@@ -568,25 +569,52 @@ export function useRequests(wantedBy: string[] = []) {
   });
 }
 
-/** Statuses a title is still moving through — the ones worth watching for a change. */
-const ARR_IN_FLIGHT = new Set(["queued", "downloading"]);
+/**
+ * A title genuinely mid-transfer — the only state that changes on its own within seconds.
+ *
+ * `queued` is deliberately NOT here. It reads like a transient but is not: `_status_for` returns it
+ * for "monitored, nothing on disk, nothing in the queue" (`engine/clients/arr.py`), which is the
+ * resting state of a monitored title that is unreleased or simply unfindable. One of those in the
+ * inbox would hold a 10-second whole-library poll open for as long as the tab stayed focused,
+ * waiting on a change that may be months away.
+ */
+const ARR_DOWNLOADING = "downloading";
+
+/** An Arr that didn't answer. Worth re-asking — this one clears itself the moment it comes back. */
+const ARR_UNREACHABLE = "unreachable";
+
+/** How often to re-ask the Arrs, given what they last said. `false` = don't. */
+const ARR_FAST_MS = 10_000;
+const ARR_RECOVER_MS = 30_000;
 
 /**
- * How often to re-ask the Arrs, given what they last said. `false` = don't.
+ * How often to re-ask the Arrs, given their last answer. `false` = don't.
  *
  * Exported so the rule itself is testable. One fetch is a WHOLE-LIBRARY read from each Arr
  * (`RadarrClient.status_by_tmdb` pulls `/api/v3/movie` entire), so the difference between "poll
  * while something is moving" and "poll forever" is megabytes a minute on a large library for as
  * long as a tab happens to be open.
+ *
+ * Two things earn a timer, for opposite reasons. A DOWNLOADING title will change within seconds, so
+ * it gets the fast pace. An UNREACHABLE app is the case that cannot recover on its own: a failed
+ * lookup returns no statuses at all, so keying the timer off the titles meant the "Can't reach
+ * Radarr" badge sat there until the operator happened to refocus the tab — the moment least likely
+ * to coincide with the app coming back. Everything else has already settled and is left alone.
  */
 export function arrStatusInterval(
-  statuses: Record<string, string | null> | undefined,
+  status: ArrStatus | undefined,
 ): number | false {
-  return (
-    Object.values(statuses ?? {}).some(
-      (status) => status && ARR_IN_FLIGHT.has(status),
-    ) && 10_000
-  );
+  if (!status) return false;
+  if (
+    Object.values(status.statuses ?? {}).some(
+      (title) => title === ARR_DOWNLOADING,
+    )
+  ) {
+    return ARR_FAST_MS;
+  }
+  return status.radarr === ARR_UNREACHABLE || status.sonarr === ARR_UNREACHABLE
+    ? ARR_RECOVER_MS
+    : false;
 }
 
 /**
@@ -613,7 +641,7 @@ export function useArrStatus() {
   return useQuery({
     queryKey: queryKeys.arrStatus,
     queryFn: api.getArrStatus,
-    refetchInterval: (query) => arrStatusInterval(query.state.data?.statuses),
+    refetchInterval: (query) => arrStatusInterval(query.state.data),
   });
 }
 

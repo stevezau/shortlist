@@ -98,6 +98,11 @@ export function toInput(collection: Collection): CollectionInput {
 /** Value equality over the JSON the editor form holds — objects, arrays and primitives. */
 function sameValue(a: unknown, b: unknown): boolean {
   if (a === b) return true;
+  // An array is never equal to a plain object. Without this, a one-sided array falls through to the
+  // object branch below, where `Object.keys([1])` is `["0"]` — so `[]` compared equal to `{}` and
+  // `[1]` to `{0: 1}`. Unreachable through `CollectionInput` today, since every field has a fixed
+  // array-or-object type, but this is a general-purpose comparison and the trap costs one line.
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
   if (Array.isArray(a) && Array.isArray(b)) {
     return a.length === b.length && a.every((item, i) => sameValue(item, b[i]));
   }
