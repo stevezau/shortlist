@@ -10,6 +10,7 @@ import { PlacementToggles } from "@/components/rows/placement-toggles";
 import { PosterField } from "@/components/rows/poster-field";
 import { RowScheduleField } from "@/components/rows/row-schedule-field";
 import { RowDestructiveActions } from "@/components/rows/row-destructive-actions";
+import { RowEnableToggle } from "@/components/rows/row-enable-toggle";
 import { RowEffectivenessPanel } from "@/components/rows/row-effectiveness";
 import { RowPreview } from "@/components/rows/row-preview";
 import { RowRunAction } from "@/components/rows/row-run-action";
@@ -440,21 +441,35 @@ export function RowEditor({
           </p>
         </div>
 
-        {/* The two things you reach for repeatedly while tuning a row: rebuild it, and look at what
-            the last rebuild did. Both existed already — one behind a dialog on the Runs page that
-            made you re-pick the row you were editing, the other only on the Rows CARD, which this
-            page replaced. Neither was reachable from here at all.
-            Removing and deleting are deliberately NOT up here. They reach into other people's Plex
-            and are not undone by Cancel, so they stay fenced off at the bottom of the form rather
-            than sitting one pixel from "rebuild this row". */}
+        {/* What you reach for repeatedly while tuning a row: turn it on or off, rebuild it, and look
+            at what the last rebuild did. The toggle used to be on the Rows card alone — this page's
+            own copy sent you back there for it, which is a page change to do the one reversible
+            thing to the row you already have open.
+            Removing and deleting are still NOT up here. They reach into other people's Plex and are
+            not undone by Cancel, so they stay fenced off at the bottom rather than sitting one pixel
+            from "rebuild this row" — but fenced off had become invisible, so the link below says
+            they exist and takes you to them. */}
         {collection && (
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <RowEnableToggle collection={collection} showLabel />
             <RowRunAction collection={collection} variant="outline" />
             <Button asChild variant="outline" size="sm">
               <Link to={`/runs?row=${encodeURIComponent(collection.slug)}`}>
                 <ListChecks aria-hidden="true" />
                 Runs
               </Link>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-destructive-text"
+              onClick={() =>
+                document
+                  .getElementById("remove-this-row")
+                  ?.scrollIntoView({ behavior: "smooth", block: "center" })
+              }
+            >
+              Remove or delete…
             </Button>
           </div>
         )}
@@ -1177,7 +1192,10 @@ export function RowEditor({
           {collection && (
             <div className="space-y-3 rounded-lg border border-destructive/30 p-5">
               <div className="space-y-1">
-                <h2 className="text-base font-semibold text-destructive-text">
+                <h2
+                  id="remove-this-row"
+                  className="text-base font-semibold text-destructive-text"
+                >
                   Remove this row
                 </h2>
                 <p className="text-sm text-muted-foreground">
@@ -1185,8 +1203,9 @@ export function RowEditor({
                   builds it again. Deleting it doesn&rsquo;t. Either way the
                   titles stay in your library.
                   <br />
-                  To turn it off without removing anything today, use the toggle
-                  on the Rows page — the next run takes it off Plex for you.
+                  To turn it off without removing anything today, use the on/off
+                  switch at the top of this page — the next run takes it off Plex
+                  for you.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
