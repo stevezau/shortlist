@@ -34,7 +34,13 @@ function NotificationRow({
       />
       <div className="min-w-0 flex-1 space-y-1">
         <p className="text-sm font-medium">{item.title}</p>
-        <p className="text-xs text-muted-foreground">{item.body}</p>
+        {/* `whitespace-pre-line`: a body long enough to need a second paragraph writes one as a
+            blank line, and collapsing it turns the notification into a wall of text. Only the line
+            breaks are honoured — wrapping still works normally, so a single-paragraph body is
+            rendered exactly as before. */}
+        <p className="whitespace-pre-line text-xs text-muted-foreground">
+          {item.body}
+        </p>
         <div className="flex items-center gap-3 pt-0.5">
           {item.action_url &&
             (isExternal ? (

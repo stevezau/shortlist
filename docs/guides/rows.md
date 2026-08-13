@@ -207,29 +207,36 @@ _how_ it works; the anchor can be any collection, Kometa's or one of Plex's own.
 
 ### If you also run Agregarr
 
-Agregarr arranges the same shelf, and it re-applies its own stored order roughly every 30 minutes. So
-on its own, re-applying at the end of a run isn't enough: Shortlist puts the rows in place tonight,
-Agregarr puts them back where it thinks they go within the half hour, and the two keep swapping.
+Agregarr arranges the same shelf, and it re-applies its own stored order roughly every 30 minutes.
+Shortlist re-applies yours at the end of every run and at the nightly privacy sync — roughly three
+passes a night against Agregarr's forty-eight. So the two take turns, and Agregarr wins on volume:
+what you see during the day is Agregarr's layout.
 
-Connect Agregarr under Settings → **Connections** (its address plus the API key from Agregarr's own
-Settings → General) and that stops. At the end of each run Shortlist stores the order it just applied
-into Agregarr, so Agregarr's next sync reproduces the shelf instead of undoing it — the two agree
-rather than take turns.
+There are two ways to settle it, and both are configuration rather than something Shortlist can do
+for you:
 
-Two things worth knowing before you switch it on:
+- **Exclude Shortlist's rows in Agregarr**, or stop its "Randomize Home Order" job, so it stops
+  moving collections labelled `shortlist_*`.
+- **Set Row placement to "Wherever Plex puts them"** so Shortlist never touches the shelf order and
+  Agregarr owns it outright.
 
-- **It renumbers your other Agregarr rows in those libraries** to make room at the top, but keeps
-  their order relative to each other — it takes the order from the shelf as it stands, so nothing of
-  Agregarr's gets rearranged, only shifted down.
-- **It never fails a run.** If Agregarr is down or the key is wrong, the run finishes normally and
-  you get a warning; the shelf just stays contested until the next run re-applies it. It also gives
-  up quickly — an Agregarr that accepts connections but never answers costs about 20 seconds per
-  library, not minutes. Every attempt is recorded under Events, including the runs where nothing
-  needed changing: a nightly run logs `run.agregarr_order`, while the "Fix privacy" and "Check
-  server" buttons log `shelf.agregarr`.
+Either way your rows are still built, delivered and kept private — only their position on the shelf
+is affected. Shortlist tells you when this is happening: three passes moving the same row in a day
+raises the "Something else is reordering your shelf" notification.
 
-If **Row placement** is set to "Wherever Plex puts them", this does nothing at all — Shortlist isn't
-ordering the shelf, so it has no order to hand over.
+#### Check which Agregarr you are running
+
+The original at `agregarr/agregarr` is no longer actively released, and it has a bug that matters
+more than the ordering one: when it reorders a shelf it re-promotes every collection with Plex's
+defaults, which puts them on the **server owner's Home** — your Home, the one place no share filter
+can hide a row, because the owner account has no share filter.
+
+Shortlist clears that flag on every run, so it is a gap between runs rather than something
+permanent — but the gap is as long as the time between your runs.
+
+The maintained fork at [bitr8/agregarr-dev](https://github.com/bitr8/agregarr-dev) (Docker image
+`bitr8/agregarr`) fixes it at the source. It is a drop-in swap — same config, same database. It
+still reorders the shelf, so the two options above still apply.
 
 ## Row posters
 

@@ -242,7 +242,6 @@ def _scrub(s: str) -> str:
 _LOCATION_KEYS = {
     "plex.url",
     "tautulli.url",
-    "agregarr.url",
     "requests.radarr.url",
     "requests.sonarr.url",
     "curator.ollama_url",

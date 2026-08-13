@@ -935,6 +935,43 @@ the 19 planned moves converged and verified on the FIRST attempt, and the next p
 in place". The retry/verify machinery is justified by honesty, not by a known Plex fault. Do not cite
 a Plex bug here without new evidence.
 
+### agregarr's convergence recovery re-promotes with Plex's defaults
+
+Separate from the ordering fight above, and the reason the shelf-contention notification and the Row
+placement section both name a fork. `PlexHubManager`'s convergence recovery unpromotes a hub and
+re-promotes it via a bare `POST /hubs/sections/<id>/manage?metadataItemId=<rk>`, sending no
+visibility parameters — so Plex applies its defaults, `promotedToOwnHome=1` and
+`homeVisibility="all"`. Every collection the recovery touches is affected, including ones agregarr
+did not create (it adopts them as `pre-existing`).
+
+Evidence, captured against a real PMS 1.43.3.10861 on a collection set to Friends'-Home-only:
+
+```
+BEFORE            own_home=False  homeVisibility='shared'
+POST /hubs/sections/1/manage?metadataItemId=<rk>   -> HTTP 200
+AFTER re-promote  own_home=True   homeVisibility='all'
+```
+
+Reported upstream as [agregarr/agregarr#622](https://github.com/agregarr/agregarr/issues/622), where
+it is still open. The recovery ran 204 times in 24 hours on SFLIX; the same window put all 31 Kometa
+collections in one library on `homeVisibility="all"`.
+
+**It matters because the owner is the one account with no share filter** (rule 5), so
+`promotedToOwnHome` is the single surface a `label!=` exclude cannot cover — which is exactly why
+`_converge_phase` clears that flag, and only that flag, on every run (`pipeline.py:908`). So
+Shortlist already repairs this: the exposure is the window between runs, not permanent. Say it that
+way. An earlier draft of the notification copy claimed the rows simply "appear on your own home
+screen", which reads as a standing leak and overstates it.
+
+Fixed in the maintained fork at [bitr8/agregarr-dev](https://github.com/bitr8/agregarr-dev) by
+commit `d6c3d89` — `syncUnifiedOrdering` now calls `syncHubVisibility` after ordering, restoring the
+stored `visibilityConfig`. **That fix is about visibility only; it does not stop agregarr reordering
+the shelf**, and the ordering machinery in `PlexHubManager.ts` is unchanged on the fork. Do not tell
+an owner the fork settles the shelf.
+
+Do not harden the copy beyond the capture above without a new one — this is a claim about someone
+else's software, made in text we ship.
+
 ### Ownership for ordering accepts the marker
 
 `collection.labels` is a per-collection re-read, and one that succeeds carrying no `<Label>` is

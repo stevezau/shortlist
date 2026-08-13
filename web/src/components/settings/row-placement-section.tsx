@@ -181,9 +181,31 @@ export function RowPlacementSection({ settings }: { settings: Settings }) {
                 When on, Shortlist positions its rows on each library’s{" "}
                 <em>Recommended</em> shelf (below). Turn it{" "}
                 <strong className="text-foreground">off</strong> if another tool
-                (Kometa, agregarr) manages that shelf — Shortlist will leave the
+                (Kometa, Agregarr) manages that shelf — Shortlist will leave the
                 order completely alone so the two don’t fight. Your rows are
                 still built, delivered, and kept private either way.
+              </p>
+              {/* The same advice is in the "something is reordering your shelf" notification, but
+                  that one only fires while this switch is ON — and turning it off is the fix it
+                  recommends. Owners who take that advice would never hear this otherwise. */}
+              <p className="text-sm text-muted-foreground">
+                If it’s <strong className="text-foreground">Agregarr</strong>,
+                check which one you run. The original is no longer actively
+                released, and reordering a shelf on it re-promotes collections
+                with Plex’s defaults — which puts other people’s rows on{" "}
+                <em>your</em> Home, the one place no share filter can cover.
+                Shortlist clears that on every run, so it’s a gap between runs
+                rather than something permanent. The maintained fork at{" "}
+                <a
+                  href="https://github.com/bitr8/agregarr-dev"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline underline-offset-2 hover:text-foreground"
+                >
+                  bitr8/agregarr-dev
+                </a>{" "}
+                (Docker: <code>bitr8/agregarr</code>) fixes it at the source and
+                is a drop-in swap.
               </p>
             </div>
             <Switch

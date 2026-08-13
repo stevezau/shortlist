@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 
 from loguru import logger
 
-from shortlist.engine.clients.agregarr import AgregarrClient
 from shortlist.engine.clients.mdblist import MdbListClient
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.plextv import PlexTvClient
@@ -46,10 +45,6 @@ class EngineContext:
     # Optional image-generation backend for generate-mode row posters, built from the AI curator's
     # provider/key. None when the curator provider can't make images (Anthropic, Ollama) or none is set.
     poster_artist: PosterArtist | None = None
-    # Optional agregarr instance co-managing the same Recommended shelf; None when not connected.
-    # Used only at the very end of the run, to store our shelf order in agregarr so its own 30-minute
-    # sync stops undoing it (see `shelf_mirror`).
-    agregarr: AgregarrClient | None = None
     # (owner_slug, row_slug, section_key) -> last run's delivered picks for that row+library, newest
     # first. Carried forward so a row is REUSED unchanged on non-refresh nights (`refresh_days` is the
     # refresh CADENCE) instead of re-curated from scratch every night — the fix for the nightly
