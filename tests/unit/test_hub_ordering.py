@@ -748,3 +748,44 @@ def test_dry_run_reports_the_move_without_writing():
     assert result["dry_run"] is True
     assert result["moved"] == ["Picked for You"]
     assert r1.moved_after == _UNSET  # dry-run never actually moves a hub
+
+
+def test_a_plexapi_failure_is_redacted_before_it_reaches_the_log():
+    """plexapi error text is credential-bearing, and this log line is derived from it (rule 9).
+
+    plexapi raises `f'({status}) {codename}; {response.url} {errtext}'` (server.py `query`), and
+    `response.url` carries `X-Plex-Token` whenever plexapi's `log.show_secrets` is on. `PlexConfig.get`
+    reads the ENVIRONMENT first, so `PLEXAPI_LOG_SHOW_SECRETS=true` on the container is enough to put
+    a live token in that message without any change to our code. Safe-by-default is not guarded, and
+    `redact`'s own docstring says anything derived from an exception message must pass through it.
+
+    This was unguarded for a while by accident: the agregarr mirror was the only `redact` caller in
+    this module, and removing it took the import — and the comment explaining why it was needed —
+    out with it.
+    """
+    from unittest.mock import MagicMock
+
+    from shortlist.engine import pipeline as pipeline_mod
+    from shortlist.engine.models import EngineConfig, HubAnchor
+    from shortlist.engine.pipeline import _order_phase
+
+    token = "SEcReT-live-plex-token-123"
+    plex = MagicMock()
+    plex.order_owned_hubs.side_effect = RuntimeError(
+        f"(401) unauthorized; http://pms:32400/hubs/sections/2/manage?X-Plex-Token={token} <html>no</html>"
+    )
+    cfg = EngineConfig(hub_anchors={"2": HubAnchor("Recently Added", False)}, rows=[])
+
+    lines: list[str] = []
+    sink = pipeline_mod.logger.add(lines.append, level="WARNING", format="{message}")
+    try:
+        _order_phase(_order_ctx(cfg, plex), _empty_report())
+    finally:
+        pipeline_mod.logger.remove(sink)
+
+    logged = "\n".join(lines)
+    assert "hub ordering failed" in logged  # the failure is still reported, not swallowed
+    assert token not in logged
+    assert "X-Plex-Token=REDACTED" in logged
+    # The non-secret half must survive — a redaction that eats the diagnosis is its own bug.
+    assert "401" in logged and "pms:32400" in logged

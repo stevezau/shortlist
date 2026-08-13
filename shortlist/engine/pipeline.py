@@ -18,6 +18,7 @@ from loguru import logger
 
 import shortlist.engine.rows as rows
 from shortlist.engine import requests as requests_mod
+from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.clients.plextv import FilterWriteRefused
 from shortlist.engine.context import EngineContext, _emit
 from shortlist.engine.delivery import (
@@ -1126,7 +1127,17 @@ def _apply_order(ctx: EngineContext, report: RunReport, section, anchor, only_ke
         if result.get("moved") and not result.get("skipped"):
             report.hub_orderings.append({"library": section.title, **result})
     except Exception as e:
-        logger.warning("{}: hub ordering failed ({}: {}) — left Plex's order", section.title, type(e).__name__, e)
+        # `redact` because this is plexapi error text (rule 9). plexapi raises
+        # `f'({status}) {codename}; {response.url} {errtext}'`, and `response.url` carries the
+        # X-Plex-Token whenever `log.show_secrets` is on — which `PlexConfig.get` reads from the
+        # environment first, so `PLEXAPI_LOG_SHOW_SECRETS=true` on the container turns this into a
+        # token in the logs without touching our code. Safe by default is not the same as guarded.
+        logger.warning(
+            "{}: hub ordering failed ({}: {}) — left Plex's order",
+            section.title,
+            type(e).__name__,
+            redact(str(e)),
+        )
 
 
 def _collection_order_phase(ctx: EngineContext, order_work: list[tuple]) -> None:
@@ -1149,7 +1160,12 @@ def _collection_order_phase(ctx: EngineContext, order_work: list[tuple]) -> None
             total += ctx.plex.order_collection(collection, wanted_keys)
         except Exception as e:  # cosmetic — a stall here must never fail an already-delivered run
             title = getattr(collection, "title", "?")
-            logger.warning("ordering '{}' failed ({}: {}) — left in delivery order", title, type(e).__name__, e)
+            logger.warning(
+                "ordering '{}' failed ({}: {}) — left in delivery order",
+                title,
+                type(e).__name__,
+                redact(str(e)),  # plexapi error text can carry the token — see `_order_one_section`
+            )
     logger.info("ordered {} collection(s), {} move(s) total", len(deduped), total)
 
 
