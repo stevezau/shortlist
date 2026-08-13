@@ -121,6 +121,19 @@ def _run_two_row_user(ctx: EngineContext, mock_plextv) -> UserRunReport:
     return report.users[0]
 
 
+def _run_cold_user(ctx: EngineContext, mock_plextv) -> UserRunReport:
+    """Fewer watches than `min_history` — the cold-start path, which never builds a candidate pool."""
+    ctx.plex.top_rated.side_effect = lambda section, n: [
+        (100 + i, MagicMock(ratingKey=9000 + i, title=f"Top{i}")) for i in range(n)
+    ]
+    ctx.config.rows = [RowSpec(slug="picked-for-you", name_template="Picked for You", size=5)]
+    ctx.history_source.fetch.return_value = [make_watched("Solo Watch", days_ago=1, rating_key=999)]
+    mock_plextv.users = [plextv_user(100, "sarah")]
+
+    report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+    return report.users[0]
+
+
 class TestRun:
     def test_happy_path_delivers_syncs_then_promotes(self, ctx: EngineContext, mock_plextv):
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
@@ -5068,6 +5081,23 @@ class TestRunUserCost:
         for cost in report.row_timing.values():
             assert cost["duration_s"] >= 0.0
             assert cost["blocked_s"] >= 0.0
+
+
+class TestPoolCosts:
+    def test_two_rows_sharing_a_pool_record_one_entry_naming_both(self, ctx: EngineContext, mock_plextv):
+        """The whole point of the honest split: one gather, one token figure, both rows named.
+        A cache HIT must still attribute its row, or the pool reads as belonging to one row."""
+        report = _run_two_row_user(ctx, mock_plextv)
+        assert len(report.pool_costs) == 1
+        entry = report.pool_costs[0]
+        assert sorted(entry["rows"]) == ["because-you-watched", "picked-for-you"]
+        assert entry["tokens"] == report.llm_tokens
+        assert entry["label"]
+
+    def test_cold_start_user_records_no_pools(self, ctx: EngineContext, mock_plextv):
+        """Cold start never builds a pool. `[]` is the true answer, not missing data."""
+        report = _run_cold_user(ctx, mock_plextv)
+        assert report.pool_costs == []
 
 
 class TestRowTiming:

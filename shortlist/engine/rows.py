@@ -885,7 +885,13 @@ def _timed_lock(ctx: EngineContext, report: UserRunReport) -> Iterator[None]:
         yield
 
 
-def _record_gather(report: UserRunReport, stats: candidates_mod.GatherStats, *, pool_label: str | None = None) -> None:
+def _record_gather(
+    report: UserRunReport,
+    stats: candidates_mod.GatherStats,
+    *,
+    pool_label: str | None = None,
+    duration_s: float = 0.0,
+) -> None:
     """Fold a candidate-gather's AI cost into the user report: per-source tokens (also into the grand
     total), Exa searches, and Exa cache hits. Called once per pool COMPUTATION — a cache hit re-adds
     nothing to tokens, but IS counted in exa_cache_hits so the run shows what the cache saved.
@@ -905,6 +911,18 @@ def _record_gather(report: UserRunReport, stats: candidates_mod.GatherStats, *, 
     report.exa_cache_hits += stats.exa_cache_hits
     if stats.trace:
         report.trace.setdefault("gathers", []).append({"pool": pool_label or "", **stats.trace})
+    # One entry per pool COMPUTATION. `rows` is filled by `pools_for` on every call, hit or miss —
+    # a cache hit is exactly the case that proves a second row shared this gather, and it is what
+    # stops the UI dividing one token figure between two rows.
+    report.pool_costs.append(
+        {
+            "label": pool_label or "",
+            "tokens": sum(stats.tokens_by_source.values()),
+            "exa_searches": stats.exa_searches,
+            "duration_s": round(duration_s, 3),
+            "rows": [],
+        }
+    )
 
 
 def _library_resolvers(ctx: EngineContext) -> tuple[Callable[[WatchedItem], str], Callable[[object], str]]:
@@ -1292,6 +1310,10 @@ class RowPolicy:
     # sources (the common case — every row inheriting the global set) reuse one pool; a row that
     # picks its own sources gets its own. Keyed by `pool_key`, memoised across the user.
     pool_cache: dict[tuple, Pool] = field(default_factory=dict)
+    # pool_key -> that pool's `report.pool_costs` entry, so a later row hitting the SAME cached pool
+    # (never re-gathered) can still append its slug to `entry["rows"]` — the only way a cache hit
+    # attributes its row to the cost it shared rather than paid for.
+    pool_rows: dict[tuple, dict] = field(default_factory=dict)
     # (pool_key, recency) -> that pool re-cut at a row's overridden release-date weight. Empty on a
     # server where every row inherits the global, which is the default shape.
     recency_cuts: dict[tuple, list[Candidate]] = field(default_factory=dict)
@@ -1545,6 +1567,7 @@ class RowPolicy:
         if key in self.pool_failures:
             return None
         if key not in self.pool_cache:
+            gather_started = time.monotonic()
             try:
                 self.pool_cache[key], gather_stats = _candidate_pool(
                     self.ctx,
@@ -1579,7 +1602,17 @@ class RowPolicy:
             pool_label = f"{spec.media} · {', '.join(key[0])}"
             if any(len(self.seeds_for(other)) != seed_n for other in self.specs):
                 pool_label += f" · {seed_n} seed{'' if seed_n == 1 else 's'}"
-            _record_gather(self.report, gather_stats, pool_label=pool_label)
+            _record_gather(
+                self.report,
+                gather_stats,
+                pool_label=pool_label,
+                duration_s=time.monotonic() - gather_started,
+            )
+            self.pool_rows[key] = self.report.pool_costs[-1]
+        # Hit or miss: a cache hit is the case that proves this row SHARED an existing gather.
+        entry = self.pool_rows.get(key)
+        if entry is not None and spec.slug not in entry["rows"]:
+            entry["rows"].append(spec.slug)
         return self.pool_cache[key]
 
 
