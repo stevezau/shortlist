@@ -1196,6 +1196,13 @@ figcaption {
   margin-bottom: 2.25rem;
 }
 
+.icon-btn--heart:hover svg {
+  /* Fills on hover only — a permanently red heart in the header reads as a notification badge, and
+     an unread count is the last thing a docs page should imply. */
+  fill: currentColor;
+  color: #e25555;
+}
+
 .footer h4 a {
   /* "Plex how-to" is both a column heading and a real page, so its heading is a link. It must still
      read as a heading rather than as the first item in its own list. */
