@@ -263,6 +263,9 @@ async def get_run(run_id: int, request: Request) -> dict:
                     # Which per-person rows this run considered for them, and what it decided. `{}` on
                     # a legacy run — "not recorded", which the UI must not render as "none".
                     "rows_considered": run_user.rows_considered or {},
+                    # What each row cost this person. `None` on a legacy run — "not recorded", which
+                    # the UI must not render as 0s.
+                    "cost": run_user.cost,
                 }
             )
         # Users who haven't finished yet show as "pending" so the UI can pre-populate the list
@@ -286,6 +289,9 @@ async def get_run(run_id: int, request: Request) -> dict:
                 "breakdown": [],
                 "has_trace": False,
                 "rows_considered": {},
+                # Same shape as a finished user's: null means "not recorded", never 0s — and a
+                # pending user has no cost to report either way.
+                "cost": None,
             }
             for u in expected
             if u["slug"] not in completed_slugs

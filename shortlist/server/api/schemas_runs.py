@@ -71,6 +71,12 @@ class RunUserOut(PassthroughModel):
     #: somebody under the rows they were skipped for. `{}` on a run recorded before it existed —
     #: which the UI must render as "not recorded", never as "no rows were considered".
     rows_considered: dict[str, str]
+    #: What each ROW cost this person: `{"setup_ms", "rows": {slug: {"duration_ms", "blocked_ms"}},
+    #: "pools": [...]}`. `null` on a run recorded before this existed — which the UI must render as
+    #: "not recorded", never as 0s. `duration_ms` includes `blocked_ms`; work time is the difference.
+    #: Tokens are reported per POOL, never per row: pools are shared between rows, so a per-row
+    #: token figure would be invented rather than measured.
+    cost: dict[str, Any] | None
 
 
 class RunSharedRowOut(PassthroughModel):

@@ -38,6 +38,7 @@ function makeResult(overrides: Partial<RunUserResult> = {}): RunUserResult {
     llm_tokens_by_step: {},
     exa_searches: 0,
     has_trace: false,
+    cost: null,
     ...overrides,
   };
 }

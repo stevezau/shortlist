@@ -4225,6 +4225,10 @@ export interface components {
             breakdown: {
                 [key: string]: unknown;
             }[];
+            /** Cost */
+            cost: {
+                [key: string]: unknown;
+            } | null;
             /** Diff */
             diff: {
                 [key: string]: unknown;

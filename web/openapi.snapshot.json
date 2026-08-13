@@ -3982,6 +3982,18 @@
             "title": "Breakdown",
             "type": "array"
           },
+          "cost": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost"
+          },
           "diff": {
             "additionalProperties": true,
             "title": "Diff",
@@ -4085,7 +4097,8 @@
           "picks",
           "breakdown",
           "has_trace",
-          "rows_considered"
+          "rows_considered",
+          "cost"
         ],
         "title": "RunUserOut",
         "type": "object"
