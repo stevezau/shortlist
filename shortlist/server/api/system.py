@@ -484,8 +484,14 @@ async def library_collections(key: str, request: Request, row: str | None = None
     The row's own collections are found through the delivery ledger, which is what maps a row slug to
     the titles it actually wrote per library — labels cannot do it, because a per-person row is
     labelled by USER (`shortlist_<userslug>`), not by row.
+
+    Matched with the marker STRIPPED off Plex's title: the ledger records the human display name,
+    while every collection we wrote carries the invisible 64-char ownership marker on the end. Compared
+    raw the two never match, so the exclusion silently did nothing and a row still listed its own 40
+    collections (SFLIX, verified live).
     """
     from shortlist.engine.clients.plex_pms import PlexClient
+    from shortlist.engine.delivery import strip_marker
     from shortlist.server.settings_store import SettingsStore
 
     state = request.app.state
@@ -513,7 +519,7 @@ async def library_collections(key: str, request: Request, row: str | None = None
         titles: list[str] = []
         for hub in section.managedHubs():
             title = getattr(hub, "title", "") or ""
-            if title and title not in ours and title not in titles:
+            if title and strip_marker(title) not in ours and title not in titles:
                 titles.append(title)
         return [{"title": t} for t in titles]
 

@@ -291,6 +291,8 @@ class TestSystemResponseShapes:
     def test_library_collections_offers_anchors_and_skips_our_own_rows(self, client: TestClient, monkeypatch):
         from types import SimpleNamespace
 
+        from shortlist.engine.delivery import row_marker
+
         self._connect_plex(client)
         ours = SimpleNamespace(title="Picked for You", labels=[SimpleNamespace(tag="shortlist_sarah")])
         theirs = SimpleNamespace(title="New Series (Unwatched)", labels=[])
@@ -299,8 +301,12 @@ class TestSystemResponseShapes:
             title="Movies",
             type="movie",
             collections=lambda: [ours, theirs],
+            # WITH the marker, because that is what a real PMS returns for a collection we wrote: the
+            # ledger stores the human display name and Plex stores it with the invisible 64-char
+            # ownership marker appended. Marker-free fixtures made a raw title comparison look
+            # correct, and on SFLIX the exclusion matched nothing at all.
             managedHubs=lambda: [
-                SimpleNamespace(title="Picked for You"),
+                SimpleNamespace(title="Picked for You" + row_marker(100)),
                 SimpleNamespace(title="New Series (Unwatched)"),
             ],
         )
@@ -318,7 +324,7 @@ class TestSystemResponseShapes:
         # for You" is the obvious thing to want, and dropping every Shortlist-labelled collection made
         # it impossible while rendering a saved anchor as "(not found)" (issue #81).
         body = client.get("/api/system/libraries/1/collections").json()
-        assert body == [{"title": "Picked for You"}, {"title": "New Series (Unwatched)"}]
+        assert body == [{"title": "Picked for You" + row_marker(100)}, {"title": "New Series (Unwatched)"}]
 
         # Only the row being EDITED is excluded, and it is found through the delivery ledger: labels
         # cannot do it, because a per-person row is labelled by USER, not by row.
