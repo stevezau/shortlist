@@ -627,15 +627,29 @@ No setting is orphaned at the settings->engine seam. Leak-safe ordering intact.
 No HIGH findings. The migration, the Plex-side ordering, leak-safe write ordering and rule 10 were
 all cleared empirically. Everything found was fixed in the same commit EXCEPT one pre-existing item:
 
-### LOW — `pipeline.py` lost its only `redact()` call site, and two raw `{e}` logs remain
+### RESOLVED — `pipeline.py`'s raw `{e}` logs of plexapi errors are redacted again
 
-Removing the agregarr mirror took `pipeline.py`'s only `redact()` use with it, and with it the
-comment recording that plexapi error text can embed the full PMS request URL, `X-Plex-Token` and all
-(rule 9). Two raw `{e}` logs of plexapi exceptions remain at `pipeline.py:1129` and `pipeline.py:1152`.
+Removing the agregarr mirror took `pipeline.py`'s only `redact()` caller with it, and the comment
+explaining why it was needed. Two raw `{e}` logs of plexapi exceptions were left unguarded at
+`_apply_order` and `_collection_order_phase`.
 
-Both are PRE-EXISTING and neither is proven to leak: plexapi's `query()` sends the token as a header,
-and `PlexServer.url()` only appends it when `includeToken`/`show_secrets` is set. But
-`plex_pms.py:150` asserts the OPPOSITE belief in its own rule-9 comment — so one of the two comments
-is wrong, and nothing in `pipeline.py` guards the assumption any more. Resolve which, then either
-re-wrap those two logs in `redact()` or correct `plex_pms.py:150`. Do not close this by picking the
-comfortable reading; capture what plexapi actually puts in the exception text.
+**What the investigation established** (this is the part worth keeping — it settles a question the
+codebase had two different beliefs about):
+
+* plexapi raises `f'({status}) {codename}; {response.url} {errtext}'` — `server.py` `query()`.
+* `query()` builds its URL with `self.url(key)` and **no** `includeToken`, so under default config
+  the token travels as a HEADER and `response.url` is clean. The logs were safe by default.
+* But `url()` appends `X-Plex-Token=` when `log.show_secrets` is on, and `PlexConfig.get()` checks
+  the ENVIRONMENT first — so `PLEXAPI_LOG_SHOW_SECRETS=true` on the container is enough to put a live
+  token into every plexapi exception message, with no change to our code.
+
+So `plex_pms.py:150` was never wrong: it describes its own timing adapter dropping the query string,
+which is correct regardless. It simply is not a guarantee about exception text, and nothing else was
+guarding that. Both logs now pass through `redact()`, and
+`test_hub_ordering.py::test_a_plexapi_failure_is_redacted_before_it_reaches_the_log` fails (printing
+the token) if either is reverted.
+
+**The general rule, since this is the second time it has bitten:** `redact()` being imported by only
+one caller in a module makes it deletable-by-accident along with that caller. Anything derived from
+an exception message goes through it — check for the import surviving whenever a module's last
+`redact()` user is removed.
