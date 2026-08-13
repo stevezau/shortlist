@@ -1956,8 +1956,10 @@ def _deliver_row(
 ) -> bool:
     """Write one row's collections to Plex, under the write-lock and with an idempotent retry.
 
-    Returns False when the run was cancelled while this row was QUEUED for the write-lock, in which
-    case nothing was written for it and the caller stops this person here.
+    Returns False when the run was cancelled while this row was QUEUED for the write-lock, and the
+    caller stops this person here. The attempt that saw the cancel wrote nothing; an EARLIER attempt
+    of the same row may have written part of it before timing out, and that part keeps its audit
+    entry.
 
     write_lock: the Plex collection writes AND the shared stored_labels mutation inside deliver_rows
     must be serial across users — the leak-safe half of Stage 3 parallelism. Timed on both sides so a
@@ -1983,7 +1985,6 @@ def _deliver_row(
 
     def _deliver_locked() -> None:
         nonlocal cancelled
-        del user_report.breakdown[breakdown_mark:]  # drop any entries a prior failed attempt appended
         lock_wait_start = time.monotonic()
         with ctx.write_lock:
             # THE boundary a cancel actually needs. Every user's writes serialize on this one lock, so
@@ -1992,15 +1993,20 @@ def _deliver_row(
             # answering in ~17s that is the minutes of "Stopping…" the checks above could not explain,
             # because the code that would have stopped them ran before they started queuing.
             #
-            # Safe because we hold the lock and have written nothing for this row: returning here is
+            # Safe because we hold the lock and this attempt has written nothing: returning here is
             # indistinguishable from never having been called. `_retry_idempotent` retries on
             # exceptions only, so a clean return is final.
             if ctx.cancelled():
                 cancelled = True
-                logger.info(
-                    "{}: cancelled while '{}' waited for the write-lock — nothing written for it", user.slug, spec.slug
-                )
+                logger.info("{}: cancelled while '{}' waited for the write-lock — stopping here", user.slug, spec.slug)
                 return
+            # AFTER the cancel check, not before it. On a retry this truncation is only safe because
+            # the attempt below re-appends; a cancel landing during the backoff would otherwise return
+            # having deleted the audit entry for a library the FIRST attempt really did write —
+            # leaving a collection on someone's Plex with no `events` row and no ledger entry (rule
+            # 10). The next run then cannot find it by key, and for a {top_seed} row (whose title
+            # differs nightly) builds a second one beside the orphan.
+            del user_report.breakdown[breakdown_mark:]  # drop any entries a prior failed attempt appended
             work_start = time.monotonic()
             claimed_this_run = _claimed_this_run(user_report)
             deliver_rows(
@@ -2216,20 +2222,23 @@ def _run_user(
             ]
             for key, sp in section_picks.items()
         }
-        # The exact title delivery will write for EACH library, so the promote phase can apply this
-        # row's placement/pin. Per library, because a {top_seed} OR {library_name} title differs
+        # Record the exact title delivery will write for EACH library, so the promote phase can apply
+        # this row's placement/pin. Per library, because a {top_seed} OR {library_name} title differs
         # library to library. Must match delivery's `render_row_name(..., library_name) + marker` — same
         # section title in, or promote would look for a row delivery never wrote (it'd stay unhidden).
-        # Held aside until the row is actually on the server: promote must never be handed the title
-        # of a row a cancel stopped us writing.
+        #
+        # Stamped BEFORE the write, and deliberately not rolled back when a cancel stops that write.
+        # The two directions are not symmetric: an entry for a row we did not write is inert (no
+        # collection on the server carries that title), while a MISSING one for a row that IS there
+        # from a previous run drops it to `_promote_one`'s no-spec branch, which forces
+        # `recommended=False` whatever the row's placement says — flipping a visibility flag against
+        # the owner's configuration. Withholding it is the more dangerous of the two.
         title_template = resolve_row_template(spec, user, cfg)
         marker = row_marker(user.plex_account_id)
-        row_titles = {
-            render_row_name(title_template, user, sp, library_name=library_names.get(section_key, ""))
-            + marker: spec.slug
-            for section_key, sp in section_picks.items()
-            if sp
-        }
+        for section_key, sp in section_picks.items():
+            if sp:
+                title = render_row_name(title_template, user, sp, library_name=library_names.get(section_key, ""))
+                user_report.placement_titles[title + marker] = spec.slug
         picks = [pick for sp in section_picks.values() for pick in sp]
         # Cancelled while this person was mid-delivery: stop before the NEXT row is written.
         #
@@ -2254,7 +2263,8 @@ def _run_user(
         ):
             # Cancelled while this row waited its turn for the write-lock — see `_deliver_row`.
             break
-        user_report.placement_titles.update(row_titles)
+        # Only once the row is on the server: `picks` is the record of what this person was actually
+        # recommended, and a row a cancel stopped is not that.
         all_picks.extend(picks)
         delivered_any = delivered_any or bool(picks)
 
