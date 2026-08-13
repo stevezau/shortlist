@@ -1196,6 +1196,17 @@ figcaption {
   margin-bottom: 2.25rem;
 }
 
+.footer h4 a {
+  /* "Plex how-to" is both a column heading and a real page, so its heading is a link. It must still
+     read as a heading rather than as the first item in its own list. */
+  color: inherit;
+  text-decoration: none;
+}
+
+.footer h4 a:hover {
+  color: var(--ink);
+}
+
 .footer h4 {
   font-size: 0.78rem;
   letter-spacing: 0.09em;

@@ -12,22 +12,39 @@
         </p>
       </div>
 
+      {%- comment -%}
+        Children are listed too, not just the top-level sections. Every docs page then carries a
+        link to every other, which is how the deeper pages get crawled at all — the sitemap alone
+        was not enough to get them indexed. So the fix for an eighteen-link column is to SPLIT it,
+        never to drop links: "Plex how-to" is a self-contained set and gets its own column, which
+        balances against Project and Related instead of towering over them.
+      {%- endcomment -%}
       <div>
         <h4>Documentation</h4>
         <ul>
-          {%- comment -%}
-            Children are listed too, not just the top-level sections. Every docs page then
-            carries a link to every other, which is how the deeper pages get crawled at all —
-            the sitemap alone was not enough to get them indexed.
-          {%- endcomment -%}
           {%- for item in site.nav -%}
-            <li><a href="{{ item.url | relative_url }}">{{ item.title }}</a></li>
-            {%- for kid in item.children -%}
-              <li class="footer__kid"><a href="{{ kid.url | relative_url }}">{{ kid.title }}</a></li>
-            {%- endfor -%}
+            {%- unless item.title == 'Plex how-to' -%}
+              <li><a href="{{ item.url | relative_url }}">{{ item.title }}</a></li>
+              {%- for kid in item.children -%}
+                <li class="footer__kid"><a href="{{ kid.url | relative_url }}">{{ kid.title }}</a></li>
+              {%- endfor -%}
+            {%- endunless -%}
           {%- endfor -%}
         </ul>
       </div>
+
+      {%- for item in site.nav -%}
+        {%- if item.title == 'Plex how-to' -%}
+          <div>
+            <h4><a href="{{ item.url | relative_url }}">{{ item.title }}</a></h4>
+            <ul>
+              {%- for kid in item.children -%}
+                <li><a href="{{ kid.url | relative_url }}">{{ kid.title }}</a></li>
+              {%- endfor -%}
+            </ul>
+          </div>
+        {%- endif -%}
+      {%- endfor -%}
 
       <div>
         <h4>Project</h4>
@@ -36,6 +53,7 @@
           <li><a href="{{ site.repo }}/releases">Releases</a></li>
           <li><a href="{{ site.repo }}/issues/new/choose">Report a bug</a></li>
           <li><a href="{{ site.docker_image_url }}">Container image</a></li>
+          <li><a href="https://github.com/sponsors/stevezau">Sponsor</a></li>
         </ul>
       </div>
 
