@@ -1327,7 +1327,12 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
             group = (effective.to_top, effective.anchor_title, effective.anchor_row, effective.before)
             groups.setdefault(group, set()).update(keys)
             group_of_slug[slug] = group
-        names = {spec.slug: (spec.name_template or spec.slug) for spec in ctx.config.rows}
+        # What the audit CALLS each row. The default row carries no template of its own — its title is
+        # the global one — so without that fallback the most likely anchor of all audits as a bare
+        # internal slug, which is not an answer to "what moved where" (rule 10).
+        names = {
+            spec.slug: (spec.name_template or ctx.config.row_name_template or spec.slug) for spec in ctx.config.rows
+        }
         for group in _anchor_group_order(groups, group_of_slug, section.title):
             to_top, anchor_title, anchor_row, before = group
             # Anchor to the GROUP the anchor row was placed as part of, not to that row's own keys.
