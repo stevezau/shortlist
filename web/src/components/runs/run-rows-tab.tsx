@@ -146,6 +146,9 @@ function RowCard({
   const [picked, setPicked] = useState("");
   const shared = group.shared;
   const libraries = libraryLabel(group);
+  // Nothing has reported for this row yet — a queued run, or one still on an earlier row. Saying
+  // "0 of 46 built" there reads as a failure rather than as not-started-yet.
+  const notStarted = group.people.length === 0 && !shared && !run.finished_at;
 
   const results = group.people.map((person) => person.result);
   // Default to the first FAILED person — what you opened the row to see — else the first.
@@ -183,9 +186,7 @@ function RowCard({
             </span>
             <span className="text-xs text-muted-foreground">
               {group.kind === "shared" ? "Shared" : "Per-person"} ·{" "}
-              {group.kind === "shared" && !shared
-                ? "waiting to build"
-                : rowSummary(group)}
+              {notStarted ? "waiting to build" : rowSummary(group)}
               {shared?.duration_ms
                 ? ` · ${formatDuration(shared.duration_ms)}`
                 : ""}
@@ -285,13 +286,11 @@ export function RunRowsTab({
               a run that started seconds ago is a confidently wrong explanation, the exact failure
               this view exists to end. Three cases, not one. */}
           <p className="font-medium">
-            {run.finished_at
-              ? "This run built no rows"
-              : "Working — rows appear as they finish"}
+            {run.finished_at ? "This run built no rows" : "Getting ready…"}
           </p>
           <p className="text-muted-foreground">
             {!run.finished_at
-              ? "Each row lands here once it is built. The People tab fills in as each person completes, and the Log tab shows live progress."
+              ? "This run hasn’t picked up its rows yet. They appear here the moment it does — the Log tab has the live detail."
               : notInRun.length > 0
                 ? `Nothing was due to rebuild. ${notInRun.length} row${notInRun.length === 1 ? " was" : "s were"} considered and skipped.`
                 : "Runs from before this view existed recorded their results per person rather than per row — the Log tab still has everything that happened."}

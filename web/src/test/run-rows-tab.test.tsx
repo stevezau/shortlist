@@ -291,9 +291,9 @@ describe("RunRowsTab — a run that is still going", () => {
       } as unknown as Partial<RunDetail>),
     );
 
-    expect(
-      screen.getByText(/rows appear as they finish/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Getting ready/i)).toBeInTheDocument();
+    // The old copy pointed at a People tab that no longer exists.
+    expect(screen.queryByText(/People tab/i)).not.toBeInTheDocument();
     expect(
       screen.queryByText(/before this view existed/i),
     ).not.toBeInTheDocument();

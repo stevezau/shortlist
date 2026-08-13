@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from shortlist.engine.context import EngineContext
 from shortlist.engine.pipeline import run as engine_run
-from shortlist.server.db.models import Run
+from shortlist.server.db.models import Collection, Run
 from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.services import jobs, run_persistence
 from shortlist.server.services.context_builder import ContextBuilder
@@ -162,7 +162,24 @@ class RunService:
             logger.warning("SHORTLIST_DRY_RUN is set — forcing this {} run to dry-run (no Plex writes)", trigger)
             dry_run = True
         with self._sessions() as session:
-            run = Run(trigger=trigger, dry_run=dry_run, status="queued", stats={})
+            # The rows this run will build, recorded the moment it is QUEUED rather than when it
+            # starts. A queued run is a real thing an operator sits watching — it had no scope
+            # recorded yet, so its page had nothing to show and said so. `collection_ids` is the
+            # scope a "run selected rows" press chose; without it, every enabled row.
+            wanted = session.query(Collection).filter(Collection.enabled)
+            if collection_ids:
+                wanted = wanted.filter(Collection.id.in_(collection_ids))
+            run = Run(
+                trigger=trigger,
+                dry_run=dry_run,
+                status="queued",
+                stats={
+                    "expected_rows": [
+                        {"slug": row.slug, "title": row.name_template or row.name, "build": row.build}
+                        for row in wanted.order_by(Collection.sort_order, Collection.id).all()
+                    ]
+                },
+            )
             session.add(run)
             session.commit()
             run_id = run.id
