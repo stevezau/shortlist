@@ -1,6 +1,11 @@
 /** Where Help / Report-a-bug send people: the project's GitHub. */
 export const GITHUB_REPO = "https://github.com/stevezau/shortlist";
 
+/** Where "Support this project" goes. GitHub Sponsors rather than a direct payment link: it takes no
+ *  platform fee, and it is the page that lists every other way to give (Ko-fi included) via the
+ *  repo's FUNDING.yml — so the app never has to know or update the list. */
+export const SPONSOR_URL = "https://github.com/sponsors/stevezau";
+
 /** A "new issue" URL with the bug body pre-filled — the build and browser are the two facts every
  *  report needs and users never think to include, so we add them for free. Everything else is a
  *  prompt they fill in. GitHub reads `body`/`labels` from the query string.

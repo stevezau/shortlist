@@ -1,0 +1,8 @@
+# Renders the ♡ Sponsor button on the repo and a "Sponsor this project" panel in its sidebar.
+#
+# GitHub Sponsors only, on purpose. It takes no platform fee, and Shortlist is distributed through
+# GitHub and Docker — so the people running it already have the account it needs. A second tip jar
+# (Ko-fi, Buy Me a Coffee) only earns its keep if someone actually asks for a way to pay that does
+# not involve GitHub, or wants to use PayPal, which Sponsors does not accept. Add one then, not now:
+# every extra line here is another page to keep alive.
+github: stevezau

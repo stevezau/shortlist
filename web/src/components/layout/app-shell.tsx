@@ -5,6 +5,7 @@ import {
   Loader2,
   BookOpen,
   Gauge,
+  Heart,
   Inbox,
   LifeBuoy,
   ListChecks,
@@ -29,7 +30,7 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { buildLabel } from "@/lib/format";
 import { useSession, useVersion } from "@/lib/queries";
-import { GITHUB_REPO } from "@/lib/support";
+import { GITHUB_REPO, SPONSOR_URL } from "@/lib/support";
 import { Toaster } from "sonner";
 
 import { cn } from "@/lib/utils";
@@ -120,6 +121,19 @@ function SessionFooter() {
       >
         {buildLabel(version.data)}
       </p>
+      {/* In the chrome, under the build string — deliberately NOT among the nav items and not
+          floating over the page. People self-host to get away from being sold to, and a donate
+          prompt that follows them around every screen costs more goodwill than it raises. Anyone
+          inclined to give goes looking; this only has to be findable. */}
+      <a
+        href={SPONSOR_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground hover:text-foreground"
+      >
+        <Heart className="h-3 w-3 shrink-0" aria-hidden="true" />
+        Support this project
+      </a>
     </div>
   );
 }

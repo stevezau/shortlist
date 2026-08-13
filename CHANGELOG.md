@@ -8,6 +8,11 @@ All notable changes to this project are documented here. This project follows
 
 ### Added
 
+- **A way to support the project, for anyone who wants to.** A quiet "Support this project" line at
+  the bottom of the sidebar, under the version, opening GitHub Sponsors. Deliberately in the chrome
+  rather than among the navigation, and nothing floats over the page — people self-host to get away
+  from being sold to, and anyone inclined to give goes looking rather than needing to be asked twice.
+
 - **The "something else is reordering your shelf" alert now tells you how to stop it.** It used to
   say to exclude `shortlist_*`, which is a wildcard no tool's exclusion list accepts. Agregarr has
   since gained an **Exclude from Ordering (Plex Label)** field, and it matches a label exactly or as a
