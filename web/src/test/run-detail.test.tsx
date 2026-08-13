@@ -131,7 +131,10 @@ describe("RunDetailPage — grouped by library", () => {
     getUsers.mockReset();
     getRunLog.mockReset();
     getUsers.mockResolvedValue([]);
-    listCollections.mockResolvedValue([]);
+    listCollections.mockResolvedValue([
+      { slug: "picked", name: "✨ {library_name} Picked for You" },
+      { slug: "gems", name: "💎 Hidden Gems" },
+    ]);
     getRunLog.mockResolvedValue([]);
   });
 
@@ -190,10 +193,16 @@ describe("RunDetailPage — grouped by library", () => {
     // A row spanning two libraries shows them as TABS — the selected library's picks only, so the
     // page stays short. Movies is selected first; TV Shows appears when you click it.
     expect(
-      await screen.findByRole("button", { name: /Movies/ }),
+      within(await screen.findByRole("group", { name: /librar/i })).getByRole(
+        "button",
+        { name: /Movies/ },
+      ),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /TV Shows/ }),
+      within(screen.getByRole("group", { name: /librar/i })).getByRole(
+        "button",
+        { name: /TV Shows/ },
+      ),
     ).toBeInTheDocument();
     expect(screen.getByText(/war epic/)).toBeInTheDocument();
     // This page is where "why did it pick that?" gets asked, and it has its OWN pick renderer
@@ -203,7 +212,12 @@ describe("RunDetailPage — grouped by library", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/survival series/)).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: /TV Shows/ }));
+    await userEvent.click(
+      within(screen.getByRole("group", { name: /librar/i })).getByRole(
+        "button",
+        { name: /TV Shows/ },
+      ),
+    );
     expect(screen.getByText(/survival series/)).toBeInTheDocument();
     expect(screen.queryByText(/war epic/)).not.toBeInTheDocument();
   });
@@ -227,7 +241,7 @@ describe("RunDetailPage — grouped by library", () => {
     await expandRows();
 
     // Duration is computed from started_at → finished_at (04:18 → 04:24 = 6 minutes).
-    expect(await screen.findByText("Duration")).toBeInTheDocument();
+    expect((await screen.findAllByText("Duration"))[0]).toBeInTheDocument();
     expect(screen.getByText("6m 0s")).toBeInTheDocument();
     expect(screen.getByText("People")).toBeInTheDocument();
     expect(screen.getByText("1 failed")).toBeInTheDocument(); // 1 of the 3 users errored
@@ -247,7 +261,9 @@ describe("RunDetailPage — grouped by library", () => {
       users_error: 0,
       titles_requested: 0,
       llm_tokens: 691422,
-      exa_searches: 1,
+      // 7, not 1: the Rows-built tile also renders a small integer, and "1" appearing twice made
+      // this assertion ambiguous rather than wrong.
+      exa_searches: 7,
       exa_cache_hits: 793,
     };
     getRun.mockResolvedValue(r);
@@ -256,8 +272,8 @@ describe("RunDetailPage — grouped by library", () => {
 
     await expandRows();
 
-    expect(await screen.findByText("Web searches")).toBeInTheDocument();
-    expect(screen.getByText("1")).toBeInTheDocument(); // actually searched
+    expect((await screen.findAllByText("Web searches"))[0]).toBeInTheDocument();
+    expect(screen.getByText("7")).toBeInTheDocument(); // actually searched
     expect(screen.getByText(/793 from cache/)).toBeInTheDocument();
   });
 
@@ -278,7 +294,9 @@ describe("RunDetailPage — grouped by library", () => {
 
     await expandRows();
 
-    expect(await screen.findByText("all succeeded")).toBeInTheDocument();
+    expect(
+      (await screen.findAllByText("all succeeded"))[0],
+    ).toBeInTheDocument();
     // No AI this run → those tiles don't render at all (0-value tiles would be noise).
     expect(screen.queryByText("AI tokens")).not.toBeInTheDocument();
     expect(screen.queryByText("Web searches")).not.toBeInTheDocument();
@@ -293,7 +311,7 @@ describe("RunDetailPage — grouped by library", () => {
 
     await expandRows();
 
-    expect(await screen.findByText("9,000")).toBeInTheDocument();
+    expect((await screen.findAllByText("9,000"))[0]).toBeInTheDocument();
     expect(screen.getByText("curate + AI sources")).toBeInTheDocument();
   });
 
@@ -352,13 +370,18 @@ describe("RunDetailPage — grouped by library", () => {
     await expandRows();
 
     expect(
-      await screen.findByText("Movies Picked for You"),
+      (await screen.findAllByText("Movies Picked for You"))[0],
     ).toBeInTheDocument();
     expect(
       screen.queryByText("TV Shows Picked for You"),
     ).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: /TV Shows/ }));
+    await userEvent.click(
+      within(screen.getByRole("group", { name: /librar/i })).getByRole(
+        "button",
+        { name: /TV Shows/ },
+      ),
+    );
     expect(screen.getByText("TV Shows Picked for You")).toBeInTheDocument();
     expect(screen.queryByText("Movies Picked for You")).not.toBeInTheDocument();
   });
@@ -416,8 +439,10 @@ describe("RunDetailPage — grouped by library", () => {
     await expandRows();
 
     // Each row shows as its own group header — not collapsed into one.
-    expect(await screen.findByText("✨ Picked for You")).toBeInTheDocument();
-    expect(screen.getByText("💎 Hidden Gems")).toBeInTheDocument();
+    expect(
+      (await screen.findAllByText("✨ Picked for You"))[0],
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("💎 Hidden Gems")[0]).toBeInTheDocument();
   });
 
   it("shows the run's activity log, seeded from the server buffer", async () => {
@@ -572,7 +597,7 @@ describe("RunDetailPage — grouped by library", () => {
 
     await expandRows();
 
-    expect(await screen.findByText("Old Title")).toBeInTheDocument();
+    expect((await screen.findAllByText("Old Title"))[0]).toBeInTheDocument();
   });
 
   it("shows a legend and explains rotated-out titles instead of a bare 'removed'", async () => {
@@ -605,7 +630,7 @@ describe("RunDetailPage — grouped by library", () => {
     renderDetail();
 
     await expandRows();
-    await screen.findByText("Fresh One");
+    await screen.findAllByText("Fresh One");
 
     // The key explains every visual cue the results use, so nothing needs a hover to decode.
     expect(screen.getByText(/What changed/i)).toBeInTheDocument();
@@ -626,6 +651,7 @@ function skippedUser(username: string, i: number) {
   return {
     username,
     slug: username,
+    rows_considered: { picked: "due" },
     status: "skipped",
     error: null,
     reason: "There are no per-person rows to build.",
@@ -817,7 +843,9 @@ describe("RunDetail — a failed run says why", () => {
     renderDetail("");
     await expandRows();
     // The tiles only render once a run has finished — wait for one, then assert no alarm.
-    expect(await screen.findByText("all succeeded")).toBeInTheDocument();
+    expect(
+      (await screen.findAllByText("all succeeded"))[0],
+    ).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 });
@@ -844,7 +872,10 @@ describe("RunDetail — 'N people failed with the same problem' (issue 7.1)", ()
     getUsers.mockReset();
     getRunLog.mockReset();
     getUsers.mockResolvedValue([]);
-    listCollections.mockResolvedValue([]);
+    listCollections.mockResolvedValue([
+      { slug: "picked", name: "✨ {library_name} Picked for You" },
+      { slug: "gems", name: "💎 Hidden Gems" },
+    ]);
     getRunLog.mockResolvedValue([]);
   });
 
@@ -900,7 +931,10 @@ describe("RunDetail — where the phase breakdown lives", () => {
     getUsers.mockReset();
     getRunLog.mockReset();
     getUsers.mockResolvedValue([]);
-    listCollections.mockResolvedValue([]);
+    listCollections.mockResolvedValue([
+      { slug: "picked", name: "✨ {library_name} Picked for You" },
+      { slug: "gems", name: "💎 Hidden Gems" },
+    ]);
     // Real TAIL_STAGES with a gap between them — the breakdown renders nothing without them.
     getRunLog.mockResolvedValue([
       {
@@ -982,7 +1016,10 @@ describe("RunDetail — SSE stage events only refetch THIS run (issue 7.6)", () 
     getUsers.mockReset();
     getRunLog.mockReset();
     getUsers.mockResolvedValue([]);
-    listCollections.mockResolvedValue([]);
+    listCollections.mockResolvedValue([
+      { slug: "picked", name: "✨ {library_name} Picked for You" },
+      { slug: "gems", name: "💎 Hidden Gems" },
+    ]);
     getRunLog.mockResolvedValue([]);
     FakeEventSource.instances = [];
   });
@@ -994,7 +1031,7 @@ describe("RunDetail — SSE stage events only refetch THIS run (issue 7.6)", () 
     getRun.mockResolvedValue(run([]));
     renderDetail("");
     await expandRows();
-    await screen.findByText("all succeeded");
+    await screen.findAllByText("all succeeded");
 
     const callsBefore = getRun.mock.calls.length;
     const source = FakeEventSource.instances.at(-1);
@@ -1014,7 +1051,7 @@ describe("RunDetail — SSE stage events only refetch THIS run (issue 7.6)", () 
     getRun.mockResolvedValue(run([]));
     renderDetail("");
     await expandRows();
-    await screen.findByText("all succeeded");
+    await screen.findAllByText("all succeeded");
 
     const callsBefore = getRun.mock.calls.length;
     const source = FakeEventSource.instances.at(-1);

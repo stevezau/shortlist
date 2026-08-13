@@ -149,11 +149,14 @@ export function groupRunByRow(
         userId: idBySlug.get(user.slug),
         // `picks` is the person's list across EVERY row and cannot be split by row (the API does not
         // carry a pick's row), so it is dropped when this row delivered nothing to them — otherwise
-        // the panel would fall back to it and show another row's picks under this one.
+        // another row's picks would show under this one.
+        //
+        // Unless they have NO breakdown at all, which is a legacy run: there is nothing to
+        // mis-attribute them to, and blanking them there hid a legacy run's picks completely.
         result: {
           ...user,
           breakdown: mine as RunUserResult["breakdown"],
-          picks: mine.length ? user.picks : [],
+          picks: mine.length || user.breakdown.length === 0 ? user.picks : [],
         },
       });
     }
