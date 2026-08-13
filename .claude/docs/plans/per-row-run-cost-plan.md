@@ -170,9 +170,7 @@ def _timed_lock(ctx: EngineContext, report: UserRunReport) -> Iterator[None]:
     with ctx.write_lock:
         bucket = report.lock_bucket
         if bucket is not None:
-            report.row_timing.setdefault(bucket, _blank_row_cost())["blocked_s"] += round(
-                time.monotonic() - started, 3
-            )
+            report.row_timing.setdefault(bucket, _blank_row_cost())["blocked_s"] += round(time.monotonic() - started, 3)
         yield
 ```
 
@@ -239,6 +237,7 @@ def test_timed_lock_charges_wait_to_the_current_row(self):
     t.join(timeout=2)
 
     assert report.row_timing["picked-for-you"]["blocked_s"] > 0
+
 
 def test_timed_lock_charges_nothing_during_setup(self):
     """lock_bucket is None before the row loop — that wait belongs to setup_s, not to a row."""
@@ -369,8 +368,8 @@ Wrap the body of `for spec in specs:` in the row timer. The loop begins at line 
 to:
 
 ```python
-    for spec in specs:
-      with _row_timer(user_report, spec.slug):
+for spec in specs:
+    with _row_timer(user_report, spec.slug):
         override = user.row_overrides.get(spec.slug)
 ```
 
@@ -675,8 +674,13 @@ class TestCostBlob:
         report.setup_s = 421.0
         report.row_timing = {"picked-for-you": {"duration_s": 12.04, "blocked_s": 0.31}}
         report.pool_costs = [
-            {"label": "movie · tmdb, llm_web", "tokens": 15917, "exa_searches": 3,
-             "duration_s": 398.0, "rows": ["picked-for-you"]}
+            {
+                "label": "movie · tmdb, llm_web",
+                "tokens": 15917,
+                "exa_searches": 3,
+                "duration_s": 398.0,
+                "rows": ["picked-for-you"],
+            }
         ]
         blob = _cost_blob(report)
         assert blob["setup_ms"] == 421000
@@ -735,7 +739,7 @@ def _cost_blob(user_report) -> dict | None:
 In `_persist_user_report`, add to the `RunUser(...)` constructor after `rows_considered`:
 
 ```python
-            cost=_cost_blob(user_report),
+cost = (_cost_blob(user_report),)
 ```
 
 - [ ] **Step 5: Run tests to verify they pass**
