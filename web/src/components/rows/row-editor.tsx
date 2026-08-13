@@ -1100,6 +1100,7 @@ export function RowEditor({
                   value={input.hub_anchor}
                   libraryKeys={input.library_keys}
                   media={input.media}
+                  rowSlug={collection?.slug}
                   pinnedTop={input.pin_top}
                   onConsumePin={() => set({ pin_top: false })}
                   onChange={(hub_anchor) => set({ hub_anchor })}

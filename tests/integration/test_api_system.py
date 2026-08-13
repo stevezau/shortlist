@@ -314,9 +314,30 @@ class TestSystemResponseShapes:
 
         monkeypatch.setattr("shortlist.engine.clients.plex_pms.PlexClient", FakePlex)
 
+        # Another Shortlist row is a legitimate anchor — "put Because you watched right after Picked
+        # for You" is the obvious thing to want, and dropping every Shortlist-labelled collection made
+        # it impossible while rendering a saved anchor as "(not found)" (issue #81).
         body = client.get("/api/system/libraries/1/collections").json()
+        assert body == [{"title": "Picked for You"}, {"title": "New Series (Unwatched)"}]
 
-        assert body == [{"title": "New Series (Unwatched)"}]  # you don't anchor a row to itself
+        # Only the row being EDITED is excluded, and it is found through the delivery ledger: labels
+        # cannot do it, because a per-person row is labelled by USER, not by row.
+        from shortlist.server.db.models import Delivery
+
+        with client.app.state.sessions() as session:
+            session.add(
+                Delivery(
+                    collection_slug="picked",
+                    user_slug="sarah",
+                    library_key="1",
+                    rating_key=9001,
+                    title="Picked for You",
+                )
+            )
+            session.commit()
+
+        scoped = client.get("/api/system/libraries/1/collections?row=picked").json()
+        assert scoped == [{"title": "New Series (Unwatched)"}], "a row must not be able to anchor to itself"
         assert set(body[0]) == {"title"}
 
     def test_the_library_list_is_read_from_plex_once_not_once_per_page_load(self, client: TestClient, monkeypatch):

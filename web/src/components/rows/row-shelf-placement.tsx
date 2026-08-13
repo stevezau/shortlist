@@ -36,14 +36,16 @@ function LibraryAnchor({
   library,
   entry,
   onChange,
+  rowSlug,
 }: {
   library: PlexLibrary;
   entry: Entry | undefined;
   onChange: (next: Entry | undefined) => void;
+  rowSlug?: string;
 }) {
   const mode = modeOf(entry);
   const relative = mode === "after" || mode === "before";
-  const collections = useLibraryCollections(library.key, relative);
+  const collections = useLibraryCollections(library.key, relative, rowSlug);
 
   const setMode = (next: Mode) => {
     if (next === "default") return onChange(undefined);
@@ -119,6 +121,7 @@ export function RowShelfPlacement({
   value,
   libraryKeys,
   media,
+  rowSlug,
   pinnedTop = false,
   onConsumePin,
   onChange,
@@ -126,6 +129,9 @@ export function RowShelfPlacement({
   value: HubAnchorMap;
   libraryKeys: string[];
   media: CollectionInput["media"];
+  /** The row being edited. Only ITS own collections are dropped from the anchor list — every other
+   *  Shortlist row is a legitimate anchor (issue #81). */
+  rowSlug?: string;
   pinnedTop?: boolean;
   onConsumePin?: () => void;
   onChange: (next: HubAnchorMap) => void;
@@ -188,6 +194,7 @@ export function RowShelfPlacement({
                 key={library.key}
                 library={library}
                 entry={value[library.key]}
+                rowSlug={rowSlug}
                 onChange={(entry) => setLibrary(library.key, entry)}
               />
             ))}

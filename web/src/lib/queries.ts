@@ -446,10 +446,11 @@ export function useLibraries() {
   });
 }
 
-export function useLibraryCollections(key: string, enabled = true) {
+export function useLibraryCollections(key: string, enabled = true, row?: string) {
   return useQuery({
-    queryKey: queryKeys.libraryCollections(key),
-    queryFn: () => api.getLibraryCollections(key),
+    // `row` is part of the key: the anchors differ per row, because a row cannot anchor to itself.
+    queryKey: [...queryKeys.libraryCollections(key), row ?? ""],
+    queryFn: () => api.getLibraryCollections(key, row),
     staleTime: 60_000,
     retry: false,
     enabled,
