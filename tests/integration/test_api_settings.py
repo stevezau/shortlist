@@ -371,6 +371,26 @@ class TestSettingsApi:
         # Both branches build their own dict, so both are checked against the response model.
         assert set(no_key) == {"ok", "message"} and set(ok) == {"ok", "message"}
 
+    def test_the_removed_agregarr_connection_is_gone_from_every_surface(self, client: TestClient):
+        """The Agregarr connection was removed. Three surfaces had to stop knowing about it, and a
+        miss on any one leaves a half-removed feature that looks configurable and does nothing.
+
+        The settings PUT is the one that matters most: `agregarr.apikey` was a Fernet-encrypted
+        secret, and it is no longer in SECRET_KEYS — so if the key were still WRITEABLE it would be
+        stored in the clear and served back by `all_public()` (rule 9). Rejecting the write is what
+        makes `LEGACY_KEYS` a cleanup rather than a losing race.
+        """
+        probe = client.post("/api/settings/test/agregarr")
+        assert probe.status_code == 404
+        assert "agregarr" in probe.json()["detail"]
+
+        for key in ("agregarr.url", "agregarr.apikey"):
+            rejected = client.put("/api/settings", json={"values": {key: "anything"}})
+            assert rejected.status_code == 422, f"{key} is still writeable"
+
+        public = client.get("/api/settings").json()
+        assert not [k for k in public if "agregarr" in k]
+
     def test_searxng_password_is_encrypted_at_rest_and_redacted_in_the_api(self, client: TestClient):
         """A reverse-proxy password in front of SearXNG is a credential like any other (rule 9). The
         URL and username are not secrets and stay readable, so the card can show what's configured."""
