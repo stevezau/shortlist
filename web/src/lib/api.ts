@@ -522,8 +522,14 @@ export const api = {
     request("/api/report/sync", { method: "POST" }),
 
   /** A library's managed collections — the candidate anchors for placing rows in the shelf. */
-  getLibraryCollections: (key: string): Promise<{ title: string }[]> =>
-    request(`/api/system/libraries/${encodeURIComponent(key)}/collections`),
+  getLibraryCollections: (
+    key: string,
+    row?: string,
+  ): Promise<{ title: string }[]> =>
+    request(
+      `/api/system/libraries/${encodeURIComponent(key)}/collections` +
+        (row ? `?row=${encodeURIComponent(row)}` : ""),
+    ),
 
   /** Cleanup audit: every shortlist-labelled collection on Plex, with drift/orphan flags. */
   getOwnedCollections: (): Promise<OwnedCollectionsAudit> =>

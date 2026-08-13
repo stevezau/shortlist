@@ -9339,7 +9339,7 @@
     },
     "/api/system/libraries/{key}/collections": {
       "get": {
-        "description": "A library's managed (orderable) collections \u2014 the candidate ANCHORS for placing Shortlist rows\nin the Recommended shelf. Shortlist's own rows are excluded (you don't anchor a row to itself).",
+        "description": "A library's managed (orderable) collections \u2014 the candidate ANCHORS for placing Shortlist rows\nin the Recommended shelf.\n\nOnly the row BEING EDITED is excluded (`row`, a collection slug), because you cannot anchor a row\nto itself. Every other Shortlist row is a legitimate anchor: \"put Because you watched right after\nPicked for You\" is the obvious thing to want, and issue #81 is exactly that \u2014 the picker dropped\nevery Shortlist-labelled collection, so a saved anchor rendered as \"(not found)\" and no new one\ncould be chosen.\n\nThe row's own collections are found through the delivery ledger, which is what maps a row slug to\nthe titles it actually wrote per library \u2014 labels cannot do it, because a per-person row is\nlabelled by USER (`shortlist_<userslug>`), not by row.",
         "operationId": "library_collections_api_system_libraries__key__collections_get",
         "parameters": [
           {
@@ -9349,6 +9349,22 @@
             "schema": {
               "title": "Key",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "row",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Row"
             }
           }
         ],
