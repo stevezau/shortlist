@@ -2063,7 +2063,9 @@ def _deliver_row(
         lock_wait_start = time.monotonic()
         # Timed, not bare: this is the ONLY write lock taken inside the per-row loop, so it is the
         # only one whose wait can make one row look slower than its sibling. The three setup-time
-        # locks stay bare — their wait is already inside `setup_s`.
+        # locks stay bare — `_remove_muted_and_retired`'s sweep, `_drop_cold_skipped_rows`'s removal
+        # and `_record_demand`'s merge — because `setup_started` in `_run_user` now starts before the
+        # first of them, so all three land inside `setup_s` instead.
         with _timed_lock(ctx, policy.report):
             # THE boundary a cancel actually needs. Every user's writes serialize on this one lock, so
             # at concurrency 8 seven people are parked right here when Cancel is pressed — already past
@@ -2150,6 +2152,14 @@ def _run_user(
     cfg = ctx.config
 
     user_report.diff = CollectionDiff()
+    # Started here, not after the `specs` computation below: `_remove_muted_and_retired` takes
+    # `ctx.write_lock` (a Plex mutation, serialized across concurrent users), and that wait must land
+    # inside `setup_s` like the other setup-time locks — otherwise it vanishes from both the row it
+    # never reaches and the shared-setup total, understating the person's measured time by exactly the
+    # lock contention this feature exists to explain. Runs on every call regardless of whether `specs`
+    # ends up empty (see the `if not specs: return False` below) — `user_report.setup_s` is only ever
+    # assigned past that return, so a person with no active rows still reports `setup_s == 0.0`.
+    setup_started = time.monotonic()
     _remove_muted_and_retired(ctx, user, cfg, user_report)
 
     # Every row that could still have a COLLECTION under this user's label — the predicate `sole_row`
@@ -2191,7 +2201,6 @@ def _run_user(
         user_report.status = "skipped"
         user_report.reason = _why_no_rows(user, cfg)
         return False
-    setup_started = time.monotonic()
     _emit(ctx, user.slug, "history", {})
     # Reuse a history the CALLER already filled, exactly as the shared-row path does. The server
     # pre-fills it from its watched-title cache, which turns the run's second complete per-user read

@@ -5073,14 +5073,46 @@ class TestCancelStopsWritingPromptly:
 
 class TestRunUserCost:
     def test_setup_and_every_entered_row_are_timed(self, ctx: EngineContext, mock_plextv):
-        """Every row the loop ENTERS gets an entry — including one whose sources were down, which
-        `continue`s. Without it the UI cannot tell 'finished fast' from 'not recorded'."""
-        report = _run_two_row_user(ctx, mock_plextv)
+        """Every row the loop ENTERS gets a `row_timing` entry — including one whose only source is
+        down, which `pools_for` turns into `None` and the row loop `continue`s past. Without an
+        entry for that row the UI cannot tell 'finished with nothing to show' from 'never recorded'.
+
+        The two rows are given DIFFERENT sources on purpose: identical rows share one pool key (see
+        `TestPoolCosts`), so both would always succeed or fail together and neither could `continue`
+        without the other. Only `tmdb_discover` is made to fail, so `picked-for-you` (the default
+        `tmdb_similar`) still delivers — the real property under test is that a row recorded via
+        `_row_timer` but never delivered is distinguishable from one that was: it's in `row_timing`
+        but absent from `breakdown`.
+        """
+        ctx.config.rows = [
+            RowSpec(slug="picked-for-you", name_template="Picked for You", size=5),
+            RowSpec(
+                slug="because-you-watched",
+                name_template="Because You Watched",
+                size=5,
+                candidate_sources=["tmdb_discover"],
+            ),
+        ]
+        ctx.tmdb.discover.side_effect = RuntimeError("tmdb_discover down")
+
+        def slow_fetch(*_args, **_kwargs) -> list:
+            # Keeps setup_s deterministically non-zero — round(x, 3) in _run_user collapses a sub-ms
+            # span to exactly 0.0, which would make `report.setup_s > 0` fail by rounding accident.
+            time.sleep(0.01)
+            return [make_watched(f"Film{i}", days_ago=i + 1, rating_key=999) for i in range(5)]
+
+        ctx.history_source.fetch.side_effect = slow_fetch
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)]).users[0]
+
         assert report.setup_s > 0
-        assert set(report.row_timing) == {"picked-for-you", "because-you-watched"}
-        for cost in report.row_timing.values():
-            assert cost["duration_s"] >= 0.0
-            assert cost["blocked_s"] >= 0.0
+        assert set(report.row_timing) == {"picked-for-you", "because-you-watched"}, (
+            "the row that continue'd past a dead source must still be timed, not silently dropped"
+        )
+        assert {b["row_slug"] for b in report.breakdown} == {"picked-for-you"}, (
+            "the dead-source row delivered nothing and must not appear in the delivery breakdown"
+        )
 
 
 class TestPoolCosts:
