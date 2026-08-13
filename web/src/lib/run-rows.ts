@@ -1,4 +1,10 @@
-import type { RunDetail, RunSharedRowResult, RunUserResult } from "@/lib/types";
+import type {
+  RunDetail,
+  RunPoolCost,
+  RunRowCost,
+  RunSharedRowResult,
+  RunUserResult,
+} from "@/lib/types";
 
 /** What a run decided about one row FOR ONE PERSON, before anything was built.
  *
@@ -20,6 +26,12 @@ export type RunRowPerson = {
    * a lesser page than the one it replaced.
    */
   result: RunUserResult;
+  /** THIS row's own cost, or null on a run recorded before it was measured — which must render as
+   *  "not recorded", never as 0s. `duration_ms` includes `blocked_ms`; work time is the difference. */
+  cost: RunRowCost | null;
+  /** The person's SHARED setup, repeated on each of their rows because it belongs to none of them.
+   *  All AI spend lives here, attributed per pool — never divided between rows. */
+  setup: { setup_ms: number; pools: RunPoolCost[] } | null;
 };
 
 /** One row as this run built it. Per-person rows carry their people; a shared row carries its result.
@@ -154,6 +166,10 @@ export function groupRunByRow(
           breakdown: mine as RunUserResult["breakdown"],
           picks: mine.length || user.breakdown.length === 0 ? user.picks : [],
         },
+        cost: user.cost?.rows?.[slug] ?? null,
+        setup: user.cost
+          ? { setup_ms: user.cost.setup_ms ?? 0, pools: user.cost.pools ?? [] }
+          : null,
       });
     }
   }
@@ -229,6 +245,8 @@ export function groupRunByRow(
       group.people.push({
         decision: null,
         userId: idBySlug.get(who.slug),
+        cost: null,
+        setup: null,
         result: {
           username: who.username ?? who.slug,
           display_name: who.display_name ?? who.username ?? who.slug,

@@ -38,6 +38,7 @@ function user(overrides: Partial<RunUserResult> = {}): RunUserResult {
     breakdown: [],
     has_trace: false,
     rows_considered: {},
+    cost: null,
     ...overrides,
   } as RunUserResult;
 }
@@ -260,6 +261,70 @@ describe("groupRunByRow", () => {
 
     expect(groups.map((g) => g.title)).toEqual(["✨ Picked for You"]);
     expect(notInRun).toEqual([]);
+  });
+});
+
+describe("per-row cost", () => {
+  it("gives each row its own duration instead of the person's whole-run total", () => {
+    const detail = run({
+      users: [
+        user({
+          slug: "alex",
+          duration_ms: 442000,
+          rows_considered: {
+            "picked-for-you": "due",
+            "because-you-watched": "due",
+          },
+          breakdown: breakdown(
+            {
+              row_slug: "picked-for-you",
+              library_key: "1",
+              library_title: "Movies",
+            },
+            {
+              row_slug: "because-you-watched",
+              library_key: "1",
+              library_title: "Movies",
+            },
+          ),
+          cost: {
+            setup_ms: 421000,
+            rows: {
+              "picked-for-you": { duration_ms: 12040, blocked_ms: 310 },
+              "because-you-watched": { duration_ms: 9120, blocked_ms: 880 },
+            },
+            pools: [
+              {
+                label: "movie · tmdb, llm_web",
+                tokens: 15917,
+                exa_searches: 3,
+                duration_ms: 398000,
+                rows: ["picked-for-you", "because-you-watched"],
+              },
+            ],
+          },
+        }),
+      ],
+    });
+    const { groups } = groupRunByRow(detail);
+    const picked = groups.find((g) => g.slug === "picked-for-you")!;
+    const because = groups.find((g) => g.slug === "because-you-watched")!;
+    expect(picked.people[0]!.cost?.duration_ms).toBe(12040);
+    expect(because.people[0]!.cost?.duration_ms).toBe(9120);
+  });
+
+  it("reports null cost for a legacy run rather than zero", () => {
+    const detail = run({
+      users: [
+        user({
+          slug: "alex",
+          cost: null,
+          rows_considered: { "picked-for-you": "due" },
+        }),
+      ],
+    });
+    const { groups } = groupRunByRow(detail);
+    expect(groups[0]!.people[0]!.cost).toBeNull();
   });
 });
 

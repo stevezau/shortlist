@@ -244,6 +244,7 @@ export type Run = {
 export type RunUserResult = {
   diff: RunDiff;
   breakdown: RunLibraryBreakdown[];
+  cost: RunUserCost | null;
 } & Schemas["RunUserOut"];
 
 /** One SHARED row's slice of GET /api/runs/{id}.
@@ -548,6 +549,39 @@ export interface RunLibraryBreakdown {
   picks: Pick[];
   /** AI tokens the curate call for this (row, library) cost. Absent on legacy runs. */
   llm_tokens?: number;
+}
+
+/** THIS run's own cost for one row: wall-clock duration including any write-lock wait. Work time is
+ *  `duration_ms - blocked_ms` — never invert this. Part of `RunUserOut.cost` (see {@link RunUserCost}). */
+export interface RunRowCost {
+  duration_ms: number;
+  blocked_ms: number;
+}
+
+/** One shared candidate pool a run's rows drew from — gather + curate spend that belongs to no
+ *  single row. `rows` names every row that drew from it; a pool with more than one entry there is
+ *  why its tokens are never split per row — the API never measured a per-row share. Part of
+ *  `RunUserOut.cost` (see {@link RunUserCost}). */
+export interface RunPoolCost {
+  label: string;
+  tokens: number;
+  exa_searches: number;
+  duration_ms: number;
+  rows: string[];
+}
+
+/**
+ * A person's full cost for one run (`RunUserOut.cost`, an open map server-side, hence hand-written
+ * here rather than generated).
+ *
+ * `null` on a run recorded before this was measured — which must render as "not recorded", never as
+ * `0s`. `setup_ms`/`pools` are the person's SHARED spend (repeated on every row because it belongs
+ * to none of them); `rows` is each row's own duration, keyed by row slug.
+ */
+export interface RunUserCost {
+  setup_ms: number;
+  rows: Record<string, RunRowCost>;
+  pools: RunPoolCost[];
 }
 
 /** One recent watch shown in a trace. */
