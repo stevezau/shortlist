@@ -138,6 +138,8 @@ Answer that first, and the list above narrows to two or three.
 
 ## Related
 
+- [How to improve Plex recommendations](improve-plex-recommendations.md) — before installing anything
+- [AI recommendations for Plex](plex-ai-recommendations.md) — which tools need an API key and why
 - [Per-user collections](plex-per-user-collections.md) — the privacy mechanism, and how to do it by hand
 - [Recommendations from watch history](plex-recommendations-watch-history.md) — what to look for in any approach
 - [Getting started](getting-started.md) — installing Shortlist

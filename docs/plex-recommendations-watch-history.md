@@ -122,13 +122,15 @@ your library.
 ```bash
 docker run -d --name shortlist -p 5959:5959 \
   -v /path/to/config:/config \
-  ghcr.io/stevezau/shortlist:latest
+  stevezzau/shortlist:latest
 ```
 
 Set `-e SHORTLIST_DRY_RUN=1` to see every change it would make without writing one.
 
 ## Related
 
+- [How to improve Plex recommendations](improve-plex-recommendations.md) — the settings to change first
+- [AI recommendations for Plex](plex-ai-recommendations.md) — where a model helps, and where it invents films
 - [Per-user collections](plex-per-user-collections.md) — making a row only one person can see
 - [A different home screen per user](plex-per-user-home-screen.md) — the surfaces rows appear on
 - [Plex recommendation tools compared](plex-recommendation-tools.md) — the other projects in this space

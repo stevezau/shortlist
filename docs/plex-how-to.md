@@ -15,10 +15,12 @@ If you already run Shortlist and want to know which button does what, you want t
 
 | The question                                          | The page                                                                         |
 | ----------------------------------------------------- | -------------------------------------------------------------------------------- |
+| My recommendations are bad — what can I change?       | [How to improve Plex recommendations](improve-plex-recommendations.md)           |
 | Can Plex recommend things based on what I've watched? | [Recommendations from watch history](plex-recommendations-watch-history.md)      |
 | Can each user have their own home screen rows?        | [A different home screen per user](plex-per-user-home-screen.md)                 |
 | Can I make a collection only one person can see?      | [Per-user collections](plex-per-user-collections.md)                             |
 | How do I get rows that feel like Netflix's?           | [Netflix-style rows for your own library](plex-netflix-style-recommendations.md) |
+| Does AI actually help here?                           | [AI recommendations for Plex](plex-ai-recommendations.md)                        |
 | Which tool should I actually install?                 | [Plex recommendation tools compared](plex-recommendation-tools.md)               |
 
 ## The short version of all of it

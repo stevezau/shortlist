@@ -112,11 +112,12 @@ and anything else managing collections on the same server keep working.
 ```bash
 docker run -d --name shortlist -p 5959:5959 \
   -v /path/to/config:/config \
-  ghcr.io/stevezau/shortlist:latest
+  stevezzau/shortlist:latest
 ```
 
 ## Related
 
+- [How to improve Plex recommendations](improve-plex-recommendations.md) — the settings to change first
 - [Per-user collections](plex-per-user-collections.md) — the label + share-filter mechanism in full
 - [Recommendations from watch history](plex-recommendations-watch-history.md) — where the titles come from
 - [Rows and templates](guides/rows.md) — row types, placement and posters in Shortlist

@@ -19,6 +19,7 @@ fight over the `/` URL.
 | [Guides](guides.md)                                       | Rows, schedules, requests, AI cost, troubleshooting                |
 | [Reference](reference.md)                                 | Configuration keys, API endpoints, environment variables, defaults |
 | [FAQ](faq.md)                                             | Privacy model, Plex requirements, Kometa coexistence, uninstalling |
+| [Plex how-to](plex-how-to.md)                             | What Plex itself can and can't do, and the manual methods          |
 | [Per-user Plex collections](plex-per-user-collections.md) | The label + share-filter mechanism everything above is built on    |
 
 **The short version:** run the container, log in with Plex, pick your users, and every night each
