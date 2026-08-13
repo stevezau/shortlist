@@ -10,7 +10,8 @@ from __future__ import annotations
 import hashlib
 import time
 import zlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import date
 from functools import cached_property
@@ -841,6 +842,47 @@ def _add_step_tokens(report: UserRunReport, step: str, n: int) -> None:
     """Accumulate ``n`` AI tokens under a WHERE-it-went bucket on the user's report (no-op for 0)."""
     if n:
         report.llm_tokens_by_step[step] = report.llm_tokens_by_step.get(step, 0) + n
+
+
+def _blank_row_cost() -> dict[str, float]:
+    return {"duration_s": 0.0, "blocked_s": 0.0}
+
+
+@contextmanager
+def _row_timer(report: UserRunReport, slug: str) -> Iterator[None]:
+    """Time one row's own work, charging any write-lock wait inside it to that row.
+
+    Stamps on EVERY exit. The delivery loop `break`s both on a cancel and on a row whose write was
+    stopped, and an interrupted row still cost the time it spent — leaving it unstamped would make
+    it indistinguishable from a row that was never recorded at all.
+    """
+    entry = report.row_timing.setdefault(slug, _blank_row_cost())
+    report.lock_bucket = slug
+    started = time.monotonic()
+    try:
+        yield
+    finally:
+        entry["duration_s"] += round(time.monotonic() - started, 3)
+        report.lock_bucket = None
+
+
+@contextmanager
+def _timed_lock(ctx: EngineContext, report: UserRunReport) -> Iterator[None]:
+    """Take the run's write lock, charging the WAIT to the report's current row bucket.
+
+    At concurrency > 1 every Plex write is serialized, so a row's wall clock silently absorbs time
+    spent waiting on OTHER people's writes — time that is not this row's work, and that makes two
+    rows on a busy run incomparable. Recording it separately is what keeps the comparison honest.
+
+    The cursor lives on the REPORT, never on ``ctx``: ctx is shared by the whole user pool, so an
+    accumulator there would bill one person's wait to another person's row.
+    """
+    started = time.monotonic()
+    with ctx.write_lock:
+        bucket = report.lock_bucket
+        if bucket is not None:
+            report.row_timing.setdefault(bucket, _blank_row_cost())["blocked_s"] += round(time.monotonic() - started, 3)
+        yield
 
 
 def _record_gather(report: UserRunReport, stats: candidates_mod.GatherStats, *, pool_label: str | None = None) -> None:

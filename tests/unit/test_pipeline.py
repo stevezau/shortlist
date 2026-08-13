@@ -3,6 +3,7 @@ and the leak-safe ordering (deliver unpromoted → sync filters → promote last
 
 from __future__ import annotations
 
+import time
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from typing import ClassVar
@@ -12,11 +13,21 @@ import pytest
 
 import shortlist.engine.picker as picker_mod
 import shortlist.engine.pipeline as pipeline_mod
+from shortlist.engine import rows as rows_mod
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.tmdb import NullCache
 from shortlist.engine.context import EngineContext
 from shortlist.engine.delivery import render_row_name, resolve_row_template, row_marker, strip_marker
-from shortlist.engine.models import EngineConfig, MediaType, OwnedRow, Pick, RowOverride, RowSpec, UserType
+from shortlist.engine.models import (
+    EngineConfig,
+    MediaType,
+    OwnedRow,
+    Pick,
+    RowOverride,
+    RowSpec,
+    UserRunReport,
+    UserType,
+)
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
 
@@ -5022,3 +5033,36 @@ class TestCancelStopsWritingPromptly:
             "the delivery ledger loses the ratingKey and the next run builds a second collection "
             "beside the orphan"
         )
+
+
+class TestRowTiming:
+    def test_row_timer_records_duration_when_body_completes(self):
+        report = UserRunReport(username="alex", slug="alex")
+        with rows_mod._row_timer(report, "picked-for-you"):
+            time.sleep(0.01)
+        assert report.row_timing["picked-for-you"]["duration_s"] >= 0.01
+        assert report.row_timing["picked-for-you"]["blocked_s"] == 0.0
+        assert report.lock_bucket is None
+
+    def test_row_timer_records_duration_when_body_breaks_early(self):
+        """The delivery loop `break`s on cancel — an interrupted row still cost the time it spent."""
+        report = UserRunReport(username="alex", slug="alex")
+        for _ in range(1):
+            with rows_mod._row_timer(report, "because-you-watched"):
+                time.sleep(0.01)
+                break
+        assert report.row_timing["because-you-watched"]["duration_s"] >= 0.01
+
+    def test_row_timer_records_duration_when_body_raises(self):
+        report = UserRunReport(username="alex", slug="alex")
+        try:
+            with rows_mod._row_timer(report, "picked-for-you"):
+                # A sleep-free raise finishes in low-microsecond time, which `round(..., 3)` in
+                # `_row_timer` collapses to exactly 0.0 — this sleep keeps the assertion below
+                # meaningful instead of passing by rounding accident.
+                time.sleep(0.01)
+                raise RuntimeError("boom")
+        except RuntimeError:
+            pass
+        assert report.row_timing["picked-for-you"]["duration_s"] > 0
+        assert report.lock_bucket is None
