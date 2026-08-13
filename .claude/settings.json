@@ -20,8 +20,7 @@
     "deny": [
       "Read(.env)",
       "Read(.env.*)",
-      "Read(./config/**)",
-      "Read(CLAUDE.local.md)"
+      "Read(./config/**)"
     ]
   },
   "enabledPlugins": {
