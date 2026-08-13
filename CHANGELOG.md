@@ -4,9 +4,21 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.5.0] - 2026-08-13
 
 ### Added
+
+- **A row can be positioned after another Shortlist row.** Choosing where a row sits on the
+  Recommended shelf offered your own library's collections, but never your other Shortlist rows — so
+  "put Because you watched right after Picked for You", the obvious thing to want, could not be
+  asked for (issue #81). It can now, and it is chosen as a ROW rather than as a collection: a
+  per-person row is one Plex collection per person, so on a 46-account server the old picker would
+  have had to list 46 identical-looking entries, and picking any one of them would have placed the
+  row for that one account and nobody else. Rows are then placed in dependency order, so a row lands
+  only once the row it follows is itself in position. Pointing two rows at each other, or a row at
+  itself, is refused when you save it rather than silently doing nothing every night; and deleting a
+  row clears the placements that pointed at it, so the rows that followed it fall back to the
+  library default instead of never being placed again.
 
 - **Run one row, from the row.** Rebuilding a single row was already possible — it was behind a
   dialog on the Runs page that made you pick, from a list, the row you were already looking at.
@@ -128,6 +140,31 @@ All notable changes to this project are documented here. This project follows
   title out of a shared row entirely, rather than only stopping it being a search starting point.
 
 ### Fixed
+
+- **Cancel stops a run.** Pressing it could leave a run writing to Plex for minutes, and a run that
+  was only queued would not stop at all until the run ahead of it had finished — the code meant to
+  stop it could not run until the thing it was waiting for got out of the way. A queued run is now
+  finished on the spot, having done nothing. A running one stops at the next row boundary: every
+  person's writes queue on a single lock, so most of them are waiting inside delivery when you press
+  it, and each used to go on to write a whole row as its turn came. Measured on a 46-user server, a
+  cancel that took over five minutes now takes about one — the remainder being the person whose row
+  was already half-written, which is finished on purpose, and the privacy merge that hides
+  everything delivered so far. Cancelling mid-retry also no longer erases the record of a collection
+  that had already been written.
+
+- **The Runs page notices when a run ends.** It had no live updates at all, so a run that finished
+  while you watched kept its "Running" badge and a ticking timer until you navigated away and back —
+  which made a cancel that had worked indistinguishable from one that was ignored.
+
+- **A run that never ran says so.** Queue three runs, cancel them nine minutes later, and each
+  reported "9m 26s" of work none of them had done: the duration was measured from the moment the run
+  was asked for, so it was timing the queue. Runs now record when they actually started, and one
+  that never got that far reads "never ran" instead of billing you for the wait.
+
+- **The "How we picked" trace is reachable again.** It had gone with the People tab it lived in, so
+  a per-person trace could not be opened from anywhere in the app. It now sits in the person's own
+  panel, along with who they are, how long they took and what they cost — and shared rows keep their
+  own trace beside them.
 
 - **The watches-per-week chart tells you the numbers.** The count was on a tooltip attached to each
   bar, so on a quiet week the only place you could hover was a three-pixel sliver at the bottom of
