@@ -976,6 +976,31 @@ class TestCancellingAQueuedRunIsImmediate:
             queued = queued_at if queued_at.tzinfo else queued_at.replace(tzinfo=UTC)
             assert began >= queued, "it cannot have begun before it was asked for"
 
+    def test_the_abort_releases_the_job_queue_instead_of_parking_it_for_ever(self, sessions, tmp_path):
+        """The cancel Event must be dropped on the abort path too, or the job queue stops for good.
+
+        `is_running()` is `bool(self._cancels)`, and the job worker reads it to decide whether to
+        claim WRITER jobs. The early return that aborts a queued run sits before the try/finally that
+        drops the Event, so the entry leaked and `is_running()` stayed True for the life of the
+        process: `privacy.sync`, `user.disable`, `user.remove` and the roster syncs would never be
+        claimed again — silently, looking like a backlog rather than a fault, until a restart. On a
+        Watchtower host that means a departed user's `label!=` excludes are never pruned.
+        """
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        with sessions() as session:
+            run = Run(trigger="manual", status="queued", stats={})
+            session.add(run)
+            session.commit()
+            run_id = run.id
+        service._cancels[run_id] = threading.Event()
+        service.cancel_run(run_id)  # marks it aborted; the task is still queued for the lock
+
+        # It finally gets the lock and takes the abort path.
+        asyncio.run(service._run_locked(run_id, False, None, None, asyncio.new_event_loop()))
+
+        assert service._cancels == {}, "the cancel Event must not outlive the run"
+        assert service.is_running() is False, "a finished run must not hold the job queue shut"
+
     def test_a_running_run_is_still_only_signalled(self, sessions, tmp_path):
         """The cooperative path is unchanged: a running run is mid-write, so it is asked to stop
         rather than declared stopped — finishing the row in hand is what keeps Plex consistent."""

@@ -154,16 +154,21 @@ function RowCard({
   liveLog,
   defaultOpen,
   idBySlug,
+  focusUser,
 }: {
   group: RunRowGroup;
   run: RunDetail;
   liveLog?: RunLogEntry[];
   defaultOpen: boolean;
+  focusUser?: string | null;
   /** person slug -> user id, so their panel can link to their own trace. */
   idBySlug: Map<string, number>;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
-  const [picked, setPicked] = useState("");
+  const inThisRow = focusUser
+    ? group.people.some((person) => person.result.slug === focusUser)
+    : false;
+  const [open, setOpen] = useState(defaultOpen || inThisRow);
+  const [picked, setPicked] = useState(inThisRow ? (focusUser ?? "") : "");
   const shared = group.shared;
   const libraries = libraryLabel(group);
   // Nothing has reported for this row yet — a queued run, or one still on an earlier row. Saying
@@ -300,11 +305,15 @@ export function RunRowsTab({
   titles,
   idBySlug,
   liveLog,
+  focusUser,
 }: {
   run: RunDetail;
   titles: Record<string, string>;
   idBySlug: Map<string, number>;
   liveLog?: RunLogEntry[];
+  /** Person slug from `?user=` — their row opens with them selected, so a link from their own page
+   *  lands on their result rather than the top of a run with forty others in it. */
+  focusUser?: string | null;
 }) {
   const { groups, notInRun } = groupRunByRow(run, titles, idBySlug);
   const [showSkipped, setShowSkipped] = useState(false);
@@ -345,6 +354,7 @@ export function RunRowsTab({
           run={run}
           liveLog={liveLog}
           idBySlug={idBySlug}
+          focusUser={focusUser}
           // One row is the whole story of a scoped run — open it on arrival rather than making the
           // operator click to see the only thing that happened.
           defaultOpen={groups.length === 1}

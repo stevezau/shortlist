@@ -76,8 +76,9 @@ function RunFailureBanner({ run }: { run: RunDetail }) {
  *
  *  `rows` is the default and the primary axis, because a ROW is what a run builds. People-first left
  *  a SHARED row — which belongs to nobody — with nowhere to appear at all, so a run whose only work
- *  was a shared row rendered as a wall of "skipped" with its actual output off screen. People stays
- *  as a secondary tab: it is still the right shape for reading one person's picks and errors. */
+ *  was a shared row rendered as a wall of "skipped" with its actual output off screen. There is no
+ *  People tab any more: its person list and per-person panel were the right shape and are kept, but
+ *  inside the row they belong to rather than as a second way of slicing the same run. */
 type RunTab = "rows" | "log";
 
 export function RunDetailPage() {
@@ -96,6 +97,10 @@ export function RunDetailPage() {
   // from a person's Runs tab all land exactly where they said they would.
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = (searchParams.get("tab") as RunTab | null) ?? "rows";
+  // Deep link from a person's Recent runs. It survived the People tab's removal as a dead parameter:
+  // the link was still built, nothing read it, and clicking "Run #NN" from someone's page landed on
+  // the top of a run with forty others in it.
+  const focusUser = searchParams.get("user");
   const setTab = (next: RunTab) => {
     const params = new URLSearchParams(searchParams);
     if (next === "rows") params.delete("tab");
@@ -161,13 +166,6 @@ export function RunDetailPage() {
       }
     },
   });
-
-  // Which user's rows are on screen. Default to the first FAILED user (what you opened the page to
-  // see), else the first user; keep the current pick as long as they're still in the run.
-  // Derived, not synced by an effect: hold only what the user explicitly clicked, and fall back
-  // whenever that person isn't in the run (first load, or a refetch that dropped them). The effect
-  // version had to list selectedSlug in its own deps to re-check itself, which is the shape that
-  // makes cascading renders easy to introduce.
 
   // Computed once per render rather than called twice (header line + phase text below it).
   const phase = currentPhase(liveLog);
@@ -321,6 +319,7 @@ export function RunDetailPage() {
                   titles={rowTitles}
                   idBySlug={idBySlug}
                   liveLog={liveLog}
+                  focusUser={focusUser}
                 />
               )}
 

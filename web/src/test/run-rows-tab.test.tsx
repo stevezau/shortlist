@@ -92,13 +92,17 @@ function run(overrides: Partial<RunDetail> = {}): RunDetail {
   } as unknown as RunDetail;
 }
 
-function renderTab(detail: RunDetail = run()) {
+function renderTab(
+  detail: RunDetail = run(),
+  opts: { focusUser?: string } = {},
+) {
   return render(
     <MemoryRouter>
       <RunRowsTab
         run={detail}
         titles={CONFIG_NAMES}
         idBySlug={new Map([["sarah", 1]])}
+        focusUser={opts.focusUser}
       />
     </MemoryRouter>,
   );
@@ -126,6 +130,16 @@ describe("RunRowsTab", () => {
     expect(
       screen.queryByText("✨ TV Shows Picked for You"),
     ).not.toBeInTheDocument();
+  });
+
+  it("opens the row a deep-linked person is in, with them selected", () => {
+    // `?user=` is built by every "Run #NN" link on a person's page. It outlived the People tab that
+    // read it: the link was still constructed, nothing consumed it, and clicking it landed you on
+    // the top of a run with forty other people in it.
+    renderTab(run(), { focusUser: "sarah" });
+
+    expect(screen.getAllByText("Sarah").length).toBeGreaterThan(1);
+    expect(screen.getByText("Sicario")).toBeInTheDocument();
   });
 
   it("opens a single-row run and shows the picks, not just the names", () => {

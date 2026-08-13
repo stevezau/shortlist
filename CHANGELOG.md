@@ -49,8 +49,10 @@ All notable changes to this project are documented here. This project follows
 
   A row is named once, by its own name, with the libraries it delivered to beside it — a row that
   builds both Movies and TV Shows reads "✨ Picked for You · Movies · TV Shows" instead of taking one
-  library's title and hiding the other. The People tab is still there for reading everything one
-  person got across every row.
+  library's title and hiding the other. The People tab is gone: everything it did — the searchable,
+  status-grouped person list and that person's own results, trace included — now sits inside the row
+  they belong to, so you read a run one row at a time rather than choosing between two ways of
+  slicing it.
 
 - **Shared rows have a trace.** The same view a per-person row has always had, minus the per-person
   watch history a shared row doesn't use — so "why did it pick that" is answerable for a shared row
