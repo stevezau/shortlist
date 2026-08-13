@@ -6,6 +6,17 @@ export const GITHUB_REPO = "https://github.com/stevezau/shortlist";
  *  repo's FUNDING.yml — so the app never has to know or update the list. */
 export const SPONSOR_URL = "https://github.com/sponsors/stevezau";
 
+/** Where "Ask a question" goes: the Q&A category, NOT `discussions/new`.
+ *
+ *  The new-discussion form does not search anything, so linking it straight would ask every person
+ *  to type a question that may already have an accepted answer two rows down. The category page
+ *  lists those and carries its own "New discussion" button, which costs one click and saves a
+ *  duplicate. Q&A specifically because it is the one answerable category — a question posted to
+ *  General can never be marked answered, so the next person searching finds a thread with no
+ *  visible resolution. */
+export const DISCUSSIONS_URL =
+  "https://github.com/stevezau/shortlist/discussions/categories/q-a";
+
 /** A "new issue" URL with the bug body pre-filled — the build and browser are the two facts every
  *  report needs and users never think to include, so we add them for free. Everything else is a
  *  prompt they fill in. GitHub reads `body`/`labels` from the query string.

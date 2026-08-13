@@ -25,6 +25,7 @@ import {
   ChevronDown,
   ClipboardCopy,
   LifeBuoy,
+  MessagesSquare,
   RefreshCw,
   Search,
   X,
@@ -36,7 +37,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, apiErrorMessage } from "@/lib/api";
 import { useVersion } from "@/lib/queries";
-import { newBugReportUrl } from "@/lib/support";
+import { DISCUSSIONS_URL, newBugReportUrl } from "@/lib/support";
 import { useCopy } from "@/lib/use-copy";
 import type { SupportHealth, SupportStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -1444,15 +1445,29 @@ function ReportSection({
 
   return (
     <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4">
-      <h2 className="text-sm font-semibold">Still stuck? Report it</h2>
+      <h2 className="text-sm font-semibold">Still stuck? Ask, or report it</h2>
+      {/* Two doors, and the sentence has to sort people into the right one BEFORE they click.
+          Everyone who reaches the bottom of this page is stuck, but only some of them are looking at
+          a bug — the rest are looking at Shortlist working exactly as designed and not understanding
+          why. Offering only "Report a bug" files those as bugs, because it is the only button there.
+          The distinction is stated as behaviour ("wrong" vs "not sure"), not as a category name,
+          since nobody classifies their own problem correctly on the way in. */}
       <p className="text-sm text-muted-foreground">
+        Not sure whether it's broken? Ask — questions get answered and stay
+        searchable for whoever hits the same thing next.
         {diagnosticsAvailable
-          ? "Open an issue, then attach the report below so whoever picks it up already has the answers to the first three questions they'd ask."
-          : "Open an issue. To attach the diagnostics with it, switch the checks on above first — the report is built by the same read-only tools."}
+          ? " If something is genuinely wrong, open an issue and attach the report below, so whoever picks it up already has the answers to the first three questions they'd ask."
+          : " If something is genuinely wrong, open an issue. To attach the diagnostics with it, switch the checks on above first — the report is built by the same read-only tools."}
       </p>
 
       <div className="flex flex-wrap gap-2">
         <Button asChild>
+          <a href={DISCUSSIONS_URL} target="_blank" rel="noopener noreferrer">
+            <MessagesSquare className="mr-2 h-4 w-4" aria-hidden="true" />
+            Ask a question
+          </a>
+        </Button>
+        <Button asChild variant="outline">
           <a
             href={newBugReportUrl(version.data)}
             target="_blank"

@@ -344,13 +344,17 @@ describe("IssuePage — sending a long report", () => {
     });
     await userEvent.click(button);
 
-    expect(await screen.findByRole("button", { name: /Preparing/i })).toBeTruthy();
+    expect(
+      await screen.findByRole("button", { name: /Preparing/i }),
+    ).toBeTruthy();
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining("/api/support/report.zip"),
       expect.objectContaining({ credentials: "same-origin" }),
     );
     // String body: a Blob body is rejected by CI's Node ("object.stream is not a function").
-    release(new Response("zip", { headers: { "content-type": "application/zip" } }));
+    release(
+      new Response("zip", { headers: { "content-type": "application/zip" } }),
+    );
     vi.unstubAllGlobals();
   });
 });
@@ -426,8 +430,28 @@ describe("IssuePage — filing the report", () => {
       screen.getByRole("button", { name: /copy the summary/i }),
     ).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: /download everything \(with logs\)/i }),
+      screen.getByRole("button", {
+        name: /download everything \(with logs\)/i,
+      }),
     ).toBeTruthy();
+  });
+
+  it("offers a place to ask, so a question is not filed as a bug", async () => {
+    // Everyone who reaches the bottom of this page is stuck; only some of them are looking at a bug.
+    // With "Report a bug" as the only button, the rest file one anyway — it is the only door there.
+    // Q&A specifically: it is the one answerable category, so an answer marks the thread resolved
+    // for the next person searching, which General cannot do.
+    renderPage();
+
+    const ask = await screen.findByRole("link", { name: /ask a question/i });
+    expect(ask.getAttribute("href")).toBe(
+      "https://github.com/stevezau/shortlist/discussions/categories/q-a",
+    );
+    // NOT the blank new-discussion form: it searches nothing, so it invites a duplicate of a
+    // question that already has an accepted answer.
+    expect(ask.getAttribute("href")).not.toContain("discussions/new");
+    // And the copy has to sort people BEFORE they click, or the second button is decoration.
+    expect(screen.getByText(/not sure whether it's broken/i)).toBeTruthy();
   });
 
   it("says what the report masks, what it keeps, and that masking is not a guarantee", async () => {
