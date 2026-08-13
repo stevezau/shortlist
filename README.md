@@ -5,9 +5,12 @@
 > Self-hosted, one Docker container, no AI key required.
 
 [![CI](https://github.com/stevezau/shortlist/actions/workflows/ci.yml/badge.svg)](https://github.com/stevezau/shortlist/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/codecov/c/github/stevezau/shortlist)](https://codecov.io/gh/stevezau/shortlist)
 [![Latest release](https://img.shields.io/github/v/release/stevezau/shortlist?include_prereleases&label=release)](https://github.com/stevezau/shortlist/releases)
 [![Docker pulls](https://img.shields.io/docker/pulls/stevezzau/shortlist)](https://hub.docker.com/r/stevezzau/shortlist)
 [![Image size](https://img.shields.io/docker/image-size/stevezzau/shortlist/latest)](https://hub.docker.com/r/stevezzau/shortlist)
+[![Stars](https://img.shields.io/github/stars/stevezau/shortlist)](https://github.com/stevezau/shortlist/stargazers)
+[![Open issues](https://img.shields.io/github/issues/stevezau/shortlist)](https://github.com/stevezau/shortlist/issues)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![AI-Assisted](https://img.shields.io/badge/AI-assisted%20development-8A2BE2)
 
