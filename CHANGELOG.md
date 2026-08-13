@@ -13,6 +13,13 @@ All notable changes to this project are documented here. This project follows
   rather than among the navigation, and nothing floats over the page — people self-host to get away
   from being sold to, and anyone inclined to give goes looking rather than needing to be asked twice.
 
+- **Somewhere to ask, rather than only somewhere to report.** GitHub Discussions is open, and Have
+  an issue? now offers **Ask a question** beside **Report a bug**. Not everyone who gets stuck is
+  looking at a defect — plenty are looking at Shortlist working exactly as designed and not
+  understanding why, and with one button on the page those get filed as bugs. Questions go to the
+  Q&A category, where an answer can be marked as the answer, so the next person searching the same
+  problem finds one instead of an abandoned thread.
+
 - **The "something else is reordering your shelf" alert now tells you how to stop it.** It used to
   say to exclude `shortlist_*`, which is a wildcard no tool's exclusion list accepts. Agregarr has
   since gained an **Exclude from Ordering (Plex Label)** field, and it matches a label exactly or as a
