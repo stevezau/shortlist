@@ -330,13 +330,20 @@ export function rowSummary(group: RunRowGroup): string {
     if (added || removed) parts.push(`+${added} −${removed}`);
     return parts.join(" · ");
   }
-  const c = rowCounts(group);
-  // Mid-run the row is still working through people, and the count of who is LEFT is the thing you
-  // are watching. Once nobody is pending this collapses back to the finished summary.
+  // Mid-run the row is still working through PEOPLE, and who is LEFT is the thing you are watching.
+  // Every per-person row shows the same count on purpose: a person's rows are built in one pass and
+  // all land together, so there is no per-row progress to report. Saying "people" stops that reading
+  // as two rows racing each other.
+  //
+  // `group.people.length` rather than `rowCounts(group).people` (same number for a real row — see
+  // `rowCounts`) because rowCounts also reads each person's `.result.status`/`.decision`, which a
+  // pending row that has not finished yet does not need and should not require just to say how many
+  // are left.
   if (group.pending > 0) {
-    const total = c.people;
-    return `building — ${total - group.pending} of ${total} done`;
+    const total = group.people.length;
+    return `building — ${total - group.pending} of ${total} people done`;
   }
+  const c = rowCounts(group);
   const parts = [`${c.built} of ${c.people} built`];
   if (c.failed) parts.push(`${c.failed} failed`);
   if (c.muted) parts.push(`${c.muted} muted`);

@@ -328,6 +328,17 @@ describe("per-row cost", () => {
   });
 });
 
+describe("row progress wording", () => {
+  it("counts PEOPLE in the building line, since a person's rows all land together", () => {
+    const group = {
+      kind: "per_person",
+      pending: 42,
+      people: new Array(46).fill(null).map(() => ({})),
+    } as never;
+    expect(rowSummary(group)).toBe("building — 4 of 46 people done");
+  });
+});
+
 describe("a run that is still going", () => {
   it("draws every row the run said it would build, before anyone has finished", () => {
     // The blocker this fixes: scope only exists in `rows_considered`, which lands per user AS EACH
@@ -353,7 +364,7 @@ describe("a run that is still going", () => {
     ]);
     // Nobody done yet, so all three are still to come.
     expect(groups[0]!.pending).toBe(3);
-    expect(rowSummary(groups[0]!)).toBe("building — 0 of 3 done");
+    expect(rowSummary(groups[0]!)).toBe("building — 0 of 3 people done");
   });
 
   it("counts down as people finish, then reports the finished summary", () => {
@@ -370,7 +381,7 @@ describe("a run that is still going", () => {
       CONFIG_NAMES,
     );
 
-    expect(rowSummary(groups[0]!)).toBe("building — 1 of 3 done");
+    expect(rowSummary(groups[0]!)).toBe("building — 1 of 3 people done");
   });
 });
 
@@ -402,7 +413,7 @@ describe("people are visible before they finish", () => {
     expect(groups[0]!.people.every((p) => p.result.status === "pending")).toBe(
       true,
     );
-    expect(rowSummary(groups[0]!)).toBe("building — 0 of 2 done");
+    expect(rowSummary(groups[0]!)).toBe("building — 0 of 2 people done");
   });
 
   it("replaces a person's pending entry with their real result as it lands", () => {
@@ -424,6 +435,6 @@ describe("people are visible before they finish", () => {
 
     // Alex reported; Bea is still waiting. Nobody appears twice.
     expect(groups[0]!.people).toHaveLength(2);
-    expect(rowSummary(groups[0]!)).toBe("building — 1 of 2 done");
+    expect(rowSummary(groups[0]!)).toBe("building — 1 of 2 people done");
   });
 });
