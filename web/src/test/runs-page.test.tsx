@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -30,6 +30,31 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
+/** An EventSource whose listeners a test can fire, so a live `run.finished` can be simulated. */
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  listeners: Record<string, ((event: MessageEvent<string>) => void)[]> = {};
+  onopen: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  constructor() {
+    FakeEventSource.instances.push(this);
+  }
+  addEventListener(
+    type: string,
+    handler: (event: MessageEvent<string>) => void,
+  ) {
+    (this.listeners[type] ??= []).push(handler);
+  }
+  removeEventListener() {}
+  close() {}
+  emit(type: string, data: unknown) {
+    for (const handler of this.listeners[type] ?? []) {
+      handler({ data: JSON.stringify(data) } as MessageEvent<string>);
+    }
+  }
+}
+vi.stubGlobal("EventSource", FakeEventSource);
+
 const START_FAILURE =
   "Service temporarily unavailable — try again in a moment.";
 
@@ -50,6 +75,37 @@ describe("RunsPage", () => {
   beforeEach(() => {
     getRuns.mockReset();
     startRun.mockReset();
+  });
+
+  it("clears a finished run from the list without a manual refresh", async () => {
+    // The list had no live updates at all: no SSE, no polling. A run that finished left its row
+    // reading "Running" with a ticking timer for as long as the page stayed open — so a cancel that
+    // HAD worked looked like one that was ignored, which is exactly how it was reported (SFLIX,
+    // 2026-08-13: the log said the run completed at 2m51s while this page still said Running at
+    // 3m20s).
+    const running = {
+      id: 2,
+      trigger: "manual",
+      status: "running",
+      started_at: "2026-07-15T04:18:00Z",
+      finished_at: null,
+      dry_run: false,
+      stats: {},
+    };
+    getRuns.mockResolvedValue([running]);
+    renderPage();
+    expect(await screen.findByText(/Running/i)).toBeTruthy();
+
+    getRuns.mockResolvedValue([
+      { ...running, status: "aborted", finished_at: "2026-07-15T04:21:00Z" },
+    ]);
+    FakeEventSource.instances.at(-1)?.emit("run.finished", {
+      run_id: 2,
+      status: "aborted",
+    });
+
+    await waitFor(() => expect(screen.getByText(/aborted/i)).toBeTruthy());
+    expect(screen.queryByText(/^Running$/)).toBeNull();
   });
 
   it("surfaces the server's reason when a run can't start", async () => {

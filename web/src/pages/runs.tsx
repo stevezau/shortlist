@@ -8,6 +8,7 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router";
 
 import { MutationAlert } from "@/components/mutation-alert";
@@ -45,6 +46,7 @@ import {
 } from "@/lib/format";
 import {
   RUNS_PAGE,
+  queryKeys,
   useCancelRun,
   useClearRuns,
   useCollections,
@@ -52,6 +54,7 @@ import {
   useRunsSummary,
   useStartRun,
 } from "@/lib/queries";
+import { useSSE } from "@/lib/sse";
 import type { Run, RunsSummary } from "@/lib/types";
 import { useLiveClock } from "@/lib/use-live-clock";
 
@@ -253,6 +256,7 @@ function RunsStats({ summary }: { summary: RunsSummary }) {
 
 export function RunsPage() {
   // A row links here as /runs?row=<slug> to show only the runs that built it.
+  const queryClient = useQueryClient();
   const [params] = useSearchParams();
   const rowSlug = params.get("row") ?? undefined;
   const runsQuery = useRunsPaged(rowSlug);
@@ -262,6 +266,15 @@ export function RunsPage() {
   const summary = useRunsSummary();
   const collections = useCollections();
   const startRun = useStartRun();
+  // Live updates. Without this the list is a snapshot: a run that finishes leaves its row reading
+  // "Running" with a ticking timer for as long as the page stays open, because nothing refetches. On
+  // a real server that made a cancel that HAD worked look like one that was ignored — the operator
+  // watches this page, and this page never changed its mind (SFLIX, 2026-08-13).
+  useSSE({
+    onRunFinished: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.runs });
+    },
+  });
   const clearRuns = useClearRuns();
   const [clearOpen, setClearOpen] = useState(false);
   const rowName =
