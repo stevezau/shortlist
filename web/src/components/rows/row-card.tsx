@@ -4,29 +4,19 @@ import {
   UserCheck,
   Users as UsersIcon,
 } from "lucide-react";
-import { useState } from "react";
 import { Link } from "react-router";
 
-import { MutationAlert } from "@/components/mutation-alert";
 import { RowDestructiveActions } from "@/components/rows/row-destructive-actions";
 import { RowRunAction } from "@/components/rows/row-run-action";
+import { RowEnableToggle } from "@/components/rows/row-enable-toggle";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
-import { audienceSummary, rowOverrides, toInput } from "@/lib/collections";
+import { audienceSummary, rowOverrides } from "@/lib/collections";
 import { DEFAULT_ROW_SLUG } from "@/lib/constants";
 import { settingString } from "@/lib/format";
-import { useLibraries, useSaveCollection, useSettings } from "@/lib/queries";
+import { useLibraries, useSettings } from "@/lib/queries";
 import type { Collection, User } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -45,20 +35,12 @@ export function RowCard({
   users: User[];
   onEdit: () => void;
 }) {
-  const save = useSaveCollection();
   const settings = useSettings();
   const libraries = useLibraries();
   const isDefault = collection.slug === DEFAULT_ROW_SLUG;
   // Turning a row OFF takes its collections off everyone's Plex on the next run
   // (`rows._remove_muted_and_retired`), which a toggle gives no hint of. Turning it back ON is
   // harmless and stays a single click.
-  const [confirmDisable, setConfirmDisable] = useState(false);
-  const setEnabled = (enabled: boolean) =>
-    save.mutate({
-      id: collection.id,
-      body: { ...toInput(collection), enabled },
-    });
-
   // null until the library list actually arrives — a half-loaded card must not label a row's
   // libraries with raw Plex section keys, which mean nothing to the owner.
   const overrides = rowOverrides(
@@ -140,13 +122,7 @@ export function RowCard({
             500px in one line, so on a phone they ran off the screen and Delete was unreachable.
             Wrapping costs a row of height on narrow screens and changes nothing above it. */}
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <Switch
-            checked={collection.enabled}
-            onCheckedChange={(enabled) =>
-              enabled ? setEnabled(true) : setConfirmDisable(true)
-            }
-            aria-label={`Enable ${collection.name}`}
-          />
+          <RowEnableToggle collection={collection} />
           {/* Rebuild, then the history of rebuilding — "Run" beside "Runs" in that order, because
               the answer to "did that work?" is the screen the Run button already sends you to. */}
           <RowRunAction collection={collection} />
@@ -167,53 +143,8 @@ export function RowCard({
           </Button>
           <RowDestructiveActions collection={collection} />
         </div>
-        {/* The Switch mirrors the saved row, so a rejected save just snaps it back — silently
-            reverting is exactly what a click that never landed looks like. */}
-        {save.isError && (
-          <MutationAlert
-            className="w-full"
-            error={save.error}
-            lead={
-              collection.enabled
-                ? "This row is still on."
-                : "This row is still off."
-            }
-            fallback="Couldn’t change this row. Try again."
-            onRetry={() => {
-              const last = save.variables;
-              if (last) save.mutate(last);
-            }}
-          />
-        )}
       </CardContent>
 
-      {/* A confirmation, because the toggle's consequence is invisible and deferred: the row stays
-          on Plex until the next run, then disappears from everyone who had it. */}
-      <Dialog open={confirmDisable} onOpenChange={setConfirmDisable}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Turn off &ldquo;{collection.name}&rdquo;?</DialogTitle>
-            <DialogDescription>
-              The next run takes this row off Plex for everyone who has it. Its
-              settings stay here, so turning it back on rebuilds it. The titles
-              themselves stay in your library.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmDisable(false)}>
-              Keep it on
-            </Button>
-            <Button
-              onClick={() => {
-                setEnabled(false);
-                setConfirmDisable(false);
-              }}
-            >
-              Turn it off
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </Card>
   );
 }

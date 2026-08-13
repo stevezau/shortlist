@@ -134,6 +134,32 @@ describe("RowEditor — acting on the row you're editing", () => {
     expect(startRun).toHaveBeenCalledWith({ collection_ids: [1] });
   });
 
+  it("turns the row off from here, instead of sending you to the Rows page for it", async () => {
+    // The editor's own copy used to say "use the toggle on the Rows page" — a page change to do the
+    // one reversible thing to the row you already have open.
+    renderEditor(row());
+
+    const toggle = await screen.findByRole("switch", {
+      name: /Enable Hidden Gems/i,
+    });
+    await userEvent.click(toggle);
+
+    // Turning OFF confirms first: the consequence is invisible and deferred until the next run.
+    expect(
+      await screen.findByRole("heading", { name: /Turn off/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("points at removing and deleting rather than leaving them below the fold", async () => {
+    // They stay fenced off at the bottom — they reach into other people's Plex and Cancel does not
+    // undo them — but fenced off had become invisible: nothing on the first screen said they exist.
+    renderEditor(row());
+
+    expect(
+      await screen.findByRole("button", { name: /Remove or delete/i }),
+    ).toBeInTheDocument();
+  });
+
   it("warns that Run rebuilds the SAVED row once the form has been edited", async () => {
     // Run is scoped to the stored row, so pressing it mid-edit silently rebuilds without your
     // changes — and nothing on the button says so.

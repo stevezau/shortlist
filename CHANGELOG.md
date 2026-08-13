@@ -54,6 +54,14 @@ All notable changes to this project are documented here. This project follows
   they belong to, so you read a run one row at a time rather than choosing between two ways of
   slicing it.
 
+- **A row's on/off switch is on its own editing page.** It lived only on the Rows card, and the
+  editor sent you back there for it — a page change to do the one reversible thing to the row you
+  already had open. It now sits beside Run now, with the same confirmation: turning a row off takes
+  it off Plex for everyone who has it at the next run, and turning it back on rebuilds it. Removing
+  and deleting stay at the bottom of the page, away from the rebuild controls, because they reach
+  into other people's Plex and Cancel doesn't undo them — but the header now says they are there and
+  takes you to them, which is the part that was missing.
+
 - **Shared rows have a trace.** The same view a per-person row has always had, minus the per-person
   watch history a shared row doesn't use — so "why did it pick that" is answerable for a shared row
   for the first time.
