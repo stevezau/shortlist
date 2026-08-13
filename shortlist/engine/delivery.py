@@ -548,7 +548,10 @@ def remove_row_collections(
     refuses anything without a ``shortlist_`` label, so a foreign (Kometa) collection is never touched.
     Returns the display titles removed (or, in a dry run, that would be).
     """
-    if not label.startswith(f"{LABEL_PREFIX}_"):
+    if not label.lower().startswith(f"{LABEL_PREFIX}_"):
+        # Lowercased because `find_owned_collections` matches case-insensitively and `User.label`
+        # stores the Plex TITLE-CASED form ("Shortlist_sarah") — a caller passing that would
+        # otherwise get a silent empty list back and leave the collections on Plex for ever.
         # This function DELETES, and `find_owned_collections` matches a tag exactly — so the bare
         # `shortlist` label every row now carries would select every Shortlist collection on the
         # server and remove the lot. No caller builds that label today; this is the guard that keeps

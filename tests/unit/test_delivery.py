@@ -1522,9 +1522,18 @@ class TestTheConstantLabel:
         its failure must not reach that delete, or a cosmetic label would start destroying rows.
         """
         plex = self._plex(movies)
-        plex.stored_label.side_effect = lambda _c, label: (
-            (_ for _ in ()).throw(RuntimeError("PMS said no")) if label == "shortlist" else "Shortlist_sarah"
-        )
+        # Keep the honest labelling for the OWNER label and fail only the constant one. Replacing
+        # `stored_label` wholesale left the owner label off the collection, so `_apply_shortlist_label`
+        # tripped its own guard and returned before ever writing — the swallow this test exists for
+        # was never reached, and deleting it would not have failed anything.
+        labelling = plex.stored_label.side_effect
+
+        def boom(collection, label):
+            if label == LABEL_PREFIX:
+                raise RuntimeError("PMS said no")
+            return labelling(collection, label)
+
+        plex.stored_label.side_effect = boom
 
         diff, stored = deliver_rows(plex, make_profile(), picks(), engine_config)
 
@@ -1617,20 +1626,28 @@ class TestTheOwnerPrefixIsLoadBearing:
         assert "" not in owned, "an empty slug here becomes `label!=Shortlist` on every share filter"
         assert owned["sarah"].label == "Shortlist_sarah"
 
-    def test_sweep_derives_a_real_owner_slug_not_an_empty_one(self):
+    def test_sweep_reads_the_owner_from_the_real_label_not_the_constant_one(self, engine_config, movies):
         """`sweep_broken_rows` is the OTHER path that turns a label into an owner and then DELETES.
 
-        An empty slug belongs to nobody, which is exactly what that path treats as removable.
+        Driven through the real function: a row carrying the constant label FIRST must still be
+        attributed to sarah. An empty slug here belongs to nobody, which is what that path removes.
         """
-        from shortlist.engine.models import LABEL_PREFIX
+        from shortlist.engine.delivery import sweep_broken_rows
 
-        prefix = f"{LABEL_PREFIX}_".lower()
-        labels = ["Shortlist", "Shortlist_sarah"]
+        collection = MagicMock()
+        collection.title = "✨ Movies Picked for You" + row_marker(100)
+        collection.ratingKey = 9001
+        collection.labels = [SimpleNamespace(tag="Shortlist"), SimpleNamespace(tag="Shortlist_sarah")]
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies]
+        plex.owned_collections.return_value = {}
+        plex._section_collections = lambda _s: [collection]
+        plex.matches_section.return_value = True
 
-        owner = next((t for t in labels if t.lower().startswith(prefix)), None)
+        swept = sweep_broken_rows(plex, engine_config, dry_run=True)
 
-        assert owner == "Shortlist_sarah"
-        assert owner.lower()[len(prefix) :] == "sarah", "an empty slug here is a deletion candidate"
+        assert "" not in swept, "an empty owner slug is a deletion candidate and must never appear"
+        assert set(swept) <= {"sarah"}, "a row is attributed to its OWNER, never to the constant label"
 
 
 class TestTheConstantLabelCannotSelectEveryRow:
@@ -1651,6 +1668,12 @@ class TestTheConstantLabelCannotSelectEveryRow:
         assert removed == []
         plex.find_owned_collections.assert_not_called()
         plex.delete_owned_collection.assert_not_called()
+
+        # But the TITLE-CASED form a caller reading `User.label` would pass must still work — a real
+        # removal silently doing nothing leaves the collections on Plex for ever.
+        plex.find_owned_collections.return_value = []
+        remove_row_collections(plex, engine_config, label="Shortlist_sarah", displays=None, dry_run=True)
+        plex.find_owned_collections.assert_called()
 
     def test_rename_and_poster_reset_refuse_it_too(self, engine_config: EngineConfig, movies):
         from shortlist.engine.delivery import rename_row_collections, reset_row_posters
