@@ -1106,7 +1106,66 @@ def _promote_one(ctx: EngineContext, collection, spec: RowSpec | None, user_type
     )
 
 
-def _apply_order(ctx: EngineContext, report: RunReport, section, anchor, only_keys: set[int] | None) -> None:
+def _anchor_group_order(
+    groups: dict[tuple, set[int]],
+    group_of_slug: dict[str, tuple],
+    section_title: str,
+) -> list[tuple]:
+    """The order anchor-groups must be applied in, with any that cannot be resolved left out.
+
+    A group anchored to one of OUR rows can only be placed once that row is where it belongs, so this
+    is a topological sort over "group G follows the group holding row R". Groups anchored to a foreign
+    collection or to the top depend on nothing and keep their input order — which is the owner's row
+    order, so a shelf stays in the order the Rows page shows.
+
+    Two things are dropped rather than guessed at: a CYCLE ("A after B, B after A", including a row
+    naming itself), and anything downstream of one. Placing half a cycle would produce a shelf order
+    that changes every run depending on which half won, and a co-managing tool reordering the same
+    shelf makes that indistinguishable from losing the race. Not moving them is stable and says so.
+    """
+    ordered: list[tuple] = []
+    state: dict[tuple, str] = {}
+
+    def visit(group: tuple) -> bool:
+        seen = state.get(group)
+        if seen == "done":
+            return True
+        if seen == "visiting":
+            return False  # closes a cycle
+        if seen == "broken":
+            return False
+        state[group] = "visiting"
+        anchor_row = group[2]
+        dependency = group_of_slug.get(anchor_row) if anchor_row else None
+        # A row we do NOT move is a fine anchor and imposes no ordering — it is already wherever it
+        # is. Only a sibling this run also places creates a dependency.
+        if dependency is not None and (dependency == group or not visit(dependency)):
+            state[group] = "broken"
+            logger.warning(
+                "hub order: row {!r} is part of a placement cycle in {} — leaving those rows where "
+                "they are rather than picking a winner",
+                anchor_row,
+                section_title,
+            )
+            return False
+        state[group] = "done"
+        ordered.append(group)
+        return True
+
+    for group in groups:
+        visit(group)
+    return ordered
+
+
+def _apply_order(
+    ctx: EngineContext,
+    report: RunReport,
+    section,
+    anchor,
+    only_keys: set[int] | None,
+    anchor_keys: set[int] | None = None,
+    anchor_label: str = "",
+) -> None:
     """One best-effort, gated reorder call + its audit. A shelf reorder is cosmetic and privacy-neutral
     (hubs are already promoted and browse-hidden; only position changes), so a failure never fails the
     run — next run re-applies. Only our hubs move; the anchor is read-only (Kometa coexistence)."""
@@ -1116,6 +1175,8 @@ def _apply_order(ctx: EngineContext, report: RunReport, section, anchor, only_ke
                 section,
                 label_prefix=LABEL_PREFIX,
                 anchor_title=anchor.anchor_title,
+                anchor_keys=anchor_keys,
+                anchor_label=anchor_label,
                 before=anchor.before,
                 to_top=anchor.to_top,
                 dry_run=ctx.config.dry_run,
@@ -1235,9 +1296,12 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
             else:
                 logger.debug("hub order: no anchor configured for {} — leaving its shelf alone", section.title)
             continue
-        distinct = {(a.to_top, a.anchor_title, a.before) for a in anchors_by_slug.values()}
+        distinct = {(a.to_top, a.anchor_title, a.anchor_row, a.before) for a in anchors_by_slug.values()}
         unanchored = [spec.slug for spec in ctx.config.rows if spec.slug not in anchors_by_slug]
-        if len(distinct) == 1 and not unanchored:
+        # A ROW anchor can never take the one-block path: the anchor is itself one of the things being
+        # moved, so the rows have to be placed in dependency order, one group at a time.
+        any_row_anchor = any(a.anchor_row for a in anchors_by_slug.values())
+        if len(distinct) == 1 and not unanchored and not any_row_anchor:
             # Every row here wants the same slot, so there is nothing to tell apart: move ALL our rows
             # in this library with one call. Naming no rows is what makes this independent of who was
             # delivered tonight — the bug that left a run with no users ordering nothing at all.
@@ -1246,7 +1310,8 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
         # Rows genuinely disagree about where they belong (or some have no anchor at all), so ours have
         # to be partitioned. The ledger is the only durable link from a collection back to its row.
         keys_by_slug = _row_keys_by_slug(ctx, key)
-        groups: dict[tuple[bool, str, bool], set[int]] = {}
+        groups: dict[tuple[bool, str, str, bool], set[int]] = {}
+        group_of_slug: dict[str, tuple[bool, str, str, bool]] = {}
         for slug, effective in anchors_by_slug.items():
             keys = keys_by_slug.get(slug, set())
             if not keys:
@@ -1259,10 +1324,44 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
                     section.title,
                 )
                 continue
-            groups.setdefault((effective.to_top, effective.anchor_title, effective.before), set()).update(keys)
-        for (to_top, anchor_title, before), keys in groups.items():
-            anchor = HubAnchor(anchor_title=anchor_title, before=before, to_top=to_top)
-            _apply_order(ctx, report, section, anchor, only_keys=keys)
+            group = (effective.to_top, effective.anchor_title, effective.anchor_row, effective.before)
+            groups.setdefault(group, set()).update(keys)
+            group_of_slug[slug] = group
+        names = {spec.slug: (spec.name_template or spec.slug) for spec in ctx.config.rows}
+        for group in _anchor_group_order(groups, group_of_slug, section.title):
+            to_top, anchor_title, anchor_row, before = group
+            # Anchor to the GROUP the anchor row was placed as part of, not to that row's own keys.
+            # Rows sharing a slot are moved in one call and land contiguously, so a follower aimed at
+            # just the anchor row's last hub is inserted INSIDE that block — and the next run's group
+            # pass, restoring contiguity, evicts it again. Neither call ever converges, both report
+            # `verified: True` every night, and on a 40-account server that is ~40 needless PUTs per
+            # library forever. Following the whole block is stable, and "after Picked" when Picked
+            # shares its slot with another row can only sensibly mean after that slot.
+            anchor_group = group_of_slug.get(anchor_row) if anchor_row else None
+            anchor_keys = (
+                groups.get(anchor_group) if anchor_group else (keys_by_slug.get(anchor_row) if anchor_row else None)
+            )
+            if anchor_row and not anchor_keys:
+                # The row someone anchored to has nothing in this library. Left alone rather than
+                # quietly falling back to the library default: reinterpreting where a row was asked to
+                # go is worse than not moving it, and the next run places it once that row delivers.
+                logger.info(
+                    "hub order: anchor row '{}' has nothing in {} yet — leaving the rows that follow it "
+                    "where they are this run",
+                    anchor_row,
+                    section.title,
+                )
+                continue
+            anchor = HubAnchor(anchor_title=anchor_title, anchor_row=anchor_row, before=before, to_top=to_top)
+            _apply_order(
+                ctx,
+                report,
+                section,
+                anchor,
+                only_keys=groups[group],
+                anchor_keys=anchor_keys,
+                anchor_label=f"the {names.get(anchor_row, anchor_row)!r} row" if anchor_row else "",
+            )
 
 
 def _request_phase(ctx: EngineContext, requests_on: bool, demand: requests_mod.DemandMap, report: RunReport) -> None:

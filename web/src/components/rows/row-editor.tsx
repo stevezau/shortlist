@@ -395,12 +395,25 @@ export function RowEditor({
     : "No tag";
 
   const submit = () => {
-    // Keep 'Top' entries and real anchors; drop a half-set library (mode chosen, no collection yet) so
-    // it inherits the global default rather than being POSTed as an empty anchor (which the API rejects).
+    // Keep 'Top' entries and real anchors — a row slug or a collection title; drop a half-set library
+    // (mode chosen, nothing picked yet) so it inherits the global default rather than being POSTed as
+    // an empty anchor, which the API rejects. Also drop the empty twin of whichever kind was chosen:
+    // the API refuses a body carrying both, since the engine reads `row` first and would silently
+    // ignore the other.
     const hub_anchor = Object.fromEntries(
-      Object.entries(input.hub_anchor).filter(
-        ([, entry]) => entry.top || (entry.anchor ?? "").trim(),
-      ),
+      Object.entries(input.hub_anchor)
+        .filter(
+          ([, entry]) =>
+            entry.top ||
+            (entry.row ?? "").trim() ||
+            (entry.anchor ?? "").trim(),
+        )
+        .map(([key, entry]) => {
+          if (entry.top) return [key, { top: true }];
+          if ((entry.row ?? "").trim())
+            return [key, { row: entry.row, before: Boolean(entry.before) }];
+          return [key, { anchor: entry.anchor, before: Boolean(entry.before) }];
+        }),
     );
     save.mutate(
       { id: collection?.id ?? null, body: { ...input, hub_anchor } },

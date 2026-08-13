@@ -1931,23 +1931,21 @@ export interface paths {
         };
         /**
          * Library Collections
-         * @description A library's managed (orderable) collections — the candidate ANCHORS for placing Shortlist rows
-         *     in the Recommended shelf.
+         * @description A library's FOREIGN managed (orderable) collections — the candidate anchors for placing
+         *     Shortlist rows in the Recommended shelf that are not themselves ours.
          *
-         *     Only the row BEING EDITED is excluded (`row`, a collection slug), because you cannot anchor a row
-         *     to itself. Every other Shortlist row is a legitimate anchor: "put Because you watched right after
-         *     Picked for You" is the obvious thing to want, and issue #81 is exactly that — the picker dropped
-         *     every Shortlist-labelled collection, so a saved anchor rendered as "(not found)" and no new one
-         *     could be chosen.
+         *     Our own collections are excluded, because a Shortlist row is never anchored by TITLE: it is one
+         *     collection PER PERSON, so a title names one account's copy and would place the row for that one
+         *     account and nobody else. Anchoring to another Shortlist row is done by row slug instead
+         *     (`hub_anchor[library].row`), which the editor offers alongside this list — that is issue #81, and
+         *     forty identical-looking "Picked for You" entries in this list was the symptom.
          *
-         *     The row's own collections are found through the delivery ledger, which is what maps a row slug to
-         *     the titles it actually wrote per library — labels cannot do it, because a per-person row is
-         *     labelled by USER (`shortlist_<userslug>`), not by row.
-         *
-         *     Matched with the marker STRIPPED off Plex's title: the ledger records the human display name,
-         *     while every collection we wrote carries the invisible 64-char ownership marker on the end. Compared
-         *     raw the two never match, so the exclusion silently did nothing and a row still listed its own 40
-         *     collections (SFLIX, verified live).
+         *     Excluded by the invisible title MARKER, never by reading labels. `collection.labels` makes plexapi
+         *     silently re-read each collection and a read that comes back carrying no <Label> is
+         *     indistinguishable from an unlabelled row (plex-safety rule 4) — on those page loads the old
+         *     label-based filter emptied and every Shortlist row appeared here as a selectable anchor. That is
+         *     how the reporter came to have one saved: the option was a flicker, and it never placed anything.
+         *     The marker is in the title we already have, so it cannot fail that way.
          */
         get: operations["library_collections_api_system_libraries__key__collections_get"];
         put?: never;
@@ -3064,8 +3062,13 @@ export interface components {
         };
         /**
          * HubAnchorIn
-         * @description A per-library shelf placement for one row: the very TOP (``top``), or after/before a collection
-         *     by title. ``top`` needs no anchor; otherwise ``anchor`` must be a non-empty title.
+         * @description A per-library shelf placement for one row: the very TOP (``top``), or after/before either
+         *     another Shortlist ROW (``row``, a row slug) or a foreign collection (``anchor``, a title).
+         *     ``top`` needs neither; otherwise exactly one of ``row``/``anchor`` must be set.
+         *
+         *     ``row`` is a slug rather than a title because a per-person row is one Plex collection PER PERSON:
+         *     a title names one account's copy and is meaningless for everyone else, which is what made the
+         *     picker offer forty identical-looking options and place none of them (issue #81).
          */
         HubAnchorIn: {
             /**
@@ -3078,6 +3081,11 @@ export interface components {
              * @default false
              */
             before: boolean;
+            /**
+             * Row
+             * @default
+             */
+            row: string;
             /**
              * Top
              * @default false
@@ -3101,6 +3109,11 @@ export interface components {
              * @default false
              */
             before: boolean;
+            /**
+             * Row
+             * @default
+             */
+            row: string;
             /**
              * Top
              * @default false
@@ -7521,9 +7534,7 @@ export interface operations {
     };
     library_collections_api_system_libraries__key__collections_get: {
         parameters: {
-            query?: {
-                row?: string | null;
-            };
+            query?: never;
             header?: never;
             path: {
                 key: string;

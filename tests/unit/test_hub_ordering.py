@@ -12,6 +12,7 @@ co-managing tool (agregarr, Kometa) reordering the same shelf between our passes
 """
 
 from shortlist.engine.clients.plex_pms import PlexClient
+from shortlist.engine.models import HubAnchor as HubAnchorModel
 
 _UNSET = "UNSET"  # sentinel: move() was never called on this hub
 
@@ -789,3 +790,367 @@ def test_a_plexapi_failure_is_redacted_before_it_reaches_the_log():
     assert "X-Plex-Token=REDACTED" in logged
     # The non-secret half must survive — a redaction that eats the diagnosis is its own bug.
     assert "401" in logged and "pms:32400" in logged
+
+
+# ── Anchoring a row to ANOTHER SHORTLIST ROW (issue #81) ────────────────────────────────────────
+#
+# A per-person row is one Plex collection PER PERSON, so the anchor is a BLOCK of hubs, not a title —
+# which is why it is addressed by the row's delivered ratingKeys and not by `anchor_title`.
+
+
+def _two_row_shelf():
+    """A shelf holding two people's copies of two rows, plus a foreign hub. Returns the pieces."""
+    foreign = FakeHub("New Series", "f")
+    picked_a = FakeHub("Picked for You (sarah)", "p1")
+    picked_b = FakeHub("Picked for You (mike)", "p2")
+    because_a = FakeHub("Because you watched X", "b1")
+    because_b = FakeHub("Because you watched Y", "b2")
+    section = FakeSection([foreign, because_a, because_b, picked_a, picked_b])
+    client = _client(
+        [
+            FakeColl("Picked for You (sarah)", ["shortlist_sarah"], rating_key=11),
+            FakeColl("Picked for You (mike)", ["shortlist_mike"], rating_key=12),
+            FakeColl("Because you watched X", ["shortlist_sarah"], rating_key=21),
+            FakeColl("Because you watched Y", ["shortlist_mike"], rating_key=22),
+            FakeColl("New Series", ["kometa"], rating_key=99),
+        ]
+    )
+    return section, client, foreign
+
+
+def test_a_row_can_be_placed_after_another_shortlist_row():
+    """The whole point of issue #81. Both of the anchor row's collections stay put and the moving
+    row's whole block lands after the LAST of them — not interleaved, because each person sees only
+    their own and a block keeps every person's pair adjacent."""
+    section, client, _foreign = _two_row_shelf()
+
+    result = client.order_owned_hubs(
+        section,
+        label_prefix="shortlist",
+        anchor_keys={11, 12},  # the "Picked for You" row
+        anchor_label="the 'Picked for You' row",
+        only_keys={21, 22},  # the "Because you watched" row
+    )
+
+    assert result["skipped"] is False
+    assert section.titles() == [
+        "New Series",
+        "Picked for You (sarah)",
+        "Picked for You (mike)",
+        "Because you watched X",
+        "Because you watched Y",
+    ]
+    assert result["anchor"] == "the 'Picked for You' row", "the audit must name the anchor (rule 10)"
+
+
+def test_a_row_can_be_placed_before_another_shortlist_row():
+    """`before` aims at the FIRST hub of the anchor block, and skips only the hubs being moved — the
+    anchor row's own hubs are legitimate landmarks, unlike the foreign-anchor case where everything
+    of ours is."""
+    section, client, _foreign = _two_row_shelf()
+
+    client.order_owned_hubs(
+        section,
+        label_prefix="shortlist",
+        anchor_keys={11, 12},
+        only_keys={21, 22},
+        before=True,
+    )
+
+    assert section.titles() == [
+        "New Series",
+        "Because you watched X",
+        "Because you watched Y",
+        "Picked for You (sarah)",
+        "Picked for You (mike)",
+    ]
+
+
+def test_the_anchor_row_itself_is_never_moved():
+    """It is one of ours, so the usual protection (`the anchor is read-only`) does not come for free
+    here — it comes from `only_keys` excluding it. A regression would shuffle the anchor too, and the
+    shelf would drift a little further every night."""
+    section, client, _ = _two_row_shelf()
+    picked = [h for h in section.managedHubs() if h.title.startswith("Picked")]
+
+    client.order_owned_hubs(section, label_prefix="shortlist", anchor_keys={11, 12}, only_keys={21, 22})
+
+    assert [h.moves for h in picked] == [0, 0]
+
+
+def test_a_row_that_names_itself_moves_nothing():
+    """Meaningless, and left to Plex it would thrash the shelf. The caller rejects it; this is the
+    second guard, so a slip cannot reach a real server."""
+    section, client, _ = _two_row_shelf()
+    before = section.titles()
+
+    result = client.order_owned_hubs(section, label_prefix="shortlist", anchor_keys={21, 22}, only_keys={21, 22})
+
+    assert result["skipped"] is True
+    assert result["reason"] == "anchor row not on this shelf"
+    assert section.titles() == before
+
+
+def test_an_anchor_row_with_nothing_on_this_shelf_leaves_the_order_alone():
+    """Never fall back to a different slot. Silently reinterpreting where someone asked their row to
+    go is worse than not moving it — the next run places it once that row delivers here."""
+    section, client, _ = _two_row_shelf()
+    before = section.titles()
+
+    result = client.order_owned_hubs(section, label_prefix="shortlist", anchor_keys={777}, only_keys={21, 22})
+
+    assert result["skipped"] is True
+    assert section.titles() == before
+
+
+def test_before_a_row_lands_immediately_before_it_even_with_another_of_our_rows_in_the_way():
+    """The cell that tells the two skip-sets apart, and the reason `before` cannot reuse the
+    foreign-anchor rule.
+
+    A foreign anchor skips back past EVERY row of ours, which is right when all of ours are moving
+    together. A row anchor is the case where they are not: rows already placed are landmarks, and
+    skipping past them drops this row on the far side of one — visibly the wrong slot, and stable, so
+    nothing ever corrects it.
+    """
+    foreign = FakeHub("New Series", "f")
+    popular_a = FakeHub("Popular on SFLIX", "pop1")
+    picked_a = FakeHub("Picked for You (sarah)", "p1")
+    because_a = FakeHub("Because you watched X", "b1")
+    section = FakeSection([foreign, popular_a, picked_a, because_a])
+    client = _client(
+        [
+            FakeColl("Popular on SFLIX", ["shortlist__shared_popular"], rating_key=31),
+            FakeColl("Picked for You (sarah)", ["shortlist_sarah"], rating_key=11),
+            FakeColl("Because you watched X", ["shortlist_sarah"], rating_key=21),
+            FakeColl("New Series", ["kometa"], rating_key=99),
+        ]
+    )
+
+    client.order_owned_hubs(
+        section,
+        label_prefix="shortlist",
+        anchor_keys={11},  # before the "Picked for You" row
+        only_keys={21},  # moving the "Because you watched" row
+        before=True,
+    )
+
+    assert section.titles() == [
+        "New Series",
+        "Popular on SFLIX",
+        "Because you watched X",
+        "Picked for You (sarah)",
+    ], "it must land between the row already placed and the anchor, not jump the whole block"
+
+
+# ── _order_phase: resolving row anchors into a placement ORDER ──────────────────────────────────
+
+
+def _anchor_cfg(rows):
+    from shortlist.engine.models import EngineConfig
+
+    return EngineConfig(hub_anchors={}, rows=rows)
+
+
+def test_order_phase_places_the_anchor_row_before_the_row_that_follows_it():
+    """A row anchored to a sibling can only be placed once that sibling is where it belongs, so the
+    calls must come out in dependency order — not in row order, and not in dict order."""
+    from unittest.mock import MagicMock
+
+    from shortlist.engine.models import HubAnchor, RowSpec
+    from shortlist.engine.pipeline import _order_phase
+
+    plex = MagicMock()
+    plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"]}
+    cfg = _anchor_cfg(
+        [
+            # Declared FOLLOWER-FIRST on purpose: input order must not decide the outcome.
+            RowSpec(slug="gems", name_template="Gems", size=10, hub_anchors={"2": HubAnchor(anchor_row="picked")}),
+            RowSpec(slug="picked", name_template="Picked", size=10, hub_anchors={"2": HubAnchor("New Series", False)}),
+        ]
+    )
+
+    _order_phase(_order_ctx(cfg, plex), _report_with_titles())
+
+    calls = plex.order_owned_hubs.call_args_list
+    assert [c.kwargs["only_keys"] for c in calls] == [{11, 12}, {21, 22}], (
+        "'picked' must be placed first — 'gems' anchors to where it ends up"
+    )
+    assert calls[0].kwargs["anchor_title"] == "New Series"
+    assert calls[1].kwargs["anchor_keys"] == {11, 12}
+    assert calls[1].kwargs["anchor_label"] == "the 'Picked' row", "the audit names the row, not its slug"
+
+
+def test_order_phase_moves_nothing_when_two_rows_anchor_to_each_other():
+    """A cycle has no right answer. Placing half of it produces a shelf order that flips run to run
+    depending on which half won — and with another tool reordering the same shelf, that is
+    indistinguishable from losing the race. Leaving them put is stable and gets logged."""
+    from unittest.mock import MagicMock
+
+    from shortlist.engine.models import HubAnchor, RowSpec
+    from shortlist.engine.pipeline import _order_phase
+
+    plex = MagicMock()
+    cfg = _anchor_cfg(
+        [
+            RowSpec(slug="picked", name_template="Picked", size=10, hub_anchors={"2": HubAnchor(anchor_row="gems")}),
+            RowSpec(slug="gems", name_template="Gems", size=10, hub_anchors={"2": HubAnchor(anchor_row="picked")}),
+        ]
+    )
+
+    _order_phase(_order_ctx(cfg, plex), _report_with_titles())
+
+    plex.order_owned_hubs.assert_not_called()
+
+
+def test_order_phase_moves_nothing_when_a_row_anchors_to_itself():
+    """A one-node cycle. Reaching Plex it would ask a row to move relative to its own hubs."""
+    from unittest.mock import MagicMock
+
+    from shortlist.engine.models import HubAnchor, RowSpec
+    from shortlist.engine.pipeline import _order_phase
+
+    plex = MagicMock()
+    cfg = _anchor_cfg(
+        [RowSpec(slug="picked", name_template="Picked", size=10, hub_anchors={"2": HubAnchor(anchor_row="picked")})]
+    )
+
+    _order_phase(_order_ctx(cfg, plex), _report_with_titles())
+
+    plex.order_owned_hubs.assert_not_called()
+
+
+def test_order_phase_skips_a_row_whose_anchor_row_has_nothing_in_this_library():
+    """Not a fallback to the library default: reinterpreting the placement is worse than skipping it.
+    The row that IS placeable still is — one unresolvable anchor must not stop the rest."""
+    from unittest.mock import MagicMock
+
+    from shortlist.engine.models import HubAnchor, RowSpec
+    from shortlist.engine.pipeline import _order_phase
+
+    plex = MagicMock()
+    plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"]}
+    cfg = _anchor_cfg(
+        [
+            RowSpec(slug="picked", name_template="Picked", size=10, hub_anchors={"2": HubAnchor("New Series", False)}),
+            RowSpec(slug="gems", name_template="Gems", size=10, hub_anchors={"2": HubAnchor(anchor_row="ghost")}),
+        ]
+    )
+
+    _order_phase(_order_ctx(cfg, plex), _report_with_titles())
+
+    calls = plex.order_owned_hubs.call_args_list
+    assert [c.kwargs["only_keys"] for c in calls] == [{11, 12}], "only the resolvable row is placed"
+
+
+def test_a_dormant_copy_of_the_anchor_row_does_not_drag_the_follower_to_the_bottom():
+    """Paused and disabled people keep a copy of every row, and we never move those — so they sit
+    wherever Plex appended them, at the bottom, under the co-managing tool's hubs.
+
+    Anchoring to the block INCLUDING them followed the row down there and reported it verified: the
+    exact burial this function exists to undo, wearing a success badge.
+    """
+    foreign = FakeHub("New Series", "f")
+    picked_live = FakeHub("Picked for You (sarah)", "p1")
+    kometa = FakeHub("Kometa Genre", "k")
+    picked_dormant = FakeHub("Picked for You (paused)", "p2", promoted=False)
+    because = FakeHub("Because you watched X", "b1")
+    section = FakeSection([foreign, picked_live, kometa, picked_dormant, because])
+    client = _client(
+        [
+            FakeColl("Picked for You (sarah)", ["shortlist_sarah"], rating_key=11),
+            FakeColl("Picked for You (paused)", ["shortlist_paused"], rating_key=12),
+            FakeColl("Because you watched X", ["shortlist_sarah"], rating_key=21),
+            FakeColl("New Series", ["kometa"], rating_key=99),
+            FakeColl("Kometa Genre", ["kometa"], rating_key=98),
+        ]
+    )
+
+    client.order_owned_hubs(section, label_prefix="shortlist", anchor_keys={11, 12}, only_keys={21})
+
+    assert section.titles() == [
+        "New Series",
+        "Picked for You (sarah)",
+        "Because you watched X",
+        "Kometa Genre",
+        "Picked for You (paused)",
+    ], "it must follow the PROMOTED copy, not the dormant one parked at the bottom"
+
+
+def test_an_all_dormant_anchor_row_leaves_the_shelf_alone():
+    """No visible position to be relative to. Inventing one puts the row somewhere nobody asked for."""
+    foreign = FakeHub("New Series", "f")
+    dormant = FakeHub("Picked for You (paused)", "p1", promoted=False)
+    because = FakeHub("Because you watched X", "b1")
+    section = FakeSection([foreign, dormant, because])
+    client = _client(
+        [
+            FakeColl("Picked for You (paused)", ["shortlist_paused"], rating_key=11),
+            FakeColl("Because you watched X", ["shortlist_sarah"], rating_key=21),
+        ]
+    )
+    before = section.titles()
+
+    result = client.order_owned_hubs(section, label_prefix="shortlist", anchor_keys={11}, only_keys={21})
+
+    assert result["skipped"] is True and result["reason"] == "anchor row not on this shelf"
+    assert section.titles() == before
+
+
+def test_order_phase_anchors_to_the_whole_group_the_anchor_row_was_placed_with():
+    """Convergence. Rows sharing a slot are moved in ONE call and land contiguously, so a follower
+    aimed at just the anchor row's own hubs is inserted INSIDE that block — and the next run's group
+    pass, restoring contiguity, evicts it again. Neither call ever settles, both report success every
+    night, and on a 40-account server that is ~40 needless writes per library forever.
+    """
+    from unittest.mock import MagicMock
+
+    from shortlist.engine.models import HubAnchor, RowSpec
+    from shortlist.engine.pipeline import _order_phase
+
+    plex = MagicMock()
+    plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"]}
+    ledger = {
+        ("a", "picked", "2"): 11,
+        ("b", "picked", "2"): 12,
+        ("a", "popular", "2"): 31,
+        ("a", "gems", "2"): 21,
+        ("b", "gems", "2"): 22,
+    }
+    cfg = _anchor_cfg(
+        [
+            # 'picked' and 'popular' share one slot, so they are placed together as one block.
+            RowSpec(slug="picked", name_template="Picked", size=10, hub_anchors={"2": HubAnchor("New Series", False)}),
+            RowSpec(
+                slug="popular", name_template="Popular", size=10, hub_anchors={"2": HubAnchor("New Series", False)}
+            ),
+            RowSpec(slug="gems", name_template="Gems", size=10, hub_anchors={"2": HubAnchor(anchor_row="picked")}),
+        ]
+    )
+
+    _order_phase(_order_ctx(cfg, plex, delivered_keys=ledger), _report_with_titles())
+
+    follower = next(c for c in plex.order_owned_hubs.call_args_list if c.kwargs["only_keys"] == {21, 22})
+    assert follower.kwargs["anchor_keys"] == {11, 12, 31}, (
+        "it must follow the block that was actually placed, not just the anchor row's own hubs"
+    )
+
+
+def test_a_row_anchor_in_the_GLOBAL_default_is_ignored_not_applied():
+    """`rows.hub_anchor` applies to EVERY row, so "all rows go after row X" includes X itself — and
+    the paths that use the global default pass no `anchor_keys`, so it would reach the client's
+    foreign branch with an empty title and match any hub whose title is empty. The settings API
+    rejects it on the way in; this is the second guard, so relaxing that one cannot open this door.
+    """
+    from shortlist.server.services.context_builder import ContextBuilder
+
+    parsed = ContextBuilder._parse_hub_anchors({"2": {"row": "picked"}})
+    assert parsed == {"2": HubAnchorModel(anchor_row="picked")}, "the per-ROW parse still reads it"
+
+    class _Store:
+        def get(self, _key):
+            return {"2": {"row": "picked"}, "3": {"anchor": "New Series"}}
+
+    globals_ = ContextBuilder._build_hub_anchors(_Store())
+
+    assert "2" not in globals_, "a row anchor cannot be a global default"
+    assert globals_["3"].anchor_title == "New Series", "the foreign anchor beside it still applies"
