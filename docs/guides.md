@@ -47,10 +47,13 @@ Looking for a specific setting or API endpoint? That's [Reference](reference.md)
 Agregarr, Kometa and similar tools reorder the same Plex Recommended shelf Shortlist does, so rows
 can appear to shuffle between runs. Both sides can be told to leave the other alone.
 
-In Agregarr, put `Shortlist` in **Settings → General → Exclude from Ordering (Plex Label)**. Every
-Shortlist row carries that label, so one entry covers all of them however many people you have, and
-it keeps working as people join and leave. (Rows built before you upgraded pick the label up the
-next time they are built, so give it a run or two.)
+In Agregarr, put `shortlist` in **Settings → General → Exclude from Ordering (Plex Label)**. That one
+word covers every Shortlist row: the field matches a label exactly OR as a prefix followed by `_`, so
+it catches the constant `shortlist` label and each person's `shortlist_<name>` one. It keeps working
+as people join and leave, and needs no updating.
+
+That field is newer than Agregarr's v2.9.1 release — at the time of writing it is on the maintained
+fork's `:develop` image (`bitr8/agregarr:develop`).
 
 Shortlist's own side is **Settings → Row placement**, which decides where it puts rows and whether
 it manages shelf order at all — turning that off leaves the order entirely to the other tool.

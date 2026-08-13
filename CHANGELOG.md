@@ -8,6 +8,12 @@ All notable changes to this project are documented here. This project follows
 
 ### Added
 
+- **The "something else is reordering your shelf" alert now tells you how to stop it.** It used to
+  say to exclude `shortlist_*`, which is a wildcard no tool's exclusion list accepts. Agregarr has
+  since gained an **Exclude from Ordering (Plex Label)** field, and it matches a label exactly or as a
+  prefix followed by `_` — so the single word `shortlist` covers the constant label and every
+  person's own. The alert names the field and the value.
+
 - **What a row actually cost, per row.** A run page showed one number per person — their whole
   night — so a row that took four minutes and a row that took four seconds looked identical, and the
   shared work every row depends on was billed to whichever row happened to be first. Each row now
