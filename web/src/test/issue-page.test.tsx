@@ -329,13 +329,28 @@ describe("IssuePage — health", () => {
 });
 
 describe("IssuePage — sending a long report", () => {
-  it("offers the full file as a download for when a paste gets truncated", async () => {
+  it("offers the full file as a download, and says it is working while it builds", async () => {
+    // It was a plain `<a download>`, so the browser fetched in silence while the server gathered
+    // and zipped the logs — the button looked dead for the several seconds that takes.
+    let release: (value: Response) => void = () => {};
+    const pending = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn().mockReturnValue(pending));
+
     renderPage();
-    const link = await screen.findByRole("link", {
+    const button = await screen.findByRole("button", {
       name: /download everything \(with logs\)/i,
     });
-    expect(link.getAttribute("href")).toContain("/api/support/report.zip");
-    expect(link.getAttribute("download")).toBe("shortlist-report.zip");
+    await userEvent.click(button);
+
+    expect(await screen.findByRole("button", { name: /Preparing/i })).toBeTruthy();
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/support/report.zip"),
+      expect.objectContaining({ credentials: "same-origin" }),
+    );
+    release(new Response(new Blob(["zip"])));
+    vi.unstubAllGlobals();
   });
 });
 
@@ -410,7 +425,7 @@ describe("IssuePage — filing the report", () => {
       screen.getByRole("button", { name: /copy the summary/i }),
     ).toBeTruthy();
     expect(
-      screen.getByRole("link", { name: /download everything \(with logs\)/i }),
+      screen.getByRole("button", { name: /download everything \(with logs\)/i }),
     ).toBeTruthy();
   });
 

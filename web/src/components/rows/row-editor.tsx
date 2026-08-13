@@ -1,4 +1,4 @@
-import { ListChecks } from "lucide-react";
+import { ListChecks, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { Link } from "react-router";
@@ -459,17 +459,21 @@ export function RowEditor({
                 Runs
               </Link>
             </Button>
+            {/* Reads as the destructive control it points at — the Rows card spells Delete in the
+                same red with the same icon, and a plain grey label here did not look like a button
+                at all, let alone one that ends in deleting a row. */}
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
-              className="text-muted-foreground hover:text-destructive-text"
+              className="border-destructive/40 text-destructive-text hover:bg-destructive/10 hover:text-destructive-text"
               onClick={() =>
                 document
                   .getElementById("remove-this-row")
                   ?.scrollIntoView({ behavior: "smooth", block: "center" })
               }
             >
-              Remove or delete…
+              <Trash2 aria-hidden="true" />
+              Remove or delete
             </Button>
           </div>
         )}

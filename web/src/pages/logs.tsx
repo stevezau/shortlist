@@ -1,9 +1,10 @@
-import { Check, Copy, Download, ScrollText, TriangleAlert } from "lucide-react";
+import { Check, Copy, ScrollText, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { PageHeader } from "@/components/page-header";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { Segmented } from "@/components/segmented";
+import { DownloadButton } from "@/components/download-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -126,12 +127,12 @@ export function LogsPage() {
                   ? "Couldn’t copy — try again"
                   : "Copy"}
             </Button>
-            <Button asChild variant="outline">
-              <a href={api.logsDownloadUrl()} download>
-                <Download aria-hidden="true" />
-                Download .zip
-              </a>
-            </Button>
+            <DownloadButton
+              url={api.logsDownloadUrl()}
+              filename="shortlist-logs.zip"
+            >
+              Download .zip
+            </DownloadButton>
           </div>
         }
       />

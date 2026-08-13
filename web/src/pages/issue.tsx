@@ -24,13 +24,13 @@ import {
   Check,
   ChevronDown,
   ClipboardCopy,
-  Download,
   LifeBuoy,
   RefreshCw,
   Search,
   X,
 } from "lucide-react";
 
+import { DownloadButton } from "@/components/download-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -1487,15 +1487,12 @@ function ReportSection({
                     : "Copy the summary"}
               </span>
             </Button>
-            <Button asChild variant="outline">
-              <a
-                href={api.supportReportZipUrl()}
-                download="shortlist-report.zip"
-              >
-                <Download className="mr-2 h-4 w-4" aria-hidden="true" />
-                Download everything (with logs)
-              </a>
-            </Button>
+            <DownloadButton
+              url={api.supportReportZipUrl()}
+              filename="shortlist-report.zip"
+            >
+              Download everything (with logs)
+            </DownloadButton>
           </>
         )}
       </div>

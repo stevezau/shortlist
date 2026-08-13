@@ -132,13 +132,27 @@ describe("LogsPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("offers the zip export as a real download link", async () => {
+  it("says it is working while the zip is built, instead of looking dead", async () => {
+    // It was a plain `<a download>`: the browser fetched silently while the server zipped the logs,
+    // which takes seconds on a busy instance. Nothing on screen changed, so the honest reading was
+    // that the click had missed — and people click again.
     getLogs.mockResolvedValue(page([line()]));
+    let release: (value: Response) => void = () => {};
+    const pending = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn().mockReturnValue(pending));
 
     renderPage();
+    const button = await screen.findByRole("button", { name: /Download \.zip/i });
+    await userEvent.click(button);
 
-    const link = await screen.findByRole("link", { name: /Download \.zip/i });
-    expect(link).toHaveAttribute("href", "/api/system/logs/download");
-    expect(link).toHaveAttribute("download");
+    expect(await screen.findByRole("button", { name: /Preparing/i })).toBeTruthy();
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/system/logs/download",
+      expect.objectContaining({ credentials: "same-origin" }),
+    );
+    release(new Response(new Blob(["zip"])));
+    vi.unstubAllGlobals();
   });
 });
