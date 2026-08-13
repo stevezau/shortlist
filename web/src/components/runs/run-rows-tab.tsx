@@ -45,11 +45,28 @@ function diffLabel(entry: RunLibraryBreakdown): string {
  * printing them one after the other made the card scroll for pages; the per-person panel has always
  * shown one library at a time, so stacking here was both longer and inconsistent with it.
  */
-function SharedRowPanel({ group }: { group: RunRowGroup }) {
+function SharedRowPanel({
+  group,
+  running,
+}: {
+  group: RunRowGroup;
+  running: boolean;
+}) {
   const shared = group.shared;
   const breakdown = shared?.breakdown ?? [];
   const [active, setActive] = useState(breakdown[0]?.library_key ?? "");
-  if (!shared) return null;
+  if (!shared) {
+    // Nothing reported yet. Returning null left an empty box under an expanded row, which reads as
+    // broken rather than as not-started — and a shared row builds LAST, after every person, so this
+    // is the state it sits in for most of a run.
+    return (
+      <p className="p-5 text-sm text-muted-foreground">
+        {running
+          ? "This row builds once everyone’s own rows are done — it is pooled from what they have all watched, so it needs their viewing first."
+          : "This row didn’t build in this run."}
+      </p>
+    );
+  }
   const current =
     breakdown.find((entry) => entry.library_key === active) ?? breakdown[0];
 
@@ -193,10 +210,16 @@ function RowCard({
             </span>
           </span>
         </button>
-        {shared && (
+        {shared ? (
           <Badge variant={runStatusVariant(shared.status)} className="shrink-0">
             {runStatusLabel(shared.status)}
           </Badge>
+        ) : (
+          notStarted && (
+            <Badge variant="outline" className="shrink-0">
+              Pending
+            </Badge>
+          )
         )}
         {/* Trace sits on the thing it traces: the row when the row is shared, the person otherwise
             (each person's panel carries their own "How we picked"). */}
@@ -224,7 +247,7 @@ function RowCard({
       {open &&
         (group.kind === "shared" ? (
           <div className="border-t">
-            <SharedRowPanel group={group} />
+            <SharedRowPanel group={group} running={!run.finished_at} />
           </div>
         ) : (
           // The People tab's own two components, scoped to this row: the searchable, status-grouped

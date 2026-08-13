@@ -305,3 +305,34 @@ describe("RunRowsTab — a run that is still going", () => {
     expect(screen.getByText("This run built no rows")).toBeInTheDocument();
   });
 });
+
+describe("RunRowsTab — a shared row that hasn't built yet", () => {
+  it("says it is pending and explains why, instead of an empty box", async () => {
+    // A shared row builds LAST, after every person, so this is the state it sits in for most of a
+    // run. The panel returned nothing, which read as broken rather than as not-started.
+    renderTab(
+      run({
+        users: [],
+        shared_rows: [],
+        finished_at: null,
+        stats: {
+          expected_rows: [
+            {
+              slug: "popular",
+              title: CONFIG_NAMES.popular,
+              build: "shared",
+            },
+          ],
+        },
+      } as unknown as Partial<RunDetail>),
+    );
+
+    expect(screen.getByText("👥 Popular on SFLIX")).toBeInTheDocument();
+    expect(screen.getByText("Pending")).toBeInTheDocument();
+
+    // Sole row, so it is already open — the panel must explain itself rather than be an empty box.
+    expect(
+      screen.getByText(/builds once everyone’s own rows are done/i),
+    ).toBeInTheDocument();
+  });
+});
