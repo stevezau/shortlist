@@ -107,6 +107,12 @@ function sharedPoolsExaSearches(pools: RunPoolCost[]): number {
   return pools.reduce((n, pool) => n + pool.exa_searches, 0);
 }
 
+/** Total AI tokens across every pool behind a person's shared-setup line — summed the same way as
+ *  `sharedPoolsExaSearches`, and the figure `sharedPoolsNote`'s parenthetical describes. */
+function sharedPoolsTokens(pools: RunPoolCost[]): number {
+  return pools.reduce((n, pool) => n + pool.tokens, 0);
+}
+
 /** One ranked pick: rank, a status dot (green = new this run), title + reason, and where it
  *  came from. */
 function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
@@ -319,6 +325,10 @@ export function UserPanel({
     result.llm_tokens > 0
       ? ` · ${result.llm_tokens.toLocaleString()} AI tokens${steps ? ` (${steps})` : ""}`
       : "";
+  // Summed once so the guard below and the rendered figure can never disagree. 0 means there is
+  // nothing to attribute, so the clause — and the pool parenthetical explaining the attribution —
+  // must not render at all, the same guard `tokens` above already applies to the whole-person case.
+  const poolTokens = setup ? sharedPoolsTokens(setup.pools) : 0;
   return (
     <div className="space-y-3">
       {/* WHOSE result this is, and what it cost — the header the People tab had. Hoisting only the
@@ -367,14 +377,9 @@ export function UserPanel({
                   <>
                     {" · shared setup "}
                     {formatDuration(setup.setup_ms)}
-                    {setup.pools.length > 0 && (
-                      <>
-                        {` · ${setup.pools
-                          .reduce((n, p) => n + p.tokens, 0)
-                          .toLocaleString()} AI tokens${sharedPoolsNote(setup.pools)}`}
-                        {webSearchSummary(sharedPoolsExaSearches(setup.pools))}
-                      </>
-                    )}
+                    {poolTokens > 0 &&
+                      ` · ${poolTokens.toLocaleString()} AI tokens${sharedPoolsNote(setup.pools)}`}
+                    {webSearchSummary(sharedPoolsExaSearches(setup.pools))}
                   </>
                 )}
               </p>

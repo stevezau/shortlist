@@ -607,6 +607,63 @@ describe("RunRowsTab — per-row cost", () => {
     expect(screen.queryByText(/shared by \d+ rows?/i)).not.toBeInTheDocument();
   });
 
+  /** A shared pool that ran (two rows drew from it) but spent no AI tokens and made no web
+   *  searches — a row whose sources returned cached/library-only candidates, so gather never called
+   *  the LLM or Exa. */
+  const runWithZeroTokenSharedPool = run({
+    users: [
+      user({
+        duration_ms: PERSON_WHOLE_RUN_MS,
+        rows_considered: { picked: "due", because: "due" },
+        breakdown: rowBreakdown(),
+        has_trace: false,
+        cost: {
+          setup_ms: 283,
+          rows: {
+            picked: { duration_ms: 30, blocked_ms: 12 },
+            because: { duration_ms: 9120, blocked_ms: 880 },
+          },
+          pools: [
+            {
+              label: "movie · tmdb_similar",
+              tokens: 0,
+              exa_searches: 0,
+              duration_ms: 283,
+              rows: ["picked", "because"],
+            },
+          ],
+        },
+      }),
+    ],
+  });
+
+  it("hides the AI-token clause and its pool note when the shared pool spent nothing", async () => {
+    // The bug: `setup.pools.length > 0` gated the clause, not whether the summed tokens were
+    // nonzero — so a pool that ran but spent 0 tokens still printed "0 AI tokens (one pool, shared
+    // by 2 rows)", noise with nothing to attribute. The web-search clause must degrade the same way.
+    render(
+      <RunRowsTab
+        run={runWithZeroTokenSharedPool}
+        titles={{}}
+        idBySlug={new Map()}
+      />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Picked for You/ }),
+    );
+    // Work time and waiting are unaffected. Row-scoped time also appears in the person list beside
+    // the panel (see the "shows this row's own time" tests above), so "18ms" is expected twice.
+    expect(screen.getAllByText(/18ms/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/12ms waiting/)).toBeInTheDocument();
+    expect(screen.getByText(/shared setup 283ms/)).toBeInTheDocument();
+    // No AI-token clause, and no pool parenthetical.
+    expect(screen.queryByText(/AI tokens/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/shared by \d+ rows?/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/pools shared/i)).not.toBeInTheDocument();
+    // No web-search clause either.
+    expect(screen.queryByText(/web search/i)).not.toBeInTheDocument();
+  });
+
   it("does not show a waiting clause for a row that did no work (0ms · 0ms)", async () => {
     // A row whose every candidate source is down `continue`s in microseconds, so `duration_ms` and
     // `blocked_ms` both truncate to 0 — and the old guard (`blocked_ms >= duration_ms * 0.1`) reads
