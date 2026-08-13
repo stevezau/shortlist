@@ -400,8 +400,31 @@ describe("RunRowsTab — per-row cost", () => {
     await userEvent.click(
       screen.getByRole("button", { name: /Picked for You/ }),
     );
-    expect(screen.getByText(/12s/)).toBeInTheDocument();
+    // Row-scoped in both places it appears — the panel header and the person list beside it (see
+    // the next test) — so "12s" now legitimately shows up twice; the point is that the person's
+    // whole-run total ("7m 22s") shows up nowhere.
+    expect(screen.getAllByText(/12s/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/7m 22s/)).not.toBeInTheDocument();
+  });
+
+  it("shows a different row-scoped time for the same person under each row", async () => {
+    // The regression that started all of this: two rows for the same person read as costing the
+    // same amount, because both showed the person's one whole-run duration. The person list next to
+    // the panel is the exact spot the original bug report pointed at ("the people names have the
+    // same processing time"), so it has to earn its own row-scoped number too, not just the header.
+    render(
+      <RunRowsTab run={runWithPerRowCost} titles={{}} idBySlug={new Map()} />,
+    );
+    const pickedToggle = screen.getByRole("button", { name: /Picked for You/ });
+
+    await userEvent.click(pickedToggle);
+    expect(screen.getByRole("tab")).toHaveTextContent("1m 12s");
+
+    await userEvent.click(pickedToggle); // collapse before opening the other row
+    await userEvent.click(
+      screen.getByRole("button", { name: /Because you watched/ }),
+    );
+    expect(screen.getByRole("tab")).toHaveTextContent("8.2s");
   });
 
   it("attributes AI tokens to the shared setup, naming both rows that used the pool", async () => {

@@ -4,8 +4,9 @@ import { useState } from "react";
 
 import { Segmented } from "@/components/segmented";
 import { UserAvatar } from "@/components/user-avatar";
+import { formatDuration } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { RunUserResult } from "@/lib/types";
+import type { RunRowCost, RunUserResult } from "@/lib/types";
 
 /** A sticky section header inside the scrollable user list. */
 function GroupLabel({ children }: { children: ReactNode }) {
@@ -22,10 +23,15 @@ function UserRow({
   result,
   selected,
   onSelect,
+  cost,
 }: {
   result: RunUserResult;
   selected: string;
   onSelect: (slug: string) => void;
+  /** THIS row's own cost for this person. `undefined` when the caller passed no per-row costs at
+   *  all (a hypothetical non-row context); `null` on a legacy run that never measured it — either
+   *  way this is "not recorded", not "0s", so both fall back to a plain "Done". */
+  cost?: RunRowCost | null;
 }) {
   const failed = result.error !== null;
   const isSelected = result.slug === selected;
@@ -61,11 +67,11 @@ function UserRow({
           <CircleSlash className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
       ) : (
-        // No duration here: this list sits inside ONE row's page, and `result.duration_ms` is the
-        // person's WHOLE-run time — showing it beside every name would repeat the exact number this
-        // work exists to stop duplicating (the row panel now shows THIS row's own time instead).
+        // This list is row-scoped — it lives inside ONE row's card — so the duration shown here is
+        // THIS row's own time, not the person's whole-run total (`result.duration_ms`), which used
+        // to repeat the same number beside every name regardless of which row was open.
         <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-          Done
+          {cost ? formatDuration(cost.duration_ms - cost.blocked_ms) : "Done"}
           <Check className="h-3.5 w-3.5 text-success" aria-hidden="true" />
         </span>
       )}
@@ -80,13 +86,17 @@ export function UserTabs({
   selected,
   onSelect,
   showSummary = true,
+  costBySlug,
 }: {
   results: RunUserResult[];
   selected: string;
   onSelect: (slug: string) => void;
   /** False where the caller already states the progress — the Rows tab's card header says
-   *  "10 of 46 done" two lines above, so repeating it here in different words was noise. */
+   *  "10 of 46 people done" two lines above, so repeating it here in different words was noise. */
   showSummary?: boolean;
+  /** THIS row's per-person cost, keyed by slug. Optional so a hypothetical future non-row caller
+   *  still compiles — every real caller today is row-scoped, so every `UserRow` gets one. */
+  costBySlug?: Map<string, RunRowCost | null>;
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "failed" | "ok">("all");
@@ -188,6 +198,7 @@ export function UserTabs({
               result={result}
               selected={selected}
               onSelect={onSelect}
+              cost={costBySlug?.get(result.slug)}
             />
           ))}
           {bothGroups && ok.length > 0 && (
@@ -199,6 +210,7 @@ export function UserTabs({
               result={result}
               selected={selected}
               onSelect={onSelect}
+              cost={costBySlug?.get(result.slug)}
             />
           ))}
           {bothGroups && skipped.length > 0 && (
@@ -210,6 +222,7 @@ export function UserTabs({
               result={result}
               selected={selected}
               onSelect={onSelect}
+              cost={costBySlug?.get(result.slug)}
             />
           ))}
           {pending.length > 0 && (
@@ -221,6 +234,7 @@ export function UserTabs({
               result={result}
               selected={selected}
               onSelect={onSelect}
+              cost={costBySlug?.get(result.slug)}
             />
           ))}
           {shown.length === 0 && (

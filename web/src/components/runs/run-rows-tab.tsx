@@ -21,8 +21,14 @@ import {
   libraryLabel,
   rowSummary,
   type RunRowGroup,
+  type RunRowPerson,
 } from "@/lib/run-rows";
-import type { RunDetail, RunLibraryBreakdown, RunLogEntry } from "@/lib/types";
+import type {
+  RunDetail,
+  RunLibraryBreakdown,
+  RunLogEntry,
+  RunRowCost,
+} from "@/lib/types";
 
 /** Why this person got, or did not get, this row. */
 const DECISION_LABEL: Record<string, string> = {
@@ -181,9 +187,15 @@ function RowCard({
     results.find((r) => r.slug === picked) ??
     results.find((r) => r.error !== null) ??
     results[0];
-  const chosenPerson = group.people.find(
-    (person) => person.result.slug === chosen?.slug,
-  );
+  // One walk over `group.people` for both: who is selected, and every person's own cost for THIS
+  // row — `UserTabs`' person list is row-scoped (it only ever renders inside a row's card), so it
+  // needs each person's row-specific time rather than their whole-run total.
+  let chosenPerson: RunRowPerson | undefined;
+  const costBySlug = new Map<string, RunRowCost | null>();
+  for (const person of group.people) {
+    costBySlug.set(person.result.slug, person.cost);
+    if (person.result.slug === chosen?.slug) chosenPerson = person;
+  }
   const decision = chosenPerson?.decision;
 
   return (
@@ -271,6 +283,7 @@ function RowCard({
               onSelect={setPicked}
               // The card header two lines above already says "10 of 46 people done".
               showSummary={false}
+              costBySlug={costBySlug}
             />
             <div className="min-w-0">
               {decision && decision !== "due" && (
