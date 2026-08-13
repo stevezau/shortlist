@@ -1,8 +1,4 @@
-import type {
-  RunDetail,
-  RunSharedRowResult,
-  RunUserResult,
-} from "@/lib/types";
+import type { RunDetail, RunSharedRowResult, RunUserResult } from "@/lib/types";
 
 /** What a run decided about one row FOR ONE PERSON, before anything was built.
  *
@@ -204,17 +200,57 @@ export function groupRunByRow(
     expected_users?: unknown[];
   };
   const expected = stats.expected_rows ?? [];
-  const expectedPeople = (stats.expected_users ?? []).length;
   for (const row of expected) {
     if (!row?.slug) continue;
     ran.add(row.slug);
-    const group = ensure(row.slug, row.build === "shared" ? "shared" : "per_person");
-    if (row.title && group.title === row.slug) group.title = rowDisplayName(row.title) || row.slug;
+    const group = ensure(
+      row.slug,
+      row.build === "shared" ? "shared" : "per_person",
+    );
+    if (row.title && group.title === row.slug)
+      group.title = rowDisplayName(row.title) || row.slug;
   }
+  // Everyone the run means to build for, as PENDING, until their own result lands. Without this a
+  // per-person row opened mid-run showed "0 succeeded" and an empty list — the run page's whole job
+  // is to let you watch it happen, and the old People tab synthesised exactly these from
+  // `expected_users` for the same reason.
+  const reported = new Set<string>();
   for (const group of groups.values()) {
-    if (group.kind === "per_person") {
-      group.pending = Math.max(0, expectedPeople - group.people.length);
+    if (group.kind !== "per_person") continue;
+    reported.clear();
+    for (const person of group.people) reported.add(person.result.slug);
+    for (const waiting of stats.expected_users ?? []) {
+      const who = waiting as {
+        slug?: string;
+        username?: string;
+        display_name?: string;
+      };
+      if (!who?.slug || reported.has(who.slug)) continue;
+      group.people.push({
+        decision: null,
+        userId: idBySlug.get(who.slug),
+        result: {
+          username: who.username ?? who.slug,
+          display_name: who.display_name ?? who.username ?? who.slug,
+          slug: who.slug,
+          status: "pending",
+          error: null,
+          reason: null,
+          duration_ms: null,
+          llm_tokens: 0,
+          llm_tokens_by_step: {},
+          exa_searches: 0,
+          diff: {},
+          picks: [],
+          breakdown: [],
+          has_trace: false,
+          rows_considered: {},
+        } as unknown as RunUserResult,
+      });
     }
+    group.pending = group.people.filter(
+      (person) => person.result.status === "pending",
+    ).length;
   }
 
   const notInRun = [...considered]
@@ -250,10 +286,14 @@ export function rowCounts(group: RunRowGroup): {
     unrecorded: 0,
   };
   for (const person of group.people) {
+    if (person.result.status === "pending") continue;
     if (person.result.status === "error") counts.failed += 1;
     else if (person.decision === "muted") counts.muted += 1;
     else if (person.decision === "not_in_audience") counts.notInAudience += 1;
-    else if (person.result.breakdown.length > 0 || person.result.status === "ok")
+    else if (
+      person.result.breakdown.length > 0 ||
+      person.result.status === "ok"
+    )
       counts.built += 1;
     else if (person.decision === null) counts.unrecorded += 1;
   }
@@ -276,9 +316,8 @@ export function rowSummary(group: RunRowGroup): string {
   // Mid-run the row is still working through people, and the count of who is LEFT is the thing you
   // are watching. Once nobody is pending this collapses back to the finished summary.
   if (group.pending > 0) {
-    const done = c.people;
-    const total = done + group.pending;
-    return `building — ${done} of ${total} done`;
+    const total = c.people;
+    return `building — ${total - group.pending} of ${total} done`;
   }
   const parts = [`${c.built} of ${c.people} built`];
   if (c.failed) parts.push(`${c.failed} failed`);
