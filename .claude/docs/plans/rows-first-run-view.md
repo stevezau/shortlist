@@ -137,3 +137,30 @@ engine no longer does. Fix in this order.
 tests assert what the components do with fixtures; none of them exercise a run that is still
 running, and none asserted that a trace still EXISTS after the engine changed. A test that a shared
 row's trace is non-empty would have caught #1 the moment it was introduced.
+
+## Next: rows-only, with live progress (owner design, 2026-08-13)
+
+Replaces the "keep the People tab" decision above. The owner is right and that call was wrong: inside
+a run the row is the axis, and the People tab is actively misleading on a shared run — run 46 was a
+shared-row run still offering "People (46)" for a row that belongs to nobody. "Everything one person
+got" is a real question, but its home is that person's own page, not the run.
+
+Target: **Rows** and **Log**, nothing else.
+
+* Every row in scope appears IMMEDIATELY with a state — `waiting` → `building 12 of 46` → `done` /
+  `skipped` — so a run can be tracked while it happens.
+* A per-person row expands to the existing people-left / picks-right panel (`UserTabs` +
+  `UserPanel`), which already renders `pending` and already has the search box.
+* A SHARED row expands to progress and its trace. No person list — there is nobody to choose.
+
+**The blocker, and why "rows appear as they finish" is currently a fudge.** Mid-run the page cannot
+know which rows are in scope: scope is only derivable from `rows_considered`, which is written per
+user AS EACH ONE FINISHES, so before the first person completes there is nothing to draw at all.
+
+Fix that first, server-side: **record the run's row scope at start**, exactly as `stats.expected_users`
+already records the people (`api/runs.py` synthesises `pending` user rows from it). Something like
+`stats.expected_rows: [{slug, title, build, audience_size}]`, written where the run computes which
+specs `should_build`. Everything else is frontend and follows from it — without it, no amount of UI
+work produces progress tracking.
+
+Order: persist `expected_rows` → render rows from it with live per-row counts → delete the People tab.
