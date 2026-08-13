@@ -465,7 +465,7 @@ def _serialize(session, collection: Collection) -> dict:
     }
 
 
-def _reject_duplicate_name(session, secrets, template: str, *, exclude_slug: str = "") -> None:
+def _reject_duplicate_name(session, secrets, template: str, *, exclude_slug: str = "", build: str = "") -> None:
     """Refuse a row title another row is already titled from — see `reconcile.row_titled_from` for
     what "already titled from" means and why the `name` column is the wrong thing to compare.
 
@@ -473,13 +473,16 @@ def _reject_duplicate_name(session, secrets, template: str, *, exclude_slug: str
     a row that carries its own template is titled from that, so changing only its `name` cannot clash
     with anything, and changing only its `name_template` very much can.
     """
-    clash = reconcile.row_titled_from(session, template, secrets=secrets, exclude_slug=exclude_slug)
+    clash = reconcile.row_titled_from(session, template, secrets=secrets, exclude_slug=exclude_slug, build=build)
     if clash is None:
         return
+    # Name the row by SLUG as well. The clashing row's `name` is usually the very string being
+    # rejected, so the message read "'Friday Films' is already the title of the row 'Friday Films'" —
+    # a tautology that named nothing the owner could go and find.
     whose = (
         "your default row, whose title is the template in Settings → Defaults"
         if clash.slug == DEFAULT_SLUG
-        else f"the row {clash.name!r}"
+        else f"the row {clash.name!r} ({clash.slug})"
     )
     raise HTTPException(
         status_code=422,
@@ -528,7 +531,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
     _validate(body)
     with request.app.state.sessions() as session:
         # The template this row will actually be titled from, not the bare name — a POST may set both.
-        _reject_duplicate_name(session, request.app.state.secrets, body.name_template or body.name)
+        _reject_duplicate_name(session, request.app.state.secrets, body.name_template or body.name, build=body.build)
         _validate_anchor_rows(session, body, editing_slug="")
         slug = _unique_slug(session, slugify(body.name))
         collection = Collection(
@@ -693,7 +696,15 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
             merged = (body.name_template if "name_template" in sent else collection.name_template) or (
                 body.name if "name" in sent else collection.name
             )
-            _reject_duplicate_name(session, state.secrets, merged, exclude_slug=collection.slug)
+            # Only when the TITLE actually moves. The editor re-sends `name` on every save, so
+            # checking on "was the field present" refused a size-only edit on a row that already
+            # clashes — with a message about names, for a change that was not about names. A row in
+            # that state (created before this guard, or restored from a backup) must stay editable;
+            # the rule is "no NEW clashes", not "no clashing row may be touched".
+            if reconcile.title_key(merged) != reconcile.title_key(collection.name_template or collection.name):
+                _reject_duplicate_name(
+                    session, state.secrets, merged, exclude_slug=collection.slug, build=before["build"]
+                )
         # The default row has no per-collection name: its title IS the global `row.name_template`
         # (Settings → Defaults), which delivery renders per library. So a rename of it writes that
         # global setting — NOT this column — because a per-collection template would win over each
@@ -706,7 +717,9 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
             if new_template and new_template != previous:
                 # Renaming the default row retitles it on Plex just as surely as renaming any other,
                 # so it owes the same clash check — onto the title EVERY other row already renders.
-                _reject_duplicate_name(session, state.secrets, new_template, exclude_slug=DEFAULT_SLUG)
+                _reject_duplicate_name(
+                    session, state.secrets, new_template, exclude_slug=DEFAULT_SLUG, build="per_person"
+                )
                 store.set("row.name_template", new_template)
                 template_before, template_after = previous, new_template
         elif "name" in sent:
@@ -942,6 +955,13 @@ async def rename_collection_stream(collection_id: int, body: RenameRequest, requ
         # If called from the dialog flow, the PATCH already saved it — this is idempotent.
         new_template = body.name_template.strip()
         if new_template:
+            # The SIXTH door onto the title collision, and the only one that goes on to retitle the
+            # collections on Plex itself (`reconcile_row_rename_iter`, below). The SPA reaches it
+            # through the rename page, which PATCHes first and so is already guarded — but this
+            # endpoint documents standalone use one line up, and an API client taking that route
+            # could hand two rows one title, or overwrite the global template, with nothing to stop
+            # it. Checked BEFORE either write, so a refusal renames nothing here or on Plex.
+            _reject_duplicate_name(session, request.app.state.secrets, new_template, exclude_slug=slug, build=build)
             # Same rule as the PATCH handler: the DEFAULT row's title IS the global setting, and its
             # own column must stay empty. Writing it here would undo that guard within the same
             # flow — the rename screen PATCHes and then immediately POSTs to this endpoint, so a

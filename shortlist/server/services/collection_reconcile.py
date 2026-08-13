@@ -72,7 +72,43 @@ def row_template(session, slug: str, secrets=None) -> str:
     return (collection.name_template or collection.name) if collection else ""
 
 
-def row_titled_from(session, template: str, *, secrets=None, exclude_slug: str = "") -> Collection | None:
+#: A library name no real library has, for `title_key`. NOT the empty string: `render_row_name`
+#: collapses a `{library_name}` template to the bare default when there is no library, so an empty
+#: probe would report "✨ {library_name} Picked for You" — the DEFAULT row's own template — as
+#: occupying DEFAULT_ROW_NAME, and every `{top_seed}` row would then be refused against it. They do
+#: not collide: the default row renders "✨ Movies Picked for You" in a real library, the `{top_seed}`
+#: row renders the bare default. A non-empty sentinel keeps the two apart.
+_PROBE_LIBRARY = "\x00library\x00"
+
+#: Stub whose only job is to let `render_row_name` resolve `{user}`. A non-empty username stops a
+#: "{user}" template collapsing to empty — same stub `context_builder._retired_rows` uses.
+_PROBE_PROFILE = UserProfile(username="_probe_", plex_account_id=0, user_type=UserType.SHARED)
+
+
+def title_key(template: str) -> str:
+    """The identity two rows collide on: what ``template`` RENDERS to, case-folded.
+
+    Rendering rather than comparing the raw template, because `render_row_name` maps several distinct
+    templates onto ONE title and each of those pairs is a real collision the raw comparison missed:
+
+    * a ``{top_seed}`` template with no seed (a cold-start user) returns ``DEFAULT_ROW_NAME``, so two
+      such rows — or one of them and a row literally named "✨ Picked for You" — are one collection
+      for everyone who has too little history to seed them;
+    * a blank or whitespace-only template does the same, and nothing refused a blank
+      ``row.name_template`` (now `_validate_values` does);
+    * whitespace is collapsed for a ``{library_name}`` template, so "{library_name}  Picks" and
+      "{library_name} Picks" render identically.
+
+    All three are template-local — no Plex read, no library list. What it still cannot see is two
+    templates that differ only OUTSIDE the placeholder and happen to agree in one library
+    ("{library_name} Picks" vs "Movies Picks"), which would need the real library names.
+    """
+    return render_row_name(template or "", _PROBE_PROFILE, [], library_name=_PROBE_LIBRARY).casefold()
+
+
+def row_titled_from(
+    session, template: str, *, secrets=None, exclude_slug: str = "", build: str = ""
+) -> Collection | None:
     """The row (if any) whose collections are ALREADY titled from ``template``, or None.
 
     The clash test for every path that sets a row title. Two rows resolving to one template render to
@@ -90,20 +126,31 @@ def row_titled_from(session, template: str, *, secrets=None, exclude_slug: str =
 
     ``exclude_slug`` is the row being edited, which must not clash with itself.
 
+    ``build`` is the build of the row being written; a row of the OTHER build is skipped. A shared row
+    and a per-person row cannot become one collection however alike their titles: they carry different
+    invisible markers (`row_marker(0)` vs `row_marker(account_id)`, delivery.py:290) and file under
+    different labels (`shortlist__shared_<slug>` vs `shortlist_<userslug>`), and
+    `_find_this_rows_collection` only ever searches within one label. Refusing that pair was a false
+    positive whose message asserted a collision that cannot happen. Two rows of the SAME build are
+    still refused — including two shared rows, whose labels do differ, because one Plex library
+    holding two identically-titled collections is a trap for the owner even when the engine copes.
+
     What this cannot see: the per-user `row_name_tpl` override, which `resolve_row_template` places
     between a row's own template and the global one. It applies only to the default row, and only for
     the one user who set it, so a clash through that door is per-user and invisible to a server-wide
-    check. Rendering is not compared either — two different templates that happen to render alike in
-    one library ("{library_name} Picks" vs "Movies Picks") would need the library list, i.e. a Plex
-    read, on every row write.
+    check.
     """
-    wanted = (template or "").strip().casefold()
+    wanted = title_key(template)
+    # An unrenderable template has no title to collide on — and `title_key` maps blank to
+    # DEFAULT_ROW_NAME, never to empty, so this only fires for a caller passing nothing at all.
     if not wanted:
         return None
     for other in session.query(Collection).all():
         if other.slug == exclude_slug:
             continue
-        if row_template(session, other.slug, secrets).strip().casefold() == wanted:
+        if build and other.build and other.build != build:
+            continue
+        if title_key(row_template(session, other.slug, secrets)) == wanted:
             return other
     return None
 
