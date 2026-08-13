@@ -908,3 +908,49 @@ class TestRunLogBuffer:
 
         monkeypatch.setattr(service._log, "_sessions", boom)
         service.flush_run_log(1)  # must not raise
+
+
+class TestCancellingAQueuedRunIsImmediate:
+    """A queued run must stop the moment you ask, not when the run in front of it finishes.
+
+    Runs serialise on the Plex writer lock. The first attempt at this marked a queued run aborted
+    when it ACQUIRED that lock — which is the very thing it is waiting for. Queue two runs, cancel
+    both, and the second sat on "Stopping…" until the first completed: the code meant to stop it
+    could not run until the thing it was queued behind got out of the way.
+    """
+
+    def test_a_queued_run_is_aborted_without_waiting_for_the_lock(self, sessions, tmp_path):
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        with sessions() as session:
+            run = Run(trigger="manual", status="queued", stats={})
+            session.add(run)
+            session.commit()
+            run_id = run.id
+        service._cancels[run_id] = threading.Event()
+
+        # Nothing is draining the queue here — as far as this run knows, the lock is held forever.
+        assert service.cancel_run(run_id) is True
+
+        with sessions() as session:
+            run = session.get(Run, run_id)
+            assert run.status == "aborted", "a queued run must not wait on the run ahead of it"
+            assert run.finished_at is not None, "it has to stop being in-flight or the UI waits for ever"
+
+    def test_a_running_run_is_still_only_signalled(self, sessions, tmp_path):
+        """The cooperative path is unchanged: a running run is mid-write, so it is asked to stop
+        rather than declared stopped — finishing the row in hand is what keeps Plex consistent."""
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        with sessions() as session:
+            run = Run(trigger="manual", status="running", stats={})
+            session.add(run)
+            session.commit()
+            run_id = run.id
+        service._cancels[run_id] = threading.Event()
+
+        assert service.cancel_run(run_id) is True
+
+        with sessions() as session:
+            run = session.get(Run, run_id)
+            assert run.status == "running", "a running run stops cooperatively, not by decree"
+            assert run.stats["cancel_requested"] is True
+        assert service._cancels[run_id].is_set()
