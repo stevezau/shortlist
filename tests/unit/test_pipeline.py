@@ -2301,18 +2301,12 @@ class TestPerRowOverrides:
         delivered row visible to the wrong person."""
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
         mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
-        # Cancel becomes true once sarah has cleared ALL THREE of her checks — the top of her turn,
-        # the one before her rows are written, and the one before each row — so she delivers and mike
-        # (and the shared row) skip. Counting calls rather than flipping a real flag means this number tracks
-        # how many times the engine asks; the real `cancelled` is an Event and answers the same
-        # every time.
-        seen = {"n": 0}
-
-        def cancelled() -> bool:
-            seen["n"] += 1
-            return seen["n"] > 3
-
-        ctx.cancelled = cancelled
+        # Cancel becomes true the moment sarah's row is actually WRITTEN, so she delivers and mike
+        # (and the shared row) skip. Anchored to the write rather than to a count of `cancelled()`
+        # calls: the engine gained a cancel check at every boundary a row passes through, and a magic
+        # number here would have to be re-tuned for each one while testing nothing about them.
+        cancelled = {"yes": False}
+        ctx.cancelled = lambda: cancelled["yes"]
 
         created_by_label: dict[str, MagicMock] = {}
 
@@ -2320,8 +2314,12 @@ class TestPerRowOverrides:
             created_by_label[label.lower()] = collection
             return label.replace("shortlist", "Shortlist", 1)
 
+        def create_collection(section, title, items):
+            cancelled["yes"] = True
+            return MagicMock()
+
         ctx.plex.stored_label.side_effect = stored_label
-        ctx.plex.create_collection.side_effect = lambda section, title, items: MagicMock()
+        ctx.plex.create_collection.side_effect = create_collection
         ctx.plex.find_owned_collections.side_effect = lambda section, label: (
             [created_by_label[label.lower()]] if label.lower() in created_by_label else []
         )
@@ -4870,7 +4868,7 @@ class TestCancelStopsWritingPromptly:
     run writing for minutes after the operator asked it to stop.
     """
 
-    def test_a_person_mid_delivery_stops_before_their_next_row(self, ctx: EngineContext, mock_plextv):
+    def test_a_person_mid_delivery_stops_before_their_next_row(self, ctx: EngineContext, mock_plextv, monkeypatch):
         """A ROW is the boundary: delivered whole, so stopping between rows leaves nothing
         half-written. Within a row is where walking away would be unsafe, and that is untouched."""
         movies = MagicMock(type="movie", key="1", title="Movies")
@@ -4890,16 +4888,82 @@ class TestCancelStopsWritingPromptly:
         ctx.config.min_history = 1
         mock_plextv.users = [plextv_user(100, "sarah")]
 
-        seen = {"n": 0}
+        # Cancel lands the moment the FIRST row reaches Plex. Tied to the write itself rather than to
+        # a count of `cancelled()` calls: the count is an implementation detail that changes whenever
+        # a new check is added, and this test is about the boundary, not about how often we look.
+        import shortlist.engine.rows as rows_mod
 
-        def cancelled() -> bool:
-            seen["n"] += 1
-            # Clear the top-of-turn and pre-delivery checks, plus the first row's — then cancel.
-            return seen["n"] > 3
+        cancelled = {"yes": False}
+        real_deliver = rows_mod.deliver_rows
 
-        ctx.cancelled = cancelled
+        def deliver_then_cancel(*args, **kwargs):
+            result = real_deliver(*args, **kwargs)
+            cancelled["yes"] = True
+            return result
+
+        monkeypatch.setattr(rows_mod, "deliver_rows", deliver_then_cancel)
+        ctx.cancelled = lambda: cancelled["yes"]
 
         report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
 
         rows_built = {e["row_slug"] for u in report.users for e in u.breakdown}
         assert rows_built == {"one"}, "the second row must not be written after a cancel"
+
+    def test_a_row_parked_on_the_write_lock_writes_nothing_after_a_cancel(self, ctx: EngineContext, monkeypatch):
+        """The boundary a cancel actually needs, and the one the two checks above cannot reach.
+
+        Every person's Plex writes serialize on ONE `ctx.write_lock`, so at concurrency 8 seven
+        people are parked INSIDE `_deliver_row` when Cancel is pressed — already past every check
+        that precedes the lock. Each resuming to write a full row on a PMS answering in ~17s is the
+        minutes of "Stopping…" the per-row check could not explain.
+        """
+        import threading
+
+        import shortlist.engine.rows as rows_mod
+        from shortlist.engine.models import UserRunReport
+        from shortlist.engine.rows import RowPolicy
+
+        wrote: list[str] = []
+        monkeypatch.setattr(rows_mod, "deliver_rows", lambda *a, **k: wrote.append(a[4].slug))
+
+        cancelled = {"yes": False}
+        real_lock = threading.Lock()
+
+        class ParkedThenCancelled:
+            """Cancel arrives while this row waits its turn — what the other seven threads are doing."""
+
+            def __enter__(self):
+                real_lock.acquire()
+                cancelled["yes"] = True
+                return self
+
+            def __exit__(self, *exc):
+                real_lock.release()
+                return False
+
+        ctx.write_lock = ParkedThenCancelled()
+        ctx.cancelled = lambda: cancelled["yes"]
+
+        spec = RowSpec(slug="two", name_template="Two", size=2, media="movie")
+        user = make_profile("sarah", account_id=100)
+        report = UserRunReport(username="sarah", slug="sarah")
+        policy = RowPolicy(
+            ctx=ctx,
+            user=user,
+            cfg=ctx.config,
+            specs=[spec],
+            library_index={},
+            report=report,
+            resolve=lambda item: None,
+        )
+        pick = Pick(tmdb_id=10, rating_key=2010, title="A", rank=1, reason="because", media_type=MediaType.MOVIE)
+
+        delivered = rows_mod._deliver_row(
+            policy, spec, [pick], {"1": [pick]}, sole_row=True, stored_labels={}, order_work=None
+        )
+
+        assert delivered is False, "the caller must be told to stop this person, not carry on to their next row"
+        assert wrote == [], "a row must not be written to Plex once the run has been cancelled"
+        # Promote is driven off these titles, so a row we did NOT write must not appear among them —
+        # otherwise the promote phase hunts for a collection that does not exist.
+        assert report.placement_titles == {}
