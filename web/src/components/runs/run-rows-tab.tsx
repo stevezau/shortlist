@@ -1,4 +1,10 @@
-import { ChevronRight, CircleSlash, Layers, Telescope } from "lucide-react";
+import {
+  AlertCircle,
+  ChevronRight,
+  CircleSlash,
+  Layers,
+  Telescope,
+} from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 
@@ -8,6 +14,7 @@ import { UserPanel } from "@/components/runs/user-panel";
 import { UserTabs } from "@/components/runs/user-tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { errorBucket, friendlyError } from "@/lib/run-format";
 import { formatDuration, runStatusLabel, runStatusVariant } from "@/lib/format";
 import {
   groupRunByRow,
@@ -85,6 +92,41 @@ function SharedRowPanel({ group }: { group: RunRowGroup }) {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * "N people failed with the same problem" — one banner instead of the same error read off N rows.
+ *
+ * Lifted from the People tab when that went: it is about the RUN, not about any one row, so it sits
+ * above them all. Losing it would have made a server-wide outage look like N unrelated failures.
+ */
+function CommonFailure({ run }: { run: RunDetail }) {
+  const buckets = new Map<string, { count: number; msg: string }>();
+  for (const user of run.users) {
+    if (!user.error) continue;
+    const bucket = errorBucket(user.error);
+    if (!bucket) continue;
+    buckets.set(bucket, {
+      count: (buckets.get(bucket)?.count ?? 0) + 1,
+      msg: friendlyError(user.error),
+    });
+  }
+  const top = [...buckets.values()].sort((a, b) => b.count - a.count)[0];
+  if (!top || top.count < 2) return null;
+  return (
+    <div
+      role="alert"
+      className="flex gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm"
+    >
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive-text" />
+      <p>
+        <span className="font-medium">
+          {top.count} people failed with the same problem.
+        </span>{" "}
+        {top.msg} Open any row below and pick them out for the raw details.
+      </p>
     </div>
   );
 }
@@ -261,6 +303,7 @@ export function RunRowsTab({
 
   return (
     <div className="space-y-3">
+      <CommonFailure run={run} />
       {groups.map((group) => (
         <RowCard
           key={`${group.kind}:${group.slug}`}
