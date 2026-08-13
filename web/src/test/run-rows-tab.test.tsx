@@ -134,7 +134,10 @@ describe("RunRowsTab", () => {
     // the People tab's own panel, so the libraries are TABS and the first one's picks are showing.
     renderTab();
 
-    expect(screen.getByText("Sarah")).toBeInTheDocument();
+    // Twice on purpose: once in the person list, once in the panel header that names whose result
+    // is on screen. That header is also where the "How we picked" button lives — hoisting the button
+    // without it left the button floating above the picks, belonging to nothing.
+    expect(screen.getAllByText("Sarah")).toHaveLength(2);
     expect(screen.getByText("Sicario")).toBeInTheDocument();
     // The libraries are a segmented control in the reused panel, so only the first one's picks are
     // on screen and the other is one click away.

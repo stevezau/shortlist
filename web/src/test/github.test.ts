@@ -8,6 +8,7 @@ function makeRun(overrides: Partial<RunDetail> = {}): RunDetail {
     id: 12,
     trigger: "schedule",
     started_at: "2026-07-14T03:30:00Z",
+    began_at: "2026-07-14T03:30:00Z",
     finished_at: "2026-07-14T03:35:00Z",
     status: "error",
     dry_run: false,

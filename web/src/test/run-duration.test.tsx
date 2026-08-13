@@ -9,6 +9,7 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     id: 1,
     trigger: "manual",
     started_at: "2026-07-19T03:30:00Z",
+    began_at: "2026-07-19T03:30:00Z",
     finished_at: null,
     status: "running",
     dry_run: false,
@@ -74,6 +75,39 @@ describe("RunDuration", () => {
 
     expect(screen.getByText("—")).toBeInTheDocument();
     expect(screen.queryByText(/11\.0s/)).toBeNull();
+  });
+
+  it("says a run cancelled while still queued NEVER RAN, rather than claiming the wait as work", () => {
+    // Reported from a real server: three runs queued together, cancelled nine minutes later, each
+    // showing "9m 26s". None of them had executed a single step. The duration was measured from
+    // `started_at`, which is stamped when the ROW is created, so it was timing the queue.
+    render(
+      <RunDuration
+        run={makeRun({
+          status: "aborted",
+          began_at: null,
+          finished_at: "2026-07-19T03:39:26Z",
+        })}
+      />,
+    );
+
+    expect(screen.getByText("never ran")).toBeInTheDocument();
+    expect(screen.queryByText(/9m/)).toBeNull();
+  });
+
+  it("times a run that DID start from when it began, not from when it was queued", () => {
+    // It waited 5 minutes behind another run, then worked for 2. The answer is 2 minutes.
+    render(
+      <RunDuration
+        run={makeRun({
+          status: "ok",
+          began_at: "2026-07-19T03:35:00Z",
+          finished_at: "2026-07-19T03:37:00Z",
+        })}
+      />,
+    );
+
+    expect(screen.getByText("2m 0s")).toBeInTheDocument();
   });
 
   it("does not tick a queued run up as time passes", () => {

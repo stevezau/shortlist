@@ -3492,6 +3492,17 @@
         "additionalProperties": true,
         "description": "A run plus every person in it, and every shared row it built.",
         "properties": {
+          "began_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Began At"
+          },
           "dry_run": {
             "title": "Dry Run",
             "type": "boolean"
@@ -3570,6 +3581,7 @@
           "id",
           "trigger",
           "started_at",
+          "began_at",
           "finished_at",
           "status",
           "dry_run",
@@ -3872,6 +3884,17 @@
         "additionalProperties": true,
         "description": "One run, as the Runs list shows it.",
         "properties": {
+          "began_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Began At"
+          },
           "dry_run": {
             "title": "Dry Run",
             "type": "boolean"
@@ -3936,6 +3959,7 @@
           "id",
           "trigger",
           "started_at",
+          "began_at",
           "finished_at",
           "status",
           "dry_run",

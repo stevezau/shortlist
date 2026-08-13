@@ -21,6 +21,10 @@ RUN_SUMMARY_KEYS = {
     "id",
     "trigger",
     "started_at",
+    # When the engine actually began, as opposed to when the row was created. None for a run that
+    # never left the queue — which is how "waited 9 minutes then cancelled" is told apart from
+    # "worked for 9 minutes".
+    "began_at",
     "finished_at",
     "status",
     "dry_run",

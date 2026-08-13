@@ -109,6 +109,9 @@ class RunSummaryOut(PassthroughModel):
     #: default, so every run row has one. It read `str | None` only because `iso_utc` is typed that
     #: way — the serializer's signature, not this column's.
     started_at: str
+    #: When the engine actually began, as opposed to when this row was created. None means the run
+    #: never got out of the queue, so it has no duration — it did nothing.
+    began_at: str | None
     finished_at: str | None
     status: str
     dry_run: bool

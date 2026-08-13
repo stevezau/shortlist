@@ -63,6 +63,7 @@ function run(breakdown: RunDetail["users"][number]["breakdown"]): RunDetail {
     trigger: "manual",
     status: "ok",
     started_at: "2026-07-15T04:18:00Z",
+    began_at: "2026-07-15T04:18:00Z",
     finished_at: "2026-07-15T04:24:00Z",
     dry_run: false,
     stats: { users_ok: 1, users_error: 0, titles_requested: 0 },
@@ -1078,6 +1079,10 @@ describe("RunDetailPage — a queued run has not started", () => {
       ...run([]),
       status: "queued",
       started_at: "2026-07-15T04:18:00Z",
+      // NULL, because status and `began_at` are written in the same commit — a queued run has never
+      // had one. Set, this fixture described a state the code cannot produce, and the assertion
+      // below would have passed with the queued branch deleted.
+      began_at: null,
       finished_at: null,
       users: [],
       stats: {},

@@ -281,7 +281,12 @@ class Run(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     trigger: Mapped[str] = mapped_column(String(16))  # schedule | manual | wizard
+    #: When the run was QUEUED — this row is created the moment someone presses Run.
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    #: When the engine actually began, which is not the same moment: a run waits here behind whatever
+    #: holds the Plex writer lock. NULL means it never got that far — cancelled or reaped while still
+    #: queued — and such a run has no duration, having done nothing.
+    began_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="queued")  # queued | running | ok | error | aborted
     dry_run: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -246,9 +246,9 @@ class RunService:
             try:
                 # Inside the try so a failure here (e.g. reading users) still marks the run errored
                 # AND runs the finally that frees the cancel Event — never leaves a run stuck "running".
+                self._mark_started(run_id)
                 with self._sessions() as session:
                     run = session.get(Run, run_id)
-                    run.status = "running"
                     profiles = self.enabled_profiles(session, user_ids)
                     run.stats = {
                         **(run.stats or {}),
@@ -369,6 +369,24 @@ class RunService:
         clobber an exclude the run had just added.
         """
         return bool(self._cancels)
+
+    def _mark_started(self, run_id: int) -> None:
+        """Mark a run as executing, and stamp WHEN — the moment the engine actually began.
+
+        Its own method rather than two lines inside `_run_locked` because the two must not drift:
+        `started_at` is stamped at INSERT (when the run was asked for), so a run that waited behind
+        another for nine minutes and was then cancelled reported nine minutes of work it had never
+        done. Anything that sets the status to running owes the timestamp too, and a named method is
+        what makes that visible — this status write has already been moved once, for the
+        cancel-while-queued fix, and a stamp left behind would read as "never ran" on every run.
+        """
+        with self._sessions() as session:
+            run = session.get(Run, run_id)
+            if run is None:
+                return
+            run.status = "running"
+            run.began_at = datetime.now(UTC)
+            session.commit()
 
     def cancel_run(self, run_id: int) -> bool:
         """Ask the in-flight run to stop. Returns True if a running run was signalled, False if that

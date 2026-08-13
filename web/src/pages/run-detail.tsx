@@ -237,10 +237,19 @@ export function RunDetailPage() {
                       {triggerLabel(run.trigger)} · queued{" "}
                       {formatDate(run.started_at)} · waiting to start
                     </>
+                  ) : !run.began_at ? (
+                    // Cancelled or reaped while still queued. Its status is no longer "queued", so
+                    // this used to fall through and claim "started 03:30 · finished 03:39" — the same
+                    // nine minutes the list row now correctly calls "never ran", one click away and
+                    // directly above a Duration tile reading "—".
+                    <>
+                      {triggerLabel(run.trigger)} · queued{" "}
+                      {formatDate(run.started_at)} · never started
+                    </>
                   ) : (
                     <>
                       {triggerLabel(run.trigger)} · started{" "}
-                      {formatDate(run.started_at)}
+                      {formatDate(run.began_at)}
                       {run.finished_at
                         ? ` · finished ${formatDate(run.finished_at)}`
                         : " · still running"}
