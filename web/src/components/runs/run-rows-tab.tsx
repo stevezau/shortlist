@@ -192,8 +192,10 @@ function RowCard({
   // needs each person's row-specific time rather than their whole-run total.
   let chosenPerson: RunRowPerson | undefined;
   const costBySlug = new Map<string, RunRowCost | null>();
+  const builtBySlug = new Map<string, boolean | null>();
   for (const person of group.people) {
     costBySlug.set(person.result.slug, person.cost);
+    builtBySlug.set(person.result.slug, person.built);
     if (person.result.slug === chosen?.slug) chosenPerson = person;
   }
   const decision = chosenPerson?.decision;
@@ -284,6 +286,7 @@ function RowCard({
               // The card header two lines above already says "10 of 46 people done".
               showSummary={false}
               costBySlug={costBySlug}
+              builtBySlug={builtBySlug}
             />
             <div className="min-w-0">
               {decision && decision !== "due" && (

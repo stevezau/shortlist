@@ -29,6 +29,18 @@ export type RunRowPerson = {
   /** THIS row's own cost, or null on a run recorded before it was measured — which must render as
    *  "not recorded", never as 0s. `duration_ms` includes `blocked_ms`; work time is the difference. */
   cost: RunRowCost | null;
+  /**
+   * Did this row actually deliver anything to them?
+   *
+   * `cost` alone cannot answer it. The row timer starts BEFORE the cancel check and before a dead
+   * candidate source can bail out, so a row that was never written still records a cost — and a
+   * cancelled person then rendered as a green tick beside "0s", which reads as "built instantly".
+   *
+   * `null` on a legacy run, where the person has no breakdown AT ALL: nothing was recorded, which is
+   * not the same as nothing happening, and claiming "not built" there would be a worse lie than the
+   * tick was.
+   */
+  built: boolean | null;
   /** The person's SHARED setup, repeated on each of their rows because it belongs to none of them.
    *  All AI spend lives here, attributed per pool — never divided between rows. */
   setup: { setup_ms: number; pools: RunPoolCost[] } | null;
@@ -166,6 +178,7 @@ export function groupRunByRow(
           breakdown: mine as RunUserResult["breakdown"],
           picks: mine.length || user.breakdown.length === 0 ? user.picks : [],
         },
+        built: breakdown.length === 0 ? null : mine.length > 0,
         cost: user.cost?.rows?.[slug] ?? null,
         setup: user.cost
           ? { setup_ms: user.cost.setup_ms ?? 0, pools: user.cost.pools ?? [] }
@@ -264,6 +277,7 @@ export function groupRunByRow(
           has_trace: false,
           rows_considered: {},
         } as unknown as RunUserResult,
+        built: false,
       });
     }
     group.pending = group.people.filter(

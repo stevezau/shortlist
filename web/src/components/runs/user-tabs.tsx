@@ -1,4 +1,10 @@
-import { AlertCircle, Check, CircleSlash, Loader2 } from "lucide-react";
+import {
+  AlertCircle,
+  Check,
+  CircleDashed,
+  CircleSlash,
+  Loader2,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 
@@ -24,6 +30,7 @@ function UserRow({
   selected,
   onSelect,
   cost,
+  built,
 }: {
   result: RunUserResult;
   selected: string;
@@ -32,6 +39,8 @@ function UserRow({
    *  all (a hypothetical non-row context); `null` on a legacy run that never measured it — either
    *  way this is "not recorded", not "0s", so both fall back to a plain "Done". */
   cost?: RunRowCost | null;
+  /** Did this row deliver anything to them? `null`/`undefined` = not recorded, so say nothing. */
+  built?: boolean | null;
 }) {
   const failed = result.error !== null;
   const isSelected = result.slug === selected;
@@ -66,6 +75,15 @@ function UserRow({
           Skipped
           <CircleSlash className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
+      ) : built === false ? (
+        // Nothing was written for them on THIS row — the run was cancelled before it got here, the
+        // row was muted for them, or it produced no picks. A cost exists anyway: the row timer
+        // starts before the cancel check, so this used to render a green tick beside "0s", which
+        // says "built instantly" about a row that was never built at all.
+        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+          Not built
+          <CircleDashed className="h-3.5 w-3.5" aria-hidden="true" />
+        </span>
       ) : (
         // This list is row-scoped — it lives inside ONE row's card — so the duration shown here is
         // THIS row's own time, not the person's whole-run total (`result.duration_ms`), which used
@@ -87,6 +105,7 @@ export function UserTabs({
   onSelect,
   showSummary = true,
   costBySlug,
+  builtBySlug,
 }: {
   results: RunUserResult[];
   selected: string;
@@ -97,6 +116,9 @@ export function UserTabs({
   /** THIS row's per-person cost, keyed by slug. Optional so a hypothetical future non-row caller
    *  still compiles — every real caller today is row-scoped, so every `UserRow` gets one. */
   costBySlug?: Map<string, RunRowCost | null>;
+  /** Whether THIS row delivered anything to each person, keyed by slug. Separate from `costBySlug`
+   *  because a cost exists for rows that were never written — see `RunRowPerson.built`. */
+  builtBySlug?: Map<string, boolean | null>;
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "failed" | "ok">("all");
@@ -199,6 +221,7 @@ export function UserTabs({
               selected={selected}
               onSelect={onSelect}
               cost={costBySlug?.get(result.slug)}
+              built={builtBySlug?.get(result.slug)}
             />
           ))}
           {bothGroups && ok.length > 0 && (
@@ -211,6 +234,7 @@ export function UserTabs({
               selected={selected}
               onSelect={onSelect}
               cost={costBySlug?.get(result.slug)}
+              built={builtBySlug?.get(result.slug)}
             />
           ))}
           {bothGroups && skipped.length > 0 && (
@@ -223,6 +247,7 @@ export function UserTabs({
               selected={selected}
               onSelect={onSelect}
               cost={costBySlug?.get(result.slug)}
+              built={builtBySlug?.get(result.slug)}
             />
           ))}
           {pending.length > 0 && (
@@ -235,6 +260,7 @@ export function UserTabs({
               selected={selected}
               onSelect={onSelect}
               cost={costBySlug?.get(result.slug)}
+              built={builtBySlug?.get(result.slug)}
             />
           ))}
           {shown.length === 0 && (

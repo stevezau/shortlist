@@ -677,6 +677,66 @@ describe("RunRowsTab — per-row cost", () => {
     expect(screen.queryByText(/waiting/i)).not.toBeInTheDocument();
   });
 
+  /** A run cancelled part-way through this person: "picked" was written, "because" never was —
+   *  but `_row_timer` wraps the loop body and starts BEFORE the cancel check, so a cost exists for
+   *  it anyway. That cost is what the person list used to render, as a green tick beside "0s". */
+  const cancelledMidPerson = run({
+    status: "cancelled",
+    users: [
+      user({
+        duration_ms: PERSON_WHOLE_RUN_MS,
+        rows_considered: { picked: "due", because: "due" },
+        breakdown: rowBreakdown().slice(0, 1),
+        has_trace: false,
+        cost: {
+          setup_ms: 421000,
+          rows: {
+            picked: { duration_ms: 72300, blocked_ms: 300 },
+            because: { duration_ms: 0, blocked_ms: 0 },
+          },
+          pools: [],
+        },
+      }),
+    ],
+  });
+
+  it("says a row that was never written was not built, rather than ticking it off in 0s", async () => {
+    render(
+      <RunRowsTab
+        run={cancelledMidPerson}
+        titles={CONFIG_NAMES}
+        idBySlug={new Map()}
+      />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Because you watched/ }),
+    );
+
+    const person = screen.getByRole("tab", { name: /Sarah/ });
+    expect(within(person).getByText(/not built/i)).toBeInTheDocument();
+    // The whole point: no duration and no success tick on a row nothing was written for.
+    expect(within(person).queryByText(/^0s$/)).not.toBeInTheDocument();
+  });
+
+  it("still ticks off the row the same cancelled run DID write", async () => {
+    // The other half — a cancel must not repaint the work that already happened as not-done. Same
+    // person, same run, the row above the one it stopped on.
+    render(
+      <RunRowsTab
+        run={cancelledMidPerson}
+        titles={CONFIG_NAMES}
+        idBySlug={new Map()}
+      />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Picked for You/ }),
+    );
+
+    const person = screen.getAllByRole("tab", { name: /Sarah/ })[0];
+    expect(within(person!).getByText(/1m 12s/)).toBeInTheDocument();
+    expect(within(person!).queryByText(/not built/i)).not.toBeInTheDocument();
+  });
+
   it("says timing was not recorded for a legacy run instead of showing 0s", async () => {
     render(<RunRowsTab run={legacyRun} titles={{}} idBySlug={new Map()} />);
     await userEvent.click(
