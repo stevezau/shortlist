@@ -494,10 +494,18 @@ def _reject_duplicate_name(
         if clash.slug == DEFAULT_SLUG
         else f"the row {clash.name!r} ({clash.slug})"
     )
+    # Name the FIELD that collided, not just the row. A fallback clash used to be reported as
+    # "'More like {top_seed}' is already the title of …" — quoting the row name, which is fine, and
+    # sending the operator to the box that isn't the problem.
+    culprit = template
+    where = "name"
+    if fallback_name and reconcile.title_key(fallback_name) in reconcile._title_keys(session, clash, secrets):
+        culprit = fallback_name
+        where = "\u201cName for people with nothing watched yet\u201d"
     raise HTTPException(
         status_code=422,
-        detail=f"{template!r} is already the title of {whose} — two rows with the same title become a "
-        "single collection on Plex, so pick a different name",
+        detail=f"{culprit!r} is already the title of {whose} — two rows with the same title become a "
+        f"single collection on Plex, so pick a different {where}",
     )
 
 

@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import String, cast, func
 from sqlalchemy.orm import Session
 
@@ -56,6 +56,26 @@ class UserPrefs(BaseModel):
     # OpenAPI schema, so the SPA's generated type lost the record shape and had to re-declare it.
     blocked_seeds: list[int | BlockSeedBody] | None = None
     paused: bool | None = None
+
+    @field_validator("row_name_tpl")
+    @classmethod
+    def _no_seed_in_a_per_user_name(cls, value: str | None) -> str | None:
+        """A per-user row name may not use ``{top_seed}``.
+
+        A row's name that follows a watch needs a fallback for people who have not got one, and that
+        fallback is a per-ROW field — there is nowhere to put a per-USER one. So this override would
+        leave exactly the person who set it with a default row that silently stops being built while
+        their history is thin, with no field anywhere to fix it and no alert naming them (issue #84's
+        notification reads rows, not user prefs). Refusing it is the honest answer: the placeholder
+        has nothing to fall back to here.
+        """
+        if value and "{top_seed}" in value:
+            raise ValueError(
+                "a per-person row name can't use {top_seed} — it needs a fallback name for people "
+                "with nothing watched yet, and that lives on the row, not the person. Set it on the "
+                "row instead."
+            )
+        return value
 
 
 class UserPatch(BaseModel):

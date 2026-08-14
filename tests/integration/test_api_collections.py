@@ -1805,6 +1805,21 @@ class TestNoTwoRowsShareATitle:
         # being refused for an unrelated reason, so it proved nothing about the clash check at all.
         assert "already the title of" in clash.json()["detail"], clash.json()
 
+    def test_the_error_names_the_field_that_actually_collided(self, client: TestClient):
+        """A fallback clash used to quote the row NAME and say "pick a different name" — sending the
+        operator to the box that is fine, while the one that collided sits untouched below it."""
+        client.post("/api/collections", json={"name": "Because you watched {top_seed}", "fallback_name": "Shared"})
+        second = client.post("/api/collections", json={"name": "More like {top_seed}"})
+
+        clash = client.patch(
+            f"/api/collections/{second.json()['id']}", json={"name": "More like {top_seed}", "fallback_name": "Shared"}
+        )
+
+        assert clash.status_code == 422
+        detail = clash.json()["detail"]
+        assert "'Shared'" in detail, detail
+        assert "nothing watched yet" in detail, detail
+
     def test_a_blank_global_template_is_refused(self, client: TestClient):
         """A blank one renders to DEFAULT_ROW_NAME, silently retitling the default row onto any row
         literally named that — the reported bug, reachable in two ordinary requests."""
