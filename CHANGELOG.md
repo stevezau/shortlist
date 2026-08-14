@@ -4,6 +4,73 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [1.5.2] - 2026-08-15
+
+### Fixed
+
+- **One row, two names on Plex** ([#84](https://github.com/stevezau/shortlist/issues/84)). A row
+  named with `{top_seed}` and set to **movies & shows** could deliver a correctly named collection to
+  one library and a plain "✨ Picked for You" to the other — from the same row, for the same person,
+  so both showed up side by side. Each library named the row from its OWN picks, and if the person's
+  seeds were all films, the TV half had nothing to name itself after and fell back. A library still
+  uses its own seed when it has one — a row spanning two libraries genuinely can follow a different
+  watch in each, and its titles should say so — but it now borrows the row's other seed before giving
+  up and using the default name.
+
+- **The owner caveat is offered during setup, not pointed at**
+  ([#85](https://github.com/stevezau/shortlist/issues/85)). Plex cannot hide anyone's row from the
+  account that owns the server, so the owner sees everybody's on each library's shelf. Shortlist said
+  so in the wizard — and then ended with "look for **You see everyone's rows** on the Users page",
+  which is homework, handed out during setup, for a problem that only becomes visible in Plex days
+  later. Someone was told exactly that, never went to the Users page, and reported 22 rows on their
+  shelf as a bug. The wizard now asks the question where the decision is being made — *do you watch on
+  this admin account?* — and opens the real "move my watching to a separate account" flow in place,
+  watch-history transfer and all. Skip it and nothing changes: the note on the Users page and the
+  alert are both still there, both dismissable.
+
+- **Dismissing that note now clears the matching alert too.** Choosing "Got it — don't show this
+  again" while reading the full explanation is a considered answer; the same message sitting in the
+  bell afterwards was just nagging. The reverse still does not hold — clearing the bell is a light
+  "seen it" and leaves the explanation on the Users page where you can find it again.
+
+- **Shortlist no longer invents a name for a row** ([#84](https://github.com/stevezau/shortlist/issues/84)).
+  A row called "Because you watched {top_seed}" needs a title the person has actually watched.
+  Someone new to your server hasn't got one — so the row had no name, and Shortlist substituted a
+  hardcoded "✨ Picked for You". On a 22-user server with a French row-name template, 19 of 22 people
+  got that: not your words, and a claim about a watch that never happened, over a row filled with
+  whatever rates highest.
+
+  Rows are now named by you or not built. The row editor asks, right beside the name that raises the
+  question: **"Name for people with nothing watched yet"**. Fill it in and they get the row under that
+  name; leave it empty and they simply don't get this row until they've watched enough — often the
+  right answer, since "because you watched" can't be true for them yet.
+
+  **Shortlist tells you when this affects a row**, in the notification bell — naming the row, saying
+  nothing was deleted, and linking to the field. A behaviour change nobody is told about reads as a
+  new bug.
+
+  **On upgrade, nothing is deleted** — but a `{top_seed}` row stops appearing for people with nothing
+  watched until you give it that name. Their existing row stays on Plex exactly as it is, still
+  private, just no longer updated; type a name and it comes back on the next rebuild. Shortlist
+  deliberately does not pick one for you: the obvious candidate is your default row's own title, and
+  handing two of someone's rows the same name is what makes them fight over a single collection.
+
+- **A skipped show request now says what to do about it.** Sonarr identifies shows by their TheTVDB
+  id, and Shortlist looks that up on TMDB — so when TMDB hasn't recorded one, there is no way to name
+  the show to Sonarr and the request is skipped. (Guessing would be worse: the closest title match
+  for "The Haunting of Bly Manor" is "The Haunting", a different and much larger series.) The reason
+  on the **Requests** page used to read "no TheTVDB id for this show" — true, and no help at all
+  unless you already knew what a TVDB id was. It now says TMDB has none and that adding the show in
+  Sonarr yourself is the way through. A lookup that *failed* — TMDB down or slow — says something
+  different again, because that one is worth waiting a night for.
+
+- **The errors notification can be dismissed.** "N errors in the last day" counts what has already
+  happened, and there is nothing to do about the past except acknowledge it — but it was pinned
+  open, so the bell carried a badge for a full day with no way to clear it. It now dismisses, and the
+  next error brings it straight back rather than staying hidden behind the last dismissal. The two
+  alerts that stay pinned are the two describing something still true right now: runs paused, and an
+  account that can see other people's rows.
+
 ## [1.5.1] - 2026-08-14
 
 ### Added

@@ -141,7 +141,11 @@ class TestNotifications:
         by_id = {n["id"]: n for n in items}
         partial = next(n for k, n in by_id.items() if k.startswith("run-partial-"))
         assert "2 people failed" in partial["title"]  # pluralized
-        assert "recent-errors" in by_id and by_id["recent-errors"]["severity"] == "warning"
+        errors = next(n for k, n in by_id.items() if k.startswith("recent-errors-"))
+        assert errors["severity"] == "warning"
+        # Dismissable: it counts what already HAPPENED, and there is nothing to do about the past but
+        # acknowledge it. Only alerts describing a condition still true now stay undismissable.
+        assert errors["dismissable"] is True
 
     def test_update_notification_can_be_dismissed_per_version(self, client: TestClient, monkeypatch):
         import shortlist.server.notifications as notif

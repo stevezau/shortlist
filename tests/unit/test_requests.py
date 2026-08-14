@@ -462,6 +462,35 @@ class TestRequestMissing:
         report = requests_mod.request_missing(cfg, FakeTmdb({20: None}), demand, dry_run=False)
         assert sonarr.series_calls == []
         assert report.outcomes[0].status == "skipped_no_tvdb"
+        # The reason is what the operator READS on the Requests page, so it has to end their search
+        # rather than restate the fault. "no TheTVDB id for this show" was true and useless: nothing
+        # in it says whether Shortlist is broken, Sonarr is misconfigured, or this is simply how it
+        # is — and there is exactly one remedy, which is to add the show in Sonarr by hand.
+        detail = report.outcomes[0].detail
+        assert "TMDB has no TheTVDB id" in detail
+        assert "add it in Sonarr yourself" in detail, f"the reason must say what to do, got: {detail!r}"
+
+    def test_a_failed_tvdb_lookup_is_told_apart_from_a_missing_one(self, monkeypatch):
+        """Same missing id, opposite advice — so the two must not share wording.
+
+        A lookup that RAISED (TMDB down, a timeout) may succeed next run and is worth waiting on. A
+        lookup that succeeded and came back empty is a settled fact about TMDB's data that will never
+        change on its own. Telling someone to go and edit Sonarr by hand because TMDB was briefly
+        down would send them off to fix something that is not broken.
+        """
+
+        class Exploding:
+            def tvdb_id(self, *a, **k):
+                raise RuntimeError("boom")
+
+        sonarr = FakeArr()
+        monkeypatch.setattr(requests_mod, "SonarrClient", lambda *a, **k: sonarr)
+        demand = self._demand(MissingTitle(20, "show", MediaType.SHOW, 2020, rating=8.0, vote_count=500))
+        report = requests_mod.request_missing(_cfg(sonarr=SONARR), Exploding(), demand, dry_run=False)
+
+        assert report.outcomes[0].status == "error"
+        assert "may work next run" in report.outcomes[0].detail
+        assert "add it in Sonarr" not in report.outcomes[0].detail
 
     def test_missing_target_for_media_type_is_skipped(self, monkeypatch):
         # Movies wanted but only Sonarr configured -> skipped_no_target, never an error.

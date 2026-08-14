@@ -74,9 +74,16 @@ class TestRenderRowName:
     def test_top_seed_substitution(self):
         assert render_row_name("Because you watched {top_seed}", make_profile(), picks()) == "Because you watched Fargo"
 
-    def test_unfillable_template_falls_back_to_the_default_row_name(self):
+    def test_unfillable_template_yields_no_name_at_all(self):
+        """ "" is the answer, and the caller must read it as "do not build this row for them".
+
+        It used to answer DEFAULT_ROW_NAME — a hardcoded English string that ignored the operator's
+        own row-name setting and claimed a watch that never happened. Issue #84: on a 22-user server
+        with a French template, that put "✨ Picked for You" on 19 people's Plex.
+        """
         cold = [Pick(1, 1, "X", 1, "r", MediaType.MOVIE)]
-        assert render_row_name("{top_seed}", make_profile(), cold) == DEFAULT_ROW_NAME
+        assert render_row_name("{top_seed}", make_profile(), cold) == ""
+        assert render_row_name("{top_seed}", make_profile(), cold) != DEFAULT_ROW_NAME
 
     def test_library_name_substitution_fills_the_delivering_library(self):
         tpl = "✨ {library_name} Picked for You"
@@ -102,14 +109,92 @@ class TestColdStartRowName:
         name = render_row_name("Because you watched {top_seed}", make_profile(), [_named_pick("Fargo")])
         assert name == "Because you watched Fargo"
 
-    def test_cold_start_user_falls_back_instead_of_dangling(self):
+    def test_cold_start_user_gets_no_name_rather_than_a_dangling_one_or_an_invented_one(self):
+        # Neither "Because you watched" (a sentence that stops halfway) nor a substitute of our own.
+        assert render_row_name("Because you watched {top_seed}", make_profile(), [_named_pick(None)]) == ""
+        assert render_row_name("Because you watched {top_seed}", make_profile(), []) == ""
+
+    def test_the_operators_own_fallback_is_used_when_they_have_given_one(self):
+        # The whole matrix of the naming rule: own template -> operator's fallback -> nothing.
+        cold = [_named_pick(None)]
+        profile = make_profile()
+
         assert (
-            render_row_name("Because you watched {top_seed}", make_profile(), [_named_pick(None)]) == DEFAULT_ROW_NAME
+            render_row_name("Car vous avez regardé {top_seed}", profile, cold, fallback_name="Spécifiquement pour vous")
+            == "Spécifiquement pour vous"
         )
-        assert render_row_name("Because you watched {top_seed}", make_profile(), []) == DEFAULT_ROW_NAME
+        # Their fallback still gets its own placeholders filled.
+        assert (
+            render_row_name("{top_seed}", profile, cold, library_name="Films", fallback_name="{library_name} pour vous")
+            == "Films pour vous"
+        )
+        # A fallback that ALSO needs a seed is no fallback at all — and must not dangle either.
+        assert render_row_name("{top_seed}", profile, cold, fallback_name="Parce que {top_seed}") == ""
+        # A seed exists: the row's own name wins and the fallback is never consulted.
+        assert (
+            render_row_name("Because you watched {top_seed}", profile, [_named_pick("Fargo")], fallback_name="Other")
+            == "Because you watched Fargo"
+        )
 
     def test_static_template_is_untouched(self):
         assert render_row_name("✨ Picked for You", make_profile(), [_named_pick(None)]) == "✨ Picked for You"
+
+    def test_both_libraries_of_one_row_get_the_same_seeded_name(self, engine_config, movies, shows):
+        """Issue #84's real mechanism, from the reporter's own screenshots.
+
+        A `movies & shows` row named "Car vous avez regardé {top_seed}" produced TWO differently
+        titled collections for one person: the seeded name in Movies, and the bare English default in
+        TV — because the title was rendered from THAT LIBRARY's picks, and their seeds were all films.
+        `{top_seed}` names something the person WATCHED; what they watched is not confined to the
+        library a pick happens to live in.
+        """
+        from shortlist.engine.delivery import deliver_rows, strip_marker
+        from shortlist.engine.models import RowSpec
+
+        plex = _labelling_plex_mock(MagicMock(spec=PlexClient))
+        plex.sections.return_value = [movies, shows]
+        plex.find_owned_collections.return_value = []
+        seeded_movie = Pick(1, 101, "Sicario", rank=1, reason="r", media_type=MediaType.MOVIE, seed_title="Conjuring")
+        unseeded_show = Pick(2, 202, "The Bear", rank=2, reason="r", media_type=MediaType.SHOW, seed_title=None)
+
+        deliver_rows(
+            plex,
+            make_profile(),
+            [seeded_movie, unseeded_show],
+            engine_config,
+            RowSpec(slug="because", name_template="Car vous avez regardé {top_seed}", size=10, media="both"),
+            sections=[movies, shows],
+            section_picks={movies.key: [seeded_movie], shows.key: [unseeded_show]},
+            dry_run=False,
+        )
+
+        created = [strip_marker(call.args[1]) for call in plex.create_collection.call_args_list]
+        assert created == ["Car vous avez regardé Conjuring"] * 2, (
+            f"one row must have ONE name in every library it lands in, got {created}"
+        )
+        assert DEFAULT_ROW_NAME not in created, "the TV library must not fall back while the row has a seed"
+
+    def test_the_seed_source_rule_has_exactly_one_implementation(self):
+        """`seed_source` is the whole cross-module contract, so cover its matrix here.
+
+        `delivery._deliver_one` renders the title Plex is given and `rows._run_user` re-renders it to
+        stamp `placement_titles`, which is how promote finds the collection delivery just wrote. Two
+        copies of this rule that drift by one character mean promote looks up a title that was never
+        written. Both now call THIS, so the only thing that can be wrong is the rule itself.
+        """
+        from shortlist.engine.delivery import seed_source
+
+        seeded_here = [_named_pick("Fargo")]
+        seeded_elsewhere = [_named_pick("Heat")]
+        seedless = [_named_pick(None)]
+
+        # Its own seed wins — a row over two libraries follows a different watch in each, on purpose.
+        assert seed_source(seeded_here, seeded_elsewhere) is seeded_here
+        # No seed here: borrow the row's, rather than give up and use the default name (#84).
+        assert seed_source(seedless, seeded_elsewhere) is seeded_elsewhere
+        # Nothing anywhere: hand back the row's list and let render_row_name fall back as before.
+        assert seed_source(seedless, seedless) is seedless
+        assert seed_source([], []) == []
 
     def test_an_unseeded_top_pick_does_not_hide_the_seeds_behind_it(self):
         """Issue #84, the half that made this happen to everyone.
@@ -129,6 +214,60 @@ class TestColdStartRowName:
 
         # The BEST SEEDED pick (rank 2), not the best pick overall and not the first in the list.
         assert name == "Because you watched Wind River"
+
+
+class TestAnUnnameableRowTouchesNothing:
+    """The row that cannot be named must leave no trace — least of all in the privacy machinery."""
+
+    def test_it_does_not_blank_the_label_a_real_row_recorded(self, engine_config: EngineConfig, movies):
+        """`stored_labels` is keyed by PERSON, shared by every one of their rows.
+
+        So an unnameable row writing "" there erases the label a nameable row just recorded — and
+        `desired_excludes` merges that empty string into every OTHER account's share filter as
+        `label!=Shortlist_bob,,Shortlist_mike`. Malformed, and while it stands there is no exclude at
+        all for that person's row. Fires on the default configuration: a `{top_seed}` row with no
+        fallback and a user with picks but no seed.
+        """
+        from shortlist.engine.delivery import deliver_rows
+        from shortlist.engine.models import RowSpec
+
+        plex = _labelling_plex_mock(MagicMock(spec=PlexClient))
+        plex.sections.return_value = [movies]
+        plex.find_owned_collections.return_value = []
+        seeded = Pick(1, 101, "A", rank=1, reason="r", media_type=MediaType.MOVIE, seed_title="Fargo")
+        unseeded = Pick(2, 102, "B", rank=1, reason="r", media_type=MediaType.MOVIE, seed_title=None)
+        stored_labels: dict[str, str] = {}
+
+        deliver_rows(
+            plex,
+            make_profile(),
+            [seeded],
+            engine_config,
+            RowSpec(slug="named", name_template="Because you watched {top_seed}", size=5, media="movie"),
+            sections=[movies],
+            section_picks={movies.key: [seeded]},
+            stored_labels=stored_labels,
+            dry_run=False,
+        )
+        recorded = dict(stored_labels)
+        assert recorded, "the nameable row must record its label"
+
+        deliver_rows(
+            plex,
+            make_profile(),
+            [unseeded],
+            engine_config,
+            RowSpec(slug="nameless", name_template="Car vous avez regardé {top_seed}", size=5, media="movie"),
+            sections=[movies],
+            section_picks={movies.key: [unseeded]},
+            stored_labels=stored_labels,
+            dry_run=False,
+        )
+
+        assert stored_labels == recorded, (
+            f"a row that wrote nothing must not touch the label accumulator, got {stored_labels}"
+        )
+        assert "" not in stored_labels.values()
 
 
 def _labelling_plex_mock(plex: MagicMock) -> MagicMock:

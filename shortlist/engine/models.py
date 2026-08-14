@@ -360,6 +360,13 @@ class RowSpec:
     # holding popular titles. Deliberately NOT a per-person override: it answers "what is this row
     # for", like `pick_order`, not "how does this person want it".
     cold_start: str | None = None
+    # The name to use when `name_template` cannot be rendered — a `{top_seed}` row for someone with
+    # no watch behind any of their picks. Empty means the row is NOT built for that person, because
+    # the engine never substitutes a name of its own (issue #84).
+    #
+    # Added LAST, deliberately: several call sites build a RowSpec positionally, so a new field in
+    # the middle silently shifts every argument after it. The same hazard bit HubAnchor.anchor_row.
+    fallback_name: str = ""
     # How many of this person's most recent watches this row may be built from, of which ONE (per media
     # type) is chosen each run — the row cycles a step a day rather than sitting on their newest watch
     # for ever. 1 (the default) is the original behaviour: always the most recent.

@@ -2,9 +2,13 @@
 
 A registry of small builder functions, each returning a notification dict (or nothing when its
 condition isn't firing). Notifications reflect CURRENT state and are recomputed on every request, so
-most clear themselves the moment the underlying condition resolves (a good run, an un-pause). Only
-the "update available" note is dismissable, because it otherwise persists until you actually update —
-its dismissal is keyed to the version, so a newer release surfaces again.
+most clear themselves the moment the underlying condition resolves (a good run, an un-pause).
+
+Everything here is dismissable EXCEPT the two alerts that describe a condition still true right now —
+runs paused, and an account that can see other people's rows — where hiding the alert hides the thing
+itself. Every dismissable id encodes its state (a version, a run id, the newest failed job, the newest
+error), so dismissing acknowledges what has happened so far and the next occurrence surfaces again
+rather than staying hidden behind the old dismissal.
 
 Shape (rendered by the React bell, so the fields are plain text — no HTML, no sanitiser needed):
     {id, severity: info|warning|error, title, body, action_url, action_label, dismissable}
@@ -82,23 +86,107 @@ def _last_run_problem(session: Session) -> dict | None:
     return None
 
 
+def _usable_fallback(row) -> bool:
+    """A fallback name that can actually produce a title — non-blank, and not itself needing a seed."""
+    value = (row.fallback_name or "").strip()
+    return bool(value) and "{top_seed}" not in value
+
+
+def _rows_with_no_name_for_newcomers(session: Session, store: SettingsStore) -> dict | None:
+    """A row named after a watch, with no name for the people who haven't got one.
+
+    Since issue #84 Shortlist will not invent a title, so such a row is simply not built for anyone
+    below the history threshold. That is the right behaviour and the wrong silence: the rows just stop
+    updating, which to an operator upgrading into this looks exactly like the bug it fixes. This is
+    the difference between "we stopped guessing" and "we stopped guessing AND told you".
+
+    Dismissable, and the id encodes the affected rows, so naming one — or adding another — surfaces it
+    again rather than staying hidden behind an old dismissal.
+    """
+    from shortlist.server.db.models import DEFAULT_SLUG, Collection
+
+    rows = [
+        row
+        for row in session.query(Collection).filter(Collection.enabled.is_(True), Collection.build == "per_person")
+        # A fallback that itself needs a seed can never render, so it is no fallback — the API refuses
+        # new ones, and this keeps the alert firing on databases that already hold one.
+        if "{top_seed}" in ((row.name_template or row.name) or "") and not _usable_fallback(row)
+    ]
+    # The DEFAULT row takes its title from the global setting, never its own column.
+    global_name = store.get("row.name_template") or ""
+    display: dict[str, str] = {row.slug: (row.name_template or row.name) for row in rows}
+    if "{top_seed}" in global_name:
+        for row in session.query(Collection).filter(Collection.enabled.is_(True), Collection.slug == DEFAULT_SLUG):
+            if _usable_fallback(row):
+                continue
+            # NOT gated on its `name_template` being empty. A stale value in that column is a real
+            # state on any database written before the API guarded it, and the ENGINE ignores it —
+            # `context_builder` forces the default row's template to "" so the global setting wins.
+            # Gating on it silenced this alert on exactly the upgraded servers it exists for.
+            if row.slug not in display:
+                rows.append(row)
+            # Named by the GLOBAL template, never its own column: the default row's `name` is the
+            # stale "✨ Picked for You" from migration 0001, which is both a title the operator will
+            # not find on their Rows page and the hardcoded string this whole issue is about.
+            display[row.slug] = global_name
+    if not rows:
+        return None
+    names = sorted(set(display.values()))
+    shown = names[0] if len(names) == 1 else f"{len(names)} rows"
+    return {
+        "id": "rows-unnamed-" + ",".join(sorted({row.slug for row in rows})),
+        "severity": "info",
+        "title": f"{shown} won\u2019t be built for people with nothing watched yet",
+        "body": (
+            "Its name follows a watch, and someone new to your server hasn\u2019t got one — so Shortlist "
+            "has no name for their copy of it and doesn\u2019t invent one. Open the row and set "
+            "\u201cName for people with nothing watched yet\u201d if you\u2019d like them to have it; "
+            "leave it and they get this row once they\u2019ve watched enough. Nothing has been deleted."
+        ),
+        "action_url": "/rows",
+        "action_label": "Open Rows",
+        "dismissable": True,
+    }
+
+
 def _recent_service_errors(session: Session) -> dict | None:
     """A count of service-level error events in the last day that AREN'T already covered by a failed
-    run — e.g. a plex.tv write that 429'd repeatedly, or a request send that errored."""
+    run — e.g. a plex.tv write that 429'd repeatedly, or a request send that errored.
+
+    Dismissable, and the id encodes the NEWEST error, so dismissing acknowledges everything up to
+    that point and the next error re-surfaces it.
+
+    It used to be neither: a stable id and `dismissable: False`, which left the bell showing a badge
+    for a full day over errors that had already happened, with nothing the owner could do but wait
+    for them to age out. That is what dismissing is FOR. The two alerts that stay undismissable are
+    the two that describe a condition still true right now — runs paused, and an account that can see
+    other people's rows — where hiding it hides the thing itself. A count of what already happened is
+    not one of those.
+
+    Keyed to the newest event id rather than to the day: a second error the same afternoon must not
+    stay hidden behind the morning's dismissal, and the COUNT is unusable as a key because it falls
+    as old events age out of the window, which would re-surface an alert nothing new had happened to.
+    """
     since = datetime.now(UTC) - timedelta(days=1)
-    count = (
-        session.query(Event).filter(Event.level == "error", Event.ts >= since, ~Event.scope.startswith("run")).count()
-    )
+    recent = session.query(Event).filter(Event.level == "error", Event.ts >= since, ~Event.scope.startswith("run"))
+    count = recent.count()
     if not count:
         return None
+    newest = recent.order_by(Event.id.desc()).first()
+    if newest is None:
+        # `count` and this are two separate queries, so the nightly retention prune landing between
+        # them gives a non-zero count with nothing behind it — and `recent-errors-0` would be a STABLE
+        # dismissable id, the one combination the state-encoded id exists to avoid. Dismissing it once
+        # would silence the alert for good.
+        return None
     return {
-        "id": "recent-errors",
+        "id": f"recent-errors-{newest.id}",
         "severity": "warning",
         "title": f"{count} error{'s' if count != 1 else ''} in the last day",
         "body": "Shortlist logged some errors recently. Check the recent runs and the container log.",
         "action_url": "/runs",
         "action_label": "See runs",
-        "dismissable": False,
+        "dismissable": True,
     }
 
 
@@ -376,6 +464,7 @@ def build_notifications(session: Session, store: SettingsStore, current_version:
         _failed_jobs(session),
         _mdblist_quota(session),
         _recent_service_errors(session),
+        _rows_with_no_name_for_newcomers(session, store),
         _rows_we_cannot_hide(session),
         _owner_sees_all_rows(session),
         _shelf_contention(session),

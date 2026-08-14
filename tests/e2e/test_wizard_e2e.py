@@ -209,7 +209,14 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
             if label.lower().startswith("shortlist_"):
                 rows.setdefault(label.lower(), []).append(collection)
 
-    assert set(rows) == {"shortlist_sarah", "shortlist_mike", "shortlist_canary"}
+    # The canary has NO watch history, and this wizard set the row name to "Because you watched
+    # {top_seed}" — a name that needs a watch. Since issue #84 Shortlist will not invent one, so the
+    # canary gets no row rather than one titled something the operator never wrote. The two people who
+    # HAVE watched are unaffected, which is the line this asserts: the rule costs exactly the rows it
+    # cannot name honestly, and no others.
+    assert set(rows) == {"shortlist_sarah", "shortlist_mike"}, (
+        "a row whose name needs a watch must be built for everyone who has one — and only them"
+    )
     for label, collections in rows.items():
         # A row runs PER LIBRARY: EACH library the user has picks in fills to the chosen size on its
         # own — not one budget of 10 split across libraries. So a 'both' watcher gets a full movie
@@ -231,9 +238,15 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
         kind = "Movie" if collection.section_id == state.section_id else "Show"
         assert collection.title.startswith(f"Because you watched {kind}"), collection.title
     assert rows["shortlist_mike"][0].title.startswith("Because you watched Show")  # mike only watches TV
-    # A cold-start user has no seed to fill {top_seed} with, so the row falls back to the default
-    # title rather than putting the dangling half-sentence "Because you watched" on their Home.
-    assert rows["shortlist_canary"][0].title.startswith("✨ Picked for You")
+    # And the canary — no watch history, so nothing to fill {top_seed} with — gets NO row rather than
+    # one Shortlist named for itself (issue #84). It used to land as the hardcoded English
+    # "✨ Picked for You", which on a server with a row name in another language read as a stray row
+    # appearing from nowhere, and claimed a watch that never happened over a list of merely popular
+    # titles. The operator gives the row a fallback name if they want these people to have one.
+    assert "shortlist_canary" not in rows
+    assert not any(c.title.startswith("✨ Picked for You") for c in state.collections.values()), (
+        "no collection may wear a title Shortlist invented"
+    )
 
     # Every row carries its owner's INVISIBLE marker, so no two rows in a library share a title —
     # and a Plex collection is a tag keyed by title, so identically-titled rows would be ONE tag
@@ -250,9 +263,16 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
         assert len(titles) == len(set(titles)), f"two rows share a collection tag in library {library}"
 
     # Every user's share now excludes the OTHER users' labels — the whole point of the product.
-    assert state.users[201].filters["filterMovies"] == "label!=Shortlist_canary,Shortlist_mike"
-    assert state.users[202].filters["filterMovies"] == "label!=Shortlist_canary,Shortlist_sarah"
+    # The canary is excluded from nobody's filter, because the canary HAS no row — excludes are built
+    # from the rows that exist on the server, not from the roster, so a person Shortlist could not
+    # name has nothing to hide. 203 is the canary: they are still excluded from both of the others.
+    assert state.users[201].filters["filterMovies"] == "label!=Shortlist_mike"
+    assert state.users[202].filters["filterMovies"] == "label!=Shortlist_sarah"
     assert state.users[203].filters["filterMovies"] == "label!=Shortlist_mike,Shortlist_sarah"
+    # And nothing empty ever reaches a filter — `label!=A,,B` is malformed and fails OPEN.
+    for user in state.users.values():
+        assert ",," not in (user.filters.get("filterMovies") or "")
+        assert not (user.filters.get("filterMovies") or "").endswith(",")
 
     run = app.api("GET", "/api/runs").json()[0]
     assert run["status"] == "ok"

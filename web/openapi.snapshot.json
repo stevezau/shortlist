@@ -526,6 +526,12 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "fallback_name": {
+            "default": "",
+            "maxLength": 255,
+            "title": "Fallback Name",
+            "type": "string"
+          },
           "hub_anchor": {
             "additionalProperties": {
               "$ref": "#/components/schemas/HubAnchorIn"
@@ -784,6 +790,10 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "fallback_name": {
+            "title": "Fallback Name",
+            "type": "string"
+          },
           "hub_anchor": {
             "additionalProperties": {
               "$ref": "#/components/schemas/HubAnchorOut"
@@ -979,6 +989,7 @@
           "media",
           "sort_order",
           "name_template",
+          "fallback_name",
           "min_watchers",
           "request_tag",
           "candidate_sources",
@@ -6075,7 +6086,7 @@
   },
   "info": {
     "title": "Shortlist",
-    "version": "1.5.1"
+    "version": "1.5.2"
   },
   "openapi": "3.1.0",
   "paths": {

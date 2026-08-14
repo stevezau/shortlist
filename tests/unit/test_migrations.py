@@ -879,6 +879,45 @@ class TestRunsBeganAt:
         assert self._began(tmp_path)[1] == "2026-05-05 05:05:05"
 
 
+class TestRowFallbackName:
+    """0070 — a row's name for someone whose own name cannot be filled in (issue #84)."""
+
+    def test_0070_adds_the_column_and_backfills_nothing(self, tmp_path: Path):
+        """No backfill, on purpose, and this test is the record of why.
+
+        The first version copied the global row-name template into every `{top_seed}` row so those
+        people's rows kept appearing. That one decision produced every serious defect in this change:
+        it matched the wrong column (the Rows page stores a template in `name`), it wrote values
+        `render_row_name` discards, it could not see per-user overrides, and the global template IS
+        the default row's title — so it gave two of a person's rows one name in one library, the exact
+        collision the change exists to prevent. Guessing for the operator was the problem. The editor
+        asks them instead, and a row nobody has named simply is not built for people who cannot be
+        named — their existing collection is left alone, not deleted.
+        """
+        # The fixture matters: a fresh DB has no `row.name_template` row in `settings` and no row
+        # carrying `{top_seed}`, so the DELETED backfill would have matched nothing and this test
+        # would pass against it too — pinning nothing. Build the state it WOULD have acted on.
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0069")
+        _write_setting(tmp_path, "row.name_template", "Spécifiquement pour le grand {user}")
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        con.execute("UPDATE collections SET name = 'Parce que vous avez regardé {top_seed}' WHERE slug = 'picked'")
+        con.commit()
+        con.close()
+        command.upgrade(_alembic(tmp_path), "0070")
+
+        flags = _not_null(tmp_path, "collections")
+        assert "fallback_name" in flags
+        assert flags["fallback_name"] is False
+
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        try:
+            values = [row[0] for row in con.execute("SELECT fallback_name FROM collections")]
+        finally:
+            con.close()
+        assert all(v is None for v in values), f"0070 must invent nothing, found {values}"
+
+
 class TestRunUsersCost:
     def test_0069_adds_nullable_cost_to_run_users(self, tmp_path: Path):
         """Nullable with NO backfill: a legacy run has no per-row cost and must read 'not recorded'.

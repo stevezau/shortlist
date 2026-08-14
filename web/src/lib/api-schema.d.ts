@@ -2703,6 +2703,11 @@ export interface components {
              * @default true
              */
             enabled: boolean;
+            /**
+             * Fallback Name
+             * @default
+             */
+            fallback_name: string;
             /** Hub Anchor */
             hub_anchor?: {
                 [key: string]: components["schemas"]["HubAnchorIn"];
@@ -2830,6 +2835,8 @@ export interface components {
             cold_start: "popular" | "skip" | null;
             /** Enabled */
             enabled: boolean;
+            /** Fallback Name */
+            fallback_name: string;
             /** Hub Anchor */
             hub_anchor: {
                 [key: string]: components["schemas"]["HubAnchorOut"];

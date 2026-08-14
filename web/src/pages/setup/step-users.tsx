@@ -1,8 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { Loader2, UserPlus } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import { MutationAlert } from "@/components/mutation-alert";
+import { TransferSteps } from "@/pages/watching-account";
 import { EmptyState, QueryBoundary } from "@/components/query-boundary";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -73,6 +74,8 @@ export function StepUsers() {
     if (!users.some((u) => u.enabled)) setAllMutate(true);
   }, [sync.isSuccess, users, setAllMutate]);
 
+  const [showTransfer, setShowTransfer] = useState(false);
+
   return (
     <div className="space-y-6">
       <div className="rounded-lg border border-primary/40 bg-primary/10 p-4 text-sm">
@@ -98,11 +101,53 @@ export function StepUsers() {
         <p className="mt-2 text-muted-foreground">
           Your own Home screen only ever shows your row. What Plex can&rsquo;t
           do is keep <em>other</em> people&rsquo;s rows out of the
-          library&rsquo;s Collections tab for you &mdash; you own the server, so
-          nothing hides them. There are a few ways to deal with that, and
-          Shortlist will walk you through them once setup is done &mdash; look
-          for <strong>You see everyone&rsquo;s rows</strong> on the Users page.
+          library&rsquo;s <strong>Collections</strong> tab and{" "}
+          <strong>Recommended</strong> shelf for you &mdash; you own the server,
+          so you have no share with yourself, and there is nothing for Plex to
+          hide them behind. Everyone else still only ever sees their own.
         </p>
+
+        {/* This used to end with "look for You see everyone's rows on the Users page" — a forward
+            reference to a page the owner has no reason to visit. Issue #85 is someone doing exactly
+            that: told twice, went to Plex days later, found 22 rows on their shelf and filed a bug.
+            The remedy now happens HERE, while they are deciding whether to watch on this account.
+
+            Inline rather than a link: until setup completes every route redirects back to /setup, so
+            the owner cannot be sent to /watching-account. `TransferSteps` is that page's own flow,
+            imported — not a second copy that would drift from it. */}
+        <p className="mt-2 text-muted-foreground">
+          <strong className="text-foreground">
+            Do you watch on this admin account?
+          </strong>{" "}
+          If so, the usual fix is to watch on a separate Plex Home account and
+          keep this one for running the server. Shortlist copies your watch
+          history across, so its picks are right from the first run.
+        </p>
+
+        {!showTransfer ? (
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+            <Button size="sm" onClick={() => setShowTransfer(true)}>
+              <UserPlus className="h-4 w-4" aria-hidden="true" />
+              Set that up now
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              Or skip it &mdash; you can do this any time from{" "}
+              <strong>Users</strong>, and Shortlist will remind you once.
+            </span>
+          </div>
+        ) : (
+          <div className="mt-3">
+            <TransferSteps numbered={false} />
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-2"
+              onClick={() => setShowTransfer(false)}
+            >
+              Not now
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Both writes here decide who gets a row at all, and the Switch mirrors the server — so a

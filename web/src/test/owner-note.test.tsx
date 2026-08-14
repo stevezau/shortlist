@@ -93,7 +93,11 @@ describe("OwnerNote", () => {
     expect(screen.getByText(/You add the account in Plex/i)).toBeInTheDocument();
   });
 
-  it("retires under its OWN id, not the bell's", async () => {
+  it("retires the bell alert as well, so the same message stops arriving twice", async () => {
+    // "Got it — don't show this again", clicked while reading the full explanation, is a considered
+    // gesture: leaving the identical message sitting in the bell afterwards is nagging someone who
+    // has already said they understand. The asymmetry with the test below is the whole design — the
+    // strong gesture clears both, the light one clears only itself.
     renderIn(<OwnerNote />);
 
     await userEvent.click(
@@ -101,13 +105,17 @@ describe("OwnerNote", () => {
     );
 
     expect(dismissNotification).toHaveBeenCalledWith(OWNER_SHELF_NOTE_ID);
-    expect(dismissNotification).not.toHaveBeenCalledWith(OWNER_SHELF_ALERT_ID);
+    await waitFor(() =>
+      expect(dismissNotification).toHaveBeenCalledWith(OWNER_SHELF_ALERT_ID),
+    );
   });
 
-  it("survives the bell alert being dismissed", async () => {
-    // The bug this fixes. Clearing a bell alert is "yep, seen it"; retiring an inline explainer is a
-    // deliberate choice. Coupling them meant one casual bell click permanently deleted the
-    // explanation from the Users page, with no way in the UI to bring it back.
+  it("survives the bell alert being dismissed — the coupling runs ONE way", async () => {
+    // The bug the split ids fix, and the reason the test above is not simply symmetric. Clearing a
+    // bell alert is "yep, seen it"; retiring an inline explainer is a deliberate choice. Coupling
+    // them BOTH ways meant one casual bell click permanently deleted the explanation from the Users
+    // page, with no way in the UI to bring it back — within an hour of shipping, on the maintainer's
+    // own server.
     getNotifications.mockResolvedValue({
       notifications: [],
       dismissed: [OWNER_SHELF_ALERT_ID],

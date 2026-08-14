@@ -594,9 +594,51 @@ export function RowEditor({
                     preview panel, which is always on screen — printing it twice made the field's
                     own help longer without answering anything the panel didn't. */}
                   <TemplateVarsHint />
+
                 </>
               )}
             </div>
+
+                {/* Issue #84. `{top_seed}` needs a title the person has watched, and someone new to
+                    the server has none — so this row has no name for them. Shortlist will not
+                    invent one, which leaves exactly two honest answers, and this is where the
+                    choice belongs: it appears the moment the name needs a watch, beside the name
+                    that needs it, rather than being discovered from Plex days later. */}
+                {namesASeed && (
+                  <div className="space-y-2 rounded-md border border-dashed p-3">
+                    <Label htmlFor="row-fallback-name">
+                      Name for people with nothing watched yet
+                    </Label>
+                    <Input
+                      id="row-fallback-name"
+                      value={input.fallback_name}
+                      onChange={(e) => set({ fallback_name: e.target.value })}
+                      placeholder="e.g. ✨ Picked for {user}"
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      This name says the row follows a watch, and someone new
+                      to your server hasn&rsquo;t got one — so there is nothing
+                      to put in <code>{"{top_seed}"}</code> for them.{" "}
+                      {input.fallback_name.trim() ? (
+                        <>
+                          They&rsquo;ll get this row under the name above,
+                          filled with what rates highest on your server.
+                        </>
+                      ) : (
+                        <>
+                          <strong className="text-foreground">
+                            Leave this empty and they simply won&rsquo;t get
+                            this row
+                          </strong>{" "}
+                          — which is often the right answer, since a
+                          &ldquo;because you watched&rdquo; row can&rsquo;t be
+                          true for them. It appears on its own once they
+                          watch enough.
+                        </>
+                      )}
+                    </p>
+                  </div>
+                )}
 
             <div className="space-y-2">
               <Label>One row each, or one for everyone?</Label>

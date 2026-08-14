@@ -18,7 +18,12 @@ from shortlist.engine import rows as rows_mod
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.tmdb import NullCache
 from shortlist.engine.context import EngineContext
-from shortlist.engine.delivery import render_row_name, resolve_row_template, row_marker, strip_marker
+from shortlist.engine.delivery import (
+    render_row_name,
+    resolve_row_template,
+    row_marker,
+    strip_marker,
+)
 from shortlist.engine.models import (
     EngineConfig,
     MediaType,

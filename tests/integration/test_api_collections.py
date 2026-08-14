@@ -34,6 +34,7 @@ COLLECTION_KEYS = {
     "media",
     "sort_order",
     "name_template",
+    "fallback_name",
     "min_watchers",
     "request_tag",
     "candidate_sources",
@@ -1728,14 +1729,114 @@ class TestNoTwoRowsShareATitle:
         assert clash.status_code == 422
         assert client.get("/api/settings").json()["row.name_template"] != "Friday Films"
 
-    def test_two_top_seed_rows_cannot_both_collapse_onto_the_default_title(self, client: TestClient):
-        """`render_row_name` returns DEFAULT_ROW_NAME for a `{top_seed}` template with no seed, so for
-        every cold-start user these two are one collection — invisible to a raw-template comparison."""
+    def test_two_unnameable_rows_no_longer_clash_on_a_name_neither_of_them_has(self, client: TestClient):
+        """The old rule inverted, on purpose (issue #84).
+
+        Both of these used to render the same substitute name for anyone with no watch, so they WERE
+        one collection and had to be refused. Nothing substitutes now: for such a person neither row
+        has a title and neither is built, so there is nothing to collide on and refusing the second
+        row was blocking a configuration that is fine.
+        """
         client.post("/api/collections", json={"name": "Because you watched {top_seed}"})
 
-        clash = client.post("/api/collections", json={"name": "More like {top_seed}"})
+        ok = client.post("/api/collections", json={"name": "More like {top_seed}"})
 
-        assert clash.status_code == 422, "two rows that both render '✨ Picked for You' were allowed"
+        assert ok.status_code < 300, f"two unnameable rows cannot share a title they do not have: {ok.text}"
+
+    def test_two_rows_sharing_a_FALLBACK_name_still_clash(self, client: TestClient):
+        """Where the collision moved to.
+
+        A fallback name is a real title that really gets written, so two rows carrying the same one
+        land on one collection for every person who needs it — the same trap the rule above used to
+        catch, now at the name the operator actually chose.
+        """
+        first = client.post(
+            "/api/collections",
+            json={"name": "Because you watched {top_seed}", "fallback_name": "Picked for You"},
+        )
+        assert first.status_code < 300, first.text
+
+        clash = client.post(
+            "/api/collections",
+            json={"name": "More like {top_seed}", "fallback_name": "Picked for You"},
+        )
+
+        assert clash.status_code == 422, "two rows with the same fallback name were allowed"
+
+    def test_a_PATCH_cannot_sneak_in_a_duplicate_fallback_name(self, client: TestClient):
+        """POST checked this from the start; PATCH did not — and PATCH is what the row editor saves
+        through, so the state POST returns 422 for was reachable in one ordinary edit."""
+        client.post("/api/collections", json={"name": "Because you watched {top_seed}", "fallback_name": "Shared"})
+        second = client.post("/api/collections", json={"name": "More like {top_seed}"})
+        assert second.status_code < 300, second.text
+
+        clash = client.patch(f"/api/collections/{second.json()['id']}", json={"fallback_name": "Shared"})
+
+        assert clash.status_code == 422, "two rows were allowed to share a fallback name via PATCH"
+
+    def test_the_DEFAULT_row_cannot_take_another_row_s_title_as_its_fallback(self, client: TestClient):
+        """The one write on the row editor that had no duplicate-title check behind it.
+
+        The default row's `name`/`name_template` are exempt because its title is the global setting —
+        but its FALLBACK is a per-row column like anyone else's, and the "no name for newcomers" alert
+        points operators straight at that field. Two rows rendering one title for one person in one
+        library are a single Plex collection: one row's picks overwrite the other's, and removing
+        either deletes the collection the survivor is using.
+        """
+        client.post("/api/collections", json={"name": "Hidden Gems"})
+        # The DEFAULT row by slug, not by a guessed id — the first test I wrote patched id 1, which
+        # was the newly created row, so it passed with the guard reverted and proved nothing.
+        rows = client.get("/api/collections").json()
+        default_id = next(r["id"] for r in rows if r["slug"] == "picked")
+
+        # `name` is REQUIRED on this body — a PATCH without it is refused by request validation before
+        # any clash logic runs, which is exactly how the first version of this test passed while
+        # proving nothing. The row editor sends the whole row, so this is also what a real save looks
+        # like: the default row's own (unchanged) title, plus the field being set.
+        default = next(r for r in rows if r["slug"] == "picked")
+        clash = client.patch(
+            f"/api/collections/{default_id}",
+            json={"name": default["name"], "fallback_name": "Hidden Gems"},
+        )
+
+        assert clash.status_code == 422, "the default row was allowed to take another row's title"
+        # The MESSAGE too, so this fails when the 422 comes from somewhere else. An earlier version of
+        # this test asserted the status alone and passed with the guard reverted — the request was
+        # being refused for an unrelated reason, so it proved nothing about the clash check at all.
+        assert "already the title of" in clash.json()["detail"], clash.json()
+
+    def test_the_error_names_the_field_that_actually_collided(self, client: TestClient):
+        """A fallback clash used to quote the row NAME and say "pick a different name" — sending the
+        operator to the box that is fine, while the one that collided sits untouched below it."""
+        client.post("/api/collections", json={"name": "Because you watched {top_seed}", "fallback_name": "Shared"})
+        second = client.post("/api/collections", json={"name": "More like {top_seed}"})
+
+        clash = client.patch(
+            f"/api/collections/{second.json()['id']}", json={"name": "More like {top_seed}", "fallback_name": "Shared"}
+        )
+
+        assert clash.status_code == 422
+        detail = clash.json()["detail"]
+        assert "'Shared'" in detail, detail
+        assert "nothing watched yet" in detail, detail
+
+    def test_a_fallback_name_cannot_itself_need_a_seed(self, client: TestClient):
+        """The nastiest shape this feature could take: the operator does what the alert asks, the
+        alert clears, and nothing changes.
+
+        The fallback is what a row is called when `{top_seed}` CANNOT be filled, so one that also
+        needs a seed is no fallback at all — `render_row_name` discards it. The API used to accept it
+        and the "no name for newcomers" alert saw a non-empty value and went quiet, so the row was
+        still not built and the operator had been told it was fixed.
+        """
+        bad = client.post(
+            "/api/collections",
+            json={"name": "More like {top_seed}", "fallback_name": "Popular like {top_seed}"},
+        )
+
+        assert bad.status_code == 422, "a fallback that also needs a seed was accepted"
+        ok = client.post("/api/collections", json={"name": "More like {top_seed}", "fallback_name": "Popular"})
+        assert ok.status_code < 300, ok.text
 
     def test_a_blank_global_template_is_refused(self, client: TestClient):
         """A blank one renders to DEFAULT_ROW_NAME, silently retitling the default row onto any row

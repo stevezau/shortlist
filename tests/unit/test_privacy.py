@@ -1244,3 +1244,19 @@ class TestThePrivatePruneNeedsTwoSourcesNotOne:
 
         after = (written or {}).get("filterMovies", ("", "label!=Shortlist_mike"))[1]
         assert "Shortlist_mike" in after
+
+
+class TestAnEmptyLabelNeverBecomesAnExclude:
+    def test_a_falsy_label_is_dropped_rather_than_written_into_a_filter(self):
+        """The last gate before a real plex.tv share filter.
+
+        `label!=A,,B` is a filter Plex cannot act on, and it fails OPEN — the row it was meant to
+        hide is visible. Dropped at the source too (`deliver_rows` only records a label it stored);
+        this is the belt, because getting it wrong here is a leak rather than a cosmetic bug.
+        """
+        from shortlist.engine.privacy import desired_excludes
+
+        got = desired_excludes("Shortlist_bob", {"bob": "Shortlist_bob", "mike": "Shortlist_mike", "ghost": ""})
+
+        assert "" not in got
+        assert got == {"Shortlist_mike"}

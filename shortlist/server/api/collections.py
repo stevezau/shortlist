@@ -11,7 +11,7 @@ from apscheduler.triggers.cron import CronTrigger
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
@@ -124,6 +124,27 @@ class CollectionIn(BaseModel):
     media: str = _closed_set(MEDIA, "both", "Which library types this row builds in.")
     sort_order: int = 0
     name_template: str = ""
+    # What to call this row for someone whose name cannot be filled in — a `{top_seed}` row for a
+    # person with nothing watched. "" means there is none, and the row is simply not built for them:
+    # Shortlist never invents a name (issue #84).
+    fallback_name: str = Field(default="", max_length=255)
+
+    @field_validator("fallback_name")
+    @classmethod
+    def _a_fallback_cannot_need_a_seed(cls, value: str) -> str:
+        """The fallback is what a row is called when `{top_seed}` CANNOT be filled — so one that also
+        needs a seed is no fallback at all. `render_row_name` refuses it, which was the whole of the
+        behaviour: the API accepted it, the "no name for newcomers" alert saw a non-empty value and
+        went quiet, and the row still was not built. The operator does exactly what the alert asks and
+        is told it worked. That is issue #84's symptom re-entering through the field built to fix it.
+        """
+        if value and "{top_seed}" in value:
+            raise ValueError(
+                "the fallback name is for people with nothing watched, so it can't use {top_seed} "
+                "either — there'd still be nothing to put in it. Use a name that stands on its own."
+            )
+        return value
+
     min_watchers: int = Field(default=2, ge=2)  # a public row must never be shaped by one person
     request_tag: str = Field(default="", max_length=64)  # tag added to titles requested via this row
     candidate_sources: list[str] = Field(default_factory=list)  # [] -> inherit global candidates.sources
@@ -201,6 +222,7 @@ class CollectionOut(PassthroughModel):
     media: str = _closed_set_out(MEDIA, "Which library types this row builds in.")
     sort_order: int
     name_template: str
+    fallback_name: str
     min_watchers: int
     request_tag: str
     candidate_sources: list[str]
@@ -443,6 +465,7 @@ def _serialize(session, collection: Collection) -> dict:
         # collections", and leave the next run to build a second collection beside the old one.
         # Neutralising it here rather than in a migration keeps one place responsible for the rule.
         "name_template": "" if collection.slug == DEFAULT_SLUG else collection.name_template,
+        "fallback_name": collection.fallback_name or "",
         "min_watchers": collection.min_watchers,
         "request_tag": collection.request_tag or "",
         "candidate_sources": list(collection.candidate_sources or []),
@@ -465,7 +488,9 @@ def _serialize(session, collection: Collection) -> dict:
     }
 
 
-def _reject_duplicate_name(session, secrets, template: str, *, exclude_slug: str = "", build: str = "") -> None:
+def _reject_duplicate_name(
+    session, secrets, template: str, *, exclude_slug: str = "", build: str = "", fallback_name: str = ""
+) -> None:
     """Refuse a row title another row is already titled from — see `reconcile.row_titled_from` for
     what "already titled from" means and why the `name` column is the wrong thing to compare.
 
@@ -473,7 +498,9 @@ def _reject_duplicate_name(session, secrets, template: str, *, exclude_slug: str
     a row that carries its own template is titled from that, so changing only its `name` cannot clash
     with anything, and changing only its `name_template` very much can.
     """
-    clash = reconcile.row_titled_from(session, template, secrets=secrets, exclude_slug=exclude_slug, build=build)
+    clash = reconcile.row_titled_from(
+        session, template, secrets=secrets, exclude_slug=exclude_slug, build=build, fallback_name=fallback_name
+    )
     if clash is None:
         return
     # Name the row by SLUG as well. The clashing row's `name` is usually the very string being
@@ -484,10 +511,18 @@ def _reject_duplicate_name(session, secrets, template: str, *, exclude_slug: str
         if clash.slug == DEFAULT_SLUG
         else f"the row {clash.name!r} ({clash.slug})"
     )
+    # Name the FIELD that collided, not just the row. A fallback clash used to be reported as
+    # "'More like {top_seed}' is already the title of …" — quoting the row name, which is fine, and
+    # sending the operator to the box that isn't the problem.
+    culprit = template
+    where = "name"
+    if fallback_name and reconcile.title_key(fallback_name) in reconcile._title_keys(session, clash, secrets):
+        culprit = fallback_name
+        where = "\u201cName for people with nothing watched yet\u201d"
     raise HTTPException(
         status_code=422,
-        detail=f"{template!r} is already the title of {whose} — two rows with the same title become a "
-        "single collection on Plex, so pick a different name",
+        detail=f"{culprit!r} is already the title of {whose} — two rows with the same title become a "
+        f"single collection on Plex, so pick a different {where}",
     )
 
 
@@ -531,7 +566,13 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
     _validate(body)
     with request.app.state.sessions() as session:
         # The template this row will actually be titled from, not the bare name — a POST may set both.
-        _reject_duplicate_name(session, request.app.state.secrets, body.name_template or body.name, build=body.build)
+        _reject_duplicate_name(
+            session,
+            request.app.state.secrets,
+            body.name_template or body.name,
+            build=body.build,
+            fallback_name=body.fallback_name,
+        )
         _validate_anchor_rows(session, body, editing_slug="")
         slug = _unique_slug(session, slugify(body.name))
         collection = Collection(
@@ -545,6 +586,10 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             media=body.media,
             sort_order=body.sort_order,
             name_template=body.name_template,
+            # Verbatim, NOT `or None`: "" is a real answer ("no fallback — skip those people"), and
+            # storing it as NULL makes it indistinguishable from "never asked", which migration 0070
+            # then overwrites on a replay.
+            fallback_name=body.fallback_name,
             min_watchers=body.min_watchers,
             request_tag=body.request_tag.strip(),
             candidate_sources=body.candidate_sources,
@@ -585,6 +630,7 @@ _PATCHABLE_COLUMNS = (
     "media",
     "sort_order",
     "name_template",
+    "fallback_name",
     "min_watchers",
     "request_tag",
     "candidate_sources",
@@ -692,18 +738,38 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
         # does: a PATCH may send either half. Sending `name_template` ALONE changes the title and used
         # to be checked by nothing at all, while sending `name` alone on a row that carries its own
         # template changes no title and was checked as though it did.
-        if not is_default and sent & {"name", "name_template"}:
+        # `fallback_name` is checked for the DEFAULT row too. Its `name`/`name_template` are exempt
+        # because its title is the global setting (handled below), but its fallback IS a per-row
+        # column, and the new "no name for newcomers" alert points operators straight at that field —
+        # so it was the one write on the row editor with no duplicate-title check behind it. Two rows
+        # rendering one title for one person in one library share a single Plex collection.
+        if (sent & {"fallback_name"}) or (not is_default and sent & {"name", "name_template"}):
             merged = (body.name_template if "name_template" in sent else collection.name_template) or (
                 body.name if "name" in sent else collection.name
             )
+            # The FALLBACK is a real title that really gets written, so two rows carrying the same one
+            # land on a single collection for every person who needs it — the same trap the template
+            # check exists for. POST checked it from the start; PATCH did not, and PATCH is the path
+            # the row editor saves through, so the state POST returns 422 for was reachable in one
+            # ordinary edit.
+            merged_fallback = (
+                body.fallback_name if "fallback_name" in sent else (collection.fallback_name or "")
+            ) or ""
+            moved = reconcile.title_key(merged) != reconcile.title_key(collection.name_template or collection.name)
+            fallback_moved = reconcile.title_key(merged_fallback) != reconcile.title_key(collection.fallback_name or "")
             # Only when the TITLE actually moves. The editor re-sends `name` on every save, so
             # checking on "was the field present" refused a size-only edit on a row that already
             # clashes — with a message about names, for a change that was not about names. A row in
             # that state (created before this guard, or restored from a backup) must stay editable;
             # the rule is "no NEW clashes", not "no clashing row may be touched".
-            if reconcile.title_key(merged) != reconcile.title_key(collection.name_template or collection.name):
+            if moved or fallback_moved:
                 _reject_duplicate_name(
-                    session, state.secrets, merged, exclude_slug=collection.slug, build=before["build"]
+                    session,
+                    state.secrets,
+                    merged,
+                    exclude_slug=collection.slug,
+                    build=before["build"],
+                    fallback_name=merged_fallback,
                 )
         # The default row has no per-collection name: its title IS the global `row.name_template`
         # (Settings → Defaults), which delivery renders per library. So a rename of it writes that

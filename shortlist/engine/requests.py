@@ -507,9 +507,24 @@ def _request_one(
                 tvdb_id = tmdb.tvdb_id(title.tmdb_id, title.media_type)
             except Exception as e:
                 logger.warning("TVDB lookup for {!r} failed: {}", title.title, e)
-                return outcome("error", "could not resolve this show's TheTVDB id")
+                # Distinct from the skip below on purpose: THIS one is a lookup that failed (TMDB
+                # down, a timeout), so retrying may well work. The skip is a settled fact about the
+                # data and never will.
+                return outcome("error", "couldn't reach TMDB to look up this show's TheTVDB id — it may work next run")
         if tvdb_id is None:
-            return outcome("skipped_no_tvdb", "no TheTVDB id for this show")
+            # Says what to DO, because nothing here can. Sonarr identifies shows by TheTVDB id and
+            # TMDB is where we look it up; when TMDB has not recorded one there is no way to name the
+            # show to Sonarr, and guessing is worse than skipping — the nearest title match for
+            # "The Haunting of Bly Manor" is "The Haunting", a different and much larger series.
+            #
+            # The old text was "no TheTVDB id for this show": true, and useless. It reads as a fault
+            # report to anyone who does not already know what a TVDB id is, so the reader cannot tell
+            # whether Shortlist is broken, their Sonarr is misconfigured, or this is simply how it is.
+            # None of those, and there is exactly one remedy.
+            return outcome(
+                "skipped_no_tvdb",
+                "TMDB has no TheTVDB id for this show, and Sonarr needs one — add it in Sonarr yourself",
+            )
         status, detail, slug = sonarr.add_series(tvdb_id, dry_run=dry_run, extra_tags=title.tags)
         return outcome(status, detail, slug)
     except ArrError as e:

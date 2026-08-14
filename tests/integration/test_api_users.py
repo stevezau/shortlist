@@ -1260,3 +1260,20 @@ class TestUserTypeIsTheEnginesOwnEnum:
             # The plain word, not "UserType.SHARED": a StrEnum must not change the payload the SPA
             # already reads, only the schema that describes it.
             assert by_slug[f"u-{member.value}"]["user_type"] == member.value
+
+
+class TestAPerUserRowNameCannotFollowAWatch:
+    def test_a_top_seed_override_is_refused_because_it_has_no_fallback(self, client: TestClient):
+        """A `{top_seed}` name needs a fallback for people with nothing watched, and that field lives
+        on the ROW. Set per USER there is nowhere to put one — so this override would leave exactly
+        the person who set it with a default row that quietly stops being built while their history
+        is thin, no field anywhere to fix it, and no alert naming them (the notification reads rows,
+        not user prefs)."""
+        users = client.get("/api/users").json()
+        uid = users[0]["id"]
+
+        bad = client.patch(f"/api/users/{uid}", json={"prefs": {"row_name_tpl": "Because you watched {top_seed}"}})
+
+        assert bad.status_code == 422, bad.text
+        ok = client.patch(f"/api/users/{uid}", json={"prefs": {"row_name_tpl": "✨ Just for {user}"}})
+        assert ok.status_code < 300, ok.text
