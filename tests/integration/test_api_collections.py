@@ -1789,9 +1789,21 @@ class TestNoTwoRowsShareATitle:
         rows = client.get("/api/collections").json()
         default_id = next(r["id"] for r in rows if r["slug"] == "picked")
 
-        clash = client.patch(f"/api/collections/{default_id}", json={"fallback_name": "Hidden Gems"})
+        # `name` is REQUIRED on this body — a PATCH without it is refused by request validation before
+        # any clash logic runs, which is exactly how the first version of this test passed while
+        # proving nothing. The row editor sends the whole row, so this is also what a real save looks
+        # like: the default row's own (unchanged) title, plus the field being set.
+        default = next(r for r in rows if r["slug"] == "picked")
+        clash = client.patch(
+            f"/api/collections/{default_id}",
+            json={"name": default["name"], "fallback_name": "Hidden Gems"},
+        )
 
         assert clash.status_code == 422, "the default row was allowed to take another row's title"
+        # The MESSAGE too, so this fails when the 422 comes from somewhere else. An earlier version of
+        # this test asserted the status alone and passed with the guard reverted — the request was
+        # being refused for an unrelated reason, so it proved nothing about the clash check at all.
+        assert "already the title of" in clash.json()["detail"], clash.json()
 
     def test_a_blank_global_template_is_refused(self, client: TestClient):
         """A blank one renders to DEFAULT_ROW_NAME, silently retitling the default row onto any row
