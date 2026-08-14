@@ -216,6 +216,60 @@ class TestColdStartRowName:
         assert name == "Because you watched Wind River"
 
 
+class TestAnUnnameableRowTouchesNothing:
+    """The row that cannot be named must leave no trace — least of all in the privacy machinery."""
+
+    def test_it_does_not_blank_the_label_a_real_row_recorded(self, engine_config: EngineConfig, movies):
+        """`stored_labels` is keyed by PERSON, shared by every one of their rows.
+
+        So an unnameable row writing "" there erases the label a nameable row just recorded — and
+        `desired_excludes` merges that empty string into every OTHER account's share filter as
+        `label!=Shortlist_bob,,Shortlist_mike`. Malformed, and while it stands there is no exclude at
+        all for that person's row. Fires on the default configuration: a `{top_seed}` row with no
+        fallback and a user with picks but no seed.
+        """
+        from shortlist.engine.delivery import deliver_rows
+        from shortlist.engine.models import RowSpec
+
+        plex = _labelling_plex_mock(MagicMock(spec=PlexClient))
+        plex.sections.return_value = [movies]
+        plex.find_owned_collections.return_value = []
+        seeded = Pick(1, 101, "A", rank=1, reason="r", media_type=MediaType.MOVIE, seed_title="Fargo")
+        unseeded = Pick(2, 102, "B", rank=1, reason="r", media_type=MediaType.MOVIE, seed_title=None)
+        stored_labels: dict[str, str] = {}
+
+        deliver_rows(
+            plex,
+            make_profile(),
+            [seeded],
+            engine_config,
+            RowSpec(slug="named", name_template="Because you watched {top_seed}", size=5, media="movie"),
+            sections=[movies],
+            section_picks={movies.key: [seeded]},
+            stored_labels=stored_labels,
+            dry_run=False,
+        )
+        recorded = dict(stored_labels)
+        assert recorded, "the nameable row must record its label"
+
+        deliver_rows(
+            plex,
+            make_profile(),
+            [unseeded],
+            engine_config,
+            RowSpec(slug="nameless", name_template="Car vous avez regardé {top_seed}", size=5, media="movie"),
+            sections=[movies],
+            section_picks={movies.key: [unseeded]},
+            stored_labels=stored_labels,
+            dry_run=False,
+        )
+
+        assert stored_labels == recorded, (
+            f"a row that wrote nothing must not touch the label accumulator, got {stored_labels}"
+        )
+        assert "" not in stored_labels.values()
+
+
 def _labelling_plex_mock(plex: MagicMock) -> MagicMock:
     """Make `stored_label` leave the label ON the collection, as the real one does.
 

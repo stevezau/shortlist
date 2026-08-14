@@ -65,16 +65,47 @@ def upgrade() -> None:
     if not isinstance(global_name, str) or not global_name.strip():
         return
 
-    # Only rows that can actually fail to render, and only where the operator has not already said
-    # something. `IS NULL` rather than `= ''` on purpose: an empty string is a deliberate "no
-    # fallback, skip these people", and a re-run of this migration must not overwrite it.
+    # A fallback that ITSELF needs a seed is one `render_row_name` discards, so backfilling it would
+    # look like protection and provide none. That is issue #84's own server: its global template is
+    # "Car vous avez regardé {top_seed}". Those instances get no backfill and a loud log line — the
+    # operator has to choose a name, because there is no honest one to choose for them.
+    if "{top_seed}" in global_name:
+        rows = (
+            bind.execute(
+                sa.text(
+                    "SELECT slug FROM collections WHERE COALESCE(NULLIF(name_template, ''), name) LIKE '%{top_seed}%'"
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if rows:
+            print(
+                f"shortlist: rows {sorted(rows)} name themselves after a watch, and so does your "
+                f"global row name ({global_name!r}), so it cannot stand in for them. Until you set "
+                "'Name for people with nothing watched yet' on each, those rows are not built for "
+                "anyone who has not watched enough."
+            )
+        return
+
+    # The EFFECTIVE template, not the column. The Rows page writes a row's template into `name` and
+    # leaves `name_template` empty (pinned by web/src/test/row-templates.test.tsx), so matching the
+    # column alone skips every row created through the UI — which is all of them on a real server.
+    #
+    # `IS NULL` rather than `= ''`: an empty string is a deliberate "no fallback, skip these people",
+    # and a replay of this migration must not overwrite it.
     bind.execute(
         sa.text(
             "UPDATE collections SET fallback_name = :name "
-            "WHERE fallback_name IS NULL AND name_template LIKE '%{top_seed}%'"
+            "WHERE fallback_name IS NULL "
+            "AND COALESCE(NULLIF(name_template, ''), name) LIKE '%{top_seed}%'"
         ),
         {"name": global_name},
     )
+
+    # The DEFAULT row needs nothing here: its effective template IS the global one, and the guard
+    # above already returned for every global template that can fail to render. A default row on any
+    # other instance can always name itself, so it never reaches a fallback.
 
 
 def downgrade() -> None:

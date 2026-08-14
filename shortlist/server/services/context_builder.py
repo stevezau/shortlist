@@ -919,6 +919,10 @@ class ContextBuilder:
             audience = self._subset_audience(collection, account_by_user, audience_by_collection)
             retired.append(
                 RowSpec(
+                    # The gate above renders WITH the fallback, so the spec must carry it too — or
+                    # removal renders a different title from the one that decided this row was safe
+                    # to retire.
+                    fallback_name=collection.fallback_name or "",
                     slug=collection.slug,
                     name_template="" if is_default else (collection.name_template or collection.name),
                     size=collection.size,

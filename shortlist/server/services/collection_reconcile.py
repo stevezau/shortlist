@@ -90,7 +90,7 @@ def title_key(template: str) -> str:
     Rendering rather than comparing the raw template, because `render_row_name` maps several distinct
     templates onto ONE title and each of those pairs is a real collision the raw comparison missed:
 
-    * a ``{top_seed}`` template with no seed (a cold-start user) returns ``DEFAULT_ROW_NAME``, so two
+    * a ``{top_seed}`` template with no seed renders to "" (issue #84 — no name is invented), so two
       such rows — or one of them and a row literally named "✨ Picked for You" — are one collection
       for everyone who has too little history to seed them;
     * a blank or whitespace-only template does the same, and nothing refused a blank

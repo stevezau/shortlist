@@ -326,6 +326,10 @@ def desired_excludes(
     from them, including public ones — a disabled user should see nothing Shortlist produces, not even
     the "Popular on this server" rows everyone else gets.
     """
+    # A falsy label is never a real row, and writing one produces `label!=A,,B` — a filter Plex
+    # cannot act on, which fails OPEN. Dropped here as well as at the source (`deliver_rows` only
+    # records a label it actually stored) because this is the last gate before a real share filter.
+    stored_labels = {k: v for k, v in stored_labels.items() if v}
     shared_labels = shared_labels or {}
     excludes: set[str] = set()
     own_lower = (own_label or "").lower()

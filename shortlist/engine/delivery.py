@@ -464,7 +464,15 @@ def deliver_rows(
             )
         # Recorded the instant the PMS confirms the label — if the NEXT library blows up, this
         # row still gets excluded on every other user's share this run.
-        if stored_labels is not None and not dry_run:
+        #
+        # `and stored`, because a row that wrote NOTHING must not touch this. `stored_key` is the
+        # person's slug, shared by every one of their rows, so a row that could not be named would
+        # otherwise overwrite the real label a NAMEABLE row just recorded with "" — and
+        # `desired_excludes` would merge that empty string into every other account's share filter as
+        # `label!=Shortlist_bob,,Shortlist_mike`: malformed, and no exclude at all for that person
+        # while it stands. This function's own docstring already promised it ("The stored label is
+        # None when nothing was delivered"); the code did not keep the promise.
+        if stored_labels is not None and not dry_run and stored:
             stored_labels[stored_key] = stored
 
     return combined, stored
@@ -536,12 +544,18 @@ def remove_row(
         # name, so this no longer has to infer "unnameable" from a title that merely LOOKS like the
         # default. That inference was always slightly wrong: a row deliberately titled exactly
         # "✨ Picked for You" was treated as unnameable and left for a sweep.
-        unrenderable = not display
+        # A `{top_seed}` template is unrenderable HERE whatever its fallback says. This function
+        # renders with no picks, so a row with a fallback renders the FALLBACK title — but a seeded
+        # user's collection wears "Because you watched X", so matching on it finds nothing (a muted
+        # or cold-skipped row silently stops being removed) or finds a SIBLING row that happens to
+        # be titled the fallback and deletes that instead. The ledger key is the only handle that
+        # survives a title which differs per person, which is exactly what a fallback creates.
+        unrenderable = not display or "{top_seed}" in template
         if unrenderable and ledger_key is None:
-            # The title collapsed to the bare default because it could not be rendered — a `{top_seed}`
-            # template with no picks, or a blank one. Per-person rows share one label and are told apart
-            # by title ONLY, so matching on that would find and DELETE whatever else is titled that: the
-            # user's live default row, or a cold-start row, in this library, every run.
+            # This row has no title to match on — a `{top_seed}` template (which renders per person,
+            # so no title computed here is anyone's) or one that renders blank. Per-person rows share
+            # one label and are told apart by title ONLY, so matching on a title we invented would
+            # find and DELETE whatever else wears it, in this library, every run.
             #
             # Tested per LIBRARY, not once up front: a `{library_name}` template renders to the bare
             # default only when there is no library name, and here there always is — so a legitimate
@@ -1000,8 +1014,13 @@ def _deliver_one(
         # This row has no name for this person and the operator has given none, so it does not get
         # built for them (issue #84). Returning an empty diff rather than raising: their OTHER rows
         # must still be delivered, and a person who cannot be named is a configuration answer, not a
-        # failure. `deliver_rows` removes any copy an earlier version wrote — by ledger key, since
-        # there is no title to match on.
+        # failure.
+        #
+        # A copy an earlier version wrote is LEFT IN PLACE, deliberately. Deleting rows as a
+        # side-effect of a naming change is what made the first attempt at this issue unshippable
+        # (reverted in 33ba725). It keeps its label, so it stays hidden from everyone else; it simply
+        # stops being updated. Muting the row, or setting it to skip a cold start, removes it through
+        # the paths that exist for removing things.
         logger.info(
             "{}: row has no name for them in '{}' — not built (its name needs a watch and they have "
             "none; set a fallback name on the row to give them one)",

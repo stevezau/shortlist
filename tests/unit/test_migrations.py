@@ -948,6 +948,40 @@ class TestRowFallbackName:
         got = self._rows(tmp_path)["seedy"]
         assert got == "Picked for You", f"expected the unwrapped setting, got {got!r}"
 
+    def test_0070_finds_rows_the_UI_created_where_the_template_lives_in_name(self, tmp_path: Path):
+        """The Rows page writes a row's template into `name` and leaves `name_template` empty
+        (web/src/test/row-templates.test.tsx), so a backfill matching only the column skips every row
+        created through the UI — which on a real server is all of them. The first version of this
+        migration did exactly that and was a no-op where it mattered most."""
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0069")
+        _write_setting(tmp_path, "row.name_template", "Spécifiquement pour le grand {user}")
+        self._add_row(tmp_path, "ui_row", "")  # name carries the template
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        con.execute("UPDATE collections SET name = 'Parce que vous avez regardé {top_seed}' WHERE slug = 'ui_row'")
+        con.commit()
+        con.close()
+
+        command.upgrade(_alembic(tmp_path), "0070")
+
+        assert self._rows(tmp_path)["ui_row"] == "Spécifiquement pour le grand {user}"
+
+    def test_0070_refuses_to_backfill_a_fallback_that_also_needs_a_seed(self, tmp_path: Path):
+        """Issue #84's own server: the GLOBAL template is "Car vous avez regardé {top_seed}".
+
+        Copying that in as a fallback would look like protection and provide none — `render_row_name`
+        discards a fallback containing `{top_seed}`. Better to leave it unset and say so than to
+        record a value that silently does nothing.
+        """
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0069")
+        _write_setting(tmp_path, "row.name_template", "Car vous avez regardé {top_seed}")
+        self._add_row(tmp_path, "because", "Because you watched {top_seed}")
+
+        command.upgrade(_alembic(tmp_path), "0070")
+
+        assert self._rows(tmp_path)["because"] is None
+
     def test_0070_leaves_a_name_the_operator_already_chose(self, tmp_path: Path):
         """Re-runnable: replaying the revision after a crash must not overwrite a real answer, and an
         empty string is a real answer — "no fallback, skip those people"."""

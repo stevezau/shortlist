@@ -561,7 +561,10 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             media=body.media,
             sort_order=body.sort_order,
             name_template=body.name_template,
-            fallback_name=body.fallback_name or None,
+            # Verbatim, NOT `or None`: "" is a real answer ("no fallback — skip those people"), and
+            # storing it as NULL makes it indistinguishable from "never asked", which migration 0070
+            # then overwrites on a replay.
+            fallback_name=body.fallback_name,
             min_watchers=body.min_watchers,
             request_tag=body.request_tag.strip(),
             candidate_sources=body.candidate_sources,
@@ -710,18 +713,33 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
         # does: a PATCH may send either half. Sending `name_template` ALONE changes the title and used
         # to be checked by nothing at all, while sending `name` alone on a row that carries its own
         # template changes no title and was checked as though it did.
-        if not is_default and sent & {"name", "name_template"}:
+        if not is_default and sent & {"name", "name_template", "fallback_name"}:
             merged = (body.name_template if "name_template" in sent else collection.name_template) or (
                 body.name if "name" in sent else collection.name
             )
+            # The FALLBACK is a real title that really gets written, so two rows carrying the same one
+            # land on a single collection for every person who needs it — the same trap the template
+            # check exists for. POST checked it from the start; PATCH did not, and PATCH is the path
+            # the row editor saves through, so the state POST returns 422 for was reachable in one
+            # ordinary edit.
+            merged_fallback = (
+                body.fallback_name if "fallback_name" in sent else (collection.fallback_name or "")
+            ) or ""
+            moved = reconcile.title_key(merged) != reconcile.title_key(collection.name_template or collection.name)
+            fallback_moved = reconcile.title_key(merged_fallback) != reconcile.title_key(collection.fallback_name or "")
             # Only when the TITLE actually moves. The editor re-sends `name` on every save, so
             # checking on "was the field present" refused a size-only edit on a row that already
             # clashes — with a message about names, for a change that was not about names. A row in
             # that state (created before this guard, or restored from a backup) must stay editable;
             # the rule is "no NEW clashes", not "no clashing row may be touched".
-            if reconcile.title_key(merged) != reconcile.title_key(collection.name_template or collection.name):
+            if moved or fallback_moved:
                 _reject_duplicate_name(
-                    session, state.secrets, merged, exclude_slug=collection.slug, build=before["build"]
+                    session,
+                    state.secrets,
+                    merged,
+                    exclude_slug=collection.slug,
+                    build=before["build"],
+                    fallback_name=merged_fallback,
                 )
         # The default row has no per-collection name: its title IS the global `row.name_template`
         # (Settings → Defaults), which delivery renders per library. So a rename of it writes that

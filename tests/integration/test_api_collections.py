@@ -1763,6 +1763,17 @@ class TestNoTwoRowsShareATitle:
 
         assert clash.status_code == 422, "two rows with the same fallback name were allowed"
 
+    def test_a_PATCH_cannot_sneak_in_a_duplicate_fallback_name(self, client: TestClient):
+        """POST checked this from the start; PATCH did not — and PATCH is what the row editor saves
+        through, so the state POST returns 422 for was reachable in one ordinary edit."""
+        client.post("/api/collections", json={"name": "Because you watched {top_seed}", "fallback_name": "Shared"})
+        second = client.post("/api/collections", json={"name": "More like {top_seed}"})
+        assert second.status_code < 300, second.text
+
+        clash = client.patch(f"/api/collections/{second.json()['id']}", json={"fallback_name": "Shared"})
+
+        assert clash.status_code == 422, "two rows were allowed to share a fallback name via PATCH"
+
     def test_a_blank_global_template_is_refused(self, client: TestClient):
         """A blank one renders to DEFAULT_ROW_NAME, silently retitling the default row onto any row
         literally named that — the reported bug, reachable in two ordinary requests."""

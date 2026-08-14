@@ -161,11 +161,11 @@ def _url_without_credentials(value: object) -> str | None:
 def _non_blank_row_template(value: object) -> str | None:
     """The default row's title may not be blank — a blank one collapses onto every other row.
 
-    `render_row_name` returns DEFAULT_ROW_NAME for a blank or whitespace-only template, so storing one
-    here silently retitles the default row to "✨ Picked for You" in every library, where it collides
-    with any row literally named that and with every `{top_seed}` row a cold-start user has. Nothing
-    refused it, which made the collision this settings guard exists to prevent reachable in two
-    ordinary requests.
+    `render_row_name` returns "" for a blank or whitespace-only template (issue #84 — it no longer
+    substitutes a name), so storing one here leaves the default row with no title at all and it stops
+    being delivered to anybody. Before that change it silently retitled the row to "✨ Picked for You"
+    in every library instead. Either way nothing refused it, which made the failure this guard exists
+    to prevent reachable in two ordinary requests.
     """
     return None if str(value or "").strip() else "cannot be empty — it is the title of your default row"
 
