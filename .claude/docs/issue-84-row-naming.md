@@ -182,3 +182,56 @@ the PATCH cell to `TestNoTwoRowsShareATitle`.
 - Five comments still reason from the old `DEFAULT_ROW_NAME` behaviour
   (`collection_reconcile.py:74,90`, `settings.py:164`, `context_builder._retired_rows`,
   `delivery.py:541`) — these are what the next person will read before touching the removal paths.
+
+---
+
+# Attempt 3, round 2 (`f8876b8`) — four HIGHs closed, ONE NEW HIGH OPEN. Still do not deploy.
+
+Re-audit re-ran every original reproduction: HIGH 1–4 are genuinely closed. Then a fifth was found,
+which neither review was asked about.
+
+## HIGH 5 (NEW) — the migration itself creates the collision the whole change exists to prevent
+
+0070 backfills every `{top_seed}` row with the global `row.name_template`. **The DEFAULT row's title
+IS that template.** So on any server running both, a cold-start user gets two rows rendering the same
+title, in the same library, under the same label and the same per-account marker — two rows fighting
+over one collection, one silently overwriting the other.
+
+Visible in the re-audit's own output:
+
+    api_row   fallback='✨ {library_name} Picked for You'
+    picked    fallback=None      # default row, renders that same template
+
+`row_titled_from` would refuse this configuration through the API. The migration writes it straight
+to the DB and never asks.
+
+The reporter escapes it only because he has no default row. Most servers have one — including,
+probably, SFLIX.
+
+**Fix options, none yet chosen:**
+- Don't backfill a row whose fallback would equal the default row's rendered title; log those rows
+  instead, as the `{top_seed}`-global case already does.
+- Or make the fallback per-person unique (e.g. append `{user}` when the global template lacks it),
+  which changes what the operator sees without asking them.
+- Or accept the collision only where the default row is disabled, and warn otherwise.
+
+The first is the most honest: it leaves the operator to choose, which is the principle this whole
+change is built on.
+
+## Also open from the re-audit
+
+- **MED** — a per-user `row_name_tpl` override containing `{top_seed}` gets no fallback and no
+  warning; that person's default row silently stops being built while they are cold. API-only
+  surface (`users.py:51`), not exposed in the SPA. Extend 0070's warning scan to
+  `users.prefs->>'row_name_tpl'`, or reject `{top_seed}` there since no per-user fallback exists.
+- **LOW** — the 422 from a fallback clash names the TEMPLATE, sending the operator to the wrong box.
+
+## Confirmed closed (re-verified by reproduction)
+
+1. Empty label never reaches a share filter — guarded at the source AND in `desired_excludes`.
+2. Migration matches the effective template, covers UI/API/shared rows, refuses a `{top_seed}` global
+   and logs instead. Default row reachable via the editor (`_serialize` surfaces the global template
+   as its `name`, so the field appears).
+3. `remove_row` uses the ledger for any `{top_seed}` template; sibling delete gone; mute/cold-skip
+   removal restored. `_retired_rows` emits the fallback it gates on.
+4. PATCH clash-checks the fallback, both directions (refuses a collision, allows unrelated edits).
