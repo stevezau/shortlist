@@ -97,7 +97,19 @@ export function OwnerNote({ className }: { className?: string }) {
             size="sm"
             className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
             disabled={dismiss.isPending}
-            onClick={() => dismiss.mutate(OWNER_SHELF_NOTE_ID)}
+            // Retires the BELL ALERT too, and the asymmetry is deliberate. "Got it — don't show this
+            // again" is a considered gesture made while reading the full explanation; leaving the
+            // same message sitting in the bell afterwards is just nagging someone who has already
+            // said they understand. The other direction still does NOT hold: a bell click is a light
+            // "seen it", and letting it delete this explainer is what wiped it off the maintainer's
+            // own Users page within an hour of shipping (see OWNER_SHELF_NOTE_ID).
+            //
+            // Sequential, not parallel: the second write reads the dismissed list the first one
+            // wrote, so firing them together loses one to a last-write-wins race.
+            onClick={async () => {
+              await dismiss.mutateAsync(OWNER_SHELF_NOTE_ID);
+              await dismiss.mutateAsync(OWNER_SHELF_ALERT_ID);
+            }}
           >
             <X className="h-3 w-3" aria-hidden="true" />
             Got it &mdash; don&rsquo;t show this again

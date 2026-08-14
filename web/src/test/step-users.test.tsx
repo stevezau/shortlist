@@ -158,9 +158,32 @@ describe("StepUsers — the owner's own line", () => {
     expect(
       await screen.findByText(/Heads up, server owner/i),
     ).toBeInTheDocument();
-    // The sentence is split by an <em>, so match the fragment that lives in one text node.
+    // The sentence is split by <em>/<strong>, so match a fragment that lives in one text node.
     expect(
-      screen.getByText(/people.s rows out of the library.s Collections tab/i),
+      screen.getByText(/you own the server, so you have no share with yourself/i),
+    ).toBeInTheDocument();
+  });
+
+  it("offers the fix here rather than pointing at a page the owner has no reason to visit", async () => {
+    // Issue #85. This step used to end with "look for You see everyone's rows on the Users page" —
+    // homework, handed out during setup, for a problem that only becomes visible in Plex days later.
+    // The reporter was told twice, never went to Users, and filed a bug about 22 rows on their shelf.
+    // A forward reference is not a remedy; the remedy has to happen where the owner already is.
+    // TransferSteps scrolls itself into view on mount; jsdom has no scrollIntoView.
+    Element.prototype.scrollIntoView = vi.fn();
+    getUsers.mockResolvedValue([SARAH, OWNER]);
+    renderStep();
+
+    expect(
+      await screen.findByText(/do you watch on this admin account\?/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/on the Users page/i)).not.toBeInTheDocument();
+
+    // And it is the real transfer flow, opened in place — not a link that would bounce off the setup
+    // gate, and not a second copy of it.
+    await userEvent.click(screen.getByRole("button", { name: /set that up now/i }));
+    expect(
+      await screen.findByText(/plex home/i, {}, { timeout: 3000 }),
     ).toBeInTheDocument();
   });
 });

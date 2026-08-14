@@ -17,6 +17,22 @@ All notable changes to this project are documented here. This project follows
   watch in each, and its titles should say so — but it now borrows the row's other seed before giving
   up and using the default name.
 
+- **The owner caveat is offered during setup, not pointed at**
+  ([#85](https://github.com/stevezau/shortlist/issues/85)). Plex cannot hide anyone's row from the
+  account that owns the server, so the owner sees everybody's on each library's shelf. Shortlist said
+  so in the wizard — and then ended with "look for **You see everyone's rows** on the Users page",
+  which is homework, handed out during setup, for a problem that only becomes visible in Plex days
+  later. Someone was told exactly that, never went to the Users page, and reported 22 rows on their
+  shelf as a bug. The wizard now asks the question where the decision is being made — *do you watch on
+  this admin account?* — and opens the real "move my watching to a separate account" flow in place,
+  watch-history transfer and all. Skip it and nothing changes: the note on the Users page and the
+  alert are both still there, both dismissable.
+
+- **Dismissing that note now clears the matching alert too.** Choosing "Got it — don't show this
+  again" while reading the full explanation is a considered answer; the same message sitting in the
+  bell afterwards was just nagging. The reverse still does not hold — clearing the bell is a light
+  "seen it" and leaves the explanation on the Users page where you can find it again.
+
 - **The errors notification can be dismissed.** "N errors in the last day" counts what has already
   happened, and there is nothing to do about the past except acknowledge it — but it was pinned
   open, so the bell carried a badge for a full day with no way to clear it. It now dismisses, and the

@@ -40,22 +40,28 @@ function Step({
   title,
   children,
 }: {
-  n: number;
+  /** Omitted when this section is mounted on its own — a lone "3" with no 1 or 2 above it reads as
+   *  a missing step rather than a numbered one. The setup wizard embeds only the third section. */
+  n?: number;
   title: string;
   children: React.ReactNode;
 }) {
   return (
     <section className="space-y-3">
       <h2 className="flex items-center gap-3 text-lg font-semibold">
-        <span
-          aria-hidden="true"
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-muted-foreground"
-        >
-          {n}
-        </span>
+        {n !== undefined && (
+          <span
+            aria-hidden="true"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-muted-foreground"
+          >
+            {n}
+          </span>
+        )}
         {title}
       </h2>
-      <div className="space-y-3 pl-10">{children}</div>
+      <div className={n === undefined ? "space-y-3" : "space-y-3 pl-10"}>
+        {children}
+      </div>
     </section>
   );
 }
@@ -264,7 +270,14 @@ export function WatchingAccountPage() {
  *  doing it there means Shortlist never has to create an account that briefly exists with no
  *  library filters on it. "I've made it" simply re-reads the Home roster.
  */
-function TransferSteps() {
+/** Exported so the SETUP WIZARD can mount the very same flow.
+ *
+ *  Not copied into the wizard: this is the only place that knows how a transfer works (which Home
+ *  accounts are candidates, that the target must have been synced first, dry-run before commit), and
+ *  a second copy would drift from it the first time any of that changed. The wizard cannot link here
+ *  instead — until setup completes, every route redirects to /setup — so the component travels to the
+ *  wizard rather than the owner travelling to the page. */
+export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
   // "Set it up" mounts this section below the fold, so without moving the viewport the button reads
   // as having done nothing. Scrolled on mount rather than in the click handler: the section does not
   // exist yet at click time. `prefers-reduced-motion` gets a jump instead of a glide.
@@ -303,7 +316,7 @@ function TransferSteps() {
 
   return (
     <div ref={ref} className="scroll-mt-6">
-      <Step n={3} title="Set up the watching account">
+      <Step n={numbered ? 3 : undefined} title="Set up the watching account">
       <div className="space-y-2">
         <p className="text-sm text-muted-foreground">
           Create the account in Plex &mdash;{" "}
