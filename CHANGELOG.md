@@ -33,6 +33,21 @@ All notable changes to this project are documented here. This project follows
   bell afterwards was just nagging. The reverse still does not hold — clearing the bell is a light
   "seen it" and leaves the explanation on the Users page where you can find it again.
 
+- **Shortlist no longer invents a name for a row** ([#84](https://github.com/stevezau/shortlist/issues/84)).
+  A row called "Because you watched {top_seed}" needs a title the person has actually watched.
+  Someone new to your server hasn't got one — so the row had no name, and Shortlist substituted a
+  hardcoded "✨ Picked for You". On a 22-user server with a French row-name template, 19 of 22 people
+  got that: not your words, and a claim about a watch that never happened, over a row filled with
+  whatever rates highest.
+
+  Rows are now named by you or not built. The row editor asks, right beside the name that raises the
+  question: **"Name for people with nothing watched yet"**. Fill it in and they get the row under that
+  name; leave it empty and they simply don't get this row until they've watched enough — often the
+  right answer, since "because you watched" can't be true for them yet.
+
+  **Nothing disappears when you upgrade.** Every existing `{top_seed}` row inherits your own row-name
+  template as its fallback, so the people who have one today keep one, in your language.
+
 - **A skipped show request now says what to do about it.** Sonarr identifies shows by their TheTVDB
   id, and Shortlist looks that up on TMDB — so when TMDB hasn't recorded one, there is no way to name
   the show to Sonarr and the request is skipped. (Guessing would be worse: the closest title match

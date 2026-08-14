@@ -40,6 +40,7 @@ const SUBSET_ROW: Collection = {
   media: "both",
   sort_order: 0,
   name_template: "",
+  fallback_name: "",
   min_watchers: 2,
   request_tag: "",
   candidate_sources: [],

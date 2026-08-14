@@ -48,6 +48,7 @@ function row(patch: Partial<Collection> = {}): Collection {
     media: "both",
     sort_order: 0,
     name_template: "",
+  fallback_name: "",
     min_watchers: 2,
     request_tag: "",
     candidate_sources: [],
@@ -173,6 +174,39 @@ describe("RowEditor — acting on the row you're editing", () => {
     );
 
     expect(await screen.findByText(/unsaved changes/i)).toBeInTheDocument();
+  });
+});
+
+describe("RowEditor — a name that needs a watch", () => {
+  it("asks what to call the row for people who have watched nothing", async () => {
+    // Issue #84. `{top_seed}` needs a title the person has watched; someone new to the server has
+    // none, so the row has no name for them. Shortlist used to invent one — a hardcoded English
+    // "✨ Picked for You" that ignored the operator's own settings and claimed a watch that never
+    // happened. It no longer does, which makes this a decision the operator has to be ABLE to make,
+    // beside the name that creates the question rather than discovered from Plex days later.
+    renderEditor(row({ name: "Car vous avez regardé {top_seed}" }));
+
+    expect(
+      await screen.findByLabelText(/nothing watched yet/i),
+    ).toBeInTheDocument();
+  });
+
+  it("says plainly that leaving it empty means those people get no row", async () => {
+    // The empty state is the DEFAULT and it is the consequential one — it decides whether ~19 of 22
+    // people on a real server get this row at all. It has to read as a choice, not a blank field.
+    renderEditor(row({ name: "Because you watched {top_seed}" }));
+
+    await screen.findByLabelText(/nothing watched yet/i);
+    expect(screen.getByText(/won.t get\s+this row/i)).toBeInTheDocument();
+  });
+
+  it("stays out of the way for a row whose name never needs one", async () => {
+    renderEditor(row({ name: "✨ {library_name} Picked for You" }));
+
+    await screen.findByLabelText(/^row name$/i).catch(() => null);
+    expect(
+      screen.queryByLabelText(/nothing watched yet/i),
+    ).not.toBeInTheDocument();
   });
 });
 
