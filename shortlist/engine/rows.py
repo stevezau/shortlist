@@ -32,8 +32,8 @@ from shortlist.engine.delivery import (
     row_marker,
     section_kind,
     sections_for_keys,
+    seed_source,
     target_sections,
-    top_seed_of,
 )
 from shortlist.engine.history import RatingsPolicy, derive_seeds, ratings_policy
 from shortlist.engine.models import (
@@ -400,6 +400,13 @@ def _names_a_seed(spec: RowSpec, user: UserProfile, config: EngineConfig) -> boo
     kept a title naming a watch it was no longer built from, which is the whole bug this guards
     (issue #57). Worse, the editor computes the same claim from the effective name, so it HID the
     cadence control and promised "every night" for a row the engine refreshed every eight days.
+
+    A library with no seed of its own borrows the ROW's (issue #84), and that borrowed title is
+    outside this guard: the question "does this library's pool still lead with the seed the row is
+    named after" is not the question being asked when the name came from another library's picks.
+    Such a collection can therefore be renamed when the OTHER library's seed rotates, while its own
+    contents are carried forward — the title then names a watch nothing in that collection was built
+    from, which is exactly what this guard exists to prevent, one library over.
 
     `resolve_row_template` is the single source of truth for that precedence, and delivery renders
     the delivered title through it too — so this now asks the same question the title answers.
@@ -2336,11 +2343,32 @@ def _run_user(
                     # This library's own picks when they carry a seed, else the ROW's — the same order
                     # delivery uses (issue #84). It has to render byte-identically or promote looks
                     # for a title delivery never wrote, and the row stays unhidden.
-                    seed_picks = sp if top_seed_of(sp) else picks
+                    seed_picks = seed_source(sp, picks)
                     title = render_row_name(
                         title_template, user, seed_picks, library_name=library_names.get(section_key, "")
                     )
-                    user_report.placement_titles[title + marker] = spec.slug
+                    key = title + marker
+                    # Two of this person's rows rendering ONE title in one library is unrecoverable
+                    # silently: they share a label and a per-account marker, so delivery's title match
+                    # hands the second row the first row's collection and overwrites its membership —
+                    # one row simply vanishes, and this map collapses to whichever stamped last.
+                    # Borrowing the row's seed made this reachable in a new shape (two rows whose
+                    # templates render alike, both seedless in this library). Nothing can be done
+                    # about it here without breaking lockstep with delivery, which renders the same
+                    # title independently — but a collision that names itself in the log is one
+                    # somebody can act on.
+                    if user_report.placement_titles.get(key, spec.slug) != spec.slug:
+                        logger.warning(
+                            "{}: rows '{}' and '{}' both render '{}' in '{}' — they share one "
+                            "collection there, and only the last one written survives. Give one of "
+                            "them a distinct name.",
+                            user.username,
+                            user_report.placement_titles[key],
+                            spec.slug,
+                            title,
+                            library_names.get(section_key, section_key),
+                        )
+                    user_report.placement_titles[key] = spec.slug
             # Cancelled while this person was mid-delivery: stop before the NEXT row is written.
             #
             # Checking only before a person's first row is not enough at concurrency 8 — eight people are

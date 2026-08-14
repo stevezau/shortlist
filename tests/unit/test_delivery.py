@@ -146,6 +146,28 @@ class TestColdStartRowName:
         )
         assert DEFAULT_ROW_NAME not in created, "the TV library must not fall back while the row has a seed"
 
+    def test_the_seed_source_rule_has_exactly_one_implementation(self):
+        """`seed_source` is the whole cross-module contract, so cover its matrix here.
+
+        `delivery._deliver_one` renders the title Plex is given and `rows._run_user` re-renders it to
+        stamp `placement_titles`, which is how promote finds the collection delivery just wrote. Two
+        copies of this rule that drift by one character mean promote looks up a title that was never
+        written. Both now call THIS, so the only thing that can be wrong is the rule itself.
+        """
+        from shortlist.engine.delivery import seed_source
+
+        seeded_here = [_named_pick("Fargo")]
+        seeded_elsewhere = [_named_pick("Heat")]
+        seedless = [_named_pick(None)]
+
+        # Its own seed wins — a row over two libraries follows a different watch in each, on purpose.
+        assert seed_source(seeded_here, seeded_elsewhere) is seeded_here
+        # No seed here: borrow the row's, rather than give up and use the default name (#84).
+        assert seed_source(seedless, seeded_elsewhere) is seeded_elsewhere
+        # Nothing anywhere: hand back the row's list and let render_row_name fall back as before.
+        assert seed_source(seedless, seedless) is seedless
+        assert seed_source([], []) == []
+
     def test_an_unseeded_top_pick_does_not_hide_the_seeds_behind_it(self):
         """Issue #84, the half that made this happen to everyone.
 

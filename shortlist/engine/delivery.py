@@ -103,6 +103,26 @@ def top_seed_of(picks: list[Pick]) -> str:
     return min(seeded, key=lambda p: p.rank).seed_title if seeded else ""
 
 
+def seed_source(section_picks: list[Pick], row_picks: list[Pick]) -> list[Pick]:
+    """Which picks name a row IN ONE LIBRARY: its own when they carry a seed, else the whole row's.
+
+    ONE function because two modules need the identical answer. `delivery._deliver_one` renders the
+    title Plex is given; `rows._run_user` re-renders it to stamp `placement_titles`, which is how the
+    promote phase finds the collection it just wrote. Disagree by one character and promote looks up a
+    title delivery never created — the row keeps whatever placement it had, or drops to the no-spec
+    default. Two copies of a four-value rule (both seeded / this library seedless / row seedless /
+    no row picks at all) is how that drift happens, so there is only one copy.
+
+    A library uses its OWN seed first: a `{top_seed}` row spanning two libraries genuinely follows a
+    different watch in each and its titles should say so (pinned by
+    test_pipeline.py::TestPlacement::test_a_top_seed_row_records_a_placement_title_per_library).
+    Borrowing is the step BEFORE giving up and using the default name — issue #84, where a
+    `movies & shows` row whose seeds were all films delivered the seeded title to Movies and
+    "✨ Picked for You" to TV, so one row appeared twice under two names on the same person's Plex.
+    """
+    return section_picks if top_seed_of(section_picks) else row_picks
+
+
 def render_row_name(template: str, profile: UserProfile, picks: list[Pick], library_name: str = "") -> str:
     """Render the row title as a HUMAN reads it — no marker. Used for reports and the UI.
 
@@ -938,7 +958,7 @@ def _deliver_one(
     # title every other seedless row already carries. `{top_seed}` names something the PERSON
     # watched, and what they watched is not confined to the library a pick happens to live in — so
     # borrowing the row's own seed is truer than giving up and calling it "Picked for You".
-    seed_picks = picks if top_seed_of(picks) else (title_picks if title_picks is not None else picks)
+    seed_picks = seed_source(picks, title_picks if title_picks is not None else picks)
     display = render_row_name(template, profile, seed_picks, library_name=getattr(section, "title", "") or "")
     # What Plex is told to call it: the same thing, plus an invisible marker that makes it unique
     # in this library. Without it, every user's row is the same collection tag and holds everyone's

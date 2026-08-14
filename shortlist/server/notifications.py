@@ -2,9 +2,13 @@
 
 A registry of small builder functions, each returning a notification dict (or nothing when its
 condition isn't firing). Notifications reflect CURRENT state and are recomputed on every request, so
-most clear themselves the moment the underlying condition resolves (a good run, an un-pause). Only
-the "update available" note is dismissable, because it otherwise persists until you actually update —
-its dismissal is keyed to the version, so a newer release surfaces again.
+most clear themselves the moment the underlying condition resolves (a good run, an un-pause).
+
+Everything here is dismissable EXCEPT the two alerts that describe a condition still true right now —
+runs paused, and an account that can see other people's rows — where hiding the alert hides the thing
+itself. Every dismissable id encodes its state (a version, a run id, the newest failed job, the newest
+error), so dismissing acknowledges what has happened so far and the next occurrence surfaces again
+rather than staying hidden behind the old dismissal.
 
 Shape (rendered by the React bell, so the fields are plain text — no HTML, no sanitiser needed):
     {id, severity: info|warning|error, title, body, action_url, action_label, dismissable}
@@ -106,8 +110,14 @@ def _recent_service_errors(session: Session) -> dict | None:
     if not count:
         return None
     newest = recent.order_by(Event.id.desc()).first()
+    if newest is None:
+        # `count` and this are two separate queries, so the nightly retention prune landing between
+        # them gives a non-zero count with nothing behind it — and `recent-errors-0` would be a STABLE
+        # dismissable id, the one combination the state-encoded id exists to avoid. Dismissing it once
+        # would silence the alert for good.
+        return None
     return {
-        "id": f"recent-errors-{newest.id if newest else 0}",
+        "id": f"recent-errors-{newest.id}",
         "severity": "warning",
         "title": f"{count} error{'s' if count != 1 else ''} in the last day",
         "body": "Shortlist logged some errors recently. Check the recent runs and the container log.",
