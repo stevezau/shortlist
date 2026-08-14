@@ -1,4 +1,10 @@
-import { AlertCircle, Check, CircleSlash, Loader2 } from "lucide-react";
+import {
+  AlertCircle,
+  Check,
+  CircleDashed,
+  CircleSlash,
+  Loader2,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 
@@ -6,7 +12,7 @@ import { Segmented } from "@/components/segmented";
 import { UserAvatar } from "@/components/user-avatar";
 import { formatDuration } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { RunUserResult } from "@/lib/types";
+import type { RunRowCost, RunUserResult } from "@/lib/types";
 
 /** A sticky section header inside the scrollable user list. */
 function GroupLabel({ children }: { children: ReactNode }) {
@@ -23,10 +29,18 @@ function UserRow({
   result,
   selected,
   onSelect,
+  cost,
+  built,
 }: {
   result: RunUserResult;
   selected: string;
   onSelect: (slug: string) => void;
+  /** THIS row's own cost for this person. `undefined` when the caller passed no per-row costs at
+   *  all (a hypothetical non-row context); `null` on a legacy run that never measured it — either
+   *  way this is "not recorded", not "0s", so both fall back to a plain "Done". */
+  cost?: RunRowCost | null;
+  /** Did this row deliver anything to them? `null`/`undefined` = not recorded, so say nothing. */
+  built?: boolean | null;
 }) {
   const failed = result.error !== null;
   const isSelected = result.slug === selected;
@@ -61,9 +75,21 @@ function UserRow({
           Skipped
           <CircleSlash className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
-      ) : (
+      ) : built === false ? (
+        // Nothing was written for them on THIS row — the run was cancelled before it got here, the
+        // row was muted for them, or it produced no picks. A cost exists anyway: the row timer
+        // starts before the cancel check, so this used to render a green tick beside "0s", which
+        // says "built instantly" about a row that was never built at all.
         <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-          {formatDuration(result.duration_ms)}
+          Not built
+          <CircleDashed className="h-3.5 w-3.5" aria-hidden="true" />
+        </span>
+      ) : (
+        // This list is row-scoped — it lives inside ONE row's card — so the duration shown here is
+        // THIS row's own time, not the person's whole-run total (`result.duration_ms`), which used
+        // to repeat the same number beside every name regardless of which row was open.
+        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+          {cost ? formatDuration(cost.duration_ms - cost.blocked_ms) : "Done"}
           <Check className="h-3.5 w-3.5 text-success" aria-hidden="true" />
         </span>
       )}
@@ -78,13 +104,21 @@ export function UserTabs({
   selected,
   onSelect,
   showSummary = true,
+  costBySlug,
+  builtBySlug,
 }: {
   results: RunUserResult[];
   selected: string;
   onSelect: (slug: string) => void;
   /** False where the caller already states the progress — the Rows tab's card header says
-   *  "10 of 46 done" two lines above, so repeating it here in different words was noise. */
+   *  "10 of 46 people done" two lines above, so repeating it here in different words was noise. */
   showSummary?: boolean;
+  /** THIS row's per-person cost, keyed by slug. Optional so a hypothetical future non-row caller
+   *  still compiles — every real caller today is row-scoped, so every `UserRow` gets one. */
+  costBySlug?: Map<string, RunRowCost | null>;
+  /** Whether THIS row delivered anything to each person, keyed by slug. Separate from `costBySlug`
+   *  because a cost exists for rows that were never written — see `RunRowPerson.built`. */
+  builtBySlug?: Map<string, boolean | null>;
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "failed" | "ok">("all");
@@ -186,6 +220,8 @@ export function UserTabs({
               result={result}
               selected={selected}
               onSelect={onSelect}
+              cost={costBySlug?.get(result.slug)}
+              built={builtBySlug?.get(result.slug)}
             />
           ))}
           {bothGroups && ok.length > 0 && (
@@ -197,6 +233,8 @@ export function UserTabs({
               result={result}
               selected={selected}
               onSelect={onSelect}
+              cost={costBySlug?.get(result.slug)}
+              built={builtBySlug?.get(result.slug)}
             />
           ))}
           {bothGroups && skipped.length > 0 && (
@@ -208,6 +246,8 @@ export function UserTabs({
               result={result}
               selected={selected}
               onSelect={onSelect}
+              cost={costBySlug?.get(result.slug)}
+              built={builtBySlug?.get(result.slug)}
             />
           ))}
           {pending.length > 0 && (
@@ -219,6 +259,8 @@ export function UserTabs({
               result={result}
               selected={selected}
               onSelect={onSelect}
+              cost={costBySlug?.get(result.slug)}
+              built={builtBySlug?.get(result.slug)}
             />
           ))}
           {shown.length === 0 && (

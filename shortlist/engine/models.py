@@ -913,6 +913,21 @@ class UserRunReport:
     # `status` says what became of it. Naming it "built" would claim a success that a later error in
     # the pipeline can still take away. {} on a cold-start skip, which never reaches the decision.
     rows_considered: dict[str, str] = field(default_factory=dict)
+    # Seconds spent on work EVERY row shares — the watch-history fetch and the candidate gather.
+    # All AI spend happens here (see `pool_costs`), so on a typical person this dwarfs the rows.
+    # Reported as its own line rather than divided between rows, which would invent a split.
+    setup_s: float = 0.0
+    # Per-row cost keyed by row slug: {"duration_s": wall clock, "blocked_s": of which, waiting on
+    # the shared Plex write lock}. duration_s INCLUDES blocked_s; work time is the difference.
+    # At concurrency 1 blocked_s is always ~0; at 8 it is what explains a row that looks slow.
+    row_timing: dict[str, dict[str, float]] = field(default_factory=dict)
+    # One entry per candidate-pool COMPUTATION: {"label", "tokens", "exa_searches", "duration_s",
+    # "rows": [slug, ...]}. Pools are memoised per `pool_key` and usually shared by every row, so
+    # `rows` is what lets the UI say "one pool, used by both rows" instead of splitting the tokens.
+    pool_costs: list[dict] = field(default_factory=list)
+    # INTERNAL cursor, never persisted: which row `_timed_lock` charges write-lock waits to.
+    # None means setup, whose wait is already inside `setup_s`.
+    lock_bucket: str | None = None
 
 
 @dataclass

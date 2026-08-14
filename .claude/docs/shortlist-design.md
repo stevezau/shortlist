@@ -279,7 +279,12 @@ logged. Temperature low. One call per user per run; ~40 users ≈ pennies/night 
 
 ## 6. Privacy system (the load-bearing wall)
 
-**Label scheme:** collections get `shortlist_<user-slug>`; items get **no labels at all** (unlike
+**Label scheme:** collections get `shortlist_<user-slug>` (or `shortlist__shared_<row-slug>` for a
+shared row) **plus a constant `shortlist` label**, which Plex stores as `Shortlist`. Only the first
+does any hiding — every `label!=` exclude and every owner lookup keys off the `shortlist_` prefix,
+WITH the underscore, which is what makes the constant one invisible to them. It exists so a
+co-managing tool (Agregarr, Kometa) can be told to leave our rows alone with one entry instead of one
+per person. Items get **no labels at all** (unlike
 Curatarr's item-labels — collections-only is sufficient since exclusions target the collection
 label, and it keeps user metadata pristine).
 

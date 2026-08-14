@@ -3982,6 +3982,18 @@
             "title": "Breakdown",
             "type": "array"
           },
+          "cost": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost"
+          },
           "diff": {
             "additionalProperties": true,
             "title": "Diff",
@@ -4085,7 +4097,8 @@
           "picks",
           "breakdown",
           "has_trace",
-          "rows_considered"
+          "rows_considered",
+          "cost"
         ],
         "title": "RunUserOut",
         "type": "object"
@@ -6062,7 +6075,7 @@
   },
   "info": {
     "title": "Shortlist",
-    "version": "1.5.0"
+    "version": "1.5.1"
   },
   "openapi": "3.1.0",
   "paths": {

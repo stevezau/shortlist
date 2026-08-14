@@ -111,6 +111,60 @@ class TestColdStartRowName:
     def test_static_template_is_untouched(self):
         assert render_row_name("✨ Picked for You", make_profile(), [_named_pick(None)]) == "✨ Picked for You"
 
+    def test_an_unseeded_top_pick_does_not_hide_the_seeds_behind_it(self):
+        """Issue #84, the half that made this happen to everyone.
+
+        `{top_seed}` used to read the single best pick and use its seed "if it had one". Sources that
+        seed nothing — trending, popular-on-this-server, a web-search suggestion — routinely rank
+        first, and the row then fell back to the default title as though the person had no history at
+        all. The reporter saw it on every account on their server, including ones with years of it.
+        """
+        picks_with_unseeded_leader = [
+            Pick(1, 1, "Trending Thing", rank=1, reason="r", media_type=MediaType.MOVIE, seed_title=None),
+            Pick(2, 2, "Sicario", rank=2, reason="r", media_type=MediaType.MOVIE, seed_title="Wind River"),
+            Pick(3, 3, "Hell or High Water", rank=3, reason="r", media_type=MediaType.MOVIE, seed_title="Fargo"),
+        ]
+
+        name = render_row_name("Because you watched {top_seed}", make_profile(), picks_with_unseeded_leader)
+
+        # The BEST SEEDED pick (rank 2), not the best pick overall and not the first in the list.
+        assert name == "Because you watched Wind River"
+
+
+def _labelling_plex_mock(plex: MagicMock) -> MagicMock:
+    """Make `stored_label` leave the label ON the collection, as the real one does.
+
+    Not decoration: `_apply_shortlist_label` refuses to write unless the owner label is already in
+    `collection.labels`, because plexapi's addLabel PUTs an ABSOLUTE tag set built from that list —
+    so writing against an empty one would DELETE the owner label and un-hide the row. A mock that
+    returned a string without touching the object would report that guard as broken, and (worse) a
+    mock that ignored the guard entirely would let a regression through. Testing rule: the fake must
+    be no easier than the real server.
+    """
+
+    def stored_label(collection, label):
+        stored = label.replace("shortlist", "Shortlist", 1)
+        current = list(getattr(collection, "_labels", []))
+        if not any(t.tag.lower() == label.lower() for t in current):
+            current.append(SimpleNamespace(tag=stored))
+        collection._labels = current
+        collection.labels = current
+        return stored
+
+    plex.stored_label.side_effect = stored_label
+    original_create = plex.create_collection.side_effect
+
+    def create(section, title, items):
+        # Default to the mock's own return_value, not a fresh MagicMock — tests assert identity
+        # against `plex.create_collection.return_value`.
+        collection = original_create(section, title, items) if original_create else plex.create_collection.return_value
+        collection._labels = []
+        collection.labels = []
+        return collection
+
+    plex.create_collection.side_effect = create
+    return plex
+
 
 class TestDeliverRows:
     """Delivery is split by media type because Plex collections belong to exactly one library.
@@ -125,8 +179,7 @@ class TestDeliverRows:
         plex.sections_by_type.return_value = {MediaType.MOVIE: movies, MediaType.SHOW: shows}
         plex.find_owned_collections.return_value = []
         plex.matches_section.return_value = True
-        plex.stored_label.return_value = "Shortlist_sarah"
-        return plex
+        return _labelling_plex_mock(plex)
 
     def test_library_keys_target_one_library_and_remap_its_rating_keys(self, engine_config: EngineConfig):
         from shortlist.engine.models import RowSpec
@@ -171,7 +224,13 @@ class TestDeliverRows:
         assert create.args[1].startswith("✨ Movies Picked for You"), "what a human reads is a clean title"
         # The row-level report title renders library-less (no single library) -> the generic default.
         assert diff.collection_title == "✨ Picked for You"
-        assert plex.stored_label.call_args.args[1] == "shortlist_sarah"
+        # Two labels per collection: the OWNER label everything keys off, and the constant one a
+        # co-managing tool can be pointed at (ours are per person, so a 46-account server otherwise
+        # needs 46 entries in agregarr's exclusion list, going stale on every roster change).
+        assert [c.args[1] for c in plex.stored_label.call_args_list] == [
+            "shortlist_sarah",
+            "shortlist",
+        ]
         # Promotion is the pipeline's job, AFTER filters are merged — never delivery's.
         plex.promote.assert_not_called()
 
@@ -196,9 +255,11 @@ class TestDeliverRows:
         assert plex.fetch_items.call_args_list[0].args[0] == [1001, 1002]
         assert plex.fetch_items.call_args_list[1].args[0] == [1005, 1006, 1007]
         assert sorted(diff.added) == ["Movie 1", "Movie 2", "Show 5", "Show 6", "Show 7"]
-        # Both collections carry the SAME label — that one label is what every other user's
-        # share filter excludes, so a second label would leave one of the two rows visible.
-        assert [c.args[1] for c in plex.stored_label.call_args_list] == ["shortlist_sarah", "shortlist_sarah"]
+        # Both collections carry the SAME owner label — that one label is what every other user's
+        # share filter excludes, so a DIFFERENT one per row would leave one of the two visible. (The
+        # constant `shortlist` label is on both too; it excludes nothing and is filtered out here.)
+        owner_labels = [c.args[1] for c in plex.stored_label.call_args_list if c.args[1] != "shortlist"]
+        assert owner_labels == ["shortlist_sarah", "shortlist_sarah"]
 
     def test_a_library_with_no_picks_keeps_its_existing_row(self, engine_config: EngineConfig, movies, shows):
         """A row nobody wrote to this run is stale, NOT leaking: it still carries its label, so
@@ -542,7 +603,8 @@ class TestServerWithTwoLibrariesOfTheSameType:
         # items of the library it lives in, so the other library's keys name items that are not there.
         assert [call.args[0] for call in plex.fetch_items.call_args_list] == [[4001, 4002], [1001, 1002]]
         # One label across both, because one `label!=` exclude on everyone else has to hide the pair.
-        assert [call.args[1] for call in plex.stored_label.call_args_list] == ["shortlist_sarah", "shortlist_sarah"]
+        owner_labels = [call.args[1] for call in plex.stored_label.call_args_list if call.args[1] != "shortlist"]
+        assert owner_labels == ["shortlist_sarah", "shortlist_sarah"]
 
     def test_a_pinned_row_builds_only_in_the_library_it_names(self, engine_config: EngineConfig):
         """`library_keys` is the ONLY thing that narrows a row to one library of its type."""
@@ -1440,3 +1502,247 @@ class TestTheLedgerRemovesAnUnrenderableRow:
         self._remove(plex, sections, "Because you watched {top_seed}", {"77": 4242})
 
         assert deleted == []
+
+
+class TestTheConstantLabel:
+    """Every row carries a constant `shortlist` label beside its `shortlist_<user>` one.
+
+    A co-managing tool (agregarr, Kometa) is pointed at a list of labels to leave alone, and ours are
+    per PERSON — a 46-account server has 46 of them, plus one per shared row, and the list goes stale
+    the moment somebody joins or leaves. This one never changes, so it is a single entry forever.
+    """
+
+    def _plex(self, movies):
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies]
+        plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        plex.find_owned_collections.return_value = []
+        return _labelling_plex_mock(plex)
+
+    def test_the_owner_label_is_still_applied_and_is_what_delivery_reports(self, engine_config: EngineConfig, movies):
+        """The constant label is ADDITIVE. If it ever replaced the per-user one, every other
+        account's `label!=shortlist_<user>` exclude would stop matching and the row would be visible
+        to the whole server — the leak this app exists to prevent."""
+        plex = self._plex(movies)
+
+        _diff, stored = deliver_rows(plex, make_profile(), picks(), engine_config)
+
+        applied = [c.args[1] for c in plex.stored_label.call_args_list]
+        assert "shortlist_sarah" in applied, "the per-user label is what every share filter excludes"
+        assert "shortlist" in applied
+        assert stored == "Shortlist_sarah", "the reported label is the OWNER one, not the constant"
+
+    def test_a_row_survives_a_constant_label_that_will_not_stick(self, engine_config: EngineConfig, movies):
+        """Unlike the per-user label, this one is never worth a row.
+
+        The create path DELETES a collection whose labelling fails — correctly, because a row with no
+        `shortlist_<user>` label can never be found, hidden or removed again. The constant label
+        carries none of that: without it a co-managing tool merely keeps reordering this one row. So
+        its failure must not reach that delete, or a cosmetic label would start destroying rows.
+        """
+        plex = self._plex(movies)
+        # Keep the honest labelling for the OWNER label and fail only the constant one. Replacing
+        # `stored_label` wholesale left the owner label off the collection, so `_apply_shortlist_label`
+        # tripped its own guard and returned before ever writing — the swallow this test exists for
+        # was never reached, and deleting it would not have failed anything.
+        labelling = plex.stored_label.side_effect
+
+        def boom(collection, label):
+            if label == LABEL_PREFIX:
+                raise RuntimeError("PMS said no")
+            return labelling(collection, label)
+
+        plex.stored_label.side_effect = boom
+
+        diff, stored = deliver_rows(plex, make_profile(), picks(), engine_config)
+
+        assert stored == "Shortlist_sarah"
+        assert diff.created is True
+        collection = plex.create_collection.return_value
+        collection.delete.assert_not_called()  # the row must outlive a cosmetic label
+
+    def test_it_refuses_to_write_when_the_owner_label_is_not_in_the_returned_labels(
+        self, engine_config: EngineConfig, movies
+    ):
+        """The leak this guard exists to stop.
+
+        plexapi's addLabel is NOT additive on the wire: it builds the new tag list as
+        `collection.labels + [new]` and PUTs it as an ABSOLUTE set (mixins/edit.py:294). So writing
+        against an EMPTY label list — rule 4's read that succeeds carrying no <Label> — would PUT
+        just `shortlist` and DELETE `shortlist_sarah`. No `label!=shortlist_sarah` exclude would match
+        the row afterwards, so it would be visible to every shared account, and nothing verifies
+        hiding after the fact. Skipping a cosmetic label is the only acceptable answer.
+        """
+        from shortlist.engine.delivery import _apply_shortlist_label
+
+        plex = MagicMock(spec=PlexClient)
+        blind = MagicMock()
+        blind.title = "✨ Movies Picked for You"
+        blind.labels = []  # Plex answered, and said this row has no labels at all
+
+        _apply_shortlist_label(plex, blind, "sarah")
+
+        # Writing here would replace the label set rather than add to it.
+        plex.stored_label.assert_not_called()
+
+    def test_it_writes_when_the_owner_label_is_present(self):
+        from shortlist.engine.delivery import _apply_shortlist_label
+
+        plex = MagicMock(spec=PlexClient)
+        collection = MagicMock()
+        collection.title = "✨ Movies Picked for You"
+        collection.labels = [SimpleNamespace(tag="Shortlist_sarah")]
+
+        _apply_shortlist_label(plex, collection, "sarah")
+
+        assert plex.stored_label.call_args.args[1] == "shortlist"
+
+    def test_it_does_not_write_again_once_the_label_is_there(self):
+        """Steady state must cost nothing. On a PMS answering writes in ~17s, a needless write per
+        row per night is the difference between a quiet night and a long one."""
+        from shortlist.engine.delivery import _apply_shortlist_label
+
+        plex = MagicMock(spec=PlexClient)
+        collection = MagicMock()
+        collection.title = "✨ Movies Picked for You"
+        collection.labels = [SimpleNamespace(tag="Shortlist_sarah"), SimpleNamespace(tag="Shortlist")]
+
+        _apply_shortlist_label(plex, collection, "sarah")
+
+        plex.stored_label.assert_not_called()
+
+
+class TestTheOwnerPrefixIsLoadBearing:
+    """Every lookup that derives an OWNER from a label matches `shortlist_` with the underscore.
+
+    Loosen any of them to bare `shortlist` and the constant label — which is on every row — matches
+    first and yields an EMPTY slug. What each site then does with that is severe and different, so
+    they are pinned against the real functions rather than against the string.
+    """
+
+    def test_owned_collections_does_not_treat_the_constant_label_as_a_users_row(self):
+        """`owned_collections` feeds `stored_labels`, which becomes every account's `label!=` excludes.
+
+        Match on bare `shortlist` and `Shortlist` enters that map, so `label!=Shortlist` is merged
+        into every share filter — hiding EVERY Shortlist row from EVERY shared user. It over-hides
+        rather than leaking, but it is permanent: the prune path also matches on `shortlist_`, so
+        Shortlist can write that exclude and then neither see nor remove it. Only a snapshot restore
+        would clear it.
+        """
+        client = PlexClient.__new__(PlexClient)
+        # The constant label FIRST, so a loosened prefix would match it before the owner's.
+        ours = SimpleNamespace(
+            title="✨ Movies Picked for You",
+            ratingKey=9001,
+            labels=[SimpleNamespace(tag="Shortlist"), SimpleNamespace(tag="Shortlist_sarah")],
+        )
+        client._section_collections = lambda _section: [ours]
+        client.sections = lambda: [SimpleNamespace(title="Movies")]
+
+        owned = client.owned_collections("shortlist")
+
+        assert set(owned) == {"sarah"}, "the constant label names nobody and must not become a slug"
+        assert "" not in owned, "an empty slug here becomes `label!=Shortlist` on every share filter"
+        assert owned["sarah"].label == "Shortlist_sarah"
+
+    def test_sweep_reads_the_owner_from_the_real_label_not_the_constant_one(self, engine_config, movies):
+        """`sweep_broken_rows` is the OTHER path that turns a label into an owner and then DELETES.
+
+        Driven through the real function: a row carrying the constant label FIRST must still be
+        attributed to sarah. An empty slug here belongs to nobody, which is what that path removes.
+        """
+        from shortlist.engine.delivery import sweep_broken_rows
+
+        collection = MagicMock()
+        collection.title = "✨ Movies Picked for You" + row_marker(100)
+        collection.ratingKey = 9001
+        collection.labels = [SimpleNamespace(tag="Shortlist"), SimpleNamespace(tag="Shortlist_sarah")]
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies]
+        plex.owned_collections.return_value = {}
+        plex._section_collections = lambda _s: [collection]
+        plex.matches_section.return_value = True
+
+        swept = sweep_broken_rows(plex, engine_config, dry_run=True)
+
+        assert "" not in swept, "an empty owner slug is a deletion candidate and must never appear"
+        assert set(swept) <= {"sarah"}, "a row is attributed to its OWNER, never to the constant label"
+
+
+class TestTheConstantLabelCannotSelectEveryRow:
+    """`find_owned_collections` matches a tag EXACTLY, and every row now carries the bare
+    `shortlist` label — so a caller passing it would select every Shortlist collection on the
+    server. No caller builds that label today; these are the guards that keep it harmless."""
+
+    def test_removal_refuses_the_bare_constant_label(self, engine_config: EngineConfig, movies):
+        """The unrecoverable one: this function DELETES."""
+        from shortlist.engine.delivery import remove_row_collections
+
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies]
+        plex.find_owned_collections.return_value = [MagicMock(title="✨ Movies Picked for You")]
+
+        removed = remove_row_collections(plex, engine_config, label="shortlist", displays=None, dry_run=False)
+
+        assert removed == []
+        plex.find_owned_collections.assert_not_called()
+        plex.delete_owned_collection.assert_not_called()
+
+        # But the TITLE-CASED form a caller reading `User.label` would pass must still work — a real
+        # removal silently doing nothing leaves the collections on Plex for ever.
+        plex.find_owned_collections.return_value = []
+        remove_row_collections(plex, engine_config, label="Shortlist_sarah", displays=None, dry_run=True)
+        plex.find_owned_collections.assert_called()
+
+    def test_rename_and_poster_reset_refuse_it_too(self, engine_config: EngineConfig, movies):
+        from shortlist.engine.delivery import rename_row_collections, reset_row_posters
+
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies]
+
+        assert (
+            rename_row_collections(
+                plex,
+                engine_config,
+                label="shortlist",
+                marker=row_marker(100),
+                old_display="✨ Picked for You",
+                new_display="✨ New Name",
+                dry_run=False,
+            )
+            == []
+        )
+        assert reset_row_posters(plex, engine_config, label="shortlist", displays=None, dry_run=False) == []
+        plex.find_owned_collections.assert_not_called()
+
+    def test_they_still_accept_the_title_cased_label_plex_actually_stores(self, engine_config: EngineConfig, movies):
+        """The other half of the guard, and the half that was wrong.
+
+        `User.label` holds Plex's title-cased `Shortlist_sarah`, so a case-SENSITIVE
+        `startswith("shortlist_")` rejects a legitimate caller — and both of these return `[]` on
+        rejection, which is indistinguishable from "nothing matched". A rename would leave the row
+        under its old title and a poster reset would leave the old artwork, with a warning in the log
+        and no error anywhere the operator looks. Removal already had the `.lower()`; these two were
+        edited in the same commit and did not.
+        """
+        from shortlist.engine.delivery import rename_row_collections, reset_row_posters
+
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies]
+        plex.find_owned_collections.return_value = []
+
+        rename_row_collections(
+            plex,
+            engine_config,
+            label="Shortlist_sarah",
+            marker=row_marker(100),
+            old_display="✨ Picked for You",
+            new_display="✨ New Name",
+            dry_run=True,
+        )
+        reset_row_posters(plex, engine_config, label="Shortlist_sarah", displays=None, dry_run=True)
+
+        # Reached the search rather than being turned away at the door — asserted per function, since
+        # one of the two passing would otherwise hide the other failing.
+        assert plex.find_owned_collections.call_count == 2
+        assert {c.args[1] for c in plex.find_owned_collections.call_args_list} == {"Shortlist_sarah"}

@@ -1,29 +1,47 @@
-# Shortlist ✨
+<!-- PROJECT SHIELDS — reference-style, so the header stays readable while editing it. -->
+<div align="center">
 
-> **Per-user movie & TV recommendations for Plex.** A private, personalized **"Picked for You"** row
-> on every user's Plex home screen — built from their own watch history, visible only to them.
-> Self-hosted, one Docker container, no AI key required.
+[![Build][build-shield]][build-url]
+[![Release][release-shield]][release-url]
+[![Coverage][codecov-shield]][codecov-url]
+[![Docker Pulls][docker-shield]][docker-url]
+[![Image Size][size-shield]][size-url]
+[![Stargazers][stars-shield]][stars-url]
+[![Issues][issues-shield]][issues-url]
+[![MIT License][license-shield]][license-url]
+[![AI-Assisted][ai-shield]][ai-url]
+[![Sponsor][sponsor-shield]][sponsor-url]
 
-[![CI](https://github.com/stevezau/shortlist/actions/workflows/ci.yml/badge.svg)](https://github.com/stevezau/shortlist/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/codecov/c/github/stevezau/shortlist)](https://codecov.io/gh/stevezau/shortlist)
-[![Latest release](https://img.shields.io/github/v/release/stevezau/shortlist?include_prereleases&label=release)](https://github.com/stevezau/shortlist/releases)
-[![Docker pulls](https://img.shields.io/docker/pulls/stevezzau/shortlist)](https://hub.docker.com/r/stevezzau/shortlist)
-[![Image size](https://img.shields.io/docker/image-size/stevezzau/shortlist/latest)](https://hub.docker.com/r/stevezzau/shortlist)
-[![Stars](https://img.shields.io/github/stars/stevezau/shortlist)](https://github.com/stevezau/shortlist/stargazers)
-[![Forks](https://img.shields.io/github/forks/stevezau/shortlist)](https://github.com/stevezau/shortlist/network/members)
-[![Open issues](https://img.shields.io/github/issues/stevezau/shortlist)](https://github.com/stevezau/shortlist/issues)
-[![Contributors](https://img.shields.io/github/contributors/stevezau/shortlist)](https://github.com/stevezau/shortlist/graphs/contributors)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![AI-Assisted](https://img.shields.io/badge/AI-assisted%20development-8A2BE2)
+</div>
 
-📖 **[Documentation](https://stevezau.github.io/shortlist/)** · [Getting started](https://stevezau.github.io/shortlist/getting-started/) · [How Plex per-user rows work](https://stevezau.github.io/shortlist/plex-per-user-collections/) · [Tools compared](https://stevezau.github.io/shortlist/plex-recommendation-tools/)
+<!-- PROJECT LOGO -->
+<div align="center">
+  <img src="docs/assets/img/logo.svg" alt="" width="110" height="110">
 
-> [!IMPORTANT]
-> **Shortlist 1.0.** It modifies other people's Plex views and share permissions, so it is built to
-> be careful: every write is previewed by `--dry-run`, your share filters are snapshotted before
-> they're touched, and a full uninstall puts everything back. **Please report bugs** — the
-> **Have an issue?** page runs twenty-two read-only checks that often name the cause outright, and
-> then opens a pre-filled issue with a secrets-free diagnostic to attach.
+  <h1 align="center">Shortlist</h1>
+
+  <p align="center">
+    Per-user movie &amp; TV recommendations for <strong>Plex</strong> — a private
+    <strong>&ldquo;Picked for You&rdquo;</strong> row on every user&rsquo;s home screen, built from
+    their own watch history and visible only to them.
+    <br />
+    Self-hosted, one Docker container, no AI key required.
+    <br />
+    <br />
+    <a href="https://stevezau.github.io/shortlist/"><strong>Explore the docs »</strong></a>
+    <br />
+    <br />
+    <a href="#quick-start">Quick start</a>
+    &middot;
+    <a href="https://stevezau.github.io/shortlist/plex-per-user-collections/">How per-user rows work</a>
+    &middot;
+    <a href="https://stevezau.github.io/shortlist/plex-recommendation-tools/">Tools compared</a>
+    &middot;
+    <a href="https://github.com/stevezau/shortlist/discussions/categories/q-a">Ask a question</a>
+    &middot;
+    <a href="https://github.com/stevezau/shortlist/issues/new?labels=bug">Report a bug</a>
+  </p>
+</div>
 
 ## The problem: "what should I watch next?"
 
@@ -109,10 +127,9 @@ account is told to hide that label, so only its owner ever sees it.
 
 ## Screenshots
 
-|                                                                     |                                                             |
-| ------------------------------------------------------------------- | ----------------------------------------------------------- |
-| ![A user's picks and why](docs/images/user-detail.png)              | ![A run in progress](docs/images/run-detail.png)            |
-| **Each person's row, and _why_ each pick** — "Because you watched…" | **Watch every run** — history → candidates → rank → deliver |
+| Each person's row, and _why_ each pick                 | Watch every run, step by step                    |
+| ------------------------------------------------------ | ------------------------------------------------ |
+| ![A user's picks and why](docs/images/user-detail.png) | ![A run in progress](docs/images/run-detail.png) |
 
 <sub>App screenshots use placeholder titles (a test library); the Plex row above is a real server.</sub>
 
@@ -123,6 +140,9 @@ each person and keep it private, inside Plex. It's designed to sit alongside wha
 
 - **It never touches what it didn't make.** Only collections carrying Shortlist's own `shortlist_*`
   label are ever modified — Kometa's collections, and anything you built by hand, are skipped.
+- **It can be told to stand aside.** Every row also carries a plain `shortlist` label, so a tool that
+  reorders the same shelf can exclude all of them with one entry — Agregarr's _Exclude from Ordering
+  (Plex Label)_, for instance. Or turn Shortlist's own shelf ordering off entirely.
 - **It merges share filters, never rebuilds them.** Existing conditions are left byte-for-byte
   identical, and the originals are snapshotted before the first change.
 - **It connects rather than duplicates.** Tautulli for richer history, Radarr/Sonarr for gaps, Trakt
@@ -174,7 +194,7 @@ picks your server, and walks you to your first rows (about 10 minutes).
 
 📖 **[stevezau.github.io/shortlist](https://stevezau.github.io/shortlist/)** — the docs as a website.
 
-|                                            |                                                     |
+| Page                                       | What's in it                                        |
 | ------------------------------------------ | --------------------------------------------------- |
 | [Getting started](docs/getting-started.md) | Install, wizard, first run                          |
 | [Guides](docs/guides.md)                   | Rows, schedules, requests, AI cost, troubleshooting |
@@ -186,7 +206,7 @@ picks your server, and walks you to your first rows (about 10 minutes).
 Background on the server, not on Shortlist — worth reading before you build anything on this
 yourself, because most advice on the subject predates Plex's 2026 fixes and quietly leaks.
 
-|                                                                                  |                                                                        |
+| Page                                                                             | What's in it                                                           |
 | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | [Per-user collections](docs/plex-per-user-collections.md)                        | The label + share-filter mechanism, and the order that leaks           |
 | [Improving Plex's recommendations](docs/improve-plex-recommendations.md)         | What Manage Recommendations really changes, and where it stops         |
@@ -196,6 +216,45 @@ yourself, because most advice on the subject predates Plex's 2026 fixes and quie
 | [AI recommendations](docs/plex-ai-recommendations.md)                            | Where a model helps, and where it invents films you don't own          |
 | [Tools compared](docs/plex-recommendation-tools.md)                              | Shortlist, Immaculaterr, Curatarr, SeekAndWatch and others             |
 
+## Support the project
+
+Shortlist is free and MIT-licensed, and built in evenings. If it saved you some, you can
+[sponsor it on GitHub](https://github.com/sponsors/stevezau) — entirely optional, and it buys time
+rather than features on request.
+
+Bug reports are worth just as much. The **Have an issue?** page runs read-only checks that often name
+the cause outright, then opens a pre-filled issue with a secrets-free diagnostic to attach.
+
+Not sure it's a bug? Ask in **[Discussions → Q&A](https://github.com/stevezau/shortlist/discussions/categories/q-a)**.
+Answers there get marked as answers, so the next person searching the same problem finds one.
+
 ## License
 
 MIT © Steven Adams
+
+<!-- SHIELD DEFINITIONS -->
+<!-- `for-the-badge` throughout: mixing shields' flat default with GitHub's own actions badge left
+     the row at two different heights, which is what made it read as clutter rather than a header.
+     The build badge tracks `master` (the released code), not the default branch — a green tick next
+     to an unreleased dev commit tells a visitor nothing about what they are about to install. -->
+
+[build-shield]: https://img.shields.io/github/actions/workflow/status/stevezau/shortlist/ci.yml?branch=master&style=for-the-badge&label=build
+[build-url]: https://github.com/stevezau/shortlist/actions/workflows/ci.yml
+[release-shield]: https://img.shields.io/github/v/release/stevezau/shortlist?style=for-the-badge&label=release
+[release-url]: https://github.com/stevezau/shortlist/releases
+[codecov-shield]: https://img.shields.io/codecov/c/github/stevezau/shortlist?style=for-the-badge
+[codecov-url]: https://codecov.io/gh/stevezau/shortlist
+[docker-shield]: https://img.shields.io/docker/pulls/stevezzau/shortlist?style=for-the-badge
+[docker-url]: https://hub.docker.com/r/stevezzau/shortlist
+[size-shield]: https://img.shields.io/docker/image-size/stevezzau/shortlist/latest?style=for-the-badge&label=image
+[size-url]: https://hub.docker.com/r/stevezzau/shortlist/tags
+[stars-shield]: https://img.shields.io/github/stars/stevezau/shortlist.svg?style=for-the-badge
+[stars-url]: https://github.com/stevezau/shortlist/stargazers
+[issues-shield]: https://img.shields.io/github/issues/stevezau/shortlist.svg?style=for-the-badge
+[issues-url]: https://github.com/stevezau/shortlist/issues
+[license-shield]: https://img.shields.io/github/license/stevezau/shortlist.svg?style=for-the-badge
+[license-url]: https://github.com/stevezau/shortlist/blob/master/LICENSE
+[ai-shield]: https://img.shields.io/badge/AI--Assisted-Claude%20Code-8A2BE2?style=for-the-badge&logo=anthropic&logoColor=white
+[ai-url]: https://claude.com/claude-code
+[sponsor-shield]: https://img.shields.io/badge/Sponsor-db61a2?style=for-the-badge&logo=githubsponsors&logoColor=white
+[sponsor-url]: https://github.com/sponsors/stevezau

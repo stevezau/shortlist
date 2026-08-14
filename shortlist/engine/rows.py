@@ -10,7 +10,8 @@ from __future__ import annotations
 import hashlib
 import time
 import zlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import date
 from functools import cached_property
@@ -843,7 +844,54 @@ def _add_step_tokens(report: UserRunReport, step: str, n: int) -> None:
         report.llm_tokens_by_step[step] = report.llm_tokens_by_step.get(step, 0) + n
 
 
-def _record_gather(report: UserRunReport, stats: candidates_mod.GatherStats, *, pool_label: str | None = None) -> None:
+def _blank_row_cost() -> dict[str, float]:
+    return {"duration_s": 0.0, "blocked_s": 0.0}
+
+
+@contextmanager
+def _row_timer(report: UserRunReport, slug: str) -> Iterator[None]:
+    """Time one row's own work, charging any write-lock wait inside it to that row.
+
+    Stamps on EVERY exit. The delivery loop `break`s both on a cancel and on a row whose write was
+    stopped, and an interrupted row still cost the time it spent — leaving it unstamped would make
+    it indistinguishable from a row that was never recorded at all.
+    """
+    entry = report.row_timing.setdefault(slug, _blank_row_cost())
+    report.lock_bucket = slug
+    started = time.monotonic()
+    try:
+        yield
+    finally:
+        entry["duration_s"] += round(time.monotonic() - started, 3)
+        report.lock_bucket = None
+
+
+@contextmanager
+def _timed_lock(ctx: EngineContext, report: UserRunReport) -> Iterator[None]:
+    """Take the run's write lock, charging the WAIT to the report's current row bucket.
+
+    At concurrency > 1 every Plex write is serialized, so a row's wall clock silently absorbs time
+    spent waiting on OTHER people's writes — time that is not this row's work, and that makes two
+    rows on a busy run incomparable. Recording it separately is what keeps the comparison honest.
+
+    The cursor lives on the REPORT, never on ``ctx``: ctx is shared by the whole user pool, so an
+    accumulator there would bill one person's wait to another person's row.
+    """
+    started = time.monotonic()
+    with ctx.write_lock:
+        bucket = report.lock_bucket
+        if bucket is not None:
+            report.row_timing.setdefault(bucket, _blank_row_cost())["blocked_s"] += round(time.monotonic() - started, 3)
+        yield
+
+
+def _record_gather(
+    report: UserRunReport,
+    stats: candidates_mod.GatherStats,
+    *,
+    pool_label: str | None = None,
+    duration_s: float = 0.0,
+) -> None:
     """Fold a candidate-gather's AI cost into the user report: per-source tokens (also into the grand
     total), Exa searches, and Exa cache hits. Called once per pool COMPUTATION — a cache hit re-adds
     nothing to tokens, but IS counted in exa_cache_hits so the run shows what the cache saved.
@@ -863,6 +911,18 @@ def _record_gather(report: UserRunReport, stats: candidates_mod.GatherStats, *, 
     report.exa_cache_hits += stats.exa_cache_hits
     if stats.trace:
         report.trace.setdefault("gathers", []).append({"pool": pool_label or "", **stats.trace})
+    # One entry per pool COMPUTATION. `rows` is filled by `pools_for` on every call, hit or miss —
+    # a cache hit is exactly the case that proves a second row shared this gather, and it is what
+    # stops the UI dividing one token figure between two rows.
+    report.pool_costs.append(
+        {
+            "label": pool_label or "",
+            "tokens": sum(stats.tokens_by_source.values()),
+            "exa_searches": stats.exa_searches,
+            "duration_s": round(duration_s, 3),
+            "rows": [],
+        }
+    )
 
 
 def _library_resolvers(ctx: EngineContext) -> tuple[Callable[[WatchedItem], str], Callable[[object], str]]:
@@ -1250,6 +1310,10 @@ class RowPolicy:
     # sources (the common case — every row inheriting the global set) reuse one pool; a row that
     # picks its own sources gets its own. Keyed by `pool_key`, memoised across the user.
     pool_cache: dict[tuple, Pool] = field(default_factory=dict)
+    # pool_key -> that pool's `report.pool_costs` entry, so a later row hitting the SAME cached pool
+    # (never re-gathered) can still append its slug to `entry["rows"]` — the only way a cache hit
+    # attributes its row to the cost it shared rather than paid for.
+    pool_rows: dict[tuple, dict] = field(default_factory=dict)
     # (pool_key, recency) -> that pool re-cut at a row's overridden release-date weight. Empty on a
     # server where every row inherits the global, which is the default shape.
     recency_cuts: dict[tuple, list[Candidate]] = field(default_factory=dict)
@@ -1503,6 +1567,7 @@ class RowPolicy:
         if key in self.pool_failures:
             return None
         if key not in self.pool_cache:
+            gather_started = time.monotonic()
             try:
                 self.pool_cache[key], gather_stats = _candidate_pool(
                     self.ctx,
@@ -1537,7 +1602,17 @@ class RowPolicy:
             pool_label = f"{spec.media} · {', '.join(key[0])}"
             if any(len(self.seeds_for(other)) != seed_n for other in self.specs):
                 pool_label += f" · {seed_n} seed{'' if seed_n == 1 else 's'}"
-            _record_gather(self.report, gather_stats, pool_label=pool_label)
+            _record_gather(
+                self.report,
+                gather_stats,
+                pool_label=pool_label,
+                duration_s=time.monotonic() - gather_started,
+            )
+            self.pool_rows[key] = self.report.pool_costs[-1]
+        # Hit or miss: a cache hit is the case that proves this row SHARED an existing gather.
+        entry = self.pool_rows.get(key)
+        if entry is not None and spec.slug not in entry["rows"]:
+            entry["rows"].append(spec.slug)
         return self.pool_cache[key]
 
 
@@ -1986,7 +2061,12 @@ def _deliver_row(
     def _deliver_locked() -> None:
         nonlocal cancelled
         lock_wait_start = time.monotonic()
-        with ctx.write_lock:
+        # Timed, not bare: this is the ONLY write lock taken inside the per-row loop, so it is the
+        # only one whose wait can make one row look slower than its sibling. The three setup-time
+        # locks stay bare — `_remove_muted_and_retired`'s sweep, `_drop_cold_skipped_rows`'s removal
+        # and `_record_demand`'s merge — because `setup_started` in `_run_user` now starts before the
+        # first of them, so all three land inside `setup_s` instead.
+        with _timed_lock(ctx, policy.report):
             # THE boundary a cancel actually needs. Every user's writes serialize on this one lock, so
             # at concurrency 8 seven people are parked right here when Cancel is pressed — already past
             # the caller's check, each one still writing a full row as its turn comes. On a PMS
@@ -2072,6 +2152,14 @@ def _run_user(
     cfg = ctx.config
 
     user_report.diff = CollectionDiff()
+    # Started here, not after the `specs` computation below: `_remove_muted_and_retired` takes
+    # `ctx.write_lock` (a Plex mutation, serialized across concurrent users), and that wait must land
+    # inside `setup_s` like the other setup-time locks — otherwise it vanishes from both the row it
+    # never reaches and the shared-setup total, understating the person's measured time by exactly the
+    # lock contention this feature exists to explain. Runs on every call regardless of whether `specs`
+    # ends up empty (see the `if not specs: return False` below) — `user_report.setup_s` is only ever
+    # assigned past that return, so a person with no active rows still reports `setup_s == 0.0`.
+    setup_started = time.monotonic()
     _remove_muted_and_retired(ctx, user, cfg, user_report)
 
     # Every row that could still have a COLLECTION under this user's label — the predicate `sole_row`
@@ -2158,6 +2246,10 @@ def _run_user(
     else:
         _warm_start(policy, demand, library_of_watch, library_of_seed)
 
+    # Everything above is shared by every row this person has — the history read and the candidate
+    # gather, which is where all AI spend happens. Closed here, before the first row is touched.
+    user_report.setup_s = round(time.monotonic() - setup_started, 3)
+
     if not ctx.plex.sections_by_type():
         raise RuntimeError("no movie or show library found for delivery")
 
@@ -2185,88 +2277,92 @@ def _run_user(
     delivered_any = False
 
     for spec in specs:
-        # A per-row override lets this one person resize or restyle this one row; each field falls
-        # through to the row's own setting when unset. Row beats global — the same direction the
-        # name template and the curation recipe resolve in.
-        override = user.row_overrides.get(spec.slug)
-        k = (override.size if override and override.size else None) or spec.size or cfg.row_size
-        targets = target_sections(ctx.delivery_sections, spec)
-        pool_for_row: list[Candidate] = []
-        if not cold:
-            # This row's own pool: its sources, its media and its libraries — already narrowed to
-            # all three BEFORE the pre-rank truncation, so nothing this row could show was cut by
-            # candidates it could never show.
-            pools = policy.pools_for(spec)
-            if pools is None:
-                continue  # every source this row uses is down; its siblings still deliver
-            _pool, in_library, pool_for_row = pools
-            # A row that overrides the server's release-date weight needs its OWN truncation, not
-            # just its own ordering: the cut decides which candidates a row may select from at all,
-            # so re-ordering what the global's cut left would cap the setting at whatever survived
-            # it. Re-taken from `in_library` — the cached pre-cut list — so this costs a sort, never
-            # another gather. A row that inherits reuses the pool's cut untouched.
-            recency = policy.effective_recency(spec)
-            if recency != ctx.config.recency:
-                pool_for_row = policy.cut_at_recency(spec, in_library, recency)
-            row_label = spec.name_template or spec.slug
-            _emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row), "row": row_label})
-        section_picks = _build_section_picks(
-            policy, spec, targets, k, cold=cold, base_cold=base_cold, pool_for_row=pool_for_row
-        )
-        # Stamp each pick with the row AND the library it belongs to, so the user page can group picks
-        # per row and the effectiveness report can split a multi-library row into one line per library.
-        library_names = {section.key: getattr(section, "title", "") or "" for section in targets}
-        section_picks = {
-            key: [
-                replace(p, collection_slug=spec.slug, section_key=key, library=library_names.get(key, "")) for p in sp
-            ]
-            for key, sp in section_picks.items()
-        }
-        # Record the exact title delivery will write for EACH library, so the promote phase can apply
-        # this row's placement/pin. Per library, because a {top_seed} OR {library_name} title differs
-        # library to library. Must match delivery's `render_row_name(..., library_name) + marker` — same
-        # section title in, or promote would look for a row delivery never wrote (it'd stay unhidden).
-        #
-        # Stamped BEFORE the write, and deliberately not rolled back when a cancel stops that write.
-        # The two directions are not symmetric: an entry for a row we did not write is inert (no
-        # collection on the server carries that title), while a MISSING one for a row that IS there
-        # from a previous run drops it to `_promote_one`'s no-spec branch, which forces
-        # `recommended=False` whatever the row's placement says — flipping a visibility flag against
-        # the owner's configuration. Withholding it is the more dangerous of the two.
-        title_template = resolve_row_template(spec, user, cfg)
-        marker = row_marker(user.plex_account_id)
-        for section_key, sp in section_picks.items():
-            if sp:
-                title = render_row_name(title_template, user, sp, library_name=library_names.get(section_key, ""))
-                user_report.placement_titles[title + marker] = spec.slug
-        picks = [pick for sp in section_picks.values() for pick in sp]
-        # Cancelled while this person was mid-delivery: stop before the NEXT row is written.
-        #
-        # Checking only before a person's first row is not enough at concurrency 8 — eight people are
-        # mid-delivery when Cancel is pressed, and each finishing all of their rows on a PMS
-        # answering in ~17s is minutes of a run that was asked to stop. A ROW is the real boundary:
-        # it is delivered whole, so stopping between rows leaves nothing half-written and no
-        # collection un-hidden. Within a row is where walking away would be unsafe, and that is
-        # untouched.
-        if ctx.cancelled():
-            logger.info("{}: cancelled — stopping before '{}', rows already written are intact", user.slug, spec.slug)
-            break
-        _emit(ctx, user.slug, "delivering", {"picks": len(picks), "row": spec.name_template or spec.slug})
-        if not _deliver_row(
-            policy,
-            spec,
-            picks,
-            section_picks,
-            sole_row=len(owned) == 1,
-            stored_labels=stored_labels,
-            order_work=order_work,
-        ):
-            # Cancelled while this row waited its turn for the write-lock — see `_deliver_row`.
-            break
-        # Only once the row is on the server: `picks` is the record of what this person was actually
-        # recommended, and a row a cancel stopped is not that.
-        all_picks.extend(picks)
-        delivered_any = delivered_any or bool(picks)
+        with _row_timer(user_report, spec.slug):
+            # A per-row override lets this one person resize or restyle this one row; each field falls
+            # through to the row's own setting when unset. Row beats global — the same direction the
+            # name template and the curation recipe resolve in.
+            override = user.row_overrides.get(spec.slug)
+            k = (override.size if override and override.size else None) or spec.size or cfg.row_size
+            targets = target_sections(ctx.delivery_sections, spec)
+            pool_for_row: list[Candidate] = []
+            if not cold:
+                # This row's own pool: its sources, its media and its libraries — already narrowed to
+                # all three BEFORE the pre-rank truncation, so nothing this row could show was cut by
+                # candidates it could never show.
+                pools = policy.pools_for(spec)
+                if pools is None:
+                    continue  # every source this row uses is down; its siblings still deliver
+                _pool, in_library, pool_for_row = pools
+                # A row that overrides the server's release-date weight needs its OWN truncation, not
+                # just its own ordering: the cut decides which candidates a row may select from at all,
+                # so re-ordering what the global's cut left would cap the setting at whatever survived
+                # it. Re-taken from `in_library` — the cached pre-cut list — so this costs a sort, never
+                # another gather. A row that inherits reuses the pool's cut untouched.
+                recency = policy.effective_recency(spec)
+                if recency != ctx.config.recency:
+                    pool_for_row = policy.cut_at_recency(spec, in_library, recency)
+                row_label = spec.name_template or spec.slug
+                _emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row), "row": row_label})
+            section_picks = _build_section_picks(
+                policy, spec, targets, k, cold=cold, base_cold=base_cold, pool_for_row=pool_for_row
+            )
+            # Stamp each pick with the row AND the library it belongs to, so the user page can group picks
+            # per row and the effectiveness report can split a multi-library row into one line per library.
+            library_names = {section.key: getattr(section, "title", "") or "" for section in targets}
+            section_picks = {
+                key: [
+                    replace(p, collection_slug=spec.slug, section_key=key, library=library_names.get(key, ""))
+                    for p in sp
+                ]
+                for key, sp in section_picks.items()
+            }
+            # Record the exact title delivery will write for EACH library, so the promote phase can apply
+            # this row's placement/pin. Per library, because a {top_seed} OR {library_name} title differs
+            # library to library. Must match delivery's `render_row_name(..., library_name) + marker` — same
+            # section title in, or promote would look for a row delivery never wrote (it'd stay unhidden).
+            #
+            # Stamped BEFORE the write, and deliberately not rolled back when a cancel stops that write.
+            # The two directions are not symmetric: an entry for a row we did not write is inert (no
+            # collection on the server carries that title), while a MISSING one for a row that IS there
+            # from a previous run drops it to `_promote_one`'s no-spec branch, which forces
+            # `recommended=False` whatever the row's placement says — flipping a visibility flag against
+            # the owner's configuration. Withholding it is the more dangerous of the two.
+            title_template = resolve_row_template(spec, user, cfg)
+            marker = row_marker(user.plex_account_id)
+            for section_key, sp in section_picks.items():
+                if sp:
+                    title = render_row_name(title_template, user, sp, library_name=library_names.get(section_key, ""))
+                    user_report.placement_titles[title + marker] = spec.slug
+            picks = [pick for sp in section_picks.values() for pick in sp]
+            # Cancelled while this person was mid-delivery: stop before the NEXT row is written.
+            #
+            # Checking only before a person's first row is not enough at concurrency 8 — eight people are
+            # mid-delivery when Cancel is pressed, and each finishing all of their rows on a PMS
+            # answering in ~17s is minutes of a run that was asked to stop. A ROW is the real boundary:
+            # it is delivered whole, so stopping between rows leaves nothing half-written and no
+            # collection un-hidden. Within a row is where walking away would be unsafe, and that is
+            # untouched.
+            if ctx.cancelled():
+                logger.info(
+                    "{}: cancelled — stopping before '{}', rows already written are intact", user.slug, spec.slug
+                )
+                break
+            _emit(ctx, user.slug, "delivering", {"picks": len(picks), "row": spec.name_template or spec.slug})
+            if not _deliver_row(
+                policy,
+                spec,
+                picks,
+                section_picks,
+                sole_row=len(owned) == 1,
+                stored_labels=stored_labels,
+                order_work=order_work,
+            ):
+                # Cancelled while this row waited its turn for the write-lock — see `_deliver_row`.
+                break
+            # Only once the row is on the server: `picks` is the record of what this person was actually
+            # recommended, and a row a cancel stopped is not that.
+            all_picks.extend(picks)
+            delivered_any = delivered_any or bool(picks)
 
     user_report.picks = all_picks
     user_report.counts.picks = len(all_picks)

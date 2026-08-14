@@ -343,17 +343,21 @@ def _shelf_contention(session: Session) -> dict | None:
         "body": (
             f"Shortlist has had to put the same row back on the Recommended shelf {worst} times in the "
             f"last day in {where}, so something else is moving it. This is almost always another tool "
-            "that manages Plex recommendations — Kometa, Agregarr, Plex-Meta-Manager. Tell it to leave "
-            "collections labelled shortlist_* alone, or turn off 'Let Shortlist order the Recommended "
-            "shelf' here so Shortlist stops competing with it. Your rows are still built, delivered "
-            "and kept private either way — only their position on the shelf is affected.\n\n"
+            "that manages Plex recommendations — Kometa, Agregarr, Plex-Meta-Manager.\n\n"
+            "The fix is to tell that tool to leave Shortlist's rows alone. Every row carries the "
+            "label 'shortlist', so that one word is all it needs — in Agregarr it goes in Settings → "
+            "General → 'Exclude from Ordering (Plex Label)'. (That field is on the maintained fork's "
+            ":develop image; it is newer than the v2.9.1 release.) Failing that, turn off 'Let "
+            "Shortlist order the Recommended shelf' here so Shortlist stops competing. Your rows are "
+            "built, delivered and kept private either way — only their position on the shelf is "
+            "affected.\n\n"
             "If it is Agregarr, it is worth checking which one you run. The original is no longer "
             "actively released, and reordering a shelf on it re-promotes collections with Plex's "
             "defaults — which puts other people's rows on the SERVER OWNER'S Home, yours, the one "
             "place no share filter can cover. Shortlist clears that on every run, so it is a gap "
             "between runs rather than something permanent. The maintained fork at "
             "github.com/bitr8/agregarr-dev (Docker: bitr8/agregarr) fixes it at the source and is a "
-            "drop-in swap. It still reorders this shelf, so the advice above applies either way."
+            "drop-in swap. It still reorders this shelf, so the exclusion above applies either way."
         ),
         "action_url": "/settings#placement",
         "action_label": "Shelf settings",

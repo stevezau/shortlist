@@ -3,6 +3,8 @@ and the leak-safe ordering (deliver unpromoted → sync filters → promote last
 
 from __future__ import annotations
 
+import threading
+import time
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from typing import ClassVar
@@ -12,11 +14,21 @@ import pytest
 
 import shortlist.engine.picker as picker_mod
 import shortlist.engine.pipeline as pipeline_mod
+from shortlist.engine import rows as rows_mod
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.tmdb import NullCache
 from shortlist.engine.context import EngineContext
 from shortlist.engine.delivery import render_row_name, resolve_row_template, row_marker, strip_marker
-from shortlist.engine.models import EngineConfig, MediaType, OwnedRow, Pick, RowOverride, RowSpec, UserType
+from shortlist.engine.models import (
+    EngineConfig,
+    MediaType,
+    OwnedRow,
+    Pick,
+    RowOverride,
+    RowSpec,
+    UserRunReport,
+    UserType,
+)
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
 
@@ -85,6 +97,41 @@ def ctx(engine_config: EngineConfig, mock_plextv, mock_tmdb, mock_curator) -> En
         curator=mock_curator,
         snapshots=MemorySnapshotStore(),
     )
+
+
+def _run_two_row_user(ctx: EngineContext, mock_plextv) -> UserRunReport:
+    """Two per-person rows sharing one pool (same media/sources/seeds), with enough watch history
+    to skip a cold start. Runs the real pipeline — which calls `_run_user` per person — and returns
+    this user's report."""
+    ctx.config.rows = [
+        RowSpec(slug="picked-for-you", name_template="Picked for You", size=5),
+        RowSpec(slug="because-you-watched", name_template="Because You Watched", size=5),
+    ]
+
+    def slow_fetch(*_args, **_kwargs) -> list:
+        # Keeps setup_s deterministically non-zero — round(x, 3) in _run_user collapses a sub-ms
+        # span to exactly 0.0, which would make `report.setup_s > 0` fail by rounding accident.
+        time.sleep(0.01)
+        return [make_watched(f"Film{i}", days_ago=i + 1, rating_key=999) for i in range(5)]
+
+    ctx.history_source.fetch.side_effect = slow_fetch
+    mock_plextv.users = [plextv_user(100, "sarah")]
+
+    report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+    return report.users[0]
+
+
+def _run_cold_user(ctx: EngineContext, mock_plextv) -> UserRunReport:
+    """Fewer watches than `min_history` — the cold-start path, which never builds a candidate pool."""
+    ctx.plex.top_rated.side_effect = lambda section, n: [
+        (100 + i, MagicMock(ratingKey=9000 + i, title=f"Top{i}")) for i in range(n)
+    ]
+    ctx.config.rows = [RowSpec(slug="picked-for-you", name_template="Picked for You", size=5)]
+    ctx.history_source.fetch.return_value = [make_watched("Solo Watch", days_ago=1, rating_key=999)]
+    mock_plextv.users = [plextv_user(100, "sarah")]
+
+    report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+    return report.users[0]
 
 
 class TestRun:
@@ -3650,6 +3697,37 @@ class TestOrphanDeletion:
         _converge_phase(ctx, set(), report)
         return report
 
+    def test_the_constant_label_does_not_turn_a_live_row_into_an_orphan(self, ctx: EngineContext):
+        """Every row now carries a constant `Shortlist` label beside its `Shortlist_<user>` one.
+
+        Orphan detection chops the owner's slug off the front of the label. It matches on
+        `shortlist_` WITH the underscore, so the constant label is skipped and `Shortlist_sarah` is
+        found — but if that prefix were ever loosened to `shortlist`, the constant label would match
+        first and yield an EMPTY slug. Empty is in nobody's roster, so every row on the server would
+        classify as an orphan, and orphans are the one thing this phase DELETES.
+
+        This is the blast radius of a one-character edit, so it is pinned against the real function
+        rather than against the string prefix alone.
+        """
+        collection = self._collection(1, "Shortlist")
+        collection.labels = [MagicMock(tag="Shortlist"), MagicMock(tag="Shortlist_sarah")]
+
+        report = self._run(ctx, [collection], known={100: "sarah"}, may_delete=True)
+
+        assert report.orphans_removed == [], "a row whose owner is known must never be deleted"
+        collection.delete.assert_not_called()
+
+    def test_a_row_carrying_ONLY_the_constant_label_is_left_alone(self, ctx: EngineContext):
+        """Belt and braces: a collection with the constant label and no owner label is not something
+        this app creates — delivery applies the owner label first and deletes the row if it fails. It
+        must not be read as an orphan on the strength of a label that names nobody."""
+        collection = self._collection(1, "Shortlist")
+
+        report = self._run(ctx, [collection], known={100: "sarah"}, may_delete=True)
+
+        assert report.orphans_removed == []
+        collection.delete.assert_not_called()
+
     def test_a_user_less_run_never_deletes_however_complete_the_picture(self, ctx: EngineContext):
         """`engine_run(ctx, [])` is the privacy-sync shape, and it fires from routine mutations —
         disabling one person, narrowing a shared row's audience. It documents itself as creating and
@@ -5022,3 +5100,134 @@ class TestCancelStopsWritingPromptly:
             "the delivery ledger loses the ratingKey and the next run builds a second collection "
             "beside the orphan"
         )
+
+
+class TestRunUserCost:
+    def test_setup_and_every_entered_row_are_timed(self, ctx: EngineContext, mock_plextv):
+        """Every row the loop ENTERS gets a `row_timing` entry — including one whose only source is
+        down, which `pools_for` turns into `None` and the row loop `continue`s past. Without an
+        entry for that row the UI cannot tell 'finished with nothing to show' from 'never recorded'.
+
+        The two rows are given DIFFERENT sources on purpose: identical rows share one pool key (see
+        `TestPoolCosts`), so both would always succeed or fail together and neither could `continue`
+        without the other. Only `tmdb_discover` is made to fail, so `picked-for-you` (the default
+        `tmdb_similar`) still delivers — the real property under test is that a row recorded via
+        `_row_timer` but never delivered is distinguishable from one that was: it's in `row_timing`
+        but absent from `breakdown`.
+        """
+        ctx.config.rows = [
+            RowSpec(slug="picked-for-you", name_template="Picked for You", size=5),
+            RowSpec(
+                slug="because-you-watched",
+                name_template="Because You Watched",
+                size=5,
+                candidate_sources=["tmdb_discover"],
+            ),
+        ]
+        ctx.tmdb.discover.side_effect = RuntimeError("tmdb_discover down")
+
+        def slow_fetch(*_args, **_kwargs) -> list:
+            # Keeps setup_s deterministically non-zero — round(x, 3) in _run_user collapses a sub-ms
+            # span to exactly 0.0, which would make `report.setup_s > 0` fail by rounding accident.
+            time.sleep(0.01)
+            return [make_watched(f"Film{i}", days_ago=i + 1, rating_key=999) for i in range(5)]
+
+        ctx.history_source.fetch.side_effect = slow_fetch
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)]).users[0]
+
+        assert report.setup_s > 0
+        assert set(report.row_timing) == {"picked-for-you", "because-you-watched"}, (
+            "the row that continue'd past a dead source must still be timed, not silently dropped"
+        )
+        assert {b["row_slug"] for b in report.breakdown} == {"picked-for-you"}, (
+            "the dead-source row delivered nothing and must not appear in the delivery breakdown"
+        )
+
+
+class TestPoolCosts:
+    def test_two_rows_sharing_a_pool_record_one_entry_naming_both(self, ctx: EngineContext, mock_plextv):
+        """The whole point of the honest split: one gather, one token figure, both rows named.
+        A cache HIT must still attribute its row, or the pool reads as belonging to one row."""
+        report = _run_two_row_user(ctx, mock_plextv)
+        assert len(report.pool_costs) == 1
+        entry = report.pool_costs[0]
+        assert sorted(entry["rows"]) == ["because-you-watched", "picked-for-you"]
+        assert entry["tokens"] == report.llm_tokens
+        assert entry["label"]
+
+    def test_cold_start_user_records_no_pools(self, ctx: EngineContext, mock_plextv):
+        """Cold start never builds a pool. `[]` is the true answer, not missing data."""
+        report = _run_cold_user(ctx, mock_plextv)
+        assert report.pool_costs == []
+
+
+class TestRowTiming:
+    def test_row_timer_records_duration_when_body_completes(self):
+        report = UserRunReport(username="alex", slug="alex")
+        with rows_mod._row_timer(report, "picked-for-you"):
+            time.sleep(0.01)
+        assert report.row_timing["picked-for-you"]["duration_s"] >= 0.01
+        assert report.row_timing["picked-for-you"]["blocked_s"] == 0.0
+        assert report.lock_bucket is None
+
+    def test_row_timer_records_duration_when_body_breaks_early(self):
+        """The delivery loop `break`s on cancel — an interrupted row still cost the time it spent."""
+        report = UserRunReport(username="alex", slug="alex")
+        for _ in range(1):
+            with rows_mod._row_timer(report, "because-you-watched"):
+                time.sleep(0.01)
+                break
+        assert report.row_timing["because-you-watched"]["duration_s"] >= 0.01
+
+    def test_row_timer_records_duration_when_body_raises(self):
+        report = UserRunReport(username="alex", slug="alex")
+        try:
+            with rows_mod._row_timer(report, "picked-for-you"):
+                # A sleep-free raise finishes in low-microsecond time, which `round(..., 3)` in
+                # `_row_timer` collapses to exactly 0.0 — this sleep keeps the assertion below
+                # meaningful instead of passing by rounding accident.
+                time.sleep(0.01)
+                raise RuntimeError("boom")
+        except RuntimeError:
+            pass
+        assert report.row_timing["picked-for-you"]["duration_s"] > 0
+        assert report.lock_bucket is None
+
+    def test_timed_lock_charges_wait_to_the_current_row(self):
+        from shortlist.engine.context import EngineContext
+
+        ctx = EngineContext.__new__(EngineContext)
+        ctx.write_lock = threading.Lock()
+        report = UserRunReport(username="alex", slug="alex")
+
+        holder_has_lock = threading.Event()
+
+        def hold() -> None:
+            with ctx.write_lock:
+                holder_has_lock.set()
+                # Holds the lock for a fixed span instead of an event-signalled release: releasing
+                # right as the requester attempts to acquire raced the wait below to sub-millisecond,
+                # which `round(..., 3)` in `_timed_lock` then collapsed to exactly 0.0.
+                time.sleep(0.05)
+
+        t = threading.Thread(target=hold)
+        t.start()
+        holder_has_lock.wait(timeout=2)
+        with rows_mod._row_timer(report, "picked-for-you"), rows_mod._timed_lock(ctx, report):
+            pass
+        t.join(timeout=2)
+
+        assert report.row_timing["picked-for-you"]["blocked_s"] > 0
+
+    def test_timed_lock_charges_nothing_during_setup(self):
+        """lock_bucket is None before the row loop — that wait belongs to setup_s, not to a row."""
+        from shortlist.engine.context import EngineContext
+
+        ctx = EngineContext.__new__(EngineContext)
+        ctx.write_lock = threading.Lock()
+        report = UserRunReport(username="alex", slug="alex")
+        with rows_mod._timed_lock(ctx, report):
+            pass
+        assert report.row_timing == {}

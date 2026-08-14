@@ -4,7 +4,78 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
-## [1.5.0] - 2026-08-13
+## [1.5.1] - 2026-08-14
+
+### Added
+
+- **A way to support the project, for anyone who wants to.** A quiet "Support this project" line at
+  the bottom of the sidebar, under the version, opening GitHub Sponsors. Deliberately in the chrome
+  rather than among the navigation, and nothing floats over the page — people self-host to get away
+  from being sold to, and anyone inclined to give goes looking rather than needing to be asked twice.
+
+- **Somewhere to ask, rather than only somewhere to report.** GitHub Discussions is open, and Have
+  an issue? now offers **Ask a question** beside **Report a bug**. Not everyone who gets stuck is
+  looking at a defect — plenty are looking at Shortlist working exactly as designed and not
+  understanding why, and with one button on the page those get filed as bugs. Questions go to the
+  Q&A category, where an answer can be marked as the answer, so the next person searching the same
+  problem finds one instead of an abandoned thread.
+
+- **The "something else is reordering your shelf" alert now tells you how to stop it.** It used to
+  say to exclude `shortlist_*`, which is a wildcard no tool's exclusion list accepts. Agregarr has
+  since gained an **Exclude from Ordering (Plex Label)** field, and it matches a label exactly or as a
+  prefix followed by `_` — so the single word `shortlist` covers the constant label and every
+  person's own. The alert names the field and the value.
+
+- **What a row actually cost, per row.** A run page showed one number per person — their whole
+  night — so a row that took four minutes and a row that took four seconds looked identical, and the
+  shared work every row depends on was billed to whichever row happened to be first. Each row now
+  reports its own time and its own AI spend, with the shared setup shown separately and the pools
+  that fed more than one row named. Waiting for the Plex write-lock is charged to the row that
+  waited, so a slow night points at what was slow rather than at whoever was unlucky.
+
+- **A download that says it is working.** The Logs page's **Download .zip** and Have an issue?'s
+  **Download everything** were plain links: the browser fetched them in silence while the server
+  gathered and zipped the logs, which takes seconds, so nothing on screen changed and the natural
+  reading was that the click had missed. Both now say **Preparing…** while the file is built.
+
+- **One label for co-managing tools.** Every row now carries a constant `shortlist` label (Plex
+  stores it as `Shortlist`) alongside its per-person one. Tools that share your Recommended shelf —
+  Agregarr's **Exclude from Ordering (Plex Label)**, Kometa's equivalents — take a list of labels to
+  leave alone, and Shortlist's per-person labels were no use there: a 46-account server has 46 of
+  them plus one per shared row, and the list goes stale the moment somebody joins or leaves. One
+  entry now covers every row, for good. It hides nothing and changes nothing about who sees what —
+  privacy still runs entirely off the per-person label. Existing rows pick it up the next time they
+  are built, so there is nothing to run — but that first run does one extra label write per row you
+  already have, and on a server whose Plex is slow to answer writes it may be a noticeably longer
+  night. Once only; the log names every row as it goes.
+
+### Fixed
+
+- **A `{top_seed}` row no longer falls back to "✨ Picked for You" for people who have plenty of
+  history** ([#84](https://github.com/stevezau/shortlist/issues/84)). A row titled "Because you
+  watched…" needs a pick that came from something the person watched, and it only ever looked at the
+  single best pick. Some sources suggest a title without following one — what's trending, what's
+  popular on your server, a web-search find — so if one of those ranked first, the row acted as
+  though the person had no history at all, with a dozen perfectly good seeded picks right behind it.
+  It now takes the strongest pick that actually has a seed. That is why this was happening on
+  established accounts and not just new ones.
+
+  Still open in that issue: when there genuinely is no seed — a brand-new account — the row is named
+  from a hardcoded "✨ Picked for You" that ignores your own row-name setting. Fixing that properly
+  means changing what a row with no title of its own is called, and per-user rows are told apart by
+  their titles, so it is a change with teeth. It is not shipping in a patch release.
+
+- **"Remove or delete" looks like what it does.** In a row's editor it was grey text that did not
+  read as a control at all, let alone one that ends in deleting a row. It now matches the Delete on
+  the Rows page — red, outlined, with a bin. It still only takes you to the section at the bottom of
+  the page rather than acting, because removing and deleting reach into other people's Plex and
+  Cancel does not undo them.
+
+## [1.5.0] - 2026-08-13 — withdrawn
+
+Tagged and published for about half an hour, then pulled before anyone was told about it. Everything
+in it ships in 1.5.1; the notes are kept here because the images were briefly public.
+
 
 ### Added
 

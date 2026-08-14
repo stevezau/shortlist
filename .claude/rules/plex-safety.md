@@ -31,6 +31,14 @@ violate them.
    modified or deleted. Detect and skip anything else — Kometa and other tools manage collections
    on the same servers; coexistence is mandatory.
 
+   Every row also carries a constant `shortlist` label beside its `shortlist_<userslug>` one, so a
+   co-managing tool can exclude all of ours with a single entry. It is ADDITIVE and names nobody.
+   Everything that resolves an owner from a label matches `shortlist_` **with the underscore** — and
+   that underscore is load-bearing: match on `shortlist` alone and the constant label yields an empty
+   slug, which is in no roster, so every row on the server classifies as an ORPHAN and orphan
+   handling is the one path here that deletes. Pinned by
+   `test_pipeline.py::TestOrphanDeletion::test_the_constant_label_does_not_turn_a_live_row_into_an_orphan`.
+
    **An empty label read never authorises a delete.** A real PMS returns NO `<Label>` children in
    the collections listing (recorded: `tests/fixtures/pms_collections_listing.json`) — labels arrive
    only because plexapi silently re-reads each collection behind `collection.labels`. A re-read that

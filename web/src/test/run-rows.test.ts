@@ -38,6 +38,7 @@ function user(overrides: Partial<RunUserResult> = {}): RunUserResult {
     breakdown: [],
     has_trace: false,
     rows_considered: {},
+    cost: null,
     ...overrides,
   } as RunUserResult;
 }
@@ -263,6 +264,81 @@ describe("groupRunByRow", () => {
   });
 });
 
+describe("per-row cost", () => {
+  it("gives each row its own duration instead of the person's whole-run total", () => {
+    const detail = run({
+      users: [
+        user({
+          slug: "alex",
+          duration_ms: 442000,
+          rows_considered: {
+            "picked-for-you": "due",
+            "because-you-watched": "due",
+          },
+          breakdown: breakdown(
+            {
+              row_slug: "picked-for-you",
+              library_key: "1",
+              library_title: "Movies",
+            },
+            {
+              row_slug: "because-you-watched",
+              library_key: "1",
+              library_title: "Movies",
+            },
+          ),
+          cost: {
+            setup_ms: 421000,
+            rows: {
+              "picked-for-you": { duration_ms: 12040, blocked_ms: 310 },
+              "because-you-watched": { duration_ms: 9120, blocked_ms: 880 },
+            },
+            pools: [
+              {
+                label: "movie · tmdb, llm_web",
+                tokens: 15917,
+                exa_searches: 3,
+                duration_ms: 398000,
+                rows: ["picked-for-you", "because-you-watched"],
+              },
+            ],
+          },
+        }),
+      ],
+    });
+    const { groups } = groupRunByRow(detail);
+    const picked = groups.find((g) => g.slug === "picked-for-you")!;
+    const because = groups.find((g) => g.slug === "because-you-watched")!;
+    expect(picked.people[0]!.cost?.duration_ms).toBe(12040);
+    expect(because.people[0]!.cost?.duration_ms).toBe(9120);
+  });
+
+  it("reports null cost for a legacy run rather than zero", () => {
+    const detail = run({
+      users: [
+        user({
+          slug: "alex",
+          cost: null,
+          rows_considered: { "picked-for-you": "due" },
+        }),
+      ],
+    });
+    const { groups } = groupRunByRow(detail);
+    expect(groups[0]!.people[0]!.cost).toBeNull();
+  });
+});
+
+describe("row progress wording", () => {
+  it("counts PEOPLE in the building line, since a person's rows all land together", () => {
+    const group = {
+      kind: "per_person",
+      pending: 42,
+      people: new Array(46).fill(null).map(() => ({})),
+    } as never;
+    expect(rowSummary(group)).toBe("building — 4 of 46 people done");
+  });
+});
+
 describe("a run that is still going", () => {
   it("draws every row the run said it would build, before anyone has finished", () => {
     // The blocker this fixes: scope only exists in `rows_considered`, which lands per user AS EACH
@@ -288,7 +364,7 @@ describe("a run that is still going", () => {
     ]);
     // Nobody done yet, so all three are still to come.
     expect(groups[0]!.pending).toBe(3);
-    expect(rowSummary(groups[0]!)).toBe("building — 0 of 3 done");
+    expect(rowSummary(groups[0]!)).toBe("building — 0 of 3 people done");
   });
 
   it("counts down as people finish, then reports the finished summary", () => {
@@ -305,7 +381,7 @@ describe("a run that is still going", () => {
       CONFIG_NAMES,
     );
 
-    expect(rowSummary(groups[0]!)).toBe("building — 1 of 3 done");
+    expect(rowSummary(groups[0]!)).toBe("building — 1 of 3 people done");
   });
 });
 
@@ -337,7 +413,7 @@ describe("people are visible before they finish", () => {
     expect(groups[0]!.people.every((p) => p.result.status === "pending")).toBe(
       true,
     );
-    expect(rowSummary(groups[0]!)).toBe("building — 0 of 2 done");
+    expect(rowSummary(groups[0]!)).toBe("building — 0 of 2 people done");
   });
 
   it("replaces a person's pending entry with their real result as it lands", () => {
@@ -359,6 +435,6 @@ describe("people are visible before they finish", () => {
 
     // Alex reported; Bea is still waiting. Nobody appears twice.
     expect(groups[0]!.people).toHaveLength(2);
-    expect(rowSummary(groups[0]!)).toBe("building — 1 of 2 done");
+    expect(rowSummary(groups[0]!)).toBe("building — 1 of 2 people done");
   });
 });

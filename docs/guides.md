@@ -41,3 +41,19 @@ Eight short pages instead of one long one. If you know what you want to do, star
 
 New here? [Getting started](getting-started.md) covers the install and the setup wizard first.
 Looking for a specific setting or API endpoint? That's [Reference](reference.md).
+
+## Another tool keeps moving your rows
+
+Agregarr, Kometa and similar tools reorder the same Plex Recommended shelf Shortlist does, so rows
+can appear to shuffle between runs. Both sides can be told to leave the other alone.
+
+In Agregarr, put `shortlist` in **Settings → General → Exclude from Ordering (Plex Label)**. That one
+word covers every Shortlist row: the field matches a label exactly OR as a prefix followed by `_`, so
+it catches the constant `shortlist` label and each person's `shortlist_<name>` one. It keeps working
+as people join and leave, and needs no updating.
+
+That field is newer than Agregarr's v2.9.1 release — at the time of writing it is on the maintained
+fork's `:develop` image (`bitr8/agregarr:develop`).
+
+Shortlist's own side is **Settings → Row placement**, which decides where it puts rows and whether
+it manages shelf order at all — turning that off leaves the order entirely to the other tool.

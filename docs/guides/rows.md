@@ -30,11 +30,16 @@ the row is built:
 - `{top_seed}` — the title that most drove their recommendations. `Because you watched {top_seed}`
   becomes "Because you watched The Bear".
 
-If a `{top_seed}` row is built for someone with too little history to have a favourite, it falls
-back to a clean default ("✨ Picked for You") rather than a half-finished sentence — or you can have
-the row not appear for them at all; see [People without enough watch history](#people-without-enough-watch-history)
-below. You can rename any row at any time in the **Row editor**, and the collection on Plex is
-renamed in place, so its place in the shelf and its privacy are preserved.
+The seed is the strongest pick that came from something they watched. Some sources suggest a title
+without following one — what's trending, what's popular on your server, a web-search find — so those
+contribute picks but no seed. The name uses the strongest pick that has one.
+
+If a `{top_seed}` row is built for someone with too little history to have a favourite at all, it
+falls back to a clean default ("✨ Picked for You") rather than a half-finished sentence — or you can
+have the row not appear for them; see
+[People without enough watch history](#people-without-enough-watch-history) below. You can rename any
+row at any time in the **Row editor**, and the collection on Plex is renamed in place, so its place
+in the shelf and its privacy are preserved.
 
 **A `{top_seed}` row needs one more setting to be honest.** By default every row is built from a
 person's 30 most recent watches blended together, so a row titled "Because you watched The Bear" is
@@ -103,7 +108,7 @@ threshold. Nothing needs setting back.
 
 **Any row can override this in the Row editor**, which is the point of having it per row rather than
 only server-wide. A `{top_seed}` row is the one worth skipping — it has no favourite to name itself
-after, so for a cold-start person it silently falls back to the plain default title. A general
+after, so for a cold-start person it falls back to the plain default title. A general
 "Picked for You" row is perfectly happy holding popular titles in the meantime. Leave a row on **Use
 the global setting** and it follows Settings.
 

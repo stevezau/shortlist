@@ -1,4 +1,10 @@
-import type { RunDetail, RunSharedRowResult, RunUserResult } from "@/lib/types";
+import type {
+  RunDetail,
+  RunPoolCost,
+  RunRowCost,
+  RunSharedRowResult,
+  RunUserResult,
+} from "@/lib/types";
 
 /** What a run decided about one row FOR ONE PERSON, before anything was built.
  *
@@ -20,6 +26,25 @@ export type RunRowPerson = {
    * a lesser page than the one it replaced.
    */
   result: RunUserResult;
+  /** THIS row's own cost, or null on a run recorded before it was measured — which must render as
+   *  "not recorded", never as 0s. `duration_ms` includes `blocked_ms`; work time is the difference. */
+  cost: RunRowCost | null;
+  /**
+   * Did this row actually deliver anything to them?
+   *
+   * `cost` alone cannot answer it. The row timer starts BEFORE the cancel check and before a dead
+   * candidate source can bail out, so a row that was never written still records a cost — and a
+   * cancelled person then rendered as a green tick beside "0s", which reads as "built instantly".
+   *
+   * `null` on a legacy run — one that recorded no per-row cost at all. Nothing was measured, which is
+   * not the same as nothing happening, and claiming "not built" there would be a worse lie than the
+   * tick was. Keyed on the COST rather than on an empty breakdown, because a person whose only row
+   * was skipped has an empty breakdown too, and that is precisely the case this exists to catch.
+   */
+  built: boolean | null;
+  /** The person's SHARED setup, repeated on each of their rows because it belongs to none of them.
+   *  All AI spend lives here, attributed per pool — never divided between rows. */
+  setup: { setup_ms: number; pools: RunPoolCost[] } | null;
 };
 
 /** One row as this run built it. Per-person rows carry their people; a shared row carries its result.
@@ -154,6 +179,11 @@ export function groupRunByRow(
           breakdown: mine as RunUserResult["breakdown"],
           picks: mine.length || user.breakdown.length === 0 ? user.picks : [],
         },
+        built: user.cost ? mine.length > 0 : null,
+        cost: user.cost?.rows?.[slug] ?? null,
+        setup: user.cost
+          ? { setup_ms: user.cost.setup_ms ?? 0, pools: user.cost.pools ?? [] }
+          : null,
       });
     }
   }
@@ -229,6 +259,8 @@ export function groupRunByRow(
       group.people.push({
         decision: null,
         userId: idBySlug.get(who.slug),
+        cost: null,
+        setup: null,
         result: {
           username: who.username ?? who.slug,
           display_name: who.display_name ?? who.username ?? who.slug,
@@ -246,6 +278,7 @@ export function groupRunByRow(
           has_trace: false,
           rows_considered: {},
         } as unknown as RunUserResult,
+        built: false,
       });
     }
     group.pending = group.people.filter(
@@ -312,13 +345,20 @@ export function rowSummary(group: RunRowGroup): string {
     if (added || removed) parts.push(`+${added} −${removed}`);
     return parts.join(" · ");
   }
-  const c = rowCounts(group);
-  // Mid-run the row is still working through people, and the count of who is LEFT is the thing you
-  // are watching. Once nobody is pending this collapses back to the finished summary.
+  // Mid-run the row is still working through PEOPLE, and who is LEFT is the thing you are watching.
+  // Every per-person row shows the same count on purpose: a person's rows are built in one pass and
+  // all land together, so there is no per-row progress to report. Saying "people" stops that reading
+  // as two rows racing each other.
+  //
+  // `group.people.length` rather than `rowCounts(group).people` (same number for a real row — see
+  // `rowCounts`) because rowCounts also reads each person's `.result.status`/`.decision`, which a
+  // pending row that has not finished yet does not need and should not require just to say how many
+  // are left.
   if (group.pending > 0) {
-    const total = c.people;
-    return `building — ${total - group.pending} of ${total} done`;
+    const total = group.people.length;
+    return `building — ${total - group.pending} of ${total} people done`;
   }
+  const c = rowCounts(group);
   const parts = [`${c.built} of ${c.people} built`];
   if (c.failed) parts.push(`${c.failed} failed`);
   if (c.muted) parts.push(`${c.muted} muted`);

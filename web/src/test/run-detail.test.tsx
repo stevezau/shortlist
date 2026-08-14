@@ -84,6 +84,7 @@ function run(breakdown: RunDetail["users"][number]["breakdown"]): RunDetail {
         duration_ms: 335000,
         llm_tokens: 5030,
         diff: {},
+        cost: null,
         picks: [],
         breakdown,
       },
@@ -579,6 +580,8 @@ describe("RunDetailPage — grouped by library", () => {
           exa_searches: 0,
           has_trace: false,
           diff: {},
+          // A legacy run predates per-row cost measurement — "not recorded", never 0s.
+          cost: null,
           picks: [
             {
               rank: 1,

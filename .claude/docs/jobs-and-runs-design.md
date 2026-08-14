@@ -987,3 +987,28 @@ change reaches Plex; this adds that a pass which does nothing must say so, and t
 cannot check its own work must not claim success. It also adds a question worth asking early: **is
 something else writing to the same thing?** Three hours went into Shortlist's code before anyone read
 another container's logs, and the answer was in the first line of them.
+
+## 20. Per-row run cost, not the person's whole-run total (2026-08-13)
+
+The Rows tab used to show every row for a person with the same whole-run duration and token total
+repeated underneath it — a person's one `UserRunReport.duration_s`/`llm_tokens` spread unnarrowed
+into every row group, so two rows read as if each had independently cost the same amount. Neither had.
+
+`run_users.cost` (migration `0069`, nullable JSON) now records what is genuinely known per row and
+what genuinely is not:
+
+- `rows: {row_slug: {duration_ms, blocked_ms}}` — each row's own wall-clock time, timed per iteration
+  of the row loop. `duration_ms` INCLUDES `blocked_ms`, the wait acquiring `ctx.write_lock` at the
+  delivery write (the shared Plex write lock, contended only above `run.concurrency` 1) — so a row's
+  own work time is `duration_ms - blocked_ms`, never the reverse.
+- `setup_ms` / `pools` — the person's SHARED spend: the history fetch and the candidate-gather pools
+  built once before the row loop starts. This is where **all** AI spend happens — curation runs in
+  code, not the LLM — so tokens are reported **per pool, never per row**. Rows sharing media, sources
+  and seeds share one pool, and `pools[].rows` names every row slug that drew on it; a per-row token
+  figure would be an allocation invented by the UI, not a measurement, so none is shown.
+- `cost = NULL` means the run predates this being measured, and must render as "not recorded" —
+  never `0s`. No backfill was done: writing zeros would claim every historical run took no time.
+
+`run_shared_rows.duration_ms` was already genuinely per-row (one shared row, one result) and needed no
+change. Full design, the rejected "split the cost per row" alternative, and why it would have been a
+lie: `.claude/docs/plans/per-row-run-cost.md`.

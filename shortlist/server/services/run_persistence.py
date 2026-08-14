@@ -441,6 +441,35 @@ def _persist_shared_row_report(session: Session, run_id: int, user_report, dry_r
         _record_deliveries(session, user_report.slug, breakdown)
 
 
+def _cost_blob(user_report) -> dict | None:
+    """The per-row cost record for `RunUser.cost`, in integer milliseconds, or None when nothing
+    was measured.
+
+    None rather than `{}` on the empty case: an empty blob is indistinguishable from a real
+    measurement of zero, and a person who never reached the shared gather (no rows due for them)
+    has nothing recorded rather than a zero cost.
+    """
+    if not user_report.row_timing and not user_report.pool_costs and not user_report.setup_s:
+        return None
+    return {
+        "setup_ms": int(user_report.setup_s * 1000),
+        "rows": {
+            slug: {"duration_ms": int(cost["duration_s"] * 1000), "blocked_ms": int(cost["blocked_s"] * 1000)}
+            for slug, cost in user_report.row_timing.items()
+        },
+        "pools": [
+            {
+                "label": pool["label"],
+                "tokens": pool["tokens"],
+                "exa_searches": pool["exa_searches"],
+                "duration_ms": int(pool["duration_s"] * 1000),
+                "rows": list(pool["rows"]),
+            }
+            for pool in user_report.pool_costs
+        ],
+    }
+
+
 def _persist_user_report(session: Session, run_id: int, user: User, user_report, dry_run: bool) -> None:
     """One user's RunUser row, their picks (non-dry-run only), and their run.user audit event."""
     user.cold_start = user_report.status == "cold_start"
@@ -459,6 +488,7 @@ def _persist_user_report(session: Session, run_id: int, user: User, user_report,
             breakdown=user_report.breakdown,
             trace=user_report.trace,
             rows_considered=user_report.rows_considered or {},
+            cost=_cost_blob(user_report),
         )
     )
     if not dry_run:

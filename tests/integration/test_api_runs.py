@@ -49,10 +49,12 @@ RUN_USER_KEYS = {
     "breakdown",
     "has_trace",
     "rows_considered",
+    "cost",
 }
 #: A shared row's entry. Same field set as a user's minus the three user fields, plus the row's own
-#: slug and its title as rendered at run time.
-RUN_SHARED_ROW_KEYS = (RUN_USER_KEYS - {"username", "display_name", "slug", "rows_considered"}) | {
+#: slug and its title as rendered at run time. `cost` is per-person only — a shared row belongs to
+#: nobody, so there is no "this person" to attribute it to.
+RUN_SHARED_ROW_KEYS = (RUN_USER_KEYS - {"username", "display_name", "slug", "rows_considered", "cost"}) | {
     "collection_slug",
     "row_title",
 }
@@ -263,6 +265,86 @@ class TestRunsApi:
         assert set(by_slug["mike"]) == RUN_USER_KEYS, "a pending user is the same shape, not a subset"
         assert by_slug["mike"]["status"] == "pending"
         assert set(by_slug["sarah"]["picks"][0]) == PICK_KEYS
+
+    def test_run_detail_carries_per_row_cost(self, client: TestClient):
+        """`RunUser.cost` (Task 5/6) is a nullable JSON blob — this proves it survives serialization
+        untouched: exact row durations, and which rows shared a pool."""
+        from shortlist.server.db.models import Run, RunUser
+
+        with client.app.state.sessions() as session:
+            user = session.query(User).filter_by(slug="sarah").first()
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(
+                RunUser(
+                    run_id=run.id,
+                    user_id=user.id,
+                    status="ok",
+                    duration_ms=1200,
+                    llm_tokens=42,
+                    cost={
+                        "setup_ms": 300,
+                        "rows": {"picked-for-you": {"duration_ms": 12040, "blocked_ms": 40}},
+                        "pools": [
+                            {
+                                "label": "similar-titles",
+                                "tokens": 500,
+                                "exa_searches": 2,
+                                "duration_ms": 900,
+                                "rows": ["picked-for-you"],
+                            }
+                        ],
+                    },
+                )
+            )
+            session.commit()
+            run_id = run.id
+
+        body = client.get(f"/api/runs/{run_id}").json()
+        user_out = body["users"][0]
+        assert user_out["cost"]["rows"]["picked-for-you"]["duration_ms"] == 12040
+        assert user_out["cost"]["pools"][0]["rows"] == ["picked-for-you"]
+
+    def test_run_detail_reports_null_cost_for_a_legacy_run(self, client: TestClient):
+        """A run recorded before 0069 must say "not recorded", never zero — a `RunUser` row simply
+        left with `cost=None`, the same as every row written before the column existed."""
+        from shortlist.server.db.models import Run, RunUser
+
+        with client.app.state.sessions() as session:
+            user = session.query(User).filter_by(slug="sarah").first()
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(RunUser(run_id=run.id, user_id=user.id, status="ok", duration_ms=1200, llm_tokens=42))
+            session.commit()
+            run_id = run.id
+
+        body = client.get(f"/api/runs/{run_id}").json()
+        assert body["users"][0]["cost"] is None
+
+    def test_pending_users_report_null_cost(self, client: TestClient):
+        """A synthesised pending user must report `cost: null` too, so the payload shape does not
+        change mid-run — the same reasoning as every other field on the pending branch."""
+        from shortlist.server.db.models import Run, RunUser
+
+        with client.app.state.sessions() as session:
+            done = session.query(User).filter_by(slug="sarah").first()
+            run = Run(
+                trigger="manual",
+                status="running",
+                # mike has not been reached yet; sarah has.
+                stats={"expected_users": [{"username": "mike", "display_name": "Mike", "slug": "mike"}]},
+            )
+            session.add(run)
+            session.flush()
+            session.add(RunUser(run_id=run.id, user_id=done.id, status="ok", duration_ms=1200, llm_tokens=42))
+            session.commit()
+            run_id = run.id
+
+        body = client.get(f"/api/runs/{run_id}").json()
+        pending = [u for u in body["users"] if u["status"] == "pending"]
+        assert pending and all(u["cost"] is None for u in pending)
 
     def test_run_detail_shows_the_display_name_not_the_bare_username(self, client: TestClient):
         """The runs view must read a person the same way the Users page does — nickname → Tautulli

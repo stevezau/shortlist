@@ -24,6 +24,8 @@ import type {
   RunDetail,
   RunLibraryBreakdown,
   RunLogEntry,
+  RunPoolCost,
+  RunRowCost,
   RunUserResult,
 } from "@/lib/types";
 
@@ -68,6 +70,49 @@ function ratingLabel(pick: Pick): string {
   return pick.rating ? `TMDB ${pick.rating.toFixed(1)}` : "";
 }
 
+/** The parenthetical after a person's shared-setup AI-token figure, explaining why the tokens
+ *  aren't this row's own.
+ *
+ *  A server with more than one library (Movies, TV Shows, …) commonly has more than one shared
+ *  pool — one per library type — each drawn on by a different set of rows. Naming only the FIRST
+ *  shared pool's row count would misstate the others whenever their counts differ, so this only
+ *  claims what holds for all of them: that pools were shared, and how many there were.
+ *
+ *  The token figure this annotates is summed over EVERY pool, not just the shared ones — a row that
+ *  overrides its sources gets its own single-row pool alongside a sibling pool the rest of the
+ *  person's rows share, and that solo pool's tokens are still setup spend (computed before the
+ *  per-row loop even starts), just not spend any OTHER row drew from. Claiming "shared by N rows"
+ *  for the whole total in that case credits the shared pool with tokens it never spent, so the
+ *  count and the total have to agree on whether they're describing all of it or only part. */
+function sharedPoolsNote(pools: RunPoolCost[]): string {
+  const shared = pools.filter((pool) => pool.rows.length > 1);
+  if (shared.length === 0) return "";
+  if (shared.length < pools.length) {
+    // A mix of shared and single-row pools: the total includes both, so naming only the shared
+    // subset's row count would overclaim it. Say how many of the pools were shared instead of
+    // how many rows — that stays true of the WHOLE figure above it.
+    return ` (${shared.length} of ${pools.length} pools shared)`;
+  }
+  if (shared.length > 1) return ` (shared across ${shared.length} pools)`;
+  // Exactly one pool, and it's shared: `reduce` reads its row count without an indexed
+  // access, which `noUncheckedIndexedAccess` would otherwise type as possibly `undefined`.
+  const rowCount = shared.reduce((n, pool) => n + pool.rows.length, 0);
+  return ` (one pool, shared by ${rowCount} rows)`;
+}
+
+/** Total Exa/web searches across every pool behind a person's shared-setup line — the searches ran
+ *  during the candidate gather, which is shared setup, so they're summed the same way the tokens
+ *  are rather than attributed to whichever row happened to trigger the gather first. */
+function sharedPoolsExaSearches(pools: RunPoolCost[]): number {
+  return pools.reduce((n, pool) => n + pool.exa_searches, 0);
+}
+
+/** Total AI tokens across every pool behind a person's shared-setup line — summed the same way as
+ *  `sharedPoolsExaSearches`, and the figure `sharedPoolsNote`'s parenthetical describes. */
+function sharedPoolsTokens(pools: RunPoolCost[]): number {
+  return pools.reduce((n, pool) => n + pool.tokens, 0);
+}
+
 /** One ranked pick: rank, a status dot (green = new this run), title + reason, and where it
  *  came from. */
 function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
@@ -97,7 +142,10 @@ function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
               asked while reading the name, and the Recent releases setting is judged on it. Absent
               on a cold-start pick, which comes from the library rather than a TMDB candidate. */}
           {pick.year != null && (
-            <span className="text-muted-foreground tabular-nums"> ({pick.year})</span>
+            <span className="text-muted-foreground tabular-nums">
+              {" "}
+              ({pick.year})
+            </span>
           )}
           {pick.reason && (
             <span className="text-muted-foreground"> — {pick.reason}</span>
@@ -187,25 +235,16 @@ function RowSection({ entries }: { entries: RunLibraryBreakdown[] }) {
   const [libKey, setLibKey] = useState(entries[0]?.library_key ?? "");
   const active =
     entries.find((entry) => entry.library_key === libKey) ?? entries[0];
-  // Title, new-count and tokens all follow the SELECTED library, so a `{library_name}` row title
-  // renders for the tab you're viewing (e.g. "Movies Picked for You" ↔ "TV Shows Picked for You")
-  // instead of being stuck on the first library's rendering.
+  // Title and new-count follow the SELECTED library, so a `{library_name}` row title renders for
+  // the tab you're viewing (e.g. "Movies Picked for You" ↔ "TV Shows Picked for You") instead of
+  // being stuck on the first library's rendering.
   const added = active?.added.length ?? 0;
-  const rowTokens = active?.llm_tokens ?? 0;
   return (
     <div className="space-y-3">
       <div className="flex items-baseline gap-2">
         <h3 className="text-sm font-semibold">{active?.row_title}</h3>
         {added > 0 && (
           <span className="text-xs text-success">+{added} new</span>
-        )}
-        {rowTokens > 0 && (
-          <span
-            className="text-xs text-muted-foreground"
-            title="AI tokens the curator spent choosing this row's picks."
-          >
-            {rowTokens.toLocaleString()} AI tokens
-          </span>
         )}
       </div>
       {entries.length > 1 && (
@@ -267,12 +306,17 @@ export function UserPanel({
   result,
   liveLog,
   userId,
+  cost,
+  setup,
 }: {
   run: RunDetail;
   result: RunUserResult;
   liveLog?: RunLogEntry[];
   /** This person's user id, for the trace link. Null when the run predates the user being known. */
   userId?: number | null;
+  /** THIS row's cost when the panel is rendered inside a row. Omitted on a whole-person view. */
+  cost?: RunRowCost | null;
+  setup?: { setup_ms: number; pools: RunPoolCost[] } | null;
 }) {
   // The per-step split ("gather 900, curate 2.1k") came with the header from the People tab. It was
   // that tab's only consumer, so dropping it here would have retired the breakdown from the whole app.
@@ -281,6 +325,10 @@ export function UserPanel({
     result.llm_tokens > 0
       ? ` · ${result.llm_tokens.toLocaleString()} AI tokens${steps ? ` (${steps})` : ""}`
       : "";
+  // Summed once so the guard below and the rendered figure can never disagree. 0 means there is
+  // nothing to attribute, so the clause — and the pool parenthetical explaining the attribution —
+  // must not render at all, the same guard `tokens` above already applies to the whole-person case.
+  const poolTokens = setup ? sharedPoolsTokens(setup.pools) : 0;
   return (
     <div className="space-y-3">
       {/* WHOSE result this is, and what it cost — the header the People tab had. Hoisting only the
@@ -311,12 +359,39 @@ export function UserPanel({
           </Badge>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
-          {(result.duration_ms ?? 0) > 0 && (
-            <p className="text-right text-sm text-muted-foreground">
-              {formatDuration(result.duration_ms)}
-              {tokens}
-              {webSearchSummary(result.exa_searches)}
-            </p>
+          {cost !== undefined ? (
+            cost === null ? (
+              <p className="text-right text-sm text-muted-foreground">
+                Timing not recorded for this run
+              </p>
+            ) : (
+              <p className="text-right text-sm text-muted-foreground">
+                {formatDuration(cost.duration_ms - cost.blocked_ms)}
+                {/* `blocked_ms > 0` first: a row whose every source `continue`s in microseconds
+                    truncates BOTH numbers to 0, and 0 >= 0 * 0.1 would otherwise read as "waiting"
+                    for a row that did no work at all. */}
+                {cost.blocked_ms > 0 &&
+                  cost.blocked_ms >= cost.duration_ms * 0.1 &&
+                  ` · ${formatDuration(cost.blocked_ms)} waiting`}
+                {setup && setup.setup_ms > 0 && (
+                  <>
+                    {" · shared setup "}
+                    {formatDuration(setup.setup_ms)}
+                    {poolTokens > 0 &&
+                      ` · ${poolTokens.toLocaleString()} AI tokens${sharedPoolsNote(setup.pools)}`}
+                    {webSearchSummary(sharedPoolsExaSearches(setup.pools))}
+                  </>
+                )}
+              </p>
+            )
+          ) : (
+            (result.duration_ms ?? 0) > 0 && (
+              <p className="text-right text-sm text-muted-foreground">
+                {formatDuration(result.duration_ms)}
+                {tokens}
+                {webSearchSummary(result.exa_searches)}
+              </p>
+            )
           )}
           {result.has_trace && userId !== null && userId !== undefined && (
             <Button
