@@ -33,6 +33,15 @@ All notable changes to this project are documented here. This project follows
   bell afterwards was just nagging. The reverse still does not hold — clearing the bell is a light
   "seen it" and leaves the explanation on the Users page where you can find it again.
 
+- **A skipped show request now says what to do about it.** Sonarr identifies shows by their TheTVDB
+  id, and Shortlist looks that up on TMDB — so when TMDB hasn't recorded one, there is no way to name
+  the show to Sonarr and the request is skipped. (Guessing would be worse: the closest title match
+  for "The Haunting of Bly Manor" is "The Haunting", a different and much larger series.) The reason
+  on the **Requests** page used to read "no TheTVDB id for this show" — true, and no help at all
+  unless you already knew what a TVDB id was. It now says TMDB has none and that adding the show in
+  Sonarr yourself is the way through. A lookup that *failed* — TMDB down or slow — says something
+  different again, because that one is worth waiting a night for.
+
 - **The errors notification can be dismissed.** "N errors in the last day" counts what has already
   happened, and there is nothing to do about the past except acknowledge it — but it was pinned
   open, so the bell carried a badge for a full day with no way to clear it. It now dismisses, and the
