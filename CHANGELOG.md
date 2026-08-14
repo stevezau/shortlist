@@ -45,9 +45,24 @@ All notable changes to this project are documented here. This project follows
   them plus one per shared row, and the list goes stale the moment somebody joins or leaves. One
   entry now covers every row, for good. It hides nothing and changes nothing about who sees what —
   privacy still runs entirely off the per-person label. Existing rows pick it up the next time they
-  are built; there is nothing to run.
+  are built, so there is nothing to run — but that first run does one extra label write per row you
+  already have, and on a server whose Plex is slow to answer writes it may be a noticeably longer
+  night. Once only; the log names every row as it goes.
 
 ### Fixed
+
+- **A phantom "Picked for You" row no longer appears beside a row you renamed**
+  ([#84](https://github.com/stevezau/shortlist/issues/84)). A row titled with `{top_seed}` —
+  "Because you watched…" — needs a pick that came from something you watched. Two things went wrong.
+  It only ever looked at the single best pick, so if that one came from a source that seeds nothing
+  (trending, popular on this server, a web-search suggestion) the row acted as though you had no
+  history at all, with a dozen perfectly good seeded picks right behind it. It now takes the best
+  pick that actually has a seed, which is why this was happening to people with years of history and
+  not just to new accounts. And when there genuinely is no seed, the row is no longer written under
+  the hardcoded English "✨ Picked for You" — a title that ignored your own row-name setting, and one
+  that per-person rows cannot tell apart from your default row, so the two ended up fighting over a
+  single collection. Such a row is now left unbuilt for that person, and any copy an earlier version
+  wrote is removed. Nothing to run: the next rebuild does it.
 
 - **"Remove or delete" looks like what it does.** In a row's editor it was grey text that did not
   read as a control at all, let alone one that ends in deleting a row. It now matches the Delete on

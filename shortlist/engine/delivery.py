@@ -83,6 +83,43 @@ def marker_account(title: str) -> int | None:
     return sum((1 << bit) for bit, c in enumerate(suffix) if c == _INVISIBLE[1])
 
 
+def top_seed_of(picks: list[Pick]) -> str:
+    """The title `{top_seed}` renders to: the best-matching pick that actually HAS a seed.
+
+    "Best-matching" is the lowest `rank`, not `picks[0]`. Those were the same thing until a row could
+    choose its own display order: `picks` arrives in the order it is written to Plex, so reading
+    position 0 renamed a `{top_seed}` row after whichever pick happened to sort first — a shuffled row
+    would have picked a new name most nights, rewriting the title on Plex each time. `rank` is stamped
+    before ordering and still means "how good a match".
+
+    Skipping the UNSEEDED picks is issue #84. It used to take the single best pick and use its seed
+    "if it has one" — so a row whose top pick came from a source that seeds nothing (trending, popular
+    on this server, a web-search suggestion) rendered no seed AT ALL and fell back to the default
+    title, with a dozen perfectly good seeded picks sitting right behind it. The reporter saw it on
+    every account on their server, including ones with years of history, which is what "no seed" was
+    never meant to mean: it is supposed to mean a cold start.
+    """
+    seeded = [p for p in picks if p.seed_title]
+    return min(seeded, key=lambda p: p.rank).seed_title if seeded else ""
+
+
+def row_name_unrenderable(template: str, picks: list[Pick]) -> bool:
+    """True when this row cannot produce a title OF ITS OWN for this user, right now.
+
+    Exactly one thing does that: a ``{top_seed}`` template with no seeded pick. `render_row_name` then
+    returns DEFAULT_ROW_NAME — and per-person rows share one label and are told apart by title alone,
+    so such a row is indistinguishable from the user's default row. Delivering it writes a second
+    collection with the same title, the same label and the same per-account marker as the default row,
+    which is how issue #84 saw an English "✨ Picked for You" appear beside a row renamed in French.
+
+    Deliberately NOT the `rendered == DEFAULT_ROW_NAME` test the removal path uses. That one is
+    conservative on purpose — it must also refuse a blank template and a title that merely coincides
+    with the default — and being wrong there means DELETING the wrong row. Here being wrong means
+    refusing to create a row somebody wanted, so it names the one condition it is sure about.
+    """
+    return "{top_seed}" in template and not top_seed_of(picks)
+
+
 def render_row_name(template: str, profile: UserProfile, picks: list[Pick], library_name: str = "") -> str:
     """Render the row title as a HUMAN reads it — no marker. Used for reports and the UI.
 
@@ -97,14 +134,9 @@ def render_row_name(template: str, profile: UserProfile, picks: list[Pick], libr
     A cold-start user has no seed, so a `{top_seed}` template would otherwise render the
     dangling half-sentence "Because you watched" onto a real Plex Home screen.
 
-    The seed comes from the BEST-MATCHING pick (lowest `rank`), not from `picks[0]`. Those were the
-    same thing until a row could choose its own display order: `picks` now arrives in the order it is
-    written to Plex, so reading position 0 renamed a `{top_seed}` row after whichever pick happened to
-    sort first — a shuffled one would have picked a new name most nights, rewriting the title on Plex
-    each time. `rank` is stamped before ordering and still means "how good a match".
+    The seed comes from the best-matching pick that HAS one — see `top_seed_of`.
     """
-    lead = min(picks, key=lambda p: p.rank) if picks else None
-    top_seed = lead.seed_title if lead and lead.seed_title else ""
+    top_seed = top_seed_of(picks)
     if "{top_seed}" in template and not top_seed:
         return DEFAULT_ROW_NAME
     rendered = (
@@ -598,7 +630,10 @@ def rename_row_collections(
     foreign (Kometa) collection never carries our label and ``find_owned_collections`` only returns
     ours. Returns the library titles renamed (or, in a dry run, that would be).
     """
-    if not label.startswith(f"{LABEL_PREFIX}_"):
+    if not label.lower().startswith(f"{LABEL_PREFIX}_"):
+        # Lowercased for the same reason as the removal guard: `User.label` stores Plex's TITLE-CASED
+        # form ("Shortlist_sarah"), and a case-sensitive test would silently return [] for it —
+        # leaving the collection under its old name with no error anywhere.
         # The UNDERSCORE matters (rule 4): every row now also carries the bare `shortlist` label, and
         # `find_owned_collections` matches a tag exactly — so a caller passing the constant label
         # would select every Shortlist collection on the server rather than one row's.
@@ -635,7 +670,9 @@ def reset_row_posters(
     promotion are untouched). Matches only OUR-labelled collections; ``displays`` limits to those
     marker-stripped titles (per-person rows), or ``None`` resets every collection under ``label``
     (a shared row's single membership). Returns the library titles reset (or that would be)."""
-    if not label.startswith(f"{LABEL_PREFIX}_"):
+    if not label.lower().startswith(f"{LABEL_PREFIX}_"):
+        # Lowercased like the other two guards — Plex stores the label title-cased, and a
+        # case-sensitive test turns a legitimate reset into a silent no-op.
         # Underscore-scoped for the same reason as the rename guard: the bare constant label matches
         # every Shortlist collection on the server, not one row's.
         logger.warning("refusing to reset posters under a non-Shortlist row label {!r}", label)
@@ -709,8 +746,10 @@ def _apply_shortlist_label(plex: PlexClient, collection, username: str) -> None:
     try:
         plex.stored_label(collection, LABEL_PREFIX)
         # Said out loud because the FIRST run after upgrading applies this to every existing
-        # collection, one write each. On a PMS answering writes in ~17s that is a materially longer
-        # night, and an unexplained slow run is its own bug report.
+        # collection, one write each — and an unexplained slow run is its own bug report. How much
+        # slower is NOT measured: the ~17s figure this codebase quotes elsewhere is a MEMBERSHIP
+        # write on a large TV library, and a label is a metadata PUT, which may be far cheaper. The
+        # log line is what turns "the first night was long" into an answerable question.
         logger.info("{}: added the '{}' label to '{}'", username, LABEL_PREFIX, getattr(collection, "title", "?"))
     except Exception as e:
         logger.warning(

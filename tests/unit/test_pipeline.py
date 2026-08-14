@@ -5231,3 +5231,102 @@ class TestRowTiming:
         with rows_mod._timed_lock(ctx, report):
             pass
         assert report.row_timing == {}
+
+
+class TestARowWithNoTitleOfItsOwn:
+    """Issue #84 — a `{top_seed}` row for someone whose picks carry no seed."""
+
+    def test_a_row_that_cannot_title_itself_is_removed_instead_of_written(self, ctx: EngineContext, monkeypatch):
+        """Issue #84: a `{top_seed}` row with no seeded pick must not be written at all.
+
+        `render_row_name` gives it DEFAULT_ROW_NAME, and per-person rows share one label and are told
+        apart by title ALONE — the invisible marker is per ACCOUNT, not per row. So writing it puts a
+        second collection in the same library under the same title, label and marker as this person's
+        default row: an English "✨ Picked for You" appearing beside a row the owner renamed, and two
+        rows fighting over one collection. Every other path (remove, rename, retire) already refuses a
+        title that collapsed to the default; delivery was the one that did not.
+
+        Removed rather than merely skipped, so a copy an earlier version wrote goes too — and by
+        LEDGER KEY, because its title cannot be recomputed.
+        """
+        import shortlist.engine.rows as rows_mod
+        from shortlist.engine.models import UserRunReport
+        from shortlist.engine.rows import RowPolicy
+
+        wrote: list[str] = []
+        removed: list[dict] = []
+        monkeypatch.setattr(rows_mod, "deliver_rows", lambda *a, **k: wrote.append(a[4].slug))
+        monkeypatch.setattr(
+            rows_mod,
+            "remove_row",
+            lambda *a, **k: (removed.append({"slug": a[3].slug, "keys": k.get("delivered_keys")}), ["1"])[1],
+        )
+
+        spec = RowSpec(slug="because", name_template="Parce que vous avez regardé {top_seed}", size=2, media="movie")
+        user = make_profile("sarah", account_id=100)
+        report = UserRunReport(username="sarah", slug="sarah")
+        policy = RowPolicy(
+            ctx=ctx,
+            user=user,
+            cfg=ctx.config,
+            specs=[spec],
+            library_index={},
+            report=report,
+            resolve=lambda item: None,
+        )
+        # A real pick, from a source that seeds nothing — the row has content, just no title.
+        unseeded = Pick(tmdb_id=10, rating_key=2010, title="A", rank=1, reason="popular", media_type=MediaType.MOVIE)
+
+        delivered = rows_mod._deliver_row(
+            policy, spec, [unseeded], {"1": [unseeded]}, sole_row=False, stored_labels={}, order_work=None
+        )
+
+        assert delivered is True, "the person's OTHER rows must still be built — this is a per-row skip"
+        assert wrote == [], "a row with no title of its own must not be written beside the default row"
+        assert [r["slug"] for r in removed] == ["because"], "an earlier version's copy must be cleaned up"
+        assert removed[0]["keys"] is not None, "removal must be by ledger key — the title cannot be recomputed"
+        # And the ledger entries it freed are marked dead, or a reused ratingKey names a live object.
+        assert [e["row_slug"] for e in report.removed_deliveries] == ["because"]
+
+    def test_the_same_row_is_written_normally_once_one_pick_carries_a_seed(self, ctx: EngineContext, monkeypatch):
+        """The other half — the guard must not swallow the row it exists to protect.
+
+        Same template, same person; one pick now has a seed, so the row titles itself and is written.
+        """
+        import shortlist.engine.rows as rows_mod
+        from shortlist.engine.models import UserRunReport
+        from shortlist.engine.rows import RowPolicy
+
+        wrote: list[str] = []
+        removed: list[str] = []
+        monkeypatch.setattr(rows_mod, "deliver_rows", lambda *a, **k: wrote.append(a[4].slug))
+        monkeypatch.setattr(rows_mod, "remove_row", lambda *a, **k: removed.append(a[3].slug) or [])
+
+        spec = RowSpec(slug="because", name_template="Parce que vous avez regardé {top_seed}", size=2, media="movie")
+        user = make_profile("sarah", account_id=100)
+        report = UserRunReport(username="sarah", slug="sarah")
+        policy = RowPolicy(
+            ctx=ctx,
+            user=user,
+            cfg=ctx.config,
+            specs=[spec],
+            library_index={},
+            report=report,
+            resolve=lambda item: None,
+        )
+        seeded = Pick(
+            tmdb_id=10,
+            rating_key=2010,
+            title="A",
+            rank=1,
+            reason="because",
+            media_type=MediaType.MOVIE,
+            seed_title="Fargo",
+        )
+
+        rows_mod._deliver_row(
+            policy, spec, [seeded], {"1": [seeded]}, sole_row=False, stored_labels={}, order_work=None
+        )
+
+        assert wrote == ["because"]
+        assert removed == []

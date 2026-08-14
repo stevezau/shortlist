@@ -111,6 +111,37 @@ class TestColdStartRowName:
     def test_static_template_is_untouched(self):
         assert render_row_name("✨ Picked for You", make_profile(), [_named_pick(None)]) == "✨ Picked for You"
 
+    def test_an_unseeded_top_pick_does_not_hide_the_seeds_behind_it(self):
+        """Issue #84, the half that made this happen to everyone.
+
+        `{top_seed}` used to read the single best pick and use its seed "if it had one". Sources that
+        seed nothing — trending, popular-on-this-server, a web-search suggestion — routinely rank
+        first, and the row then fell back to the default title as though the person had no history at
+        all. The reporter saw it on every account on their server, including ones with years of it.
+        """
+        picks_with_unseeded_leader = [
+            Pick(1, 1, "Trending Thing", rank=1, reason="r", media_type=MediaType.MOVIE, seed_title=None),
+            Pick(2, 2, "Sicario", rank=2, reason="r", media_type=MediaType.MOVIE, seed_title="Wind River"),
+            Pick(3, 3, "Hell or High Water", rank=3, reason="r", media_type=MediaType.MOVIE, seed_title="Fargo"),
+        ]
+
+        name = render_row_name("Because you watched {top_seed}", make_profile(), picks_with_unseeded_leader)
+
+        # The BEST SEEDED pick (rank 2), not the best pick overall and not the first in the list.
+        assert name == "Because you watched Wind River"
+
+    def test_a_row_with_no_seeded_pick_at_all_is_still_unrenderable(self):
+        """The residual case the delivery guard keys off — it must stay detectable."""
+        from shortlist.engine.delivery import row_name_unrenderable
+
+        none_seeded = [_named_pick(None), _named_pick(None)]
+
+        assert row_name_unrenderable("Because you watched {top_seed}", none_seeded) is True
+        assert row_name_unrenderable("Because you watched {top_seed}", [_named_pick("Fargo")]) is False
+        # A static template is never unrenderable, however thin the picks — it names itself.
+        assert row_name_unrenderable("✨ Picked for You", []) is False
+        assert row_name_unrenderable("Le meilleur du cinéma", none_seeded) is False
+
 
 def _labelling_plex_mock(plex: MagicMock) -> MagicMock:
     """Make `stored_label` leave the label ON the collection, as the real one does.
@@ -1695,3 +1726,35 @@ class TestTheConstantLabelCannotSelectEveryRow:
         )
         assert reset_row_posters(plex, engine_config, label="shortlist", displays=None, dry_run=False) == []
         plex.find_owned_collections.assert_not_called()
+
+    def test_they_still_accept_the_title_cased_label_plex_actually_stores(self, engine_config: EngineConfig, movies):
+        """The other half of the guard, and the half that was wrong.
+
+        `User.label` holds Plex's title-cased `Shortlist_sarah`, so a case-SENSITIVE
+        `startswith("shortlist_")` rejects a legitimate caller — and both of these return `[]` on
+        rejection, which is indistinguishable from "nothing matched". A rename would leave the row
+        under its old title and a poster reset would leave the old artwork, with a warning in the log
+        and no error anywhere the operator looks. Removal already had the `.lower()`; these two were
+        edited in the same commit and did not.
+        """
+        from shortlist.engine.delivery import rename_row_collections, reset_row_posters
+
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies]
+        plex.find_owned_collections.return_value = []
+
+        rename_row_collections(
+            plex,
+            engine_config,
+            label="Shortlist_sarah",
+            marker=row_marker(100),
+            old_display="✨ Picked for You",
+            new_display="✨ New Name",
+            dry_run=True,
+        )
+        reset_row_posters(plex, engine_config, label="Shortlist_sarah", displays=None, dry_run=True)
+
+        # Reached the search rather than being turned away at the door — asserted per function, since
+        # one of the two passing would otherwise hide the other failing.
+        assert plex.find_owned_collections.call_count == 2
+        assert {c.args[1] for c in plex.find_owned_collections.call_args_list} == {"Shortlist_sarah"}
