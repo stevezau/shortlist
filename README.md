@@ -60,6 +60,10 @@ everyone can actually discover from.
 
 <sub>A "Picked for You" row on Plex — private to that user, built from their watch history.</sub>
 
+**It slots into the stack you already run.** Reads watch history straight from your Plex server
+(Tautulli optional), pulls candidates from TMDB and Trakt, and hands gaps to **Radarr/Sonarr** —
+while leaving Kometa's collections completely alone. One container, no database of its own to run.
+
 ## Why this couldn't exist before 2026
 
 A row that only one person can see was simply impossible until recently. Plex had no per-user

@@ -1,6 +1,6 @@
 ---
 title: Plex recommendation tools compared
-description: An honest comparison of the self-hosted tools that build recommendation collections for Plex — Curatarr, Immaculaterr, SeekAndWatch, Shortlist — and which fits which server.
+description: Kometa, SuggestArr, Recommendarr, Curatarr and Shortlist compared — what each actually does, and which ones give every Plex user their own recommendations.
 heading: Plex recommendation tools compared
 ---
 
@@ -9,24 +9,63 @@ recommendations". This page is an attempt at a straight comparison of what each 
 
 **Disclosure:** Shortlist is my project, so read the row about it with that in mind. I've tried to be
 accurate about everything else and to say plainly where another tool is the better pick. Facts
-checked **12 August 2026** against each project's repository — this space moves fast, so verify
+checked **14 August 2026** against each project's repository — this space moves fast, so verify
 anything that matters to you.
 [Corrections welcome.](https://github.com/stevezau/shortlist/issues/new/choose)
 
+## Sent here after trying Kometa or SuggestArr?
+
+If you asked for "a tool that gives each Plex user recommendations based on their watch history",
+the three names you were almost certainly given first are **Kometa**, **SuggestArr** and
+**Recommendarr**. They're the biggest and best-known projects near this problem, and it's worth
+being precise about why none of them answer that particular question — because working it out by
+installing all three takes an evening.
+
+**[Kometa](https://kometa.wiki/)** (3,400+ stars, formerly Plex Meta Manager) is a metadata and
+collection builder. It creates collections from rules you write in YAML — by genre, by decade, by
+Trakt list, by almost anything — and manages artwork and metadata beautifully. It is the right tool
+for shaping a library, and it's excellent at it.
+
+It is not a recommender. It doesn't read anyone's watch history to decide what to suggest, and its
+collections are library-wide: everyone with access sees the same ones. Shortlist is built to run
+alongside Kometa rather than instead of it — it never touches a collection it didn't create.
+
+**[SuggestArr](https://github.com/giuseppe99barchetta/SuggestArr)** (1,200+ stars) watches what you
+recently played and automatically requests similar content through Jellyseerr/Overseerr, so your
+library keeps growing with things you'll probably like. Works with Plex, Jellyfin and Emby.
+
+It's about **acquisition**, not presentation. Its output is new files on your disk, not a row on
+anyone's home screen — and the "recently watched" trigger is server-wide rather than a per-person
+profile. If your complaint is "my library never has anything new", it's a great fit. If it's "my
+library is huge and nobody can find anything in it", it's solving the opposite problem.
+
+**Recommendarr** is AI-driven and works from Radarr/Sonarr library data. Be careful searching for it
+— there are several unrelated repos under that name and near-spellings, so check what you're
+installing. Like SuggestArr it's oriented toward what to _add_, not toward per-user rows in Plex.
+
+**The common thread:** all three are server-wide. None of them produces a different row for
+different people, and none of them hides one person's row from everyone else. That's not a flaw —
+it's just a different problem, and it's the problem the rest of this page is about.
+
 ## First, decide which problem you have
 
-The tools split into three groups, and picking from the wrong group is the usual mistake.
+The tools split into four groups, and picking from the wrong group is the usual mistake.
+
+**"Keep my library stocked with things we'll like."** You want new content acquired automatically.
+→ SuggestArr, Recommendarr.
+
+**"Organise the library I already have."** You want well-built collections, artwork and metadata.
+→ Kometa.
 
 **"Help me decide what to watch tonight."** You want a dashboard you open when you can't choose.
-It doesn't need to touch your Plex library at all.
-
-**"Make my library's rows better for everyone."** You want richer collections on the Home and
-Recommended shelves. One good set of rows, shared by the whole server.
+It doesn't need to touch your Plex library at all. → SeekAndWatch.
 
 **"Give each person on my server their own rows."** You share with family or friends and want each
 of them to get suggestions from their own viewing — ideally without everyone else seeing them.
+→ the rest of this page.
 
-That third one is where the privacy question appears, and it's the axis the tools differ on most.
+That last one is where the privacy question appears, and it's the axis the remaining tools differ
+on most.
 
 ## The comparison
 
@@ -38,6 +77,12 @@ That third one is where the privacy question appears, and it's the axis the tool
 | [SeekAndWatch](https://github.com/softerfish/seekandwatch)                                          | Docker + web UI          | Dashboard     | n/a                            | No            | Apr 2026     |
 | [TV-Show-Recommendations-for-Plex](https://github.com/netplexflix/TV-Show-Recommendations-for-Plex) | CLI script               | Via labels    | No                             | No            | Mar 2025     |
 | [plex-recommendations-ai](https://github.com/rocstack/plex-recommendations-ai)                      | Docker                   | No            | No                             | Required      | May 2023     |
+| [Kometa](https://kometa.wiki/)                                                                      | Docker / Python + YAML   | No            | No                             | No            | Active       |
+| [SuggestArr](https://github.com/giuseppe99barchetta/SuggestArr)                                     | Docker + web UI          | No            | No                             | Optional      | Active       |
+
+Kometa and SuggestArr are in the table because people arrive having tried them, not because they
+compete on per-user rows — see [above](#sent-here-after-trying-kometa-or-suggestarr) for what each
+is genuinely for.
 
 ### Shortlist
 
@@ -120,9 +165,16 @@ summary explaining the choices. Simple, cheap to run, and one of the earliest to
 Not per-user, and unmaintained since May 2023 — listed here because it still ranks well in search
 results and people find it first. No licence file.
 
-## The question worth asking before you install any of them
+## The three questions that actually narrow the list
 
-**Do you need rows to be private, or just personal?**
+**1. Do you want content acquired, or content surfaced?**
+
+The most common wasted evening in this space is installing an acquisition tool to solve a
+presentation problem. SuggestArr and Recommendarr add files to your library. Kometa organises the
+files you have. Neither changes what any individual sees on their home screen. If your library is
+already big and the complaint is "nobody can find anything", you want the surfacing group.
+
+**2. Do you need rows to be private, or just personal?**
 
 Those get conflated constantly and the difference is the whole architecture. _Personal_ means the
 titles are chosen for one person. _Private_ means nobody else can see the row. Most tools do the
@@ -134,7 +186,14 @@ with fifteen friends, twelve rows called "Picked for Dave" on your home screen i
 before it's a privacy one — and a row built from someone's viewing habits is more revealing than
 people expect.
 
-Answer that first, and the list above narrows to two or three.
+**3. Does it need to coexist with what you already run?**
+
+Most people asking this question already have Kometa, Radarr and Sonarr in place. A recommender that
+rewrites collections it didn't create, or that fights another tool over shelf order, costs more than
+it adds. Check that whatever you pick scopes its writes to its own collections — and if you run
+Kometa, that the two won't overwrite each other.
+
+Answer those three and the list narrows to two or three.
 
 ## Related
 

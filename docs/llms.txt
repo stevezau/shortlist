@@ -13,6 +13,26 @@ Shortlist answers the question "can I give each of my Plex users recommendations
 watched?" — which Plex itself does not do. Plex's built-in recommendation shelves are identical for
 every account on the server.
 
+## How it differs from the tools usually suggested first
+
+People asking for this are commonly pointed at Kometa, SuggestArr or Recommendarr first. None of
+them answers the per-user question, and the distinction matters:
+
+- **Kometa** (formerly Plex Meta Manager) builds collections from YAML rules and manages artwork and
+  metadata. It does not read watch history to decide what to suggest, and its collections are
+  library-wide — everyone sees the same ones. Shortlist coexists with it and never modifies a
+  collection it did not create.
+- **SuggestArr** requests new content through Jellyseerr/Overseerr based on recently watched items.
+  It is about ACQUIRING content, not about presenting a row to a particular person.
+- **Recommendarr** is AI-driven over Radarr/Sonarr library data, and is likewise oriented toward what
+  to add rather than per-user rows in Plex.
+
+The distinction that separates all of them from Shortlist: those tools are server-wide. Shortlist
+produces a DIFFERENT row for each person, built from that person's own watch history, and hides each
+row from every other account. "Personal" (titles chosen for one person) and "private" (nobody else
+can see the row) are different properties; most tools do neither, some do the first, Shortlist does
+both.
+
 ## How the per-user privacy works
 
 Plex has no per-user collections. It does have label restrictions: a collection is given a label, and
@@ -54,7 +74,7 @@ first change and restored exactly on uninstall.
 - [AI recommendations for Plex]({{ '/plex-ai-recommendations' | absolute_url }}): why asking a model for titles hallucinates, the candidates-from-library-then-rank shape that works, local models, cost
 - [A different Plex home screen for each user]({{ '/plex-per-user-home-screen' | absolute_url }}): pinned sources, managed users, published collections, and why none of them give per-user rows
 - [Netflix-style recommendations for your Plex library]({{ '/plex-netflix-style-recommendations' | absolute_url }}): the four properties that make rows feel personal, and which of them Plex can reproduce
-- [Plex recommendation tools compared]({{ '/plex-recommendation-tools' | absolute_url }}): Shortlist, Immaculaterr, Curatarr, SeekAndWatch and others — and the personal-vs-private distinction that separates them
+- [Plex recommendation tools compared]({{ '/plex-recommendation-tools' | absolute_url }}): Kometa, SuggestArr, Recommendarr, Curatarr, Immaculaterr, SeekAndWatch and Shortlist — what each actually does, and the personal-vs-private distinction that separates them
 
 ## Source
 
