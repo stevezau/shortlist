@@ -112,8 +112,29 @@ class TestRecentServiceErrors:
 
         result = notif._recent_service_errors(session)
 
-        assert result["id"] == "recent-errors"
+        assert result["id"].startswith("recent-errors-")
         assert "1 error" in result["title"]
+
+    def test_the_id_moves_with_the_newest_error_so_a_dismissal_cannot_hide_the_next_one(self, session):
+        """The whole point of making this dismissable.
+
+        A stable id would mean dismissing this morning's errors hides this afternoon's too — the
+        badge goes quiet while things are still going wrong, which is worse than the undismissable
+        version it replaced. Keyed to the newest event id, not to the day and not to the COUNT: the
+        count falls as old events age out of the 24h window, which would re-surface an alert that
+        nothing new had happened to.
+        """
+        session.add(Event(scope="requests.send", level="error", ts=datetime.now(UTC)))
+        session.commit()
+        first = notif._recent_service_errors(session)
+
+        session.add(Event(scope="arr.send", level="error", ts=datetime.now(UTC)))
+        session.commit()
+        second = notif._recent_service_errors(session)
+
+        assert first["dismissable"] is True
+        assert second["id"] != first["id"], "a new error must not stay hidden behind an old dismissal"
+        assert "2 errors" in second["title"]
 
     def test_excludes_run_scoped_errors_already_covered_by_last_run_problem(self, session):
         session.add(Event(scope="run.user", level="error", ts=datetime.now(UTC)))

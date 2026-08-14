@@ -84,21 +84,36 @@ def _last_run_problem(session: Session) -> dict | None:
 
 def _recent_service_errors(session: Session) -> dict | None:
     """A count of service-level error events in the last day that AREN'T already covered by a failed
-    run — e.g. a plex.tv write that 429'd repeatedly, or a request send that errored."""
+    run — e.g. a plex.tv write that 429'd repeatedly, or a request send that errored.
+
+    Dismissable, and the id encodes the NEWEST error, so dismissing acknowledges everything up to
+    that point and the next error re-surfaces it.
+
+    It used to be neither: a stable id and `dismissable: False`, which left the bell showing a badge
+    for a full day over errors that had already happened, with nothing the owner could do but wait
+    for them to age out. That is what dismissing is FOR. The two alerts that stay undismissable are
+    the two that describe a condition still true right now — runs paused, and an account that can see
+    other people's rows — where hiding it hides the thing itself. A count of what already happened is
+    not one of those.
+
+    Keyed to the newest event id rather than to the day: a second error the same afternoon must not
+    stay hidden behind the morning's dismissal, and the COUNT is unusable as a key because it falls
+    as old events age out of the window, which would re-surface an alert nothing new had happened to.
+    """
     since = datetime.now(UTC) - timedelta(days=1)
-    count = (
-        session.query(Event).filter(Event.level == "error", Event.ts >= since, ~Event.scope.startswith("run")).count()
-    )
+    recent = session.query(Event).filter(Event.level == "error", Event.ts >= since, ~Event.scope.startswith("run"))
+    count = recent.count()
     if not count:
         return None
+    newest = recent.order_by(Event.id.desc()).first()
     return {
-        "id": "recent-errors",
+        "id": f"recent-errors-{newest.id if newest else 0}",
         "severity": "warning",
         "title": f"{count} error{'s' if count != 1 else ''} in the last day",
         "body": "Shortlist logged some errors recently. Check the recent runs and the container log.",
         "action_url": "/runs",
         "action_label": "See runs",
-        "dismissable": False,
+        "dismissable": True,
     }
 
 

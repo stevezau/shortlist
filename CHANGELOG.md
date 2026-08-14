@@ -4,6 +4,26 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **One row, two names on Plex** ([#84](https://github.com/stevezau/shortlist/issues/84)). A row
+  named with `{top_seed}` and set to **movies & shows** could deliver a correctly named collection to
+  one library and a plain "✨ Picked for You" to the other — from the same row, for the same person,
+  so both showed up side by side. Each library named the row from its OWN picks, and if the person's
+  seeds were all films, the TV half had nothing to name itself after and fell back. A library still
+  uses its own seed when it has one — a row spanning two libraries genuinely can follow a different
+  watch in each, and its titles should say so — but it now borrows the row's other seed before giving
+  up and using the default name.
+
+- **The errors notification can be dismissed.** "N errors in the last day" counts what has already
+  happened, and there is nothing to do about the past except acknowledge it — but it was pinned
+  open, so the bell carried a badge for a full day with no way to clear it. It now dismisses, and the
+  next error brings it straight back rather than staying hidden behind the last dismissal. The two
+  alerts that stay pinned are the two describing something still true right now: runs paused, and an
+  account that can see other people's rows.
+
 ## [1.5.1] - 2026-08-14
 
 ### Added

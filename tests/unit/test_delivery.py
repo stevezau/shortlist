@@ -111,6 +111,41 @@ class TestColdStartRowName:
     def test_static_template_is_untouched(self):
         assert render_row_name("✨ Picked for You", make_profile(), [_named_pick(None)]) == "✨ Picked for You"
 
+    def test_both_libraries_of_one_row_get_the_same_seeded_name(self, engine_config, movies, shows):
+        """Issue #84's real mechanism, from the reporter's own screenshots.
+
+        A `movies & shows` row named "Car vous avez regardé {top_seed}" produced TWO differently
+        titled collections for one person: the seeded name in Movies, and the bare English default in
+        TV — because the title was rendered from THAT LIBRARY's picks, and their seeds were all films.
+        `{top_seed}` names something the person WATCHED; what they watched is not confined to the
+        library a pick happens to live in.
+        """
+        from shortlist.engine.delivery import deliver_rows, strip_marker
+        from shortlist.engine.models import RowSpec
+
+        plex = _labelling_plex_mock(MagicMock(spec=PlexClient))
+        plex.sections.return_value = [movies, shows]
+        plex.find_owned_collections.return_value = []
+        seeded_movie = Pick(1, 101, "Sicario", rank=1, reason="r", media_type=MediaType.MOVIE, seed_title="Conjuring")
+        unseeded_show = Pick(2, 202, "The Bear", rank=2, reason="r", media_type=MediaType.SHOW, seed_title=None)
+
+        deliver_rows(
+            plex,
+            make_profile(),
+            [seeded_movie, unseeded_show],
+            engine_config,
+            RowSpec(slug="because", name_template="Car vous avez regardé {top_seed}", size=10, media="both"),
+            sections=[movies, shows],
+            section_picks={movies.key: [seeded_movie], shows.key: [unseeded_show]},
+            dry_run=False,
+        )
+
+        created = [strip_marker(call.args[1]) for call in plex.create_collection.call_args_list]
+        assert created == ["Car vous avez regardé Conjuring"] * 2, (
+            f"one row must have ONE name in every library it lands in, got {created}"
+        )
+        assert DEFAULT_ROW_NAME not in created, "the TV library must not fall back while the row has a seed"
+
     def test_an_unseeded_top_pick_does_not_hide_the_seeds_behind_it(self):
         """Issue #84, the half that made this happen to everyone.
 

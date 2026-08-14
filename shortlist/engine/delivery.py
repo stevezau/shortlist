@@ -351,6 +351,8 @@ def deliver_rows(
             wanted_label,
             marker,
             sole_row,
+            # The row's whole pick list for the TITLE; `this_section` is the content. See _deliver_one.
+            title_picks=picks,
             # This library's entry only: a row has one collection per library, and a key from a
             # DIFFERENT library must never be allowed to match here.
             delivered_key=(delivered_keys or {}).get(str(section.key)),
@@ -905,6 +907,7 @@ def _deliver_one(
     marker: str,
     sole_row: bool,
     *,
+    title_picks: list[Pick] | None = None,
     delivered_key: int | None = None,
     dry_run: bool,
     label_prefix: str = LABEL_PREFIX,
@@ -923,7 +926,20 @@ def _deliver_one(
     """
     # This library's own name fills {library_name}; every match/promote/retire caller renders with the
     # same section title, so the titles stay in lockstep (a mismatch would leave a row unhidden).
-    display = render_row_name(template, profile, picks, library_name=getattr(section, "title", "") or "")
+    #
+    # This library's OWN picks name the row when they carry a seed — a `{top_seed}` row spanning two
+    # libraries follows a different watch in each, and each title says which (pinned by
+    # test_pipeline.py::TestPlacement::test_a_top_seed_row_records_a_placement_title_per_library).
+    #
+    # `title_picks` — the ROW's whole pick list — is the fallback BEFORE the default title, and that
+    # is issue #84. Rendering only from `picks` meant a `movies & shows` row whose seeds were all
+    # films got "Car vous avez regardé Conjuring" in Movies and the bare English default in TV, from
+    # ONE row: two differently-titled collections for the same person, the second colliding with the
+    # title every other seedless row already carries. `{top_seed}` names something the PERSON
+    # watched, and what they watched is not confined to the library a pick happens to live in — so
+    # borrowing the row's own seed is truer than giving up and calling it "Picked for You".
+    seed_picks = picks if top_seed_of(picks) else (title_picks if title_picks is not None else picks)
+    display = render_row_name(template, profile, seed_picks, library_name=getattr(section, "title", "") or "")
     # What Plex is told to call it: the same thing, plus an invisible marker that makes it unique
     # in this library. Without it, every user's row is the same collection tag and holds everyone's
     # picks. Users see `display`; only the PMS ever sees the marker.

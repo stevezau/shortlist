@@ -33,6 +33,7 @@ from shortlist.engine.delivery import (
     section_kind,
     sections_for_keys,
     target_sections,
+    top_seed_of,
 )
 from shortlist.engine.history import RatingsPolicy, derive_seeds, ratings_policy
 from shortlist.engine.models import (
@@ -2329,11 +2330,17 @@ def _run_user(
             # the owner's configuration. Withholding it is the more dangerous of the two.
             title_template = resolve_row_template(spec, user, cfg)
             marker = row_marker(user.plex_account_id)
+            picks = [pick for sp in section_picks.values() for pick in sp]
             for section_key, sp in section_picks.items():
                 if sp:
-                    title = render_row_name(title_template, user, sp, library_name=library_names.get(section_key, ""))
+                    # This library's own picks when they carry a seed, else the ROW's — the same order
+                    # delivery uses (issue #84). It has to render byte-identically or promote looks
+                    # for a title delivery never wrote, and the row stays unhidden.
+                    seed_picks = sp if top_seed_of(sp) else picks
+                    title = render_row_name(
+                        title_template, user, seed_picks, library_name=library_names.get(section_key, "")
+                    )
                     user_report.placement_titles[title + marker] = spec.slug
-            picks = [pick for sp in section_picks.values() for pick in sp]
             # Cancelled while this person was mid-delivery: stop before the NEXT row is written.
             #
             # Checking only before a person's first row is not enough at concurrency 8 — eight people are
