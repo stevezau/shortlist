@@ -100,3 +100,85 @@ delivery; and never let a naming change delete a row.
 - Architecture Review is MANDATORY here (Plex writes + a migration + title matching).
 - Live on SFLIX: a `{top_seed}` row against real users, checking that nobody gets an English title and
   that no row is deleted that should not be.
+
+---
+
+# Attempt 3 (`61b26b8`, `b7b34b4`) — BLOCKED by review, do not deploy
+
+Code is on `dev` and green in tests, but the Architecture Review found **four HIGH** issues, each
+reproduced against real code. Fix these before the change is trusted; the tests passing means the
+tests did not cover them.
+
+## HIGH 1 — an unnameable row blanks the user's label, and "" is merged into share filters
+
+`delivery.py:468`. `_deliver_one` now returns `("", CollectionDiff())`, but `deliver_rows` still does
+`stored_labels[stored_key] = stored` unconditionally. `stored_key` is `profile.slug`, shared by ALL
+of a person's rows — so one unnameable row erases the label a nameable row just recorded, and
+`desired_excludes` then writes it:
+
+    merge_label_excludes("label!=Shortlist_bob", {"", "Shortlist_mike"})
+      -> "label!=Shortlist_bob,,Shortlist_mike"
+
+That is a malformed filter on a real plex.tv share and, while it stands, NO exclude for that person's
+label. Fires when a `{top_seed}` row has no `fallback_name` and a user has picks but no seed — the
+default configuration.
+
+**Fix:** only record a label when one was actually stored (`deliver_rows`' own docstring already says
+so), and make `desired_excludes` drop falsy labels.
+
+## HIGH 2 — migration 0070 misses the rows that actually exist, and is a no-op on the reporter's server
+
+`0070`'s `WHERE name_template LIKE '%{top_seed}%'` is the wrong predicate:
+
+- **The Rows page writes the template into `name`, not `name_template`** (pinned by
+  `web/src/test/row-templates.test.tsx:91`; the editor reads `name_template || name`). Every
+  UI-created `{top_seed}` row has `name_template = ''` and is skipped.
+- **The default row** is seeded with `name_template = ''` (`0001_initial.py:295`); its effective
+  template is the global setting. Never matched.
+- **When the global template itself contains `{top_seed}`** — issue #84's exact server — the value
+  backfilled is one `render_row_name` discards, so it achieves nothing.
+
+So the migration whose stated purpose is "nothing disappears" does nothing on the reporting server,
+and after upgrade those rows silently stop being built for everyone below `min_history`.
+
+**Fix:** match `COALESCE(NULLIF(name_template,''), name)`; handle the default row explicitly; refuse
+to backfill a value containing `{top_seed}` (leave NULL and warn, naming the affected rows). Add a
+migration-test row for each of the three shapes.
+
+## HIGH 3 — a fallback name disables `remove_row`'s ledger match, and can delete a SIBLING row
+
+`delivery.py:529`. With a fallback, `unrenderable = not display` is False, so the EITHER/OR at `:556`
+consults only the title — and that title is not what a seeded user's collection wears:
+
+    no fallback,   ledger key: removed correctly
+    WITH fallback, ledger key: NOT removed (mute/cold-skip silently stops working)
+    WITH fallback, sibling row titled the same: deleted the WRONG collection
+
+Migration 0070 grants a fallback automatically, so this becomes the common case.
+
+**Fix:** for a `{top_seed}` template keep `unrenderable` True regardless of the fallback, or try the
+ledger key AND the title. Also give `context_builder._retired_rows`' emitted RowSpec the
+`fallback_name` it gates on (`context_builder.py:915` vs `:919`).
+
+## HIGH 4 — PATCH never clash-checks `fallback_name`, and PATCH is what the editor uses
+
+`collections.py:723`. POST checks it (pinned by `test_two_rows_sharing_a_FALLBACK_name_still_clash`);
+PATCH gates on `sent & {"name","name_template"}` and writes the column unchecked, so two rows can end
+up sharing a fallback name — the state POST returns 422 for, and the direct enabler for HIGH 3's
+wrong-delete.
+
+**Fix:** clash-check whenever `"fallback_name" in sent`, against the merged post-PATCH row, and add
+the PATCH cell to `TestNoTwoRowsShareATitle`.
+
+## MED, also outstanding
+
+- `_deliver_one`'s comment claims `deliver_rows` removes the old copy by ledger key. **It does not.**
+  The pre-upgrade "✨ Picked for You" collection stays, keeps its label, and is re-promoted every run.
+  Either implement the removal (and record it in `report.removed_deliveries`) or drop the claim.
+- POST stores `body.fallback_name or None`, so the deliberate empty string the migration promises not
+  to overwrite is a state only the test can create. Store it verbatim, or gate the backfill on a
+  one-shot marker.
+- Changing `fallback_name` triggers no rename reconcile (`touching_name` covers only name/template).
+- Five comments still reason from the old `DEFAULT_ROW_NAME` behaviour
+  (`collection_reconcile.py:74,90`, `settings.py:164`, `context_builder._retired_rows`,
+  `delivery.py:541`) — these are what the next person will read before touching the removal paths.
