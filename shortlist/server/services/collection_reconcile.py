@@ -18,7 +18,6 @@ from loguru import logger
 
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.delivery import (
-    DEFAULT_ROW_NAME,
     remove_row_collections,
     render_row_name,
     reset_row_posters,
@@ -106,8 +105,22 @@ def title_key(template: str) -> str:
     return render_row_name(template or "", _PROBE_PROFILE, [], library_name=_PROBE_LIBRARY).casefold()
 
 
+def _title_keys(session, collection: Collection, secrets) -> set[str]:
+    """Every title this row can end up with: from its own template, and from its fallback name.
+
+    Both, because a row now has two ways to be named (issue #84) and either can collide. Empties are
+    dropped — a `{top_seed}` row with no fallback renders to nothing for a person with no watch, and
+    "no title" cannot clash with "no title": neither row is built for them.
+    """
+    keys = {
+        title_key(row_template(session, collection.slug, secrets)),
+        title_key(collection.fallback_name or ""),
+    }
+    return {k for k in keys if k}
+
+
 def row_titled_from(
-    session, template: str, *, secrets=None, exclude_slug: str = "", build: str = ""
+    session, template: str, *, secrets=None, exclude_slug: str = "", build: str = "", fallback_name: str = ""
 ) -> Collection | None:
     """The row (if any) whose collections are ALREADY titled from ``template``, or None.
 
@@ -140,17 +153,21 @@ def row_titled_from(
     the one user who set it, so a clash through that door is per-user and invisible to a server-wide
     check.
     """
-    wanted = title_key(template)
-    # An unrenderable template has no title to collide on — and `title_key` maps blank to
-    # DEFAULT_ROW_NAME, never to empty, so this only fires for a caller passing nothing at all.
-    if not wanted:
+    # Both of the incoming row's possible titles, for the same reason `_title_keys` collects both.
+    wanted_keys = {k for k in (title_key(template), title_key(fallback_name)) if k}
+    # An unrenderable template has no title to collide on. Since issue #84 that includes every
+    # `{top_seed}` template, which renders to "" without picks — an improvement: they all used to
+    # render the same substitute name and so were refused against each other and against any row
+    # genuinely titled that. A `{top_seed}` row's real collision is between two PEOPLE-less renders
+    # at delivery time, which `_run_user` logs when it happens.
+    if not wanted_keys:
         return None
     for other in session.query(Collection).all():
         if other.slug == exclude_slug:
             continue
         if build and other.build and other.build != build:
             continue
-        if title_key(row_template(session, other.slug, secrets)) == wanted:
+        if _title_keys(session, other, secrets) & wanted_keys:
             return other
     return None
 
@@ -544,7 +561,7 @@ def reconcile_row_rename_iter(
         for section in ctx.plex.sections():
             lib_name = getattr(section, "title", "") or ""
             new_display = render_row_name(new_template, _shared_profile(), [], library_name=lib_name)
-            if new_display == DEFAULT_ROW_NAME:
+            if not new_display:  # unnameable — see render_row_name
                 continue
             for collection in ctx.plex.find_owned_collections(section, label):
                 if collection.title == new_display:
@@ -579,7 +596,7 @@ def reconcile_row_rename_iter(
         for section in ctx.plex.sections():
             lib_name = getattr(section, "title", "") or ""
             new_display = render_row_name(effective_template, profile, [], library_name=lib_name)
-            if new_display == DEFAULT_ROW_NAME:
+            if not new_display:  # unnameable — see render_row_name
                 continue
             new_with_marker = new_display + marker
             old_display = (

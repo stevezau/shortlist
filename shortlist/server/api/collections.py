@@ -124,6 +124,10 @@ class CollectionIn(BaseModel):
     media: str = _closed_set(MEDIA, "both", "Which library types this row builds in.")
     sort_order: int = 0
     name_template: str = ""
+    # What to call this row for someone whose name cannot be filled in — a `{top_seed}` row for a
+    # person with nothing watched. "" means there is none, and the row is simply not built for them:
+    # Shortlist never invents a name (issue #84).
+    fallback_name: str = Field(default="", max_length=255)
     min_watchers: int = Field(default=2, ge=2)  # a public row must never be shaped by one person
     request_tag: str = Field(default="", max_length=64)  # tag added to titles requested via this row
     candidate_sources: list[str] = Field(default_factory=list)  # [] -> inherit global candidates.sources
@@ -201,6 +205,7 @@ class CollectionOut(PassthroughModel):
     media: str = _closed_set_out(MEDIA, "Which library types this row builds in.")
     sort_order: int
     name_template: str
+    fallback_name: str
     min_watchers: int
     request_tag: str
     candidate_sources: list[str]
@@ -443,6 +448,7 @@ def _serialize(session, collection: Collection) -> dict:
         # collections", and leave the next run to build a second collection beside the old one.
         # Neutralising it here rather than in a migration keeps one place responsible for the rule.
         "name_template": "" if collection.slug == DEFAULT_SLUG else collection.name_template,
+        "fallback_name": collection.fallback_name or "",
         "min_watchers": collection.min_watchers,
         "request_tag": collection.request_tag or "",
         "candidate_sources": list(collection.candidate_sources or []),
@@ -465,7 +471,9 @@ def _serialize(session, collection: Collection) -> dict:
     }
 
 
-def _reject_duplicate_name(session, secrets, template: str, *, exclude_slug: str = "", build: str = "") -> None:
+def _reject_duplicate_name(
+    session, secrets, template: str, *, exclude_slug: str = "", build: str = "", fallback_name: str = ""
+) -> None:
     """Refuse a row title another row is already titled from — see `reconcile.row_titled_from` for
     what "already titled from" means and why the `name` column is the wrong thing to compare.
 
@@ -473,7 +481,9 @@ def _reject_duplicate_name(session, secrets, template: str, *, exclude_slug: str
     a row that carries its own template is titled from that, so changing only its `name` cannot clash
     with anything, and changing only its `name_template` very much can.
     """
-    clash = reconcile.row_titled_from(session, template, secrets=secrets, exclude_slug=exclude_slug, build=build)
+    clash = reconcile.row_titled_from(
+        session, template, secrets=secrets, exclude_slug=exclude_slug, build=build, fallback_name=fallback_name
+    )
     if clash is None:
         return
     # Name the row by SLUG as well. The clashing row's `name` is usually the very string being
@@ -531,7 +541,13 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
     _validate(body)
     with request.app.state.sessions() as session:
         # The template this row will actually be titled from, not the bare name — a POST may set both.
-        _reject_duplicate_name(session, request.app.state.secrets, body.name_template or body.name, build=body.build)
+        _reject_duplicate_name(
+            session,
+            request.app.state.secrets,
+            body.name_template or body.name,
+            build=body.build,
+            fallback_name=body.fallback_name,
+        )
         _validate_anchor_rows(session, body, editing_slug="")
         slug = _unique_slug(session, slugify(body.name))
         collection = Collection(
@@ -545,6 +561,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             media=body.media,
             sort_order=body.sort_order,
             name_template=body.name_template,
+            fallback_name=body.fallback_name or None,
             min_watchers=body.min_watchers,
             request_tag=body.request_tag.strip(),
             candidate_sources=body.candidate_sources,
@@ -585,6 +602,7 @@ _PATCHABLE_COLUMNS = (
     "media",
     "sort_order",
     "name_template",
+    "fallback_name",
     "min_watchers",
     "request_tag",
     "candidate_sources",

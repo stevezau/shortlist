@@ -2345,8 +2345,18 @@ def _run_user(
                     # for a title delivery never wrote, and the row stays unhidden.
                     seed_picks = seed_source(sp, picks)
                     title = render_row_name(
-                        title_template, user, seed_picks, library_name=library_names.get(section_key, "")
+                        title_template,
+                        user,
+                        seed_picks,
+                        library_name=library_names.get(section_key, ""),
+                        fallback_name=spec.fallback_name,
                     )
+                    if not title:
+                        # No name for this person in this library, so delivery will not write the row
+                        # either (issue #84). Stamping the empty string would map the bare marker onto
+                        # this row's spec, and every OTHER unnameable row of theirs would collide on
+                        # that same key — handing promote one arbitrary spec for all of them.
+                        continue
                     key = title + marker
                     # Two of this person's rows rendering ONE title in one library is unrecoverable
                     # silently: they share a label and a per-account marker, so delivery's title match

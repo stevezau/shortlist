@@ -879,6 +879,93 @@ class TestRunsBeganAt:
         assert self._began(tmp_path)[1] == "2026-05-05 05:05:05"
 
 
+_NOW = "2026-08-14 00:00:00"
+
+
+class TestRowFallbackName:
+    """0070 — a row's name for someone whose own name cannot be filled in (issue #84)."""
+
+    def _rows(self, config_dir: Path) -> dict[str, str | None]:
+        con = sqlite3.connect(config_dir / "shortlist.db")
+        try:
+            return {slug: fb for slug, fb in con.execute("SELECT slug, fallback_name FROM collections")}
+        finally:
+            con.close()
+
+    def _add_row(self, config_dir: Path, slug: str, template: str) -> None:
+        con = sqlite3.connect(config_dir / "shortlist.db")
+        try:
+            # Every NOT NULL column, because the real table has a dozen of them and a partial insert
+            # fails on the constraint rather than on anything this test is about.
+            con.execute(
+                "INSERT INTO collections (slug, name, name_template, build, audience, enabled, schedule, size, "
+                "media, sort_order, candidate_sources, library_keys, min_watchers, request_tag, placement, "
+                "pin_top, hub_anchor, prompt, poster, created_at, updated_at) "
+                "VALUES (?, ?, ?, 'per_person', 'everyone', 1, '', 10, 'both', 0, '[]', '[]', 2, '', '{}', 0, "
+                "'{}', '', '{}', ?, ?)",
+                (slug, slug, template, _NOW, _NOW),
+            )
+            con.commit()
+        finally:
+            con.close()
+
+    def test_0070_backfills_top_seed_rows_so_an_upgrade_removes_nobody_s_row(self, tmp_path: Path):
+        """The guard against repeating the reverted first attempt at #84.
+
+        Under the new rule a row with no name is not built for that person. Existing rows inherit
+        `cold_start = NULL` -> the global setting -> "popular", i.e. they have already chosen "build
+        it for everyone" — so upgrading without a name would delete rows off live servers. They
+        inherit the operator's OWN global template instead.
+        """
+        run_migrations(tmp_path)  # build the whole schema, then rewind just this revision
+        command.downgrade(_alembic(tmp_path), "0069")
+        _write_setting(tmp_path, "row.name_template", "Spécifiquement pour le grand {user}")
+        self._add_row(tmp_path, "because", "Car vous avez regardé {top_seed}")
+        self._add_row(tmp_path, "static", "✨ {library_name} qui vous correspondent")
+
+        command.upgrade(_alembic(tmp_path), "0070")
+
+        rows = self._rows(tmp_path)
+        assert rows["because"] == "Spécifiquement pour le grand {user}", (
+            "a {top_seed} row must inherit the operator's own name, or upgrading deletes it for "
+            "everyone who cannot be named"
+        )
+        # A row that can always render never reaches a fallback; inventing configuration for it would
+        # be putting words in the operator's mouth.
+        assert rows["static"] is None
+
+    def test_0070_reads_the_settings_envelope_not_the_raw_json(self, tmp_path: Path):
+        """`settings.value` holds `{"v": ...}`. Reading it as a bare string finds a dict, backfills
+        nothing, and every existing row silently stops being built — which looks exactly like the bug
+        this migration exists to prevent."""
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0069")
+        _write_setting(tmp_path, "row.name_template", "Picked for You")
+        self._add_row(tmp_path, "seedy", "Because you watched {top_seed}")
+
+        command.upgrade(_alembic(tmp_path), "0070")
+
+        got = self._rows(tmp_path)["seedy"]
+        assert got == "Picked for You", f"expected the unwrapped setting, got {got!r}"
+
+    def test_0070_leaves_a_name_the_operator_already_chose(self, tmp_path: Path):
+        """Re-runnable: replaying the revision after a crash must not overwrite a real answer, and an
+        empty string is a real answer — "no fallback, skip those people"."""
+        run_migrations(tmp_path)
+        _write_setting(tmp_path, "row.name_template", "Global")
+        self._add_row(tmp_path, "mine", "Because you watched {top_seed}")
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        con.execute("UPDATE collections SET fallback_name = '' WHERE slug = 'mine'")
+        con.commit()
+        con.close()
+
+        # Replay the revision on a database that already has it — the crash-between-DDL-and-stamp case.
+        command.stamp(_alembic(tmp_path), "0069")
+        command.upgrade(_alembic(tmp_path), "0070")
+
+        assert self._rows(tmp_path)["mine"] == ""
+
+
 class TestRunUsersCost:
     def test_0069_adds_nullable_cost_to_run_users(self, tmp_path: Path):
         """Nullable with NO backfill: a legacy run has no per-row cost and must read 'not recorded'.

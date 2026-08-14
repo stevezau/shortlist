@@ -34,6 +34,7 @@ COLLECTION_KEYS = {
     "media",
     "sort_order",
     "name_template",
+    "fallback_name",
     "min_watchers",
     "request_tag",
     "candidate_sources",
@@ -1728,14 +1729,39 @@ class TestNoTwoRowsShareATitle:
         assert clash.status_code == 422
         assert client.get("/api/settings").json()["row.name_template"] != "Friday Films"
 
-    def test_two_top_seed_rows_cannot_both_collapse_onto_the_default_title(self, client: TestClient):
-        """`render_row_name` returns DEFAULT_ROW_NAME for a `{top_seed}` template with no seed, so for
-        every cold-start user these two are one collection — invisible to a raw-template comparison."""
+    def test_two_unnameable_rows_no_longer_clash_on_a_name_neither_of_them_has(self, client: TestClient):
+        """The old rule inverted, on purpose (issue #84).
+
+        Both of these used to render the same substitute name for anyone with no watch, so they WERE
+        one collection and had to be refused. Nothing substitutes now: for such a person neither row
+        has a title and neither is built, so there is nothing to collide on and refusing the second
+        row was blocking a configuration that is fine.
+        """
         client.post("/api/collections", json={"name": "Because you watched {top_seed}"})
 
-        clash = client.post("/api/collections", json={"name": "More like {top_seed}"})
+        ok = client.post("/api/collections", json={"name": "More like {top_seed}"})
 
-        assert clash.status_code == 422, "two rows that both render '✨ Picked for You' were allowed"
+        assert ok.status_code < 300, f"two unnameable rows cannot share a title they do not have: {ok.text}"
+
+    def test_two_rows_sharing_a_FALLBACK_name_still_clash(self, client: TestClient):
+        """Where the collision moved to.
+
+        A fallback name is a real title that really gets written, so two rows carrying the same one
+        land on one collection for every person who needs it — the same trap the rule above used to
+        catch, now at the name the operator actually chose.
+        """
+        first = client.post(
+            "/api/collections",
+            json={"name": "Because you watched {top_seed}", "fallback_name": "Picked for You"},
+        )
+        assert first.status_code < 300, first.text
+
+        clash = client.post(
+            "/api/collections",
+            json={"name": "More like {top_seed}", "fallback_name": "Picked for You"},
+        )
+
+        assert clash.status_code == 422, "two rows with the same fallback name were allowed"
 
     def test_a_blank_global_template_is_refused(self, client: TestClient):
         """A blank one renders to DEFAULT_ROW_NAME, silently retitling the default row onto any row

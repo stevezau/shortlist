@@ -858,7 +858,11 @@ def promote_user_rows(
             # and setdefault leaves the recorded per-library titles (placement_titles) winning.
             for section in target_sections(ctx.plex.sections(), replace(spec, library_keys=[])):
                 name = render_row_name(title_template, user, [], library_name=getattr(section, "title", "") or "")
-                placements.setdefault(name + marker, spec)
+                # `{top_seed}` templates never reach here (guarded above), so the only way this is
+                # empty is a template that renders to nothing — and mapping the bare marker would
+                # claim every unnamed collection of this person's for this one spec.
+                if name:
+                    placements.setdefault(name + marker, spec)
 
     promoted = into if into is not None else set()
     # Every row the user has, in every library — they can have several rows (all sharing their label),

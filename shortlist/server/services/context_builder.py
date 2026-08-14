@@ -22,7 +22,7 @@ from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.clients.trakt import TraktClient
 from shortlist.engine.context import EngineContext
 from shortlist.engine.curator import make_curator
-from shortlist.engine.delivery import DEFAULT_ROW_NAME, render_row_name
+from shortlist.engine.delivery import render_row_name
 from shortlist.engine.history import ShareTokenWatchSource, distinct_recent, ratings_are_trustworthy
 from shortlist.engine.models import (
     ArrTarget,
@@ -837,6 +837,9 @@ class ContextBuilder:
                     recent_count=collection.recent_count,  # None -> inherit the global recent_count
                     max_seeds=collection.max_seeds,  # None -> inherit the global recommendations.max_seeds
                     cold_start=collection.cold_start,  # None -> inherit the global recommendations.cold_start
+                    # "" means this row has no name for someone who cannot be named, and is therefore
+                    # not built for them — the engine never invents one (issue #84).
+                    fallback_name=collection.fallback_name or "",
                     seed_window=int(collection.seed_window or 1),  # 1 -> always their most recent watch
                     pick_order=collection.pick_order or "best",
                     placement=collection.placement or "both",
@@ -910,7 +913,7 @@ class ContextBuilder:
             # blank/whitespace — so test the rendered result, not a substring, or a "   " template slips
             # through and re-opens the collision.
             effective_template = global_name if is_default else (collection.name_template or collection.name)
-            if render_row_name(effective_template, probe, []) == DEFAULT_ROW_NAME:
+            if not render_row_name(effective_template, probe, [], fallback_name=collection.fallback_name or ""):
                 logger.debug("retired row '{}' would render to the default title — left for a rebuild", collection.slug)
                 continue
             audience = self._subset_audience(collection, account_by_user, audience_by_collection)

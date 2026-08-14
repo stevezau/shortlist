@@ -74,9 +74,16 @@ class TestRenderRowName:
     def test_top_seed_substitution(self):
         assert render_row_name("Because you watched {top_seed}", make_profile(), picks()) == "Because you watched Fargo"
 
-    def test_unfillable_template_falls_back_to_the_default_row_name(self):
+    def test_unfillable_template_yields_no_name_at_all(self):
+        """ "" is the answer, and the caller must read it as "do not build this row for them".
+
+        It used to answer DEFAULT_ROW_NAME — a hardcoded English string that ignored the operator's
+        own row-name setting and claimed a watch that never happened. Issue #84: on a 22-user server
+        with a French template, that put "✨ Picked for You" on 19 people's Plex.
+        """
         cold = [Pick(1, 1, "X", 1, "r", MediaType.MOVIE)]
-        assert render_row_name("{top_seed}", make_profile(), cold) == DEFAULT_ROW_NAME
+        assert render_row_name("{top_seed}", make_profile(), cold) == ""
+        assert render_row_name("{top_seed}", make_profile(), cold) != DEFAULT_ROW_NAME
 
     def test_library_name_substitution_fills_the_delivering_library(self):
         tpl = "✨ {library_name} Picked for You"
@@ -102,11 +109,32 @@ class TestColdStartRowName:
         name = render_row_name("Because you watched {top_seed}", make_profile(), [_named_pick("Fargo")])
         assert name == "Because you watched Fargo"
 
-    def test_cold_start_user_falls_back_instead_of_dangling(self):
+    def test_cold_start_user_gets_no_name_rather_than_a_dangling_one_or_an_invented_one(self):
+        # Neither "Because you watched" (a sentence that stops halfway) nor a substitute of our own.
+        assert render_row_name("Because you watched {top_seed}", make_profile(), [_named_pick(None)]) == ""
+        assert render_row_name("Because you watched {top_seed}", make_profile(), []) == ""
+
+    def test_the_operators_own_fallback_is_used_when_they_have_given_one(self):
+        # The whole matrix of the naming rule: own template -> operator's fallback -> nothing.
+        cold = [_named_pick(None)]
+        profile = make_profile()
+
         assert (
-            render_row_name("Because you watched {top_seed}", make_profile(), [_named_pick(None)]) == DEFAULT_ROW_NAME
+            render_row_name("Car vous avez regardé {top_seed}", profile, cold, fallback_name="Spécifiquement pour vous")
+            == "Spécifiquement pour vous"
         )
-        assert render_row_name("Because you watched {top_seed}", make_profile(), []) == DEFAULT_ROW_NAME
+        # Their fallback still gets its own placeholders filled.
+        assert (
+            render_row_name("{top_seed}", profile, cold, library_name="Films", fallback_name="{library_name} pour vous")
+            == "Films pour vous"
+        )
+        # A fallback that ALSO needs a seed is no fallback at all — and must not dangle either.
+        assert render_row_name("{top_seed}", profile, cold, fallback_name="Parce que {top_seed}") == ""
+        # A seed exists: the row's own name wins and the fallback is never consulted.
+        assert (
+            render_row_name("Because you watched {top_seed}", profile, [_named_pick("Fargo")], fallback_name="Other")
+            == "Because you watched Fargo"
+        )
 
     def test_static_template_is_untouched(self):
         assert render_row_name("✨ Picked for You", make_profile(), [_named_pick(None)]) == "✨ Picked for You"

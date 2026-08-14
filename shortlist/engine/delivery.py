@@ -123,25 +123,8 @@ def seed_source(section_picks: list[Pick], row_picks: list[Pick]) -> list[Pick]:
     return section_picks if top_seed_of(section_picks) else row_picks
 
 
-def render_row_name(template: str, profile: UserProfile, picks: list[Pick], library_name: str = "") -> str:
-    """Render the row title as a HUMAN reads it — no marker. Used for reports and the UI.
-
-    ``library_name`` fills the ``{library_name}`` placeholder with the delivering library's own name,
-    so the same row gets a distinct title per library (a privacy requirement: per-person rows share one
-    label and are told apart only by title). Every caller that renders a title to MATCH a collection on
-    the PMS — deliver, promote, mute/retire, rename — must pass the SAME library name delivery used, or
-    it would look for a title delivery never wrote and silently no-op (a row could stay unhidden). With
-    no library (a preview, or the row-level combined summary), the empty placeholder is collapsed away
-    ("✨  Picked for You" -> "✨ Picked for You" == DEFAULT_ROW_NAME).
-
-    A cold-start user has no seed, so a `{top_seed}` template would otherwise render the
-    dangling half-sentence "Because you watched" onto a real Plex Home screen.
-
-    The seed comes from the best-matching pick that HAS one — see `top_seed_of`.
-    """
-    top_seed = top_seed_of(picks)
-    if "{top_seed}" in template and not top_seed:
-        return DEFAULT_ROW_NAME
+def _fill(template: str, profile: UserProfile, top_seed: str, library_name: str) -> str:
+    """Substitute the placeholders and tidy the spacing. No fallbacks, no opinions."""
     rendered = (
         template.replace("{top_seed}", top_seed)
         .replace("{user}", profile.display_name)
@@ -149,23 +132,62 @@ def render_row_name(template: str, profile: UserProfile, picks: list[Pick], libr
     )
     # A {library_name} title with no (or a padding-adjacent) library leaves double spaces where the
     # placeholder was — collapse runs of whitespace so the human title reads clean either way.
-    rendered = " ".join(rendered.split()) if "{library_name}" in template else rendered.strip()
-    return rendered or DEFAULT_ROW_NAME
+    return " ".join(rendered.split()) if "{library_name}" in template else rendered.strip()
+
+
+def render_row_name(
+    template: str,
+    profile: UserProfile,
+    picks: list[Pick],
+    library_name: str = "",
+    fallback_name: str = "",
+) -> str:
+    """Render the row title as a HUMAN reads it — no marker. **"" means this row has no name.**
+
+    ``library_name`` fills the ``{library_name}`` placeholder with the delivering library's own name,
+    so the same row gets a distinct title per library (a privacy requirement: per-person rows share one
+    label and are told apart only by title). Every caller that renders a title to MATCH a collection on
+    the PMS — deliver, promote, mute/retire, rename — must pass the SAME library name delivery used, or
+    it would look for a title delivery never wrote and silently no-op (a row could stay unhidden).
+
+    The seed comes from the best-matching pick that HAS one — see `top_seed_of`.
+
+    **Returning "" is the point of this function** (issue #84). A `{top_seed}` template needs a pick
+    that traces back to something the person watched, and someone below the history threshold has
+    none — their picks come from the cold-start fill and carry no seed at all. This used to answer
+    with the hardcoded DEFAULT_ROW_NAME, which on a 22-user server with a French row-name template
+    put "✨ Picked for You" on 19 people's Plex: not the operator's words, and a claim about a watch
+    that never happened. `fallback_name` is the operator's own answer to that — and when they have
+    not given one, the honest result is no name, which the caller must read as "do not build this row
+    for this person". Nothing here invents a title. `render_poster_text` has always worked this way;
+    row titles simply never did.
+    """
+    top_seed = top_seed_of(picks)
+    unfillable = "{top_seed}" in template and not top_seed
+    rendered = "" if unfillable else _fill(template, profile, top_seed, library_name)
+    if rendered:
+        return rendered
+    # The row's own name could not be produced — a `{top_seed}` with nothing to name, or a template
+    # that is blank once rendered. Fall back only to what the OPERATOR wrote, and only if that itself
+    # can be rendered: a fallback that also needs a seed is no fallback at all.
+    if fallback_name and "{top_seed}" not in fallback_name:
+        return _fill(fallback_name, profile, "", library_name)
+    return ""
 
 
 def render_poster_text(field_value: str, profile: UserProfile, picks: list[Pick], library_name: str) -> str:
     """Fill a poster text field's placeholders (``{user}``/``{library_name}``/``{top_seed}``) for the
     user and library it lands on, using the same helper delivery uses for titles.
 
-    ``render_row_name`` substitutes DEFAULT_ROW_NAME for a ``{top_seed}`` template with no seed, so a
-    blank/whitespace field or an unrenderable ``{top_seed}`` collapses to "" (dropped) rather than
-    turning into "✨ Picked for You".
+    ``render_row_name`` returns "" when a field cannot be filled — a blank one, or a ``{top_seed}``
+    with no seed — so the text is dropped rather than becoming "✨ Picked for You". This was the one
+    place that already refused a substitute; row titles now behave the same way (issue #84), so the
+    special-casing that used to be needed here is gone.
     """
     field_value = field_value.strip()
     if not field_value:
         return ""
-    rendered = render_row_name(field_value, profile, picks, library_name=library_name)
-    return "" if rendered == DEFAULT_ROW_NAME and "{top_seed}" in field_value else rendered
+    return render_row_name(field_value, profile, picks, library_name=library_name)
 
 
 # Poster modes that produce an image from text (vs "upload", which carries its own bytes). Each maps
@@ -339,7 +361,7 @@ def deliver_rows(
         by_type.setdefault(pick.media_type, []).append(pick)
 
     combined = diff if diff is not None else CollectionDiff()
-    combined.collection_title = render_row_name(template, profile, picks)
+    combined.collection_title = render_row_name(template, profile, picks, fallback_name=spec.fallback_name)
     stored: str | None = None
 
     for section in targets:
@@ -373,6 +395,10 @@ def deliver_rows(
             sole_row,
             # The row's whole pick list for the TITLE; `this_section` is the content. See _deliver_one.
             title_picks=picks,
+            # Must be the SAME value every other renderer of this row's title uses — remove, the
+            # placement stamp, promote, rename. A site that forgets it renders a different title, and
+            # then looks for a collection delivery never wrote (issue #84).
+            fallback_name=spec.fallback_name if spec else "",
             # This library's entry only: a row has one collection per library, and a key from a
             # DIFFERENT library must never be allowed to match here.
             delivered_key=(delivered_keys or {}).get(str(section.key)),
@@ -464,10 +490,11 @@ def remove_row(
     until it's gone), so this is always safe.
 
     Static-titled rows — the default row and most custom rows — match on their rendered title. A row
-    whose title depends on its picks (a `{top_seed}` template) renders to the bare `DEFAULT_ROW_NAME`
-    with no picks, and per-person rows share one label and are told apart by title ONLY, so matching on
-    that would find and DELETE whatever else is titled that: the user's live default row, or a
-    cold-start row, in every library, every run. `_retired_rows` guards the identical collision for
+    whose title depends on its picks (a `{top_seed}` template) renders to NOTHING with no picks, and
+    per-person rows share one label and are told apart by title ONLY — so there is no title to match
+    on at all. It used to render the bare `DEFAULT_ROW_NAME`, and matching on THAT would find and
+    delete whatever else was titled that: the user's live default row, in every library, every run.
+    `_retired_rows` guards the identical collision for
     DISABLED rows (`context_builder._retired_rows`).
 
     ``delivered_keys`` ({section key -> ratingKey}, from the delivery ledger) is how such a row is
@@ -498,12 +525,18 @@ def remove_row(
     for section in scan:
         # Render the title with THIS library's name so a {library_name} row matches its own per-library
         # collection (delivery wrote "✨ Movies Picked for You" in Movies, "✨ TV Shows …" in TV).
-        display = render_row_name(template, profile, [], library_name=getattr(section, "title", "") or "")
+        display = render_row_name(
+            template, profile, [], library_name=getattr(section, "title", "") or "", fallback_name=spec.fallback_name
+        )
         # `or None`: a ledger key of 0 means "the PMS never gave us one" (a dry run records 0), and
         # `_rating_key` also returns 0 for a collection carrying no key — so a 0 would match every
         # keyless collection under this label. Only a real key may ever select an object for deletion.
         ledger_key = (delivered_keys or {}).get(str(section.key)) or None
-        unrenderable = display == DEFAULT_ROW_NAME and template != DEFAULT_ROW_NAME
+        # "" IS the unrenderable signal now — `render_row_name` no longer answers with a substitute
+        # name, so this no longer has to infer "unnameable" from a title that merely LOOKS like the
+        # default. That inference was always slightly wrong: a row deliberately titled exactly
+        # "✨ Picked for You" was treated as unnameable and left for a sweep.
+        unrenderable = not display
         if unrenderable and ledger_key is None:
             # The title collapsed to the bare default because it could not be rendered — a `{top_seed}`
             # template with no picks, or a blank one. Per-person rows share one label and are told apart
@@ -928,6 +961,7 @@ def _deliver_one(
     sole_row: bool,
     *,
     title_picks: list[Pick] | None = None,
+    fallback_name: str = "",
     delivered_key: int | None = None,
     dry_run: bool,
     label_prefix: str = LABEL_PREFIX,
@@ -959,7 +993,22 @@ def _deliver_one(
     # watched, and what they watched is not confined to the library a pick happens to live in — so
     # borrowing the row's own seed is truer than giving up and calling it "Picked for You".
     seed_picks = seed_source(picks, title_picks if title_picks is not None else picks)
-    display = render_row_name(template, profile, seed_picks, library_name=getattr(section, "title", "") or "")
+    display = render_row_name(
+        template, profile, seed_picks, library_name=getattr(section, "title", "") or "", fallback_name=fallback_name
+    )
+    if not display:
+        # This row has no name for this person and the operator has given none, so it does not get
+        # built for them (issue #84). Returning an empty diff rather than raising: their OTHER rows
+        # must still be delivered, and a person who cannot be named is a configuration answer, not a
+        # failure. `deliver_rows` removes any copy an earlier version wrote — by ledger key, since
+        # there is no title to match on.
+        logger.info(
+            "{}: row has no name for them in '{}' — not built (its name needs a watch and they have "
+            "none; set a fallback name on the row to give them one)",
+            profile.username,
+            getattr(section, "title", "?"),
+        )
+        return CollectionDiff(), ""
     # What Plex is told to call it: the same thing, plus an invisible marker that makes it unique
     # in this library. Without it, every user's row is the same collection tag and holds everyone's
     # picks. Users see `display`; only the PMS ever sees the marker.
