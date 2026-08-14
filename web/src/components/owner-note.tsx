@@ -107,8 +107,20 @@ export function OwnerNote({ className }: { className?: string }) {
             // Sequential, not parallel: the second write reads the dismissed list the first one
             // wrote, so firing them together loses one to a last-write-wins race.
             onClick={async () => {
-              await dismiss.mutateAsync(OWNER_SHELF_NOTE_ID);
-              await dismiss.mutateAsync(OWNER_SHELF_ALERT_ID);
+              // `mutateAsync` REJECTS on failure, unlike `mutate` — so without this the first failed
+              // write becomes an unhandled rejection, which vitest fails the whole run on even
+              // though every test passes. The user-visible handling is already correct without it:
+              // `dismiss.isError` drives the "couldn't save that" line below, and the note stays.
+              //
+              // Both attempted, and the second only after the first resolves: the write reads the
+              // dismissed list the previous one wrote, so firing them together loses one to a
+              // last-write-wins race.
+              try {
+                await dismiss.mutateAsync(OWNER_SHELF_NOTE_ID);
+                await dismiss.mutateAsync(OWNER_SHELF_ALERT_ID);
+              } catch {
+                // Surfaced by `dismiss.isError`, not swallowed silently.
+              }
             }}
           >
             <X className="h-3 w-3" aria-hidden="true" />
