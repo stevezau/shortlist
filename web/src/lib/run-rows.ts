@@ -36,9 +36,10 @@ export type RunRowPerson = {
    * candidate source can bail out, so a row that was never written still records a cost — and a
    * cancelled person then rendered as a green tick beside "0s", which reads as "built instantly".
    *
-   * `null` on a legacy run, where the person has no breakdown AT ALL: nothing was recorded, which is
+   * `null` on a legacy run — one that recorded no per-row cost at all. Nothing was measured, which is
    * not the same as nothing happening, and claiming "not built" there would be a worse lie than the
-   * tick was.
+   * tick was. Keyed on the COST rather than on an empty breakdown, because a person whose only row
+   * was skipped has an empty breakdown too, and that is precisely the case this exists to catch.
    */
   built: boolean | null;
   /** The person's SHARED setup, repeated on each of their rows because it belongs to none of them.
@@ -178,7 +179,7 @@ export function groupRunByRow(
           breakdown: mine as RunUserResult["breakdown"],
           picks: mine.length || user.breakdown.length === 0 ? user.picks : [],
         },
-        built: breakdown.length === 0 ? null : mine.length > 0,
+        built: user.cost ? mine.length > 0 : null,
         cost: user.cost?.rows?.[slug] ?? null,
         setup: user.cost
           ? { setup_ms: user.cost.setup_ms ?? 0, pools: user.cost.pools ?? [] }

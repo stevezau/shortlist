@@ -31,18 +31,15 @@ the row is built:
   becomes "Because you watched The Bear".
 
 The seed is the strongest pick that came from something they watched. Some sources suggest a title
-without following one — what's trending, what's popular on your server, a web-search find — so if
-those are all a row produced, there is no seed to name.
+without following one — what's trending, what's popular on your server, a web-search find — so those
+contribute picks but no seed. The name uses the strongest pick that has one.
 
-When there is no seed, the row is **not built for that person**. It cannot be: a name like
-"Because you watched" with nothing after it is a half-finished sentence, and the fallback that used
-to fill the gap gave the row the same title as their default row, which is the one thing per-user
-rows cannot survive — Shortlist tells a person's rows apart by their titles. Two rows under one title
-fight over a single collection on Plex. So the row waits until it has something true to say. A
-person with a reasonable history will almost always have a seed; someone brand new won't yet. See
-[People without enough watch history](#people-without-enough-watch-history) below for the same
-question at the whole-account level. You can rename any row at any time in the **Row editor**, and the collection on Plex is
-renamed in place, so its place in the shelf and its privacy are preserved.
+If a `{top_seed}` row is built for someone with too little history to have a favourite at all, it
+falls back to a clean default ("✨ Picked for You") rather than a half-finished sentence — or you can
+have the row not appear for them; see
+[People without enough watch history](#people-without-enough-watch-history) below. You can rename any
+row at any time in the **Row editor**, and the collection on Plex is renamed in place, so its place
+in the shelf and its privacy are preserved.
 
 **A `{top_seed}` row needs one more setting to be honest.** By default every row is built from a
 person's 30 most recent watches blended together, so a row titled "Because you watched The Bear" is
@@ -110,9 +107,8 @@ Either way it resolves itself: the row appears (or returns) on its own the night
 threshold. Nothing needs setting back.
 
 **Any row can override this in the Row editor**, which is the point of having it per row rather than
-only server-wide. A `{top_seed}` row is the one worth skipping outright — it has no favourite to name
-itself after, so a cold-start person gets no such row either way; skipping makes that explicit rather
-than leaving it to be worked out at delivery time. A general
+only server-wide. A `{top_seed}` row is the one worth skipping — it has no favourite to name itself
+after, so for a cold-start person it falls back to the plain default title. A general
 "Picked for You" row is perfectly happy holding popular titles in the meantime. Leave a row on **Use
 the global setting** and it follows Settings.
 

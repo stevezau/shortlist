@@ -103,23 +103,6 @@ def top_seed_of(picks: list[Pick]) -> str:
     return min(seeded, key=lambda p: p.rank).seed_title if seeded else ""
 
 
-def row_name_unrenderable(template: str, picks: list[Pick]) -> bool:
-    """True when this row cannot produce a title OF ITS OWN for this user, right now.
-
-    Exactly one thing does that: a ``{top_seed}`` template with no seeded pick. `render_row_name` then
-    returns DEFAULT_ROW_NAME — and per-person rows share one label and are told apart by title alone,
-    so such a row is indistinguishable from the user's default row. Delivering it writes a second
-    collection with the same title, the same label and the same per-account marker as the default row,
-    which is how issue #84 saw an English "✨ Picked for You" appear beside a row renamed in French.
-
-    Deliberately NOT the `rendered == DEFAULT_ROW_NAME` test the removal path uses. That one is
-    conservative on purpose — it must also refuse a blank template and a title that merely coincides
-    with the default — and being wrong there means DELETING the wrong row. Here being wrong means
-    refusing to create a row somebody wanted, so it names the one condition it is sure about.
-    """
-    return "{top_seed}" in template and not top_seed_of(picks)
-
-
 def render_row_name(template: str, profile: UserProfile, picks: list[Pick], library_name: str = "") -> str:
     """Render the row title as a HUMAN reads it — no marker. Used for reports and the UI.
 
@@ -632,8 +615,10 @@ def rename_row_collections(
     """
     if not label.lower().startswith(f"{LABEL_PREFIX}_"):
         # Lowercased for the same reason as the removal guard: `User.label` stores Plex's TITLE-CASED
-        # form ("Shortlist_sarah"), and a case-sensitive test would silently return [] for it —
-        # leaving the collection under its old name with no error anywhere.
+        # form ("Shortlist_sarah"), and a case-sensitive test returns [] for it — indistinguishable
+        # from "nothing matched", so a rename would leave the row under its old name with nothing but
+        # a log line. Defensive: no caller passes the title-cased form today, and this is what keeps
+        # one from silently no-opping if it ever does.
         # The UNDERSCORE matters (rule 4): every row now also carries the bare `shortlist` label, and
         # `find_owned_collections` matches a tag exactly — so a caller passing the constant label
         # would select every Shortlist collection on the server rather than one row's.
@@ -672,7 +657,8 @@ def reset_row_posters(
     (a shared row's single membership). Returns the library titles reset (or that would be)."""
     if not label.lower().startswith(f"{LABEL_PREFIX}_"):
         # Lowercased like the other two guards — Plex stores the label title-cased, and a
-        # case-sensitive test turns a legitimate reset into a silent no-op.
+        # case-sensitive test would turn a legitimate reset into a silent no-op. Defensive: both
+        # callers build the label lowercase today.
         # Underscore-scoped for the same reason as the rename guard: the bare constant label matches
         # every Shortlist collection on the server, not one row's.
         logger.warning("refusing to reset posters under a non-Shortlist row label {!r}", label)

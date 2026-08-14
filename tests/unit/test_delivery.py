@@ -130,18 +130,6 @@ class TestColdStartRowName:
         # The BEST SEEDED pick (rank 2), not the best pick overall and not the first in the list.
         assert name == "Because you watched Wind River"
 
-    def test_a_row_with_no_seeded_pick_at_all_is_still_unrenderable(self):
-        """The residual case the delivery guard keys off — it must stay detectable."""
-        from shortlist.engine.delivery import row_name_unrenderable
-
-        none_seeded = [_named_pick(None), _named_pick(None)]
-
-        assert row_name_unrenderable("Because you watched {top_seed}", none_seeded) is True
-        assert row_name_unrenderable("Because you watched {top_seed}", [_named_pick("Fargo")]) is False
-        # A static template is never unrenderable, however thin the picks — it names itself.
-        assert row_name_unrenderable("✨ Picked for You", []) is False
-        assert row_name_unrenderable("Le meilleur du cinéma", none_seeded) is False
-
 
 def _labelling_plex_mock(plex: MagicMock) -> MagicMock:
     """Make `stored_label` leave the label ON the collection, as the real one does.

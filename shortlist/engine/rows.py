@@ -30,7 +30,6 @@ from shortlist.engine.delivery import (
     render_row_name,
     resolve_row_template,
     row_marker,
-    row_name_unrenderable,
     section_kind,
     sections_for_keys,
     target_sections,
@@ -2058,40 +2057,6 @@ def _deliver_row(
     # needs no reset: it is None during delivery (only populated from swept rows after _run_user).
     breakdown_mark = len(user_report.breakdown)
     cancelled = False
-
-    # Issue #84: a `{top_seed}` row with no seeded pick has no title of its own — `render_row_name`
-    # gives it DEFAULT_ROW_NAME. Per-person rows share one label and are told apart by title ALONE,
-    # and the invisible marker is per ACCOUNT rather than per row, so writing it would put a second
-    # collection in the same library under the SAME title, label and marker as this person's default
-    # row — two rows fighting over one collection, and a phantom "✨ Picked for You" appearing beside
-    # a row the owner had renamed. Every other path here already refuses such a row: remove, rename
-    # and retire all decline to match on a title that collapsed to the default. Delivery creating one
-    # was the odd one out.
-    #
-    # Removed rather than merely skipped, so a copy an earlier version wrote goes too — by LEDGER KEY,
-    # since its title cannot be recomputed. That is the one case `remove_row`'s `delivered_keys` exists
-    # for. Removal only ever makes the server more private, so it is safe wherever it lands.
-    if row_name_unrenderable(resolve_row_template(spec, user, cfg), picks):
-        logger.info(
-            "{}: row '{}' not built — its title needs a seed ({{top_seed}}) and none of its {} picks "
-            "carry one, so it would be titled the same as their default row",
-            user.username,
-            spec.slug,
-            len(picks),
-        )
-        with _timed_lock(ctx, policy.report):
-            removed_in = remove_row(
-                ctx.plex,
-                user,
-                cfg,
-                spec,
-                dry_run=cfg.dry_run,
-                diff=user_report.diff if user_report.diff is not None else CollectionDiff(),
-                sections=ctx.plex.sections(),
-                delivered_keys=_ledger_keys(ctx, user, spec),
-            )
-        _forget(user_report, spec, removed_in)
-        return True
 
     def _deliver_locked() -> None:
         nonlocal cancelled

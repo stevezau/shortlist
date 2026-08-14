@@ -718,6 +718,37 @@ describe("RunRowsTab — per-row cost", () => {
     expect(within(person).queryByText(/^0s$/)).not.toBeInTheDocument();
   });
 
+  it("says not built when the person's ONLY row is the one that was skipped", async () => {
+    // The case the first version of this got wrong: it discriminated legacy-run from not-built on
+    // whether the breakdown was empty, and a person whose only row was skipped has an empty
+    // breakdown too — so exactly the person this exists to catch still got a tick. What actually
+    // separates the two is whether per-row COST was recorded at all.
+    const onlyRowSkipped = run({
+      status: "cancelled",
+      users: [
+        user({
+          duration_ms: PERSON_WHOLE_RUN_MS,
+          rows_considered: { picked: "due" },
+          breakdown: [],
+          has_trace: false,
+          cost: {
+            setup_ms: 421000,
+            rows: { picked: { duration_ms: 0, blocked_ms: 0 } },
+            pools: [],
+          },
+        }),
+      ],
+    });
+
+    // No click: with a single row in the run the card starts open (`defaultOpen={groups.length === 1}`).
+    render(
+      <RunRowsTab run={onlyRowSkipped} titles={CONFIG_NAMES} idBySlug={new Map()} />,
+    );
+
+    const person = await screen.findByRole("tab", { name: /Sarah/ });
+    expect(within(person).getByText(/not built/i)).toBeInTheDocument();
+  });
+
   it("still ticks off the row the same cancelled run DID write", async () => {
     // The other half — a cancel must not repaint the work that already happened as not-done. Same
     // person, same run, the row above the one it stopped on.
