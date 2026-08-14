@@ -1820,6 +1820,24 @@ class TestNoTwoRowsShareATitle:
         assert "'Shared'" in detail, detail
         assert "nothing watched yet" in detail, detail
 
+    def test_a_fallback_name_cannot_itself_need_a_seed(self, client: TestClient):
+        """The nastiest shape this feature could take: the operator does what the alert asks, the
+        alert clears, and nothing changes.
+
+        The fallback is what a row is called when `{top_seed}` CANNOT be filled, so one that also
+        needs a seed is no fallback at all — `render_row_name` discards it. The API used to accept it
+        and the "no name for newcomers" alert saw a non-empty value and went quiet, so the row was
+        still not built and the operator had been told it was fixed.
+        """
+        bad = client.post(
+            "/api/collections",
+            json={"name": "More like {top_seed}", "fallback_name": "Popular like {top_seed}"},
+        )
+
+        assert bad.status_code == 422, "a fallback that also needs a seed was accepted"
+        ok = client.post("/api/collections", json={"name": "More like {top_seed}", "fallback_name": "Popular"})
+        assert ok.status_code < 300, ok.text
+
     def test_a_blank_global_template_is_refused(self, client: TestClient):
         """A blank one renders to DEFAULT_ROW_NAME, silently retitling the default row onto any row
         literally named that — the reported bug, reachable in two ordinary requests."""

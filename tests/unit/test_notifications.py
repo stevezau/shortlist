@@ -769,6 +769,16 @@ class TestRowsWithNoNameForNewcomers:
 
         assert notif._rows_with_no_name_for_newcomers(session, SettingsStore(session)) is None
 
+    def test_a_fallback_that_also_needs_a_seed_does_not_silence_it(self, session):
+        """For databases that already hold one — the API refuses new ones. A fallback containing
+        `{top_seed}` can never render, so treating it as "named" would leave the row unbuilt with the
+        alert switched off, which is worse than never having alerted at all."""
+        from shortlist.server.settings_store import SettingsStore
+
+        self._row(session, "because", "Car vous avez regardé {top_seed}", fallback="Parce que {top_seed}")
+
+        assert notif._rows_with_no_name_for_newcomers(session, SettingsStore(session)) is not None
+
     def test_a_row_whose_name_never_needs_a_watch_is_not_mentioned(self, session):
         from shortlist.server.settings_store import SettingsStore
 

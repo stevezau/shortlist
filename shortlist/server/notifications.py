@@ -86,6 +86,12 @@ def _last_run_problem(session: Session) -> dict | None:
     return None
 
 
+def _usable_fallback(row) -> bool:
+    """A fallback name that can actually produce a title — non-blank, and not itself needing a seed."""
+    value = (row.fallback_name or "").strip()
+    return bool(value) and "{top_seed}" not in value
+
+
 def _rows_with_no_name_for_newcomers(session: Session, store: SettingsStore) -> dict | None:
     """A row named after a watch, with no name for the people who haven't got one.
 
@@ -102,14 +108,16 @@ def _rows_with_no_name_for_newcomers(session: Session, store: SettingsStore) -> 
     rows = [
         row
         for row in session.query(Collection).filter(Collection.enabled.is_(True), Collection.build == "per_person")
-        if "{top_seed}" in ((row.name_template or row.name) or "") and not (row.fallback_name or "").strip()
+        # A fallback that itself needs a seed can never render, so it is no fallback — the API refuses
+        # new ones, and this keeps the alert firing on databases that already hold one.
+        if "{top_seed}" in ((row.name_template or row.name) or "") and not _usable_fallback(row)
     ]
     # The DEFAULT row takes its title from the global setting, never its own column.
     global_name = store.get("row.name_template") or ""
     display: dict[str, str] = {row.slug: (row.name_template or row.name) for row in rows}
     if "{top_seed}" in global_name:
         for row in session.query(Collection).filter(Collection.enabled.is_(True), Collection.slug == DEFAULT_SLUG):
-            if (row.fallback_name or "").strip():
+            if _usable_fallback(row):
                 continue
             # NOT gated on its `name_template` being empty. A stale value in that column is a real
             # state on any database written before the API guarded it, and the ENGINE ignores it —

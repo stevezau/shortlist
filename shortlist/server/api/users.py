@@ -62,12 +62,13 @@ class UserPrefs(BaseModel):
     def _no_seed_in_a_per_user_name(cls, value: str | None) -> str | None:
         """A per-user row name may not use ``{top_seed}``.
 
-        A row's name that follows a watch needs a fallback for people who have not got one, and that
-        fallback is a per-ROW field — there is nowhere to put a per-USER one. So this override would
-        leave exactly the person who set it with a default row that silently stops being built while
-        their history is thin, with no field anywhere to fix it and no alert naming them (issue #84's
-        notification reads rows, not user prefs). Refusing it is the honest answer: the placeholder
-        has nothing to fall back to here.
+        A name that follows a watch needs a fallback for people who have not got one, and that field
+        is per-ROW — there is no per-USER one. Delivery does pass the ROW's fallback whichever template
+        won, so this override is only safe when the row already has one; set on a row without, it
+        leaves exactly the person who set it with a default row that stops being built while their
+        history is thin. Nothing surfaces who is in that state either: the "no name for newcomers"
+        alert reads rows, not user prefs. So the honest answer is to refuse it and point at the field
+        that has a fallback beside it.
         """
         if value and "{top_seed}" in value:
             raise ValueError(

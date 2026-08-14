@@ -168,8 +168,10 @@ class Collection(Base):
     name_template: Mapped[str] = mapped_column(String(255), default="")  # per_person display name
     # What to call this row for someone whose name cannot be filled in — a `{top_seed}` row for a
     # person with nothing watched. NULL/"" means there is no such name, and the row is simply NOT
-    # built for them: Shortlist never invents one (issue #84). Backfilled for existing `{top_seed}`
-    # rows by migration 0070, so an upgrade removes nobody's row.
+    # built for them: Shortlist never invents one (issue #84). NOT backfilled — 0070 adds the column
+    # and nothing else, and its docstring says why. So on upgrade a `{top_seed}` row stops being built
+    # for anyone who cannot be named until the operator names it; nothing is deleted, their existing
+    # collection keeps its label, stays hidden from everyone else, and simply stops being updated.
     fallback_name: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
     # Per-row override of which discovery sources feed this row; [] -> inherit global candidates.sources.
     candidate_sources: Mapped[list] = mapped_column(JSON, default=list)

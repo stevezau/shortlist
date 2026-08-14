@@ -11,7 +11,7 @@ from apscheduler.triggers.cron import CronTrigger
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
@@ -128,6 +128,23 @@ class CollectionIn(BaseModel):
     # person with nothing watched. "" means there is none, and the row is simply not built for them:
     # Shortlist never invents a name (issue #84).
     fallback_name: str = Field(default="", max_length=255)
+
+    @field_validator("fallback_name")
+    @classmethod
+    def _a_fallback_cannot_need_a_seed(cls, value: str) -> str:
+        """The fallback is what a row is called when `{top_seed}` CANNOT be filled — so one that also
+        needs a seed is no fallback at all. `render_row_name` refuses it, which was the whole of the
+        behaviour: the API accepted it, the "no name for newcomers" alert saw a non-empty value and
+        went quiet, and the row still was not built. The operator does exactly what the alert asks and
+        is told it worked. That is issue #84's symptom re-entering through the field built to fix it.
+        """
+        if value and "{top_seed}" in value:
+            raise ValueError(
+                "the fallback name is for people with nothing watched, so it can't use {top_seed} "
+                "either — there'd still be nothing to put in it. Use a name that stands on its own."
+            )
+        return value
+
     min_watchers: int = Field(default=2, ge=2)  # a public row must never be shaped by one person
     request_tag: str = Field(default="", max_length=64)  # tag added to titles requested via this row
     candidate_sources: list[str] = Field(default_factory=list)  # [] -> inherit global candidates.sources
