@@ -45,6 +45,10 @@ All notable changes to this project are documented here. This project follows
   name; leave it empty and they simply don't get this row until they've watched enough — often the
   right answer, since "because you watched" can't be true for them yet.
 
+  **Shortlist tells you when this affects a row**, in the notification bell — naming the row, saying
+  nothing was deleted, and linking to the field. A behaviour change nobody is told about reads as a
+  new bug.
+
   **On upgrade, nothing is deleted** — but a `{top_seed}` row stops appearing for people with nothing
   watched until you give it that name. Their existing row stays on Plex exactly as it is, still
   private, just no longer updated; type a name and it comes back on the next rebuild. Shortlist

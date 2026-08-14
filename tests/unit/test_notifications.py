@@ -721,3 +721,67 @@ class TestShelfContention:
         items = notif.build_notifications(session, SettingsStore(session), "1.0.0")
 
         assert any(n["id"].startswith("shelf-contention-") for n in items)
+
+
+class TestRowsWithNoNameForNewcomers:
+    """The alert that keeps issue #84's fix from being a silent behaviour change."""
+
+    def _row(self, session, slug, name, fallback=None):
+        from shortlist.server.db.models import Collection
+
+        session.add(
+            Collection(
+                slug=slug,
+                name=name,
+                name_template="",
+                build="per_person",
+                audience="everyone",
+                enabled=True,
+                schedule="",
+                size=10,
+                media="both",
+                sort_order=0,
+                fallback_name=fallback,
+            )
+        )
+        session.commit()
+
+    def test_it_fires_for_a_row_that_cannot_name_a_newcomer(self, session):
+        """Without this the rows just stop updating — which to someone upgrading looks exactly like
+        the bug being fixed, and sends them to file a second issue."""
+        from shortlist.server.settings_store import SettingsStore
+
+        self._row(session, "because", "Car vous avez regardé {top_seed}")
+
+        got = notif._rows_with_no_name_for_newcomers(session, SettingsStore(session))
+
+        assert got is not None
+        assert "nothing watched yet" in got["title"]
+        assert got["dismissable"] is True
+        # Says what to DO and that nothing was destroyed — the two things an alarmed operator needs.
+        assert "Name for people with nothing watched yet" in got["body"]
+        assert "Nothing has been deleted" in got["body"]
+
+    def test_it_goes_quiet_once_the_row_has_a_name(self, session):
+        from shortlist.server.settings_store import SettingsStore
+
+        self._row(session, "because", "Car vous avez regardé {top_seed}", fallback="Pour vous")
+
+        assert notif._rows_with_no_name_for_newcomers(session, SettingsStore(session)) is None
+
+    def test_a_row_whose_name_never_needs_a_watch_is_not_mentioned(self, session):
+        from shortlist.server.settings_store import SettingsStore
+
+        self._row(session, "static", "✨ {library_name} Picked for You")
+
+        assert notif._rows_with_no_name_for_newcomers(session, SettingsStore(session)) is None
+
+    def test_the_id_moves_when_another_row_joins_so_a_dismissal_cannot_hide_it(self, session):
+        from shortlist.server.settings_store import SettingsStore
+
+        self._row(session, "because", "Car vous avez regardé {top_seed}")
+        first = notif._rows_with_no_name_for_newcomers(session, SettingsStore(session))
+        self._row(session, "more", "More like {top_seed}")
+        second = notif._rows_with_no_name_for_newcomers(session, SettingsStore(session))
+
+        assert second["id"] != first["id"], "a newly affected row must not stay hidden behind an old dismissal"

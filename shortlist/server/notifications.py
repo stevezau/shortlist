@@ -86,6 +86,52 @@ def _last_run_problem(session: Session) -> dict | None:
     return None
 
 
+def _rows_with_no_name_for_newcomers(session: Session, store: SettingsStore) -> dict | None:
+    """A row named after a watch, with no name for the people who haven't got one.
+
+    Since issue #84 Shortlist will not invent a title, so such a row is simply not built for anyone
+    below the history threshold. That is the right behaviour and the wrong silence: the rows just stop
+    updating, which to an operator upgrading into this looks exactly like the bug it fixes. This is
+    the difference between "we stopped guessing" and "we stopped guessing AND told you".
+
+    Dismissable, and the id encodes the affected rows, so naming one — or adding another — surfaces it
+    again rather than staying hidden behind an old dismissal.
+    """
+    from shortlist.server.db.models import DEFAULT_SLUG, Collection
+
+    rows = [
+        row
+        for row in session.query(Collection).filter(Collection.enabled.is_(True), Collection.build == "per_person")
+        if "{top_seed}" in ((row.name_template or row.name) or "") and not (row.fallback_name or "").strip()
+    ]
+    # The DEFAULT row takes its title from the global setting, never its own column.
+    global_name = store.get("row.name_template") or ""
+    if "{top_seed}" in global_name:
+        rows += [
+            row
+            for row in session.query(Collection).filter(Collection.enabled.is_(True), Collection.slug == DEFAULT_SLUG)
+            if not (row.fallback_name or "").strip() and not (row.name_template or "").strip()
+        ]
+    if not rows:
+        return None
+    names = sorted({(row.name_template or row.name) for row in rows})
+    shown = names[0] if len(names) == 1 else f"{len(names)} rows"
+    return {
+        "id": "rows-unnamed-" + ",".join(sorted(row.slug for row in rows)),
+        "severity": "info",
+        "title": f"{shown} won\u2019t be built for people with nothing watched yet",
+        "body": (
+            "Its name follows a watch, and someone new to your server hasn\u2019t got one — so Shortlist "
+            "has no name for their copy of it and doesn\u2019t invent one. Open the row and set "
+            "\u201cName for people with nothing watched yet\u201d if you\u2019d like them to have it; "
+            "leave it and they get this row once they\u2019ve watched enough. Nothing has been deleted."
+        ),
+        "action_url": "/rows",
+        "action_label": "Open Rows",
+        "dismissable": True,
+    }
+
+
 def _recent_service_errors(session: Session) -> dict | None:
     """A count of service-level error events in the last day that AREN'T already covered by a failed
     run — e.g. a plex.tv write that 429'd repeatedly, or a request send that errored.
@@ -401,6 +447,7 @@ def build_notifications(session: Session, store: SettingsStore, current_version:
         _failed_jobs(session),
         _mdblist_quota(session),
         _recent_service_errors(session),
+        _rows_with_no_name_for_newcomers(session, store),
         _rows_we_cannot_hide(session),
         _owner_sees_all_rows(session),
         _shelf_contention(session),
