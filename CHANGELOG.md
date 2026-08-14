@@ -45,8 +45,11 @@ All notable changes to this project are documented here. This project follows
   name; leave it empty and they simply don't get this row until they've watched enough — often the
   right answer, since "because you watched" can't be true for them yet.
 
-  **Nothing disappears when you upgrade.** Every existing `{top_seed}` row inherits your own row-name
-  template as its fallback, so the people who have one today keep one, in your language.
+  **On upgrade, nothing is deleted** — but a `{top_seed}` row stops appearing for people with nothing
+  watched until you give it that name. Their existing row stays on Plex exactly as it is, still
+  private, just no longer updated; type a name and it comes back on the next rebuild. Shortlist
+  deliberately does not pick one for you: the obvious candidate is your default row's own title, and
+  handing two of someone's rows the same name is what makes them fight over a single collection.
 
 - **A skipped show request now says what to do about it.** Sonarr identifies shows by their TheTVDB
   id, and Shortlist looks that up on TMDB — so when TMDB hasn't recorded one, there is no way to name

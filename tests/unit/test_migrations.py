@@ -879,125 +879,33 @@ class TestRunsBeganAt:
         assert self._began(tmp_path)[1] == "2026-05-05 05:05:05"
 
 
-_NOW = "2026-08-14 00:00:00"
-
-
 class TestRowFallbackName:
     """0070 — a row's name for someone whose own name cannot be filled in (issue #84)."""
 
-    def _rows(self, config_dir: Path) -> dict[str, str | None]:
-        con = sqlite3.connect(config_dir / "shortlist.db")
-        try:
-            return {slug: fb for slug, fb in con.execute("SELECT slug, fallback_name FROM collections")}
-        finally:
-            con.close()
+    def test_0070_adds_the_column_and_backfills_nothing(self, tmp_path: Path):
+        """No backfill, on purpose, and this test is the record of why.
 
-    def _add_row(self, config_dir: Path, slug: str, template: str) -> None:
-        con = sqlite3.connect(config_dir / "shortlist.db")
-        try:
-            # Every NOT NULL column, because the real table has a dozen of them and a partial insert
-            # fails on the constraint rather than on anything this test is about.
-            con.execute(
-                "INSERT INTO collections (slug, name, name_template, build, audience, enabled, schedule, size, "
-                "media, sort_order, candidate_sources, library_keys, min_watchers, request_tag, placement, "
-                "pin_top, hub_anchor, prompt, poster, created_at, updated_at) "
-                "VALUES (?, ?, ?, 'per_person', 'everyone', 1, '', 10, 'both', 0, '[]', '[]', 2, '', '{}', 0, "
-                "'{}', '', '{}', ?, ?)",
-                (slug, slug, template, _NOW, _NOW),
-            )
-            con.commit()
-        finally:
-            con.close()
-
-    def test_0070_backfills_top_seed_rows_so_an_upgrade_removes_nobody_s_row(self, tmp_path: Path):
-        """The guard against repeating the reverted first attempt at #84.
-
-        Under the new rule a row with no name is not built for that person. Existing rows inherit
-        `cold_start = NULL` -> the global setting -> "popular", i.e. they have already chosen "build
-        it for everyone" — so upgrading without a name would delete rows off live servers. They
-        inherit the operator's OWN global template instead.
-        """
-        run_migrations(tmp_path)  # build the whole schema, then rewind just this revision
-        command.downgrade(_alembic(tmp_path), "0069")
-        _write_setting(tmp_path, "row.name_template", "Spécifiquement pour le grand {user}")
-        self._add_row(tmp_path, "because", "Car vous avez regardé {top_seed}")
-        self._add_row(tmp_path, "static", "✨ {library_name} qui vous correspondent")
-
-        command.upgrade(_alembic(tmp_path), "0070")
-
-        rows = self._rows(tmp_path)
-        assert rows["because"] == "Spécifiquement pour le grand {user}", (
-            "a {top_seed} row must inherit the operator's own name, or upgrading deletes it for "
-            "everyone who cannot be named"
-        )
-        # A row that can always render never reaches a fallback; inventing configuration for it would
-        # be putting words in the operator's mouth.
-        assert rows["static"] is None
-
-    def test_0070_reads_the_settings_envelope_not_the_raw_json(self, tmp_path: Path):
-        """`settings.value` holds `{"v": ...}`. Reading it as a bare string finds a dict, backfills
-        nothing, and every existing row silently stops being built — which looks exactly like the bug
-        this migration exists to prevent."""
-        run_migrations(tmp_path)
-        command.downgrade(_alembic(tmp_path), "0069")
-        _write_setting(tmp_path, "row.name_template", "Picked for You")
-        self._add_row(tmp_path, "seedy", "Because you watched {top_seed}")
-
-        command.upgrade(_alembic(tmp_path), "0070")
-
-        got = self._rows(tmp_path)["seedy"]
-        assert got == "Picked for You", f"expected the unwrapped setting, got {got!r}"
-
-    def test_0070_finds_rows_the_UI_created_where_the_template_lives_in_name(self, tmp_path: Path):
-        """The Rows page writes a row's template into `name` and leaves `name_template` empty
-        (web/src/test/row-templates.test.tsx), so a backfill matching only the column skips every row
-        created through the UI — which on a real server is all of them. The first version of this
-        migration did exactly that and was a no-op where it mattered most."""
-        run_migrations(tmp_path)
-        command.downgrade(_alembic(tmp_path), "0069")
-        _write_setting(tmp_path, "row.name_template", "Spécifiquement pour le grand {user}")
-        self._add_row(tmp_path, "ui_row", "")  # name carries the template
-        con = sqlite3.connect(tmp_path / "shortlist.db")
-        con.execute("UPDATE collections SET name = 'Parce que vous avez regardé {top_seed}' WHERE slug = 'ui_row'")
-        con.commit()
-        con.close()
-
-        command.upgrade(_alembic(tmp_path), "0070")
-
-        assert self._rows(tmp_path)["ui_row"] == "Spécifiquement pour le grand {user}"
-
-    def test_0070_refuses_to_backfill_a_fallback_that_also_needs_a_seed(self, tmp_path: Path):
-        """Issue #84's own server: the GLOBAL template is "Car vous avez regardé {top_seed}".
-
-        Copying that in as a fallback would look like protection and provide none — `render_row_name`
-        discards a fallback containing `{top_seed}`. Better to leave it unset and say so than to
-        record a value that silently does nothing.
+        The first version copied the global row-name template into every `{top_seed}` row so those
+        people's rows kept appearing. That one decision produced every serious defect in this change:
+        it matched the wrong column (the Rows page stores a template in `name`), it wrote values
+        `render_row_name` discards, it could not see per-user overrides, and the global template IS
+        the default row's title — so it gave two of a person's rows one name in one library, the exact
+        collision the change exists to prevent. Guessing for the operator was the problem. The editor
+        asks them instead, and a row nobody has named simply is not built for people who cannot be
+        named — their existing collection is left alone, not deleted.
         """
         run_migrations(tmp_path)
-        command.downgrade(_alembic(tmp_path), "0069")
-        _write_setting(tmp_path, "row.name_template", "Car vous avez regardé {top_seed}")
-        self._add_row(tmp_path, "because", "Because you watched {top_seed}")
 
-        command.upgrade(_alembic(tmp_path), "0070")
+        flags = _not_null(tmp_path, "collections")
+        assert "fallback_name" in flags
+        assert flags["fallback_name"] is False
 
-        assert self._rows(tmp_path)["because"] is None
-
-    def test_0070_leaves_a_name_the_operator_already_chose(self, tmp_path: Path):
-        """Re-runnable: replaying the revision after a crash must not overwrite a real answer, and an
-        empty string is a real answer — "no fallback, skip those people"."""
-        run_migrations(tmp_path)
-        _write_setting(tmp_path, "row.name_template", "Global")
-        self._add_row(tmp_path, "mine", "Because you watched {top_seed}")
         con = sqlite3.connect(tmp_path / "shortlist.db")
-        con.execute("UPDATE collections SET fallback_name = '' WHERE slug = 'mine'")
-        con.commit()
-        con.close()
-
-        # Replay the revision on a database that already has it — the crash-between-DDL-and-stamp case.
-        command.stamp(_alembic(tmp_path), "0069")
-        command.upgrade(_alembic(tmp_path), "0070")
-
-        assert self._rows(tmp_path)["mine"] == ""
+        try:
+            values = [row[0] for row in con.execute("SELECT fallback_name FROM collections")]
+        finally:
+            con.close()
+        assert all(v is None for v in values), f"0070 must invent nothing, found {values}"
 
 
 class TestRunUsersCost:
