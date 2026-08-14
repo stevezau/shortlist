@@ -894,7 +894,17 @@ class TestRowFallbackName:
         asks them instead, and a row nobody has named simply is not built for people who cannot be
         named — their existing collection is left alone, not deleted.
         """
+        # The fixture matters: a fresh DB has no `row.name_template` row in `settings` and no row
+        # carrying `{top_seed}`, so the DELETED backfill would have matched nothing and this test
+        # would pass against it too — pinning nothing. Build the state it WOULD have acted on.
         run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0069")
+        _write_setting(tmp_path, "row.name_template", "Spécifiquement pour le grand {user}")
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        con.execute("UPDATE collections SET name = 'Parce que vous avez regardé {top_seed}' WHERE slug = 'picked'")
+        con.commit()
+        con.close()
+        command.upgrade(_alembic(tmp_path), "0070")
 
         flags = _not_null(tmp_path, "collections")
         assert "fallback_name" in flags

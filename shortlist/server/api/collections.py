@@ -713,7 +713,12 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
         # does: a PATCH may send either half. Sending `name_template` ALONE changes the title and used
         # to be checked by nothing at all, while sending `name` alone on a row that carries its own
         # template changes no title and was checked as though it did.
-        if not is_default and sent & {"name", "name_template", "fallback_name"}:
+        # `fallback_name` is checked for the DEFAULT row too. Its `name`/`name_template` are exempt
+        # because its title is the global setting (handled below), but its fallback IS a per-row
+        # column, and the new "no name for newcomers" alert points operators straight at that field —
+        # so it was the one write on the row editor with no duplicate-title check behind it. Two rows
+        # rendering one title for one person in one library share a single Plex collection.
+        if (sent & {"fallback_name"}) or (not is_default and sent & {"name", "name_template"}):
             merged = (body.name_template if "name_template" in sent else collection.name_template) or (
                 body.name if "name" in sent else collection.name
             )

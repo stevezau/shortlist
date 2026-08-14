@@ -106,18 +106,27 @@ def _rows_with_no_name_for_newcomers(session: Session, store: SettingsStore) -> 
     ]
     # The DEFAULT row takes its title from the global setting, never its own column.
     global_name = store.get("row.name_template") or ""
+    display: dict[str, str] = {row.slug: (row.name_template or row.name) for row in rows}
     if "{top_seed}" in global_name:
-        rows += [
-            row
-            for row in session.query(Collection).filter(Collection.enabled.is_(True), Collection.slug == DEFAULT_SLUG)
-            if not (row.fallback_name or "").strip() and not (row.name_template or "").strip()
-        ]
+        for row in session.query(Collection).filter(Collection.enabled.is_(True), Collection.slug == DEFAULT_SLUG):
+            if (row.fallback_name or "").strip():
+                continue
+            # NOT gated on its `name_template` being empty. A stale value in that column is a real
+            # state on any database written before the API guarded it, and the ENGINE ignores it —
+            # `context_builder` forces the default row's template to "" so the global setting wins.
+            # Gating on it silenced this alert on exactly the upgraded servers it exists for.
+            if row.slug not in display:
+                rows.append(row)
+            # Named by the GLOBAL template, never its own column: the default row's `name` is the
+            # stale "✨ Picked for You" from migration 0001, which is both a title the operator will
+            # not find on their Rows page and the hardcoded string this whole issue is about.
+            display[row.slug] = global_name
     if not rows:
         return None
-    names = sorted({(row.name_template or row.name) for row in rows})
+    names = sorted(set(display.values()))
     shown = names[0] if len(names) == 1 else f"{len(names)} rows"
     return {
-        "id": "rows-unnamed-" + ",".join(sorted(row.slug for row in rows)),
+        "id": "rows-unnamed-" + ",".join(sorted({row.slug for row in rows})),
         "severity": "info",
         "title": f"{shown} won\u2019t be built for people with nothing watched yet",
         "body": (

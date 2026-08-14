@@ -1774,6 +1774,25 @@ class TestNoTwoRowsShareATitle:
 
         assert clash.status_code == 422, "two rows were allowed to share a fallback name via PATCH"
 
+    def test_the_DEFAULT_row_cannot_take_another_row_s_title_as_its_fallback(self, client: TestClient):
+        """The one write on the row editor that had no duplicate-title check behind it.
+
+        The default row's `name`/`name_template` are exempt because its title is the global setting —
+        but its FALLBACK is a per-row column like anyone else's, and the "no name for newcomers" alert
+        points operators straight at that field. Two rows rendering one title for one person in one
+        library are a single Plex collection: one row's picks overwrite the other's, and removing
+        either deletes the collection the survivor is using.
+        """
+        client.post("/api/collections", json={"name": "Hidden Gems"})
+        # The DEFAULT row by slug, not by a guessed id — the first test I wrote patched id 1, which
+        # was the newly created row, so it passed with the guard reverted and proved nothing.
+        rows = client.get("/api/collections").json()
+        default_id = next(r["id"] for r in rows if r["slug"] == "picked")
+
+        clash = client.patch(f"/api/collections/{default_id}", json={"fallback_name": "Hidden Gems"})
+
+        assert clash.status_code == 422, "the default row was allowed to take another row's title"
+
     def test_a_blank_global_template_is_refused(self, client: TestClient):
         """A blank one renders to DEFAULT_ROW_NAME, silently retitling the default row onto any row
         literally named that — the reported bug, reachable in two ordinary requests."""
