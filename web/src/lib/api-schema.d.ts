@@ -3840,6 +3840,11 @@ export interface components {
             /** Media Type */
             media_type: string;
             /**
+             * Overview
+             * @default
+             */
+            overview: string;
+            /**
              * Poster Path
              * @default
              */

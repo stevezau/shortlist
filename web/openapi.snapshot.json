@@ -3040,6 +3040,11 @@
             "title": "Media Type",
             "type": "string"
           },
+          "overview": {
+            "default": "",
+            "title": "Overview",
+            "type": "string"
+          },
           "poster_path": {
             "default": "",
             "title": "Poster Path",

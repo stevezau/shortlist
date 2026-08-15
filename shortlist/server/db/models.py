@@ -653,6 +653,11 @@ class RequestCandidate(Base):
     # change, so the UI builds the URL. Empty on pre-0044 rows and for titles TMDB has no art for —
     # the inbox draws a placeholder tile rather than a broken image.
     poster_path: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    # TMDB's synopsis, so the inbox can be triaged without opening a tab per unfamiliar title
+    # (discussion #87). Text, not String(n): TMDB does not publish a length bound, and a truncated
+    # synopsis is worse than a long one the UI clamps. Empty on pre-0071 rows and for titles TMDB has
+    # no synopsis for — the inbox omits the paragraph rather than drawing an empty gap.
+    overview: Mapped[str] = mapped_column(Text, default="", server_default="")
     rating: Mapped[float] = mapped_column(Float, default=0.0)  # on the chosen source (TMDB, or IMDb)
     vote_count: Mapped[int] = mapped_column(Integer, default=0)  # vote count on that same source
     demand: Mapped[int] = mapped_column(Integer, default=1)  # distinct users whose picks wanted it

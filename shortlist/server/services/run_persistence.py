@@ -105,6 +105,7 @@ def _refresh_pending(row: RequestCandidate, m) -> None:
     # Same rule as imdb_id, and it is also what backfills rows queued before 0044: the first run to
     # re-surface the title fills the artwork in.
     row.poster_path = m.poster_path or row.poster_path
+    row.overview = m.overview or row.overview  # same rule again — and the backfill for pre-0071 rows
     row.rating = m.rating
     row.vote_count = m.vote_count
     row.demand = m.demand
@@ -129,6 +130,7 @@ def _candidate_row(m, run_id: int, *, status: str) -> RequestCandidate:
         year=m.year,
         imdb_id=m.imdb_id,
         poster_path=m.poster_path,
+        overview=m.overview,
         rating=m.rating,
         vote_count=m.vote_count,
         demand=m.demand,

@@ -331,12 +331,14 @@ def gather_candidates(
                 rating=float(item.get("vote_average") or 0.0),
                 vote_count=int(item.get("vote_count") or 0),
                 poster_path=item.get("poster_path") or "",
+                overview=item.get("overview") or "",
             )
         # Artwork folds like the rest: `merge()` (Trakt, and any other non-TMDB source) has no poster
         # to give and runs BEFORE the TMDB-backed sources, so a title both found would otherwise keep
         # the poster-less copy's "" and buy the path again with a detail call in `request_missing` —
         # while a list response carrying it was already in hand. Same rule `accumulate` uses.
         pool[key].poster_path = pool[key].poster_path or (item.get("poster_path") or "")
+        pool[key].overview = pool[key].overview or (item.get("overview") or "")
         # A title two sources both found belongs to both — it competes in each one's share, and
         # keeps the STRONGEST claim any of them made for it. A source with nothing to claim
         # (`affinity is None`) adds itself to `sources` but never touches the score.

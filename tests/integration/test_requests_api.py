@@ -48,6 +48,7 @@ def client(tmp_path: Path):
                     tags=["kids", "sarah"],  # per-user + per-row tags recorded when it was queued
                     wanters=["Sarah", "Mike"],  # the two people whose picks wanted it
                     poster_path="/wanted-film.jpg",  # the inbox shows the artwork
+                    overview="Two people want this one.",  # ...and the synopsis, to judge it by
                 )
             )
             session.add(
@@ -99,6 +100,9 @@ class FakeTmdb:
         # missing this method turns into a swallowed AttributeError rather than a failing test.
         return f"/poster-{tmdb_id}.jpg"
 
+    def overview(self, tmdb_id: int, media_type) -> str:
+        return f"synopsis for {tmdb_id}"  # must exist for the same reason poster_path must
+
 
 def _fake_requests_ctx(cfg: RequestConfig | None):
     """Stand in for RunService.build_requests_context() -> (RequestConfig | None, TmdbClient)."""
@@ -135,6 +139,12 @@ class TestRequestsApi:
         rows = {r["tmdb_id"]: r for r in client.get("/api/requests").json()}
         assert rows[10]["poster_path"] == "/wanted-film.jpg"
         assert rows[20]["poster_path"] == ""  # seeded without one — absent, not null
+
+    def test_overview_is_served_and_is_empty_never_null_when_absent(self, client: TestClient):
+        """The inbox omits the synopsis paragraph on "", and a null would break the typed client."""
+        rows = {r["tmdb_id"]: r for r in client.get("/api/requests").json()}
+        assert rows[10]["overview"] == "Two people want this one."
+        assert rows[20]["overview"] == ""  # a pre-0071 row, or a title TMDB has no synopsis for
 
     def test_reject_marks_rejected_and_drops_from_pending(self, client: TestClient):
         body = client.post("/api/requests/reject", json={"ids": [1]}).json()

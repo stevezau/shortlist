@@ -51,9 +51,11 @@ like the global one.
 ### The Requests inbox
 
 The **Requests** tab (in the sidebar) is your approval queue. Each run adds the wanted-but-missing
-titles it didn't auto-send, with its poster, title, year, rating, and a full **why it's here**
+titles it didn't auto-send, with its poster, title, year, rating, TMDB's synopsis, and a full **why it's here**
 breakdown: one line per person and row that wanted it, with the reason (e.g. "Sarah · Comedy Classics · because
 they watched Fawlty Towers"). That answers where a request came from and why, not just a count.
+The synopsis is there so a title you've never heard of can be judged without opening a tab for it;
+titles queued before Shortlist stored synopses show none until the next run re-surfaces them.
 A long queue can be narrowed by a minimum rating and vote count (and to movies or shows) and
 sorted by **Newest**, **Top rated**, or **Most wanted**, so the best picks triage first.
 Posters come straight from TMDB's image CDN (`image.tmdb.org`), the only third-party asset Shortlist's
@@ -61,8 +63,13 @@ web UI fetches. An install behind a restrictive network, or a browser with an ad
 placeholder tile instead; so will a title TMDB has no artwork for, and one queued before posters existed
 (those fill in on the next run that re-surfaces the title). Nothing else on the page depends on it.
 
-Tick the ones you want and click **Send to Radarr/Sonarr**. For the rest you have two choices, and the
-difference is exactly what happens on the next run:
+Every title carries its own **Send**, **Delete** and **Reject** buttons, so you can work straight down
+the list deciding one at a time. For a batch, tick the ones you want instead and use the same three
+buttons on the toolbar above the queue — they act on everything ticked. The two ways don't interfere:
+deciding a single title from its own row leaves a selection you're part-way through assembling alone.
+
+For anything you're not sending you have two choices, and the difference is exactly what happens on
+the next run:
 
 - **Reject** — a permanent "no". The title is never re-queued AND never auto-sent by a later run. It
   moves to the **Rejected** tab as a record. Changed your mind? **Allow again** (or **Allow all
@@ -72,7 +79,7 @@ difference is exactly what happens on the next run:
   taste turns it up again on a later run, it comes back to Waiting. Use it to clear clutter without
   slamming the door.
 
-Both buttons carry a hover hint, and an always-visible line under the queue spells out the difference.
+Both carry a hover hint wherever they appear, and an always-visible line under the queue spells out the difference.
 A title already in the library stops appearing on its own, and one that's already been sent (still
 downloading, say) never re-consumes an auto-request slot, so a slow grab can't starve the queue.
 Everything sent moves to the **Sent to Radarr & Sonarr** log, each entry keeping when

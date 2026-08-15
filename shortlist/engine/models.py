@@ -151,6 +151,9 @@ class Candidate:
     # TMDB's own poster path ("/abc.jpg"), free in every list response. Only carried through to the
     # request inbox, which shows the artwork — a delivered pick uses Plex's copy of the title.
     poster_path: str = ""
+    # TMDB's synopsis, free in the same list response as the poster and carried the same way: only
+    # the request inbox reads it, so the owner can judge an unfamiliar title without leaving the page.
+    overview: str = ""
     seeds: list[Seed] = field(default_factory=list)  # every seed that suggested it
     rating_key: int | None = None  # set once matched to the library
     # Which candidate source(s) produced it. Ranking needs this: seedless sources (tmdb_discover,
@@ -534,6 +537,10 @@ class MissingTitle:
     # TMDB poster path ("/abc.jpg") so the inbox can show the artwork. Free from the candidate's own
     # TMDB list response; filled in for the gated shortlist when a non-TMDB source surfaced the title.
     poster_path: str = ""
+    # TMDB's synopsis, on the same terms as the poster: free from the candidate's list response, and
+    # bought with a detail call only for the gated few a non-TMDB source surfaced. Empty is normal —
+    # TMDB has no synopsis for some titles, and the inbox simply omits the paragraph.
+    overview: str = ""
     # Per-user + per-row tags to apply on request, layered on top of the target's global tag. Unioned
     # across every user who wanted the title and every row it surfaced in (deduplication merges them).
     tags: set[str] = field(default_factory=set)
