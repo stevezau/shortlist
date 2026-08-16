@@ -148,6 +148,40 @@ class TestPersistRequestQueue:
         with sessions() as s:
             assert s.query(RequestCandidate).one().poster_path == "/later.jpg"
 
+    def test_overview_is_persisted_on_insert(self, tmp_path: Path):
+        # Same gap the poster test above exists to close: the engine chain can be perfect and the
+        # synopsis still never reach the database if `_candidate_row` doesn't carry it.
+        sessions = _sessions(tmp_path)
+        with sessions() as s:
+            RunService._persist_request_queue(s, 1, _report([_title(1, overview="A synopsis.")]))
+            s.commit()
+        with sessions() as s:
+            assert s.query(RequestCandidate).one().overview == "A synopsis."
+
+    def test_a_resurfaced_title_keeps_its_synopsis_when_the_new_pass_has_none(self, tmp_path: Path):
+        """The retain rule for text, and the ONLY way rows queued before 0071 ever get a synopsis."""
+        sessions = _sessions(tmp_path)
+        with sessions() as s:
+            RunService._persist_request_queue(s, 1, _report([_title(1, overview="A synopsis.")]))
+            s.commit()
+        with sessions() as s:
+            RunService._persist_request_queue(s, 2, _report([_title(1, overview="")]))
+            s.commit()
+        with sessions() as s:
+            assert s.query(RequestCandidate).one().overview == "A synopsis."
+
+    def test_a_resurfaced_title_gains_a_synopsis_it_did_not_have(self, tmp_path: Path):
+        # The backfill direction — the whole migration note for 0071 is this expression.
+        sessions = _sessions(tmp_path)
+        with sessions() as s:
+            RunService._persist_request_queue(s, 1, _report([_title(1, overview="")]))
+            s.commit()
+        with sessions() as s:
+            RunService._persist_request_queue(s, 2, _report([_title(1, overview="Filled in later.")]))
+            s.commit()
+        with sessions() as s:
+            assert s.query(RequestCandidate).one().overview == "Filled in later."
+
     def test_pending_titles_now_in_the_library_are_dropped(self, tmp_path: Path):
         sessions = _sessions(tmp_path)
         with sessions() as s:

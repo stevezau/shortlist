@@ -218,4 +218,24 @@ describe("RowCard", () => {
     renderCard(collection());
     expect(screen.queryByRole("button", { name: /^Rename$/i })).toBeNull();
   });
+
+  it("shows a real template token as a placeholder, keeping the words around it", () => {
+    // The list is the one screen that shows the row's TEMPLATE; everywhere else shows it resolved
+    // ("✨ Movies Picked for You"). Printed raw, it reads as a substitution that failed.
+    renderCard(collection({ name: "✨ {library_name} Picked for You" }));
+
+    expect(screen.getByText("library name")).toBeTruthy();
+    expect(screen.queryByText(/\{library_name\}/)).toBeNull();
+    expect(screen.getByText(/Picked for You/)).toBeTruthy();
+  });
+
+  it("leaves a token the engine does not substitute exactly as typed", () => {
+    // The name field is free text and no whitelist is enforced server-side, so `{genre}` reaches
+    // Plex as literal braces in the collection title. Dressing it up as a resolved placeholder
+    // would hide the typo on the one screen that could show it before the next run ships it.
+    renderCard(collection({ name: "Best of {genre}" }));
+
+    expect(screen.getByText(/Best of \{genre\}/)).toBeTruthy();
+    expect(screen.queryByText("genre")).toBeNull();
+  });
 });

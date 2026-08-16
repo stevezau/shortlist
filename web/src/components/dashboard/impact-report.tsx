@@ -1,5 +1,6 @@
 import {
   CalendarClock,
+  CheckCircle2,
   Clock,
   RefreshCw,
   Send,
@@ -57,8 +58,12 @@ function WatchSyncLine({ sync }: { sync: EffectivenessReport["watch_sync"] }) {
       <span>
         Watch status{" "}
         {sync.last ? `synced ${timeAgo(sync.last)}` : "not synced yet"}
-        {sync.next && ` · next check ${formatDate(sync.next)}`}. It also
-        refreshes on every run.
+        {/* "and on every run" is not filler: the sync job's interval is normally LONGER than the
+            run schedule, so "next check <in 3 days>" on its own reads as "this data is three days
+            out of date" when a run tonight will refresh it. */}
+        {sync.next &&
+          ` · next check ${formatDate(sync.next)}, and on every run`}
+        .
       </span>
       <div className="flex items-center gap-2">
         {syncNow.isError && (
@@ -159,7 +164,8 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
       {/* The chart is aria-hidden (hover reaches a mouse and nothing else), so a screen reader gets
           NOTHING from it without a text alternative — this is that alternative. */}
       <p className="sr-only">
-        {total} watched across the last {trend.length} weeks, from{" "}
+        {total} watched across the last {trend.length} weeks, of which{" "}
+        {trend.reduce((s, t) => s + t.finished, 0)} were finished. From{" "}
         {first.watched} in the week of {weekStarting(first.week)} to{" "}
         {last.watched} in the week of {weekStarting(last.week)}.
       </p>
@@ -176,6 +182,11 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
           {shown.watched}
         </span>
         watched in the week of {weekStarting(shown.week)}
+        <span className="opacity-70">
+          · {shown.finished} finished
+          {shown.watched > shown.finished &&
+            `, ${shown.watched - shown.finished} still going`}
+        </span>
         {hovered === null && <span className="opacity-70">· latest</span>}
       </p>
 
@@ -184,28 +195,49 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
         aria-hidden="true"
         onMouseLeave={() => setHovered(null)}
       >
-        {trend.map((t) => (
-          // The COLUMN is the hover target, not the bar it contains: `justify-end` drops the bar to
-          // the bottom of a full-height box, so a week with two watches is still readable from the
-          // 77px of empty space above its 3px bar.
-          <div
-            key={t.week}
-            data-testid="trend-week"
-            onMouseEnter={() => setHovered(t.week)}
-            className={cn(
-              "flex flex-1 cursor-default flex-col justify-end rounded-t transition-colors",
-              hovered === t.week ? "bg-muted" : "hover:bg-muted/60",
-            )}
-          >
+        {trend.map((t) => {
+          // The floor applies to the COLUMN, then the two segments split it proportionally —
+          // flooring each segment instead would draw a 4% "finished" block for a week that
+          // finished nothing, which is a lie about the data at the exact size hardest to notice.
+          const columnPct = Math.max(4, (t.watched / max) * 100);
+          const finishedPct =
+            t.watched > 0 ? columnPct * (t.finished / t.watched) : 0;
+          return (
+            // The COLUMN is the hover target, not the bar it contains: `justify-end` drops the bar to
+            // the bottom of a full-height box, so a week with two watches is still readable from the
+            // 77px of empty space above its 3px bar.
             <div
+              key={t.week}
+              data-testid="trend-week"
+              onMouseEnter={() => setHovered(t.week)}
               className={cn(
-                "rounded-t transition-colors",
-                hovered === t.week ? "bg-primary" : "bg-primary/70",
+                "flex flex-1 cursor-default flex-col justify-end rounded-t transition-colors",
+                hovered === t.week ? "bg-muted" : "hover:bg-muted/60",
               )}
-              style={{ height: `${Math.max(4, (t.watched / max) * 100)}%` }}
-            />
-          </div>
-        ))}
+            >
+              {/* Two segments of ONE hue rather than two colours: finished and still-going are an
+                ordered pair, not two categories, so intensity carries the order. The finished part
+                sits on the baseline where it can be compared across weeks by eye. `finished` is
+                bucketed by the same week key as `watched` (see report_service), so it can never
+                exceed the bar it is drawn inside. */}
+              <div
+                className={cn(
+                  "rounded-t transition-colors",
+                  hovered === t.week ? "bg-primary/50" : "bg-primary/30",
+                )}
+                style={{ height: `${columnPct - finishedPct}%` }}
+              />
+              <div
+                className={cn(
+                  "transition-colors",
+                  finishedPct >= columnPct && "rounded-t",
+                  hovered === t.week ? "bg-primary" : "bg-primary/70",
+                )}
+                style={{ height: `${finishedPct}%` }}
+              />
+            </div>
+          );
+        })}
       </div>
 
       {/* The axis. Only weeks with a watch get a bucket (`report_service` groups over rows that
@@ -231,10 +263,12 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
  */
 function CountBar({
   watched,
+  finished,
   delivered,
   max,
 }: {
   watched: number;
+  finished: number;
   delivered: number;
   max: number;
 }) {
@@ -244,26 +278,81 @@ function CountBar({
     // meant picking a width — and any width is wrong for some count: w-32 wrapped "3 watched · 103
     // delivered" onto two lines, and even w-44 overflows once a row passes 999 watched or 9999
     // delivered. This way no count can break the layout.
-    <div className="flex min-w-0 items-center gap-2">
+    <div className="flex min-w-0 items-center gap-2 xl:shrink-0">
       {/* Two labelled numbers, NOT "{watched} of {delivered}". They are counts over two different
           sets — watched-in-window and delivered-in-window — so presenting them as a fraction makes
           "4 of 0" reachable whenever delivery paused (a weekly row cron on a 7-day window). That is
           the same misleading fraction this rewrite exists to remove. */}
-      <span className="shrink-0 whitespace-nowrap text-right tabular-nums text-muted-foreground">
-        <span className="font-medium text-foreground">{watched}</span> watched
+      {/* `nowrap` from `xl`, and never the element that shrinks. Below `xl` the caller stacks this
+          under the row name, so it has the whole card width to itself; from `xl` the name is the
+          flexible half and this is the fixed one. Letting BOTH be flexible was the old bug: flex
+          shares a deficit in proportion to content width, so the long counts label kept ~180px and
+          the row name was squeezed to 32px — "Late Night" rendered as "Lat…" at every width from
+          390 to 1280. Measured, not theorised.
+
+          The nowrap stays breakpoint-gated even though the label now has a line to itself, because
+          a line to itself is not the same as room: at 320px a card's content box is 238px, and
+          "1203 watched · 318 finished · 41600 delivered" is 305px. Unconditional `nowrap` removes
+          the only break opportunity in the label — the separators are real whitespace text nodes
+          in THIS span — and the page scrolls sideways again, 355 against a 320 client. The shrink
+          fix lives in `xl:flex-1` / `xl:shrink-0`, not here, so gating this costs nothing. */}
+      <span className="text-right tabular-nums text-muted-foreground xl:whitespace-nowrap">
+        {/* "watched" stays the leading number so the list keeps its old meaning and its old sort.
+            "finished" is the qualifier beside it: a series counts as watched on its first episode,
+            so a big watched number with a small finished one means sampled, not enjoyed — which is
+            exactly what a single count could never say. */}
+        {/* Each clause is its own nowrap span so a narrow screen breaks BETWEEN clauses rather than
+            between a number and its noun — "0" on one line and "finished" on the next reads as a
+            different, missing figure.
+
+            The separators sit OUTSIDE the spans, as real whitespace text nodes. Putting " · " inside
+            a nowrap span (the obvious way to write this) leaves no whitespace between the spans at
+            all, so the browser has no break opportunity anywhere in the label and the whole thing
+            behaves as one unbreakable string — measured: 404px of it inside a 390px phone. */}
+        <span className="whitespace-nowrap">
+          <span className="font-medium text-foreground">{watched}</span> watched
+        </span>
+        {watched > 0 && (
+          <>
+            {" "}
+            <span className="whitespace-nowrap">
+              · <span className="font-medium text-foreground">{finished}</span>{" "}
+              finished
+            </span>
+          </>
+        )}
         {/* "delivered", not "sent" — the Requests card on this same page uses "sent" to mean asked of
             Sonarr/Radarr, and two meanings of the word side by side is exactly the kind of quiet
             ambiguity this rewrite is meant to remove. */}
-        {delivered > 0 && ` · ${delivered} delivered`}
+        {delivered > 0 && (
+          <>
+            {" "}
+            <span className="whitespace-nowrap">{`· ${delivered} delivered`}</span>
+          </>
+        )}
       </span>
-      {/* Hidden on phones. The label and the bar are both `shrink-0`, so together they demand 264px
-          before the row name gets a pixel — which does not fit beside a name at 390px. The numbers
-          carry the information on their own; the bar's job is letting you compare rows down the
-          list by their right edges, and that only pays off where the list is wide enough to scan. */}
-      <div className="hidden h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-muted sm:block">
+      {/* `2xl`, not `xl`. These cards sit in a 2-column grid from `lg`, so a card is ~360px at
+          1024 and ~500px at 1280 — and `xl` IS 1280, which is to say the bar switched itself on at
+          the exact width where the last 96px did not exist. Measured: it landed at right:1290 in a
+          1280px viewport and scrolled the whole document sideways. The numbers carry the
+          information on their own; the bar only earns its width once a card is wide enough that
+          nothing has to be given up for it. */}
+      {/* One bar, split: the solid part is what got finished, the faded part what is still going.
+          Same hue at two intensities because the two are ordered, not two categories — and the
+          finished part is anchored at the left so it can be compared down the list by eye. */}
+      <div className="hidden h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-muted 2xl:flex">
         <div
-          className="h-full rounded-full bg-primary"
-          style={{ width: `${max > 0 ? (watched / max) * 100 : 0}%` }}
+          className="h-full bg-primary"
+          style={{ width: `${max > 0 ? (finished / max) * 100 : 0}%` }}
+        />
+        {/* /50, not /35: at /35 this segment sat almost on top of the `bg-muted` track behind it,
+            so "watched but not finished" and "never watched" looked the same at a glance — which is
+            the one distinction this bar exists to draw. */}
+        <div
+          className="h-full bg-primary/50"
+          style={{
+            width: `${max > 0 ? (Math.max(0, watched - finished) / max) * 100 : 0}%`,
+          }}
         />
       </div>
     </div>
@@ -339,15 +428,19 @@ function Disclosure({
 function ZeroDisclosure({
   count,
   noun,
+  plural,
   children,
 }: {
   count: number;
   noun: string;
+  plural: string;
   children: React.ReactNode;
 }) {
   if (count === 0) return null;
   return (
-    <Disclosure label={`${count} ${noun} with none in this window`}>
+    <Disclosure
+      label={`${count} ${count === 1 ? noun : plural} with none in this window`}
+    >
       {children}
     </Disclosure>
   );
@@ -371,14 +464,26 @@ function ByPerson({
   const line = (p: EffectivenessReport["per_user"][number]) => (
     <div
       key={p.slug}
-      className="flex items-center justify-between gap-3 text-sm"
+      className="flex flex-col gap-0.5 text-sm xl:flex-row xl:items-center xl:justify-between xl:gap-3"
     >
       {/* `min-w-0` is what makes `truncate` actually truncate here. `truncate` sets
           `white-space: nowrap`, so this flex child's min-content width is the WHOLE name — without
           `min-w-0` it refuses to shrink, and a long name pushes the line past a phone's screen
           instead of ellipsing (the dashboard scrolled 134px sideways at 390px). */}
-      <span className="min-w-0 truncate">{p.display_name || p.username}</span>
-      <CountBar watched={p.watched} delivered={p.delivered} max={max} />
+      {/* `flex-1`: the name is the half that gets whatever room is left, so it only ellipses when
+          the card genuinely cannot hold it. Below `xl` the line stacks instead. `lg` was measured
+          and rejected: that is exactly where these cards go two-across, so a card is ~360px and the
+          counts alone want ~290 of it — the name came out at 55px, worse than before the fix. The
+          two only fit side by side once a card is ~500px, which is `xl`. */}
+      <span className="min-w-0 truncate xl:flex-1">
+        {p.display_name || p.username}
+      </span>
+      <CountBar
+        watched={p.watched}
+        finished={p.finished}
+        delivered={p.delivered}
+        max={max}
+      />
     </div>
   );
 
@@ -387,7 +492,7 @@ function ByPerson({
       title="By person"
       // "Most watched first" is load-bearing here, not decoration: only the top ten are shown
       // outright, so without it the fold looks arbitrary rather than like the bottom of a ranking.
-      hint={`Picks watched in ${WINDOW_PHRASE[reportWindow]}, of picks delivered. Most watched first.`}
+      hint={`Most watched first · ${WINDOW_PHRASE[reportWindow]}`}
     >
       {active.length === 0 && idle.length === 0 ? (
         <p className="text-sm text-muted-foreground">
@@ -413,7 +518,7 @@ function ByPerson({
               {overflow.map(line)}
             </Disclosure>
           )}
-          <ZeroDisclosure count={idle.length} noun="people">
+          <ZeroDisclosure count={idle.length} noun="person" plural="people">
             {idle.map(line)}
           </ZeroDisclosure>
         </>
@@ -438,9 +543,9 @@ function ByRow({
   const line = (r: EffectivenessReport["per_row"][number]) => (
     <div
       key={`${r.slug}-${r.section_key}-${r.library}`}
-      className="flex items-center justify-between gap-3 text-sm"
+      className="flex flex-col gap-0.5 text-sm xl:flex-row xl:items-center xl:justify-between xl:gap-3"
     >
-      <span className="flex min-w-0 items-center gap-1.5">
+      <span className="flex min-w-0 items-center gap-1.5 xl:flex-1">
         {/* `min-w-0` for the same reason as ByPerson above: `truncate` alone cannot shrink a flex
             child, so the row name held the line open past the screen. */}
         <span
@@ -456,14 +561,19 @@ function ByRow({
           </Badge>
         )}
       </span>
-      <CountBar watched={r.watched} delivered={r.delivered} max={max} />
+      <CountBar
+        watched={r.watched}
+        finished={r.finished}
+        delivered={r.delivered}
+        max={max}
+      />
     </div>
   );
 
   return (
     <Section
       title="By row"
-      hint={`Picks watched in ${WINDOW_PHRASE[reportWindow]}, of picks delivered. Most watched first.`}
+      hint={`Most watched first · ${WINDOW_PHRASE[reportWindow]}`}
     >
       {live.length === 0 && gone.length === 0 ? (
         <p className="text-sm text-muted-foreground">
@@ -648,7 +758,12 @@ function ReportBody({
       {selector}
 
       {/* Is it working? Counts for the window, each against the previous equal period. */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Five tiles never divide evenly, so the last one spans the full width on a phone rather
+          than sitting alone in a half-width cell with a gap beside it. And five ACROSS starts at
+          `xl`, not `lg`: at 1024 five columns are ~148px each, which wraps "PEOPLE WATCHING" and
+          "TIME TO WATCH" onto two lines while their neighbours stay on one, so the row of tiles
+          comes out different heights. Three columns at that width fit every label on one line. */}
+      <div className="grid grid-cols-2 gap-3 [&>*:last-child]:col-span-2 sm:grid-cols-3 sm:[&>*:last-child]:col-span-1 xl:grid-cols-5">
         <StatTile
           icon={TrendingUp}
           label="Watched"
@@ -656,7 +771,26 @@ function ReportBody({
           hint={
             <Delta value={overall.watched_delta} reportWindow={reportWindow} />
           }
-          title="Picks people watched in this window. A pick delivered earlier and watched now counts here — this is about watching, not delivery."
+          title="Picks people started watching in this window. A series counts here from its first episode, which is Plex's own definition — see Finished for the ones they saw out. A pick delivered earlier and watched now counts here: this is about watching, not delivery."
+        />
+        {/* Beside Watched, never instead of it. A series is credited as watched on one episode, so
+            the two numbers together are what say whether a pick was enjoyed or merely sampled —
+            measured on a real server, only 21 of 158 credited show picks had actually been
+            finished. */}
+        {/* No `Delta` here, unlike its neighbours, and that is deliberate: this window's finishes
+            are counted as of now while the previous window's had a whole extra period to complete,
+            so a steady server would render a permanent decline. The hint says what the number is a
+            share OF instead, which is the comparison that actually reads. */}
+        <StatTile
+          icon={CheckCircle2}
+          label="Finished"
+          value={overall.finished}
+          hint={
+            overall.watched > 0
+              ? `of ${overall.watched} watched`
+              : "nothing watched yet"
+          }
+          title="Of the picks watched, the ones they saw out: a film played, or a series with every episode watched. Plex publishes no finished flag for a series, so this counts episodes."
         />
         <StatTile
           icon={UsersIcon}
@@ -703,14 +837,14 @@ function ReportBody({
       <div className="grid gap-4 lg:grid-cols-2">
         <Section
           title="Watches per week"
-          hint="The long view — always the last 16 weeks, whatever window is selected."
+          hint="Always the last 16 weeks, whatever window is selected."
         >
           <Trend trend={report.trend} />
         </Section>
 
         <Section
           title="Picks that get watched"
-          hint={`Are the recommendations any good? This is the share of delivered picks someone actually watched, within ${landing.matured_days} days of the pick landing.`}
+          hint={`The share of delivered picks watched within ${landing.matured_days} days of landing.`}
         >
           {landing.rate === null ? (
             // Say what it is waiting FOR and when it arrives — not the rule and a cutoff date the
@@ -750,11 +884,20 @@ function ReportBody({
                   : ` before ${formatDate(landing.cohort_to)}`}
                 .
               </p>
+              {/* The same cohort, the stricter question. Without it the headline percentage is the
+                  one number on the page that still counts a single episode of a series as a win. */}
+              <p className="text-sm text-muted-foreground">
+                <span className="font-medium text-foreground tabular-nums">
+                  {formatHitRate(landing.finished_rate)}
+                </span>{" "}
+                were finished ({landing.finished} of {landing.delivered}).
+              </p>
+              {/* One clause, not a paragraph. The reason a young pick is excluded (it has not had
+                  its chance yet) follows from the rule itself; spelling the reasoning out was four
+                  lines of prose under a single number. */}
               <p className="text-xs text-muted-foreground/80">
-                Measured only over picks old enough to have had their full{" "}
-                {landing.matured_days} days — a pick delivered yesterday can’t
-                have been watched “within 30 days” yet, so counting it would
-                drag this toward zero for no reason.
+                Only picks that have had their full {landing.matured_days} days
+                are counted.
               </p>
             </div>
           )}
@@ -770,7 +913,7 @@ function ReportBody({
         {report.top_titles.length > 0 && (
           <Section
             title="Most watched"
-            hint={`The picks the most people watched in ${WINDOW_PHRASE[reportWindow]}.`}
+            hint={`Most watchers first · ${WINDOW_PHRASE[reportWindow]}`}
           >
             <ul className="space-y-1 text-sm">
               {report.top_titles.map((t) => (
@@ -831,6 +974,21 @@ function ReportBody({
 const RECENT_SHOWN = 12;
 
 /**
+ * "watched", "finished" or "started" — the distinction the rest of this page already draws.
+ *
+ * A FILM keeps "watched": it has no middle state, so "finished" would add a word without adding a
+ * fact, and "started" would be wrong for the overwhelmingly common case. A SERIES is credited by
+ * Plex on its first finished episode, so "watched" there means only that they began it — measured
+ * on a real server, 21 of 158 credited show picks had actually been seen out. Saying "watched" for
+ * the other 137 overstates the result on the one page that exists to report it, and contradicts the
+ * By-row card directly above, which has said "N watched · M finished" all along.
+ */
+function watchVerb(watch: EffectivenessReport["recent"][number]): string {
+  if (watch.media_type !== "show") return "watched";
+  return watch.finished_at ? "finished" : "started";
+}
+
+/**
  * The newest watches, newest first.
  *
  * The extras used to be `slice(0, 12)` and nothing else: the server sends up to 20, so eight of
@@ -855,7 +1013,7 @@ function RecentlyWatched({
       <span className="font-medium text-foreground">
         {w.display_name || w.username}
       </span>
-      watched
+      {watchVerb(w)}
       <span className="text-foreground">{w.title}</span>
       <Badge variant="secondary" className="font-normal">
         {w.row}

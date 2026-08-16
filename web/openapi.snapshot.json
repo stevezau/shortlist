@@ -1772,6 +1772,21 @@
             "title": "Delivered",
             "type": "integer"
           },
+          "finished": {
+            "title": "Finished",
+            "type": "integer"
+          },
+          "finished_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished Rate"
+          },
           "matured_days": {
             "title": "Matured Days",
             "type": "integer"
@@ -1795,6 +1810,8 @@
         "required": [
           "delivered",
           "watched",
+          "finished",
+          "finished_rate",
           "rate",
           "cohort_from",
           "cohort_to",
@@ -2135,6 +2152,10 @@
             "title": "Delivered",
             "type": "integer"
           },
+          "finished": {
+            "title": "Finished",
+            "type": "integer"
+          },
           "landing": {
             "$ref": "#/components/schemas/LandingOut"
           },
@@ -2173,6 +2194,7 @@
           "watched",
           "watched_prev",
           "watched_delta",
+          "finished",
           "avg_days_to_watch",
           "avg_days_to_watch_delta",
           "landing"
@@ -2267,6 +2289,10 @@
             "title": "Delivered",
             "type": "integer"
           },
+          "finished": {
+            "title": "Finished",
+            "type": "integer"
+          },
           "library": {
             "title": "Library",
             "type": "string"
@@ -2295,7 +2321,8 @@
           "name",
           "deleted",
           "delivered",
-          "watched"
+          "watched",
+          "finished"
         ],
         "title": "PerRowOut",
         "type": "object"
@@ -2310,6 +2337,10 @@
           "display_name": {
             "title": "Display Name",
             "type": "string"
+          },
+          "finished": {
+            "title": "Finished",
+            "type": "integer"
           },
           "slug": {
             "title": "Slug",
@@ -2329,7 +2360,8 @@
           "display_name",
           "slug",
           "delivered",
-          "watched"
+          "watched",
+          "finished"
         ],
         "title": "PerUserOut",
         "type": "object"
@@ -2781,6 +2813,17 @@
             "title": "Display Name",
             "type": "string"
           },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
           "library": {
             "title": "Library",
             "type": "string"
@@ -2825,7 +2868,8 @@
           "row",
           "library",
           "seed_title",
-          "watched_at"
+          "watched_at",
+          "finished_at"
         ],
         "title": "RecentWatchOut",
         "type": "object"
@@ -3040,6 +3084,11 @@
             "title": "Media Type",
             "type": "string"
           },
+          "overview": {
+            "default": "",
+            "title": "Overview",
+            "type": "string"
+          },
           "poster_path": {
             "default": "",
             "title": "Poster Path",
@@ -3211,6 +3260,10 @@
             "title": "Delivered",
             "type": "integer"
           },
+          "finished": {
+            "title": "Finished",
+            "type": "integer"
+          },
           "first_delivered_at": {
             "anyOf": [
               {
@@ -3266,6 +3319,7 @@
         "required": [
           "delivered",
           "watched",
+          "finished",
           "runs",
           "first_delivered_at",
           "last_delivered_at",
@@ -3282,6 +3336,10 @@
         "properties": {
           "delivered": {
             "title": "Delivered",
+            "type": "integer"
+          },
+          "finished": {
+            "title": "Finished",
             "type": "integer"
           },
           "library": {
@@ -3308,6 +3366,7 @@
           "library",
           "delivered",
           "watched",
+          "finished",
           "rate"
         ],
         "title": "RowLibraryEffectiveness",
@@ -3323,6 +3382,10 @@
           },
           "delivered": {
             "title": "Delivered",
+            "type": "integer"
+          },
+          "finished": {
+            "title": "Finished",
             "type": "integer"
           },
           "rate": {
@@ -3344,6 +3407,7 @@
         "required": [
           "delivered",
           "watched",
+          "finished",
           "rate",
           "cohort_to"
         ],
@@ -4988,6 +5052,10 @@
       "TrendPointOut": {
         "additionalProperties": true,
         "properties": {
+          "finished": {
+            "title": "Finished",
+            "type": "integer"
+          },
           "watched": {
             "title": "Watched",
             "type": "integer"
@@ -4999,7 +5067,8 @@
         },
         "required": [
           "week",
-          "watched"
+          "watched",
+          "finished"
         ],
         "title": "TrendPointOut",
         "type": "object"
@@ -6086,7 +6155,7 @@
   },
   "info": {
     "title": "Shortlist",
-    "version": "1.5.2"
+    "version": "1.6.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -9224,7 +9293,7 @@
     },
     "/api/system/jobs": {
       "get": {
-        "description": "Recent background jobs, newest first \u2014 the \"did that actually happen?\" answer.\n\nMaintenance work used to be fire-and-forget: it landed in the logs and the events table and\nnowhere an operator would look. Runs keep their own page; this is everything else.\n\n`kind` narrows it to one job type, which is how the Jobs page shows a single job's own history\nwithout pulling every other kind's rows down with it. `before_id` pages backwards \u2014 pass the id\nof the oldest job you already have.",
+        "description": "Recent background jobs, newest first \u2014 the \"did that actually happen?\" answer.\n\nMaintenance work used to be fire-and-forget: it landed in the logs and the events table and\nnowhere an operator would look. Runs keep their own page; this is everything else.\n\n`kind` narrows it to one job type, which is how the Jobs page shows a single job's own history\nwithout pulling every other kind's rows down with it. `before_id` pages backwards \u2014 pass the id\nof the oldest job you already have.\n\n`status` narrows it to one outcome, and it exists because the Jobs page's \"N failed\" badge\ncounts every failed row in the table while the feed behind it could only fetch the newest N.\nMeasured on a real server: 8 failures, all `privacy.sync`, at ids 587-596 \u2014 the newest hundred\njobs started at id 680, so filtering a fetched page client-side answered \"8 failed\" with an\nempty list. A count over the whole table needs a filter over the whole table.",
         "operationId": "list_jobs_api_system_jobs_get",
         "parameters": [
           {
@@ -9269,6 +9338,28 @@
                 }
               ],
               "title": "Before Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "queued",
+                    "running",
+                    "done",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
             }
           }
         ],

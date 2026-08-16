@@ -76,18 +76,11 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
                 "how much detail Shortlist writes to its logs" sent people to TRACE for a bug report
                 and gave them a download with no prompts in it. */}
             <p className="text-sm text-muted-foreground">
-              How much detail Shortlist prints to the container&rsquo;s console
-              &mdash; what you see in <code>docker logs</code>.
+              How much detail reaches <code>docker logs</code>. Applies straight
+              away, and never affects the <strong>Logs</strong> page or its
+              download &mdash; the file always records DEBUG.
               <br />
-              The <strong>Logs</strong> page and its download are not affected:
-              the log file always records DEBUG detail, whatever this is set to.
-              <br />
-              <strong>DEBUG</strong> adds per-source pick counts and AI timing
-              and token use. <strong>TRACE</strong> also prints the full AI
-              prompts &mdash; to the console only, since the log file stops at
-              DEBUG.
-              <br />
-              Changes apply straight away &mdash; no restart.
+              <strong>TRACE</strong> adds the full AI prompts, console only.
             </p>
           </div>
           <Segmented<Level>
@@ -99,13 +92,9 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
           <div className="border-t pt-4">
             <p className="font-medium">Run concurrency</p>
             <p className="text-sm text-muted-foreground">
-              How many people a run works on at the same time.
-              <br />
-              Only the reading and AI steps overlap — changes to Plex are always
-              made one at a time, in order, so this never affects privacy.
-              <br />
-              Higher is faster on big servers. Set to <strong>1</strong> to work
-              through people one after another.
+              How many people a run reads and curates at once — higher is faster
+              on a big server. Writes to Plex stay one at a time whatever this
+              says, so it never affects privacy.
             </p>
           </div>
           <NumberPresets
@@ -120,14 +109,10 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
           <div className="border-t pt-4">
             <p className="font-medium">Plex request timeout</p>
             <p className="text-sm text-muted-foreground">
-              How long to wait on a single Plex request before giving up and
-              retrying it.
-              <br />
-              Rebuilding a big library&rsquo;s row (a TV row on a large server)
-              can legitimately take 15&ndash;20s — set this too low and those
-              time out and retry, slowing the whole run. Raise it if you see
-              &ldquo;PMS SLOW … ERR&rdquo; timeouts in the log; lower it to give
-              up on a stalled server faster.
+              How long to wait on one Plex request before retrying it. A TV row
+              on a big server can legitimately take 15&ndash;20s, so too low
+              here makes runs slower, not faster. Raise it if the log shows
+              &ldquo;PMS SLOW … ERR&rdquo;.
             </p>
           </div>
           <NumberPresets
@@ -164,17 +149,10 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
                 changed on whose account, which an operator may want long after the run detail around
                 it has gone — so it defaults to Forever while runs default to three months. */}
             <p className="text-sm text-muted-foreground">
-              How long to keep the log of what Shortlist has changed &mdash;
-              each write to a Plex collection or to someone&rsquo;s sharing
-              settings, and each change you make to these settings.
-              <br />
-              Cleared out by the same nightly tidy-up as run history.{" "}
-              <strong>Forever</strong> keeps every entry, and is the default:
-              it&rsquo;s the only lasting record of what changed on whose
-              account, so it outlives the runs it belongs to.
-              <br />
-              There is no screen for it yet &mdash; it&rsquo;s read through
-              Shortlist&rsquo;s API, at <code>/api/events/log</code>.
+              How long to keep the record of every write to Plex and every
+              settings change. <strong>Forever</strong> by default &mdash; it is
+              the only lasting account of what changed on whose account. Read it
+              at <code>/api/events/log</code>; it has no screen yet.
             </p>
           </div>
           <NumberPresets

@@ -56,6 +56,8 @@ function renderReport() {
 const LANDING = {
   delivered: 10,
   watched: 4,
+  finished: 3,
+  finished_rate: 0.3,
   rate: 0.4,
   cohort_from: "2026-05-30T00:00:00Z",
   cohort_to: "2026-06-29T00:00:00Z",
@@ -94,6 +96,7 @@ const REPORT: EffectivenessReport = {
     watched: 4,
     watched_prev: 2,
     watched_delta: 2,
+    finished: 3,
     avg_days_to_watch: 3.5,
     avg_days_to_watch_delta: -0.8,
     landing: LANDING,
@@ -102,7 +105,7 @@ const REPORT: EffectivenessReport = {
   top_titles: [
     { tmdb_id: 1, media_type: "movie", title: "Dune: Part Two", watchers: 3 },
   ],
-  trend: [{ week: "2026-28", watched: 4 }],
+  trend: [{ week: "2026-28", watched: 4, finished: 3 }],
   per_user: [
     {
       username: "sarah",
@@ -110,6 +113,7 @@ const REPORT: EffectivenessReport = {
       slug: "sarah",
       delivered: 6,
       watched: 3,
+      finished: 1,
     },
   ],
   per_row: [
@@ -121,6 +125,7 @@ const REPORT: EffectivenessReport = {
       deleted: false,
       delivered: 10,
       watched: 4,
+      finished: 4,
     },
     {
       slug: "faves",
@@ -130,6 +135,7 @@ const REPORT: EffectivenessReport = {
       deleted: false,
       delivered: 6,
       watched: 3,
+      finished: 0,
     },
   ],
   recent: [
@@ -142,6 +148,7 @@ const REPORT: EffectivenessReport = {
       library: "Movies",
       seed_title: "Arrival",
       watched_at: new Date().toISOString(),
+      finished_at: new Date().toISOString(),
     },
   ],
 };
@@ -184,6 +191,34 @@ describe("ImpactReport", () => {
     expect(screen.getByText("TV Shows")).toBeTruthy(); // the library badge on the plain-named row
   });
 
+  it("shows Finished beside Watched, never instead of it", async () => {
+    // A series is credited as watched on its FIRST episode, so a lone watched count says nothing
+    // about whether anyone saw a thing out. Both numbers have to be on the page for that to read.
+    renderReport();
+
+    expect(await screen.findByText("Watched")).toBeTruthy();
+    // The tile, not just the word: `parentElement` is the tile body, so this asserts the label is
+    // showing ITS number and not merely that a 3 exists somewhere on a page full of numbers.
+    expect(screen.getByText("Finished").parentElement?.textContent).toContain(
+      "3",
+    );
+    expect(screen.getByText("Watched").parentElement?.textContent).toContain(
+      "4",
+    );
+  });
+
+  it("qualifies each person and row line with what was actually finished", async () => {
+    // The line that makes the difference visible: the TV row landed 3 and finished none of them,
+    // while the movie row finished all 4 it landed. Before the split these rendered identically.
+    // Asserted against the rendered text because the count and its word are separate elements.
+    renderReport();
+    await screen.findByText("Watched");
+
+    const page = document.body.textContent ?? "";
+    expect(page).toContain("4 watched · 4 finished");
+    expect(page).toContain("3 watched · 0 finished");
+  });
+
   it("defaults to the 30-day window and refetches when it changes", async () => {
     renderReport();
     await screen.findByText("Watched");
@@ -203,7 +238,7 @@ describe("ImpactReport", () => {
     expect(screen.getByText(/4 of 10 picks delivered/i)).toBeTruthy();
     // The caveat is the point — without it "40%" is just another number with no meaning.
     expect(
-      screen.getByText(/old enough to have had their full 30 days/i),
+      screen.getByText(/only picks that have had their full 30 days/i),
     ).toBeTruthy();
   });
 
@@ -349,9 +384,9 @@ describe("ImpactReport", () => {
     getReport.mockResolvedValue({
       ...REPORT,
       trend: [
-        { week: "2026-27", watched: 9 },
-        { week: "2026-28", watched: 2 },
-        { week: "2026-32", watched: 5 },
+        { week: "2026-27", watched: 9, finished: 4 },
+        { week: "2026-28", watched: 2, finished: 0 },
+        { week: "2026-32", watched: 5, finished: 5 },
       ],
     });
     renderReport();
@@ -379,6 +414,7 @@ describe("ImpactReport", () => {
       slug: `user${i}`,
       delivered: 5,
       watched: 12 - i,
+      finished: Math.max(0, 6 - i),
     }));
     getReport.mockResolvedValue({ ...REPORT, per_user: many });
     renderReport();
@@ -431,7 +467,17 @@ describe("ImpactReport", () => {
         ...REPORT.overall,
         delivered: 0,
         watched: 0,
-        landing: { ...LANDING, delivered: 0, watched: 0, rate: null },
+        // `finished` must come down with `watched`: it is a proven subset server-side, so
+        // `watched: 0, finished: 3` is a payload the API cannot emit, and inheriting it left the
+        // zero-watched branch of the Finished hint rendered by this test but asserted by nothing.
+        finished: 0,
+        landing: {
+          ...LANDING,
+          delivered: 0,
+          watched: 0,
+          finished: 0,
+          rate: null,
+        },
       },
       runs: { ...EMPTY.runs, total: 0, in_window: 0 },
       requests: { sent: 0, pending: 0, watched_after_sent: 0 },
@@ -447,6 +493,47 @@ describe("ImpactReport", () => {
     ).toBeTruthy();
   });
 
+  it("says nothing was watched rather than dividing by it", async () => {
+    // The Finished tile's hint is "of N watched". At N = 0 that would read "of 0 watched", so it
+    // has its own branch — rendered by the empty-window test below and, until now, asserted by
+    // nothing.
+    getReport.mockResolvedValue({
+      ...REPORT,
+      overall: { ...REPORT.overall, watched: 0, finished: 0 },
+    });
+    renderReport();
+
+    expect(await screen.findByText(/nothing watched yet/i)).toBeTruthy();
+  });
+
+  it("draws a finished segment inside each trend column", async () => {
+    // `trend[].finished` reached the DOM through an untyped mock, so a fixture missing the field
+    // produced `height: "NaN%"` — silently dropped by the CSSOM, with every test still green.
+    // This asserts the segment is actually drawn, and drawn at a real height.
+    //
+    // Three weeks, supplied here rather than in the shared fixture: `Trend` short-circuits to a
+    // single number below three points, so a one-week fixture renders no columns at all and every
+    // column assertion becomes vacuous.
+    getReport.mockResolvedValue({
+      ...REPORT,
+      trend: [
+        { week: "2026-27", watched: 9, finished: 4 },
+        { week: "2026-28", watched: 2, finished: 0 },
+        { week: "2026-32", watched: 5, finished: 5 },
+      ],
+    });
+    renderReport();
+    await screen.findByText("Watched");
+
+    const columns = document.querySelectorAll('[data-testid="trend-week"]');
+    expect(columns.length).toBeGreaterThan(0);
+    const heights = [...columns].flatMap((c) =>
+      [...c.children].map((el) => (el as HTMLElement).style.height),
+    );
+    expect(heights.length).toBeGreaterThan(0);
+    expect(heights.every((h) => h !== "" && !h.includes("NaN"))).toBe(true);
+  });
+
   it("distinguishes an empty window from an empty install", async () => {
     getReport.mockResolvedValue({
       ...REPORT,
@@ -454,7 +541,17 @@ describe("ImpactReport", () => {
         ...REPORT.overall,
         delivered: 0,
         watched: 0,
-        landing: { ...LANDING, delivered: 0, watched: 0, rate: null },
+        // `finished` must come down with `watched`: it is a proven subset server-side, so
+        // `watched: 0, finished: 3` is a payload the API cannot emit, and inheriting it left the
+        // zero-watched branch of the Finished hint rendered by this test but asserted by nothing.
+        finished: 0,
+        landing: {
+          ...LANDING,
+          delivered: 0,
+          watched: 0,
+          finished: 0,
+          rate: null,
+        },
       },
       per_user: [],
       per_row: [],
@@ -625,5 +722,73 @@ describe("ImpactReport — recently watched", () => {
 
     expect(await screen.findByText(/newest watch/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Show .* more/i })).toBeNull();
+  });
+});
+
+describe("ImpactReport — the recent feed says which kind of watch it was", () => {
+  beforeEach(() => {
+    getReport.mockReset();
+    getDeletedRows.mockReset();
+    getDeletedRows.mockResolvedValue([]);
+  });
+
+  function withRecent(
+    recent: Partial<(typeof REPORT)["recent"][number]>[],
+  ): void {
+    getReport.mockResolvedValue({
+      ...REPORT,
+      recent: recent.map((r) => ({ ...REPORT.recent[0]!, ...r })),
+    });
+  }
+
+  it("says a series was only STARTED when nobody saw it out", async () => {
+    // Plex credits a series on its first finished episode, so "watched" here has always meant
+    // "began". Measured on a real server: 21 of 158 credited show picks were actually finished.
+    withRecent([
+      {
+        title: "Love, Death & Robots",
+        media_type: "show",
+        finished_at: null,
+      },
+    ]);
+    renderReport();
+
+    const line = await screen.findByText(/Love, Death & Robots/);
+    expect(line.closest("li")).toHaveTextContent(/started/i);
+    expect(line.closest("li")).not.toHaveTextContent(/watched/i);
+  });
+
+  it("says FINISHED for a series they saw out", async () => {
+    withRecent([
+      {
+        title: "Fleabag",
+        media_type: "show",
+        finished_at: new Date().toISOString(),
+      },
+    ]);
+    renderReport();
+
+    const line = await screen.findByText(/Fleabag/);
+    expect(line.closest("li")).toHaveTextContent(/finished/i);
+  });
+
+  it("leaves a FILM as watched, finished or not", async () => {
+    // A film has no middle state. "finished" adds a word without adding a fact, and "started" would
+    // be wrong for the overwhelmingly common case — so the split must not reach movies at all.
+    withRecent([
+      { title: "The Martian", media_type: "movie", finished_at: null },
+      {
+        title: "Toy Story",
+        media_type: "movie",
+        finished_at: new Date().toISOString(),
+      },
+    ]);
+    renderReport();
+
+    for (const title of ["The Martian", "Toy Story"]) {
+      const line = (await screen.findByText(title)).closest("li");
+      expect(line).toHaveTextContent(/watched/i);
+      expect(line).not.toHaveTextContent(/started|finished/i);
+    }
   });
 });

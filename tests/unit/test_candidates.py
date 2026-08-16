@@ -130,6 +130,7 @@ class TestGatherCandidates:
             "genre_ids": [],
             "vote_average": 8.0,
             "poster_path": "/art.jpg",
+            "overview": "A synopsis.",
         }
         trakt = _FakeTrakt([{"tmdb_id": 42, "title": "Both", "year": 2020, "genres": []}])
 
@@ -150,6 +151,7 @@ class TestGatherCandidates:
 
         both = next(c for c in pool if c.tmdb_id == 42)
         assert both.poster_path == "/art.jpg"
+        assert both.overview == "A synopsis."  # the synopsis folds on the same rule, for the same reason
         assert both.sources == {"trakt", "llm_web"}  # one candidate, owned by both
 
     def test_genre_map_fetched_once_per_media_type(self, mock_tmdb):

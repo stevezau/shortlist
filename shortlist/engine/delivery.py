@@ -23,6 +23,47 @@ from shortlist.engine.models import (
 
 DEFAULT_ROW_NAME = "✨ Picked for You"
 
+
+def _rename_or_keep(collection, title: str, profile: UserProfile, section_title: str) -> None:
+    """Rename a row in place, keeping its old name if Plex refuses the new one.
+
+    A Plex collection is keyed by TITLE within a library, so a rename onto a title that already
+    exists there answers 409 Conflict. The rebuild path a few lines below already knows this and
+    deletes first to avoid it; this path did not, and an unguarded `editTitle` took the whole PERSON
+    down with it — recorded on a real server (run 4, 2026-08-15):
+
+        BadRequest: (409) conflict; …title.value=🎯 Because you watched Ted Lasso…&type=18
+
+    That user got no rows at all that night, over a name. A `{top_seed}` row renames itself whenever
+    the seed it is named after changes, so it is the one row whose title moves onto ground another
+    row of the same person's may already be standing on.
+
+    Keeping the old title is the safe failure: it still carries this account's marker, so nothing
+    becomes visible to anyone new, and the row's MEMBERSHIP — the part that matters — is written by
+    the caller either way. A stale name for one night beats an empty row.
+    """
+    try:
+        collection.editTitle(title)
+    except Exception as exc:  # plexapi raises BadRequest; the status is only in the message
+        # `startswith`, NOT `"409" in`. plexapi formats the message as
+        # `f'({status}) {codename}; {url} {errtext}'` (`plexapi/server.py:752`), and for `editTitle`
+        # that url carries `id=<ratingKey>` — so a substring test matches the COLLECTION'S OWN KEY.
+        # Measured: a 500 on ratingKey 40953, a 401 on ratingKey 1409 and a 503 on ratingKey 24091
+        # were all swallowed, each logging "409 — a collection there already has that title", which
+        # is a lie about a failure that then went unreported. The status is always the leading
+        # token, so anchoring it is exact.
+        if not str(exc).startswith("(409)"):
+            raise
+        logger.warning(
+            "{}: Plex refused to rename '{}' to '{}' in '{}' (409 — a collection there already has "
+            "that title). Keeping the old name; the row's titles are still updated.",
+            profile.username,
+            log_title(collection.title),
+            log_title(title),
+            section_title,
+        )
+
+
 # When a row's update would remove at least this many items, rebuild the collection (delete + one
 # batched create) instead of firing that many per-item removeItems DELETEs. plexapi has no bulk
 # remove, and on a slow library each DELETE is expensive (SFLIX TV rows ~15s each), so a big turnover
@@ -1133,7 +1174,7 @@ def _deliver_one(
         return diff, stored
 
     if collection.title != title:
-        collection.editTitle(title)
+        _rename_or_keep(collection, title, profile, section.title)
 
     if not to_add_keys and to_remove_count == 0:
         # Membership already IS the wanted set — skip the add/remove/sortUpdate writes entirely. An

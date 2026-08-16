@@ -715,7 +715,9 @@ describe("JobsPage — sync check", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /^Activity$/ }));
 
-    expect(getJobs).toHaveBeenCalledWith(undefined, 100);
+    // The third argument is the status filter, and `undefined` is load-bearing: the unfiltered
+    // feed must ask the server for everything, not quietly narrow itself.
+    expect(getJobs).toHaveBeenCalledWith(undefined, 100, undefined);
     // The feed names the JOB, not the raw kind — `privacy.sync` means nothing to an operator.
     expect(await screen.findByText("Privacy sync")).toBeInTheDocument();
     expect(
@@ -953,5 +955,100 @@ describe("JobsPage — the schedule panel for a job you can switch off", () => {
     // And no second way back to the default: Daily already IS it here, so a Built-in chip beside it
     // would be two chips for one state.
     expect(within(row).queryByRole("button", { name: /Built-in/ })).toBeNull();
+  });
+});
+
+describe("JobsPage — the failure count has to lead somewhere", () => {
+  beforeEach(() => {
+    getJobCatalog.mockReset();
+    getJobs.mockReset();
+  });
+
+  /** The shape measured on a real server: the LAST run of every job succeeded, and the failures
+   *  are older rows sitting behind those green ticks. */
+  const HEALTHY_LOOKING_BUT_FAILED = [
+    entry("privacy.sync", {
+      label: "Privacy sync",
+      failed: 8,
+      total: 200,
+      last: {
+        id: 779,
+        kind: "privacy.sync",
+        status: "done",
+        attempts: 1,
+        max_attempts: 3,
+        detail: "Share filters merged for every account",
+        error: null,
+        created_at: "2026-08-16T21:30:00Z",
+        started_at: null,
+        finished_at: null,
+      },
+    }),
+  ];
+
+  /** What an unfiltered fetch returns: recent, healthy, and hiding nothing useful. */
+  const RECENT_SUCCESS = {
+    id: 779,
+    kind: "privacy.sync",
+    status: "done",
+    attempts: 1,
+    max_attempts: 3,
+    detail: "Share filters merged for every account",
+    error: null,
+    created_at: "2026-08-16T21:30:00Z",
+    started_at: null,
+    finished_at: null,
+  };
+
+  const OLD_FAILURE = {
+    id: 596,
+    kind: "privacy.sync",
+    status: "failed",
+    attempts: 3,
+    max_attempts: 3,
+    detail: null,
+    error:
+      "ConnectionError: Failed to establish a new connection: No route to host",
+    created_at: "2026-08-14T06:30:00Z",
+    started_at: null,
+    finished_at: null,
+  };
+
+  it("makes the failure count a way in, not a label", async () => {
+    // The badge was a bare <span> while its "N running" sibling was a button. Nothing else on the
+    // Jobs tab pointed at these failures either: the job's own status chip reports its LAST
+    // attempt, which succeeded, so the count was the only evidence they existed.
+    getJobCatalog.mockResolvedValue(HEALTHY_LOOKING_BUT_FAILED);
+    getJobs.mockResolvedValue([OLD_FAILURE]);
+    renderPage();
+
+    const badge = await screen.findByRole("button", { name: /8 failed/i });
+    await userEvent.click(badge);
+
+    // Asks the SERVER for failures rather than filtering whatever page it happened to hold: on the
+    // real server all eight sat past the newest hundred jobs.
+    await waitFor(() =>
+      expect(getJobs).toHaveBeenCalledWith(undefined, 100, "failed"),
+    );
+    // And the reason is on screen, which is the whole point of following the badge.
+    expect(await screen.findByText(/No route to host/i)).toBeInTheDocument();
+  });
+
+  it("never claims nothing failed while the badge says otherwise", async () => {
+    // The mock behaves like the real endpoint, which is the whole point: an UNFILTERED fetch
+    // returns the newest page, and on the real server every one of the eight failures sat past the
+    // end of it (ids 587-596, newest hundred starting at 680). Filtering that page client-side
+    // therefore rendered "No failed jobs. Nothing has given up — that's the good outcome."
+    // directly beneath a badge reading "8 failed". A confident wrong answer is worse than the dead
+    // end it replaced, and only a mock that can tell the two requests apart can catch it.
+    getJobCatalog.mockResolvedValue(HEALTHY_LOOKING_BUT_FAILED);
+    getJobs.mockImplementation(
+      (_kind: string | undefined, _limit: number, status?: string) =>
+        Promise.resolve(status === "failed" ? [OLD_FAILURE] : [RECENT_SUCCESS]),
+    );
+    renderPage("/jobs?tab=activity&filter=failed");
+
+    expect(await screen.findByText(/No route to host/i)).toBeInTheDocument();
+    expect(screen.queryByText(/that's the good outcome/i)).toBeNull();
   });
 });

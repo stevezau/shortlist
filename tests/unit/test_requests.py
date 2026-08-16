@@ -17,7 +17,15 @@ RADARR = ArrTarget(url="http://radarr.test", api_key="rk", quality_profile_id=1,
 SONARR = ArrTarget(url="http://sonarr.test", api_key="sk", quality_profile_id=1, root_folder="/tv")
 
 
-def _cand(tmdb_id: int, media: MediaType, *, rating: float = 8.0, votes: int = 500, poster: str = "") -> Candidate:
+def _cand(
+    tmdb_id: int,
+    media: MediaType,
+    *,
+    rating: float = 8.0,
+    votes: int = 500,
+    poster: str = "",
+    overview: str = "",
+) -> Candidate:
     return Candidate(
         tmdb_id=tmdb_id,
         title=f"t{tmdb_id}",
@@ -25,6 +33,7 @@ def _cand(tmdb_id: int, media: MediaType, *, rating: float = 8.0, votes: int = 5
         rating=rating,
         vote_count=votes,
         poster_path=poster,
+        overview=overview,
     )
 
 
@@ -106,13 +115,18 @@ class FakeTmdb:
         imdb: dict[int, str | None] | None = None,
         posters: dict[int, str] | None = None,
         poster_raises: bool = False,
+        overviews: dict[int, str] | None = None,
+        overview_raises: bool = False,
     ):
         self._tvdb = tvdb or {}
         self._raise_on = raise_on
         self._imdb = imdb or {}
         self._posters = posters or {}
         self._poster_raises = poster_raises
+        self._overviews = overviews or {}
+        self._overview_raises = overview_raises
         self.poster_calls: list[int] = []  # every tmdb_id a poster was actually looked up for
+        self.overview_calls: list[int] = []  # and every one a synopsis was looked up for
 
     def tvdb_id(self, tmdb_id: int, media_type: MediaType) -> int | None:
         if self._raise_on == tmdb_id:
@@ -130,6 +144,15 @@ class FakeTmdb:
         if self._poster_raises:
             raise RuntimeError("TMDB API error HTTP 503")
         return self._posters.get(tmdb_id, f"/poster-{tmdb_id}.jpg")
+
+    def overview(self, tmdb_id: int, media_type: MediaType) -> str:
+        # Must exist for the same reason poster_path must, and it is the same trap: the synopsis
+        # backfill sits inside a bare `except Exception`, so a fake without this method swallows an
+        # AttributeError and every assertion below passes against a backfill that never ran.
+        self.overview_calls.append(tmdb_id)
+        if self._overview_raises:
+            raise RuntimeError("TMDB API error HTTP 503")
+        return self._overviews.get(tmdb_id, f"synopsis for {tmdb_id}")
 
 
 class FakeMdbList:
@@ -201,6 +224,20 @@ class TestAccumulate:
         requests_mod.accumulate(reverse, [_cand(3, MediaType.MOVIE, poster="/art.jpg")])
         requests_mod.accumulate(reverse, [_cand(3, MediaType.MOVIE, poster="")])
         assert reverse[(3, MediaType.MOVIE)].poster_path == "/art.jpg"
+
+    def test_keeps_the_synopsis_from_whichever_copy_actually_has_one(self):
+        # Same fold rule as the poster, and it matters for the same reason: a Trakt-surfaced copy
+        # carries no synopsis, and letting it blank out TMDB's costs a detail call in the enrichment
+        # loop to buy back text that was already in hand.
+        demand: requests_mod.DemandMap = {}
+        requests_mod.accumulate(demand, [_cand(2, MediaType.MOVIE, overview="")])
+        requests_mod.accumulate(demand, [_cand(2, MediaType.MOVIE, overview="A synopsis.")])
+        assert demand[(2, MediaType.MOVIE)].overview == "A synopsis."
+
+        reverse: requests_mod.DemandMap = {}
+        requests_mod.accumulate(reverse, [_cand(3, MediaType.MOVIE, overview="A synopsis.")])
+        requests_mod.accumulate(reverse, [_cand(3, MediaType.MOVIE, overview="")])
+        assert reverse[(3, MediaType.MOVIE)].overview == "A synopsis."
 
     def test_tags_union_across_users_and_dedupe_blanks(self):
         demand: requests_mod.DemandMap = {}
@@ -327,6 +364,34 @@ class TestRequestMissing:
         assert by_title["From Trakt"].poster_path == "/poster-1.jpg"  # looked up
         assert by_title["From TMDB"].poster_path == "/already.jpg"  # left alone
         assert tmdb.poster_calls == [1]  # and the one that had art cost no call at all
+
+    def test_backfills_a_missing_synopsis_but_leaves_one_it_already_has(self, monkeypatch):
+        """The inbox's whole point is judging an unfamiliar title, so a poster-less source's title
+        needs its synopsis bought too — and a title that arrived with one must not pay for it."""
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        demand = self._demand(
+            MissingTitle(1, "From Trakt", MediaType.MOVIE, 2020, rating=8.0, vote_count=500, overview=""),
+            MissingTitle(2, "From TMDB", MediaType.MOVIE, 2020, rating=8.0, vote_count=500, overview="Already known."),
+        )
+        tmdb = FakeTmdb()
+        report = requests_mod.request_missing(_cfg(radarr=RADARR), tmdb, demand, dry_run=False)
+        by_title = {m.title: m for m in report.sent}
+        assert by_title["From Trakt"].overview == "synopsis for 1"  # looked up
+        assert by_title["From TMDB"].overview == "Already known."  # left alone
+        assert tmdb.overview_calls == [1]  # and the one that had text cost no call at all
+
+    def test_a_failing_synopsis_lookup_never_fails_the_run(self, monkeypatch):
+        """TMDB being down must cost a paragraph, not the whole request pass."""
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        demand = self._demand(MissingTitle(1, "no text", MediaType.MOVIE, 2020, rating=8.0, vote_count=500))
+        report = requests_mod.request_missing(
+            _cfg(radarr=RADARR), FakeTmdb(overview_raises=True), demand, dry_run=False
+        )
+        # Still requested, and carrying "" — never None, which the NOT NULL column rejects.
+        assert [m.title for m in report.sent] == ["no text"]
+        assert report.sent[0].overview == ""
 
     def test_a_failing_poster_lookup_never_fails_the_run(self, monkeypatch):
         """TMDB being down must cost a picture, not the whole request pass."""

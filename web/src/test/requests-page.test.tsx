@@ -101,6 +101,7 @@ function candidate(
     year: 2024,
     imdb_id: "",
     poster_path: "",
+    overview: "",
     rating: 8.3,
     vote_count: 5000,
     demand: 4,
@@ -139,6 +140,20 @@ async function pickPerson(name: string) {
   await userEvent.click(
     await screen.findByRole("option", { name: new RegExp(`^${name},`) }),
   );
+}
+
+/** The bulk toolbar, which acts on the ticked rows. Every action name it carries — Send, Delete,
+ *  Reject — also appears on each card's own button group, so an unscoped `getByRole("button", …)`
+ *  is ambiguous the moment a second title is on screen. Scope to the group that is under test. */
+function toolbar() {
+  return within(
+    screen.getByRole("group", { name: "Actions for the selected titles" }),
+  );
+}
+
+/** The action group on one card, which acts on that title alone. */
+function rowActions(title: string) {
+  return within(screen.getByRole("group", { name: `Actions for ${title}` }));
 }
 
 describe("RequestsPage", () => {
@@ -754,7 +769,7 @@ describe("RequestsPage", () => {
     await userEvent.click(
       screen.getByRole("checkbox", { name: /Sarah Pick/i }),
     );
-    await userEvent.click(screen.getByRole("button", { name: /^Delete/i }));
+    await userEvent.click(toolbar().getByRole("button", { name: /^Delete/i }));
     await waitFor(() => expect(screen.getByText("Mike Pick")).toBeTruthy());
     expect(screen.queryByRole("button", { name: /^Sarah/ })).toBeNull();
   });
@@ -1073,7 +1088,7 @@ describe("RequestsPage", () => {
     renderPage();
     await screen.findByText("Fallout");
     await userEvent.click(screen.getByRole("checkbox", { name: /Fallout/i }));
-    await userEvent.click(screen.getByRole("button", { name: /Send/i }));
+    await userEvent.click(toolbar().getByRole("button", { name: /Send/i }));
     await waitFor(() => expect(sendRequests).toHaveBeenCalledWith([7], false));
   });
 
@@ -1082,7 +1097,7 @@ describe("RequestsPage", () => {
     renderPage();
     await screen.findByText("Ripley");
     await userEvent.click(screen.getByRole("checkbox", { name: /Ripley/i }));
-    await userEvent.click(screen.getByRole("button", { name: /Reject/i }));
+    await userEvent.click(toolbar().getByRole("button", { name: /Reject/i }));
     await waitFor(() => expect(rejectRequests).toHaveBeenCalledWith([9]));
     // Delete is the other, non-permanent action — reject must not also hard-delete.
     expect(deleteRequests).not.toHaveBeenCalled();
@@ -1093,7 +1108,7 @@ describe("RequestsPage", () => {
     renderPage();
     await screen.findByText("Andor");
     await userEvent.click(screen.getByRole("checkbox", { name: /Andor/i }));
-    await userEvent.click(screen.getByRole("button", { name: /^Delete/i }));
+    await userEvent.click(toolbar().getByRole("button", { name: /^Delete/i }));
     await waitFor(() => expect(deleteRequests).toHaveBeenCalledWith([11]));
     // Delete is not a rejection — it leaves no tombstone.
     expect(rejectRequests).not.toHaveBeenCalled();
@@ -1151,7 +1166,7 @@ describe("RequestsPage", () => {
     expect(
       screen.getByRole("button", { name: /to Radarr\/Sonarr/i }),
     ).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Reject/i })).toBeDisabled();
+    expect(toolbar().getByRole("button", { name: /Reject/i })).toBeDisabled();
     expect(screen.getByRole("checkbox", { name: /Fallout/i })).toBeDisabled();
   });
 
@@ -1164,6 +1179,207 @@ describe("RequestsPage", () => {
     expect(
       screen.getByRole("checkbox", { name: /Fallout/i }),
     ).not.toBeDisabled();
+  });
+
+  /**
+   * Discussion #87: judging a pile of unfamiliar titles meant opening a tab per row and then coming
+   * back to the bulk toolbar. The synopsis and the per-row buttons are the two halves of that.
+   */
+  describe("deciding one title at a time", () => {
+    it("shows TMDB's synopsis on a waiting title", async () => {
+      listRequests.mockResolvedValue([
+        candidate({
+          id: 1,
+          title: "Sinners",
+          overview: "Twin brothers return home to a waiting evil.",
+        }),
+      ]);
+      renderPage();
+      expect(
+        await screen.findByText("Twin brothers return home to a waiting evil."),
+      ).toBeTruthy();
+    });
+
+    it("draws no synopsis block at all when there is no synopsis", async () => {
+      // A pre-0071 row waiting on its next run, or a title TMDB has no text for. An empty paragraph
+      // would leave a gap on the card that reads as still-loading.
+      listRequests.mockResolvedValue([
+        candidate({ id: 1, title: "Sinners", overview: "   " }),
+      ]);
+      renderPage();
+      await screen.findByText("Sinners");
+      const card = screen
+        .getByRole("group", { name: "Actions for Sinners" })
+        .closest("div[class*='rounded-lg']");
+      expect(card?.textContent).not.toMatch(/^\s*$/);
+      expect(screen.queryByTitle("   ")).toBeNull();
+    });
+
+    it("sends one title from its own row without ticking anything", async () => {
+      listRequests.mockResolvedValue([
+        candidate({ id: 7, title: "Fallout" }),
+        candidate({ id: 8, tmdb_id: 200, title: "Andor" }),
+      ]);
+      renderPage();
+      await screen.findByText("Fallout");
+      await userEvent.click(
+        rowActions("Fallout").getByRole("button", { name: /Send/i }),
+      );
+      // Exactly this title — not the whole visible page, which is what a mis-wired row button
+      // acting on `selectedPending` (empty) or on `pendingShown` would have done.
+      await waitFor(() =>
+        expect(sendRequests).toHaveBeenCalledWith([7], false),
+      );
+    });
+
+    it("rejects and deletes one title from its own row, each on the right id", async () => {
+      listRequests.mockResolvedValue([
+        candidate({ id: 7, title: "Fallout" }),
+        candidate({ id: 8, tmdb_id: 200, title: "Andor" }),
+      ]);
+      renderPage();
+      await screen.findByText("Andor");
+
+      await userEvent.click(
+        rowActions("Andor").getByRole("button", { name: /Reject/i }),
+      );
+      await waitFor(() => expect(rejectRequests).toHaveBeenCalledWith([8]));
+      expect(deleteRequests).not.toHaveBeenCalled();
+
+      await userEvent.click(
+        rowActions("Fallout").getByRole("button", { name: /^Delete/i }),
+      );
+      await waitFor(() => expect(deleteRequests).toHaveBeenCalledWith([7]));
+    });
+
+    it("does not disturb a batch the owner has half-assembled", async () => {
+      // The row buttons and the checkboxes are two ways through the same list. Deciding one title
+      // must not silently drop the selection someone was building up for the toolbar.
+      listRequests.mockResolvedValue([
+        candidate({ id: 7, title: "Fallout" }),
+        candidate({ id: 8, tmdb_id: 200, title: "Andor" }),
+      ]);
+      renderPage();
+      await screen.findByText("Fallout");
+      await userEvent.click(screen.getByRole("checkbox", { name: /Andor/i }));
+
+      await userEvent.click(
+        rowActions("Fallout").getByRole("button", { name: /^Delete/i }),
+      );
+      await waitFor(() => expect(deleteRequests).toHaveBeenCalledWith([7]));
+      expect(screen.getByRole("checkbox", { name: /Andor/i })).toBeChecked();
+    });
+
+    it("does not tick the row it is acting on", async () => {
+      listRequests.mockResolvedValue([candidate({ id: 7, title: "Fallout" })]);
+      renderPage();
+      await screen.findByText("Fallout");
+      await userEvent.click(
+        rowActions("Fallout").getByRole("button", { name: /Send/i }),
+      );
+      expect(
+        screen.getByRole("checkbox", { name: /Fallout/i }),
+      ).not.toBeChecked();
+    });
+
+    it("does not tick the row when the click lands on a look-up link or the why expander", async () => {
+      // The card was a <label>, which by spec does nothing for clicks targeted at interactive
+      // descendants — so links and the expander never selected the row. Re-creating
+      // click-anywhere-to-select on a plain div means re-creating that exclusion by hand, and
+      // without it the exact workflow #87 is about (open TMDB to research an unfamiliar title)
+      // silently ticks the row, and the next toolbar Reject takes a title nobody chose.
+      listRequests.mockResolvedValue([
+        candidate({
+          id: 7,
+          title: "Fallout",
+          why: [
+            {
+              user: "sarah",
+              row: "Picked for You",
+              seed: "Mad Max",
+              source: "tmdb_similar",
+            },
+            {
+              user: "mike",
+              row: "Picked for You",
+              seed: "The Last of Us",
+              source: "tmdb_similar",
+            },
+            {
+              user: "james",
+              row: "Sci-Fi",
+              seed: "Dune",
+              source: "trakt_related",
+            },
+            // A fourth, because WhyBreakdown only draws the expander past LIMIT = 3.
+            {
+              user: "kim",
+              row: "Sci-Fi",
+              seed: "Alien",
+              source: "tmdb_similar",
+            },
+          ],
+        }),
+      ]);
+      renderPage();
+      await screen.findByText("Fallout");
+      const box = screen.getByRole("checkbox", { name: /Fallout/i });
+
+      await userEvent.click(screen.getByRole("link", { name: /TMDB/i }));
+      expect(box).not.toBeChecked();
+
+      await userEvent.click(
+        screen.getByRole("button", { name: /more reason/i }),
+      );
+      expect(box).not.toBeChecked();
+
+      // ...and the plain card surface still selects, which is the whole point of the handler.
+      await userEvent.click(screen.getByText("Fallout"));
+      expect(box).toBeChecked();
+    });
+
+    it("drops the decided title from a batch without clearing the rest", async () => {
+      // `busy` goes false when the POST resolves, before the refetched list lands. Leaving the
+      // decided id in the selection lets the toolbar act on it inside that window.
+      listRequests.mockResolvedValue([
+        candidate({ id: 7, title: "Fallout" }),
+        candidate({ id: 8, tmdb_id: 200, title: "Andor" }),
+      ]);
+      renderPage();
+      await screen.findByText("Fallout");
+      await userEvent.click(screen.getByRole("checkbox", { name: /Fallout/i }));
+      await userEvent.click(screen.getByRole("checkbox", { name: /Andor/i }));
+
+      await userEvent.click(
+        rowActions("Fallout").getByRole("button", { name: /Send/i }),
+      );
+      await waitFor(() =>
+        expect(sendRequests).toHaveBeenCalledWith([7], false),
+      );
+      expect(
+        screen.getByRole("checkbox", { name: /Fallout/i }),
+      ).not.toBeChecked();
+      expect(screen.getByRole("checkbox", { name: /Andor/i })).toBeChecked();
+    });
+
+    it("still selects the row when the card itself is clicked", async () => {
+      // The click-anywhere-to-select affordance is deliberate and survived the <label> removal.
+      listRequests.mockResolvedValue([candidate({ id: 7, title: "Fallout" })]);
+      renderPage();
+      await userEvent.click(await screen.findByText("Fallout"));
+      expect(screen.getByRole("checkbox", { name: /Fallout/i })).toBeChecked();
+    });
+
+    it("cannot act on a row while requests are off", async () => {
+      getSettings.mockResolvedValue({ "requests.enabled": false });
+      listRequests.mockResolvedValue([candidate({ id: 7, title: "Fallout" })]);
+      renderPage();
+      await screen.findByText("Fallout");
+      const row = rowActions("Fallout");
+      expect(row.getByRole("button", { name: /Send/i })).toBeDisabled();
+      expect(row.getByRole("button", { name: /^Delete/i })).toBeDisabled();
+      expect(row.getByRole("button", { name: /Reject/i })).toBeDisabled();
+    });
   });
 });
 

@@ -928,3 +928,53 @@ class TestRunUsersCost:
         flags = _not_null(tmp_path, "run_users")
         assert "cost" in flags
         assert flags["cost"] is False
+
+
+class TestPickFinishedAtBackfill:
+    """0072 adds `picks.finished_at` and backfills FILMS from `watched_at`.
+
+    This repo has shipped a migration that was a no-op on every real database (0032), so a backfill
+    is asserted against rows that existed BEFORE the upgrade, never against a fresh schema — a test
+    that inserts after the fact would pass even if the UPDATE never ran.
+    """
+
+    def _seed_pick(self, config_dir: Path, *, pick_id: int, media_type: str, watched: str | None) -> None:
+        with sqlite3.connect(config_dir / "shortlist.db") as db:
+            db.execute(
+                "INSERT INTO picks (id, user_id, tmdb_id, media_type, rating_key, rank, collection_slug, "
+                "section_key, library, title, reason, sources, affinity, created_at, watched_at) "
+                "VALUES (?, 1, 500, ?, 9, 1, 'picked', '1', 'Movies', 'T', '', '', 1.0, "
+                "'2026-07-01 00:00:00', ?)",
+                (pick_id, media_type, watched),
+            )
+
+    def _finished(self, config_dir: Path, pick_id: int):
+        with sqlite3.connect(config_dir / "shortlist.db") as db:
+            return db.execute("SELECT finished_at FROM picks WHERE id = ?", (pick_id,)).fetchone()[0]
+
+    def test_a_watched_film_is_backfilled_with_its_own_watch_time(self, tmp_path: Path):
+        """A film's watched flag IS completion, so copying it is exact rather than a guess."""
+        command.upgrade(_alembic(tmp_path), "0071")
+        self._seed_pick(tmp_path, pick_id=1, media_type="movie", watched="2026-07-10 09:30:00")
+
+        run_migrations(tmp_path)
+
+        assert self._finished(tmp_path, 1) == "2026-07-10 09:30:00"
+
+    def test_a_watched_series_is_left_empty_to_fill_in_going_forward(self, tmp_path: Path):
+        """We know which shows are past the bar today but not WHEN they crossed it, and inventing
+        that date would file old watches in the wrong week of the trend chart permanently."""
+        command.upgrade(_alembic(tmp_path), "0071")
+        self._seed_pick(tmp_path, pick_id=2, media_type="show", watched="2026-07-10 09:30:00")
+
+        run_migrations(tmp_path)
+
+        assert self._finished(tmp_path, 2) is None
+
+    def test_an_unwatched_film_stays_empty(self, tmp_path: Path):
+        command.upgrade(_alembic(tmp_path), "0071")
+        self._seed_pick(tmp_path, pick_id=3, media_type="movie", watched=None)
+
+        run_migrations(tmp_path)
+
+        assert self._finished(tmp_path, 3) is None

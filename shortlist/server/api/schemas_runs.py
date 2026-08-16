@@ -215,6 +215,9 @@ class LandingOut(PassthroughModel):
 
     delivered: int
     watched: int
+    #: Same cohort, stricter numerator — the picks they saw out rather than sampled.
+    finished: int
+    finished_rate: float | None
     rate: float | None
     cohort_from: str | None
     cohort_to: str | None
@@ -228,6 +231,14 @@ class OverallOut(PassthroughModel):
     watched: int
     watched_prev: int | None  # null on the `all` window, which has no previous period
     watched_delta: int | float | None
+    #: Of the picks credited in this window, the ones they finished — always <= `watched`, because
+    #: both are windowed on when the pick was credited. `watched - finished` is the middle state: a
+    #: series they are into but have not seen out. A difference, not a third independent count.
+    #:
+    #: Carries NO `_prev`/`_delta` pair, unlike its neighbours: this window's finishes are counted as
+    #: of now while the previous window's had an extra period to complete, so a steady server reports
+    #: a permanent decline. See `report_service.effectiveness`.
+    finished: int
     avg_days_to_watch: float | None
     avg_days_to_watch_delta: int | float | None
     landing: LandingOut
@@ -268,6 +279,10 @@ class ReportRequestsOut(PassthroughModel):
 class TrendPointOut(PassthroughModel):
     week: str  # "%Y-%W"
     watched: int
+    #: Of the picks credited in THIS week, how many have since been finished — bucketed by
+    #: `watched_at`, the same key as `watched`, so it is always a subset and the chart can stack the
+    #: two. A past week's figure grows when someone finally finishes an old series.
+    finished: int
 
 
 class PerUserOut(PassthroughModel):
@@ -276,6 +291,7 @@ class PerUserOut(PassthroughModel):
     slug: str
     delivered: int
     watched: int
+    finished: int
 
 
 class PerRowOut(PassthroughModel):
@@ -288,6 +304,7 @@ class PerRowOut(PassthroughModel):
     deleted: bool  # history from a row that no longer exists
     delivered: int
     watched: int
+    finished: int
 
 
 class TopTitleOut(PassthroughModel):
@@ -306,6 +323,11 @@ class RecentWatchOut(PassthroughModel):
     library: str
     seed_title: str
     watched_at: str | None
+    #: Whether they saw it OUT, as opposed to Plex's binary watched flag — which for a series trips
+    #: on its first finished episode. Measured on a real server: 21 of 158 credited show picks had
+    #: actually been finished, so a feed that says "watched" for all of them overstates the answer
+    #: on the very page that exists to report it. Null means credited but not finished.
+    finished_at: str | None
 
 
 class EffectivenessReportOut(PassthroughModel):

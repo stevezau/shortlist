@@ -107,7 +107,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           service="plex"
           title="Plex"
           need="required"
-          purpose="Your media server. Shortlist reads each person’s watch history from it, and builds their row back into it."
+          purpose="Where Shortlist reads watch history, and where it builds each person’s row."
           settings={settings}
           summary={settingString(settings, "plex.url")}
           glyph={<PlexGlyph />}
@@ -124,8 +124,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="tautulli"
           title="Tautulli"
-          purpose="Tautulli is the monitoring dashboard many people run alongside Plex."
-          next="Shortlist reads nothing but the friendlier names it knows your users by, so rows say “Sarah” rather than an email address."
+          purpose="Supplies the friendlier names your users go by, so rows say “Sarah” and not an email address."
           settings={settings}
           summary={settingString(settings, "tautulli.url")}
           glyph={<TautulliGlyph />}
@@ -143,8 +142,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           service="tmdb"
           title="TMDB"
           need="required"
-          purpose="TMDB (The Movie Database) is the free catalogue Shortlist looks titles up in. It is where “people who watched this also watched…” comes from."
-          next="A key is free — sign up, then paste it here."
+          purpose="The free catalogue Shortlist looks titles up in. A key is free."
           settings={settings}
           summary={
             settingString(settings, "tmdb.apikey") ? "API key saved" : ""
@@ -162,8 +160,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="llm"
           title="AI provider"
-          purpose="An AI provider lets Shortlist search the web for titles that match someone’s taste, and explain why it picked each one."
-          next="Shortlist works fully without it. This only adds the web-search source."
+          purpose="Adds the web-search source and the one-line reasons. Shortlist works fully without it."
           settings={settings}
           summary={
             // Show the provider's friendly label ("Claude", "None"), never the raw id or a
@@ -239,8 +236,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="radarr"
           title="Radarr"
-          purpose="Radarr is the app that fetches films for your library."
-          next="Connect it and Shortlist can ask for a film it wanted to recommend but couldn’t find on your server."
+          purpose="Fetches films Shortlist wanted to recommend but couldn’t find on your server."
           settings={settings}
           summary={settingString(settings, "requests.radarr.url")}
           glyph={<Film aria-hidden className="text-primary" />}
@@ -261,8 +257,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="sonarr"
           title="Sonarr"
-          purpose="Sonarr is Radarr’s equivalent for TV."
-          next="Connect it and Shortlist can ask for a show it wanted to recommend but couldn’t find on your server."
+          purpose="Fetches shows Shortlist wanted to recommend but couldn’t find on your server."
           settings={settings}
           summary={settingString(settings, "requests.sonarr.url")}
           glyph={<Tv aria-hidden className="text-primary" />}
@@ -287,8 +282,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           // create a key, and reported it as a Shortlist bug (issue #73). The badge says it before
           // they go looking, rather than burying it mid-paragraph where it was skimmed past.
           requires="Needs paid Trakt VIP"
-          purpose="Trakt is a site where people log what they watch. Its “related titles” often catch suggestions TMDB misses."
-          next="Creating an API key needs a paid Trakt VIP subscription. Once the key is saved, switch the Trakt source on under Finding titles."
+          purpose="Its “related titles” often catch suggestions TMDB misses. Switch the source on under Finding titles once the key is saved."
           settings={settings}
           summary={
             settingString(settings, "trakt.client_id") ? "API key saved" : ""
@@ -308,8 +302,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           // Two consumers, not one: `requests.rating_source` gates what gets requested, and
           // `recommendations.rating_source` orders any row set to "Highest rated". Naming only
           // Requests left the row-ordering setting looking like it needed nothing.
-          purpose="MDBList fetches a title’s IMDb, Rotten Tomatoes, Metacritic and Trakt scores in one lookup. The key is free."
-          next="Needed only if you sort a row by “Highest rated” on anything but TMDB, or judge requests by those scores."
+          purpose="IMDb, Rotten Tomatoes, Metacritic and Trakt scores in one lookup. Only needed for “Highest rated” off TMDB, or to judge requests by those scores."
           settings={settings}
           summary={
             settingString(settings, "requests.mdblist.apikey")
@@ -333,8 +326,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           // The native probe runs a real web search, so it is never fired unasked.
           autoTest={testableSearchService(settings) !== "native_search"}
           title="Web search"
-          purpose="The optional web-search source looks up what to watch next, then keeps only titles already in your library. Claude, GPT and Gemini can search on their own; any other provider — including a local Ollama — searches through Exa or your own SearXNG."
-          next="You only need ONE of them. Exa is hosted and takes a free-tier key; SearXNG runs on your own hardware and costs nothing."
+          purpose="Looks up what to watch next, keeping only titles already in your library. Claude, GPT and Gemini search on their own; any other provider needs Exa or your own SearXNG — one of them, not both."
           settings={settings}
           summary={searchSummary(settings)}
           glyph={<Globe aria-hidden className="text-primary" />}

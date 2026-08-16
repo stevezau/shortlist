@@ -32,26 +32,77 @@ import {
   useUsers,
 } from "@/lib/queries";
 import { mergeRunLog, stageBelongsToRun } from "@/lib/run-log";
-import { currentPhase } from "@/lib/run-format";
+import { currentPhase, errorBucket } from "@/lib/run-format";
 import { useSSE } from "@/lib/sse";
 import type { RunDetail, RunLogEntry, RunUserStageEvent } from "@/lib/types";
+
+/** The people a run failed for, grouped by the reason — because 45 people can share one cause.
+ *
+ * Grouped on `errorBucket`, NOT on the raw string. The engine stores
+ * `f"{type(e).__name__}: {e}"` (`pipeline.py:361`), and a plexapi message embeds the per-user
+ * ratingKey and row title — so two people felled by one PMS outage never produce equal strings, and
+ * grouping on them reported "4 people didn't get their rows, for 4 different reasons" about a
+ * single 500. That is the exact opposite of what this banner exists to tell you.
+ *
+ * `errorBucket` returns null for anything it does not recognise, and those keep their own line:
+ * claiming two unrecognised errors are "the same problem" would be the same lie in the other
+ * direction.
+ */
+function failuresByReason(
+  run: RunDetail,
+): { reason: string; people: string[] }[] {
+  const groups = new Map<string, { reason: string; people: string[] }>();
+  for (const user of run.users ?? []) {
+    if (!user.error) continue;
+    const bucket = errorBucket(user.error);
+    // Unrecognised errors group by their own text, so they are never merged with each other.
+    const key = bucket ?? `raw:${user.error}`;
+    const group = groups.get(key) ?? { reason: user.error, people: [] };
+    group.people.push(user.display_name || user.username);
+    groups.set(key, group);
+  }
+  return [...groups.values()].sort((a, b) => b.people.length - a.people.length);
+}
+
+/** Says how many people, and whether it was one cause or several — the two facts that decide
+ *  whether this is "one bad account" or "the server was down". */
+function peopleFailedHeadline(
+  groups: { reason: string; people: string[] }[],
+): string {
+  const people = groups.reduce((n, g) => n + g.people.length, 0);
+  const who = people === 1 ? "1 person" : `${people} people`;
+  return groups.length > 1
+    ? `${who} didn’t get their rows, for ${groups.length} different reasons`
+    : `${who} didn’t get their rows`;
+}
 
 /** Why a run failed for a reason that belongs to no single person — a share filter Plex refused, a
  *  sweep that could not run. The reason was always recorded, but lived only in `stats.error`, which
  *  nothing rendered: the page said "Failed" and left the operator reading container logs (issue #1). */
 function RunFailureBanner({ run }: { run: RunDetail }) {
   const blockers = run.promotion_blockers ?? [];
-  if (run.status !== "error" || (!run.error && blockers.length === 0))
+  // A run can be `error` with NOTHING at run level: the failure belonged to individual people.
+  // Measured on a real server — run 4, `users_ok: 45, users_error: 1`, `stats.error` null and no
+  // blockers — so this returned null and the page announced a failed run and then explained
+  // nothing, leaving one bad account to be found by eye among forty-six.
+  const perUser = failuresByReason(run);
+  if (
+    run.status !== "error" ||
+    (!run.error && blockers.length === 0 && perUser.length === 0)
+  )
     return null;
   return (
     <div
       role="alert"
+      data-testid="run-failure"
       className="space-y-2 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm"
     >
       <p className="font-medium text-foreground">
         {blockers.length > 0
           ? "Nothing was promoted — Plex wouldn’t accept a share filter"
-          : "This run didn’t finish cleanly"}
+          : run.error
+            ? "This run didn’t finish cleanly"
+            : peopleFailedHeadline(perUser)}
       </p>
       {blockers.length > 0 && (
         <p className="text-muted-foreground">
@@ -64,9 +115,26 @@ function RunFailureBanner({ run }: { run: RunDetail }) {
           showing one person’s row to someone else.
         </p>
       )}
-      <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-background/60 p-2.5 font-mono text-xs text-destructive-text">
-        {blockers.length > 0 ? blockers.join("\n") : run.error}
-      </pre>
+      {blockers.length === 0 && !run.error ? (
+        // Grouped by reason and NAMING the people, because the whole difficulty was finding them:
+        // one failure among forty-five successes is invisible in a list of forty-six.
+        perUser.map((group) => (
+          <div key={group.reason} className="space-y-1">
+            <p className="text-muted-foreground">
+              {group.people.length === 1
+                ? group.people[0]
+                : `${group.people.length} people: ${group.people.join(", ")}`}
+            </p>
+            <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-background/60 p-2.5 font-mono text-xs text-destructive-text">
+              {group.reason}
+            </pre>
+          </div>
+        ))
+      ) : (
+        <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-background/60 p-2.5 font-mono text-xs text-destructive-text">
+          {blockers.length > 0 ? blockers.join("\n") : run.error}
+        </pre>
+      )}
     </div>
   );
 }
@@ -167,8 +235,10 @@ export function RunDetailPage() {
     },
   });
 
-  // Computed once per render rather than called twice (header line + phase text below it).
-  const phase = currentPhase(liveLog);
+  // Computed once per render rather than called twice (header line + phase text below it). Takes the
+  // run as well as the log: the people count comes off the run's own roster, not off log subjects —
+  // the library index and shared rows narrate under names that are in nobody's roster.
+  const phase = runQuery.data ? currentPhase(runQuery.data, liveLog) : null;
   // A failed log fetch with nothing to show is otherwise indistinguishable from "no log was ever
   // recorded" — RunLogPanel's own empty state says the latter, which is a lie when the former is
   // true. Live SSE stage events can still fill `liveLog` even if the initial snapshot failed, so
@@ -255,7 +325,9 @@ export function RunDetailPage() {
                   )}
                 </p>
                 {/* The direct fix for "all users finished but it still says running": say WHAT it
-                    is doing. Everything after the last person is server-wide and used to be silent. */}
+                    is doing. Everything after the last person is server-wide and used to be silent.
+                    The lead-in is NOT fixed text: "Finishing up" is a claim about where the run is,
+                    and hardcoding it told the owner a run 9 people into 46 was nearly done. */}
                 {!run.finished_at && phase && (
                   <p className="flex items-center gap-1.5 text-sm">
                     <Loader2
@@ -263,9 +335,9 @@ export function RunDetailPage() {
                       aria-hidden="true"
                     />
                     <span className="text-muted-foreground">
-                      Finishing up ·{" "}
+                      {phase.tail ? "Finishing up · " : "Right now · "}
                     </span>
-                    <span className="font-medium">{phase}</span>
+                    <span className="font-medium">{phase.label}</span>
                   </p>
                 )}
               </header>

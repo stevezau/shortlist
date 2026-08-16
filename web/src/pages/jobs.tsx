@@ -426,7 +426,7 @@ export function JobsPage() {
         title="Jobs"
         // Not "the nightly run": these are five separate jobs on five separate timers, and rows
         // build on their own schedules again — there is no one nightly thing to wait for.
-        subtitle="The upkeep Shortlist does in the background — refreshing who has access, re-reading what people watched, and keeping Plex in step with what you've set. Each one runs on its own timer; press Run to do it now instead."
+        subtitle="Background upkeep, each on its own timer. Press Run to do one now instead."
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -462,10 +462,25 @@ export function JobsPage() {
               {activeLabel}
             </button>
           )}
+          {/* A BUTTON, like its "N running" sibling above. It was a bare span: the badge that
+              reports the healthy state was clickable and the one reporting the problem was a dead
+              end. Worse, nothing else on this tab pointed at the failures either — a job's status
+              chip shows only its LAST attempt, so eight failed `privacy.sync` runs sat behind a
+              green tick and the badge was the sole evidence they existed. */}
           {totals.failed > 0 && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2.5 py-1 text-xs font-medium text-destructive-text">
+            <button
+              type="button"
+              onClick={() =>
+                setSearchParams(
+                  { tab: "activity", filter: "failed" },
+                  { replace: true },
+                )
+              }
+              className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2.5 py-1 text-xs font-medium text-destructive-text hover:bg-destructive/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              title="See what failed, and why"
+            >
               {totals.failed} failed
-            </span>
+            </button>
           )}
           {active === 0 && totals.failed === 0 && entries.length > 0 && (
             <span className="text-xs text-muted-foreground">
@@ -484,16 +499,24 @@ export function JobsPage() {
       )}
 
       {view === "activity" ? (
-        <ActivityFeed catalog={entries} />
+        <ActivityFeed
+          catalog={entries}
+          initialFilter={
+            searchParams.get("filter") === "failed" ? "failed" : "all"
+          }
+        />
       ) : catalog.isPending ? (
         <Skeleton className="h-72 w-full" />
       ) : (
         <div className="space-y-5">
           <section className="space-y-2">
+            {/* The page subtitle already says "each on its own timer", and the tag note is a
+                legend for something that appears three rows down — three explainers stacked
+                between the page title and the first job. One is enough here; the tags carry
+                their own meaning (a job with no tag changes nothing on Plex). */}
             <GroupHeading
               title="Run now"
-              hint="each on its own timer — open one to see or change when"
-              note="A tag says what a job changes on your Plex server. Anything without one only reads, or only touches Shortlist's own records."
+              hint="open one to see or change when it runs"
             />
             <div className="overflow-hidden rounded-md border">
               <JobRow

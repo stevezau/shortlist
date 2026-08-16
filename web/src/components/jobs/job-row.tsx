@@ -160,7 +160,12 @@ export function JobRow({
             aria-hidden="true"
             className="size-4 shrink-0 text-muted-foreground"
           />
-          <span className="truncate text-sm font-medium">{entry.label}</span>
+          {/* Wraps on a phone, truncates from `sm`. At 390 the floor above leaves the name ~207px
+              and the longest job needs 249, so three of them ellipsed into nothing you could tell
+              apart — "Put an un-paused person's ro…", "Remove a row's collections fr…". The row is
+              already `flex-wrap`, so a name on two lines costs a few pixels of height and nothing
+              else; from `sm` there is room for one line and truncation never fires. */}
+          <span className="text-sm font-medium sm:truncate">{entry.label}</span>
         </button>
 
         {/* Outside the expander button on purpose: it is information about the job, not part of the

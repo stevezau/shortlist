@@ -276,12 +276,11 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
           <div className="space-y-1">
             <p className="font-medium">Fill in the gaps automatically</p>
             <p className="text-sm text-muted-foreground">
-              When a title would have been a great pick for someone but
-              isn&rsquo;t in your library, Shortlist can ask Radarr or Sonarr
-              &mdash; the apps that fetch films and TV &mdash; to get it. You
-              decide which go out on their own and which wait in your{" "}
+              Ask Radarr or Sonarr for titles that would have been good picks
+              but aren&rsquo;t in your library. You choose which go out on their
+              own and which wait in{" "}
               <strong className="font-medium text-foreground">Requests</strong>{" "}
-              inbox for a yes or no.
+              for a yes or no.
             </p>
           </div>
           <Switch

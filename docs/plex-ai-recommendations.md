@@ -70,6 +70,10 @@ Ranking twenty candidates and writing ten short sentences is not a demanding job
 70B model for this, and a modest local one running on the same box as your server is a perfectly
 reasonable setup.
 
+The same setting covers hosted gateways that speak this API — ollama.com's cloud, OpenRouter — since
+the only difference is that they want an API key. Give the "Local / OpenAI-compatible" option the
+gateway's address and its key; a server on your own network needs the address alone.
+
 ## What it costs on a cloud provider
 
 The bill is driven by how many people, how often, and how much you put in each prompt — not by which

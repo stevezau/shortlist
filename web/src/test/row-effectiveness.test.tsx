@@ -8,6 +8,7 @@ import type { RowEffectiveness } from "@/lib/types";
 const BASE: RowEffectiveness = {
   delivered: 12,
   watched: 3,
+  finished: 1,
   runs: 7,
   first_delivered_at: "2026-06-01T00:00:00Z",
   last_delivered_at: "2026-08-01T00:00:00Z",
@@ -42,7 +43,12 @@ describe("RowEffectivenessPanel", () => {
     panel();
 
     // Anchored: an unanchored /Watched/ also matches the hint "of judged picks watched".
-    for (const label of [/^Delivered$/, /^Watched$/, /^Runs$/, /^Last built$/]) {
+    for (const label of [
+      /^Delivered$/,
+      /^Watched$/,
+      /^Runs$/,
+      /^Last built$/,
+    ]) {
       expect(screen.getByText(label)).toBeTruthy();
     }
     expect(screen.getByText(/Too early for a score/i)).toBeTruthy();
@@ -53,6 +59,7 @@ describe("RowEffectivenessPanel", () => {
       matured: {
         delivered: 9,
         watched: 4,
+        finished: 2,
         rate: 0.44,
         cohort_to: "2026-07-05T00:00:00Z",
       },
@@ -62,7 +69,58 @@ describe("RowEffectivenessPanel", () => {
       expect(screen.getByText(label)).toBeTruthy();
     }
     expect(screen.getByText(/44%/)).toBeTruthy();
-    expect(screen.getByText(/Judged on 9 picks/i)).toBeTruthy();
+    expect(screen.getByText(/Judged on the 9 picks delivered before/i)).toBeTruthy();
+  });
+
+  it("shows the finished count in the MATURED panel, not only before a cohort exists", () => {
+    // Caught live, not by a test: the finished hint was added to the "too early to judge" branch
+    // only, so the state a row spends its whole life in never showed it. Both branches render a
+    // Watched tile and they are separate JSX — asserting one proves nothing about the other.
+    panel({
+      matured: {
+        delivered: 9,
+        watched: 4,
+        finished: 2,
+        rate: 0.44,
+        cohort_to: "2026-07-05T00:00:00Z",
+      },
+    });
+
+    expect(screen.getByText(/2 finished/)).toBeTruthy();
+  });
+
+  it("splits each library's landings into finished and still-going", () => {
+    // The case this exists for: both libraries land the same share, so on the old bar the row read
+    // as performing identically in each. It doesn't — the movie half gets finished, the TV half
+    // gets sampled, because a series is credited on its first episode.
+    panel({
+      matured: {
+        delivered: 20,
+        watched: 8,
+        finished: 5,
+        rate: 0.4,
+        cohort_to: "2026-07-05T00:00:00Z",
+      },
+      per_library: [
+        {
+          library: "Movies",
+          delivered: 10,
+          watched: 4,
+          finished: 4,
+          rate: 0.4,
+        },
+        {
+          library: "TV Shows",
+          delivered: 10,
+          watched: 4,
+          finished: 1,
+          rate: 0.4,
+        },
+      ],
+    });
+
+    expect(screen.getByText(/4 finished \(100%\)/)).toBeTruthy();
+    expect(screen.getByText(/1 finished \(25%\)/)).toBeTruthy();
   });
 
   it("says so plainly when the row has never delivered, rather than showing zeros", () => {

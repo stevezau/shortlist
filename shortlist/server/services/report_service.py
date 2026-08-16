@@ -83,13 +83,36 @@ def _watched_in(start, end=None) -> list:
     return [PickRow.watched_at.isnot(None), *_in_period(PickRow.watched_at, start, end)]
 
 
+def _finished_in(start, end=None) -> list:
+    """Filters for picks credited in [start, end) that have since been FINISHED.
+
+    The window is asked of ``watched_at``, NOT ``finished_at``, and that is the whole point: the UI
+    prints the pair as "N watched · M finished" and draws M inside the bar of N, which is only ever
+    true if M is a genuine subset of N for the same window.
+
+    Windowing on ``finished_at`` breaks that. A series credited in June and finished in August gives
+    `0 watched · 1 finished` in an August window — nonsense text, and a segment wider than the bar
+    containing it. Pinned by `test_report_finished_window.py`.
+
+    So the question is "of the picks credited in this window, how many are finished", and the cost is
+    accepted deliberately: a series finished this week but credited months ago lands in the window it
+    was credited in, not this one. That is the reading the whole dashboard already uses — `watched`
+    itself is bucketed by when the pick was credited, not by anything else.
+    """
+    return [PickRow.finished_at.isnot(None), *_watched_in(start, end)]
+
+
 def _counts(session: Session, group_cols, key_expr, start) -> dict:
-    """{group key -> (delivered, watched)} distinct-title counts for one period, in two scans.
+    """{group key -> (delivered, watched, finished)} distinct-title counts for one period, in three scans.
 
     `delivered` counts picks CREATED in the period; `watched` counts picks WATCHED in it —
     deliberately not the same set. A pick delivered last month and watched this week is a watch this
     week, and pinning it to its delivery period would hide it entirely. These are counts, never a
     ratio, so the mismatch is honest rather than misleading.
+
+    `finished` is a subset of `watched`: the picks they saw out rather than sampled. The gap between
+    the two is the whole point of the split — a TV row scores a `watched` on a single episode, so
+    ranking rows on that number alone flatters television for a structural reason.
     """
     cols = list(group_cols) if isinstance(group_cols, (list, tuple)) else [group_cols]
 
@@ -99,11 +122,19 @@ def _counts(session: Session, group_cols, key_expr, start) -> dict:
 
     delivered = scan(*_in_period(PickRow.created_at, start))
     watched = scan(*_watched_in(start))
-    return {k: (delivered.get(k, 0), watched.get(k, 0)) for k in set(delivered) | set(watched)}
+    finished = scan(*_finished_in(start))
+    return {
+        k: (delivered.get(k, 0), watched.get(k, 0), finished.get(k, 0))
+        for k in set(delivered) | set(watched) | set(finished)
+    }
 
 
 def _watched_count(session: Session, start, end=None) -> int:
     return session.query(func.count(func.distinct(_PERSON_TITLE))).filter(*_watched_in(start, end)).scalar() or 0
+
+
+def _finished_count(session: Session, start, end=None) -> int:
+    return session.query(func.count(func.distinct(_PERSON_TITLE))).filter(*_finished_in(start, end)).scalar() or 0
 
 
 def _watchers_count(session: Session, start, end=None) -> int:
@@ -151,9 +182,22 @@ def _landing(session: Session, now: datetime, days: int | None) -> dict:
         session.query(func.count(func.distinct(_PERSON_TITLE))).filter(PickRow.watched_at.isnot(None), *cohort).scalar()
         or 0
     )
+    # `watched_at IS NOT NULL` alongside it, for the reason `_finished_in` exists: the UI draws
+    # finished INSIDE watched, so the subset is enforced where it is counted rather than assumed
+    # from the writer. Nothing clears `watched_at` today; this is what keeps that from mattering.
+    finished = (
+        session.query(func.count(func.distinct(_PERSON_TITLE)))
+        .filter(PickRow.finished_at.isnot(None), PickRow.watched_at.isnot(None), *cohort)
+        .scalar()
+        or 0
+    )
     return {
         "delivered": delivered,
         "watched": watched,
+        # Same matured cohort, stricter numerator. Both rates are over the picks that have had their
+        # full 30 days, so they are directly comparable with each other.
+        "finished": finished,
+        "finished_rate": _rate(finished, delivered),
         "rate": _rate(watched, delivered),
         "cohort_from": iso_utc(matured_since) if matured_since else None,
         "cohort_to": iso_utc(matured_until),
@@ -211,9 +255,18 @@ def _breakdown(raw: dict, label) -> list[dict]:
     Sorting by rate is what put `1/31` above `3/103` — a single data point outranking three times the
     evidence. Watched count first, delivered as the tiebreak, so the list reads as "who is getting
     the most out of this".
+
+    Still sorted on `watched`, not `finished`. Ranking by finished would bury every TV row under
+    every movie row — a series is finished far less often than a film, for reasons that have nothing
+    to do with how good the pick was. The split is shown per line so the difference is visible;
+    it is deliberately not the sort key.
     """
     return sorted(
-        ({**label(key), "delivered": d, "watched": w} for key, (d, w) in raw.items() if label(key) is not None),
+        (
+            {**label(key), "delivered": d, "watched": w, "finished": f}
+            for key, (d, w, f) in raw.items()
+            if label(key) is not None
+        ),
         key=lambda r: (r["watched"], r["delivered"]),
         reverse=True,
     )
@@ -268,10 +321,16 @@ def _recent_watches(session: Session, users: dict[int, User], namer: _RowNamer, 
     watch once per delivery ("Jarrah watched Beckham" five times). Credit the newest delivery (its
     row/library label is the current one) at the latest time that person watched it.
     """
+    # `finished` is aggregated over the SAME group as `watched`, not read off the credited pick row.
+    # The two are stamped by different passes — `watched_at` when Plex first credits the title,
+    # `finished_at` once it passes our own completion threshold, possibly on a later night and
+    # possibly onto a different delivery of the same title — so taking it from `pick_id` alone would
+    # report "started" for a series the person demonstrably finished.
     latest = (
         session.query(
             func.max(PickRow.id).label("pick_id"),
             func.max(PickRow.watched_at).label("watched"),
+            func.max(PickRow.finished_at).label("finished"),
         )
         .filter(*_watched_in(since))
         .group_by(PickRow.user_id, PickRow.tmdb_id, PickRow.media_type)
@@ -289,8 +348,9 @@ def _recent_watches(session: Session, users: dict[int, User], namer: _RowNamer, 
             "library": p.library,
             "seed_title": p.seed_title or "",
             "watched_at": iso_utc(watched),
+            "finished_at": iso_utc(finished) if finished else None,
         }
-        for p, watched in session.query(PickRow, latest.c.watched)
+        for p, watched, finished in session.query(PickRow, latest.c.watched, latest.c.finished)
         .join(latest, PickRow.id == latest.c.pick_id)
         .order_by(latest.c.watched.desc())
         .all()
@@ -332,6 +392,7 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
     )
 
     watched_now = _watched_count(session, since)
+    finished_now = _finished_count(session, since)
     watchers_now = _watchers_count(session, since)
     avg_now = _avg_days_to_watch(session, since)
     watched_prev = _watched_count(session, prev_since, since) if since else None
@@ -354,6 +415,19 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
         .all()
     )
     trend_rows = list(reversed(trend_rows))
+    # Of the picks CREDITED in each week, how many have since been finished — bucketed by
+    # `watched_at`, the same key as the bar above, for the reason `_finished_in` explains: it is what
+    # makes the segment a true subset of the column it is drawn inside.
+    #
+    # Consequence worth knowing: a past week's dark segment GROWS when someone finishes an old
+    # series. That is the truth about a cohort, not a bug — the bar is "what became of what landed
+    # that week", and that answer genuinely changes.
+    finished_by_week = dict(
+        session.query(func.strftime("%Y-%W", PickRow.watched_at), func.count(func.distinct(_PERSON_TITLE)))
+        .filter(PickRow.watched_at.isnot(None), PickRow.finished_at.isnot(None))
+        .group_by(func.strftime("%Y-%W", PickRow.watched_at))
+        .all()
+    )
 
     store = SettingsStore(session)
     last_watch_sync = store.get("report.watch_synced_at")  # when the daily job last ran
@@ -444,6 +518,21 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
             "watched": watched_now,
             "watched_prev": watched_prev,
             "watched_delta": _delta(watched_now, watched_prev),
+            # Of the watched, the ones they saw out. `watched - finished` is the middle state — a
+            # series they are into but have not finished — which has no column of its own because it
+            # is a difference, not a third independent count.
+            #
+            # NO period-over-period delta, deliberately, unlike every other headline here. `watched`
+            # is windowed on the watch event, which is complete the instant it happens, so comparing
+            # two periods is fair. `finished` is not: this window's picks are counted as finished AS
+            # OF NOW, while the previous window's have had a whole extra period to complete, and a
+            # series takes weeks to finish. On a server behaving perfectly steadily — 10 picks a day,
+            # half eventually finished, a 20-day lag — that asymmetry renders as
+            # "finished 50, previous 150, down 100" for ever. A number that reports a permanent
+            # decline on a system that is not changing is worse than no number: it is the one figure
+            # on this page someone would act on. Measuring the change honestly needs a matured-cohort
+            # comparison (what `landing` does), not a shifted window.
+            "finished": finished_now,
             "avg_days_to_watch": avg_now,
             "avg_days_to_watch_delta": _delta(avg_now, avg_prev),
             "landing": landing,
@@ -466,7 +555,7 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
             "errors_last": errors_last or 0,
         },
         "requests": requests,
-        "trend": [{"week": week, "watched": n} for week, n in trend_rows],
+        "trend": [{"week": week, "watched": n, "finished": finished_by_week.get(week, 0)} for week, n in trend_rows],
         "per_user": per_user,
         "per_row": per_row,
         "top_titles": [{"tmdb_id": tid, "media_type": mt, "title": ttl, "watchers": n} for tid, mt, ttl, n in top_rows],
@@ -502,7 +591,7 @@ def row_effectiveness(session: Session, slug: str, now: datetime | None = None) 
     now = now or datetime.now(UTC)
     mine = [PickRow.collection_slug == slug]
 
-    def counts(extra: list) -> tuple[int, int]:
+    def counts(extra: list) -> tuple[int, int, int]:
         delivered = session.query(func.count(func.distinct(_PERSON_TITLE))).filter(*mine, *extra).scalar() or 0
         watched = (
             session.query(func.count(func.distinct(_PERSON_TITLE)))
@@ -510,9 +599,16 @@ def row_effectiveness(session: Session, slug: str, now: datetime | None = None) 
             .scalar()
             or 0
         )
-        return delivered, watched
+        finished = (
+            session.query(func.count(func.distinct(_PERSON_TITLE)))
+            # See `_finished_in`: finished is drawn inside watched, so the subset is enforced here.
+            .filter(PickRow.finished_at.isnot(None), PickRow.watched_at.isnot(None), *mine, *extra)
+            .scalar()
+            or 0
+        )
+        return delivered, watched, finished
 
-    delivered_all, watched_all = counts([])
+    delivered_all, watched_all, finished_all = counts([])
     first = session.query(func.min(PickRow.created_at)).filter(*mine).scalar()
     last = session.query(func.max(PickRow.created_at)).filter(*mine).scalar()
 
@@ -526,7 +622,7 @@ def row_effectiveness(session: Session, slug: str, now: datetime | None = None) 
 
     matured_until = now - timedelta(days=HIT_WINDOW_DAYS)
     cohort = [PickRow.created_at < matured_until]
-    cohort_delivered, cohort_watched = counts(cohort)
+    cohort_delivered, cohort_watched, cohort_finished = counts(cohort)
 
     per_library: list[dict] = []
     if cohort_delivered:
@@ -537,19 +633,25 @@ def row_effectiveness(session: Session, slug: str, now: datetime | None = None) 
                 # COUNT(DISTINCT ...) skips NULLs, so an unwatched pick contributes nothing —
                 # which is what makes one GROUP BY answer both halves of the ratio per library.
                 func.count(func.distinct(case((PickRow.watched_at.isnot(None), _PERSON_TITLE)))),
+                func.count(
+                    func.distinct(
+                        case(((PickRow.finished_at.isnot(None)) & (PickRow.watched_at.isnot(None)), _PERSON_TITLE))
+                    )
+                ),
             )
             .filter(*mine, *cohort)
             .group_by(PickRow.library)
             .all()
         )
         per_library = [
-            {"library": lib or "", "delivered": d, "watched": w, "rate": _rate(w, d)}
-            for lib, d, w in sorted(rows, key=lambda r: -r[1])
+            {"library": lib or "", "delivered": d, "watched": w, "finished": f, "rate": _rate(w, d)}
+            for lib, d, w, f in sorted(rows, key=lambda r: -r[1])
         ]
 
     return {
         "delivered": delivered_all,
         "watched": watched_all,
+        "finished": finished_all,
         "runs": runs,
         "first_delivered_at": iso_utc(first) if first else None,
         "last_delivered_at": iso_utc(last) if last else None,
@@ -560,7 +662,11 @@ def row_effectiveness(session: Session, slug: str, now: datetime | None = None) 
             {
                 "delivered": cohort_delivered,
                 "watched": cohort_watched,
+                "finished": cohort_finished,
                 "rate": _rate(cohort_watched, cohort_delivered),
+                # No `finished_rate` here. The dashboard's landing card has one and renders it; this
+                # panel shows the finished COUNT in its Watched tile and a per-library percentage
+                # below, so a third figure was computed, serialised and read by nothing.
                 "cohort_to": iso_utc(matured_until),
             }
             if cohort_delivered

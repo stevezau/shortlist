@@ -420,7 +420,10 @@ export function useCuratorModels(
   params: { provider: string; apiKey?: string; ollamaUrl?: string },
   enabled: boolean,
 ) {
-  const credential = params.apiKey || params.ollamaUrl || "";
+  // BOTH inputs, not whichever is set first: a local/OpenAI-compatible server can now carry a key
+  // as well as a URL, and keying on the key alone would serve a cached list from the previous
+  // server when only the URL changed.
+  const credential = `${params.apiKey ?? ""} ${params.ollamaUrl ?? ""}`;
   return useQuery({
     queryKey: queryKeys.curatorModels(params.provider, fingerprint(credential)),
     queryFn: () =>

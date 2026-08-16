@@ -121,7 +121,8 @@ account is told to hide that label, so only its owner ever sees it.
 - 🔒 **Private by design** — share filters are snapshotted before the first change and fully
   restored on uninstall; rows are delivered hidden and only revealed once the exclusions exist.
 - 📊 **Know if it's working** — a dashboard tracks what was delivered versus what people actually
-  watched (hit rate), per user and per row.
+  watched, per user and per row — and separates a title they **started** from one they **finished**,
+  so a single episode of a series stops scoring like a whole film.
 - 🧹 **Kometa-friendly** — never touches collections it didn't create.
 - ↩️ **Provable uninstall** — one flow restores your server exactly as Shortlist found it.
 - 🧪 **Safe mode** — set `SHORTLIST_DRY_RUN=1` to try it against your real server without writing a

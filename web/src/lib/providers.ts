@@ -13,6 +13,15 @@ export interface CuratorProviderInfo {
   glyph: "anthropic" | "openai" | "google" | "ollama" | null;
   defaultModel: string;
   needsKey: boolean;
+  /**
+   * Offer a key field without requiring one. A local runtime needs no key, but the same
+   * OpenAI-compatible API is what hosted gateways (ollama.com cloud, OpenRouter) speak, and those
+   * reject every call without one — so "needs a key" and "has somewhere to type a key" are two
+   * different questions (issue #88).
+   */
+  optionalKey?: boolean;
+  /** Extra line under the key field, for when it isn't obvious whether one is needed. */
+  keyHint?: string;
   needsUrl: boolean;
   /** Which setting the URL is stored under — each URL-taking provider has its own. */
   urlKey?: "curator.ollama_url" | "curator.openai_base_url";
@@ -65,6 +74,9 @@ export const CURATOR_PROVIDERS: readonly CuratorProviderInfo[] = [
     glyph: "ollama",
     defaultModel: "",
     needsKey: false,
+    optionalKey: true,
+    keyHint:
+      "Only needed for a hosted gateway like ollama.com or OpenRouter. Leave blank for a server on your own network.",
     needsUrl: true,
     urlKey: "curator.openai_base_url",
     urlLabel: "Server URL",

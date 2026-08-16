@@ -44,6 +44,8 @@ class RequestCandidateOut(PassthroughModel):
     imdb_id: str = ""  # "tt…" for a direct IMDb link; "" -> the UI falls back to an IMDb search
     # TMDB poster path ("/abc.jpg"). The UI builds the image URL and its size; "" -> placeholder tile.
     poster_path: str = ""
+    # TMDB's synopsis, so an unfamiliar title can be judged in the inbox; "" -> no paragraph is drawn.
+    overview: str = ""
     rating: float
     vote_count: int
     demand: int
@@ -126,6 +128,7 @@ def list_requests(
             year=r.year,
             imdb_id=r.imdb_id or "",
             poster_path=r.poster_path or "",
+            overview=r.overview or "",
             rating=r.rating,
             vote_count=r.vote_count,
             demand=r.demand,

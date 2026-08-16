@@ -52,7 +52,11 @@ export const WIZARD_STEPS: readonly WizardStepMeta[] = [
   },
   {
     title: "Recommendations & history",
-    why: "A free key from The Movie Database (TMDB) is required — it is the catalogue Shortlist searches for titles to suggest. Watch history is read from Plex for each person; Tautulli is optional, only for friendlier display names.",
+    // One line, because both halves of the old one were restated verbatim by the fields directly
+    // beneath it — "TMDB is a free film and TV catalogue…" and "Tautulli is only used for the
+    // friendlier names it knows people by". A step header should say what the step is for; the
+    // field that needs explaining is right there to explain itself.
+    why: "One required key, and one optional connection.",
   },
   {
     title: "Add an AI provider (optional)",

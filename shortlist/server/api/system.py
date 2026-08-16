@@ -837,7 +837,11 @@ def _job_dict(job) -> dict:
 
 @_authed.get("/jobs", response_model=list[JobOut])
 async def list_jobs(
-    request: Request, limit: int = Query(25, ge=1, le=200), kind: str | None = None, before_id: int | None = None
+    request: Request,
+    limit: int = Query(25, ge=1, le=200),
+    kind: str | None = None,
+    before_id: int | None = None,
+    status: JobStatus | None = None,
 ) -> list[dict]:
     """Recent background jobs, newest first — the "did that actually happen?" answer.
 
@@ -847,6 +851,12 @@ async def list_jobs(
     `kind` narrows it to one job type, which is how the Jobs page shows a single job's own history
     without pulling every other kind's rows down with it. `before_id` pages backwards — pass the id
     of the oldest job you already have.
+
+    `status` narrows it to one outcome, and it exists because the Jobs page's "N failed" badge
+    counts every failed row in the table while the feed behind it could only fetch the newest N.
+    Measured on a real server: 8 failures, all `privacy.sync`, at ids 587-596 — the newest hundred
+    jobs started at id 680, so filtering a fetched page client-side answered "8 failed" with an
+    empty list. A count over the whole table needs a filter over the whole table.
     """
     from shortlist.server.db.models import Job
 
@@ -854,6 +864,8 @@ async def list_jobs(
         query = session.query(Job)
         if kind:
             query = query.filter(Job.kind == kind)
+        if status:
+            query = query.filter(Job.status == status)
         if before_id is not None:
             query = query.filter(Job.id < before_id)
         rows = query.order_by(Job.created_at.desc(), Job.id.desc()).limit(min(limit, 200)).all()

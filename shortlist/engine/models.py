@@ -121,6 +121,34 @@ class WatchedItem:
         function of the same name."""
         return is_human_rating(self.user_rating)
 
+    @property
+    def is_finished(self) -> bool:
+        """Did they finish this, as opposed to merely starting it?
+
+        A MOVIE is finished whenever it is here at all: this type only ever holds titles Plex has
+        already flagged watched, and for a movie that flag means played.
+
+        A SERIES needs every episode. That threshold is OURS and has to be — Plex publishes no
+        show-level watched flag, only ``viewedLeafCount``/``leafCount`` (recorded:
+        ``tests/fixtures/pms_watched_shows.xml.txt``, where a show 2 episodes into 176 comes back as
+        "watched"). Of the thresholds available this is the strictest and the least arguable, and it
+        is already the wording the user page shows per title ("3 of 12 episodes" / "finished").
+
+        Deliberately NOT the engine's already-seen bar (`rows._watched_titles`, effectively 3
+        episodes or 15%): that one answers "engaged enough not to recommend this again?", which is a
+        different question with a legitimately looser answer.
+
+        A series whose episode total is unknown reads as UNFINISHED — the opposite of the
+        already-seen rule, which counts it as watched rather than risk re-recommending. Here the
+        cautious direction is the other way: "we cannot show they finished it" must not become a
+        claim that they did.
+        """
+        if self.media_type is MediaType.MOVIE:
+            return True
+        if not self.leaf_count:
+            return False
+        return (self.viewed_leaf_count or 0) >= self.leaf_count
+
 
 @dataclass(frozen=True)
 class Seed:
@@ -151,6 +179,9 @@ class Candidate:
     # TMDB's own poster path ("/abc.jpg"), free in every list response. Only carried through to the
     # request inbox, which shows the artwork — a delivered pick uses Plex's copy of the title.
     poster_path: str = ""
+    # TMDB's synopsis, free in the same list response as the poster and carried the same way: only
+    # the request inbox reads it, so the owner can judge an unfamiliar title without leaving the page.
+    overview: str = ""
     seeds: list[Seed] = field(default_factory=list)  # every seed that suggested it
     rating_key: int | None = None  # set once matched to the library
     # Which candidate source(s) produced it. Ranking needs this: seedless sources (tmdb_discover,
@@ -534,6 +565,10 @@ class MissingTitle:
     # TMDB poster path ("/abc.jpg") so the inbox can show the artwork. Free from the candidate's own
     # TMDB list response; filled in for the gated shortlist when a non-TMDB source surfaced the title.
     poster_path: str = ""
+    # TMDB's synopsis, on the same terms as the poster: free from the candidate's list response, and
+    # bought with a detail call only for the gated few a non-TMDB source surfaced. Empty is normal —
+    # TMDB has no synopsis for some titles, and the inbox simply omits the paragraph.
+    overview: str = ""
     # Per-user + per-row tags to apply on request, layered on top of the target's global tag. Unioned
     # across every user who wanted the title and every row it surfaced in (deduplication merges them).
     tags: set[str] = field(default_factory=set)

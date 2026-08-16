@@ -1272,6 +1272,10 @@ class RowLibraryEffectiveness(PassthroughModel):
     library: str
     delivered: int
     watched: int
+    #: Of the watched, the ones they saw out. A TV library finishes far less of what it lands than a
+    #: movie library does, for reasons that have nothing to do with the row — so the two numbers are
+    #: shown side by side rather than one being presented as the row's score.
+    finished: int
     rate: float | None  # None when nothing was delivered there
 
 
@@ -1281,6 +1285,7 @@ class RowMaturedCohort(PassthroughModel):
 
     delivered: int
     watched: int
+    finished: int
     rate: float | None
     cohort_to: str
 
@@ -1290,6 +1295,7 @@ class RowEffectivenessOut(PassthroughModel):
 
     delivered: int  # all time, distinct person+title
     watched: int
+    finished: int
     # Runs still on record that built this row — counted exactly as `/api/runs?collection=<slug>`
     # selects them, since the panel's Runs tile links there. Pruned runs are in neither.
     runs: int

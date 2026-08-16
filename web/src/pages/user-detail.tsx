@@ -52,11 +52,8 @@ function UserDetailBody({ user }: { user: User }) {
         <section className="space-y-3">
           <SectionHeading>Their personal rows</SectionHeading>
           <p className="text-sm text-muted-foreground">
-            Each per-person row {user.display_name || user.username} gets, with
-            its current picks and why each was chosen. Customize any of them for
-            this person only. Shared "popular on this server" rows aren&rsquo;t
-            listed here — they&rsquo;re the same for everyone and are managed
-            under Rows.
+            Their current picks, and why each was chosen. Shared rows are the
+            same for everyone, so they live under Rows.
           </p>
           <UserRowsSection user={user} />
         </section>

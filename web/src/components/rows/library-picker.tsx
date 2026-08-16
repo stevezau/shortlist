@@ -149,10 +149,8 @@ export function LibraryPicker({
                 })}
               </div>
               <p className="text-sm text-muted-foreground">
-                This row builds a collection in each ticked library.{" "}
-                {media === "both"
-                  ? "Tick them all and the row also covers any library you add to Plex later."
-                  : `Tick every ${media === "movie" ? "movie" : "TV"} library and the row also covers ${media === "movie" ? "movie" : "TV"} libraries you add to Plex later. Tick one of the others and it covers both types.`}
+                One collection per ticked library. Tick them all and the row
+                covers anything you add to Plex later.
               </p>
             </>
           );

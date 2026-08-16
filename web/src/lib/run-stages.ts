@@ -56,6 +56,14 @@ export function isServerStage(userSlug: string): boolean {
   return userSlug === "Shortlist";
 }
 
+/** Is the run past its last person and into the server-wide tail? Only then is "Finishing up" true.
+ *
+ *  `preparing` is server-wide too but runs BEFORE anyone — treating "server-wide" as "the tail" is
+ *  what let the header claim a run was finishing up while it was 9 people into 46. */
+export function isTailStage(stage: string): boolean {
+  return (TAIL_STAGES as readonly string[]).includes(stage);
+}
+
 /** Stages that write to Plex or plex.tv. The one filter worth having on a privacy-sensitive app:
  *  "what did this run actually change on the server?" is a different question from "what did it do". */
 const PLEX_WRITE_STAGES = new Set([

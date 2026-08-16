@@ -142,7 +142,7 @@ export function UsersPage() {
       <PageHeader
         icon={UsersIcon}
         title="Users"
-        subtitle="Everyone on your Plex server. Turn someone on and they start getting the rows you've built."
+        subtitle="Turn someone on and they start getting the rows you’ve built."
         actions={
           // Wraps: three buttons need 345px in one line and ran off a 320px screen.
           <div className="flex flex-wrap gap-2">
@@ -338,11 +338,30 @@ export function UsersPage() {
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
+                    {/* Six columns do not fit a phone. Unhidden they simply ran off the card —
+                        356px of container for 463px of table — so "Picks watched" and "Enabled"
+                        sat outside it, cut mid-number, inside a horizontal scroller with no
+                        visible edge to suggest scrolling. Dropping the two time columns below `lg`
+                        gets the remaining four under 356px. Type stays at every width: its badges
+                        are the warnings ("Sees 8 rows of others'", "Older Kid"), which is the last
+                        thing a narrow screen should lose — and rendering them twice, once per
+                        breakpoint, would announce every one of them twice to a screen reader. */}
                     <TableHead>User</TableHead>
                     <TableHead>Type</TableHead>
-                    <TableHead>Watch history</TableHead>
-                    <TableHead>Last run</TableHead>
-                    <TableHead title="Share of Shortlist's picks this person has watched">
+                    <TableHead className="hidden lg:table-cell">
+                      Watch history
+                    </TableHead>
+                    <TableHead className="hidden lg:table-cell">
+                      Last run
+                    </TableHead>
+                    {/* One more column goes at 320: four still overran by 32px there, and the one
+                        left outside the card was Enabled — a switch you could not reach. A number
+                        you cannot see is a nuisance; a control you cannot press is a broken page,
+                        so the number is what yields. */}
+                    <TableHead
+                      className="hidden sm:table-cell"
+                      title="Share of Shortlist's picks this person has watched"
+                    >
                       Picks watched
                     </TableHead>
                     <TableHead className="text-right">Enabled</TableHead>
@@ -371,7 +390,7 @@ export function UsersPage() {
                           <DepartedBadge user={user} />
                         </span>
                       </TableCell>
-                      <TableCell className="text-muted-foreground">
+                      <TableCell className="hidden text-muted-foreground lg:table-cell">
                         {/* "New viewer" belongs HERE, next to the number it explains — it's a
                             state, not a type, and in the Type column it read as one. */}
                         <span className="flex flex-wrap items-center gap-2">
@@ -381,10 +400,10 @@ export function UsersPage() {
                           <ColdStartBadge user={user} />
                         </span>
                       </TableCell>
-                      <TableCell className="text-muted-foreground">
+                      <TableCell className="hidden text-muted-foreground lg:table-cell">
                         {timeAgo(user.last_run_at)}
                       </TableCell>
-                      <TableCell className="text-muted-foreground tabular-nums">
+                      <TableCell className="hidden text-muted-foreground tabular-nums sm:table-cell">
                         {formatHitRate(user.hit_rate)}
                       </TableCell>
                       <TableCell className="text-right">

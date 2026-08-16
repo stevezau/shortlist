@@ -182,3 +182,13 @@ class TmdbClient:
         """
         kind = "movie" if media_type is MediaType.MOVIE else "tv"
         return (self._get(f"/{kind}/{tmdb_id}") or {}).get("poster_path") or ""
+
+    def overview(self, tmdb_id: int, media_type: MediaType) -> str:
+        """A title's synopsis, or ``""`` when TMDB has none for it.
+
+        Same terms as :meth:`poster_path` — every TMDB list response already carries ``overview``, so
+        this is only reached for a title a non-TMDB source surfaced. It hits the same detail endpoint,
+        which the response cache serves, so a title missing both costs one round-trip, not two.
+        """
+        kind = "movie" if media_type is MediaType.MOVIE else "tv"
+        return (self._get(f"/{kind}/{tmdb_id}") or {}).get("overview") or ""

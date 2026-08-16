@@ -3,6 +3,7 @@ import type {
   RowEffectiveness,
   JobCatalogEntry,
   JobResult,
+  JobStatus,
   ApiTokenCreated,
   ApiTokenStatus,
   NotificationsPage,
@@ -254,9 +255,13 @@ export const api = {
   }> => request("/api/users/sync", { method: "POST" }),
 
   // --- Background jobs ---
-  getJobs: (kind?: string, limit = 25): Promise<Job[]> =>
+  getJobs: (kind?: string, limit = 25, status?: JobStatus): Promise<Job[]> =>
     request(
-      `/api/system/jobs?limit=${limit}${kind ? `&kind=${encodeURIComponent(kind)}` : ""}`,
+      `/api/system/jobs?limit=${limit}` +
+        (kind ? `&kind=${encodeURIComponent(kind)}` : "") +
+        // Server-side, not a client filter over a fetched page: the "N failed" badge counts every
+        // failed row in the table, and on a real server all eight sat past the newest hundred.
+        (status ? `&status=${encodeURIComponent(status)}` : ""),
     ),
 
   /** Every job Shortlist can run, with its schedule and how it went last time. */

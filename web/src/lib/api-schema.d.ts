@@ -1861,6 +1861,12 @@ export interface paths {
          *     `kind` narrows it to one job type, which is how the Jobs page shows a single job's own history
          *     without pulling every other kind's rows down with it. `before_id` pages backwards — pass the id
          *     of the oldest job you already have.
+         *
+         *     `status` narrows it to one outcome, and it exists because the Jobs page's "N failed" badge
+         *     counts every failed row in the table while the feed behind it could only fetch the newest N.
+         *     Measured on a real server: 8 failures, all `privacy.sync`, at ids 587-596 — the newest hundred
+         *     jobs started at id 680, so filtering a fetched page client-side answered "8 failed" with an
+         *     empty list. A count over the whole table needs a filter over the whole table.
          */
         get: operations["list_jobs_api_system_jobs_get"];
         put?: never;
@@ -3250,6 +3256,10 @@ export interface components {
             cohort_to: string | null;
             /** Delivered */
             delivered: number;
+            /** Finished */
+            finished: number;
+            /** Finished Rate */
+            finished_rate: number | null;
             /** Matured Days */
             matured_days: number;
             /** Rate */
@@ -3420,6 +3430,8 @@ export interface components {
             avg_days_to_watch_delta: number | null;
             /** Delivered */
             delivered: number;
+            /** Finished */
+            finished: number;
             landing: components["schemas"]["LandingOut"];
             /** Watched */
             watched: number;
@@ -3472,6 +3484,8 @@ export interface components {
             deleted: boolean;
             /** Delivered */
             delivered: number;
+            /** Finished */
+            finished: number;
             /** Library */
             library: string;
             /** Name */
@@ -3491,6 +3505,8 @@ export interface components {
             delivered: number;
             /** Display Name */
             display_name: string;
+            /** Finished */
+            finished: number;
             /** Slug */
             slug: string;
             /** Username */
@@ -3715,6 +3731,8 @@ export interface components {
         RecentWatchOut: {
             /** Display Name */
             display_name: string;
+            /** Finished At */
+            finished_at: string | null;
             /** Library */
             library: string;
             /** Media Type */
@@ -3840,6 +3858,11 @@ export interface components {
             /** Media Type */
             media_type: string;
             /**
+             * Overview
+             * @default
+             */
+            overview: string;
+            /**
              * Poster Path
              * @default
              */
@@ -3908,6 +3931,8 @@ export interface components {
         RowEffectivenessOut: {
             /** Delivered */
             delivered: number;
+            /** Finished */
+            finished: number;
             /** First Delivered At */
             first_delivered_at: string | null;
             /** Last Delivered At */
@@ -3932,6 +3957,8 @@ export interface components {
         RowLibraryEffectiveness: {
             /** Delivered */
             delivered: number;
+            /** Finished */
+            finished: number;
             /** Library */
             library: string;
             /** Rate */
@@ -3951,6 +3978,8 @@ export interface components {
             cohort_to: string;
             /** Delivered */
             delivered: number;
+            /** Finished */
+            finished: number;
             /** Rate */
             rate: number | null;
             /** Watched */
@@ -4662,6 +4691,8 @@ export interface components {
         };
         /** TrendPointOut */
         TrendPointOut: {
+            /** Finished */
+            finished: number;
             /** Watched */
             watched: number;
             /** Week */
@@ -7447,6 +7478,7 @@ export interface operations {
                 limit?: number;
                 kind?: string | null;
                 before_id?: number | null;
+                status?: ("queued" | "running" | "done" | "failed") | null;
             };
             header?: never;
             path?: never;

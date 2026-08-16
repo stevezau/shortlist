@@ -297,6 +297,22 @@ function TitleMeta({
   );
 }
 
+/** TMDB's synopsis, clamped to three lines — enough to decide on a title you've never heard of,
+ *  which is the whole reason it's here (discussion #87). No expander: if three lines don't settle
+ *  it, the TMDB link directly below is the better next step than more text in a triage list.
+ *
+ *  Renders nothing at all when there's no synopsis (a pre-0071 row awaiting its next run, or a
+ *  title TMDB has none for) — an empty paragraph would leave a gap that reads like a loading state.
+ */
+function Synopsis({ text }: { text: string }) {
+  if (!text.trim()) return null;
+  return (
+    <p className="line-clamp-3 text-sm text-muted-foreground" title={text}>
+      {text}
+    </p>
+  );
+}
+
 /**
  * Requests are off, but titles queued before that are still on file. The inbox stays readable —
  * hiding it would lose them — but nothing here can be acted on, and it has to say so: the live
@@ -385,6 +401,11 @@ function PendingRow({
   disabled,
   arrView,
   nameOf,
+  onSend,
+  onDelete,
+  onReject,
+  busy,
+  sending,
 }: {
   item: RequestCandidate;
   checked: boolean;
@@ -394,10 +415,33 @@ function PendingRow({
   disabled: boolean;
   arrView: ArrView;
   nameOf: DisplayNameLookup;
+  /** Decide this one title without touching the selection — the toolbar stays for batches. */
+  onSend: (id: number) => void;
+  onDelete: (id: number) => void;
+  onReject: (id: number) => void;
+  /** A mutation is in flight somewhere on the page; every row's buttons wait it out. */
+  busy: boolean;
+  /** THIS row's Send is the one in flight — the spinner belongs on the button that was clicked, not
+   *  on the toolbar's, which may be scrolled off the top of a long queue. */
+  sending: boolean;
 }) {
   const app = item.media_type === "movie" ? "Radarr" : "Sonarr";
   return (
-    <label
+    // A div, not the <label> this used to be: a <button> is a labelable element, so a label may not
+    // contain one — the row now has three.
+    //
+    // Re-creating click-anywhere-to-select by hand means re-creating the rule the label gave us for
+    // free: "the activation behavior of a label element for events targeted at interactive content
+    // descendants … must be to do nothing" (HTML spec). Without the guard below, opening TMDB to
+    // read up on an unfamiliar title silently ticks that row, and the next toolbar Reject takes a
+    // title nobody chose. Filter on the target, not per-child `stopPropagation` — every link, badge
+    // and expander added to this card later would each have to remember to opt out.
+    <div
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest("a,button,input,select,textarea"))
+          return;
+        if (!disabled) onToggle(item.id);
+      }}
       className={cn(
         "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors",
         // Selection is what the whole toolbar acts on, so a picked card says so on the card itself —
@@ -411,6 +455,7 @@ function PendingRow({
         type="checkbox"
         checked={checked}
         disabled={disabled}
+        aria-label={`Select ${item.title}`}
         onChange={() => onToggle(item.id)}
         className="mt-1.5 h-4 w-4 shrink-0 accent-primary disabled:cursor-not-allowed disabled:opacity-50"
       />
@@ -421,6 +466,7 @@ function PendingRow({
           <ArrStatusBadge view={arrView} />
         </div>
         <TitleMeta item={item} globalTag={globalTag} nameOf={nameOf} />
+        <Synopsis text={item.overview} />
         <WhyBreakdown why={item.why} nameOf={nameOf} />
         <ExternalLinks item={item} />
         {/* Deliberately does NOT promise the row disappears next run: the tidy-up matches shows by
@@ -452,8 +498,50 @@ function PendingRow({
             Last recorded reason: {item.detail}
           </p>
         ) : null}
+        {/* Decide this title on its own. The toolbar above still handles batches — these exist for
+            the other way through the list, one unfamiliar title at a time, which is what the inbox
+            actually looks like on most nights. Same variants and the same dividing rule as the
+            toolbar, so Send-vs-the-destructive-pair reads identically in both places. */}
+        <div
+          role="group"
+          aria-label={`Actions for ${item.title}`}
+          className="flex flex-wrap items-center justify-end gap-1 pt-1"
+        >
+          <Button
+            size="sm"
+            variant="outline"
+            loading={sending}
+            disabled={disabled || busy}
+            onClick={() => onSend(item.id)}
+            title={`Add ${item.title} to ${app} and start searching for it now.`}
+          >
+            {!sending && <Send aria-hidden="true" />}
+            Send
+          </Button>
+          <span aria-hidden="true" className="mx-1 h-5 w-px bg-border" />
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={disabled || busy}
+            onClick={() => onDelete(item.id)}
+            title="Take this off the list for now. If a later run turns it up again, it comes back."
+          >
+            <Trash2 aria-hidden="true" />
+            Delete
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={disabled || busy}
+            onClick={() => onReject(item.id)}
+            title={`Never ask ${app} for this again. It won't come back to this list.`}
+          >
+            <X aria-hidden="true" />
+            Reject
+          </Button>
+        </div>
       </div>
-    </label>
+    </div>
   );
 }
 
@@ -1125,18 +1213,26 @@ export function RequestsPage() {
     setSelected(new Set());
   };
 
+  // A per-row decision keeps the batch someone is assembling, but must still drop the title it just
+  // decided. `useSendRequests.onSuccess` doesn't return its invalidation, so `busy` goes false when
+  // the POST resolves — before the refetched list arrives. In that window the row is still listed as
+  // pending, so leaving its id in `selected` lets the toolbar's Reject land on a title that was just
+  // sent (unlike /delete, /reject doesn't exclude sent rows), stamping it rejected with a sent_at.
+  const decide = (id: number, mutate: () => void) => {
+    mutate();
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  };
+
   return (
     <div>
       <PageHeader
         icon={Inbox}
         title="Requests"
-        subtitle={
-          <>
-            Titles your people wanted that aren&rsquo;t in your library yet.
-            Send the ones you want to Radarr or Sonarr &mdash; the apps that
-            fetch films and TV for your library.
-          </>
-        }
+        subtitle="Titles your people wanted that aren’t in your library yet. Send the ones you want to Radarr or Sonarr."
       />
 
       {/* Whether requests are ON is a fact about the SETTING, never about whether the inbox happens
@@ -1176,9 +1272,12 @@ export function RequestsPage() {
                     }
                   />
                 ) : (
+                  // The hint used to restate the page subtitle directly above it in different
+                  // words. An empty state's job is to say what to do next, not to re-introduce the
+                  // feature the reader just read about.
                   <EmptyState
                     title="Requests are off"
-                    hint="Turn requests on and Shortlist will notice the titles your people would have loved but your library doesn't have, and offer to fetch them through Radarr or Sonarr."
+                    hint="Switch them on and missing titles start collecting here."
                     action={
                       <Button asChild variant="outline" size="sm">
                         <Link to={SETTINGS_LINK}>
@@ -1368,7 +1467,14 @@ export function RequestsPage() {
                             {/* Send first, and separated: it is the reason the page exists, and the
                                 eye used to land on "Delete". The rule (a plain border, not a
                                 Separator) keeps the two destructive actions visibly apart from it. */}
-                            <div className="flex items-center gap-2">
+                            {/* Named, because the page now has two Delete buttons and two Rejects —
+                                this one acts on the ticked rows, the one on each card acts on that
+                                card. Reading "Reject" alone, they are indistinguishable. */}
+                            <div
+                              role="group"
+                              aria-label="Actions for the selected titles"
+                              className="flex items-center gap-2"
+                            >
                               <Button
                                 size="sm"
                                 loading={send.isPending}
@@ -1468,6 +1574,23 @@ export function RequestsPage() {
                                   disabled={!requestsEnabled}
                                   arrView={arrView(item)}
                                   nameOf={nameOf}
+                                  busy={busy}
+                                  // `decide`, not `act`: a per-row decision must not clear a batch
+                                  // the owner had half-assembled in the checkboxes.
+                                  onSend={(id) =>
+                                    decide(id, () => send.mutate({ ids: [id] }))
+                                  }
+                                  onDelete={(id) =>
+                                    decide(id, () => del.mutate([id]))
+                                  }
+                                  onReject={(id) =>
+                                    decide(id, () => reject.mutate([id]))
+                                  }
+                                  sending={
+                                    send.isPending &&
+                                    send.variables?.ids?.length === 1 &&
+                                    send.variables.ids[0] === item.id
+                                  }
                                 />
                               ))}
                             </div>

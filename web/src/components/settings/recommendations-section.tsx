@@ -233,26 +233,17 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           AI enhancement
         </h3>
-        <div className="space-y-1.5 rounded-md border bg-muted/40 p-4 text-sm text-muted-foreground">
-          <p className="font-medium text-foreground">How AI is used</p>
-          <p>
-            The <strong>TMDB</strong> sources above use no AI — just the free
-            TMDB key — and find most titles.
-          </p>
-          <p>
-            <strong>AI web search</strong> below is optional but proven
-            valuable: it searches the web for acclaimed titles TMDB misses,
-            using your AI provider.
-          </p>
-          <p>
-            Prefer no AI at all? Leave the AI provider set to{" "}
-            <strong>None</strong> in{" "}
-            <Link to="/settings#connections" className="font-medium underline">
-              Connections
-            </Link>{" "}
-            — you still get full rows, ranked by score with plain reasons.
-          </p>
-        </div>
+        {/* Three paragraphs became one line. The point a reader needs here is that AI is optional
+            and what turning it off costs — not a walk through which source uses which key. */}
+        <p className="text-sm text-muted-foreground">
+          Optional. The TMDB sources above find most titles with no AI at all;
+          this searches the web for the ones they miss. Set the provider to{" "}
+          <strong>None</strong> in{" "}
+          <Link to="/settings#connections" className="font-medium underline">
+            Connections
+          </Link>{" "}
+          and you still get full rows, ranked by score with plain reasons.
+        </p>
 
         <AiWebSearchCard
           settings={settings}
@@ -271,7 +262,6 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
               <Label htmlFor="watched-pct">Already-watched titles</Label>
               <p className="text-sm text-muted-foreground">
                 How much of a row may be things a person has already finished.
-                The default every row inherits; any row can choose its own.
               </p>
               <WatchedSlider
                 id="watched-pct"
@@ -282,14 +272,11 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
             <div className="space-y-2 border-t pt-4">
               <Label htmlFor="refresh-days">How often rows rebuild</Label>
               <p className="text-sm text-muted-foreground">
-                How often a row swaps in new titles. On the nights in between it
-                keeps the same set and nothing is rewritten to Plex; on its
-                rebuild night the strongest picks stay and the weakest are
-                swapped for new ones. Longer = stickier and cheaper; shorter =
-                fresher. This decides <strong>which</strong> titles a row holds
-                — the order they appear in is that row’s own{" "}
-                <strong>Order</strong> setting. The default every row inherits;
-                any row can choose its own.
+                How often a row swaps in new titles; in between, it is left
+                exactly as it is. Longer = stickier and cheaper, shorter =
+                fresher. Decides <strong>which</strong> titles a row holds, not
+                the order they appear in — that is the row’s own{" "}
+                <strong>Order</strong> setting.
               </p>
               <RefreshDaysField
                 id="refresh-days"
@@ -301,13 +288,8 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
               <Label htmlFor="recency">Recent releases</Label>
               <p className="text-sm text-muted-foreground">
                 How much a title’s <strong>release date</strong> counts when
-                ranking it. Without this, a well-rated 1996 film beats a 2024
-                one every time, and rows fill up with older titles. It’s a
-                preference, not a filter — old titles still reach rows, they
-                just have to be a better match. Distinct from{" "}
-                <strong>How often rows rebuild</strong> above, which is how
-                often a row re-picks rather than which titles win. The default
-                every row inherits; any row can choose its own.
+                ranking it. A preference, not a filter — older titles still
+                reach rows, they just have to be a better match.
               </p>
               <RecencySlider
                 id="recency"
@@ -323,15 +305,9 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
             <div className="space-y-2 border-t pt-4">
               <Label htmlFor="max-seeds">{MAX_SEEDS_LABEL}</Label>
               <p className="text-sm text-muted-foreground">
-                Shortlist works backwards from what someone recently watched.
-                This is how far back it looks &mdash; and it applies to every
-                source, not just the AI one. Fewer makes a row tighter and more
-                about a couple of things; more covers more of their taste. Any
-                row can set its own, and a row named after one title (
-                <span className="font-mono">{"{top_seed}"}</span>) should
-                &mdash; the row editor prompts you there. This server-wide
-                default stops at 5 for that reason: a row covering movies and TV
-                needs at least one of each to work from.
+                How far back Shortlist looks when working out someone&rsquo;s
+                taste. Applies to every source. Fewer makes a row tighter and
+                more about a couple of things; more covers more of their taste.
               </p>
               <div className="flex items-center gap-2">
                 <Input
@@ -353,15 +329,11 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
             <div className="space-y-2 border-t pt-4">
               <Label htmlFor="recent-count">{RECENT_COUNT_LABEL}</Label>
               <p className="text-sm text-muted-foreground">
-                A narrower slice of the same list. The AI web-search source
-                takes the most recent few of the watches above and runs one
-                search each &mdash; &ldquo;what to watch if you liked X&rdquo;.
-                This is how many. Setting it higher than the number above
-                changes nothing, since there is nothing further to search.
-                Results are cached for two weeks and shared across people, so a
-                popular title is searched once for the whole server. Fewer =
-                tighter and cheaper. Nothing else uses this; any row &mdash; and
-                any person on a row &mdash; can set their own.
+                A narrower slice of the same list: how many of those watches the
+                AI web search runs a &ldquo;what to watch if you liked X&rdquo;
+                search for. Fewer = tighter and cheaper, and setting it higher
+                than <strong>{MAX_SEEDS_LABEL}</strong> changes nothing. Results
+                are cached for two weeks and shared across people.
               </p>
               <div className="flex items-center gap-2">
                 <Input
@@ -392,14 +364,9 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                       row but ignore it on the TV row" is not a preference anyone holds. */}
                   <p className="text-sm text-muted-foreground">
                     When someone rates a title low in Plex, stop using it to
-                    find similar things for them. They rate it in Plex like they
-                    always have &mdash; there is nothing for them to sign in to,
-                    and nothing for you to do per person. A title they
-                    haven&rsquo;t rated is unaffected, which is nearly all of
-                    them. This one is server-wide: what someone thought of a
-                    film is true on every row, so no row overrides it. Shared
-                    rows ignore ratings entirely &mdash; one person&rsquo;s
-                    opinion shouldn&rsquo;t reshape a row everyone sees.
+                    find similar things for them. Server-wide, and shared rows
+                    ignore ratings entirely &mdash; one person&rsquo;s opinion
+                    shouldn&rsquo;t reshape a row everyone sees.
                   </p>
                 </div>
                 <Switch
@@ -416,9 +383,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                   </Label>
                   <p className="text-sm text-muted-foreground">
                     At or below this rating, a title stops shaping their picks.
-                    A thumbs-down in Plex counts as 1 star. It stays in their
-                    watch history either way &mdash; this only changes what gets
-                    recommended next.
+                    A thumbs-down in Plex counts as 1 star.
                   </p>
                   <div className="flex items-center gap-2">
                     <Input
@@ -454,10 +419,8 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
               <Label htmlFor="min-history">Enough watch history</Label>
               <p className="text-sm text-muted-foreground">
                 How many titles someone needs watched before Shortlist
-                recommends from <strong>their</strong> taste. Below this there
-                isn&rsquo;t enough to work from, so they get whatever you choose
-                next. New people cross it on their own; nothing here needs
-                revisiting.
+                recommends from <strong>their</strong> taste. Below it they get
+                whatever you choose next.
               </p>
               <div className="flex items-center gap-2">
                 <Input
@@ -483,8 +446,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 When someone hasn&rsquo;t watched enough
               </Label>
               <p className="text-sm text-muted-foreground">
-                The default every row inherits; any row can choose its own. A
-                row named after one title (
+                A row named after one title (
                 <span className="font-mono">{"{top_seed}"}</span>) is the one
                 worth skipping &mdash; it has no favourite to name itself after,
                 so it falls back to a plain title.
@@ -509,17 +471,14 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
               <Label htmlFor="rating-source">Rate titles using</Label>
               <p className="text-sm text-muted-foreground">
                 Which score a row set to <strong>Highest rated</strong> sorts
-                on. TMDB needs no setup. The others come from MDBList &mdash; a
-                free service that returns every site&rsquo;s score in one lookup
-                &mdash; so they need its API key, which you paste into the
-                MDBList card in{" "}
+                on. Anything but TMDB needs an MDBList key in{" "}
                 <Link
                   to="/settings#connections"
                   className="font-medium underline"
                 >
                   Connections
                 </Link>
-                . Without one, those rows quietly fall back to TMDB.
+                , and falls back to TMDB without one.
               </p>
               <select
                 id="rating-source"

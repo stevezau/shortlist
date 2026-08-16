@@ -99,6 +99,7 @@ def accumulate(
                 rating=c.rating,
                 vote_count=c.vote_count,
                 poster_path=c.poster_path,
+                overview=c.overview,
                 demand=1,
                 tags=set(tags),
                 wanters=set(who),
@@ -109,6 +110,7 @@ def accumulate(
             # A title several people wanted may have arrived from a poster-less source for one of
             # them and a TMDB list for another — keep whichever copy actually has the artwork.
             existing.poster_path = existing.poster_path or c.poster_path
+            existing.overview = existing.overview or c.overview
             existing.tags |= tags
             existing.wanters |= who
             for reason in reasons:
@@ -198,12 +200,12 @@ def request_missing(
     if in_arr:
         logger.info("requests: {} qualifying already in Sonarr/Radarr — dropped", in_arr)
 
-    # Enrich only the titles that SURVIVED the Arr drop: the inbox's IMDb deep-link and its poster.
-    # Deliberately after `_apply_arr_state`, not before — enriching first paid a TMDB detail call per
-    # title the very next line then discarded, and nothing ever read the result. Both lookups are
-    # best-effort: a miss leaves the IMDb search fallback / a placeholder tile, never a failed run.
-    # The poster call only fires for a title a NON-TMDB source surfaced (Trakt, the web search);
-    # anything from a TMDB list already arrived with its path.
+    # Enrich only the titles that SURVIVED the Arr drop: the inbox's IMDb deep-link, its poster and
+    # its synopsis. Deliberately after `_apply_arr_state`, not before — enriching first paid a TMDB
+    # detail call per title the very next line then discarded, and nothing ever read the result. All
+    # three lookups are best-effort: a miss leaves the IMDb search fallback / a placeholder tile / no
+    # synopsis paragraph, never a failed run. The poster and synopsis calls only fire for a title a
+    # NON-TMDB source surfaced (Trakt, the web search); anything from a TMDB list arrived with both.
     for m in qualifying:
         if not m.imdb_id:
             try:
@@ -217,6 +219,13 @@ def request_missing(
                 m.poster_path = tmdb.poster_path(m.tmdb_id, m.media_type)
             except Exception as e:  # never fail the run for a picture
                 logger.debug("poster lookup for {!r} failed: {}", m.title, e)
+        if not m.overview:
+            try:
+                # Hits the same detail endpoint the poster lookup just did, and `TMDBClient._get`
+                # caches on path — so a title missing both pays one HTTP round-trip, not two.
+                m.overview = tmdb.overview(m.tmdb_id, m.media_type)
+            except Exception as e:  # never fail the run for a paragraph of text
+                logger.debug("synopsis lookup for {!r} failed: {}", m.title, e)
 
     # Hybrid split: the strongest clear the auto-send bar and go now (capped); the rest wait for the
     # owner. Auto-worthy titles beyond the cap fall through to the queue rather than being lost. An

@@ -561,6 +561,57 @@ describe("RunDetailPage — grouped by library", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("counts people mid-run instead of claiming a run 1-of-3 in is finishing up", async () => {
+    // Run #10 (2026-08-17): the header read "Finishing up · getting ready — reading your libraries"
+    // while the Rows tab beside it read "9 of 46 people done". `preparing` is the newest SERVER
+    // line for the whole per-user stretch, so reading back to it reported the index build long
+    // after it ended — under a lead-in that said the run was nearly over.
+    const base = run([]);
+    getRun.mockResolvedValue({
+      ...base,
+      finished_at: null,
+      status: "running",
+      // The roster the run declared, and the one person it has reported on — the same two fields
+      // the Rows tab counts, so the header cannot disagree with the card beside it.
+      stats: {
+        ...base.stats,
+        expected_users: [
+          { slug: "moohouse" },
+          { slug: "sarah" },
+          { slug: "mike" },
+        ],
+      },
+    });
+    getRunLog.mockResolvedValue(
+      [
+        { user: "moohouse", stage: "queued" },
+        { user: "sarah", stage: "queued" },
+        { user: "mike", stage: "queued" },
+        { user: "Shortlist", stage: "preparing" },
+        // Neither of these is a person: the index narrates under the section title and a shared row
+        // under `shared_<row>`. Counting log subjects made them two extra people.
+        { user: "Movies", stage: "indexed" },
+        { user: "shared_popular", stage: "delivering" },
+        { user: "moohouse", stage: "done" },
+        { user: "sarah", stage: "curating" },
+      ].map((line, seq) => ({
+        seq,
+        ts: "2026-08-17T03:30:00Z",
+        run_id: 2,
+        counts: {},
+        ...line,
+      })),
+    );
+
+    renderDetail("");
+
+    expect(
+      await screen.findByText("building rows — 1 of 3 people done"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Right now/)).toBeInTheDocument();
+    expect(screen.queryByText(/Finishing up/)).toBeNull();
+  });
+
   it("falls back to the flat pick list for legacy runs with no breakdown", async () => {
     // A legacy run has no per-library breakdown, but its picks still render as a plain list.
     getRun.mockResolvedValue({
@@ -1108,5 +1159,120 @@ describe("RunDetailPage — a queued run has not started", () => {
 
     expect(await screen.findByText(/still running/i)).toBeInTheDocument();
     expect(screen.queryByText(/waiting to start/i)).toBeNull();
+  });
+});
+
+describe("RunDetailPage — a run that failed for PEOPLE, not for itself", () => {
+  beforeEach(() => {
+    getRun.mockReset();
+    getUsers.mockReset();
+    getUsers.mockResolvedValue([]);
+    getRunLog.mockReset();
+    getRunLog.mockResolvedValue([]);
+    listCollections.mockReset();
+    listCollections.mockResolvedValue([]);
+  });
+
+  const PLEX_409 =
+    "BadRequest: (409) conflict; http://plex:32400/library/sections/2/all?id=578636 <html><head><title>Conflict</title></head></html>";
+
+  /** Run 4 on a real 46-user server: `users_ok: 45, users_error: 1`, `stats.error` null, no
+   *  promotion blockers. The page said the run failed and then rendered no banner at all. */
+  function runWithFailures(
+    failures: { name: string; error: string }[],
+    ok = 45,
+  ): RunDetail {
+    const base = run([]);
+    return {
+      ...base,
+      status: "error",
+      error: null,
+      promotion_blockers: [],
+      stats: { users_ok: ok, users_error: failures.length, titles_requested: 0 },
+      users: [
+        ...base.users,
+        ...failures.map((f) => ({
+          ...base.users[0]!,
+          username: f.name,
+          slug: f.name.toLowerCase(),
+          display_name: f.name,
+          status: "error",
+          error: f.error,
+        })),
+      ],
+    } as RunDetail;
+  }
+
+  it("names the person and the reason instead of an empty failure", async () => {
+    getRun.mockResolvedValue(runWithFailures([{ name: "Jarrah", error: PLEX_409 }]));
+    renderDetail();
+
+    const alert = await screen.findByTestId("run-failure");
+    expect(alert).toHaveTextContent(/1 person didn.t get their rows/i);
+    expect(alert).toHaveTextContent(/Jarrah/);
+    expect(alert).toHaveTextContent(/409/);
+  });
+
+  it("groups people under one shared cause rather than repeating it per person", async () => {
+    // A PMS outage fails everyone with the same CLASS of error, but never the same string: the
+    // engine stores `f"{type(e).__name__}: {e}"` and a plexapi message embeds that user's own
+    // ratingKey and row title. Grouping on the raw text therefore reported one 500 as "4 people
+    // didn't get their rows, for 4 different reasons" — the exact opposite of what this banner is
+    // for. These three differ byte-for-byte, exactly as they would on a real server.
+    getRun.mockResolvedValue(
+      runWithFailures([
+        {
+          name: "Jarrah",
+          error: "BadRequest: (500) internal_server_error; http://pms:32400/library/sections/2/all?id=771",
+        },
+        {
+          name: "Sam",
+          error: "BadRequest: (500) internal_server_error; http://pms:32400/library/sections/2/all?id=982",
+        },
+        {
+          name: "Nikki",
+          error: "BadRequest: (500) internal_server_error; http://pms:32400/library/sections/1/all?id=1043",
+        },
+      ]),
+    );
+    renderDetail();
+
+    const alert = await screen.findByTestId("run-failure");
+    expect(alert).toHaveTextContent(/3 people didn.t get their rows/i);
+    expect(alert).not.toHaveTextContent(/different reasons/i);
+    expect(alert).toHaveTextContent(/Jarrah, Sam, Nikki/);
+    expect(within(alert).getAllByText(/internal_server_error/i)).toHaveLength(1);
+  });
+
+  it("says so when the failures had different causes", async () => {
+    getRun.mockResolvedValue(
+      runWithFailures([
+        { name: "Jarrah", error: PLEX_409 },
+        { name: "Sam", error: "ConnectionError: No route to host" },
+      ]),
+    );
+    renderDetail();
+
+    const alert = await screen.findByTestId("run-failure");
+    expect(alert).toHaveTextContent(/2 people didn.t get their rows, for 2 different reasons/i);
+  });
+
+  it("still leads with the run-level reason when there is one", async () => {
+    // A run-level failure is not a per-person one, and must not be reworded as though it were.
+    const base = runWithFailures([{ name: "Jarrah", error: PLEX_409 }]);
+    getRun.mockResolvedValue({ ...base, error: "Engine blew up before it started" });
+    renderDetail();
+
+    const alert = await screen.findByTestId("run-failure");
+    expect(alert).toHaveTextContent(/didn.t finish cleanly/i);
+    expect(alert).toHaveTextContent(/Engine blew up before it started/);
+  });
+
+  it("shows no banner on a healthy run", async () => {
+    getRun.mockResolvedValue(run([]));
+    renderDetail();
+
+    await screen.findAllByText(/MooHouse/);
+    expect(screen.queryByTestId("run-failure")).toBeNull();
   });
 });

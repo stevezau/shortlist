@@ -145,7 +145,7 @@ function RunRow({ run }: { run: Run }) {
           #{run.id}
         </Link>
       </TableCell>
-      <TableCell className="text-muted-foreground">
+      <TableCell className="hidden text-muted-foreground sm:table-cell">
         {triggerLabel(run.trigger)}
       </TableCell>
       <TableCell
@@ -154,7 +154,7 @@ function RunRow({ run }: { run: Run }) {
       >
         <RunStarted run={run} />
       </TableCell>
-      <TableCell className="text-muted-foreground">
+      <TableCell className="hidden text-muted-foreground md:table-cell">
         <RunDuration run={run} />
       </TableCell>
       <TableCell>
@@ -417,10 +417,14 @@ export function RunsPage() {
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
+                    {/* Six columns overran a 320px phone by ~55px, and the one pushed outside the
+                        card was Users — the column that says how the run actually went. Trigger and
+                        Duration are the two a narrow screen can spare: both are on the run's own
+                        page, one tap away. */}
                     <TableHead>Run</TableHead>
-                    <TableHead>Trigger</TableHead>
+                    <TableHead className="hidden sm:table-cell">Trigger</TableHead>
                     <TableHead>Started</TableHead>
-                    <TableHead>Duration</TableHead>
+                    <TableHead className="hidden md:table-cell">Duration</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Users</TableHead>
                   </TableRow>
