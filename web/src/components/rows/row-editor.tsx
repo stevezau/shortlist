@@ -517,7 +517,12 @@ export function RowEditor({
       )}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
-        <div className="space-y-5">
+        {/* `min-w-0`, because a grid item's default `min-width: auto` resolves to its MIN-CONTENT
+            width. The `minmax(0,1fr)` above only covers `lg` and up; below it the single implicit
+            column took its floor from the widest unbreakable thing inside — measured at 380px in a
+            320px viewport, so the whole page scrolled sideways and every heading and paragraph on
+            it ran past the right edge. Same fix, and the same reason, as the dashboard's cards. */}
+        <div className="min-w-0 space-y-5">
           {/* Names the left column, so the page reads as three labelled parts — how it is doing,
               what you can change, what that will produce — instead of an unlabelled wall of cards
               with a panel floating beside it. */}
@@ -583,51 +588,49 @@ export function RowEditor({
                     preview panel, which is always on screen — printing it twice made the field's
                     own help longer without answering anything the panel didn't. */}
                   <TemplateVarsHint />
-
                 </>
               )}
             </div>
 
-                {/* Issue #84. `{top_seed}` needs a title the person has watched, and someone new to
+            {/* Issue #84. `{top_seed}` needs a title the person has watched, and someone new to
                     the server has none — so this row has no name for them. Shortlist will not
                     invent one, which leaves exactly two honest answers, and this is where the
                     choice belongs: it appears the moment the name needs a watch, beside the name
                     that needs it, rather than being discovered from Plex days later. */}
-                {namesASeed && (
-                  <div className="space-y-2 rounded-md border border-dashed p-3">
-                    <Label htmlFor="row-fallback-name">
-                      Name for people with nothing watched yet
-                    </Label>
-                    <Input
-                      id="row-fallback-name"
-                      value={input.fallback_name}
-                      onChange={(e) => set({ fallback_name: e.target.value })}
-                      placeholder="e.g. ✨ Picked for {user}"
-                    />
-                    <p className="text-sm text-muted-foreground">
-                      This name says the row follows a watch, and someone new
-                      to your server hasn&rsquo;t got one — so there is nothing
-                      to put in <code>{"{top_seed}"}</code> for them.{" "}
-                      {input.fallback_name.trim() ? (
-                        <>
-                          They&rsquo;ll get this row under the name above,
-                          filled with what rates highest on your server.
-                        </>
-                      ) : (
-                        <>
-                          <strong className="text-foreground">
-                            Leave this empty and they simply won&rsquo;t get
-                            this row
-                          </strong>{" "}
-                          — which is often the right answer, since a
-                          &ldquo;because you watched&rdquo; row can&rsquo;t be
-                          true for them. It appears on its own once they
-                          watch enough.
-                        </>
-                      )}
-                    </p>
-                  </div>
-                )}
+            {namesASeed && (
+              <div className="space-y-2 rounded-md border border-dashed p-3">
+                <Label htmlFor="row-fallback-name">
+                  Name for people with nothing watched yet
+                </Label>
+                <Input
+                  id="row-fallback-name"
+                  value={input.fallback_name}
+                  onChange={(e) => set({ fallback_name: e.target.value })}
+                  placeholder="e.g. ✨ Picked for {user}"
+                />
+                <p className="text-sm text-muted-foreground">
+                  This name says the row follows a watch, and someone new to
+                  your server hasn&rsquo;t got one — so there is nothing to put
+                  in <code>{"{top_seed}"}</code> for them.{" "}
+                  {input.fallback_name.trim() ? (
+                    <>
+                      They&rsquo;ll get this row under the name above, filled
+                      with what rates highest on your server.
+                    </>
+                  ) : (
+                    <>
+                      <strong className="text-foreground">
+                        Leave this empty and they simply won&rsquo;t get this
+                        row
+                      </strong>{" "}
+                      — which is often the right answer, since a &ldquo;because
+                      you watched&rdquo; row can&rsquo;t be true for them. It
+                      appears on its own once they watch enough.
+                    </>
+                  )}
+                </p>
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label>One row each, or one for everyone?</Label>
@@ -918,8 +921,8 @@ export function RowEditor({
                 description={
                   <>
                     How many recent watches this row is built from. High blends
-                    someone&rsquo;s whole recent viewing; low makes the row about
-                    one or two specific things they watched.
+                    someone&rsquo;s whole recent viewing; low makes the row
+                    about one or two specific things they watched.
                   </>
                 }
                 ariaLabel="Use the default number of watches every source builds from"

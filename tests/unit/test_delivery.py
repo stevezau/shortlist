@@ -1885,3 +1885,79 @@ class TestTheConstantLabelCannotSelectEveryRow:
         # one of the two passing would otherwise hide the other failing.
         assert plex.find_owned_collections.call_count == 2
         assert {c.args[1] for c in plex.find_owned_collections.call_args_list} == {"Shortlist_sarah"}
+
+
+class TestAConflictingRenameDoesNotTakeThePersonDown:
+    """A Plex collection is keyed by TITLE within a library, so renaming onto a title that already
+    exists there answers 409 Conflict.
+
+    The rebuild path deletes first precisely to avoid this. The in-place rename did not, and an
+    unguarded `editTitle` propagated — recorded on a real 46-user server (run 4, 2026-08-15):
+    `users_ok: 45, users_error: 1`, the one error being
+
+        BadRequest: (409) conflict; …title.value=🎯 Because you watched Ted Lasso…&type=18
+
+    That person got no rows at all that night, over a name. A `{top_seed}` row renames itself every
+    time the seed it is named after changes, so it is the row whose title moves onto ground another
+    of the same person's rows may already occupy.
+    """
+
+    # plexapi surfaces the status only inside the message, which is why the guard matches on it.
+    CONFLICT = "BadRequest: (409) conflict; http://pms:32400/library/sections/2/all?type=18"
+
+    def _plex(self, movies, shows):
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies, shows]
+        plex.sections_by_type.return_value = {MediaType.MOVIE: movies, MediaType.SHOW: shows}
+        plex.find_owned_collections.return_value = []
+        plex.matches_section.return_value = True
+        return _labelling_plex_mock(plex)
+
+    def _existing(self, profile, raiser):
+        existing = MagicMock()
+        existing.title = "Old Name" + row_marker(profile.plex_account_id)
+        existing.items.return_value = [MagicMock(title="Movie 1", ratingKey=1001)]
+        existing.editTitle.side_effect = raiser
+        return existing
+
+    def test_the_row_still_gets_its_titles_when_plex_refuses_the_rename(
+        self, engine_config: EngineConfig, movies, shows
+    ):
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        existing = self._existing(profile, Exception(self.CONFLICT))
+        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+
+        diff, _ = deliver_rows(plex, profile, picks(), engine_config)
+
+        # Membership is the part that matters, and it is written either way.
+        existing.editTitle.assert_called_once()
+        assert diff.added == ["Movie 2"]
+        assert diff.kept == ["Movie 1"]
+        plex.set_items.assert_called_once()
+
+    def test_the_old_title_is_kept_so_nothing_becomes_visible_to_anyone_new(
+        self, engine_config: EngineConfig, movies, shows
+    ):
+        """The safe failure. The retained title still carries THIS account's marker, so the row's
+        membership stays its own — a rename that silently dropped the marker would merge two
+        people's rows into one shared tag, which is the leak the marker exists to prevent."""
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        existing = self._existing(profile, Exception(self.CONFLICT))
+        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+
+        deliver_rows(plex, profile, picks(), engine_config)
+
+        assert existing.title.endswith(row_marker(profile.plex_account_id))
+
+    def test_any_other_plex_error_still_propagates(self, engine_config: EngineConfig, movies, shows):
+        """Only the title collision is survivable. Swallowing everything would hide a dead server,
+        an expired token or a refused write behind a row that merely looks slightly stale."""
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        existing = self._existing(profile, Exception("BadRequest: (401) unauthorized"))
+        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+
+        with pytest.raises(Exception, match="401"):
+            deliver_rows(plex, profile, picks(), engine_config)
