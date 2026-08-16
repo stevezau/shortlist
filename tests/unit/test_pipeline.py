@@ -3395,6 +3395,39 @@ class TestPerDeliveryTimeoutRetry:
 class TestCollectionOrderPhase:
     """The deferred, post-promote item-ordering pass: best-effort, never fatal to an already-delivered run."""
 
+    def test_the_ordering_pass_counts_itself_out_too(self, ctx: EngineContext):
+        """`ordering` announced itself once and then went silent for the whole pass.
+
+        It is one PMS round-trip per MOVED ITEM, so a cold rollout spends minutes in here — and the
+        header sat on "Finishing up · ordering rows" with no number for the duration, which is the
+        wedged look the tail narration exists to remove (owner, run #10, 2026-08-17). `filters` and
+        `promoting` have counted themselves out since the last time this bug appeared; this one had
+        been missed.
+        """
+        emitted: list[dict] = []
+        ctx.progress = lambda slug, stage, counts, reason=None: emitted.append(counts) if stage == "ordering" else None
+        ctx.plex.order_collection.return_value = 0
+        order_work = [(MagicMock(ratingKey=key), [key]) for key in (11, 22, 33)]
+
+        pipeline_mod._collection_order_phase(ctx, order_work)
+
+        assert [(c["done"], c["total"]) for c in emitted] == [(1, 3), (2, 3), (3, 3)]
+
+    def test_the_ordering_count_promises_a_total_it_can_reach(self, ctx: EngineContext):
+        """The pass de-dupes by ratingKey — a delivery retried after a mid-run timeout appends the
+        same collection twice — so counting `order_work` would stall the header one short of a total
+        it was never going to reach."""
+        emitted: list[dict] = []
+        ctx.progress = lambda slug, stage, counts, reason=None: emitted.append(counts) if stage == "ordering" else None
+        ctx.plex.order_collection.return_value = 0
+        repeated = MagicMock(ratingKey=11)
+        order_work = [(repeated, [11]), (repeated, [11]), (MagicMock(ratingKey=22), [22])]
+
+        pipeline_mod._collection_order_phase(ctx, order_work)
+
+        assert [(c["done"], c["total"]) for c in emitted] == [(1, 2), (2, 2)]
+        assert emitted[-1]["done"] == emitted[-1]["total"], "the count never reaches its total"
+
     def test_orders_every_collection_with_its_keys_and_survives_a_failure(self, ctx: EngineContext):
         from unittest.mock import MagicMock as MM
         from unittest.mock import call

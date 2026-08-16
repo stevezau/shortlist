@@ -1220,7 +1220,13 @@ def _collection_order_phase(ctx: EngineContext, order_work: list[tuple]) -> None
     for collection, wanted_keys in order_work:
         deduped[getattr(collection, "ratingKey", id(collection))] = (collection, wanted_keys)
     total = 0
-    for collection, wanted_keys in deduped.values():
+    # Counted out loud, exactly like `filters` and `promoting` above: this is one PMS round-trip per
+    # MOVED ITEM, so a cold rollout spends minutes here. The phase announced itself once and then
+    # went silent for the duration, which is the wedged look the tail narration exists to remove.
+    # The total is the DEDUPED count, not `len(order_work)` — the announce in `run()` reports the
+    # latter, and a delivery retried after a timeout appends the same collection twice.
+    for position, (collection, wanted_keys) in enumerate(deduped.values(), start=1):
+        _emit(ctx, "Shortlist", "ordering", {"done": position, "total": len(deduped)})
         try:
             total += ctx.plex.order_collection(collection, wanted_keys)
         except Exception as e:  # cosmetic — a stall here must never fail an already-delivered run
