@@ -1861,6 +1861,12 @@ export interface paths {
          *     `kind` narrows it to one job type, which is how the Jobs page shows a single job's own history
          *     without pulling every other kind's rows down with it. `before_id` pages backwards — pass the id
          *     of the oldest job you already have.
+         *
+         *     `status` narrows it to one outcome, and it exists because the Jobs page's "N failed" badge
+         *     counts every failed row in the table while the feed behind it could only fetch the newest N.
+         *     Measured on a real server: 8 failures, all `privacy.sync`, at ids 587-596 — the newest hundred
+         *     jobs started at id 680, so filtering a fetched page client-side answered "8 failed" with an
+         *     empty list. A count over the whole table needs a filter over the whole table.
          */
         get: operations["list_jobs_api_system_jobs_get"];
         put?: never;
@@ -7470,6 +7476,7 @@ export interface operations {
                 limit?: number;
                 kind?: string | null;
                 before_id?: number | null;
+                status?: ("queued" | "running" | "done" | "failed") | null;
             };
             header?: never;
             path?: never;

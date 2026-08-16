@@ -781,3 +781,51 @@ class TestJobStatusIsAClosedSet:
         # `/jobs/catalog` renders the newest row per kind through the SAME model, so it validates too.
         card = next(c for c in client.get("/api/system/jobs/catalog").json() if c["kind"] == "sync.check")
         assert card["last"]["status"] in set(JobStatus.__args__)
+
+    def test_failed_jobs_are_findable_past_the_end_of_the_newest_page(self, client: TestClient):
+        """The Jobs page counts EVERY failed row but its feed could only fetch the newest N.
+
+        Measured on a real 46-user server: 8 failures, all `privacy.sync`, at job ids 587-596, while
+        the newest hundred jobs began at id 680. The "8 failed" badge therefore pointed at a feed
+        that filtered a fetched page client-side and found nothing — the count and the list
+        disagreed, and the list was the one that looked authoritative. A count over the whole table
+        needs a filter over the whole table, which is what `status=` is for.
+        """
+        from shortlist.server.db.models import Job
+
+        with client.app.state.sessions() as session:
+            for _ in range(3):
+                session.add(Job(kind="privacy.sync", status="failed", payload={}, result={}, error="boom"))
+            # Buried under enough successes that a newest-page fetch cannot reach them.
+            for _ in range(120):
+                session.add(Job(kind="privacy.sync", status="done", payload={}, result={}))
+            session.commit()
+
+        newest_page = client.get("/api/system/jobs", params={"limit": 100}).json()
+        assert [j for j in newest_page if j["status"] == "failed"] == [], "fixture no longer buries the failures"
+
+        failed = client.get("/api/system/jobs", params={"status": "failed", "limit": 100}).json()
+
+        assert len(failed) == 3
+        assert {j["status"] for j in failed} == {"failed"}
+        assert {j["error"] for j in failed} == {"boom"}, "the reason is the point of looking"
+
+    def test_the_status_filter_composes_with_kind(self, client: TestClient):
+        """Both narrowings at once — a job row asking "has THIS kind been failing?"."""
+        from shortlist.server.db.models import Job
+
+        with client.app.state.sessions() as session:
+            session.add(Job(kind="privacy.sync", status="failed", payload={}, result={}))
+            session.add(Job(kind="sync.users", status="failed", payload={}, result={}))
+            session.add(Job(kind="privacy.sync", status="done", payload={}, result={}))
+            session.commit()
+
+        rows = client.get("/api/system/jobs", params={"status": "failed", "kind": "privacy.sync"}).json()
+
+        assert len(rows) == 1
+        assert rows[0]["kind"] == "privacy.sync"
+        assert rows[0]["status"] == "failed"
+
+    def test_an_unknown_status_is_refused_rather_than_ignored(self, client: TestClient):
+        """A typo'd filter must not silently return everything — that reads as "nothing failed"."""
+        assert client.get("/api/system/jobs", params={"status": "explodey"}).status_code == 422

@@ -39,19 +39,57 @@ import type { RunDetail, RunLogEntry, RunUserStageEvent } from "@/lib/types";
 /** Why a run failed for a reason that belongs to no single person — a share filter Plex refused, a
  *  sweep that could not run. The reason was always recorded, but lived only in `stats.error`, which
  *  nothing rendered: the page said "Failed" and left the operator reading container logs (issue #1). */
+/** The people a run failed for, grouped by the reason — because 45 people can share one cause. */
+function failuresByReason(
+  run: RunDetail,
+): { reason: string; people: string[] }[] {
+  const groups = new Map<string, string[]>();
+  for (const user of run.users ?? []) {
+    if (!user.error) continue;
+    const who = user.display_name || user.username;
+    groups.set(user.error, [...(groups.get(user.error) ?? []), who]);
+  }
+  return [...groups.entries()]
+    .map(([reason, people]) => ({ reason, people }))
+    .sort((a, b) => b.people.length - a.people.length);
+}
+
+/** Says how many people, and whether it was one cause or several — the two facts that decide
+ *  whether this is "one bad account" or "the server was down". */
+function peopleFailedHeadline(
+  groups: { reason: string; people: string[] }[],
+): string {
+  const people = groups.reduce((n, g) => n + g.people.length, 0);
+  const who = people === 1 ? "1 person" : `${people} people`;
+  return groups.length > 1
+    ? `${who} didn’t get their rows, for ${groups.length} different reasons`
+    : `${who} didn’t get their rows`;
+}
+
 function RunFailureBanner({ run }: { run: RunDetail }) {
   const blockers = run.promotion_blockers ?? [];
-  if (run.status !== "error" || (!run.error && blockers.length === 0))
+  // A run can be `error` with NOTHING at run level: the failure belonged to individual people.
+  // Measured on a real server — run 4, `users_ok: 45, users_error: 1`, `stats.error` null and no
+  // blockers — so this returned null and the page announced a failed run and then explained
+  // nothing, leaving one bad account to be found by eye among forty-six.
+  const perUser = failuresByReason(run);
+  if (
+    run.status !== "error" ||
+    (!run.error && blockers.length === 0 && perUser.length === 0)
+  )
     return null;
   return (
     <div
       role="alert"
+      data-testid="run-failure"
       className="space-y-2 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm"
     >
       <p className="font-medium text-foreground">
         {blockers.length > 0
           ? "Nothing was promoted — Plex wouldn’t accept a share filter"
-          : "This run didn’t finish cleanly"}
+          : run.error
+            ? "This run didn’t finish cleanly"
+            : peopleFailedHeadline(perUser)}
       </p>
       {blockers.length > 0 && (
         <p className="text-muted-foreground">
@@ -64,9 +102,26 @@ function RunFailureBanner({ run }: { run: RunDetail }) {
           showing one person’s row to someone else.
         </p>
       )}
-      <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-background/60 p-2.5 font-mono text-xs text-destructive-text">
-        {blockers.length > 0 ? blockers.join("\n") : run.error}
-      </pre>
+      {blockers.length === 0 && !run.error ? (
+        // Grouped by reason and NAMING the people, because the whole difficulty was finding them:
+        // one failure among forty-five successes is invisible in a list of forty-six.
+        perUser.map((group) => (
+          <div key={group.reason} className="space-y-1">
+            <p className="text-muted-foreground">
+              {group.people.length === 1
+                ? group.people[0]
+                : `${group.people.length} people: ${group.people.join(", ")}`}
+            </p>
+            <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-background/60 p-2.5 font-mono text-xs text-destructive-text">
+              {group.reason}
+            </pre>
+          </div>
+        ))
+      ) : (
+        <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-background/60 p-2.5 font-mono text-xs text-destructive-text">
+          {blockers.length > 0 ? blockers.join("\n") : run.error}
+        </pre>
+      )}
     </div>
   );
 }

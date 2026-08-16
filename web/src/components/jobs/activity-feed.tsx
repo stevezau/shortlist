@@ -89,15 +89,28 @@ function ActivityRow({
 /** How many job rows one page shows, and how many each "Show more" adds. */
 const PAGE = 100;
 
-export function ActivityFeed({ catalog }: { catalog: JobCatalogEntry[] }) {
-  const [filter, setFilter] = useState<Filter>("all");
+export function ActivityFeed({
+  catalog,
+  initialFilter = "all",
+}: {
+  catalog: JobCatalogEntry[];
+  /** Where the "N failed" badge lands you. */
+  initialFilter?: Filter;
+}) {
+  const [filter, setFilter] = useState<Filter>(initialFilter);
   // Every background job the server has ever run lands here, so the list only grows. A flat cap
   // silently hid everything past it — "every background job this server has run" was a promise the
   // view stopped keeping the moment you passed 100. Raise the ceiling on demand instead.
   const [limit, setLimit] = useState(PAGE);
+  // `filter` is part of the KEY and of the request, not a predicate applied afterwards. Filtering
+  // the fetched page client-side made the empty state lie: on a real server the eight failures sat
+  // at job ids 587-596 while the newest hundred began at 680, so "Failed" rendered "No failed jobs.
+  // Nothing has given up — that's the good outcome." underneath a badge reading "8 failed". A
+  // confident wrong answer is worse than the dead end it replaced.
   const jobs = useQuery({
-    queryKey: ["jobs", "activity", limit],
-    queryFn: () => api.getJobs(undefined, limit),
+    queryKey: ["jobs", "activity", limit, filter],
+    queryFn: () =>
+      api.getJobs(undefined, limit, filter === "failed" ? "failed" : undefined),
     // Slow when idle rather than stopping: a feed of "every background job this server has run" that
     // never refetches shows a job appearing only if you happen to reload.
     refetchInterval: (query) =>
@@ -132,13 +145,10 @@ export function ActivityFeed({ catalog }: { catalog: JobCatalogEntry[] }) {
         skeleton={<Skeleton className="h-64 w-full" />}
       >
         {(rows) => {
-          const shown =
-            filter === "all"
-              ? rows
-              : filter === "active"
-                ? rows.filter(isActiveJob)
-                : rows.filter((j) => j.status === "failed");
-          if (rows.length === 0) {
+          // "failed" arrives already narrowed by the server; only "active" is still a predicate,
+          // because queued-or-running is two statuses and the endpoint takes one.
+          const shown = filter === "active" ? rows.filter(isActiveJob) : rows;
+          if (rows.length === 0 && filter === "all") {
             // An empty state has to say WHY, or a working feature reads as a broken one.
             return (
               <p className="rounded-md border border-dashed bg-muted/30 p-4 text-sm text-muted-foreground">

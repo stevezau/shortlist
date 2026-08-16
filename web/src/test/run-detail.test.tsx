@@ -1161,3 +1161,107 @@ describe("RunDetailPage — a queued run has not started", () => {
     expect(screen.queryByText(/waiting to start/i)).toBeNull();
   });
 });
+
+describe("RunDetailPage — a run that failed for PEOPLE, not for itself", () => {
+  beforeEach(() => {
+    getRun.mockReset();
+    getUsers.mockReset();
+    getUsers.mockResolvedValue([]);
+    getRunLog.mockReset();
+    getRunLog.mockResolvedValue([]);
+    listCollections.mockReset();
+    listCollections.mockResolvedValue([]);
+  });
+
+  const PLEX_409 =
+    "BadRequest: (409) conflict; http://plex:32400/library/sections/2/all?id=578636 <html><head><title>Conflict</title></head></html>";
+
+  /** Run 4 on a real 46-user server: `users_ok: 45, users_error: 1`, `stats.error` null, no
+   *  promotion blockers. The page said the run failed and then rendered no banner at all. */
+  function runWithFailures(
+    failures: { name: string; error: string }[],
+    ok = 45,
+  ): RunDetail {
+    const base = run([]);
+    return {
+      ...base,
+      status: "error",
+      error: null,
+      promotion_blockers: [],
+      stats: { users_ok: ok, users_error: failures.length, titles_requested: 0 },
+      users: [
+        ...base.users,
+        ...failures.map((f) => ({
+          ...base.users[0]!,
+          username: f.name,
+          slug: f.name.toLowerCase(),
+          display_name: f.name,
+          status: "error",
+          error: f.error,
+        })),
+      ],
+    } as RunDetail;
+  }
+
+  it("names the person and the reason instead of an empty failure", async () => {
+    getRun.mockResolvedValue(runWithFailures([{ name: "Jarrah", error: PLEX_409 }]));
+    renderDetail();
+
+    const alert = await screen.findByTestId("run-failure");
+    expect(alert).toHaveTextContent(/1 person didn.t get their rows/i);
+    expect(alert).toHaveTextContent(/Jarrah/);
+    expect(alert).toHaveTextContent(/409/);
+  });
+
+  it("groups people under one shared cause rather than repeating it per person", async () => {
+    // A server-wide outage fails everyone with the identical string. Printing it 40 times buries
+    // the one fact that matters: it is ONE problem, not forty.
+    getRun.mockResolvedValue(
+      runWithFailures([
+        { name: "Jarrah", error: "ConnectionError: No route to host" },
+        { name: "Sam", error: "ConnectionError: No route to host" },
+        { name: "Nikki", error: "ConnectionError: No route to host" },
+      ]),
+    );
+    renderDetail();
+
+    const alert = await screen.findByTestId("run-failure");
+    expect(alert).toHaveTextContent(/3 people didn.t get their rows/i);
+    expect(alert).toHaveTextContent(/Jarrah, Sam, Nikki/);
+    expect(
+      within(alert).getAllByText(/No route to host/i),
+    ).toHaveLength(1);
+  });
+
+  it("says so when the failures had different causes", async () => {
+    getRun.mockResolvedValue(
+      runWithFailures([
+        { name: "Jarrah", error: PLEX_409 },
+        { name: "Sam", error: "ConnectionError: No route to host" },
+      ]),
+    );
+    renderDetail();
+
+    const alert = await screen.findByTestId("run-failure");
+    expect(alert).toHaveTextContent(/2 people didn.t get their rows, for 2 different reasons/i);
+  });
+
+  it("still leads with the run-level reason when there is one", async () => {
+    // A run-level failure is not a per-person one, and must not be reworded as though it were.
+    const base = runWithFailures([{ name: "Jarrah", error: PLEX_409 }]);
+    getRun.mockResolvedValue({ ...base, error: "Engine blew up before it started" });
+    renderDetail();
+
+    const alert = await screen.findByTestId("run-failure");
+    expect(alert).toHaveTextContent(/didn.t finish cleanly/i);
+    expect(alert).toHaveTextContent(/Engine blew up before it started/);
+  });
+
+  it("shows no banner on a healthy run", async () => {
+    getRun.mockResolvedValue(run([]));
+    renderDetail();
+
+    await screen.findAllByText(/MooHouse/);
+    expect(screen.queryByTestId("run-failure")).toBeNull();
+  });
+});

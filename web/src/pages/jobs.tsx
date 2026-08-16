@@ -462,10 +462,25 @@ export function JobsPage() {
               {activeLabel}
             </button>
           )}
+          {/* A BUTTON, like its "N running" sibling above. It was a bare span: the badge that
+              reports the healthy state was clickable and the one reporting the problem was a dead
+              end. Worse, nothing else on this tab pointed at the failures either — a job's status
+              chip shows only its LAST attempt, so eight failed `privacy.sync` runs sat behind a
+              green tick and the badge was the sole evidence they existed. */}
           {totals.failed > 0 && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2.5 py-1 text-xs font-medium text-destructive-text">
+            <button
+              type="button"
+              onClick={() =>
+                setSearchParams(
+                  { tab: "activity", filter: "failed" },
+                  { replace: true },
+                )
+              }
+              className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2.5 py-1 text-xs font-medium text-destructive-text hover:bg-destructive/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              title="See what failed, and why"
+            >
               {totals.failed} failed
-            </span>
+            </button>
           )}
           {active === 0 && totals.failed === 0 && entries.length > 0 && (
             <span className="text-xs text-muted-foreground">
@@ -484,7 +499,12 @@ export function JobsPage() {
       )}
 
       {view === "activity" ? (
-        <ActivityFeed catalog={entries} />
+        <ActivityFeed
+          catalog={entries}
+          initialFilter={
+            searchParams.get("filter") === "failed" ? "failed" : "all"
+          }
+        />
       ) : catalog.isPending ? (
         <Skeleton className="h-72 w-full" />
       ) : (
