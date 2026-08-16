@@ -45,7 +45,14 @@ def _rename_or_keep(collection, title: str, profile: UserProfile, section_title:
     try:
         collection.editTitle(title)
     except Exception as exc:  # plexapi raises BadRequest; the status is only in the message
-        if "409" not in str(exc):
+        # `startswith`, NOT `"409" in`. plexapi formats the message as
+        # `f'({status}) {codename}; {url} {errtext}'` (`plexapi/server.py:752`), and for `editTitle`
+        # that url carries `id=<ratingKey>` — so a substring test matches the COLLECTION'S OWN KEY.
+        # Measured: a 500 on ratingKey 40953, a 401 on ratingKey 1409 and a 503 on ratingKey 24091
+        # were all swallowed, each logging "409 — a collection there already has that title", which
+        # is a lie about a failure that then went unreported. The status is always the leading
+        # token, so anchoring it is exact.
+        if not str(exc).startswith("(409)"):
             raise
         logger.warning(
             "{}: Plex refused to rename '{}' to '{}' in '{}' (409 — a collection there already has "

@@ -4,6 +4,68 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [1.6.0] - 2026-08-17
+
+### Added
+
+- **Judge a request without leaving the inbox**
+  ([#87](https://github.com/stevezau/shortlist/discussions/87)). Deciding on a queue of unfamiliar
+  titles meant opening a tab per row to find out what each one was, then coming back to the bulk
+  toolbar to act on them. Every waiting title now carries its synopsis, and every card has its own
+  Send, Delete and Reject. The synopsis rides in the same TMDB response the poster already came
+  from, so it costs nothing extra for a title a TMDB source surfaced; rows already waiting fill in
+  on the next run that re-surfaces them.
+
+- **"Watched" and "finished" are different questions, and the dashboard now asks both.** Plex's
+  watched flag trips on a series' FIRST finished episode, so one episode of a sixty-episode show
+  scored exactly like a whole film — on a real 47-user server, of 158 show picks credited as
+  watched only 21 had been finished and 31 were a single episode, which ranked TV rows above movie
+  rows for a purely structural reason. Every breakdown now reads "N watched · M finished".
+
+### Fixed
+
+- **A name collision took one person's whole night down with it.** A Plex collection is keyed by
+  title within a library, so renaming a row onto a title that already exists there answers 409
+  Conflict — and a `{top_seed}` row renames itself whenever the seed it is named after changes.
+  Recorded on a 46-user server as 45 people fine and one with nothing at all, over a name. The row
+  now keeps its old title for that night and still gets its titles; only the collision is
+  survivable, so a dead server or a refused write still fails loudly.
+
+- **The recent-watches feed said "watched" for a show somebody sampled one episode of.** Every
+  other figure on that page already drew the distinction; this one feed never asked for it. Films
+  still read "watched" — they have no middle state — and series now read "started" or "finished".
+
+- **"8 failed" on the Jobs page led nowhere, and the Failed tab claimed nothing had failed.** The
+  badge counts every failed job on record; the feed behind it could only fetch the newest hundred
+  and filter those in the browser. On a real server the eight failures sat well past that window,
+  so following the badge produced "No failed jobs. Nothing has given up — that's the good outcome."
+  underneath a badge reading "8 failed". The badge is now a way in, and the list asks the server.
+
+- **A run could report itself failed and then explain nothing.** The banner only appeared for a
+  failure that belonged to the run itself, so a run where 45 people succeeded and one did not
+  announced "Failed" and showed no reason — leaving one bad account to be found by eye among
+  forty-six. Failures are now named and grouped by cause, because forty people failing one outage
+  share one cause and printing it forty times buries the only fact that matters.
+
+- **The run header said "Finishing up" for the whole per-user stretch**, and the ordering pass
+  counted itself out of its own progress.
+
+- **A local AI server can be a hosted one, and those want a key.**
+
+### Changed
+
+- **A UI pass over every screen.** Eight measured layout defects: the dashboard scrolled sideways
+  at exactly 1280px; row names were squeezed to 32px and rendered as "Lat…"; the users and runs
+  tables pushed columns — including a switch you could not press — outside their own cards on a
+  phone; job names ellipsed into text you could not tell apart; the logs page opened already
+  scrolled past its own heading and gave each message a third of the width it needed. All gone,
+  verified at 320 through 1536.
+
+- **Less prose in front of the controls.** On-screen explanatory text is down by roughly a third.
+  The pattern removed throughout was a page-header explainer, then a section explainer, then a card
+  subtitle, then a per-field paragraph — four layers before a value. Anything that prevents a real
+  mistake stayed.
+
 ## [1.5.2] - 2026-08-15
 
 ### Fixed

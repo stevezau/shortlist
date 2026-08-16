@@ -1214,23 +1214,34 @@ describe("RunDetailPage — a run that failed for PEOPLE, not for itself", () =>
   });
 
   it("groups people under one shared cause rather than repeating it per person", async () => {
-    // A server-wide outage fails everyone with the identical string. Printing it 40 times buries
-    // the one fact that matters: it is ONE problem, not forty.
+    // A PMS outage fails everyone with the same CLASS of error, but never the same string: the
+    // engine stores `f"{type(e).__name__}: {e}"` and a plexapi message embeds that user's own
+    // ratingKey and row title. Grouping on the raw text therefore reported one 500 as "4 people
+    // didn't get their rows, for 4 different reasons" — the exact opposite of what this banner is
+    // for. These three differ byte-for-byte, exactly as they would on a real server.
     getRun.mockResolvedValue(
       runWithFailures([
-        { name: "Jarrah", error: "ConnectionError: No route to host" },
-        { name: "Sam", error: "ConnectionError: No route to host" },
-        { name: "Nikki", error: "ConnectionError: No route to host" },
+        {
+          name: "Jarrah",
+          error: "BadRequest: (500) internal_server_error; http://pms:32400/library/sections/2/all?id=771",
+        },
+        {
+          name: "Sam",
+          error: "BadRequest: (500) internal_server_error; http://pms:32400/library/sections/2/all?id=982",
+        },
+        {
+          name: "Nikki",
+          error: "BadRequest: (500) internal_server_error; http://pms:32400/library/sections/1/all?id=1043",
+        },
       ]),
     );
     renderDetail();
 
     const alert = await screen.findByTestId("run-failure");
     expect(alert).toHaveTextContent(/3 people didn.t get their rows/i);
+    expect(alert).not.toHaveTextContent(/different reasons/i);
     expect(alert).toHaveTextContent(/Jarrah, Sam, Nikki/);
-    expect(
-      within(alert).getAllByText(/No route to host/i),
-    ).toHaveLength(1);
+    expect(within(alert).getAllByText(/internal_server_error/i)).toHaveLength(1);
   });
 
   it("says so when the failures had different causes", async () => {

@@ -1902,8 +1902,14 @@ class TestAConflictingRenameDoesNotTakeThePersonDown:
     of the same person's rows may already occupy.
     """
 
-    # plexapi surfaces the status only inside the message, which is why the guard matches on it.
-    CONFLICT = "BadRequest: (409) conflict; http://pms:32400/library/sections/2/all?type=18"
+    # The REAL message shape. plexapi formats it as `f'({status}) {codename}; {url} {errtext}'`
+    # (`plexapi/server.py:752`) with no class-name prefix, and `editTitle`'s url always carries
+    # `id=<ratingKey>` — which is exactly why a substring test for "409" is unsafe and the guard
+    # anchors to the leading token instead.
+    CONFLICT = "(409) conflict; http://pms:32400/library/sections/2/all?id=771&title.value=X&type=18"
+    # A NON-409 whose ratingKey happens to contain the digits. Five- and six-digit keys are normal
+    # on a real server, so roughly one collection in three hundred can produce this.
+    FIVE_HUNDRED_ON_A_409_KEY = "(500) internal_server_error; http://pms:32400/library/sections/2/all?id=40953&type=18"
 
     def _plex(self, movies, shows):
         plex = MagicMock(spec=PlexClient)
@@ -1949,14 +1955,29 @@ class TestAConflictingRenameDoesNotTakeThePersonDown:
 
         deliver_rows(plex, profile, picks(), engine_config)
 
-        assert existing.title.endswith(row_marker(profile.plex_account_id))
+        # Asserted on the title the SUT COMPUTED and tried to write, not on `existing.title` — that
+        # is set by this test's own fixture and never touched by the code under test, so asserting
+        # it could not fail. A marker dropped from the computed title fails here.
+        assert existing.editTitle.call_args.args[0].endswith(row_marker(profile.plex_account_id))
+
+    def test_a_non_409_whose_rating_key_contains_409_still_propagates(self, engine_config: EngineConfig, movies, shows):
+        """The cell a substring match gets wrong. `"409" in str(exc)` matched the collection's own
+        ratingKey, so a 500 on key 40953 was swallowed AND logged as a title collision — a real
+        failure reported as a benign one, in the log line an operator would go on to trust."""
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        existing = self._existing(profile, Exception(self.FIVE_HUNDRED_ON_A_409_KEY))
+        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+
+        with pytest.raises(Exception, match="500"):
+            deliver_rows(plex, profile, picks(), engine_config)
 
     def test_any_other_plex_error_still_propagates(self, engine_config: EngineConfig, movies, shows):
         """Only the title collision is survivable. Swallowing everything would hide a dead server,
         an expired token or a refused write behind a row that merely looks slightly stale."""
         plex = self._plex(movies, shows)
         profile = make_profile()
-        existing = self._existing(profile, Exception("BadRequest: (401) unauthorized"))
+        existing = self._existing(profile, Exception("(401) unauthorized; http://pms:32400/x"))
         plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
 
         with pytest.raises(Exception, match="401"):

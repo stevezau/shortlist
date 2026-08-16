@@ -32,26 +32,36 @@ import {
   useUsers,
 } from "@/lib/queries";
 import { mergeRunLog, stageBelongsToRun } from "@/lib/run-log";
-import { currentPhase } from "@/lib/run-format";
+import { currentPhase, errorBucket } from "@/lib/run-format";
 import { useSSE } from "@/lib/sse";
 import type { RunDetail, RunLogEntry, RunUserStageEvent } from "@/lib/types";
 
-/** Why a run failed for a reason that belongs to no single person — a share filter Plex refused, a
- *  sweep that could not run. The reason was always recorded, but lived only in `stats.error`, which
- *  nothing rendered: the page said "Failed" and left the operator reading container logs (issue #1). */
-/** The people a run failed for, grouped by the reason — because 45 people can share one cause. */
+/** The people a run failed for, grouped by the reason — because 45 people can share one cause.
+ *
+ * Grouped on `errorBucket`, NOT on the raw string. The engine stores
+ * `f"{type(e).__name__}: {e}"` (`pipeline.py:361`), and a plexapi message embeds the per-user
+ * ratingKey and row title — so two people felled by one PMS outage never produce equal strings, and
+ * grouping on them reported "4 people didn't get their rows, for 4 different reasons" about a
+ * single 500. That is the exact opposite of what this banner exists to tell you.
+ *
+ * `errorBucket` returns null for anything it does not recognise, and those keep their own line:
+ * claiming two unrecognised errors are "the same problem" would be the same lie in the other
+ * direction.
+ */
 function failuresByReason(
   run: RunDetail,
 ): { reason: string; people: string[] }[] {
-  const groups = new Map<string, string[]>();
+  const groups = new Map<string, { reason: string; people: string[] }>();
   for (const user of run.users ?? []) {
     if (!user.error) continue;
-    const who = user.display_name || user.username;
-    groups.set(user.error, [...(groups.get(user.error) ?? []), who]);
+    const bucket = errorBucket(user.error);
+    // Unrecognised errors group by their own text, so they are never merged with each other.
+    const key = bucket ?? `raw:${user.error}`;
+    const group = groups.get(key) ?? { reason: user.error, people: [] };
+    group.people.push(user.display_name || user.username);
+    groups.set(key, group);
   }
-  return [...groups.entries()]
-    .map(([reason, people]) => ({ reason, people }))
-    .sort((a, b) => b.people.length - a.people.length);
+  return [...groups.values()].sort((a, b) => b.people.length - a.people.length);
 }
 
 /** Says how many people, and whether it was one cause or several — the two facts that decide
@@ -66,6 +76,9 @@ function peopleFailedHeadline(
     : `${who} didn’t get their rows`;
 }
 
+/** Why a run failed for a reason that belongs to no single person — a share filter Plex refused, a
+ *  sweep that could not run. The reason was always recorded, but lived only in `stats.error`, which
+ *  nothing rendered: the page said "Failed" and left the operator reading container logs (issue #1). */
 function RunFailureBanner({ run }: { run: RunDetail }) {
   const blockers = run.promotion_blockers ?? [];
   // A run can be `error` with NOTHING at run level: the failure belonged to individual people.
