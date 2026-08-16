@@ -54,7 +54,12 @@ export function StepCurator({ data, update }: StepProps) {
     seeded.current = true;
     const savedKey = settingString(saved, "curator.api_key");
     if (savedKey) setApiKey(savedKey);
-    const savedUrl = settingString(saved, "curator.ollama_url");
+    // What this step SAVES is `curator.openai_base_url`, so that is what it must seed from;
+    // `curator.ollama_url` is the pre-merge key, read as a fallback for an instance configured
+    // before the two providers were merged.
+    const savedUrl =
+      settingString(saved, "curator.openai_base_url") ||
+      settingString(saved, "curator.ollama_url");
     if (savedUrl) setOllamaUrl(savedUrl);
     const savedModel = settingString(saved, "curator.model");
     if (savedModel) setModel(savedModel);
@@ -80,7 +85,11 @@ export function StepCurator({ data, update }: StepProps) {
     mutationFn: async (provider: CuratorProviderInfo) => {
       await api.putSettings({
         "curator.provider": provider.id,
-        ...(provider.needsKey ? { "curator.api_key": apiKey } : {}),
+        // Saved whenever the field is on screen, required or not: a blank optional key is the owner
+        // saying "this server wants none", which the curator turns into its placeholder.
+        ...(provider.needsKey || provider.optionalKey
+          ? { "curator.api_key": apiKey }
+          : {}),
         // Each URL-taking provider stores its endpoint under its own setting key.
         ...(provider.needsUrl && provider.urlKey
           ? { [provider.urlKey]: ollamaUrl }
@@ -152,9 +161,29 @@ export function StepCurator({ data, update }: StepProps) {
       {selected && selected.id !== "none" && (
         <Card>
           <CardContent className="space-y-4 pt-6">
-            {selected.needsKey && (
+            {/* URL before key: for the one provider that takes both, the address IS the choice and
+                the key only qualifies it — a local server never needs one. */}
+            {selected.needsUrl && (
               <div className="space-y-2">
-                <Label htmlFor={keyId}>{selected.label} API key</Label>
+                <Label htmlFor={ollamaId}>
+                  {selected.urlLabel ?? "Server URL"}
+                </Label>
+                <Input
+                  id={ollamaId}
+                  value={ollamaUrl}
+                  onChange={(event) => setOllamaUrl(event.target.value)}
+                  placeholder={selected.urlPlaceholder}
+                  autoComplete="off"
+                />
+              </div>
+            )}
+            {(selected.needsKey || selected.optionalKey) && (
+              <div className="space-y-2">
+                <Label htmlFor={keyId}>
+                  {selected.needsKey
+                    ? `${selected.label} API key`
+                    : "API key (optional)"}
+                </Label>
                 <Input
                   id={keyId}
                   type="password"
@@ -162,6 +191,12 @@ export function StepCurator({ data, update }: StepProps) {
                   onChange={(event) => setApiKey(event.target.value)}
                   autoComplete="off"
                 />
+                {selected.keyHint && (
+                  <p className="text-sm text-muted-foreground">
+                    {selected.keyHint} Stored encrypted, never logged, redacted
+                    after save.
+                  </p>
+                )}
                 {selected.keyUrl && (
                   <p className="text-sm text-muted-foreground">
                     Get a key at{" "}
@@ -176,20 +211,6 @@ export function StepCurator({ data, update }: StepProps) {
                     . Stored encrypted, never logged, redacted after save.
                   </p>
                 )}
-              </div>
-            )}
-            {selected.needsUrl && (
-              <div className="space-y-2">
-                <Label htmlFor={ollamaId}>
-                  {selected.urlLabel ?? "Server URL"}
-                </Label>
-                <Input
-                  id={ollamaId}
-                  value={ollamaUrl}
-                  onChange={(event) => setOllamaUrl(event.target.value)}
-                  placeholder={selected.urlPlaceholder}
-                  autoComplete="off"
-                />
               </div>
             )}
             <div className="space-y-2">
