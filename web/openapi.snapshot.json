@@ -1772,6 +1772,21 @@
             "title": "Delivered",
             "type": "integer"
           },
+          "finished": {
+            "title": "Finished",
+            "type": "integer"
+          },
+          "finished_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished Rate"
+          },
           "matured_days": {
             "title": "Matured Days",
             "type": "integer"
@@ -1795,6 +1810,8 @@
         "required": [
           "delivered",
           "watched",
+          "finished",
+          "finished_rate",
           "rate",
           "cohort_from",
           "cohort_to",
@@ -2135,6 +2152,10 @@
             "title": "Delivered",
             "type": "integer"
           },
+          "finished": {
+            "title": "Finished",
+            "type": "integer"
+          },
           "landing": {
             "$ref": "#/components/schemas/LandingOut"
           },
@@ -2173,6 +2194,7 @@
           "watched",
           "watched_prev",
           "watched_delta",
+          "finished",
           "avg_days_to_watch",
           "avg_days_to_watch_delta",
           "landing"
@@ -2267,6 +2289,10 @@
             "title": "Delivered",
             "type": "integer"
           },
+          "finished": {
+            "title": "Finished",
+            "type": "integer"
+          },
           "library": {
             "title": "Library",
             "type": "string"
@@ -2295,7 +2321,8 @@
           "name",
           "deleted",
           "delivered",
-          "watched"
+          "watched",
+          "finished"
         ],
         "title": "PerRowOut",
         "type": "object"
@@ -2310,6 +2337,10 @@
           "display_name": {
             "title": "Display Name",
             "type": "string"
+          },
+          "finished": {
+            "title": "Finished",
+            "type": "integer"
           },
           "slug": {
             "title": "Slug",
@@ -2329,7 +2360,8 @@
           "display_name",
           "slug",
           "delivered",
-          "watched"
+          "watched",
+          "finished"
         ],
         "title": "PerUserOut",
         "type": "object"
@@ -3216,6 +3248,10 @@
             "title": "Delivered",
             "type": "integer"
           },
+          "finished": {
+            "title": "Finished",
+            "type": "integer"
+          },
           "first_delivered_at": {
             "anyOf": [
               {
@@ -3271,6 +3307,7 @@
         "required": [
           "delivered",
           "watched",
+          "finished",
           "runs",
           "first_delivered_at",
           "last_delivered_at",
@@ -3287,6 +3324,10 @@
         "properties": {
           "delivered": {
             "title": "Delivered",
+            "type": "integer"
+          },
+          "finished": {
+            "title": "Finished",
             "type": "integer"
           },
           "library": {
@@ -3313,6 +3354,7 @@
           "library",
           "delivered",
           "watched",
+          "finished",
           "rate"
         ],
         "title": "RowLibraryEffectiveness",
@@ -3328,6 +3370,10 @@
           },
           "delivered": {
             "title": "Delivered",
+            "type": "integer"
+          },
+          "finished": {
+            "title": "Finished",
             "type": "integer"
           },
           "rate": {
@@ -3349,6 +3395,7 @@
         "required": [
           "delivered",
           "watched",
+          "finished",
           "rate",
           "cohort_to"
         ],
@@ -4993,6 +5040,10 @@
       "TrendPointOut": {
         "additionalProperties": true,
         "properties": {
+          "finished": {
+            "title": "Finished",
+            "type": "integer"
+          },
           "watched": {
             "title": "Watched",
             "type": "integer"
@@ -5004,7 +5055,8 @@
         },
         "required": [
           "week",
-          "watched"
+          "watched",
+          "finished"
         ],
         "title": "TrendPointOut",
         "type": "object"

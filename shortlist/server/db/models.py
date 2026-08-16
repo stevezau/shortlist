@@ -437,6 +437,17 @@ class PickRow(Base):
     # these two, over the largest table in this schema (retention prunes it, but only by whole runs).
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     watched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)  # hit-rate
+    # When they finished it, as opposed to merely starting it. `watched_at` is Plex's binary flag,
+    # which for a SERIES flips on the first finished episode — so one episode of a 60-episode show
+    # has always scored identically to a whole film, and 87% of this server's credited show picks
+    # were people who had not finished the series (measured 2026-08-16: 21 of 158 finished).
+    #
+    # A movie has no middle state, so this is stamped with the same value as `watched_at`. A series
+    # gets it only once every episode is watched — the wording the user page already uses. It is
+    # deliberately NOT the engine's "already seen" bar: that one is `min(80%, max(3, 15%))` episodes
+    # (rows.py `_watched_titles`), which answers "engaged enough not to re-recommend?", a different
+    # question from "did they finish it?". Two thresholds, on purpose.
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
 
 class RestrictionSnapshotRow(Base):

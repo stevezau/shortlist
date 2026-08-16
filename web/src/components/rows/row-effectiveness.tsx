@@ -27,8 +27,18 @@ function LibraryBar({
   library,
   delivered,
   watched,
+  finished,
   rate,
 }: RowEffectiveness["per_library"][number]) {
+  // Of what landed here, how much got seen out. A TV library finishes far less of what it lands
+  // than a movie library does — a series is credited on its first episode — so this is the number
+  // that stops "Movies beats TV" being read as a verdict on the row rather than on the medium.
+  const finishedShare = watched > 0 ? Math.round((finished / watched) * 100) : 0;
+  // Widths as whole percentages of the whole track, the second derived from the first so the pair
+  // can never exceed `landedPct` (see the bar below).
+  const landedPct = Math.round((rate ?? 0) * 100);
+  const finishedPct =
+    watched > 0 ? Math.round(landedPct * (finished / watched)) : 0;
   return (
     <div className="space-y-1">
       <div className="flex items-baseline justify-between gap-2 text-sm">
@@ -36,17 +46,23 @@ function LibraryBar({
         <span className="shrink-0 font-medium tabular-nums">{pct(rate)}</span>
       </div>
       <div
-        className="h-1.5 overflow-hidden rounded-full bg-muted"
+        className="flex h-1.5 overflow-hidden rounded-full bg-muted"
         role="img"
-        aria-label={`${library}: ${watched} of ${delivered} watched`}
+        aria-label={`${library}: ${watched} of ${delivered} watched, ${finished} finished`}
       >
+        {/* One bar split by intensity, not two colours: finished and still-going are ordered.
+            The second width is DERIVED from the first rather than rounded independently —
+            `round(x) + round(100 - x)` reaches 101 whenever the split lands on .5, which overflows
+            the track it is drawn inside. */}
+        <div className="h-full bg-primary" style={{ width: `${finishedPct}%` }} />
         <div
-          className="h-full rounded-full bg-primary"
-          style={{ width: `${Math.round((rate ?? 0) * 100)}%` }}
+          className="h-full bg-primary/50"
+          style={{ width: `${landedPct - finishedPct}%` }}
         />
       </div>
       <p className="text-xs text-muted-foreground tabular-nums">
         {watched} of {delivered} watched
+        {watched > 0 && ` · ${finished} finished (${finishedShare}%)`}
       </p>
     </div>
   );
@@ -103,7 +119,8 @@ export function RowEffectivenessPanel({
               icon={Eye}
               label="Watched"
               value={data.watched}
-              hint="so far"
+              hint={`${data.finished} finished`}
+              title="Watched counts a series from its first episode — Plex's own definition. Finished counts the ones seen out."
             />
             <StatTile
               icon={History}
@@ -139,11 +156,15 @@ export function RowEffectivenessPanel({
               hint="of judged picks watched"
               title={`Picks watched within ${data.matured_days} days, as a share of the picks old enough to judge.`}
             />
+            {/* The finished count rides in the hint here too, not just in the pre-cohort branch —
+                this is the state a real row spends its life in, and shipping the split to only the
+                "too early to judge" panel would mean nobody ever saw it. */}
             <StatTile
               icon={Eye}
               label="Watched"
               value={data.matured.watched}
-              hint={`within ${data.matured_days} days`}
+              hint={`${data.matured.finished} finished, within ${data.matured_days} days`}
+              title="Watched counts a series from its first episode — Plex's own definition. Finished counts the ones seen out."
             />
             <StatTile
               icon={Send}

@@ -56,6 +56,8 @@ function renderReport() {
 const LANDING = {
   delivered: 10,
   watched: 4,
+  finished: 3,
+  finished_rate: 0.3,
   rate: 0.4,
   cohort_from: "2026-05-30T00:00:00Z",
   cohort_to: "2026-06-29T00:00:00Z",
@@ -94,6 +96,7 @@ const REPORT: EffectivenessReport = {
     watched: 4,
     watched_prev: 2,
     watched_delta: 2,
+    finished: 3,
     avg_days_to_watch: 3.5,
     avg_days_to_watch_delta: -0.8,
     landing: LANDING,
@@ -102,7 +105,7 @@ const REPORT: EffectivenessReport = {
   top_titles: [
     { tmdb_id: 1, media_type: "movie", title: "Dune: Part Two", watchers: 3 },
   ],
-  trend: [{ week: "2026-28", watched: 4 }],
+  trend: [{ week: "2026-28", watched: 4, finished: 3 }],
   per_user: [
     {
       username: "sarah",
@@ -110,6 +113,7 @@ const REPORT: EffectivenessReport = {
       slug: "sarah",
       delivered: 6,
       watched: 3,
+      finished: 1,
     },
   ],
   per_row: [
@@ -121,6 +125,7 @@ const REPORT: EffectivenessReport = {
       deleted: false,
       delivered: 10,
       watched: 4,
+      finished: 4,
     },
     {
       slug: "faves",
@@ -130,6 +135,7 @@ const REPORT: EffectivenessReport = {
       deleted: false,
       delivered: 6,
       watched: 3,
+      finished: 0,
     },
   ],
   recent: [
@@ -182,6 +188,34 @@ describe("ImpactReport", () => {
     ).toBeGreaterThan(0);
     expect(screen.getByText("My Faves")).toBeTruthy();
     expect(screen.getByText("TV Shows")).toBeTruthy(); // the library badge on the plain-named row
+  });
+
+  it("shows Finished beside Watched, never instead of it", async () => {
+    // A series is credited as watched on its FIRST episode, so a lone watched count says nothing
+    // about whether anyone saw a thing out. Both numbers have to be on the page for that to read.
+    renderReport();
+
+    expect(await screen.findByText("Watched")).toBeTruthy();
+    // The tile, not just the word: `parentElement` is the tile body, so this asserts the label is
+    // showing ITS number and not merely that a 3 exists somewhere on a page full of numbers.
+    expect(screen.getByText("Finished").parentElement?.textContent).toContain(
+      "3",
+    );
+    expect(screen.getByText("Watched").parentElement?.textContent).toContain(
+      "4",
+    );
+  });
+
+  it("qualifies each person and row line with what was actually finished", async () => {
+    // The line that makes the difference visible: the TV row landed 3 and finished none of them,
+    // while the movie row finished all 4 it landed. Before the split these rendered identically.
+    // Asserted against the rendered text because the count and its word are separate elements.
+    renderReport();
+    await screen.findByText("Watched");
+
+    const page = document.body.textContent ?? "";
+    expect(page).toContain("4 watched · 4 finished");
+    expect(page).toContain("3 watched · 0 finished");
   });
 
   it("defaults to the 30-day window and refetches when it changes", async () => {

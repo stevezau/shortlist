@@ -912,6 +912,7 @@ class TestRunsApi:
             "watched",
             "watched_prev",
             "watched_delta",
+            "finished",
             "avg_days_to_watch",
             "avg_days_to_watch_delta",
             "landing",
@@ -919,6 +920,8 @@ class TestRunsApi:
         assert set(body["overall"]["landing"]) == {
             "delivered",
             "watched",
+            "finished",
+            "finished_rate",
             "rate",
             "cohort_from",
             "cohort_to",
@@ -942,8 +945,15 @@ class TestRunsApi:
             "errors_last",
         }
         assert set(body["requests"]) == {"sent", "pending", "watched_after_sent"}
-        assert set(body["trend"][0]) == {"week", "watched"}
-        assert set(body["per_user"][0]) == {"username", "display_name", "slug", "delivered", "watched"}
+        assert set(body["trend"][0]) == {"week", "watched", "finished"}
+        assert set(body["per_user"][0]) == {
+            "username",
+            "display_name",
+            "slug",
+            "delivered",
+            "watched",
+            "finished",
+        }
         assert set(body["per_row"][0]) == {
             "slug",
             "section_key",
@@ -952,6 +962,7 @@ class TestRunsApi:
             "deleted",
             "delivered",
             "watched",
+            "finished",
         }
         assert set(body["top_titles"][0]) == {"tmdb_id", "media_type", "title", "watchers"}
         assert set(body["recent"][0]) == {

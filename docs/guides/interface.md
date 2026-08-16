@@ -219,8 +219,15 @@ were. A pick can only ever be credited as watched within **30 days** of being de
 denominator kept every pick ever delivered, for ever, so each night added ~60 permanently
 uncreditable picks per person to the bottom of the fraction and the number could only sink.
 
-**Watched** — picks people watched in the window. A pick delivered last month and watched this week
-counts here: this figure is about watching, not delivery.
+**Watched** — picks people STARTED in the window. A pick delivered last month and watched this week
+counts here: this figure is about watching, not delivery. For a series it counts from the **first
+finished episode**, because that is Plex's own definition and Plex offers no other — see Finished.
+
+**Finished** — of those, the ones they saw out: a film played, or a series with every episode
+watched. The two are worth reading together. On the maintainer's own server, of 158 series picks
+credited as watched only 21 had actually been finished and 31 were a single episode — so a lone
+"watched" count makes a TV row look better than a movie row for a structural reason rather than a
+real one. A big Watched with a small Finished means people are sampling, not staying.
 
 **People watching** — how many people watched at least one pick, out of everyone currently enabled.
 
@@ -234,9 +241,10 @@ delivered in the window _and_ at least 30 days ago. A pick delivered yesterday c
 7-day window there is usually no settled group at all, and the card says so instead of showing a
 misleading number.
 
-**By person / By row** — counts, not percentages, sorted by what was actually watched. At these
-sample sizes a percentage is noise: ranking by one put a person with `1/31` above a person with
-`3/103`. People and rows with nothing in the window fold away behind a disclosure rather than filling
+**By person / By row** — counts, not percentages, sorted by what was actually watched, with the
+finished count beside each. At these sample sizes a percentage is noise: ranking by one put a person
+with `1/31` above a person with `3/103`. Sorting stays on watched deliberately — ranking on finished
+would bury every TV row under every movie row, which says more about the medium than about the row. People and rows with nothing in the window fold away behind a disclosure rather than filling
 the list with empty bars, and rows you have since deleted are hidden the same way, and their picks still
 count in the totals above.
 
@@ -247,4 +255,7 @@ undone. Rows that still exist are never affected, whichever slug is named: Short
 eligible on the server rather than trusting the request.
 
 **Watches per week** is always the long view: the last 16 weeks, whatever window is
-selected.
+selected. Each column is split: the solid part is what got finished, the faded part what is still
+going. A past week's solid part can GROW later, when someone finally finishes a series they started
+back then — the bar answers "what became of what landed that week", and that answer genuinely
+changes.

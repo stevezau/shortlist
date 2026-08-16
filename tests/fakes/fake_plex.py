@@ -147,11 +147,28 @@ class FakePlexState:
     # reading 6.2 for the owner carried no `userRating` at all for any of the 49 viewers. A fake that
     # served one rating to everybody would make the leak this keying prevents untestable.
     user_ratings: dict[tuple[int, int], float] = field(default_factory=dict)
+    # How many episodes of a SHOW one account has watched, {(account_id, rating_key): viewedLeafCount}.
+    # Absent = the seeded default of "watched means finished".
+    #
+    # Without this the fake could only ever serve a show as fully watched, and a partly-watched
+    # series is not a corner case: on a real 47-account server (measured 2026-08-16) only 21 of 158
+    # credited show picks had been finished, and 31 were a single episode. Every test of the
+    # watched-vs-finished split would otherwise run against the one shape the split does not have to
+    # distinguish. "The fake must be no easier than the real server" (.claude/rules/testing.md).
+    partial_shows: dict[tuple[int, int], int] = field(default_factory=dict)
     next_rating_key: int = 5000
 
     def rate(self, account_id: int, rating_key: int, rating: float) -> None:
         """Record that one account rated one title — what tapping the stars in Plex does."""
         self.user_ratings[(account_id, rating_key)] = rating
+
+    def watch_episodes(self, account_id: int, rating_key: int, viewed: int) -> None:
+        """This account has watched `viewed` of the show's episodes — a series in progress.
+
+        Plex reports a show through `viewedLeafCount`/`leafCount` and has no show-level watched flag,
+        so this is the only way the state exists at all.
+        """
+        self.partial_shows[(account_id, rating_key)] = viewed
 
     @property
     def section_id(self) -> int:
@@ -403,9 +420,12 @@ def _movie_xml(parent: Element, state: FakePlexState, movie: FakeMovie, *, watch
         if rating is not None:
             element.set("userRating", str(rating))
         if is_show:
-            # A watched show in the fixture is served fully watched (viewed == total) — the common
-            # "finished the series" case, which the engine then treats as finished AND a seed.
-            element.set("viewedLeafCount", str(movie.leaf_count))
+            # A watched show defaults to fully watched (viewed == total) — the "finished the series"
+            # case. `state.watch_episodes()` overrides it per account so the fake can also serve a
+            # series IN PROGRESS, which is what `unwatched=0` mostly returns on a real server and the
+            # only shape that tells `watched` and `finished` apart.
+            viewed = state.partial_shows.get((watched_by, movie.rating_key), movie.leaf_count)
+            element.set("viewedLeafCount", str(min(viewed, movie.leaf_count)))
             element.set("leafCount", str(movie.leaf_count))
         else:
             # viewCount = how many times this account has this title in history (>= 1, since it's watched).

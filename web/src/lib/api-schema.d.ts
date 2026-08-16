@@ -3250,6 +3250,10 @@ export interface components {
             cohort_to: string | null;
             /** Delivered */
             delivered: number;
+            /** Finished */
+            finished: number;
+            /** Finished Rate */
+            finished_rate: number | null;
             /** Matured Days */
             matured_days: number;
             /** Rate */
@@ -3420,6 +3424,8 @@ export interface components {
             avg_days_to_watch_delta: number | null;
             /** Delivered */
             delivered: number;
+            /** Finished */
+            finished: number;
             landing: components["schemas"]["LandingOut"];
             /** Watched */
             watched: number;
@@ -3472,6 +3478,8 @@ export interface components {
             deleted: boolean;
             /** Delivered */
             delivered: number;
+            /** Finished */
+            finished: number;
             /** Library */
             library: string;
             /** Name */
@@ -3491,6 +3499,8 @@ export interface components {
             delivered: number;
             /** Display Name */
             display_name: string;
+            /** Finished */
+            finished: number;
             /** Slug */
             slug: string;
             /** Username */
@@ -3913,6 +3923,8 @@ export interface components {
         RowEffectivenessOut: {
             /** Delivered */
             delivered: number;
+            /** Finished */
+            finished: number;
             /** First Delivered At */
             first_delivered_at: string | null;
             /** Last Delivered At */
@@ -3937,6 +3949,8 @@ export interface components {
         RowLibraryEffectiveness: {
             /** Delivered */
             delivered: number;
+            /** Finished */
+            finished: number;
             /** Library */
             library: string;
             /** Rate */
@@ -3956,6 +3970,8 @@ export interface components {
             cohort_to: string;
             /** Delivered */
             delivered: number;
+            /** Finished */
+            finished: number;
             /** Rate */
             rate: number | null;
             /** Watched */
@@ -4667,6 +4683,8 @@ export interface components {
         };
         /** TrendPointOut */
         TrendPointOut: {
+            /** Finished */
+            finished: number;
             /** Watched */
             watched: number;
             /** Week */

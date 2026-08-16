@@ -15,6 +15,7 @@ import time
 from datetime import UTC, datetime, timedelta
 
 from loguru import logger
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, sessionmaker
 
 from shortlist.engine.models import SHARED_SLUG_PREFIX
@@ -155,6 +156,12 @@ def reconcile_watched(sessions: sessionmaker[Session], profiles) -> None:
     produced it) and within 30 days — recommending something they had already seen isn't a hit,
     and neither is a watch a year later. `history_depth` is refreshed here too; it was likewise
     surfaced in the UI and written nowhere, so every user read "0 titles watched".
+
+    `finished_at` is stamped alongside, and answers the harder question. `watched_at` comes from
+    Plex's binary flag, which for a SERIES flips on the first finished episode — so it has always
+    scored one episode of a 60-episode show like a whole film (measured 2026-08-16: only 21 of 158
+    credited show picks were actually finished). See `WatchedItem.is_finished` for the threshold and
+    why it is ours to choose rather than Plex's to report.
     """
     with sessions() as session:
         for profile in profiles:
@@ -171,6 +178,9 @@ def reconcile_watched(sessions: sessionmaker[Session], profiles) -> None:
                 user.prefs = {**(user.prefs or {}), "history_depth": len(profile.history)}
 
             latest_watch: dict[tuple[int, str], datetime] = {}
+            # Titles they have FINISHED, not merely started (`WatchedItem.is_finished`). A movie is
+            # always here; a series only once every episode is watched.
+            finished_keys: set[tuple[int, str]] = set()
             for item in profile.history:
                 if item.tmdb_id is None:
                     continue
@@ -178,6 +188,8 @@ def reconcile_watched(sessions: sessionmaker[Session], profiles) -> None:
                 when = item.watched_at if item.watched_at.tzinfo else item.watched_at.replace(tzinfo=UTC)
                 if key not in latest_watch or when > latest_watch[key]:
                     latest_watch[key] = when
+                if item.is_finished:
+                    finished_keys.add(key)
             if not latest_watch:
                 continue
 
@@ -187,22 +199,46 @@ def reconcile_watched(sessions: sessionmaker[Session], profiles) -> None:
             # not the run's started_at — so picks that outlive their run (after clear/prune) are
             # still creditable.
             cutoff = datetime.now(UTC) - timedelta(days=HIT_WINDOW_DAYS)
-            unwatched = (
+            # Two groups in one scan, both still missing `finished_at`:
+            #   * not yet credited, and young enough to still be creditable — the original case;
+            #   * ALREADY credited but unfinished — a series they have since watched out.
+            # The second group carries no age bound on purpose. A series finished 60 days after
+            # delivery is still a series they finished, and the pick is already counted, so stamping
+            # completion late cannot inflate any total. It is bounded by "credited but unfinished",
+            # which is small (139 rows on a real 47-user server), not by the size of `picks`.
+            candidates = (
                 session.query(PickRow)
                 .filter(
                     PickRow.user_id == user.id,
-                    PickRow.watched_at.is_(None),
-                    PickRow.created_at >= cutoff,
+                    PickRow.finished_at.is_(None),
+                    or_(
+                        PickRow.watched_at.isnot(None),
+                        and_(PickRow.watched_at.is_(None), PickRow.created_at >= cutoff),
+                    ),
                 )
                 .all()
             )
-            for pick in unwatched:
-                watched = latest_watch.get((pick.tmdb_id, pick.media_type))
+            for pick in candidates:
+                key = (pick.tmdb_id, pick.media_type)
+                watched = latest_watch.get(key)
                 if watched is None:
                     continue
-                since = pick.created_at if pick.created_at.tzinfo else pick.created_at.replace(tzinfo=UTC)
-                if since <= watched <= since + timedelta(days=HIT_WINDOW_DAYS):
+                if pick.watched_at is None:
+                    since = pick.created_at if pick.created_at.tzinfo else pick.created_at.replace(tzinfo=UTC)
+                    if not (since <= watched <= since + timedelta(days=HIT_WINDOW_DAYS)):
+                        continue
                     pick.watched_at = watched
+                if key in finished_keys:
+                    # The show's own `lastViewedAt` — the most recent episode they watched, which for
+                    # a series that is now complete IS when they finished it, rather than the night we
+                    # happened to notice.
+                    #
+                    # Nothing reads this VALUE today: every consumer asks only whether the column is
+                    # set, and the trend buckets on `watched_at` by design. It is stored truthfully
+                    # anyway so that a future consumer windowing on `finished_at` gets a real date
+                    # instead of a sync timestamp — which is a fact about this column that cannot be
+                    # recovered later if it is thrown away now.
+                    pick.finished_at = watched
         session.commit()
 
 

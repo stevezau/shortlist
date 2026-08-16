@@ -121,6 +121,34 @@ class WatchedItem:
         function of the same name."""
         return is_human_rating(self.user_rating)
 
+    @property
+    def is_finished(self) -> bool:
+        """Did they finish this, as opposed to merely starting it?
+
+        A MOVIE is finished whenever it is here at all: this type only ever holds titles Plex has
+        already flagged watched, and for a movie that flag means played.
+
+        A SERIES needs every episode. That threshold is OURS and has to be — Plex publishes no
+        show-level watched flag, only ``viewedLeafCount``/``leafCount`` (recorded:
+        ``tests/fixtures/pms_watched_shows.xml.txt``, where a show 2 episodes into 176 comes back as
+        "watched"). Of the thresholds available this is the strictest and the least arguable, and it
+        is already the wording the user page shows per title ("3 of 12 episodes" / "finished").
+
+        Deliberately NOT the engine's already-seen bar (`rows._watched_titles`, effectively 3
+        episodes or 15%): that one answers "engaged enough not to recommend this again?", which is a
+        different question with a legitimately looser answer.
+
+        A series whose episode total is unknown reads as UNFINISHED — the opposite of the
+        already-seen rule, which counts it as watched rather than risk re-recommending. Here the
+        cautious direction is the other way: "we cannot show they finished it" must not become a
+        claim that they did.
+        """
+        if self.media_type is MediaType.MOVIE:
+            return True
+        if not self.leaf_count:
+            return False
+        return (self.viewed_leaf_count or 0) >= self.leaf_count
+
 
 @dataclass(frozen=True)
 class Seed:

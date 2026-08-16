@@ -144,7 +144,9 @@ POST /api/watching-account/transfer {to_user_id, scrobble?, dry_run?} -> {copied
 
 ```
 GET/POST /api/collections · PATCH/DELETE /api/collections/{id} (incl. `request_tag`, `candidate_sources`, `library_keys`, `max_seeds` — how many watched titles the row is built from (1–100; null inherits the engine default of 30), `recency` — how much a title's release date counts when ranking it for this row (0.0–1.0; null inherits the global `recommendations.recency`), `cold_start` — what the row does for someone below `recommendations.min_history` (`popular` | `skip`; null inherits the global `recommendations.cold_start`), `fallback_name` — what to call this row for someone whose name cannot be filled in, i.e. a `{top_seed}` row for a person with nothing watched. `""` (the default) means there is no such name and the row is simply not built for them — Shortlist never invents one, and a value containing `{top_seed}` is refused because it could not be filled in either, `seed_window` — how many recent watches a one-title row cycles between, one per run (1–20, default 1 = always their most recent; no global to inherit), `pick_order` — how the delivered collection is ordered (`best` | `rating` | `newest` | `shuffle` | `new_first` — titles that arrived this run lead | `rotate` — the front advances by one title a day, default `best`), `hub_anchor` — per-row shelf-placement override, and `poster` — custom row artwork {mode: ""|upload|generate, title, subtitle, style})
-GET  /api/collections/{id}/effectiveness -> {delivered, watched, first_delivered_at, matured_days, matured, per_library} (has this row actually landed? `matured` is null until picks are old enough to judge — a pick counts as a hit only if watched within 30 days, so a newer row is reported as "too early" rather than scored 0%)
+GET  /api/collections/{id}/effectiveness -> {delivered, watched, finished, first_delivered_at, matured_days, matured, per_library} (has this row actually landed? `matured` is null until picks are old enough to judge — a pick counts as a hit only if watched within 30 days, so a newer row is reported as "too early" rather than scored 0%)
+     `finished` accompanies every `watched` here too, including per library. A row spanning Movies and TV can land the same share in
+     both and finish almost none of the TV — that gap is the panel's most useful line, and it is invisible in `watched` alone.
      `rewatch` (bool, default false) makes a REWATCH row: already-finished titles are ordered FIRST and unwatched ones only fill what is left.
      `watched_pct` cannot express this — it is a ceiling, so the ranking shows unwatched titles first and merely PERMITS finished ones; even at 1.0 a
      library with plenty of unwatched candidates yields a mostly-unwatched row. Setting `rewatch` also keeps finished titles in the row's candidate
@@ -217,6 +219,15 @@ GET  /api/report?window=7|30|90|all -> {window, since, first_pick, overall, tren
      old. That matters — a pick can only ever be credited as watched within 30 days of delivery, so counting a pick delivered
      yesterday in the denominator drags the rate toward zero for no reason. `per_user`/`per_row` return COUNTS, not rates, sorted by
      what was actually watched: at these sample sizes a percentage is noise, and sorting by one put `1/31` above `3/103`.
+     Every count comes in a WATCHED/FINISHED pair (`overall.finished`, `landing.finished`/`finished_rate`, and a `finished` on each
+     `per_user`, `per_row` and `trend` entry). `overall.finished` carries NO `_prev`/`_delta`, unlike its neighbours: this window's
+     finishes are counted as of now while the previous window's have had an extra period to complete, so a server behaving perfectly
+     steadily would report a permanent decline. The level is honest; a shifted-window change is not. `watched` is Plex's own flag, which for a SERIES flips on the FIRST finished episode —
+     so one episode of a 60-episode show scores exactly like a whole film, and a TV row therefore out-scores a movie row for a
+     structural reason rather than a real one (measured on a 47-user server: only 21 of 158 credited show picks had been finished).
+     `finished` is the stricter count — a film played, or a series with every episode watched. See
+     [Watched vs finished](#watched-vs-finished) for why the threshold is ours to choose. Sorting still uses `watched`, deliberately:
+     ranking by `finished` would bury every TV row under every movie row.
 POST /api/report/sync -> 202 (kick off a watch-history sync — re-reads every user's watched set from Plex so hit rates and "N titles watched" stay fresh between runs; writes nothing to Plex)
 GET  /api/report/deleted-rows -> [{slug, picks, first_seen, last_seen}] (pick history left behind by rows that no longer exist, biggest first; NOT windowed — "what can I clear" is a question about all of it)
 DELETE /api/report/deleted-rows?slug= -> {cleared, picks, slugs[]} (permanently delete that history; omit `slug` to clear every deleted row)
@@ -489,6 +500,37 @@ treated as fresh while three episodes of a 200-episode run isn't treated as fini
 A row that should LEAD with rewatches needs the per-row `rewatch` flag instead. `unstarted_only`
 still exists and still matters — but only on a row whose cap is **above** 0%, since a 0% row now
 drops started series anyway.
+
+### Watched vs finished
+
+The dashboard reports both, and they are different questions. **Watched** is Plex's own flag: a film
+played, or a series with at least one finished episode. **Finished** is a film played, or a series
+with **every** episode watched.
+
+The gap is not a rounding error. On a real 47-user server, of the 158 show picks credited as watched,
+only 21 had actually been finished — 31 were a single episode. A single "watched" count therefore
+flatters television structurally, and a TV row will out-score a movie row on it without being any
+better. Both numbers are shown side by side so that comparison stops being misleading; lists are
+still SORTED by watched, because ranking on finished would bury every TV row under every movie row.
+
+Three thresholds exist in Shortlist and they are deliberately not the same, because they answer
+different questions:
+
+| Where                 | Bar for a series                 | Question it answers                             |
+| --------------------- | -------------------------------- | ----------------------------------------------- |
+| Dashboard `watched`   | 1 episode (Plex's own)           | Did they start it?                              |
+| Recommendation engine | `min(80%, max(3, 15%))` episodes | Are they engaged enough not to re-recommend it? |
+| Dashboard `finished`  | every episode                    | Did they see it out?                            |
+
+Plex publishes no show-level finished flag, so the last one is Shortlist's own threshold — the
+strictest and least arguable of the options, and the same wording a person's page already uses per
+title ("3 of 12 episodes" / "finished").
+
+**Backfill.** `picks.finished_at` was added in migration 0072. Films were backfilled exactly, since
+a film's watched flag IS completion. Series were deliberately left empty and fill in going forward:
+which shows are past the bar today is knowable, but _when_ they crossed it is not, and inventing that
+date would file old watches in the wrong week of the trend chart permanently. A series already
+credited as watched is picked up on the first sync after it completes.
 
 **Why a watched title can still appear:** the read is per-run, so a title marked watched _after_ the
 last run stays eligible until the next run re-reads. Between runs, **Jobs → Sync history**
