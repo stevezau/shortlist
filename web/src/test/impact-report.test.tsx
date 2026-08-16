@@ -148,6 +148,7 @@ const REPORT: EffectivenessReport = {
       library: "Movies",
       seed_title: "Arrival",
       watched_at: new Date().toISOString(),
+      finished_at: new Date().toISOString(),
     },
   ],
 };
@@ -470,7 +471,13 @@ describe("ImpactReport", () => {
         // `watched: 0, finished: 3` is a payload the API cannot emit, and inheriting it left the
         // zero-watched branch of the Finished hint rendered by this test but asserted by nothing.
         finished: 0,
-        landing: { ...LANDING, delivered: 0, watched: 0, finished: 0, rate: null },
+        landing: {
+          ...LANDING,
+          delivered: 0,
+          watched: 0,
+          finished: 0,
+          rate: null,
+        },
       },
       runs: { ...EMPTY.runs, total: 0, in_window: 0 },
       requests: { sent: 0, pending: 0, watched_after_sent: 0 },
@@ -538,7 +545,13 @@ describe("ImpactReport", () => {
         // `watched: 0, finished: 3` is a payload the API cannot emit, and inheriting it left the
         // zero-watched branch of the Finished hint rendered by this test but asserted by nothing.
         finished: 0,
-        landing: { ...LANDING, delivered: 0, watched: 0, finished: 0, rate: null },
+        landing: {
+          ...LANDING,
+          delivered: 0,
+          watched: 0,
+          finished: 0,
+          rate: null,
+        },
       },
       per_user: [],
       per_row: [],
@@ -709,5 +722,73 @@ describe("ImpactReport — recently watched", () => {
 
     expect(await screen.findByText(/newest watch/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Show .* more/i })).toBeNull();
+  });
+});
+
+describe("ImpactReport — the recent feed says which kind of watch it was", () => {
+  beforeEach(() => {
+    getReport.mockReset();
+    getDeletedRows.mockReset();
+    getDeletedRows.mockResolvedValue([]);
+  });
+
+  function withRecent(
+    recent: Partial<(typeof REPORT)["recent"][number]>[],
+  ): void {
+    getReport.mockResolvedValue({
+      ...REPORT,
+      recent: recent.map((r) => ({ ...REPORT.recent[0]!, ...r })),
+    });
+  }
+
+  it("says a series was only STARTED when nobody saw it out", async () => {
+    // Plex credits a series on its first finished episode, so "watched" here has always meant
+    // "began". Measured on a real server: 21 of 158 credited show picks were actually finished.
+    withRecent([
+      {
+        title: "Love, Death & Robots",
+        media_type: "show",
+        finished_at: null,
+      },
+    ]);
+    renderReport();
+
+    const line = await screen.findByText(/Love, Death & Robots/);
+    expect(line.closest("li")).toHaveTextContent(/started/i);
+    expect(line.closest("li")).not.toHaveTextContent(/watched/i);
+  });
+
+  it("says FINISHED for a series they saw out", async () => {
+    withRecent([
+      {
+        title: "Fleabag",
+        media_type: "show",
+        finished_at: new Date().toISOString(),
+      },
+    ]);
+    renderReport();
+
+    const line = await screen.findByText(/Fleabag/);
+    expect(line.closest("li")).toHaveTextContent(/finished/i);
+  });
+
+  it("leaves a FILM as watched, finished or not", async () => {
+    // A film has no middle state. "finished" adds a word without adding a fact, and "started" would
+    // be wrong for the overwhelmingly common case — so the split must not reach movies at all.
+    withRecent([
+      { title: "The Martian", media_type: "movie", finished_at: null },
+      {
+        title: "Toy Story",
+        media_type: "movie",
+        finished_at: new Date().toISOString(),
+      },
+    ]);
+    renderReport();
+
+    for (const title of ["The Martian", "Toy Story"]) {
+      const line = (await screen.findByText(title)).closest("li");
+      expect(line).toHaveTextContent(/watched/i);
+      expect(line).not.toHaveTextContent(/started|finished/i);
+    }
   });
 });

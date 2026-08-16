@@ -323,6 +323,11 @@ class RecentWatchOut(PassthroughModel):
     library: str
     seed_title: str
     watched_at: str | None
+    #: Whether they saw it OUT, as opposed to Plex's binary watched flag — which for a series trips
+    #: on its first finished episode. Measured on a real server: 21 of 158 credited show picks had
+    #: actually been finished, so a feed that says "watched" for all of them overstates the answer
+    #: on the very page that exists to report it. Null means credited but not finished.
+    finished_at: str | None
 
 
 class EffectivenessReportOut(PassthroughModel):

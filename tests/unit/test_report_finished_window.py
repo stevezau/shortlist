@@ -237,3 +237,52 @@ class TestFinishedNeverExceedsWatchedInAWindow:
 
         for point in self._report(sessions, "all")["trend"]:
             assert point["finished"] <= point["watched"], point
+
+
+class TestTheRecentFeedSaysWhichKindOfWatchItWas:
+    """ "Watched" is Plex's binary flag, and for a SERIES it trips on the first finished episode.
+
+    Measured on a real server: 21 of 158 credited show picks had actually been finished. A feed that
+    prints "watched" for all of them overstates the product's success by a factor of seven, on the
+    one page whose whole job is reporting that success — and it contradicts the By-row card directly
+    above it, which has said "N watched · M finished" all along.
+    """
+
+    def test_a_finished_series_is_reported_as_finished(self, sessions):
+        seed(sessions, tmdb_id=1, delivered_ago=40, watched_ago=10, finished_ago=8)
+
+        with sessions() as session:
+            recent = effectiveness(session, "30")["recent"]
+
+        assert len(recent) == 1
+        assert recent[0]["finished_at"] is not None
+
+    def test_a_series_they_only_started_carries_no_finish(self, sessions):
+        """Credited by Plex on episode one, never seen out — the case the split exists for."""
+        seed(sessions, tmdb_id=2, delivered_ago=40, watched_ago=10, finished_ago=None)
+
+        with sessions() as session:
+            recent = effectiveness(session, "30")["recent"]
+
+        assert len(recent) == 1
+        assert recent[0]["watched_at"] is not None
+        assert recent[0]["finished_at"] is None
+
+    def test_the_finish_is_taken_over_the_whole_title_not_one_delivery(self, sessions):
+        """A title re-recommended over several runs has one pick row per run, and the two stamps
+        land on different passes — `watched_at` when Plex credits it, `finished_at` once it passes
+        our completion threshold, possibly a fortnight later onto whichever row was newest then.
+
+        The feed already collapses those rows to one line per (person, title). Reading `finished_at`
+        off the single credited row rather than aggregating it over the group would report a series
+        the person demonstrably finished as merely started, depending on which delivery won.
+        """
+        # Older delivery carries the finish; the newest delivery carries only the credit.
+        seed(sessions, tmdb_id=3, delivered_ago=60, watched_ago=20, finished_ago=15)
+        seed(sessions, tmdb_id=3, delivered_ago=10, watched_ago=5, finished_ago=None)
+
+        with sessions() as session:
+            recent = effectiveness(session, "30")["recent"]
+
+        assert len(recent) == 1, "one line per person+title, not one per delivery"
+        assert recent[0]["finished_at"] is not None, "the finish belongs to the title, not the row"

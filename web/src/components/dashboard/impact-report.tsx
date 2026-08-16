@@ -61,7 +61,9 @@ function WatchSyncLine({ sync }: { sync: EffectivenessReport["watch_sync"] }) {
         {/* "and on every run" is not filler: the sync job's interval is normally LONGER than the
             run schedule, so "next check <in 3 days>" on its own reads as "this data is three days
             out of date" when a run tonight will refresh it. */}
-        {sync.next && ` · next check ${formatDate(sync.next)}, and on every run`}.
+        {sync.next &&
+          ` · next check ${formatDate(sync.next)}, and on every run`}
+        .
       </span>
       <div className="flex items-center gap-2">
         {syncNow.isError && (
@@ -972,6 +974,21 @@ function ReportBody({
 const RECENT_SHOWN = 12;
 
 /**
+ * "watched", "finished" or "started" — the distinction the rest of this page already draws.
+ *
+ * A FILM keeps "watched": it has no middle state, so "finished" would add a word without adding a
+ * fact, and "started" would be wrong for the overwhelmingly common case. A SERIES is credited by
+ * Plex on its first finished episode, so "watched" there means only that they began it — measured
+ * on a real server, 21 of 158 credited show picks had actually been seen out. Saying "watched" for
+ * the other 137 overstates the result on the one page that exists to report it, and contradicts the
+ * By-row card directly above, which has said "N watched · M finished" all along.
+ */
+function watchVerb(watch: EffectivenessReport["recent"][number]): string {
+  if (watch.media_type !== "show") return "watched";
+  return watch.finished_at ? "finished" : "started";
+}
+
+/**
  * The newest watches, newest first.
  *
  * The extras used to be `slice(0, 12)` and nothing else: the server sends up to 20, so eight of
@@ -996,7 +1013,7 @@ function RecentlyWatched({
       <span className="font-medium text-foreground">
         {w.display_name || w.username}
       </span>
-      watched
+      {watchVerb(w)}
       <span className="text-foreground">{w.title}</span>
       <Badge variant="secondary" className="font-normal">
         {w.row}

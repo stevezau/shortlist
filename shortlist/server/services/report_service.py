@@ -321,10 +321,16 @@ def _recent_watches(session: Session, users: dict[int, User], namer: _RowNamer, 
     watch once per delivery ("Jarrah watched Beckham" five times). Credit the newest delivery (its
     row/library label is the current one) at the latest time that person watched it.
     """
+    # `finished` is aggregated over the SAME group as `watched`, not read off the credited pick row.
+    # The two are stamped by different passes — `watched_at` when Plex first credits the title,
+    # `finished_at` once it passes our own completion threshold, possibly on a later night and
+    # possibly onto a different delivery of the same title — so taking it from `pick_id` alone would
+    # report "started" for a series the person demonstrably finished.
     latest = (
         session.query(
             func.max(PickRow.id).label("pick_id"),
             func.max(PickRow.watched_at).label("watched"),
+            func.max(PickRow.finished_at).label("finished"),
         )
         .filter(*_watched_in(since))
         .group_by(PickRow.user_id, PickRow.tmdb_id, PickRow.media_type)
@@ -342,8 +348,9 @@ def _recent_watches(session: Session, users: dict[int, User], namer: _RowNamer, 
             "library": p.library,
             "seed_title": p.seed_title or "",
             "watched_at": iso_utc(watched),
+            "finished_at": iso_utc(finished) if finished else None,
         }
-        for p, watched in session.query(PickRow, latest.c.watched)
+        for p, watched, finished in session.query(PickRow, latest.c.watched, latest.c.finished)
         .join(latest, PickRow.id == latest.c.pick_id)
         .order_by(latest.c.watched.desc())
         .all()

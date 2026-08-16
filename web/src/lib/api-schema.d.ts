@@ -3731,6 +3731,8 @@ export interface components {
         RecentWatchOut: {
             /** Display Name */
             display_name: string;
+            /** Finished At */
+            finished_at: string | null;
             /** Library */
             library: string;
             /** Media Type */

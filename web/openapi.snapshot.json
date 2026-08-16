@@ -2813,6 +2813,17 @@
             "title": "Display Name",
             "type": "string"
           },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
           "library": {
             "title": "Library",
             "type": "string"
@@ -2857,7 +2868,8 @@
           "row",
           "library",
           "seed_title",
-          "watched_at"
+          "watched_at",
+          "finished_at"
         ],
         "title": "RecentWatchOut",
         "type": "object"

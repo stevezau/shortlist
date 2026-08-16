@@ -974,6 +974,10 @@ class TestRunsApi:
             "library",
             "seed_title",
             "watched_at",
+            # Whether they saw it OUT. `watched_at` is Plex's flag, which trips on a series' first
+            # finished episode, so without this the feed reports "watched" for a show somebody
+            # sampled one episode of — on the page that exists to report whether picks land.
+            "finished_at",
         }
         # `all` is the branch with no previous period: the deltas and `since` go null, but not one
         # key may go missing with them.
