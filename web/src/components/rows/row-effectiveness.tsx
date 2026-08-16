@@ -194,10 +194,9 @@ export function RowEffectivenessPanel({
           )}
 
           <p className="text-xs text-muted-foreground">
-            Judged on {data.matured.delivered} picks — the ones delivered before{" "}
-            {shortDate(data.matured.cohort_to)}, so every one has had its full{" "}
-            {data.matured_days} days. Newer picks are in the all-time total but
-            not the score.
+            Judged on the {data.matured.delivered} picks delivered before{" "}
+            {shortDate(data.matured.cohort_to)} — the ones that have had their
+            full {data.matured_days} days.
           </p>
         </>
       )}

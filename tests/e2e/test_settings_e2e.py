@@ -49,8 +49,18 @@ class TestConnectionCards:
         # An unconfigured connection says so plainly and never claims a connection it doesn't have —
         # and its Test is disabled until a key is on file (you can't test what isn't set up), rather
         # than letting the owner test nothing and read a raw error.
+        #
+        # Asserted on the status label the card carries next to its state dot, NOT on a sentence in
+        # the body. The body used to end "Not set up yet — choose Set up to connect." on every
+        # unconfigured card, which is five identical sentences down one page, each directly under a
+        # button reading "Set up". The state is still stated; it is stated once.
         tautulli = page.get_by_test_id("connection-tautulli")
-        expect(tautulli).to_contain_text("Not set up yet")
+        expect(tautulli).to_contain_text("Not set up")
+        # `status` renders only inside an `sr-only` span, and `to_contain_text` reads textContent —
+        # so the line above passes off an invisible string and would stay green if every visible
+        # signal regressed. The visible one is the button, which reads "Set up" precisely when the
+        # connection isn't.
+        expect(tautulli.get_by_role("button", name="Set up")).to_be_visible()
         expect(tautulli.get_by_role("button", name="Test")).to_be_disabled()
         expect(tautulli).not_to_contain_text("Connected —")
 

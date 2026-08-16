@@ -58,8 +58,10 @@ function WatchSyncLine({ sync }: { sync: EffectivenessReport["watch_sync"] }) {
       <span>
         Watch status{" "}
         {sync.last ? `synced ${timeAgo(sync.last)}` : "not synced yet"}
-        {sync.next && ` · next check ${formatDate(sync.next)}`}. It also
-        refreshes on every run.
+        {/* "and on every run" is not filler: the sync job's interval is normally LONGER than the
+            run schedule, so "next check <in 3 days>" on its own reads as "this data is three days
+            out of date" when a run tonight will refresh it. */}
+        {sync.next && ` · next check ${formatDate(sync.next)}, and on every run`}.
       </span>
       <div className="flex items-center gap-2">
         {syncNow.isError && (
@@ -274,17 +276,25 @@ function CountBar({
     // meant picking a width — and any width is wrong for some count: w-32 wrapped "3 watched · 103
     // delivered" onto two lines, and even w-44 overflows once a row passes 999 watched or 9999
     // delivered. This way no count can break the layout.
-    <div className="flex min-w-0 items-center gap-2">
+    <div className="flex min-w-0 items-center gap-2 xl:shrink-0">
       {/* Two labelled numbers, NOT "{watched} of {delivered}". They are counts over two different
           sets — watched-in-window and delivered-in-window — so presenting them as a fraction makes
           "4 of 0" reachable whenever delivery paused (a weekly row cron on a 7-day window). That is
           the same misleading fraction this rewrite exists to remove. */}
-      {/* `nowrap` only from `sm` up. The bar it aligns against is itself `hidden sm:flex`, so below
-          that breakpoint holding the line rigid buys nothing and costs everything: with a third
-          clause ("· N finished") the label demanded more than a 390px phone has, and the whole
-          dashboard scrolled sideways — measured at 404px in a 390px viewport. Wrapping to two lines
-          on a phone is free; from `sm` up the old rigid behaviour is unchanged. */}
-      <span className="text-right tabular-nums text-muted-foreground xl:shrink-0 xl:whitespace-nowrap">
+      {/* `nowrap` from `xl`, and never the element that shrinks. Below `xl` the caller stacks this
+          under the row name, so it has the whole card width to itself; from `xl` the name is the
+          flexible half and this is the fixed one. Letting BOTH be flexible was the old bug: flex
+          shares a deficit in proportion to content width, so the long counts label kept ~180px and
+          the row name was squeezed to 32px — "Late Night" rendered as "Lat…" at every width from
+          390 to 1280. Measured, not theorised.
+
+          The nowrap stays breakpoint-gated even though the label now has a line to itself, because
+          a line to itself is not the same as room: at 320px a card's content box is 238px, and
+          "1203 watched · 318 finished · 41600 delivered" is 305px. Unconditional `nowrap` removes
+          the only break opportunity in the label — the separators are real whitespace text nodes
+          in THIS span — and the page scrolls sideways again, 355 against a 320 client. The shrink
+          fix lives in `xl:flex-1` / `xl:shrink-0`, not here, so gating this costs nothing. */}
+      <span className="text-right tabular-nums text-muted-foreground xl:whitespace-nowrap">
         {/* "watched" stays the leading number so the list keeps its old meaning and its old sort.
             "finished" is the qualifier beside it: a series counts as watched on its first episode,
             so a big watched number with a small finished one means sampled, not enjoyed — which is
@@ -304,8 +314,7 @@ function CountBar({
           <>
             {" "}
             <span className="whitespace-nowrap">
-              ·{" "}
-              <span className="font-medium text-foreground">{finished}</span>{" "}
+              · <span className="font-medium text-foreground">{finished}</span>{" "}
               finished
             </span>
           </>
@@ -320,16 +329,16 @@ function CountBar({
           </>
         )}
       </span>
-      {/* `xl`, not `sm`. The label and the bar are both `shrink-0`, so together they demand a fixed
-          slice before the row name gets a pixel. At `sm` that was already too generous: these cards
-          sit in a 2-column grid from `lg`, so at 1024px each is ~400px wide and the By-row line
-          (name + library badge + counts + bar) overflowed its own card and clipped off-screen —
-          measured, not theorised. The numbers carry the information on their own; the bar only
-          earns its width where the list is wide enough to scan down. */}
+      {/* `2xl`, not `xl`. These cards sit in a 2-column grid from `lg`, so a card is ~360px at
+          1024 and ~500px at 1280 — and `xl` IS 1280, which is to say the bar switched itself on at
+          the exact width where the last 96px did not exist. Measured: it landed at right:1290 in a
+          1280px viewport and scrolled the whole document sideways. The numbers carry the
+          information on their own; the bar only earns its width once a card is wide enough that
+          nothing has to be given up for it. */}
       {/* One bar, split: the solid part is what got finished, the faded part what is still going.
           Same hue at two intensities because the two are ordered, not two categories — and the
           finished part is anchored at the left so it can be compared down the list by eye. */}
-      <div className="hidden h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-muted xl:flex">
+      <div className="hidden h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-muted 2xl:flex">
         <div
           className="h-full bg-primary"
           style={{ width: `${max > 0 ? (finished / max) * 100 : 0}%` }}
@@ -417,15 +426,19 @@ function Disclosure({
 function ZeroDisclosure({
   count,
   noun,
+  plural,
   children,
 }: {
   count: number;
   noun: string;
+  plural: string;
   children: React.ReactNode;
 }) {
   if (count === 0) return null;
   return (
-    <Disclosure label={`${count} ${noun} with none in this window`}>
+    <Disclosure
+      label={`${count} ${count === 1 ? noun : plural} with none in this window`}
+    >
       {children}
     </Disclosure>
   );
@@ -449,13 +462,20 @@ function ByPerson({
   const line = (p: EffectivenessReport["per_user"][number]) => (
     <div
       key={p.slug}
-      className="flex items-center justify-between gap-3 text-sm"
+      className="flex flex-col gap-0.5 text-sm xl:flex-row xl:items-center xl:justify-between xl:gap-3"
     >
       {/* `min-w-0` is what makes `truncate` actually truncate here. `truncate` sets
           `white-space: nowrap`, so this flex child's min-content width is the WHOLE name — without
           `min-w-0` it refuses to shrink, and a long name pushes the line past a phone's screen
           instead of ellipsing (the dashboard scrolled 134px sideways at 390px). */}
-      <span className="min-w-0 truncate">{p.display_name || p.username}</span>
+      {/* `flex-1`: the name is the half that gets whatever room is left, so it only ellipses when
+          the card genuinely cannot hold it. Below `xl` the line stacks instead. `lg` was measured
+          and rejected: that is exactly where these cards go two-across, so a card is ~360px and the
+          counts alone want ~290 of it — the name came out at 55px, worse than before the fix. The
+          two only fit side by side once a card is ~500px, which is `xl`. */}
+      <span className="min-w-0 truncate xl:flex-1">
+        {p.display_name || p.username}
+      </span>
       <CountBar
         watched={p.watched}
         finished={p.finished}
@@ -470,7 +490,7 @@ function ByPerson({
       title="By person"
       // "Most watched first" is load-bearing here, not decoration: only the top ten are shown
       // outright, so without it the fold looks arbitrary rather than like the bottom of a ranking.
-      hint={`Picks watched in ${WINDOW_PHRASE[reportWindow]}, of picks delivered. Most watched first.`}
+      hint={`Most watched first · ${WINDOW_PHRASE[reportWindow]}`}
     >
       {active.length === 0 && idle.length === 0 ? (
         <p className="text-sm text-muted-foreground">
@@ -496,7 +516,7 @@ function ByPerson({
               {overflow.map(line)}
             </Disclosure>
           )}
-          <ZeroDisclosure count={idle.length} noun="people">
+          <ZeroDisclosure count={idle.length} noun="person" plural="people">
             {idle.map(line)}
           </ZeroDisclosure>
         </>
@@ -521,9 +541,9 @@ function ByRow({
   const line = (r: EffectivenessReport["per_row"][number]) => (
     <div
       key={`${r.slug}-${r.section_key}-${r.library}`}
-      className="flex items-center justify-between gap-3 text-sm"
+      className="flex flex-col gap-0.5 text-sm xl:flex-row xl:items-center xl:justify-between xl:gap-3"
     >
-      <span className="flex min-w-0 items-center gap-1.5">
+      <span className="flex min-w-0 items-center gap-1.5 xl:flex-1">
         {/* `min-w-0` for the same reason as ByPerson above: `truncate` alone cannot shrink a flex
             child, so the row name held the line open past the screen. */}
         <span
@@ -551,7 +571,7 @@ function ByRow({
   return (
     <Section
       title="By row"
-      hint={`Picks watched in ${WINDOW_PHRASE[reportWindow]}, of picks delivered. Most watched first.`}
+      hint={`Most watched first · ${WINDOW_PHRASE[reportWindow]}`}
     >
       {live.length === 0 && gone.length === 0 ? (
         <p className="text-sm text-muted-foreground">
@@ -736,7 +756,12 @@ function ReportBody({
       {selector}
 
       {/* Is it working? Counts for the window, each against the previous equal period. */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      {/* Five tiles never divide evenly, so the last one spans the full width on a phone rather
+          than sitting alone in a half-width cell with a gap beside it. And five ACROSS starts at
+          `xl`, not `lg`: at 1024 five columns are ~148px each, which wraps "PEOPLE WATCHING" and
+          "TIME TO WATCH" onto two lines while their neighbours stay on one, so the row of tiles
+          comes out different heights. Three columns at that width fit every label on one line. */}
+      <div className="grid grid-cols-2 gap-3 [&>*:last-child]:col-span-2 sm:grid-cols-3 sm:[&>*:last-child]:col-span-1 xl:grid-cols-5">
         <StatTile
           icon={TrendingUp}
           label="Watched"
@@ -810,14 +835,14 @@ function ReportBody({
       <div className="grid gap-4 lg:grid-cols-2">
         <Section
           title="Watches per week"
-          hint="The long view — always the last 16 weeks, whatever window is selected."
+          hint="Always the last 16 weeks, whatever window is selected."
         >
           <Trend trend={report.trend} />
         </Section>
 
         <Section
           title="Picks that get watched"
-          hint={`Are the recommendations any good? This is the share of delivered picks someone actually watched, within ${landing.matured_days} days of the pick landing.`}
+          hint={`The share of delivered picks watched within ${landing.matured_days} days of landing.`}
         >
           {landing.rate === null ? (
             // Say what it is waiting FOR and when it arrives — not the rule and a cutoff date the
@@ -865,11 +890,12 @@ function ReportBody({
                 </span>{" "}
                 were finished ({landing.finished} of {landing.delivered}).
               </p>
+              {/* One clause, not a paragraph. The reason a young pick is excluded (it has not had
+                  its chance yet) follows from the rule itself; spelling the reasoning out was four
+                  lines of prose under a single number. */}
               <p className="text-xs text-muted-foreground/80">
-                Measured only over picks old enough to have had their full{" "}
-                {landing.matured_days} days — a pick delivered yesterday can’t
-                have been watched “within 30 days” yet, so counting it would
-                drag this toward zero for no reason.
+                Only picks that have had their full {landing.matured_days} days
+                are counted.
               </p>
             </div>
           )}
@@ -885,7 +911,7 @@ function ReportBody({
         {report.top_titles.length > 0 && (
           <Section
             title="Most watched"
-            hint={`The picks the most people watched in ${WINDOW_PHRASE[reportWindow]}.`}
+            hint={`Most watchers first · ${WINDOW_PHRASE[reportWindow]}`}
           >
             <ul className="space-y-1 text-sm">
               {report.top_titles.map((t) => (

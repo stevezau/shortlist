@@ -20,6 +20,44 @@ import { useLibraries, useSettings } from "@/lib/queries";
 import type { Collection, User } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
+/** A row name with its `{placeholders}` shown as placeholders rather than as literal text.
+ *
+ * The list used to print the raw template — "✨ {library_name} Picked for You" — beside cards
+ * whose names had no token in them, and beside a dashboard that shows the same row resolved
+ * ("✨ Movies Picked for You"). Read cold it looks like a substitution that failed. Resolving it
+ * here instead would be a different lie: a row over two libraries really is two collections with
+ * two names, so there is no single name to show. Marking the variable as a variable is the honest
+ * version, and it costs one chip.
+ */
+// EXACTLY the tokens the engine substitutes (`delivery.py`), matched case-sensitively — not
+// `\{[a-z_]+\}`. The name field is free text and nothing validates a token whitelist, so a loose
+// pattern would dress "Best of {genre}" or "{Library_Name} Picks" up as a resolved placeholder
+// while Plex receives the literal braces in the collection title on every home screen. Anything
+// outside this set must stay plain text: the whole point is to stop a template reading as a failed
+// substitution, and hiding a typo does the exact opposite.
+const ROW_NAME_TOKEN_SPLIT = /(\{(?:user|top_seed|library_name)\})/;
+const ROW_NAME_TOKEN = /^\{(?:user|top_seed|library_name)\}$/;
+
+function RowCardName({ name }: { name: string }) {
+  const parts = name.split(ROW_NAME_TOKEN_SPLIT);
+  return (
+    <span className="font-medium">
+      {parts.map((part, i) =>
+        ROW_NAME_TOKEN.test(part) ? (
+          <span
+            key={i}
+            className="mx-0.5 rounded bg-muted px-1 py-0.5 text-xs font-normal text-muted-foreground"
+          >
+            {part.slice(1, -1).replace(/_/g, " ")}
+          </span>
+        ) : (
+          part
+        ),
+      )}
+    </span>
+  );
+}
+
 /** One row in the Rows list: its audience/size summary, an enable toggle, edit, and delete.
  *
  * Renaming is NOT here. It lives in the editor beside the name it changes, which is where someone
@@ -89,7 +127,7 @@ export function RowCard({
         )}
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">{collection.name}</span>
+            <RowCardName name={collection.name} />
             <Badge
               variant={collection.build === "shared" ? "warning" : "secondary"}
             >
@@ -144,7 +182,6 @@ export function RowCard({
           <RowDestructiveActions collection={collection} />
         </div>
       </CardContent>
-
     </Card>
   );
 }

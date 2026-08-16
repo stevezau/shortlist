@@ -237,7 +237,7 @@ describe("ImpactReport", () => {
     expect(screen.getByText(/4 of 10 picks delivered/i)).toBeTruthy();
     // The caveat is the point — without it "40%" is just another number with no meaning.
     expect(
-      screen.getByText(/old enough to have had their full 30 days/i),
+      screen.getByText(/only picks that have had their full 30 days/i),
     ).toBeTruthy();
   });
 

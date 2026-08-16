@@ -178,12 +178,10 @@ export function RowPlacementSection({ settings }: { settings: Settings }) {
                 Let Shortlist order the Recommended shelf
               </p>
               <p className="text-sm text-muted-foreground">
-                When on, Shortlist positions its rows on each library’s{" "}
-                <em>Recommended</em> shelf (below). Turn it{" "}
-                <strong className="text-foreground">off</strong> if another tool
-                (Kometa, Agregarr) manages that shelf — Shortlist will leave the
-                order completely alone so the two don’t fight. Your rows are
-                still built, delivered, and kept private either way.
+                Turn it <strong className="text-foreground">off</strong> if
+                another tool (Kometa, Agregarr) orders that shelf, and Shortlist
+                will leave it alone. Rows are still built, delivered and kept
+                private either way.
               </p>
               {/* The same advice is in the "something is reordering your shelf" notification, but
                   that one only fires while this switch is ON — and turning it off is the fix it

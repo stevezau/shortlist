@@ -452,9 +452,11 @@ export function ConnectionCard({
         ) : test.isError ? (
           <TestResult error={test.error} />
         ) : (
-          <p className="text-sm text-muted-foreground">
-            {summary || "Not set up yet — choose Set up to connect."}
-          </p>
+          // Only when there IS something to say. The old fallback printed "Not set up yet — choose
+          // Set up to connect." on every unconfigured card — five identical sentences down one
+          // page, each of them directly beneath a button labelled "Set up". The absence of a
+          // connected line, next to that button, already says it.
+          summary && <p className="text-sm text-muted-foreground">{summary}</p>
         )}
         {footnote && !editing && (
           <p className="mt-2 text-xs text-muted-foreground">{footnote}</p>

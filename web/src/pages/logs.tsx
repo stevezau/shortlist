@@ -41,10 +41,14 @@ function LogRow({ line }: { line: LogLine }) {
   // The message can be multi-line (a folded traceback), so it wraps and preserves its own newlines
   // while the row as a whole never forces the page sideways.
   return (
-    <div className="grid grid-cols-[auto_5.5rem_1fr] gap-x-3 px-3 py-1 odd:bg-muted/20">
+    // Three columns only where three columns fit. At 390 the timestamp (~85px) and the level
+    // (5.5rem) plus gutters left the message ~137px, so every line wrapped five or six deep and
+    // four log lines filled a phone screen. Below `sm` the stamp and level share one line and the
+    // message gets the full width underneath.
+    <div className="px-3 py-1 odd:bg-muted/20 sm:grid sm:grid-cols-[auto_5.5rem_1fr] sm:gap-x-3">
       {/* Opacities here are set by measured contrast, not taste: /70 put the timestamp at 4.31:1 and
           /50 put the source ref at 2.78:1, both under AA at this 12px monospace size. */}
-      <span className="whitespace-nowrap text-muted-foreground/85">
+      <span className="mr-3 whitespace-nowrap text-muted-foreground/85 sm:mr-0">
         {line.ts?.slice(11) ?? ""}
       </span>
       <span
@@ -55,7 +59,7 @@ function LogRow({ line }: { line: LogLine }) {
       >
         {line.level}
       </span>
-      <span className="min-w-0">
+      <span className="block min-w-0 sm:inline">
         <span className="whitespace-pre-wrap break-words text-foreground/90">
           {line.message}
         </span>
@@ -85,18 +89,27 @@ export function LogsPage() {
   const { state: copyState, copy } = useCopy();
   const debouncedSearch = useDebouncedValue(search, 300);
   const query = useLogs(level, debouncedSearch, LIMIT, follow);
-  const endRef = useRef<HTMLDivElement>(null);
+  const paneRef = useRef<HTMLDivElement>(null);
 
   const lines = useMemo(() => query.data?.lines ?? [], [query.data]);
 
   // Follow the tail as new lines arrive, but never yank the page for reduced-motion users.
+  //
+  // Scrolls the PANE, not the element into view. `scrollIntoView` walks every scrollable ancestor
+  // up to the document, so on a phone — where the pane's bottom is well below the fold — following
+  // the tail scrolled the window too, and you arrived on the page already past its own heading,
+  // mid-sentence in the subtitle. Moving one element's scrollTop keeps the effect inside the pane.
   useEffect(() => {
     if (!follow) return;
+    const pane = paneRef.current;
+    if (!pane) return;
     const reduce = window.matchMedia?.(
       "(prefers-reduced-motion: reduce)",
     )?.matches;
-    endRef.current?.scrollIntoView?.({
-      block: "nearest",
+    // Optional-called: jsdom gives an element no `scrollTo`, and a test environment should not be
+    // able to crash the page it is rendering.
+    pane.scrollTo?.({
+      top: pane.scrollHeight,
       behavior: reduce ? "auto" : "smooth",
     });
   }, [lines.length, follow]);
@@ -106,7 +119,7 @@ export function LogsPage() {
       <PageHeader
         icon={ScrollText}
         title="Logs"
-        subtitle="What Shortlist has been doing, straight from this instance. Passwords, tokens and API keys are stripped out before anything reaches this page — so it's safe to copy into a bug report."
+        subtitle="What Shortlist has been doing. Passwords, tokens and API keys are stripped out — safe to paste into a bug report."
         actions={
           <div className="flex gap-2">
             <Button
@@ -181,6 +194,7 @@ export function LogsPage() {
           <div className="space-y-2">
             <div className="overflow-hidden rounded-xl border bg-background">
               <div
+                ref={paneRef}
                 className="max-h-[65vh] overflow-y-auto font-mono text-xs leading-relaxed"
                 role="log"
                 aria-label="Application logs"
@@ -188,7 +202,6 @@ export function LogsPage() {
                 {page.lines.map((line, i) => (
                   <LogRow key={`${line.ts}-${i}`} line={line} />
                 ))}
-                <div ref={endRef} />
               </div>
             </div>
             {/* The recording-vs-showing point lives HERE rather than in a paragraph above the

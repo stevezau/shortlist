@@ -34,7 +34,7 @@ export function RowsPage() {
       <PageHeader
         icon={Rows3}
         title="Rows"
-        subtitle="The curated strips Shortlist builds on your users’ Plex home screens. Each row picks its own recommendation sources, AI style, libraries, size and audience."
+        subtitle="The strips Shortlist builds on your users’ Plex home screens."
         actions={
           <Button
             onClick={() => setPickingTemplate(true)}
@@ -95,7 +95,6 @@ export function RowsPage() {
                 );
               }}
             />
-
           </>
         )}
       </QueryBoundary>

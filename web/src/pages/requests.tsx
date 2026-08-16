@@ -1232,13 +1232,7 @@ export function RequestsPage() {
       <PageHeader
         icon={Inbox}
         title="Requests"
-        subtitle={
-          <>
-            Titles your people wanted that aren&rsquo;t in your library yet.
-            Send the ones you want to Radarr or Sonarr &mdash; the apps that
-            fetch films and TV for your library.
-          </>
-        }
+        subtitle="Titles your people wanted that aren’t in your library yet. Send the ones you want to Radarr or Sonarr."
       />
 
       {/* Whether requests are ON is a fact about the SETTING, never about whether the inbox happens
@@ -1278,9 +1272,12 @@ export function RequestsPage() {
                     }
                   />
                 ) : (
+                  // The hint used to restate the page subtitle directly above it in different
+                  // words. An empty state's job is to say what to do next, not to re-introduce the
+                  // feature the reader just read about.
                   <EmptyState
                     title="Requests are off"
-                    hint="Turn requests on and Shortlist will notice the titles your people would have loved but your library doesn't have, and offer to fetch them through Radarr or Sonarr."
+                    hint="Switch them on and missing titles start collecting here."
                     action={
                       <Button asChild variant="outline" size="sm">
                         <Link to={SETTINGS_LINK}>

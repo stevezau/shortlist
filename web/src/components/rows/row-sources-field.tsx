@@ -82,10 +82,8 @@ export function RowSourcesField({
     <div className="space-y-3 border-t pt-4">
       <Label>Recommendation sources</Label>
       <p className="text-sm text-muted-foreground">
-        Where this row looks for titles. Pick different ones for different rows
-        to give each its own character &mdash; a Trakt-only &ldquo;What to watch
-        next&rdquo;, or an AI web search &ldquo;Everyone&rsquo;s talking about
-        it&rdquo;.
+        Where this row looks for titles. Different sources give different rows
+        their own character.
       </p>
       <Segmented
         value={custom ? "custom" : "global"}

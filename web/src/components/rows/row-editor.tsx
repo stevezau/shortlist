@@ -435,10 +435,6 @@ export function RowEditor({
           <h1 className="text-2xl font-semibold">
             {collection ? "Edit row" : "Add a row"}
           </h1>
-          <p className="mt-1 text-muted-foreground">
-            A row is a strip of “Picked for You”-style recommendations on your
-            users’ Plex home screens.
-          </p>
         </div>
 
         {/* What you reach for repeatedly while tuning a row: turn it on or off, rebuild it, and look
@@ -525,13 +521,7 @@ export function RowEditor({
           {/* Names the left column, so the page reads as three labelled parts — how it is doing,
               what you can change, what that will produce — instead of an unlabelled wall of cards
               with a panel floating beside it. */}
-          <div>
-            <h2 className="text-base font-semibold">Row settings</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Everything that decides what this row picks, who gets it, and when
-              it rebuilds.
-            </p>
-          </div>
+          <h2 className="text-base font-semibold">Row settings</h2>
           <SettingsGroup
             title="The basics"
             description="What this row is called, who gets one, and how it's put together."
@@ -575,9 +565,8 @@ export function RowEditor({
                     </p>
                   ) : (
                     <p className="text-sm text-muted-foreground">
-                      Renaming rewrites this row&rsquo;s collection on Plex for
-                      everyone who has it, so it happens on its own screen where
-                      you can watch it go through. Nothing else on this page is
+                      Renaming rewrites this row on Plex for everyone who has
+                      it, so it gets its own screen. Nothing else here is
                       touched.
                     </p>
                   )}
@@ -755,7 +744,7 @@ export function RowEditor({
               <InheritableField
                 label="Already-watched titles"
                 labelFor="row-watched-pct"
-                description="How much of this row can be things they have already finished watching. At 0 the row is all new suggestions. Leave it on the global default to use the figure from Settings → Finding titles, where you set it once for every row."
+                description="How much of this row can be things they have already finished. At 0 it is all new suggestions."
                 ariaLabel="Use the global already-watched default"
                 inheriting={input.watched_pct === null}
                 globalValue={watchedPctGlobal(settings.data)}
@@ -855,7 +844,7 @@ export function RowEditor({
               <InheritableField
                 label="How often it changes"
                 labelFor="row-refresh-days"
-                description="How often this row swaps some of its titles for new ones. Leave it on the global default to use the figure from Settings → Finding titles, where you set it once for every row."
+                description="How often this row swaps some of its titles for new ones."
                 ariaLabel="Use the global rebuild cadence"
                 inheriting={input.refresh_days === null}
                 globalValue={refreshDaysGlobal(settings.data)}
@@ -886,7 +875,7 @@ export function RowEditor({
               <InheritableField
                 label="Recent releases"
                 labelFor="row-recency"
-                description="How much a title’s release date counts when ranking it for this row — turn it up for a “new and notable” shelf, or all the way down for one that digs up older films. Old titles are never excluded; they just have to be a better match. Leave it on the global default to use the figure from Settings → Finding titles."
+                description="How much a title’s release date counts for this row — up for “new and notable”, down for one that digs up older films. Older titles are never excluded, they just have to be a better match."
                 ariaLabel="Use the global recent-releases default"
                 inheriting={input.recency === null}
                 globalValue={recencyGlobal(settings.data)}
@@ -928,11 +917,9 @@ export function RowEditor({
                 label={MAX_SEEDS_LABEL}
                 description={
                   <>
-                    How many recent watches this row is built from. Every source
-                    works from these. A high number blends their whole recent
-                    viewing, which suits a general &ldquo;Picked for you&rdquo;
-                    row. A low number makes the row about one or two specific
-                    things they watched.
+                    How many recent watches this row is built from. High blends
+                    someone&rsquo;s whole recent viewing; low makes the row about
+                    one or two specific things they watched.
                   </>
                 }
                 ariaLabel="Use the default number of watches every source builds from"
@@ -995,12 +982,9 @@ export function RowEditor({
                 labelFor="row-cold-start"
                 description={
                   <>
-                    Some people have too little watch history to recommend from
-                    &mdash; someone new, or someone who barely watches. This row
-                    can still show them the server&rsquo;s highest-rated titles,
-                    or not appear for them at all until they&rsquo;ve watched
-                    enough. Set where the line is in Settings &rarr; Finding
-                    titles.
+                    What someone with too little watch history sees: the
+                    server&rsquo;s highest-rated titles, or no row at all until
+                    they have watched enough.
                   </>
                 }
                 ariaLabel="Use the global setting for people without enough watch history"
@@ -1165,10 +1149,9 @@ export function RowEditor({
                   Position in the Recommended shelf
                 </span>
                 <p className="text-sm text-muted-foreground">
-                  Where this row sits on the shelf. In each library it can
-                  follow the default &mdash; Settings → Row placement sets where
-                  all your rows go &mdash; or sit at the <strong>Top</strong>,
-                  or right after or right before one of your own collections.
+                  Where this row sits on the shelf: the default from Settings →
+                  Row placement, the <strong>Top</strong>, or beside one of your
+                  own collections.
                 </p>
                 <RowShelfPlacement
                   value={input.hub_anchor}
@@ -1215,10 +1198,9 @@ export function RowEditor({
                   className="max-w-xs"
                 />
                 <p className="text-sm text-muted-foreground">
-                  With Requests switched on, anything someone asks for from this
-                  row arrives in Radarr or Sonarr carrying this tag &mdash;
-                  alongside the tag every Shortlist request gets and the one for
-                  the person who asked. Leave it blank to add nothing extra.
+                  An extra Radarr/Sonarr tag on requests from this row, beside
+                  the ones every Shortlist request already gets. Blank adds
+                  nothing.
                 </p>
               </div>
             )}
@@ -1247,11 +1229,8 @@ export function RowEditor({
                 <p className="text-sm text-muted-foreground">
                   Taking it off Plex keeps its settings here, so the next run
                   builds it again. Deleting it doesn&rsquo;t. Either way the
-                  titles stay in your library.
-                  <br />
-                  To turn it off without removing anything today, use the on/off
-                  switch at the top of this page — the next run takes it off Plex
-                  for you.
+                  titles stay in your library. To stop it coming back, use the
+                  on/off switch at the top of this page instead.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
