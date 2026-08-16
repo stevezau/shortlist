@@ -298,3 +298,123 @@ describe("currentPhase", () => {
     expect(phase?.label).toBe("getting ready — reading your libraries");
   });
 });
+/** Run #10 on the owner's server, 2026-08-17 — 46 people, 94m26s, replayed from the shape its real
+ *  522-line log had. The run this whole fix came from: it spent 5037s (84 min) with `preparing` as
+ *  the newest server line and 572s more with a single `ordering` line, so the header was wrong or
+ *  frozen for all but a few seconds of it.
+ *
+ *  The roster comes from `stats.expected_users`, written at queue time AND at start
+ *  (run_service.py:180,266) and dropped only when `run_persistence.py:782` reassigns `stats` whole
+ *  at finalize — the same moment `finished_at` is set and this header stops rendering. `run.users`
+ *  grows as people finish because `ctx.on_user_done` persists each person BEFORE their terminal
+ *  emit (pipeline.py:373 then :380), so a person present in the log is present in the payload.
+ */
+describe("currentPhase — replaying run #10", () => {
+  const ROSTER = Array.from({ length: 46 }, (_, i) => `person${i + 1}`);
+  const line = (user: string, stage: string, counts = {}) =>
+    entry({ user, stage, counts });
+
+  /** The run as the page saw it when `done` people had finished. */
+  const runAt = (done: number): RunDetail =>
+    ({
+      stats: {
+        expected_users: ROSTER.map((slug) => ({ slug })),
+        expected_rows: [
+          { slug: "picked", build: "per_person" },
+          { slug: "because", build: "per_person" },
+          { slug: "popular", build: "shared" },
+        ],
+      },
+      users: ROSTER.slice(0, done).map((slug) => ({ slug, status: "ok" })),
+      shared_rows: [],
+    }) as unknown as RunDetail;
+
+  const history = ROSTER.map((_, i) =>
+    line("Shortlist", "reading_history", { done: i + 1, total: 46 }),
+  );
+  const queued = ROSTER.map((slug) => line(slug, "queued"));
+  const preparing = [line("Shortlist", "preparing")];
+  const through = (n: number) =>
+    ROSTER.slice(0, n).flatMap((slug) => [
+      line(slug, "history"),
+      line(slug, "curating"),
+      line(slug, "done"),
+    ]);
+
+  it("names the watch-history pre-read before anyone is queued", () => {
+    expect(currentPhase(runAt(0), history)).toEqual({
+      label: "reading watch history 46/46",
+      tail: false,
+    });
+  });
+
+  it("names the index build between queueing and the first person", () => {
+    expect(
+      currentPhase(runAt(0), [...history, ...queued, ...preparing]),
+    ).toEqual({
+      label: "getting ready — reading your libraries",
+      tail: false,
+    });
+  });
+
+  it("reproduces the reported screenshot — 9 people in, NOT 'finishing up'", () => {
+    // What the owner saw: "Finishing up · getting ready — reading your libraries", beside a Rows
+    // tab correctly reading "9 of 46 people done". This is that exact moment.
+    const phase = currentPhase(runAt(9), [
+      ...history,
+      ...queued,
+      ...preparing,
+      ...through(9),
+    ]);
+    expect(phase).toEqual({
+      label: "building rows — 9 of 46 people done",
+      tail: false,
+    });
+  });
+
+  it("names the shared-row build in the gap before users_done", () => {
+    expect(
+      currentPhase(runAt(46), [
+        ...history,
+        ...queued,
+        ...preparing,
+        ...through(46),
+        line("shared_popular", "delivering"),
+      ]),
+    ).toEqual({ label: "building the shared row", tail: false });
+  });
+
+  it("only says 'Finishing up' once the tail actually starts", () => {
+    const tail = [
+      ...history,
+      ...queued,
+      ...preparing,
+      ...through(46),
+      line("Shortlist", "users_done", { done: 46, total: 46 }),
+      line("Shortlist", "filters", { done: 12, total: 46 }),
+    ];
+    expect(currentPhase(runAt(46), tail)).toEqual({
+      label: "merging share filters 12/46",
+      tail: true,
+    });
+    // The 572-second phase the owner watched sit still. 186 collections = 46 people x 2 rows x 2
+    // libraries, plus the shared row in each.
+    expect(
+      currentPhase(runAt(46), [
+        ...tail,
+        line("Shortlist", "ordering", { done: 40, total: 186 }),
+      ]),
+    ).toEqual({ label: "ordering rows 40/186", tail: true });
+  });
+
+  it("goes quiet on the finished marker", () => {
+    expect(
+      currentPhase(runAt(46), [
+        ...history,
+        ...preparing,
+        ...through(46),
+        line("Shortlist", "finished", { ok: 46, failed: 0, seconds: 5666 }),
+      ]),
+    ).toBeNull();
+  });
+});
