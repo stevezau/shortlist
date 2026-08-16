@@ -383,9 +383,9 @@ describe("ImpactReport", () => {
     getReport.mockResolvedValue({
       ...REPORT,
       trend: [
-        { week: "2026-27", watched: 9 },
-        { week: "2026-28", watched: 2 },
-        { week: "2026-32", watched: 5 },
+        { week: "2026-27", watched: 9, finished: 4 },
+        { week: "2026-28", watched: 2, finished: 0 },
+        { week: "2026-32", watched: 5, finished: 5 },
       ],
     });
     renderReport();
@@ -413,6 +413,7 @@ describe("ImpactReport", () => {
       slug: `user${i}`,
       delivered: 5,
       watched: 12 - i,
+      finished: Math.max(0, 6 - i),
     }));
     getReport.mockResolvedValue({ ...REPORT, per_user: many });
     renderReport();
@@ -465,7 +466,11 @@ describe("ImpactReport", () => {
         ...REPORT.overall,
         delivered: 0,
         watched: 0,
-        landing: { ...LANDING, delivered: 0, watched: 0, rate: null },
+        // `finished` must come down with `watched`: it is a proven subset server-side, so
+        // `watched: 0, finished: 3` is a payload the API cannot emit, and inheriting it left the
+        // zero-watched branch of the Finished hint rendered by this test but asserted by nothing.
+        finished: 0,
+        landing: { ...LANDING, delivered: 0, watched: 0, finished: 0, rate: null },
       },
       runs: { ...EMPTY.runs, total: 0, in_window: 0 },
       requests: { sent: 0, pending: 0, watched_after_sent: 0 },
@@ -481,6 +486,47 @@ describe("ImpactReport", () => {
     ).toBeTruthy();
   });
 
+  it("says nothing was watched rather than dividing by it", async () => {
+    // The Finished tile's hint is "of N watched". At N = 0 that would read "of 0 watched", so it
+    // has its own branch — rendered by the empty-window test below and, until now, asserted by
+    // nothing.
+    getReport.mockResolvedValue({
+      ...REPORT,
+      overall: { ...REPORT.overall, watched: 0, finished: 0 },
+    });
+    renderReport();
+
+    expect(await screen.findByText(/nothing watched yet/i)).toBeTruthy();
+  });
+
+  it("draws a finished segment inside each trend column", async () => {
+    // `trend[].finished` reached the DOM through an untyped mock, so a fixture missing the field
+    // produced `height: "NaN%"` — silently dropped by the CSSOM, with every test still green.
+    // This asserts the segment is actually drawn, and drawn at a real height.
+    //
+    // Three weeks, supplied here rather than in the shared fixture: `Trend` short-circuits to a
+    // single number below three points, so a one-week fixture renders no columns at all and every
+    // column assertion becomes vacuous.
+    getReport.mockResolvedValue({
+      ...REPORT,
+      trend: [
+        { week: "2026-27", watched: 9, finished: 4 },
+        { week: "2026-28", watched: 2, finished: 0 },
+        { week: "2026-32", watched: 5, finished: 5 },
+      ],
+    });
+    renderReport();
+    await screen.findByText("Watched");
+
+    const columns = document.querySelectorAll('[data-testid="trend-week"]');
+    expect(columns.length).toBeGreaterThan(0);
+    const heights = [...columns].flatMap((c) =>
+      [...c.children].map((el) => (el as HTMLElement).style.height),
+    );
+    expect(heights.length).toBeGreaterThan(0);
+    expect(heights.every((h) => h !== "" && !h.includes("NaN"))).toBe(true);
+  });
+
   it("distinguishes an empty window from an empty install", async () => {
     getReport.mockResolvedValue({
       ...REPORT,
@@ -488,7 +534,11 @@ describe("ImpactReport", () => {
         ...REPORT.overall,
         delivered: 0,
         watched: 0,
-        landing: { ...LANDING, delivered: 0, watched: 0, rate: null },
+        // `finished` must come down with `watched`: it is a proven subset server-side, so
+        // `watched: 0, finished: 3` is a payload the API cannot emit, and inheriting it left the
+        // zero-watched branch of the Finished hint rendered by this test but asserted by nothing.
+        finished: 0,
+        landing: { ...LANDING, delivered: 0, watched: 0, finished: 0, rate: null },
       },
       per_user: [],
       per_row: [],

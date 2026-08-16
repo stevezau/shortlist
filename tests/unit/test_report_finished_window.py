@@ -58,6 +58,28 @@ def seed(sessions, *, tmdb_id: int, delivered_ago: int, watched_ago: int | None,
         session.commit()
 
 
+def seed_in(sessions, *, tmdb_id: int, media_type: str, library: str, watched: bool, finished: bool) -> None:
+    """A pick in a named library, old enough to be inside the matured cohort the row panel judges."""
+    with sessions() as session:
+        session.add(
+            PickRow(
+                user_id=1,
+                tmdb_id=tmdb_id,
+                media_type=media_type,
+                rating_key=tmdb_id,
+                rank=1,
+                collection_slug="picked",
+                section_key="1" if media_type == "movie" else "2",
+                library=library,
+                title=f"T{tmdb_id}",
+                created_at=NOW - timedelta(days=60),
+                watched_at=NOW - timedelta(days=55) if watched else None,
+                finished_at=NOW - timedelta(days=50) if finished else None,
+            )
+        )
+        session.commit()
+
+
 class TestFinishedNeverExceedsWatchedInAWindow:
     """The failing shape: credited outside the window, finished inside it."""
 
@@ -157,6 +179,57 @@ class TestFinishedNeverExceedsWatchedInAWindow:
             assert line["finished"] == 0, line
         for lib in panel["per_library"]:
             assert lib["finished"] == 0, lib
+
+    def test_a_weeks_finished_count_is_the_real_number_not_a_zero(self, sessions):
+        """The subset assertions above all hold for a counter that returns 0 for everything.
+
+        Proven, not theorised: replacing `finished_by_week.get(week, 0)` with a literal `0` left the
+        whole suite green. `finished <= watched` is only half a test — this is the other half.
+        """
+        seed(sessions, tmdb_id=1, delivered_ago=20, watched_ago=18, finished_ago=17)
+        seed(sessions, tmdb_id=2, delivered_ago=20, watched_ago=18, finished_ago=None)
+
+        trend = self._report(sessions, "all")["trend"]
+
+        assert trend, "no trend weeks at all — the assertion below would be vacuous"
+        assert sum(p["finished"] for p in trend) == 1, trend
+        assert sum(p["watched"] for p in trend) == 2, trend
+
+    def test_the_per_library_split_counts_each_library_correctly(self, sessions):
+        """Positive direction, per library. The guard added to the `case()` is exactly where an
+        over-tight condition would land — and hard-coding that case to count 0 kept 142 existing
+        tests green, so nothing else in the suite would notice a row panel reading "0 finished"
+        for every library on a real server.
+        """
+        # Movies: everything watched is finished. TV: one of three, the shape this split exists for.
+        for tmdb_id, watched, finished in [(10, True, True), (11, True, True), (12, False, False)]:
+            seed_in(
+                sessions,
+                tmdb_id=tmdb_id,
+                media_type="movie",
+                library="Movies",
+                watched=watched,
+                finished=finished,
+            )
+        for tmdb_id, watched, finished in [(20, True, True), (21, True, False), (22, True, False)]:
+            seed_in(
+                sessions,
+                tmdb_id=tmdb_id,
+                media_type="show",
+                library="TV Shows",
+                watched=watched,
+                finished=finished,
+            )
+
+        with sessions() as session:
+            panel = row_effectiveness(session, "picked")
+
+        by_library = {lib["library"]: lib for lib in panel["per_library"]}
+        assert by_library["Movies"]["watched"] == 2, by_library
+        assert by_library["Movies"]["finished"] == 2, by_library
+        assert by_library["TV Shows"]["watched"] == 3, by_library
+        assert by_library["TV Shows"]["finished"] == 1, by_library
+        assert panel["finished"] == 3, panel
 
     def test_the_trend_segment_never_exceeds_its_own_column(self, sessions):
         seed(sessions, tmdb_id=1, delivered_ago=50, watched_ago=40, finished_ago=2)

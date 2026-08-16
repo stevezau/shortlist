@@ -218,7 +218,12 @@ class TestTheSplitBarsAreHonest:
         page.goto("/")
         expect(page.get_by_text("Watched", exact=True)).to_be_visible(timeout=20_000)
 
-        # Every split track on the page: children must fit inside their parent.
+        # Every split track on the page: children must fit inside their parent. The count is
+        # asserted first because these tracks are `hidden xl:flex` — at any viewport below 1280 they
+        # have zero width, get filtered out below, and the overflow check passes measuring nothing.
+        assert page.evaluate("() => document.querySelectorAll('div.rounded-full.bg-muted').length") > 0, (
+            "no split track rendered at this viewport — the assertion below would be vacuous"
+        )
         overflows = page.evaluate(
             """() => {
                 const bad = [];
@@ -296,9 +301,37 @@ class TestTheSplitBarsAreHonest:
         assert [b for b in measured if b["inner"] > b["outer"] + 1] == [], measured
 
     def test_no_trend_column_has_a_finished_segment_taller_than_itself(self, page: Page, app: ShortlistApp):
+        """`seed_outcomes` alone puts every watch in ONE week, and the chart collapses to a single
+        number below three weeks — so this assertion used to run against zero columns and could not
+        fail. Spread the watches across four weeks, then refuse to pass if nothing rendered."""
         seed_outcomes(app)
+        now = datetime.now(UTC)
+        with sqlite3.connect(app.config_dir / "shortlist.db") as con:
+            uid = con.execute("SELECT id FROM users ORDER BY id LIMIT 1").fetchone()[0]
+            for n, weeks_back in enumerate((2, 3, 4, 5)):
+                when = now - timedelta(weeks=weeks_back)
+                con.execute(
+                    "INSERT INTO picks (user_id, tmdb_id, media_type, rating_key, rank, collection_slug, "
+                    "section_key, library, title, reason, sources, affinity, created_at, watched_at, finished_at) "
+                    "VALUES (?,?, 'movie', ?, 1, 'picked', '1', 'Movies', ?, '', 'tmdb', 1.0, ?, ?, ?)",
+                    (
+                        uid,
+                        7100 + n,
+                        7100 + n,
+                        f"Week {n}",
+                        (when - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S"),
+                        when.strftime("%Y-%m-%d %H:%M:%S"),
+                        when.strftime("%Y-%m-%d %H:%M:%S"),
+                    ),
+                )
+            con.commit()
+
         page.goto("/")
         expect(page.get_by_text("Watched", exact=True)).to_be_visible(timeout=20_000)
+        page.wait_for_timeout(400)
+        assert page.locator('[data-testid="trend-week"]').count() >= 3, (
+            "the chart collapsed to its under-three-weeks form, so the check below measures nothing"
+        )
 
         overflows = page.evaluate(
             """() => {

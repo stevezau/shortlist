@@ -57,7 +57,9 @@ function LibraryBar({
         <div className="h-full bg-primary" style={{ width: `${finishedPct}%` }} />
         <div
           className="h-full bg-primary/50"
-          style={{ width: `${landedPct - finishedPct}%` }}
+          // Clamped like `CountBar`'s equivalent. Unreachable while `finished <= watched` (the
+          // server guards that), but the two bars should not disagree about whether it is possible.
+          style={{ width: `${Math.max(0, landedPct - finishedPct)}%` }}
         />
       </div>
       <p className="text-xs text-muted-foreground tabular-nums">
