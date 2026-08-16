@@ -561,6 +561,57 @@ describe("RunDetailPage — grouped by library", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("counts people mid-run instead of claiming a run 1-of-3 in is finishing up", async () => {
+    // Run #10 (2026-08-17): the header read "Finishing up · getting ready — reading your libraries"
+    // while the Rows tab beside it read "9 of 46 people done". `preparing` is the newest SERVER
+    // line for the whole per-user stretch, so reading back to it reported the index build long
+    // after it ended — under a lead-in that said the run was nearly over.
+    const base = run([]);
+    getRun.mockResolvedValue({
+      ...base,
+      finished_at: null,
+      status: "running",
+      // The roster the run declared, and the one person it has reported on — the same two fields
+      // the Rows tab counts, so the header cannot disagree with the card beside it.
+      stats: {
+        ...base.stats,
+        expected_users: [
+          { slug: "moohouse" },
+          { slug: "sarah" },
+          { slug: "mike" },
+        ],
+      },
+    });
+    getRunLog.mockResolvedValue(
+      [
+        { user: "moohouse", stage: "queued" },
+        { user: "sarah", stage: "queued" },
+        { user: "mike", stage: "queued" },
+        { user: "Shortlist", stage: "preparing" },
+        // Neither of these is a person: the index narrates under the section title and a shared row
+        // under `shared_<row>`. Counting log subjects made them two extra people.
+        { user: "Movies", stage: "indexed" },
+        { user: "shared_popular", stage: "delivering" },
+        { user: "moohouse", stage: "done" },
+        { user: "sarah", stage: "curating" },
+      ].map((line, seq) => ({
+        seq,
+        ts: "2026-08-17T03:30:00Z",
+        run_id: 2,
+        counts: {},
+        ...line,
+      })),
+    );
+
+    renderDetail("");
+
+    expect(
+      await screen.findByText("building rows — 1 of 3 people done"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Right now/)).toBeInTheDocument();
+    expect(screen.queryByText(/Finishing up/)).toBeNull();
+  });
+
   it("falls back to the flat pick list for legacy runs with no breakdown", async () => {
     // A legacy run has no per-library breakdown, but its picks still render as a plain list.
     getRun.mockResolvedValue({

@@ -167,8 +167,10 @@ export function RunDetailPage() {
     },
   });
 
-  // Computed once per render rather than called twice (header line + phase text below it).
-  const phase = currentPhase(liveLog);
+  // Computed once per render rather than called twice (header line + phase text below it). Takes the
+  // run as well as the log: the people count comes off the run's own roster, not off log subjects —
+  // the library index and shared rows narrate under names that are in nobody's roster.
+  const phase = runQuery.data ? currentPhase(runQuery.data, liveLog) : null;
   // A failed log fetch with nothing to show is otherwise indistinguishable from "no log was ever
   // recorded" — RunLogPanel's own empty state says the latter, which is a lie when the former is
   // true. Live SSE stage events can still fill `liveLog` even if the initial snapshot failed, so
@@ -255,7 +257,9 @@ export function RunDetailPage() {
                   )}
                 </p>
                 {/* The direct fix for "all users finished but it still says running": say WHAT it
-                    is doing. Everything after the last person is server-wide and used to be silent. */}
+                    is doing. Everything after the last person is server-wide and used to be silent.
+                    The lead-in is NOT fixed text: "Finishing up" is a claim about where the run is,
+                    and hardcoding it told the owner a run 9 people into 46 was nearly done. */}
                 {!run.finished_at && phase && (
                   <p className="flex items-center gap-1.5 text-sm">
                     <Loader2
@@ -263,9 +267,9 @@ export function RunDetailPage() {
                       aria-hidden="true"
                     />
                     <span className="text-muted-foreground">
-                      Finishing up ·{" "}
+                      {phase.tail ? "Finishing up · " : "Right now · "}
                     </span>
-                    <span className="font-medium">{phase}</span>
+                    <span className="font-medium">{phase.label}</span>
                   </p>
                 )}
               </header>
