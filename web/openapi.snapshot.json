@@ -5221,6 +5221,10 @@
             ],
             "title": "Last Run At"
           },
+          "manage_sharing": {
+            "title": "Manage Sharing",
+            "type": "boolean"
+          },
           "nickname": {
             "title": "Nickname",
             "type": "string"
@@ -5282,6 +5286,7 @@
           "restricted",
           "restriction_profile",
           "enabled",
+          "manage_sharing",
           "cold_start",
           "request_tag",
           "prefs",
@@ -5307,6 +5312,17 @@
               }
             ],
             "title": "Enabled"
+          },
+          "manage_sharing": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manage Sharing"
           },
           "nickname": {
             "anyOf": [
@@ -6155,7 +6171,7 @@
   },
   "info": {
     "title": "Shortlist",
-    "version": "1.6.0"
+    "version": "1.6.1"
   },
   "openapi": "3.1.0",
   "paths": {

@@ -74,6 +74,7 @@ function row(patch: Partial<Collection> = {}): Collection {
 
 function user(patch: Partial<User> = {}): User {
   return {
+    manage_sharing: true,
     id: 1,
     username: "sarah",
     slug: "sarah",

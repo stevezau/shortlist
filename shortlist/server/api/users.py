@@ -81,6 +81,10 @@ class UserPrefs(BaseModel):
 
 class UserPatch(BaseModel):
     enabled: bool | None = None
+    # False = never touch this account's Plex sharing settings again, and take back out the excludes
+    # already added. The account can then see other people's rows, so the UI says so at the point of
+    # the choice; the API takes the owner at their word.
+    manage_sharing: bool | None = None
     # What to call them in a row title. "" clears the override and falls back to Tautulli's friendly
     # name, then their Plex username. Never touches the slug, so their label (and every share filter
     # that excludes it) is unaffected.
@@ -348,6 +352,7 @@ async def patch_user(user_id: int, patch: UserPatch, request: Request) -> dict:
     enabled_slug: str | None = None
     paused_slug: str | None = None
     unpaused_slug: str | None = None
+    sharing_slug: tuple[str, bool] | None = None  # (slug, now managed?) when the setting actually changed
     was_called: dict[str, str] = {}  # {slug -> the display name their collections are still titled with}
     with state.sessions() as session:
         user = session.get(User, user_id)
@@ -362,6 +367,21 @@ async def patch_user(user_id: int, patch: UserPatch, request: Request) -> dict:
                 # Their own row is a rebuild, so that part still waits for the next run.
                 enabled_slug = user.slug
             user.enabled = patch.enabled
+        if patch.manage_sharing is not None and user.user_type == "owner":
+            # Plex has no share filters for the account that owns the server (rule 5), so this flag
+            # can never mean anything for them. Ignored rather than stored: persisting it would badge
+            # the owner "Sharing untouched" in the Users list, which describes a state that does not
+            # exist. The UI already hides the switch for them; this is the same answer at the API.
+            patch.manage_sharing = None
+        if patch.manage_sharing is not None and patch.manage_sharing != user.manage_sharing:
+            # Both directions need the same pass, and it is the same pass everything else uses:
+            # `privacy.sync` is `engine_run(ctx, [])`, which walks every account's filter and builds,
+            # delivers and promotes nothing. Turning management OFF makes it remove our excludes from
+            # this one account; turning it back ON merges them in again. Neither creates a row, so the
+            # leak-safe ordering of §12 has nothing to order here — no row becomes visible that was not
+            # already on the server.
+            sharing_slug = (user.slug, patch.manage_sharing)
+            user.manage_sharing = patch.manage_sharing
         if patch.nickname is not None:
             nickname = patch.nickname.strip()
             # Checked whether it is being SET or CLEARED: clearing falls back to the Tautulli or
@@ -400,6 +420,16 @@ async def patch_user(user_id: int, patch: UserPatch, request: Request) -> dict:
         await remove_users_rows(state, [disabled_slug])
     if enabled_slug is not None:
         await jobs.queue_privacy_sync(state, f"'{enabled_slug}' was turned back on")
+    if sharing_slug is not None:
+        slug, managed = sharing_slug
+        # Both read as a clause after the job toast's "Share filters merged for every account
+        # after …", the same shape the enable/disable reasons already use.
+        await jobs.queue_privacy_sync(
+            state,
+            f"'{slug}' was set back to managed Plex sharing"
+            if managed
+            else f"'{slug}' was set to leave their Plex sharing alone",
+        )
     if paused_slug is not None:
         await _hide_paused_users_rows(state, paused_slug)
     if unpaused_slug is not None:

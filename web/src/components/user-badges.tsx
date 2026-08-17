@@ -83,6 +83,25 @@ export function UnhiddenRowsBadge({ user }: { user: User }) {
 }
 
 /**
+ * The owner asked Shortlist to leave this account's Plex sharing settings alone.
+ *
+ * A setting, not a fault, so it is deliberately not `destructive` — but it is never silent either:
+ * this account can see other people's rows, and hidden state that changes who sees what is exactly
+ * the kind that gets forgotten and then reported as a leak.
+ */
+export function SharingUntouchedBadge({ user }: { user: User }) {
+  if (user.manage_sharing) return null;
+  return (
+    <Badge
+      variant="outline"
+      title="You've asked Shortlist not to change this account's Plex sharing settings, so it adds no label exclusions for them. They can see other people's rows unless their own Plex restrictions stop them."
+    >
+      Sharing untouched
+    </Badge>
+  );
+}
+
+/**
  * Not a type — a STATE, and a temporary one: this person has too little watch history to
  * personalise from, so their row is built from popular titles until they've watched more. Shown
  * beside their watch history, where it explains the number sitting next to it.

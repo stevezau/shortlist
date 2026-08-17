@@ -38,6 +38,7 @@ USER_KEYS = {
     "restricted",
     "restriction_profile",
     "enabled",
+    "manage_sharing",
     "cold_start",
     "request_tag",
     "prefs",
@@ -358,6 +359,65 @@ class TestUsersApi:
         r = client.patch(f"/api/users/{target['id']}", json={"enabled": False})
         assert r.status_code == 200 and r.json()["enabled"] is False
         assert len(deleted) == 1  # their collection was removed by their whole label
+
+    def test_leaving_a_users_sharing_alone_is_saved_and_queues_the_filter_pass(self, client: TestClient, monkeypatch):
+        """PATCH manage_sharing=false persists AND fires the pass that takes our excludes back out.
+
+        Storing the flag without queueing anything would leave the account exactly as polluted as
+        before until the next nightly run — the "settings PATCH was inert" shape from §12's audit.
+        """
+        import shortlist.server.api.users as users_api
+
+        reasons: list[str] = []
+
+        async def fake_queue(state, reason):
+            reasons.append(reason)
+
+        monkeypatch.setattr(users_api.jobs, "queue_privacy_sync", fake_queue)
+        target = next(u for u in client.get("/api/users").json() if u["username"] == "mike")
+        assert target["manage_sharing"] is True  # managed by default — no live server changes on upgrade
+
+        r = client.patch(f"/api/users/{target['id']}", json={"manage_sharing": False})
+
+        assert r.status_code == 200 and r.json()["manage_sharing"] is False
+        assert len(reasons) == 1 and "leave their Plex sharing alone" in reasons[0]
+
+        # Turning it back on queues the merge again...
+        r = client.patch(f"/api/users/{target['id']}", json={"manage_sharing": True})
+        assert r.json()["manage_sharing"] is True
+        assert len(reasons) == 2
+
+        # ...and a PATCH that does not CHANGE it queues nothing, so an unrelated edit (a nickname,
+        # the enabled switch) never fires a server-wide filter pass on the side.
+        client.patch(f"/api/users/{target['id']}", json={"manage_sharing": True, "nickname": "Michael"})
+        assert len(reasons) == 2
+
+    def test_the_owner_cannot_be_marked_left_alone(self, client: TestClient):
+        """Plex has no share filters for the account that owns the server (rule 5), so the flag can
+        never mean anything for them. The UI hides the switch; the API has to agree, or the Users
+        list badges the owner with a state that does not exist."""
+        with client.app.state.sessions() as session:
+            owner = session.query(User).filter_by(username="sarah").one()
+            owner.user_type = "owner"
+            session.commit()
+            owner_id = owner.id
+
+        r = client.patch(f"/api/users/{owner_id}", json={"manage_sharing": False})
+
+        assert r.status_code == 200
+        assert r.json()["manage_sharing"] is True, "the owner is always 'managed', because there is nothing to manage"
+
+    def test_leaving_sharing_alone_is_independent_of_the_enabled_switch(self, client: TestClient):
+        """The two are different axes, not three states of one control: a user can have a row AND
+        untouched sharing. If this ever collapses into one flag, someone disabled months ago for an
+        unrelated reason silently becomes able to see every private row on the server."""
+        target = next(u for u in client.get("/api/users").json() if u["username"] == "sarah")
+
+        client.patch(f"/api/users/{target['id']}", json={"enabled": True, "manage_sharing": False})
+        after = next(u for u in client.get("/api/users").json() if u["username"] == "sarah")
+
+        assert after["enabled"] is True
+        assert after["manage_sharing"] is False
 
     def test_set_all_users_enabled_toggles_everyone_and_cleans_up_on_disable(self, client: TestClient, monkeypatch):
         from types import SimpleNamespace

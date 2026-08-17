@@ -1920,6 +1920,9 @@ async def sharing(request: Request) -> dict:
         # ("MooHouse" -> "moohouse", "Chris Smith" -> "chris_smith"). Passing a username on as if it
         # were a slug made the per-person section 404 for exactly the people with a privacy fault.
         slug_of = {u.plex_account_id: u.slug for u in session.query(User).all()}
+        # Accounts the owner asked us to leave alone. They legitimately hide nothing, so counting them
+        # as a fault would make this tool cry wolf on a server that is exactly as its owner set it up.
+        unmanaged = {u.plex_account_id for u in session.query(User).filter_by(manage_sharing=False).all()}
 
         rows: list[dict] = []
         error = None
@@ -1963,6 +1966,9 @@ async def sharing(request: Request) -> dict:
                             # clause as ours whenever it contained any shortlist label, blaming the
                             # owner's own `label!=Kids` on Shortlist. That made this unable to answer
                             # the one question it exists for: is every row excluded for this person.
+                            # The owner turned sharing management off for this account: `missing` below
+                            # is still reported truthfully, but it is a setting, not a fault.
+                            "manage_sharing": account.id not in unmanaged,
                             "shortlist_excludes": ours_flat,
                             "shortlist_excludes_by_filter": {k: sorted(set(v)) for k, v in ours.items()},
                             "other_conditions": theirs,
@@ -1980,11 +1986,14 @@ async def sharing(request: Request) -> dict:
                 error = _fail(e)
         _audit(session, "sharing", {"accounts": len(rows)})
 
-    short = [r["user"] for r in rows if r["missing"]]
+    # A left-alone account is expected to hide nothing, so it is never "a person who can see a row
+    # that is not theirs" — it is listed separately, by name, so the state stays visible.
+    short = [r["user"] for r in rows if r["missing"] and r["manage_sharing"]]
+    left_alone = [r["user"] for r in rows if not r["manage_sharing"]]
     # Slugs for the machine-readable field, usernames for the human-readable block. `person()` takes
     # a slug; an account plex.tv knows but our roster does not has none, and is dropped rather than
     # sent on to 404.
-    short_slugs = [r["slug"] for r in rows if r["missing"] and r["slug"]]
+    short_slugs = [r["slug"] for r in rows if r["missing"] and r["manage_sharing"] and r["slug"]]
 
     # Only the accounts with something WRONG get detail; the rest are a count.
     #
@@ -2007,10 +2016,36 @@ async def sharing(request: Request) -> dict:
     elif not all_labels:
         block.line("No per-person rows exist on Plex yet, so there is nothing for anyone to hide.")
     else:
-        healthy = len(rows) - len(short)
-        block.line(f"{healthy} of {len(rows)} accounts hide every row that is not theirs.")
+        healthy = len(rows) - len(short) - len(left_alone)
+        managed_total = len(rows) - len(left_alone)
+        # "managed accounts" only once some account is NOT managed. On the overwhelming majority of
+        # servers nothing is left alone, and qualifying the count there would make every reader ask
+        # what the qualifier excludes.
+        counted = "managed accounts" if left_alone else "accounts"
+        block.line(f"{healthy} of {managed_total} {counted} hide every row that is not theirs.")
         block.line(f"({len(all_labels)} per-person row(s) exist on Plex right now.)")
-        for row in (r for r in rows if r["missing"]):
+        if left_alone:
+            # Split on what the FILTER actually says, not on the setting. The setting is the owner's
+            # intent; whether our excludes really came off is a fact about plex.tv, and they are not
+            # the same thing while a write is owed or permanently refused (a parental profile makes
+            # plex.tv reject the removal for ever). Reporting intent as fact here would re-create
+            # exactly what the comment at the top of this function exists to prevent.
+            cleared = [r["user"] for r in rows if not r["manage_sharing"] and not r["shortlist_excludes"]]
+            still_held = [r for r in rows if not r["manage_sharing"] and r["shortlist_excludes"]]
+            if cleared:
+                block.line(
+                    f"Left alone by choice, so they hide nothing and can see other people's rows: "
+                    f"{', '.join(cleared[:8])}"
+                )
+                if len(cleared) > 8:
+                    block.line(f"  …and {len(cleared) - 8} more")
+            for row in still_held[:8]:
+                held = ", ".join(row["shortlist_excludes"][:6])
+                block.line(f"{row['user']} (#{row['account_id']}) is set to be left alone, but our exclusions are")
+                block.line(f"  STILL on this account — the removal has not gone through: {held}")
+            if len(still_held) > 8:
+                block.line(f"  …and {len(still_held) - 8} more account(s) in the same state")
+        for row in (r for r in rows if r["missing"] and r["manage_sharing"]):
             block.line(f"{row['user']} (#{row['account_id']})")
             block.line(f"  hides {len(row['shortlist_excludes'])} of {len(row['should_hide'])} other rows")
             # Named, not counted: "which row can this person see" is the actual question.

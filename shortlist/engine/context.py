@@ -75,6 +75,13 @@ class EngineContext:
     # them from Shortlist entirely. A non-Shortlist account that merely shares the server is NOT here,
     # so it still sees public shared rows.
     disabled_account_ids: set[int] = field(default_factory=set)
+    # plex_account_ids the owner has told Shortlist to LEAVE ALONE: their share filters are never
+    # merged into, and any exclude we previously added is taken back out (`privacy.clear_our_excludes`).
+    # Separate from `disabled_account_ids` on purpose — disabling someone means "no row for them" and
+    # still hides everyone else's rows FROM them; this means "do not touch their Plex sharing at all",
+    # and the account can therefore see other people's rows unless their own Plex restrictions stop it.
+    # The two combine freely: an account can have a row and untouched sharing.
+    unmanaged_account_ids: set[int] = field(default_factory=set)
     # section key -> {tmdb_id: ratingKey}: per-library index so a row delivered into a specific
     # library uses that library's ratingKeys. Built by _build_indexes each run.
     section_index: dict[str, dict[int, int]] = field(default_factory=dict)

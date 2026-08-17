@@ -4768,6 +4768,8 @@ export interface components {
             id: number;
             /** Last Run At */
             last_run_at: string | null;
+            /** Manage Sharing */
+            manage_sharing: boolean;
             /** Nickname */
             nickname: string;
             /** Plex Account Id */
@@ -4798,6 +4800,8 @@ export interface components {
         UserPatch: {
             /** Enabled */
             enabled?: boolean | null;
+            /** Manage Sharing */
+            manage_sharing?: boolean | null;
             /** Nickname */
             nickname?: string | null;
             prefs?: components["schemas"]["UserPrefs"] | null;

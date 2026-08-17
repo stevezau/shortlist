@@ -360,6 +360,13 @@ async def queue_privacy_sync(state, reason: str) -> None:
     which is what makes it safe to fire straight from a mutation handler. It does also reposition our
     hubs on the Recommended shelf, which is a Plex WRITE but a position-only one: it cannot promote,
     unhide, or change who sees anything.
+
+    ONE EXCEPTION, and it is bounded: for an account the owner set `manage_sharing=0` ("leave their Plex sharing
+    alone"), the pass REMOVES our per-person excludes from that one account instead of merging into it
+    (`pipeline._leave_sharing_alone`). That widens what that account sees, by request. It stays handler-safe
+    because it creates and promotes nothing — no row becomes visible that was not already on the server — and it
+    touches nobody else's filter, so every other account still excludes that person's row. Anything else that
+    widens visibility needs its own argument; rule 1 does not cover it.
     """
     enqueue(state.sessions, "privacy.sync", {"reason": reason})
     await drain_now(state, reason)
@@ -851,6 +858,13 @@ def _privacy_sync(state, payload: dict) -> dict:
 
     That is what makes it safe to fire from a mutation (a user disabled, a
     shared row's audience narrowed) rather than waiting for the nightly run.
+
+    ONE EXCEPTION, and it is bounded: for an account the owner set `manage_sharing=0` ("leave their Plex sharing
+    alone"), the pass REMOVES our per-person excludes from that one account instead of merging into it
+    (`pipeline._leave_sharing_alone`). That widens what that account sees, by request. It stays handler-safe
+    because it creates and promotes nothing — no row becomes visible that was not already on the server — and it
+    touches nobody else's filter, so every other account still excludes that person's row. Anything else that
+    widens visibility needs its own argument; rule 1 does not cover it.
 
     It DOES write one more thing to Plex: the Recommended-shelf position of our own hubs. That is a
     real PUT, so it is named here rather than left to be discovered — but it is position-only, on hubs

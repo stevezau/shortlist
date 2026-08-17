@@ -53,11 +53,39 @@ depth just for them. Opening a person shows their recent watch history (distinct
 and episode numbers for TV), their picks grouped by row (long lists collapse behind a "show more"),
 and a **Run now** button to rebuild just that person.
 
+### Leaving someone's Plex sharing alone
+
+To keep their own row private, Shortlist adds `label!=` exclusions to every other account's Plex
+restrictions. Occasionally that fights a restriction you set yourself — most often an **allow only**
+label list on a child's account, where the whole point is that the account sees nothing but the
+labels you named.
+
+Open that person, go to **Settings → Plex sharing**, and turn off **Manage their Plex sharing
+settings**. Shortlist takes back out the exclusions it added and never touches that account again.
+Their row in the Users list is badged **Sharing untouched** so you can see it at a glance, and
+Support → Sharing lists them separately instead of reporting them as a fault.
+
+The trade-off, plainly: that account can then see other people's rows, unless — as with an allow-only
+list — its own Plex restrictions already keep it away from them. Everyone else still hides _this_
+person's row as normal, so leaving one account alone never exposes their row to the rest of the
+server.
+
+This is not the same as switching someone **off**. Off means "no row for them" and still rewrites
+their filters so they stop seeing everyone else's rows — unless you have also left their sharing
+alone, which wins, because it means "don't touch this account" full stop. The two are independent:
+someone can have a row _and_ untouched sharing.
+
+One thing is deliberately left in place: if you have a **shared row limited to certain people**, the
+entry hiding it from everyone else stays. That entry is the only thing keeping that row away from
+people you didn't pick, so removing it would undo a choice you made on the row itself. The catch is
+that later changes to who a shared row is for stop reaching a left-alone account — turn management
+back on if you need them to pick those up.
+
 ### When someone leaves your server
 
 Removing a person from your Plex share (or deleting a Plex Home user) is picked up by the daily user
 sync. Shortlist switches them off, deletes their rows from the server, and badges them **Left the
-server** in the Users list — distinct from an account *you* switched off, which is the same
+server** in the Users list — distinct from an account _you_ switched off, which is the same
 `disabled` state but means something completely different.
 
 Two safety limits keep that sweep from acting on a bad read of plex.tv, because it deletes
@@ -67,7 +95,7 @@ Both cases are far more likely to be a truncated response than a real mass depar
 
 A departed row stays in the list so you can see what happened. **Remove** clears it out: their pick
 history and run history are deleted and the row disappears. What it deliberately keeps is that
-account's *original Plex share settings*, recorded before Shortlist ever touched them — so
+account's _original Plex share settings_, recorded before Shortlist ever touched them — so
 uninstalling Shortlist can still put the account back exactly as it found it. That record is the only
 copy, which is why Remove archives rather than deletes.
 

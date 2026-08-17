@@ -777,6 +777,10 @@ def _finalize_run(
     # assumed it meant.
     if report.unhideable_measured:
         stats["unhideable_rows"] = {name: list(keys) for name, keys in report.unhideable_rows.items()}
+    # Accounts the owner left alone whose excludes could not be taken back off. Written only when
+    # non-empty: an empty key would read as a measurement on every run that never got this far.
+    if report.left_alone_failures:
+        stats["left_alone_failures"] = {str(account): why for account, why in report.left_alone_failures.items()}
     # Assigned whole rather than mutated in place: `stats` is a JSON column, and an in-place edit
     # after assignment would not reliably mark it dirty.
     run.stats = stats

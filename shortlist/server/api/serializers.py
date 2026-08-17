@@ -59,6 +59,7 @@ class UserOut(PassthroughModel):
     restricted: bool
     restriction_profile: str
     enabled: bool
+    manage_sharing: bool
     cold_start: bool
     request_tag: str
     # Free-form JSON, deliberately left untyped here: which keys exist varies by DATA, not by branch
@@ -146,6 +147,10 @@ def user_dict(
         # to filter it either way. The UI needs the difference to say anything true (#20).
         "restriction_profile": user.restriction_profile or "",
         "enabled": user.enabled,
+        # False = the owner asked Shortlist to leave this account's Plex sharing settings alone. Not a
+        # variant of `enabled`: that decides whether they get a row, this decides whether we touch
+        # their share filters, and an account can be on with its sharing untouched.
+        "manage_sharing": user.manage_sharing,
         "cold_start": user.cold_start,
         "request_tag": user.request_tag or "",
         "prefs": user.prefs or {},

@@ -5,6 +5,7 @@ import type { Run, User } from "@/lib/types";
 
 function makeUser(overrides: Partial<User> = {}): User {
   return {
+    manage_sharing: true,
     id: 1,
     username: "sarah",
     slug: "sarah",

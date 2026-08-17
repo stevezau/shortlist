@@ -121,6 +121,13 @@ class User(Base):
     # for both), and the difference decides whether Plex will accept a label restriction at all.
     restriction_profile: Mapped[str] = mapped_column(String(32), default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # May Shortlist edit this person's Plex sharing settings? A separate axis from `enabled`, not a
+    # third value of it: `enabled` decides whether they get a ROW, this decides whether we touch THEIR
+    # share filters, and the four combinations are all meaningful. False means the owner has told us to
+    # leave the account alone — no excludes merged in, ours taken back out — which they do when the
+    # account's own Plex restrictions conflict with ours (an "allow only" label list, discussion #92).
+    # The cost is stated where it is set: the account can then see other people's rows.
+    manage_sharing: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     # plex.tv stopped listing this account — set by the roster sweep, CLEARED the moment it lists them
     # again, so a re-invite heals on the next sync. Distinct from `enabled=0`, which the owner also
     # sets by hand: without it the Users list cannot say why somebody is switched off.

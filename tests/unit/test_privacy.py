@@ -1260,3 +1260,140 @@ class TestAnEmptyLabelNeverBecomesAnExclude:
 
         assert "" not in got
         assert got == {"Shortlist_mike"}
+
+
+class TestLeavingAnAccountsSharingAlone:
+    """`clear_our_excludes` — the one write in this module that makes the server LESS private.
+
+    The owner sets "don't change this person's Plex sharing settings" when their own restrictions
+    conflict with ours (discussion #92: a managed account whose "allow only" label list is the thing
+    actually keeping it away from our rows). Everything here has to hold: we remove ONLY our own
+    labels, we leave every other condition byte-identical, and a steady state writes nothing at all.
+    """
+
+    def _remote(self, filter_movies: str = "", filter_tv: str = "") -> PlexTvUser:
+        return PlexTvUser(
+            id=500,
+            username="kid",
+            user_type=UserType.MANAGED,
+            home=True,
+            restricted=True,
+            protected=False,
+            restriction_profile="",
+            filters={
+                "filterAll": "",
+                "filterMovies": filter_movies,
+                "filterTelevision": filter_tv,
+                "filterMusic": "",
+                "filterPhotos": "",
+            },
+        )
+
+    def test_the_allow_only_list_survives_and_only_our_labels_go(self, mock_plextv):
+        """Discussion #92's exact filter: an "allow only" clause the owner wrote, plus the excludes we
+        merged in. The allow clause is theirs and must come back byte-identical."""
+        kid = make_profile("kid", user_type=UserType.MANAGED, account_id=500)
+        remote = self._remote("label=Kids%20Safe|label!=Shortlist_sarah,Shortlist_mike")
+
+        written = privacy.clear_our_excludes(mock_plextv, kid, remote)
+
+        assert written is not None
+        assert written["filterMovies"][1] == "label=Kids%20Safe"
+        call = mock_plextv.update_user_filters.call_args
+        assert call.args[0] == 500
+        assert call.args[1] == {"filterMovies": "label=Kids%20Safe"}
+
+    def test_a_foreign_exclude_alongside_ours_is_kept(self, mock_plextv):
+        """Rule 3 cuts both ways: the owner's own `label!=` values are not ours to remove."""
+        kid = make_profile("kid", user_type=UserType.MANAGED, account_id=500)
+        remote = self._remote("label!=Halloween,Shortlist_mike,Grown%20Ups")
+
+        written = privacy.clear_our_excludes(mock_plextv, kid, remote)
+
+        assert written["filterMovies"][1] == "label!=Halloween,Grown%20Ups"
+
+    def test_both_restricted_fields_are_cleared(self, mock_plextv):
+        kid = make_profile("kid", user_type=UserType.MANAGED, account_id=500)
+        remote = self._remote("label!=Shortlist_mike", "label!=Shortlist_mike|contentRating=TV-Y")
+
+        written = privacy.clear_our_excludes(mock_plextv, kid, remote)
+
+        assert written["filterMovies"][1] == ""
+        assert written["filterTelevision"][1] == "contentRating=TV-Y"
+
+    def test_nothing_of_ours_left_writes_nothing(self, mock_plextv):
+        """Idempotence is what makes this safe to run every night rather than once: the second pass
+        over a cleared account must not touch plex.tv at all."""
+        kid = make_profile("kid", user_type=UserType.MANAGED, account_id=500)
+
+        written = privacy.clear_our_excludes(mock_plextv, kid, self._remote("label=Kids%20Safe"))
+
+        assert written is None
+        mock_plextv.update_user_filters.assert_not_called()
+
+    def test_a_percent_encoded_label_of_ours_is_still_ours(self, mock_plextv):
+        """Plex Web re-encodes what it rewrites, so our own label can come back percent-encoded — and
+        reading it as foreign would leave the account exactly as polluted as before."""
+        kid = make_profile("kid", user_type=UserType.MANAGED, account_id=500)
+
+        written = privacy.clear_our_excludes(mock_plextv, kid, self._remote("label!=Shortlist%5Fmike"))
+
+        assert written["filterMovies"][1] == ""
+
+    def test_a_restricted_shared_rows_exclude_is_kept(self, mock_plextv):
+        """The one exclude "leave them alone" must NOT remove.
+
+        `SHARED_LABEL_PREFIX` is `shortlist__shared_`, which starts with `shortlist_` — so the
+        obvious "remove every label of ours" also strips a shared row's exclude. For a shared row
+        limited to an audience, that exclude is the ONLY thing hiding it from everyone outside the
+        audience, and nothing re-adds it: the next run skips this account entirely. So the account
+        would silently gain a row the owner restricted on the row itself.
+        """
+        kid = make_profile("kid", user_type=UserType.MANAGED, account_id=500)
+        remote = self._remote("label!=shortlist__shared_date_night,Shortlist_mike")
+
+        written = privacy.clear_our_excludes(mock_plextv, kid, remote)
+
+        assert written["filterMovies"][1] == "label!=shortlist__shared_date_night"
+
+    def test_a_filter_holding_only_a_shared_exclude_is_not_written_at_all(self, mock_plextv):
+        """The steady state for an account whose only exclude of ours is a shared row's: nothing to
+        do, so no write. Without this the run would rewrite that filter to itself every night."""
+        kid = make_profile("kid", user_type=UserType.MANAGED, account_id=500)
+
+        written = privacy.clear_our_excludes(mock_plextv, kid, self._remote("label!=shortlist__shared_date_night"))
+
+        assert written is None
+        mock_plextv.update_user_filters.assert_not_called()
+
+    def test_the_owner_is_never_written_to(self, mock_plextv):
+        """Rule 5. The owner has no share, so "leave their sharing alone" is the only possible state
+        and there is nothing to clear."""
+        owner = make_profile("steve", user_type=UserType.OWNER, account_id=1)
+
+        assert privacy.clear_our_excludes(mock_plextv, owner, self._remote("label!=Shortlist_mike")) is None
+        mock_plextv.update_user_filters.assert_not_called()
+
+    def test_an_account_that_no_longer_shares_the_server_is_skipped(self, mock_plextv):
+        kid = make_profile("kid", user_type=UserType.MANAGED, account_id=500)
+
+        assert privacy.clear_our_excludes(mock_plextv, kid, None) is None
+        mock_plextv.update_user_filters.assert_not_called()
+
+    def test_dry_run_reports_the_diff_and_writes_nothing(self, mock_plextv):
+        kid = make_profile("kid", user_type=UserType.MANAGED, account_id=500)
+        remote = self._remote("label!=Shortlist_mike")
+
+        written = privacy.clear_our_excludes(mock_plextv, kid, remote, dry_run=True)
+
+        assert written == {"filterMovies": ("label!=Shortlist_mike", "")}
+        mock_plextv.update_user_filters.assert_not_called()
+
+    def test_an_unparseable_filter_raises_rather_than_being_rewritten(self, mock_plextv):
+        """Same answer as every other path here: a filter we cannot represent is one we refuse to
+        touch. The caller downgrades it to a warning — the account simply stays as it is."""
+        kid = make_profile("kid", user_type=UserType.MANAGED, account_id=500)
+
+        with pytest.raises(FilterParseError):
+            privacy.clear_our_excludes(mock_plextv, kid, self._remote("this is not a filter"))
+        mock_plextv.update_user_filters.assert_not_called()

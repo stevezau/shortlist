@@ -33,6 +33,7 @@ from shortlist.engine.delivery import row_marker
 from shortlist.engine.history import ShareTokenWatchSource
 from shortlist.engine.models import EngineConfig, MediaType, RowOverride, RowSpec, UserProfile, UserType
 from shortlist.engine.pipeline import run as engine_run
+from shortlist.engine.privacy import shortlist_labels_in
 from tests.fakes.fake_plex import (
     FakeCollection,
     FakeHistoryEntry,
@@ -2480,3 +2481,170 @@ class TestLabelReadsAgainstTheRealServerShape:
         row = next(r for r in plex.owned_row_surfaces("shortlist", flags=False) if r["rating_key"] == 9109)
 
         assert "recommended" not in row and row["label"] == "Shortlist_mike"
+
+
+def test_an_account_left_alone_keeps_its_own_filter_and_everyone_else_still_hides_from_it(fakes, tmp_path):
+    """ "Don't change this person's Plex sharing settings" (discussion #92), end to end.
+
+    The reporter's shape: a managed account whose own "allow only" label list is what keeps Shortlist
+    out of its view, and whose owner wants our excludes out of the Restrictions tab. Three things have
+    to be true afterwards, and only the first is the feature:
+
+    1. Nothing of ours is left in that account's filters, and its own conditions are byte-identical.
+    2. It is still excluded on EVERY OTHER account — leaving one account alone must not make its
+       owner's row visible to the rest of the server.
+    3. The run still promotes. One account nobody wants managed cannot be a promotion blocker.
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(row_size=12, min_history=5, candidates_pre_rank=40, max_seeds=12),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+
+    # Account 203 already carries an allow-only list of its owner's AND an exclude of ours from an
+    # earlier run — exactly the state the setting has to clean up.
+    state.users[203].filters["filterMovies"] = "label=Kids%20Safe|label!=Shortlist_sarah"
+    state.users[203].filters["filterTelevision"] = "label=Kids%20Safe"
+    ctx.unmanaged_account_ids = {203}
+
+    sarah = UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED)
+    mike = UserProfile(username="mike", plex_account_id=202, user_type=UserType.SHARED)
+    report = engine_run(ctx, [sarah, mike])
+
+    assert report.ok
+    # 1. Their own filter is theirs again — the allow list survives byte for byte.
+    assert state.users[203].filters["filterMovies"] == "label=Kids%20Safe"
+    assert state.users[203].filters["filterTelevision"] == "label=Kids%20Safe"
+
+    # 2. Everyone else still hides the left-alone account nothing changed about.
+    assert "Shortlist_sarah" in state.users[202].filters["filterMovies"]
+    assert "Shortlist_mike" in state.users[201].filters["filterMovies"]
+
+    # 3. The run promoted rather than treating an unmanaged account as a blocker.
+    assert not report.promotion_blockers
+    assert plex.owned_collections()["sarah"].rating_keys
+
+    # And the widening write is auditable like every other share write (rule 10).
+    assert report.filter_writes[203]["fields"]["filterMovies"][1] == "label=Kids%20Safe"
+
+
+def test_leaving_an_account_alone_is_a_no_op_on_the_second_run(fakes, tmp_path):
+    """Steady state writes nothing. Without this the nightly run would re-write the same filter for
+    ever, and every run's audit would claim a change that never happened."""
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(row_size=12, min_history=5, candidates_pre_rank=40, max_seeds=12),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+    state.users[203].filters["filterMovies"] = "label=Kids%20Safe|label!=Shortlist_sarah"
+    ctx.unmanaged_account_ids = {203}
+    sarah = UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED)
+
+    engine_run(ctx, [sarah])
+    second = engine_run(ctx, [sarah])
+
+    assert 203 not in second.filter_writes
+    assert state.users[203].filters["filterMovies"] == "label=Kids%20Safe"
+
+
+def test_leaving_an_account_alone_does_not_make_that_persons_own_row_public(fakes, tmp_path):
+    """The leak direction, and the one that would be worst to get wrong.
+
+    "Leave this account's sharing alone" is about what THEY can see. It must not touch what everyone
+    else can see of THEM: their own row still has to be excluded on every other account's filter.
+    The two are separate by construction — excludes are derived from the rows that exist on the PMS,
+    not from who Shortlist manages — but nothing pinned it, and a "skip this user entirely" reading
+    of the setting is the obvious wrong implementation.
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(row_size=12, min_history=5, candidates_pre_rank=40, max_seeds=12),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+    # mike is left alone AND still gets a row of his own.
+    ctx.unmanaged_account_ids = {202}
+
+    sarah = UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED)
+    mike = UserProfile(username="mike", plex_account_id=202, user_type=UserType.SHARED)
+    report = engine_run(ctx, [sarah, mike])
+
+    assert report.ok
+    assert plex.owned_collections()["mike"].rating_keys, "mike should still get his row"
+
+    # Everyone else hides mike's row, exactly as if he were managed.
+    for account_id in (201, 203):
+        filters = state.users[account_id].filters
+        assert "Shortlist_mike" in filters["filterMovies"], f"account {account_id} can see mike's row"
+        assert "Shortlist_mike" in filters["filterTelevision"], f"account {account_id} can see mike's row"
+
+    # Mike's own filter stays empty of ours — he is the one account we do not write to.
+    assert shortlist_labels_in(state.users[202].filters["filterMovies"], "Shortlist") == set()
+
+    # And proof through their eyes: mike's row is not on anyone else's Home.
+    mike_rows = set(plex.owned_collections()["mike"].rating_keys)
+    for account_id in (201, 203):
+        visible = {collection_id_from_hub(h) for h in plex.user_hubs(f"server-{account_id}")}
+        assert not (mike_rows & visible), f"account {account_id} sees mike's row on their Home"
+
+
+def test_an_account_that_is_both_switched_off_and_left_alone_keeps_the_shared_row_hidden(fakes, tmp_path):
+    """The fourth cell of the `enabled` / `manage_sharing` matrix — the only one where they interact.
+
+    Switching someone off normally hides even the PUBLIC shared rows from them
+    (`hide_shared_from_disabled`); leaving them alone means we do not write their filter at all. So
+    for a user with both switches off, "left alone" wins and the disabled-user hiding never applies.
+    That is the intended precedence — "don't touch this account" is the stronger statement — but it
+    is the cell where the docs' unconditional "off still writes their filters" stops being true, so
+    it is pinned rather than left to be rediscovered.
+
+    What must NOT change is the restricted shared row: its exclude is the only thing keeping the row
+    away from someone outside its audience, so it survives both switches.
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(row_size=12, min_history=5, candidates_pre_rank=40, max_seeds=12),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+    # 203 is switched off in Shortlist AND left alone, and already carries both kinds of exclude.
+    state.users[203].filters["filterMovies"] = "label!=shortlist__shared_date_night,Shortlist_sarah|label=Kids"
+    ctx.disabled_account_ids = {203}
+    ctx.unmanaged_account_ids = {203}
+
+    sarah = UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED)
+    report = engine_run(ctx, [sarah])
+
+    assert report.ok
+    after = state.users[203].filters["filterMovies"]
+    # The per-person exclude goes (that is the setting doing its job)...
+    assert "Shortlist_sarah" not in after
+    # ...the restricted shared row's does NOT, and their own condition is untouched.
+    assert "shortlist__shared_date_night" in after
+    assert "label=Kids" in after

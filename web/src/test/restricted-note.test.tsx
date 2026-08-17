@@ -11,6 +11,7 @@ import type { User } from "@/lib/types";
  */
 function user(patch: Partial<User> = {}): User {
   return {
+    manage_sharing: true,
     id: 9,
     username: "kid",
     slug: "kid",

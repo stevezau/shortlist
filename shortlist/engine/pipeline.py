@@ -44,6 +44,7 @@ from shortlist.engine.models import (
     UserType,
 )
 from shortlist.engine.privacy import (
+    clear_our_excludes,
     shared_label_audiences,
     shortlist_labels_in,
     sync_user_restrictions,
@@ -488,6 +489,42 @@ def _record_unhideable(ctx, user, remote, owned, collections_known, report) -> N
     )
 
 
+def _leave_sharing_alone(ctx: EngineContext, user, remote, report: RunReport) -> None:
+    """Strip Shortlist's excludes from an account the owner asked us not to manage, and audit it.
+
+    Never raises and never blocks promotion. Everything this does REMOVES an exclusion of ours from
+    one named account's filter, so a failure leaves that account more private than the owner asked
+    for — the safe direction, and the next run retries it. Letting it escape would do the opposite:
+    one 503 on an account nobody wants managed would stop every other user's row being promoted.
+    """
+    try:
+        written = clear_our_excludes(ctx.plextv, user, remote, label_prefix=LABEL_PREFIX, dry_run=ctx.config.dry_run)
+    except FilterWriteRefused as e:
+        # PERMANENT. plex.tv refuses label filters outright while a parental profile is set, so "we
+        # will try again tonight" is a lie — the account keeps our excludes until somebody clears the
+        # profile in Plex. Recorded rather than only logged, because the owner has flipped a switch
+        # whose UI promises the excludes come out, and nothing else would tell them it didn't.
+        report.left_alone_failures[user.plex_account_id] = f"{user.username}: plex.tv refused the write ({e})"
+        logger.warning(
+            "{}: plex.tv will not accept a filter write for this account, so Shortlist's excludes "
+            "STAY on it — clear its Plex restriction profile if you want them gone",
+            user.username,
+        )
+        return
+    except Exception as e:
+        report.left_alone_failures[user.plex_account_id] = f"{user.username}: {type(e).__name__}: {e}"
+        logger.warning(
+            "{}: could not remove Shortlist's excludes from this left-alone account ({}) — retried next run",
+            user.username,
+            type(e).__name__,
+        )
+        return
+    if written:
+        # Audited like any other share write (rule 10): this one changes who can see what, and it is
+        # the only write in the run that widens rather than narrows.
+        report.filter_writes[user.plex_account_id] = {"username": user.username, "fields": written}
+
+
 def _privacy_sync_phase(
     ctx: EngineContext, users: list[UserProfile], stored_labels: dict[str, str], report: RunReport
 ) -> bool | None:
@@ -597,6 +634,14 @@ def _privacy_sync_phase(
     for position, user in enumerate(audience, start=1):
         _emit(ctx, "Shortlist", "filters", {"done": position, "total": len(audience)})
         user_report = reports.get(user.slug)
+        if user.plex_account_id in ctx.unmanaged_account_ids:
+            # The owner told Shortlist to leave this account's Plex sharing alone. It gets no excludes
+            # and keeps none of ours, so it can see other people's rows — which is the whole point of
+            # the setting, and is why this is NOT `_record_unhideable`'s business: that badge means
+            # "Plex refuses to hide these", and reporting a chosen state as a fault would train the
+            # owner to ignore the one that is a fault.
+            _leave_sharing_alone(ctx, user, roster.get(user.plex_account_id), report)
+            continue
         try:
             own_slug = own_slugs.get(user.plex_account_id)
             written = sync_user_restrictions(
