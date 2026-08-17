@@ -67,7 +67,10 @@ faster than a list of questions: _"open /issue, switch the checks on, type the t
   **shared row can't reach its threshold**. A shared row is built only from titles several people
   have watched, so it needs at least 2 enabled users with viewing in common and will skip forever
   below that. Make it a per-person row instead if you want one person to get it.
-- **A user says they can see someone else's row** — run Shortlist again (Run now): every run
+- **A user says they can see someone else's row** — first check they aren't badged **Sharing
+  untouched** in Users: that means you asked Shortlist to leave their Plex account alone, so it
+  writes no exclusions for them and re-running will never change it (turn **Manage their Plex
+  sharing settings** back on for them). Otherwise run Shortlist again (Run now): every run
   re-merges the `label!=` exclusions into each account's share filters. Check whether the share
   was edited by hand in plex.tv (Shortlist re-merges but never deletes filter conditions it
   didn't add), and confirm Plex Media Server is ≥ 1.43.2.10687 (older builds ignore the exclusion).

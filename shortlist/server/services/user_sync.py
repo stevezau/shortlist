@@ -207,6 +207,11 @@ def _sync_owner(
     user.avatar_url = account.get("thumb") or ""
     user.friendly_name = friendly or user.friendly_name
     user.user_type = UserType.OWNER.value  # a pre-existing row for this account was never really "shared"
+    # Plex has no share filters for the owner, so "leave their sharing alone" stops meaning anything
+    # the moment an account becomes one. Cleared here as well as refused in `patch_user`, or an
+    # account that carried the flag before an owner transfer keeps badging the owner for a state
+    # that cannot exist.
+    user.manage_sharing = True
     return "updated"
 
 

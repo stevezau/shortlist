@@ -1236,6 +1236,58 @@ class TestSharingCountsLabelsNotClauses:
         assert row["shortlist_excludes"] == ["shortlist_ana", "shortlist_dan", "shortlist_mike"]
         assert "hides 3 of 4" in client.get("/api/support/sharing").json()["text"]
 
+    def test_a_kept_shared_row_exclude_is_not_reported_as_a_failed_removal(self, client, monkeypatch):
+        """Found by the v1.6.1 release review.
+
+        `clear_our_excludes` deliberately KEEPS a restricted shared row's exclude on a left-alone
+        account — it is the only thing hiding that row from someone outside its audience. This
+        report's split was matching on `shortlist_`, which `shortlist__shared_` also starts with, so
+        that correct state printed as "the removal has not gone through" on every report, for ever.
+        Which is worse than noise: it makes the genuinely stuck case — a plex.tv 422 that really did
+        leave our excludes behind — indistinguishable from the normal one.
+        """
+        from shortlist.server.db.models import User
+
+        self._accounts(
+            monkeypatch,
+            {"sarah": {"filterMovies": "label!=shortlist__shared_date_night", "filterTelevision": ""}},
+        )
+        _rows_on_plex(monkeypatch, ["mike"])
+        _enable(client)
+        with client.app.state.sessions() as session:
+            sarah = session.query(User).filter_by(username="sarah").one()
+            sarah.plex_account_id = 1000  # the id the faked plex.tv account above carries
+            sarah.manage_sharing = False
+            session.commit()
+
+        text = client.get("/api/support/sharing").json()["text"]
+
+        assert "the removal has not gone through" not in text
+        assert "Left alone by choice" in text
+
+    def test_a_per_person_exclude_left_behind_IS_reported(self, client, monkeypatch):
+        """The other half of the same split: a left-alone account still carrying a per-person exclude
+        means the removal is genuinely owed, and saying so is the whole point of the block."""
+        from shortlist.server.db.models import User
+
+        self._accounts(
+            monkeypatch,
+            {"sarah": {"filterMovies": "label!=shortlist__shared_date_night,shortlist_mike", "filterTelevision": ""}},
+        )
+        _rows_on_plex(monkeypatch, ["mike"])
+        _enable(client)
+        with client.app.state.sessions() as session:
+            sarah = session.query(User).filter_by(username="sarah").one()
+            sarah.plex_account_id = 1000  # the id the faked plex.tv account above carries
+            sarah.manage_sharing = False
+            session.commit()
+
+        text = client.get("/api/support/sharing").json()["text"]
+
+        assert "the removal has not gone through" in text
+        assert "shortlist_mike" in text
+        assert "shortlist__shared_date_night" not in text.split("has not gone through")[1]
+
     def test_a_foreign_label_in_our_clause_is_not_attributed_to_shortlist(self, client, monkeypatch):
         """The owner's own restriction, sharing the condition we merged into. Reporting it as ours
         would send someone hunting for a Shortlist bug in their own configuration."""

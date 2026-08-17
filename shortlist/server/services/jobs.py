@@ -890,6 +890,12 @@ def _privacy_sync(state, payload: dict) -> dict:
         detail += f" after {reason}"
     if swept:
         detail += f"; swept {swept} unhidable row(s)"
+    # `privacy.sync` persists no run, so `report.left_alone_failures` has nowhere else to surface —
+    # and this handler is the one the "leave their sharing alone" PATCH fires. Without this the toast
+    # says the filters were merged while that account kept every exclude we promised to remove.
+    if report.left_alone_failures:
+        failed = len(report.left_alone_failures)
+        detail += f"; could NOT clear Shortlist's exclusions from {failed} left-alone account(s)"
     # This job repositions rows on the shelf now, and its own description promises it does. Reported
     # here in the same words `sync.check` uses, so the two jobs do not describe the same write
     # differently — the audit event is written either way (`_audit_hub_orderings`, rule 10); this is
