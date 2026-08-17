@@ -50,6 +50,7 @@ from shortlist.engine.privacy import (
     sync_user_restrictions,
     unhidden_rows_visible_to,
 )
+from shortlist.engine.request_config import resolve_request_config
 
 
 def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
@@ -102,7 +103,7 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     # Missing-title demand, accumulated across users only when requests are on — the common case
     # (feature off) pays nothing for it. None -> _run_user does no missing-title bookkeeping at all.
     requests_on = bool(ctx.config.requests and ctx.config.requests.enabled)
-    demand: requests_mod.DemandMap = {}
+    demand: requests_mod.RowDemand = {}
 
     # Collection item-ordering is deferred to a best-effort pass AFTER promotion (see
     # _collection_order_phase): each (collection, ranked_keys) delivery records here, so the expensive
@@ -164,7 +165,7 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
 
     # Sonarr/Radarr requests, dead LAST — after every Plex write is done.
     if requests_on:
-        _emit(ctx, "Shortlist", "requesting", {"wanted": len(demand)})
+        _emit(ctx, "Shortlist", "requesting", {"wanted": sum(len(m) for m in demand.values())})
     _request_phase(ctx, requests_on, demand, report)
 
     report.finished_at = datetime.now(UTC)
@@ -328,7 +329,7 @@ def _deliver_phase(
     library_index: dict[MediaType, dict[int, int]],
     stored_labels: dict[str, str],
     report: RunReport,
-    demand: requests_mod.DemandMap | None,
+    demand: requests_mod.RowDemand | None,
     order_work: list[tuple],
 ) -> tuple[list[UserProfile], list[tuple[RowSpec, UserProfile]]]:
     """Deliver every per-person and shared row, all UNPROMOTED. Returns the promotion candidates."""
@@ -1424,7 +1425,28 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
             )
 
 
-def _request_phase(ctx: EngineContext, requests_on: bool, demand: requests_mod.DemandMap, report: RunReport) -> None:
+def _rows_to_request(ctx: EngineContext, demand: requests_mod.RowDemand) -> list[requests_mod.RowRequest]:
+    """This run's rows that actually wanted something, each with its own effective request config.
+
+    In SPEC ORDER, not demand order — the order decides both the even-split remainder and which row
+    claims a title several rows want, and spec order is the owner's own row ordering, which they
+    control by dragging rows. A demand-ordered list would hand the tie-break to whichever row happened
+    to surface the most titles that night.
+
+    Rows the run did not build contribute no demand and are simply absent, so a per-row scheduled run
+    divides its slots between its own rows only.
+    """
+    rows: list[requests_mod.RowRequest] = []
+    for spec in ctx.config.per_person_rows():
+        row_demand = demand.get(spec.slug)
+        if not row_demand:
+            continue
+        cfg = resolve_request_config(ctx.config.requests, spec.request_overrides)
+        rows.append(requests_mod.RowRequest(spec.slug, cfg, row_demand))
+    return rows
+
+
+def _request_phase(ctx: EngineContext, requests_on: bool, demand: requests_mod.RowDemand, report: RunReport) -> None:
     """Sonarr/Radarr requests for picks the library lacks — dead LAST, after every Plex write is done.
 
     It touches no Plex object, and running it here (not before the privacy sync) keeps its "never
@@ -1437,7 +1459,7 @@ def _request_phase(ctx: EngineContext, requests_on: bool, demand: requests_mod.D
             report.requests = requests_mod.request_missing(
                 ctx.config.requests,
                 ctx.tmdb,
-                demand,
+                _rows_to_request(ctx, demand),
                 dry_run=ctx.config.dry_run,
                 already_handled=ctx.handled_requests,
                 mdblist=ctx.mdblist,

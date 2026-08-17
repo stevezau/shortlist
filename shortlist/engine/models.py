@@ -591,12 +591,19 @@ class RequestWhy:
 
     ``seed`` is the history title behind it ("because you watched …"); empty for seedless sources
     (tmdb_discover / llm_web). ``source`` is the candidate source that produced it.
+
+    ``row`` is the RENDERED name the user sees ("🎯 Because you watched Bluey"), which is why
+    ``row_slug`` exists beside it: the rendered name carries the person's own seed and display name,
+    so it identifies nothing stable. Resolving which row's Sonarr/Radarr target a title should be
+    sent under — months later, when the owner approves it from the inbox — needs the slug.
+    Empty for candidates queued before per-row settings existed; those fall back to the global config.
     """
 
     user: str
     row: str
     seed: str = ""
     source: str = ""
+    row_slug: str = ""
 
 
 @dataclass
@@ -676,6 +683,13 @@ class RequestReport:
     pool_size: int = 0  # titles that cleared the base floors (demand, year) — what the gate was handed
     examined: int = 0  # of those, how many the rating gate actually rated
     lookups_spent: int = 0  # live rating-API calls that cost; cached ratings are free and are not counted
+    # The same three, per row slug, plus what each row actually got. A run-wide total cannot answer
+    # "why did the kids row send nothing" once every row gates on its own floors and its own share of
+    # the lookup budget — which row was starved is exactly the question these exist to answer.
+    pool_by_row: dict[str, int] = field(default_factory=dict)
+    examined_by_row: dict[str, int] = field(default_factory=dict)
+    considered_by_row: dict[str, int] = field(default_factory=dict)
+    sent_by_row: dict[str, int] = field(default_factory=dict)
     outcomes: list[RequestOutcome] = field(default_factory=list)
     # Titles handed back for the server to persist as pending so the owner can approve them by hand:
     # those that cleared the base floors but not the auto-send bar (or overflowed max_per_run), PLUS
