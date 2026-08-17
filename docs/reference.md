@@ -83,6 +83,34 @@ heading: Reference
 | `requests.auto_min_rating`                            | `8.0`                              | ...and rated ≥ this on the chosen source; rest are queued                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `requests.tag`                                        | `shortlist`                        | global tag on every requested title (created in the app; `""` = no tag)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
+
+### Per-row request overrides
+
+Any per-person row may override these in the row editor; the column is the `collections` column name,
+and NULL always means "inherit the global `requests.*` setting".
+
+| Row column                      | Overrides                                                        |
+| ------------------------------- | ---------------------------------------------------------------- |
+| `req_min_rating`                | `requests.min_rating`                                             |
+| `req_min_votes`                 | `requests.min_votes`                                              |
+| `req_min_demand`                | `requests.min_demand` — counted WITHIN the row                    |
+| `req_min_year` / `req_max_year` | `requests.min_year` / `requests.max_year`                         |
+| `req_auto_send`                 | `requests.auto_send`                                              |
+| `req_auto_min_demand`           | `requests.auto_min_demand`                                        |
+| `req_auto_min_rating`           | `requests.auto_min_rating`                                        |
+| `req_max_per_row`               | this row's share of `requests.max_per_run`; may only restrict it  |
+| `req_radarr_root_folder`        | `requests.radarr.root_folder`                                     |
+| `req_radarr_quality_profile_id` | `requests.radarr.quality_profile_id`                              |
+| `req_sonarr_root_folder`        | `requests.sonarr.root_folder`                                     |
+| `req_sonarr_quality_profile_id` | `requests.sonarr.quality_profile_id`                              |
+
+`requests.enabled`, `requests.rating_source`, `requests.mdblist.apikey`, `requests.max_per_run` and
+the Arr URLs and API keys are server-wide and cannot be overridden per row — the first four are the
+run's ceilings and its one rating account, and the last two mean a row files into a different folder
+on the SAME Radarr, not a second one.
+
+Shared rows carry none of these: built from already-watched titles, they surface nothing missing.
+
 ## API
 
 The interactive API docs are off by default (they'd disclose the whole surface unauthenticated);

@@ -134,3 +134,50 @@ Why the two can disagree so sharply: the run rates titles in **demand** order �
 but judges them on **rating**. On a large library the most-wanted _missing_ titles are often the ones
 nobody thought worth adding, so the top of the list can be the worst-rated part of it, and the titles
 that would pass sit further down. A bigger budget reaches them.
+
+## Different settings per row
+
+Everything above is the server-wide default. Any per-person row can override most of it in the row
+editor, under **Requests** — a kids row can file into its own folder at a lower quality profile, ask
+for a lower rating, and hold itself to one title a night, while your main row carries on as it was.
+
+A field left on "use the setting from Settings › Requests" follows the global, and follows it as you
+change it. Only the ones you deliberately override differ.
+
+Two things stay server-wide on purpose:
+
+- **How many a run may request.** This is what stops a library ballooning, so a row can only ever ask
+  for *less* of it, never more.
+- **The rating source and its MDBList key.** One account, one place to set it.
+
+### How rows share the limit
+
+Rows split the run's limit evenly, and any row that can't fill its share hands it back to the rows
+that can. With the limit at 10 and two rows:
+
+```
+Row A capped at 3, Row B uncapped
+  even split -> 5 each
+  A takes 3 (its own limit)
+  A's spare 2 goes to B -> B takes 7
+                           -------
+                           10 total
+```
+
+A run that builds one row is simply that row on its own, so a row capped at 3 asks for 3.
+
+Rows on the **same schedule build together as one run** and share one limit. Rows on different
+schedules are different runs, each with the full limit — so three rows on three different times can
+ask for three times as much in a day as the same three rows on one schedule.
+
+### When two rows want the same title
+
+It's requested once, by the first row in your row order whose settings it passes — so it lands in
+that row's folder, and the other row's slot frees up for its next pick. Ten slots always mean ten
+titles. The Requests inbox shows every row that wanted it, not just the one that asked.
+
+### Shared rows
+
+A shared row ("Popular on your server") has no request settings, and the editor doesn't show the
+section for one. It's built from titles people have already watched, which are by definition already
+on your server — so there is never anything missing for it to ask for.

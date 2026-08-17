@@ -317,6 +317,9 @@ def request_missing(
     flat = [m for _, _, qualifying in gated for m in qualifying]
     kept, in_arr, report.arr_present = _apply_arr_state(tmdb, flat, radarr, sonarr)
     kept_keys = {(m.tmdb_id, m.media_type) for m in kept}
+    # Fold every row's evidence about a title into every copy of it, BEFORE one of them is claimed
+    # and sent — the claimed copy has to carry all of it (see _merge_across_rows).
+    _merge_across_rows(gated)
     if in_arr:
         logger.info("requests: {} qualifying already in Sonarr/Radarr — dropped", in_arr)
 
@@ -364,6 +367,7 @@ def request_missing(
             "; ".join(f"{n} {reason}" for reason, n in blocked.most_common()),
         )
 
+    report.queued = _dedupe_queued(report.queued, set())
     if not claims:
         # Say how far it LOOKED, not just what it found. A bare "0 qualifying" reads identically
         # whether the floors emptied the pool, the gate rejected everything it rated, or it ran out of
@@ -406,6 +410,7 @@ def request_missing(
         if (m.tmdb_id, m.media_type) in fail_detail:
             m.detail = fail_detail[(m.tmdb_id, m.media_type)]
             report.queued.append(m)
+    report.queued = _dedupe_queued(report.queued, {(m.tmdb_id, m.media_type) for m in report.sent})
     logger.info(
         "requests: {} of {} auto-{}, {} queued for approval ({} considered across {} row(s))",
         report.requested,
@@ -416,6 +421,65 @@ def request_missing(
         len(rows),
     )
     return report
+
+
+def _merge_across_rows(gated: list[tuple[str, RequestConfig, list[MissingTitle]]]) -> None:
+    """Give every row's copy of a title the tags, wanters and provenance of ALL of them.
+
+    Per-row demand splits one title into one object per row, and only the claiming row's object is
+    ever sent — so without this a title two rows wanted went to Radarr carrying one row's tag. That
+    contradicts the documented contract ("the tags of every per-person row they're in") and breaks
+    exactly the thing the tag is for: hanging Radarr/Sonarr rules on which rows asked.
+
+    Demand stays each row's own — it is the floor `min_demand` is checked against, and merging it
+    would let one row's popularity satisfy another row's threshold.
+    """
+    merged: dict[tuple[int, MediaType], tuple[set[str], set[str], list[RequestWhy]]] = {}
+    for _slug, _cfg, titles in gated:
+        for m in titles:
+            tags, wanters, why = merged.setdefault((m.tmdb_id, m.media_type), (set(), set(), []))
+            tags |= m.tags
+            wanters |= m.wanters
+            for reason in m.why:
+                if reason not in why:
+                    why.append(reason)
+    for _slug, _cfg, titles in gated:
+        for m in titles:
+            tags, wanters, why = merged[(m.tmdb_id, m.media_type)]
+            m.tags = set(tags)
+            m.wanters = set(wanters)
+            m.why = list(why)
+
+
+def _dedupe_queued(queued: list[MissingTitle], sent: set[tuple[int, MediaType]]) -> list[MissingTitle]:
+    """One inbox row per title, however many rows wanted it — and none for a title already sent.
+
+    Per-row demand means a title several rows want exists as several MissingTitle objects, one per
+    row. Both used to reach `report.queued`, and `request_candidates` has a UNIQUE constraint on
+    (tmdb_id, media_type), so persisting that run died with an IntegrityError — the whole inbox write
+    lost, not just the duplicate.
+
+    The earliest row's copy wins, matching the collision rule in `allocate`, but the others' evidence
+    is folded in: the inbox exists to say WHO wanted a title and from WHICH row, and dropping a copy
+    silently would drop half that answer. `demand` takes the max rather than the sum — a person in two
+    rows is one person, and summing would inflate them into two.
+    """
+    first: dict[tuple[int, MediaType], MissingTitle] = {}
+    for m in queued:
+        key = (m.tmdb_id, m.media_type)
+        if key in sent:
+            continue  # it went out under another row; an inbox row would name a title Radarr has
+        keeper = first.get(key)
+        if keeper is None:
+            first[key] = m
+            continue
+        keeper.tags |= m.tags
+        keeper.wanters |= m.wanters
+        keeper.demand = max(keeper.demand, m.demand)
+        for reason in m.why:
+            if reason not in keeper.why:
+                keeper.why.append(reason)
+    return list(first.values())
 
 
 def _enrich(tmdb: TmdbClient, titles: list[MissingTitle]) -> None:

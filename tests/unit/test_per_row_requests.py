@@ -359,3 +359,104 @@ class TestTwoTitlesThatLookAlike:
         assert len(report.sent) == 1
         assert len(report.queued) == 1, "the twin must be queued, not swallowed by a value comparison"
         assert {m.tmdb_id for m in report.sent} | {m.tmdb_id for m in report.queued} == {1, 2}
+
+
+class TestOneInboxRowPerTitle:
+    """Audit round 7, 2026-08-18: per-row demand means a title several rows want exists as several
+    MissingTitle objects. Both reached `report.queued`, and `request_candidates` is UNIQUE on
+    (tmdb_id, media_type) — so persisting that run died with an IntegrityError and lost the WHOLE
+    inbox write, not just the duplicate."""
+
+    def _manual(self, **kw):
+        return _cfg(auto_send=False, **kw)
+
+    def test_a_title_two_rows_queued_yields_one_row(self, radarr):
+        base = self._manual()
+        report = requests_mod.request_missing(
+            base,
+            FakeTmdb(),
+            _rows(("a", base, _demand(_title(550))), ("b", base, _demand(_title(550)))),
+            dry_run=True,
+        )
+        keys = [(m.tmdb_id, m.media_type) for m in report.queued]
+        assert len(keys) == len(set(keys)) == 1
+
+    def test_the_surviving_row_keeps_every_rows_evidence(self, radarr):
+        """The inbox exists to say WHO wanted a title and from WHICH row — dropping a copy silently
+        would drop half that answer."""
+        base = self._manual()
+        a, b = _title(550), _title(550)
+        a.wanters, b.wanters = {"sarah"}, {"mike"}
+        a.tags, b.tags = {"kids"}, {"prestige"}
+        b.demand = 4
+
+        report = requests_mod.request_missing(
+            base, FakeTmdb(), _rows(("a", base, _demand(a)), ("b", base, _demand(b))), dry_run=True
+        )
+
+        kept = report.queued[0]
+        assert kept.wanters == {"sarah", "mike"}
+        assert kept.tags == {"kids", "prestige"}
+        # Max, never the sum: a person in two rows is one person, and summing invents a second.
+        assert kept.demand == 4
+
+    def test_a_title_sent_under_one_row_is_not_queued_by_another(self, radarr):
+        """It went out; an inbox row would name a title Radarr already has."""
+        auto = _cfg(max_per_run=5)
+        manual = _cfg(auto_send=False)
+        report = requests_mod.request_missing(
+            auto,
+            FakeTmdb(),
+            _rows(("sender", auto, _demand(_title(550))), ("waiter", manual, _demand(_title(550)))),
+            dry_run=False,
+        )
+        assert [m.tmdb_id for m in report.sent] == [550]
+        assert report.queued == []
+
+
+class TestTagsSurviveTheRowSplit:
+    """Audit round 9, 2026-08-18: the guide promises a requested title carries "the tags of every
+    per-person row they're in". Per-row demand splits one title into one object per row and only the
+    CLAIMING row's object is sent — so the union silently became "whichever row got there first",
+    breaking the one thing the tag is for: hanging Radarr rules on which rows asked."""
+
+    def test_a_sent_title_carries_every_wanting_rows_tags(self, radarr):
+        base = _cfg()
+        kids, prestige = _title(550), _title(550)
+        kids.tags, prestige.tags = {"kids", "sarah"}, {"prestige", "mike"}
+
+        requests_mod.request_missing(
+            base,
+            FakeTmdb(),
+            _rows(("kids", base, _demand(kids)), ("prestige", base, _demand(prestige))),
+            dry_run=False,
+        )
+
+        assert radarr[("/movies", 1)].tag_calls == [{"kids", "sarah", "prestige", "mike"}]
+
+    def test_a_sent_title_names_everyone_who_wanted_it(self, radarr):
+        base = _cfg()
+        a, b = _title(550), _title(550)
+        a.wanters, b.wanters = {"sarah"}, {"mike"}
+
+        report = requests_mod.request_missing(
+            base, FakeTmdb(), _rows(("a", base, _demand(a)), ("b", base, _demand(b))), dry_run=False
+        )
+
+        assert report.sent[0].wanters == {"sarah", "mike"}
+
+    def test_demand_is_deliberately_not_merged(self, radarr):
+        """It is the floor `min_demand` is checked against, so merging would let one row's popularity
+        satisfy another row's threshold — the cross-row leak this whole feature removed."""
+        strict = _cfg(min_demand=3)
+        loose = _cfg(min_demand=1)
+        lonely, popular = _title(550, demand=1), _title(550, demand=9)
+
+        report = requests_mod.request_missing(
+            strict,
+            FakeTmdb(),
+            _rows(("strict", strict, _demand(lonely)), ("loose", loose, _demand(popular))),
+            dry_run=False,
+        )
+
+        assert report.pool_by_row == {"strict": 0, "loose": 1}, "the strict row must not borrow demand"
