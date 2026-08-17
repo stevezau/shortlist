@@ -37,6 +37,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
 
 function user(over: Partial<User>): User {
   return {
+    manage_sharing: true,
     id: 1,
     username: "u",
     slug: "u",

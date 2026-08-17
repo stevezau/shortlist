@@ -106,8 +106,22 @@ POST /api/setup/probe · POST /api/setup/link · GET/PUT /api/setup/state
 ### Users
 
 ```
-GET  /api/users · PATCH /api/users/{id} {enabled?, request_tag?, prefs?} · DELETE /api/users/{id} (only for someone plex.tv no longer lists: drops their picks and run history and hides them from the list; keeps the users row and their pre-Shortlist share-filter snapshot, which uninstall restores from — 409 for anyone still on the share) · POST /api/users/sync (shared + Home users from plex.tv, plus the server owner, whom that list never returns)
+GET  /api/users · PATCH /api/users/{id} {enabled?, manage_sharing?, request_tag?, prefs?} · DELETE /api/users/{id} (only for someone plex.tv no longer lists: drops their picks and run history and hides them from the list; keeps the users row and their pre-Shortlist share-filter snapshot, which uninstall restores from — 409 for anyone still on the share) · POST /api/users/sync (shared + Home users from plex.tv, plus the server owner, whom that list never returns)
 POST /api/users/set-enabled {enabled} (bulk enable/disable every user at once)
+```
+
+`manage_sharing` (default true) is a SEPARATE axis from `enabled`, not another value of it. `enabled`
+decides whether someone gets a row; `manage_sharing` decides whether Shortlist may edit that
+account's Plex share filters. Set it false and Shortlist adds no `label!=shortlist_*` exclusions for
+them and removes the ones it already added — so that account can see other people's rows unless its
+own Plex restrictions stop it. That is the point: an account with its own "allow only" label list is
+already kept away from Shortlist's rows by that list, and our exclusions were fighting it. Every
+OTHER account still excludes this person's own row label, so leaving one account alone never exposes
+their row to the rest of the server. Changing it either way rewrites the filters straight away rather
+than waiting for a run. Turning someone OFF (`enabled=false`) still writes their filters — it means
+"no row for them", not "let them see everyone else's".
+
+```
 GET  /api/users/{id}/rows · PUT /api/users/{id}/rows/{collection_id} {muted?, row_size?, recent_count?} (per-person, per-row: `recent_count` (1–25) overrides how many recent watches the `llm_web` source searches for this person on this row; null on any field clears it back to the row's own setting)
 GET  /api/users/{id}/runs (this person's outcome per run — `status`, `reason` for a non-failing skip, `duration_ms`, their diff and picks) · GET /api/users/{id}/runs/summary -> {included, total} (a run is server-wide, so "6 runs" on a person's page only reads honestly next to "of 148")
 GET  /api/users/search/titles?q=&media_type=movie|show -> [{tmdb_id, title, media_type, year}] (TMDB's best guess, for the block-a-seed picker)

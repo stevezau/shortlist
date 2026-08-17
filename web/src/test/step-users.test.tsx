@@ -33,6 +33,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 const SARAH: User = {
+  manage_sharing: true,
   id: 4,
   username: "sarah",
   slug: "sarah",

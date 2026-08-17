@@ -27,6 +27,17 @@ violate them.
 3. **Merge, never rebuild.** Share-filter writes are read-modify-write: parse the user's current
    `filterMovies`/`filterTelevision`, union our `shortlist_*` excludes into the existing `label!=`
    values, leave every other condition byte-identical. Never construct a filter string from scratch.
+
+   The same rule governs the one write that goes the other way. `users.manage_sharing=0` ("leave this
+   account's Plex sharing alone", discussion #92) makes the run REMOVE our excludes from that one
+   account rather than merge into it — `privacy.clear_our_excludes`, which takes out exactly the
+   `shortlist_*` values and byte-preserves everything else, including the owner's own `label=`
+   allow-list and their own `label!=` entries. It is the only write here that widens what an account
+   can see, it is per-account and owner-chosen, and it never touches anyone else's filter, so every
+   other account still excludes that person's row. It takes no snapshot: an account carrying our
+   labels was already snapshotted before the first merge, and snapshotting now would capture our own
+   pollution as if it were the user's original setting (rule 2).
+
 4. **Touch only what we own.** Only collections titled/labeled by Shortlist (`shortlist_*` label) may be
    modified or deleted. Detect and skip anything else — Kometa and other tools manage collections
    on the same servers; coexistence is mandatory.

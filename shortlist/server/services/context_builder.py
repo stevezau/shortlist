@@ -220,6 +220,12 @@ class ContextBuilder:
             # Opted-out accounts: with hide_shared_from_disabled, even public shared rows are hidden
             # from them, so disabling a user removes them from Shortlist entirely.
             disabled_account_ids = {u.plex_account_id for u in session.query(User).filter_by(enabled=False).all()}
+            # Accounts the owner has told Shortlist to leave alone: no excludes merged into their share
+            # filters, and any we already added taken back out. Independent of `enabled` above — the
+            # two answer different questions (does this person get a row / may we edit their sharing).
+            unmanaged_account_ids = {
+                u.plex_account_id for u in session.query(User).filter_by(manage_sharing=False).all()
+            }
             concurrency = int(store.get("run.concurrency") or 1)
             # Every user Shortlist knows, enabled or not: the engine answers "whose row is this?"
             # by account id, because a name can change and two names can slugify alike.
@@ -284,6 +290,7 @@ class ContextBuilder:
                 delivered_keys=delivered_keys,
                 pms_for_user=_pms_for_user,
                 disabled_account_ids=disabled_account_ids,
+                unmanaged_account_ids=unmanaged_account_ids,
                 known_slugs=known_slugs,
                 departed_slugs=departed_slugs,
                 owner_slug=owner_slug,

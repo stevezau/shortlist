@@ -16,6 +16,7 @@ import {
   ColdStartBadge,
   DepartedBadge,
   RestrictedBadge,
+  SharingUntouchedBadge,
   UnhiddenRowsBadge,
   UserTypeBadge,
 } from "@/components/user-badges";
@@ -387,6 +388,7 @@ export function UsersPage() {
                           <UserTypeBadge user={user} />
                           <RestrictedBadge user={user} />
                           <UnhiddenRowsBadge user={user} />
+                          <SharingUntouchedBadge user={user} />
                           <DepartedBadge user={user} />
                         </span>
                       </TableCell>

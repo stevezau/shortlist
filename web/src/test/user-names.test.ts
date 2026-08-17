@@ -5,6 +5,7 @@ import { displayNameLookup } from "@/lib/user-names";
 
 function user(overrides: Partial<User>): User {
   return {
+    manage_sharing: true,
     id: 1,
     plex_account_id: 100,
     username: "sarah_p",

@@ -8,6 +8,7 @@ import type { User } from "@/lib/types";
 
 function makeUser(overrides: Partial<User> = {}): User {
   return {
+    manage_sharing: true,
     id: 1,
     username: "Sarah",
     slug: "sarah",

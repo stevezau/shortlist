@@ -7,6 +7,7 @@ import type { User } from "@/lib/types";
 
 function user(id: number, username: string): User {
   return {
+    manage_sharing: true,
     id,
     username,
     slug: username.toLowerCase(),

@@ -66,6 +66,7 @@ vi.mock("@/lib/api", () => ({
 /** A users-list row, for the username → display-name resolution the inbox does client-side. */
 function person(username: string, displayName: string): User {
   return {
+    manage_sharing: true,
     id: username.length,
     plex_account_id: 0,
     username,

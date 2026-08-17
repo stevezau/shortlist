@@ -14,6 +14,7 @@ import { UserDetailHeader } from "@/components/user-detail/user-detail-header";
 import { UserNickname } from "@/components/user-detail/user-nickname";
 import { UserRequestTag } from "@/components/user-detail/user-request-tag";
 import { UserRowsSection } from "@/components/user-detail/user-row-card";
+import { UserSharing } from "@/components/user-detail/user-sharing";
 import { WatchHistory } from "@/components/user-detail/watch-history";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -90,6 +91,11 @@ function UserDetailBody({ user }: { user: User }) {
           <section className="space-y-3">
             <SectionHeading>Requests</SectionHeading>
             <UserRequestTag user={user} />
+          </section>
+
+          <section className="space-y-3">
+            <SectionHeading>Plex sharing</SectionHeading>
+            <UserSharing user={user} />
           </section>
 
           <section className="space-y-3">

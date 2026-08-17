@@ -128,6 +128,41 @@ class TestBuildContext:
         assert ctx.curator.name == "none"
         assert ctx.config.dry_run is True
 
+    def test_the_leave_alone_flag_reaches_the_engine_and_is_not_confused_with_disabled(
+        self, service, configured, sessions
+    ):
+        """The one link between `users.manage_sharing` and the code that acts on it.
+
+        Everything else about this feature is tested with `ctx.unmanaged_account_ids` set BY HAND, so
+        an inverted or missing query here would leave every one of those tests green while the switch
+        did nothing on a real server — the "settings PATCH was inert" shape from §12's mutation audit.
+
+        The two flags are asserted together because they are different axes that this builder reads
+        from the same table: the account that is switched OFF must not turn up as left-alone, and the
+        left-alone account must not turn up as disabled. Collapsing them is the specific mistake that
+        would let disabling someone silently stop hiding everyone else's rows from them.
+        """
+        with sessions() as session:
+            session.add_all(
+                [
+                    User(plex_account_id=101, username="managed_on", slug="managed_on", enabled=True),
+                    User(
+                        plex_account_id=102,
+                        username="left_alone",
+                        slug="left_alone",
+                        enabled=True,
+                        manage_sharing=False,
+                    ),
+                    User(plex_account_id=103, username="switched_off", slug="switched_off", enabled=False),
+                ]
+            )
+            session.commit()
+
+        ctx = service.build_context(dry_run=True)
+
+        assert ctx.unmanaged_account_ids == {102}
+        assert ctx.disabled_account_ids == {103}
+
     def test_plex_only_skips_the_clients_a_label_walk_never_touches(self, service, configured, monkeypatch):
         """The reconciles, the pause/disable handlers and the watch sync only ever walk collections
         under a label — but every one of them opened Trakt, Exa, MDBList, the LLM curator and the

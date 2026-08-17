@@ -978,3 +978,39 @@ class TestPickFinishedAtBackfill:
         run_migrations(tmp_path)
 
         assert self._finished(tmp_path, 3) is None
+
+
+class TestManageSharingDefaultsToManaged:
+    """0073 adds `users.manage_sharing`, and its DEFAULT is the whole safety story.
+
+    Every account on an upgrading server must keep having its share filters managed. A column that
+    landed as 0/NULL would, on the first run after the upgrade, strip Shortlist's excludes from
+    EVERY account — the entire server's row privacy, undone by a migration nobody was watching.
+    Asserted against a user row that existed BEFORE the upgrade, because this repo has shipped a
+    migration that was a no-op on every real database (0032).
+    """
+
+    def _seed_user(self, config_dir: Path) -> None:
+        with sqlite3.connect(config_dir / "shortlist.db") as db:
+            db.execute(
+                "INSERT INTO users (id, plex_account_id, username, slug, avatar_url, nickname, friendly_name,"
+                " user_type, restricted, restriction_profile, enabled, cold_start, label, request_tag, prefs)"
+                " VALUES (7, 900, 'kid', 'kid', '', '', '', 'managed', 1, '', 1, 0, 'shortlist_kid', '', '{}')"
+            )
+
+    def test_an_existing_account_is_still_managed_after_the_upgrade(self, tmp_path: Path):
+        command.upgrade(_alembic(tmp_path), "0072")
+        self._seed_user(tmp_path)
+
+        run_migrations(tmp_path)
+
+        with sqlite3.connect(tmp_path / "shortlist.db") as db:
+            assert db.execute("SELECT manage_sharing FROM users WHERE id = 7").fetchone()[0] == 1
+
+    def test_the_column_is_not_nullable_so_no_account_is_ever_undecided(self, tmp_path: Path):
+        run_migrations(tmp_path)
+
+        with sqlite3.connect(tmp_path / "shortlist.db") as db:
+            column = next(c for c in db.execute("PRAGMA table_info(users)") if c[1] == "manage_sharing")
+        assert column[3] == 1  # notnull
+        assert column[4].strip("'") == "1"  # server default
