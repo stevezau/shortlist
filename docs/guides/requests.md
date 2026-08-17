@@ -106,8 +106,31 @@ without asking only if it clears **both** `requests.auto_min_demand` (default 3 
   list, and Shortlist will never auto-send one (the app would refuse the add anyway). The card says
   so; clear it in Radarr/Sonarr first, then approve.
 - **Over the per-run cap** — `requests.max_per_run` auto-worthy titles go per run; the rest wait.
+- **The run never rated it** — when `requests.rating_source` is not `tmdb`, a run only rates as many
+  titles as its lookup budget allows (see below).
 - **Already in Radarr/Sonarr** — the card shows a **Downloaded / Downloading / Searching / Not
   monitored** badge if either app already tracks it, which normally means it was added by hand after
   it landed here. Films drop off the list on the next run. **Shows only drop off on Sonarr v4**,
   because matching them back to the request needs Sonarr's own TMDB id, which v3 doesn't report. On v3
   the badge appears but the entry stays until you clear it yourself.
+
+### Nothing is being requested at all
+
+If runs keep finishing with **0 requested** and the inbox stays empty, the rating gate is rejecting
+everything it managed to rate. The run's stats carry the three numbers that tell you which:
+
+- `requests_pool` — titles that cleared the base floors (`min_demand`, the year window). If this is
+  **0**, those floors are the problem, not the ratings: `requests.min_year` and `requests.min_demand`
+  are the ones to loosen.
+- `requests_examined` — how many of that pool the run actually rated.
+- `requests_lookups` — how many of those cost an MDBList API call. Cached ratings are free.
+
+When `examined` is well below `pool`, the run ran out of lookup budget before it reached anything
+good. That is the case to act on, and it is what `requests.none_qualified` in the event log means.
+Raise `requests.max_per_run` (the budget is 4x it, floor 20) so each run rates more, or lower
+`requests.min_rating`.
+
+Why the two can disagree so sharply: the run rates titles in **demand** order — most-wanted first —
+but judges them on **rating**. On a large library the most-wanted _missing_ titles are often the ones
+nobody thought worth adding, so the top of the list can be the worst-rated part of it, and the titles
+that would pass sit further down. A bigger budget reaches them.

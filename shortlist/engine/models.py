@@ -619,6 +619,14 @@ class RequestReport:
     """Outcome of the whole request pass for one run."""
 
     considered: int = 0  # titles that cleared the rating/vote thresholds
+    # How the run ARRIVED at `considered`, so that a zero can be read. "0 qualifying, 0 auto-sent, 0
+    # queued" is the same sentence whether the base floors emptied the pool, the rating gate rejected
+    # everything it rated, or the gate ran out of lookup budget before reaching anything good — and
+    # for five days in production (2026-08-13..18) it was the third, with nothing anywhere saying so.
+    # Reconstructing it afterwards meant diffing settings timestamps against the rating cache by hand.
+    pool_size: int = 0  # titles that cleared the base floors (demand, year) — what the gate was handed
+    examined: int = 0  # of those, how many the rating gate actually rated
+    lookups_spent: int = 0  # live rating-API calls that cost; cached ratings are free and are not counted
     outcomes: list[RequestOutcome] = field(default_factory=list)
     # Titles handed back for the server to persist as pending so the owner can approve them by hand:
     # those that cleared the base floors but not the auto-send bar (or overflowed max_per_run), PLUS

@@ -159,7 +159,13 @@ class FakeMdbList:
     """Stand-in MDBList client returning preset (rating, votes) by TMDB id, counting lookups.
 
     ``error_on`` raises a generic error for one title (drops just that title); ``rate_limit_after``
-    raises MdbListRateLimitError once that many lookups have happened (drives the TMDB fallback).
+    raises MdbListRateLimitError once that many LIVE lookups have happened (drives the TMDB fallback).
+
+    ``cached`` are the ids whose rating is already in the persistent cache. Modelling it is not
+    optional detail: the real client answers a cached title from SQLite and never calls the API, so a
+    fake that bills every lookup as a request is EASIER than the real thing in the one dimension the
+    budget is spent in — and that is precisely how a five-day production outage passed a green suite
+    (see TestACachedHeadOfTheListMustNotStarveTheGate).
     """
 
     def __init__(
@@ -168,19 +174,29 @@ class FakeMdbList:
         *,
         error_on: int | None = None,
         rate_limit_after: int | None = None,
+        cached: set[int] | None = None,
     ):
         self._ratings = ratings
         self._error_on = error_on
         self._rate_limit_after = rate_limit_after
-        self.calls = 0
+        self._cached = set(cached or ())
+        self.calls = 0  # every lookup asked for, cached or not
+        self.live_lookups = 0  # only those that cost an API call — what the daily quota actually sees
+        self.deferred: dict[int, int] = {}  # tmdb_id -> the TTL the gate asked to hold its score for
 
     def rating(self, tmdb_id: int, media_type: MediaType, source: str) -> tuple[float, int] | None:
         self.calls += 1
-        if self._rate_limit_after is not None and self.calls > self._rate_limit_after:
-            raise MdbListRateLimitError("quota spent")
+        if tmdb_id not in self._cached:
+            self.live_lookups += 1
+            if self._rate_limit_after is not None and self.live_lookups > self._rate_limit_after:
+                raise MdbListRateLimitError("quota spent")
         if tmdb_id == self._error_on:
             raise RuntimeError("MDBList hiccup")
         return self._ratings.get(tmdb_id, (8.0, 500))  # default: a passing score
+
+    def defer_recheck(self, tmdb_id: int, media_type: MediaType, ttl_s: int) -> None:
+        self.deferred[tmdb_id] = ttl_s
+        self._cached.add(tmdb_id)  # as the real cache does: it stays readable, and readable is free
 
 
 class TestCollectMissing:
@@ -1019,21 +1035,29 @@ class TestTheLookupBudgetFollowsTheOwnersRequestCap:
     shape: a hidden number quietly overriding a visible one.
     """
 
-    def test_the_default_cap_is_unchanged(self):
-        """5 x 4 = 20, exactly the old flat value — nobody on defaults sees any difference."""
-        assert requests_mod._lookup_budget(5) == 20
-
     def test_a_raised_cap_raises_the_pool(self):
         """The bug: at max_per_run=40 the old flat 20 could not even supply the run, let alone let
         the rating floors reject anything."""
         assert requests_mod._lookup_budget(40) > 40, "the pool must exceed the cap, or the run cannot fill"
         assert requests_mod._lookup_budget(100) == 400
 
-    def test_a_small_cap_still_gets_a_real_pool(self):
-        """A floor, so max_per_run=1 inspects a sensible pool rather than 4 titles — the gate rejects
-        most of what it sees, so a pool of 4 would usually yield nothing at all."""
-        assert requests_mod._lookup_budget(1) == 20
-        assert requests_mod._lookup_budget(0) == 20
+    def test_a_low_send_rate_does_not_mean_a_shallow_look(self):
+        """`max_per_run` is how many to SEND — everything else qualifying goes to the Waiting inbox.
+        Choosing 3 a night says "add a little to my library", not "and barely look". The floor is what
+        keeps those apart, and at 20 it did not: 20 lookups at the observed ~10% pass rate yield about
+        two qualifying titles, so a modest cap silently meant a run that found nothing at all."""
+        assert requests_mod._lookup_budget(3) == 100
+        assert requests_mod._lookup_budget(1) == 100
+        assert requests_mod._lookup_budget(0) == 100
+
+    def test_the_walk_limit_tracks_the_budget(self):
+        """A flat walk bound becomes the binding constraint the moment the cap goes up — rejects are
+        held for 60 days, so ~60 runs' worth can sit in front of the frontier. That is the same flat
+        number this module has already been bitten by twice."""
+        assert requests_mod._walk_limit(requests_mod._lookup_budget(3)) > 100 * 60
+        assert requests_mod._walk_limit(requests_mod._lookup_budget(100)) > requests_mod._walk_limit(
+            requests_mod._lookup_budget(3)
+        )
 
     @staticmethod
     def _demand(*titles: MissingTitle) -> requests_mod.DemandMap:
@@ -1056,3 +1080,177 @@ class TestTheLookupBudgetFollowsTheOwnersRequestCap:
 
         assert mdblist.calls > 20, "a raised max_per_run must widen the MDBList shortlist past the old flat 20"
         assert mdblist.calls <= requests_mod._lookup_budget(40)
+
+
+class TestACachedHeadOfTheListMustNotStarveTheGate:
+    """Production, 2026-08-10..18: 10,488 titles wanted, `0 qualifying, 0 auto-sent, 0 queued`, every
+    night for five days, and nothing sent to Radarr/Sonarr since the 13th.
+
+    The gate rated the top `_lookup_budget` titles BY DEMAND and stopped there. Ratings cache for a
+    week and the demand ranking barely moves, so the same head was re-inspected every night — the
+    server's own cache showed 18 of 20 slots going to titles already rated and already rejected —
+    while every title that WOULD have cleared the floor sat below the cut and was never looked at.
+
+    The budget exists to protect MDBList's daily quota. A cache hit costs no quota, so billing one
+    against the budget protects nothing and pins the run to the titles it has already rejected. Budget
+    the API calls, and the walk can read straight past a stale head for free.
+
+    The demand-vs-rating mismatch is what makes it permanent rather than unlucky: the shortlist is
+    ordered by how many people want a title, the gate asks how well-rated it is, and on a large server
+    the most-wanted MISSING titles are the ones nobody bothered to add — so the head of the list is
+    systematically the worst-rated part of it.
+    """
+
+    @staticmethod
+    def _demand(*titles: MissingTitle) -> requests_mod.DemandMap:
+        return {(t.tmdb_id, t.media_type): t for t in titles}
+
+    def _cfg_imdb(self, **kw) -> RequestConfig:
+        return _cfg(
+            **{
+                "radarr": RADARR,
+                "rating_source": "imdb",
+                "mdblist_api_key": "k",
+                "max_per_run": 3,
+                "min_rating": 7.3,
+                "min_votes": 100,
+                "min_demand": 1,
+                "auto_min_demand": 1,
+                "auto_min_rating": 7.5,
+                **kw,
+            }
+        )
+
+    def test_a_qualifying_title_below_a_cached_head_is_still_found(self, monkeypatch):
+        """The outage, minimised: 30 cached titles that all fail, one that passes ranked beneath them.
+
+        At `max_per_run=3` the budget is 20, so the old slice never reached title 99 — not on this
+        run, and not on any later one, because the head's ratings stay cached and its demand stays top.
+        """
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        losers = [MissingTitle(i, f"loser{i}", MediaType.MOVIE, 2021, 0.0, 0, demand=100 - i) for i in range(1, 31)]
+        winner = MissingTitle(99, "winner", MediaType.MOVIE, 2021, 0.0, 0, demand=2)
+        ratings: dict[int, tuple[float, int] | None] = {t.tmdb_id: (6.1, 5000) for t in losers}
+        ratings[99] = (8.4, 9000)
+        mdblist = FakeMdbList(ratings, cached={t.tmdb_id for t in losers})
+
+        report = requests_mod.request_missing(
+            self._cfg_imdb(), FakeTmdb(), self._demand(*losers, winner), dry_run=False, mdblist=mdblist
+        )
+
+        assert [m.title for m in report.sent] == ["winner"]
+        assert fake.movie_calls == [(99, False)]
+
+    def test_reading_past_the_cached_head_costs_no_quota(self, monkeypatch):
+        """The daily-cap guard is the reason the budget exists — it must survive the fix intact.
+
+        Only the one uncached title may cost an API call, however far down the list it sits.
+        """
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        losers = [MissingTitle(i, f"loser{i}", MediaType.MOVIE, 2021, 0.0, 0, demand=100 - i) for i in range(1, 61)]
+        winner = MissingTitle(99, "winner", MediaType.MOVIE, 2021, 0.0, 0, demand=2)
+        ratings: dict[int, tuple[float, int] | None] = {t.tmdb_id: (6.1, 5000) for t in losers}
+        ratings[99] = (8.4, 9000)
+        mdblist = FakeMdbList(ratings, cached={t.tmdb_id for t in losers})
+
+        requests_mod.request_missing(
+            self._cfg_imdb(), FakeTmdb(), self._demand(*losers, winner), dry_run=False, mdblist=mdblist
+        )
+
+        assert mdblist.live_lookups == 1, "60 cached titles must not bill a single request against the cap"
+        assert mdblist.calls == 61, "but all 61 must actually have been consulted"
+
+    def test_uncached_titles_still_stop_at_the_budget(self, monkeypatch):
+        """The other half of the guard: when nothing is cached, the walk must stop at the budget and
+        NOT read on through a 10,000-title pool spending a live request on each."""
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        budget = requests_mod._lookup_budget(3)
+        # Flat demand, deliberately: a descending `100 - i` goes non-positive partway down and
+        # `min_demand` then trims the pool below the budget, so the assertion would pass by running
+        # out of titles rather than by the budget stopping the walk.
+        pool = [MissingTitle(i, f"t{i}", MediaType.MOVIE, 2021, 0.0, 0, demand=5) for i in range(1, budget * 3)]
+        mdblist = FakeMdbList({t.tmdb_id: (6.1, 5000) for t in pool})  # nothing cached, nothing passes
+
+        requests_mod.request_missing(self._cfg_imdb(), FakeTmdb(), self._demand(*pool), dry_run=False, mdblist=mdblist)
+
+        assert mdblist.live_lookups == budget
+
+    def test_a_clear_reject_is_not_re_rated_next_week(self, monkeypatch):
+        """Without this the fix undoes itself in about a week.
+
+        Everything rated is cached for 7 days, so in a steady state the titles expiring each night
+        equal the titles rated each night — which is the budget. The whole allowance would go back to
+        re-rating the same high-demand rejects and the walk would stop advancing again. A title far
+        below the bar is held much longer; a near miss keeps the weekly re-check, because that is the
+        one that can actually cross.
+        """
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        hopeless = MissingTitle(1, "hopeless", MediaType.MOVIE, 2021, 0.0, 0, demand=9)
+        near_miss = MissingTitle(2, "near miss", MediaType.MOVIE, 2021, 0.0, 0, demand=8)
+        mdblist = FakeMdbList({1: (5.0, 5000), 2: (7.1, 5000)})  # floor is 7.3
+
+        requests_mod.request_missing(
+            self._cfg_imdb(), FakeTmdb(), self._demand(hopeless, near_miss), dry_run=False, mdblist=mdblist
+        )
+
+        assert mdblist.deferred == {1: requests_mod._REJECT_RECHECK_TTL_S}
+        assert 2 not in mdblist.deferred, "a title 0.2 off the bar must still be re-checked weekly"
+
+    def test_a_deferred_title_is_still_admitted_when_the_floor_drops(self, monkeypatch):
+        """Deferral holds the SCORE, not a verdict — so lowering min_rating admits it next run, free."""
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        title = MissingTitle(1, "held", MediaType.MOVIE, 2021, 0.0, 0, demand=9)
+        mdblist = FakeMdbList({1: (6.0, 5000)})
+        requests_mod.request_missing(self._cfg_imdb(), FakeTmdb(), self._demand(title), dry_run=False, mdblist=mdblist)
+        assert mdblist.deferred and not fake.movie_calls  # rejected at 7.3, and its score is held
+
+        report = requests_mod.request_missing(
+            self._cfg_imdb(min_rating=5.5, auto_min_rating=5.5),
+            FakeTmdb(),
+            self._demand(MissingTitle(1, "held", MediaType.MOVIE, 2021, 0.0, 0, demand=9)),
+            dry_run=False,
+            mdblist=mdblist,
+        )
+
+        assert [m.title for m in report.sent] == ["held"]
+        assert mdblist.live_lookups == 1, "the second run must read the held score, not re-buy it"
+
+    def test_the_free_walk_is_still_bounded(self, monkeypatch):
+        """Cache hits are free but not instant — each is a local read. A pool whose head is an
+        unbounded run of cached titles must still terminate rather than scan the lot."""
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        limit = requests_mod._walk_limit(requests_mod._lookup_budget(3))
+        pool = [MissingTitle(i, f"t{i}", MediaType.MOVIE, 2021, 0.0, 0, demand=1) for i in range(1, limit + 200)]
+        mdblist = FakeMdbList({t.tmdb_id: (6.1, 5000) for t in pool}, cached={t.tmdb_id for t in pool})
+
+        report = requests_mod.request_missing(
+            self._cfg_imdb(), FakeTmdb(), self._demand(*pool), dry_run=False, mdblist=mdblist
+        )
+
+        assert mdblist.calls == limit
+        assert report.examined == limit
+
+    def test_zero_qualifying_says_how_far_it_looked(self, monkeypatch):
+        """The second half of the outage: it was SILENT. `0 qualifying, 0 auto-sent, 0 queued` is the
+        same sentence whether the floors emptied the pool or the gate never reached the good titles,
+        and neither the run stats nor the inbox carried the difference — the only way to tell them
+        apart was reading the container's log by hand."""
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        pool = [MissingTitle(i, f"t{i}", MediaType.MOVIE, 2021, 0.0, 0, demand=100 - i) for i in range(1, 51)]
+        mdblist = FakeMdbList({t.tmdb_id: (6.1, 5000) for t in pool}, cached={t.tmdb_id for t in pool})
+
+        report = requests_mod.request_missing(
+            self._cfg_imdb(), FakeTmdb(), self._demand(*pool), dry_run=False, mdblist=mdblist
+        )
+
+        assert report.considered == 0
+        assert report.pool_size == 50, "how many titles cleared the base floors"
+        assert report.examined == 50, "how many the rating gate actually rated"
+        assert report.lookups_spent == 0, "and what that cost against the daily cap"

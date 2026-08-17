@@ -54,6 +54,10 @@ class MdbListClient:
         self._api_key = api_key
         self._cache = cache or NullCache()
         self._timeout = timeout
+        # Lookups that actually cost an API call. The daily quota is spent here and NOWHERE else — a
+        # cached title is answered from SQLite — so this, not the number of titles inspected, is what
+        # a caller rationing the free tier has to budget against. See `requests._gate_by_source`.
+        self.live_lookups = 0
 
     def rating(self, tmdb_id: int, media_type: MediaType, source: str) -> tuple[float, int] | None:
         """(rating 0..10, votes) for ``source`` on this title, or None if that source has no score.
@@ -67,12 +71,28 @@ class MdbListClient:
         if cached is not None:
             by_source = json.loads(cached)
         else:
+            # Counted BEFORE the call, and regardless of how it turns out: a request that 404s or
+            # times out has still been billed against the daily allowance.
+            self.live_lookups += 1
             by_source = self._fetch_all(tmdb_id, media_type)
             if by_source is None:
                 return None
             self._cache.set(key, json.dumps(by_source), RATING_CACHE_TTL_S)
         entry = by_source.get(source)
         return (entry[0], entry[1]) if entry else None
+
+    def defer_recheck(self, tmdb_id: int, media_type: MediaType, ttl_s: int) -> None:
+        """Keep this title's already-cached ratings for ``ttl_s`` instead of the usual week.
+
+        Re-stamps the TTL on what is already stored; it never fetches, so it costs no quota and
+        cannot change a stored score. For a caller that has just judged a title far short of its bar
+        and does not want to pay to re-ask soon — see ``requests._gate_by_source``. A title with
+        nothing cached is left alone (there is no verdict to hold on to).
+        """
+        key = f"{media_type.value}:{tmdb_id}"
+        cached = self._cache.get(key)
+        if cached is not None:
+            self._cache.set(key, cached, ttl_s)
 
     def _fetch_all(self, tmdb_id: int, media_type: MediaType) -> dict[str, list] | None:
         """Fetch every source's (rating, votes) for one title, normalised to a 0..10 scale.

@@ -216,6 +216,51 @@ def _mdblist_quota(session: Session) -> dict | None:
     }
 
 
+def _requests_found_nothing(session: Session) -> dict | None:
+    """Recent runs wanted titles but the rating gate passed none of them, so nothing reached
+    Sonarr/Radarr and nothing reached the inbox either.
+
+    This is the one request outcome with no trace anywhere the owner looks: a run that sends nothing
+    and queues nothing shows "0 requested" on a green run, which is also what a run with nothing to
+    do shows. It went unnoticed for five days in production. Fires only after TWO runs, so a single
+    quiet night — genuinely common — never nags.
+    """
+    since = datetime.now(UTC) - timedelta(days=3)
+    events = (
+        session.query(Event)
+        .filter(Event.scope == "requests.none_qualified", Event.ts >= since)
+        .order_by(Event.ts.desc())
+        .limit(5)
+        .all()
+    )
+    if len(events) < 2:
+        return None
+    latest = events[0]
+    data = latest.message if isinstance(latest.message, dict) else {}
+    pool, examined = data.get("pool_size", 0), data.get("examined", 0)
+    # Two different problems wearing the same "0 requested". Only one is about the rating floor.
+    if data.get("exhausted_pool"):
+        body = (
+            f"The last {len(events)} runs rated every one of the {pool} titles people wanted, and none "
+            "cleared your minimum rating. Lower it, or widen the year range, to let some through."
+        )
+    else:
+        body = (
+            f"The last {len(events)} runs got through {examined} of the {pool} titles people wanted "
+            "before running out of rating lookups, and none of those cleared your minimum rating. "
+            "Raise how many to auto-request per run so each run looks further, or lower the minimum."
+        )
+    return {
+        "id": f"requests-none-qualified-{latest.ts.date().isoformat()}",
+        "severity": "warning",
+        "title": "Nothing is being requested",
+        "body": body,
+        "action_url": "/settings#requests",
+        "action_label": "Requests settings",
+        "dismissable": True,
+    }
+
+
 def _owner_sees_all_rows(session: Session) -> dict | None:
     """The owner has per-person rows on a library's Recommended shelf, so their own shelf shows
     everyone's row — Plex hides rows through each person's SHARE, and the owner has no share.
@@ -463,6 +508,7 @@ def build_notifications(session: Session, store: SettingsStore, current_version:
         _last_run_problem(session),
         _failed_jobs(session),
         _mdblist_quota(session),
+        _requests_found_nothing(session),
         _recent_service_errors(session),
         _rows_with_no_name_for_newcomers(session, store),
         _rows_we_cannot_hide(session),

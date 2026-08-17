@@ -26,27 +26,69 @@ from shortlist.engine.models import (
     RequestWhy,
 )
 
-# When gating on a non-TMDB source, only the top-by-demand candidates are looked up on MDBList per
-# run, so a large missing pool can't blow the daily cap (each title's whole rating set is also cached,
-# so re-runs mostly hit the cache). DERIVED from the owner's own `requests.max_per_run`, never a flat
-# number: the gate exists to reject most of what it inspects, so the pool it inspects has to be a
-# multiple of what the run may actually send, or the run cannot fill.
+# When gating on a non-TMDB source, only so many candidates are rated on MDBList per run, so a large
+# missing pool can't blow the daily cap (each title's whole rating set is cached, so re-runs mostly
+# hit the cache). It scales with `requests.max_per_run` so that raising the cap really does let a run
+# look harder — but it does NOT bottom out at the cap, and that floor is the important part.
 #
-# It WAS a flat 20, described as "a generous multiple of the request cap" — which it was at the
-# default cap of 5, and was not above 20, where `max_per_run` is accepted all the way to 100 and was
-# then silently capped at 20. The TMDB path (`_gate_by_tmdb`) filters the whole pool and has never had
-# a limit, so the same setting meant two different things depending on the rating source, with nothing
-# saying so. `_MIN_LOOKUP_POOL` keeps the default behaviour byte-identical (5 x 4 = 20).
+# `max_per_run` means "how many to auto-send per run"; everything qualifying beyond it overflows into
+# the Waiting inbox rather than being lost. So it is a SEND rate, and the owner sets it low on purpose
+# — 3 a night is a perfectly sane answer to "how much should this add to my library". Deriving the
+# evaluation depth from it alone made a modest send rate also mean "and barely look", which is not
+# what the setting says and not what anyone choosing 3 is asking for. The floor is what keeps the two
+# apart: a run figures out the field properly, sends `max_per_run` of it, and queues the rest.
 #
-# The MDBList quota is protected by the rate-limit fallback below (a 429 stops the gate, falls back to
-# TMDB for the whole run and raises an owner notification), not by quietly honouring a smaller number
-# than the owner asked for.
+# The floor WAS 20, chosen to keep the then-default (5 x 4) byte-identical. In production that turned
+# out to be far too shallow: at the observed ~10% pass rate, 20 lookups yield ~2 qualifying titles,
+# and against a pool of thousands the run simply never saw anything good (2026-08-13..18, five days
+# at `0 qualifying`). 100 costs ~10% of MDBList's free daily allowance for a nightly run and gives
+# the gate enough to actually find something.
+#
+# The quota is protected by the rate-limit fallback below (a 429 stops the gate, falls back to TMDB
+# for the whole run and raises an owner notification), not by quietly honouring a smaller number than
+# the owner asked for.
 _LOOKUP_HEADROOM = 4
-_MIN_LOOKUP_POOL = 20
+_MIN_LOOKUP_POOL = 100
+
+
+def _walk_limit(budget: int) -> int:
+    """A hard stop on how far the gate will WALK, distinct from what it may SPEND.
+
+    Quota is capped by ``_lookup_budget``; this only bounds the pathological pool whose head is
+    thousands of already-cached titles, where every step is a cheap local read and the loop would
+    otherwise scan the lot.
+
+    Derived from the budget, never flat, because rejects are deliberately held for
+    ``_REJECT_RECHECK_TTL_S`` — so up to one run's budget per day of them can pile up in front of the
+    frontier, and a flat bound would become the new binding constraint the moment the owner raised
+    the cap. That is the same shape as the flat 20 this module has already been bitten by twice.
+    """
+    return budget * (_REJECT_RECHECK_TTL_S // (24 * 3600) + 1)
+
+
+# How long a title that missed the rating floor by MORE than `_NEAR_MISS` keeps its cached score,
+# instead of the usual week. This is what stops the starvation fix from undoing itself.
+#
+# Ratings cache for 7 days, so in a steady state the number of titles expiring each night equals the
+# number rated each night, which equals the budget — the whole allowance would go on re-rating the
+# same high-demand rejects and the walk would stop advancing again, about a week after the fix. A
+# title 0.5 below the bar does not climb over it in a week, so re-asking is pure cost. Near misses
+# are deliberately NOT deferred: those are the ones that genuinely can cross, so they keep the normal
+# weekly re-check.
+#
+# It defers RE-FETCHING, never the verdict: the score stays readable, so lowering `min_rating` still
+# admits a deferred title on the very next run, for free.
+_NEAR_MISS = 0.5
+_REJECT_RECHECK_TTL_S = 60 * 24 * 3600
 
 
 def _lookup_budget(max_per_run: int) -> int:
-    """How many candidates may be rated on MDBList this run, from the owner's own request cap."""
+    """How many BILLABLE MDBList lookups this run may spend, from the owner's own request cap.
+
+    A budget of calls, not of titles: cached ratings cost nothing and are walked past for free (see
+    ``_gate_by_source``), so this is the number of titles the run may rate that it has not rated
+    recently — which is what MDBList's daily allowance actually meters.
+    """
     return max(_MIN_LOOKUP_POOL, max(0, max_per_run) * _LOOKUP_HEADROOM)
 
 
@@ -184,10 +226,13 @@ def request_missing(
     # Then the rating gate, from whichever source the owner chose (it ranks the survivors too). A
     # non-TMDB source needs MDBList; if it isn't available, or its quota runs out mid-gate, we fall
     # back to TMDB so the run still completes (and flag it so the owner is told — see _gate_by_source).
+    report.pool_size = len(pool)
     if cfg.rating_source != "tmdb" and mdblist is not None:
         qualifying = _gate_by_source(cfg, mdblist, pool, report)
     else:
         qualifying = _gate_by_tmdb(cfg, pool)
+        # The TMDB path rates from data already in hand: it reads the whole pool and bills nothing.
+        report.examined, report.lookups_spent = len(pool), 0
     report.considered = len(qualifying)
 
     # Build the Arr clients once (reused for the state check below and the send), then reconcile the
@@ -267,7 +312,28 @@ def request_missing(
         )
 
     if not auto:
-        logger.info("requests: {} qualifying, 0 auto-sent, {} queued for approval", len(qualifying), len(report.queued))
+        # Say how far it LOOKED, not just what it found. A bare "0 qualifying" reads identically
+        # whether the floors emptied the pool, the gate rejected everything it rated, or it ran out of
+        # budget before reaching anything good — and the third is the one the owner can act on.
+        logger.info(
+            "requests: {} qualifying, 0 auto-sent, {} queued for approval "
+            "({} past the floors, {} rated, {} live lookups; floors: rating>={} votes>={})",
+            len(qualifying),
+            len(report.queued),
+            report.pool_size,
+            report.examined,
+            report.lookups_spent,
+            cfg.min_rating,
+            cfg.min_votes,
+        )
+        if report.pool_size and not report.considered and report.examined < report.pool_size:
+            logger.warning(
+                "requests: the rating gate stopped {} titles into a pool of {} — nothing it rated "
+                "cleared rating>={}. Raise requests.max_per_run to rate more per run, or lower the floor.",
+                report.examined,
+                report.pool_size,
+                cfg.min_rating,
+            )
         return report
 
     report.outcomes = _send(
@@ -433,31 +499,60 @@ def _gate_by_tmdb(cfg: RequestConfig, pool: list[MissingTitle]) -> list[MissingT
     return qualifying
 
 
+def _live_lookups(mdblist: object) -> int | None:
+    """Billable calls this rating client has made so far, or None if it cannot report its own spend.
+
+    None falls the caller back to billing every inspection — the behaviour before 2026-08-18, which
+    is merely over-cautious rather than wrong. Only a client that doesn't track its spend takes it.
+    """
+    value = getattr(mdblist, "live_lookups", None)
+    return value if isinstance(value, int) else None
+
+
 def _gate_by_source(
     cfg: RequestConfig, mdblist: MdbListClient, pool: list[MissingTitle], report: RequestReport
 ) -> list[MissingTitle]:
     """Keep titles clearing the chosen MDBList source's rating/vote floors, ranked by demand then score.
 
-    Only a shortlist (top by demand, then TMDB score as a cheap proxy) is looked up, so a big missing
-    pool stays well under MDBList's daily cap — and every source is cached per title, so re-runs mostly
-    hit the cache. Its size comes from ``max_per_run`` (see ``_lookup_budget``) rather than a flat
-    number, so raising the request cap raises what this may inspect instead of silently capping the
-    run below the figure the owner set. A lookup that fails or has no score for this source just
-    drops that title. If the
-    daily quota runs out mid-gate, we stop, flag the run, and fall back to TMDB for the WHOLE pool so
-    the run still completes (the owner is alerted from the flag).
+    Walks the demand-ranked pool and rates titles until ``_lookup_budget`` LIVE lookups have been
+    spent, so a big missing pool stays well under MDBList's daily cap. A lookup that fails or has no
+    score for this source just drops that title. If the daily quota runs out mid-gate, we stop, flag
+    the run, and fall back to TMDB for the WHOLE pool so the run still completes (the owner is alerted
+    from the flag).
+
+    The budget counts API CALLS, not titles inspected, and the difference is the whole point. Ratings
+    cache for a week (``RATING_CACHE_TTL_S``) and the demand ranking barely moves between nights, so
+    the head of this list is mostly titles already rated on an earlier run. Charging those cache hits
+    against the budget — which is what taking a fixed ``[:budget]`` slice did — spent the allowance
+    re-reading the same rejects every night and never reached the titles below them. In production
+    that stuck at ``0 qualifying`` for five days across 10,488 wanted titles, and the ranking makes it
+    permanent rather than unlucky: the list is ordered by how many people want a title while the gate
+    asks how well-rated it is, and on a big server the most-wanted MISSING titles are exactly the ones
+    nobody thought worth adding. Reading past a stale head costs nothing, so it is no longer paid for.
     """
     source = cfg.rating_source
     enforce_votes = source in VOTE_SOURCES  # RT/Metacritic are critic scores — no audience-vote floor
     budget = _lookup_budget(cfg.max_per_run)
-    shortlist = sorted(pool, key=lambda m: (m.demand, m.rating, m.vote_count), reverse=True)[:budget]
+    ranked = sorted(pool, key=lambda m: (m.demand, m.rating, m.vote_count), reverse=True)
+    start = _live_lookups(mdblist)
     scored: list[tuple[MissingTitle, float, int]] = []
-    for title in shortlist:
+    examined = 0
+
+    def spent() -> int:
+        now = _live_lookups(mdblist)
+        return examined if start is None or now is None else now - start
+
+    walk_limit = _walk_limit(budget)
+    for title in ranked:
+        if spent() >= budget or examined >= walk_limit:
+            break
+        examined += 1
         try:
             score = mdblist.rating(title.tmdb_id, title.media_type, source)
         except MdbListRateLimitError:
             logger.warning("MDBList daily limit reached — falling back to TMDB ratings for this run")
             report.ratings_rate_limited = True
+            report.examined, report.lookups_spent = examined, spent()
             return _gate_by_tmdb(cfg, pool)
         except Exception as e:  # a single lookup hiccup drops that title, never the whole gate
             logger.warning("{} rating lookup for {!r} failed: {}", source, title.title, e)
@@ -471,6 +566,11 @@ def _gate_by_source(
             title.rating = rating
             title.vote_count = votes
             scored.append((title, rating, votes))
+        elif rating < cfg.min_rating - _NEAR_MISS:
+            # Nowhere near the bar. Hold the score so next week's run reads it for free instead of
+            # spending one of its lookups re-learning the same answer (see _REJECT_RECHECK_TTL_S).
+            mdblist.defer_recheck(title.tmdb_id, title.media_type, _REJECT_RECHECK_TTL_S)
+    report.examined, report.lookups_spent = examined, spent()
     scored.sort(key=lambda row: (row[0].demand, row[1], row[2]), reverse=True)
     return [title for title, _, _ in scored]
 

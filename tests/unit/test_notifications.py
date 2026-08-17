@@ -187,6 +187,51 @@ class TestMdblistQuota:
         assert notif._mdblist_quota(session) is None
 
 
+class TestRequestsFoundNothing:
+    """A run that sends nothing AND queues nothing looked exactly like a run with nothing to do:
+    "0 requested" on a green run, no inbox rows, no event. Production sat that way for five days."""
+
+    @staticmethod
+    def _event(**message):
+        return Event(scope="requests.none_qualified", level="warning", ts=datetime.now(UTC), message=message)
+
+    def test_does_not_fire_for_a_single_quiet_night(self, session):
+        """One run finding nothing is ordinary — nagging about it would train the owner to ignore it."""
+        session.add(self._event(pool_size=400, examined=100, exhausted_pool=False))
+        session.commit()
+
+        assert notif._requests_found_nothing(session) is None
+
+    def test_tells_the_owner_to_look_further_when_the_gate_ran_out(self, session):
+        session.add_all([self._event(pool_size=400, examined=100, exhausted_pool=False) for _ in range(2)])
+        session.commit()
+
+        result = notif._requests_found_nothing(session)
+
+        assert result["severity"] == "warning"
+        assert "100 of the 400" in result["body"]
+        assert "looks further" in result["body"], "the actionable half: the gate never saw the rest"
+
+    def test_blames_the_floor_when_the_whole_pool_was_rated(self, session):
+        """The other shape of the same zero — everything WAS rated and none of it was good enough.
+        Telling this owner to raise max_per_run would be advice that cannot possibly work."""
+        session.add_all([self._event(pool_size=40, examined=40, exhausted_pool=True) for _ in range(2)])
+        session.commit()
+
+        body = notif._requests_found_nothing(session)["body"]
+
+        assert "rated every one of the 40" in body
+        assert "looks further" not in body
+
+    def test_does_not_fire_for_events_older_than_the_window(self, session):
+        old = datetime.now(UTC) - timedelta(days=5)
+        for _ in range(3):
+            session.add(Event(scope="requests.none_qualified", level="warning", ts=old, message={}))
+        session.commit()
+
+        assert notif._requests_found_nothing(session) is None
+
+
 class TestFailedJobs:
     def test_fires_when_a_job_exhausts_its_retries(self, session):
         job = Job(kind="user.cleanup", status="failed")

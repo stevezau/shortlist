@@ -647,6 +647,24 @@ def _emit_request_events(session: Session, run_id: int, report) -> None:
             _add_event(session, "requests.incomplete_config", "warning", run_id, dry_run=report.dry_run, detail=msg)
     if report.requests is not None and report.requests.ratings_rate_limited:
         _add_event(session, "requests.rate_limited", "warning", run_id, dry_run=report.dry_run)
+    # A run that asked for nothing used to emit nothing at all, so "Shortlist has sent Radarr nothing
+    # for five days" left no trace in the app — the only record was a single INFO line in the
+    # container log. Record the shape of the zero: how many titles cleared the base floors, how many
+    # the rating gate got to rate, and what that cost. A gate that stopped short of the pool is the
+    # actionable case (raise max_per_run / lower the floor); one that rated everything and still
+    # passed nothing means the floors themselves are too high for this library.
+    if report.requests is not None and report.requests.pool_size and not report.requests.considered:
+        _add_event(
+            session,
+            "requests.none_qualified",
+            "warning",
+            run_id,
+            dry_run=report.dry_run,
+            pool_size=report.requests.pool_size,
+            examined=report.requests.examined,
+            lookups_spent=report.requests.lookups_spent,
+            exhausted_pool=report.requests.examined >= report.requests.pool_size,
+        )
     if report.requests is None or not report.requests.outcomes:
         return
     _add_event(
@@ -755,6 +773,11 @@ def _finalize_run(
         "titles_removed": titles_removed,
         "titles_requested": report.requests.requested if report.requests else 0,
         "requests_warnings": report.requests.warnings if report.requests else [],
+        # What "0 requested" was arrived at from — see RequestReport. Kept beside the count because a
+        # zero on its own is unreadable, and the run page is where it gets read.
+        "requests_pool": report.requests.pool_size if report.requests else 0,
+        "requests_examined": report.requests.examined if report.requests else 0,
+        "requests_lookups": report.requests.lookups_spent if report.requests else 0,
         "llm_tokens": sum(u.llm_tokens for u in report.users),
         "llm_tokens_by_step": tokens_by_step,
         "exa_searches": sum(u.exa_searches for u in report.users),
