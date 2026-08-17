@@ -91,6 +91,17 @@ _ERROR_LINES = 40
 _LABEL_PREFIX = "shortlist_"
 
 
+def _per_person_excludes(row: dict) -> list[str]:
+    """The Shortlist excludes on one account that "leave their sharing alone" would actually remove.
+
+    A restricted shared row's `shortlist__shared_*` exclude is deliberately kept, so it is not
+    evidence that a removal is owed. `_is_ours` matches on `shortlist_`, which a shared label also
+    starts with — the same collision that made the writer strip them in the first place.
+    """
+    shared = SHARED_LABEL_PREFIX.lower()
+    return [v for v in row["shortlist_excludes"] if not unquote(v).lower().startswith(shared)]
+
+
 def _is_ours(value: str) -> bool:
     """Is this filter value one of Shortlist's own labels?
 
@@ -2030,8 +2041,12 @@ async def sharing(request: Request) -> dict:
             # the same thing while a write is owed or permanently refused (a parental profile makes
             # plex.tv reject the removal for ever). Reporting intent as fact here would re-create
             # exactly what the comment at the top of this function exists to prevent.
-            cleared = [r["user"] for r in rows if not r["manage_sharing"] and not r["shortlist_excludes"]]
-            still_held = [r for r in rows if not r["manage_sharing"] and r["shortlist_excludes"]]
+            # PER-PERSON excludes only, matching what the writer actually removes. A restricted
+            # shared row's exclude is KEPT on purpose (`privacy.clear_our_excludes`), so counting it
+            # here reports a correct state as a permanent failure — and worse, makes the genuinely
+            # stuck case (a 422'd removal) indistinguishable from the normal one.
+            cleared = [r["user"] for r in rows if not r["manage_sharing"] and not _per_person_excludes(r)]
+            still_held = [r for r in rows if not r["manage_sharing"] and _per_person_excludes(r)]
             if cleared:
                 block.line(
                     f"Left alone by choice, so they hide nothing and can see other people's rows: "
@@ -2040,7 +2055,7 @@ async def sharing(request: Request) -> dict:
                 if len(cleared) > 8:
                     block.line(f"  …and {len(cleared) - 8} more")
             for row in still_held[:8]:
-                held = ", ".join(row["shortlist_excludes"][:6])
+                held = ", ".join(_per_person_excludes(row)[:6])
                 block.line(f"{row['user']} (#{row['account_id']}) is set to be left alone, but our exclusions are")
                 block.line(f"  STILL on this account — the removal has not gone through: {held}")
             if len(still_held) > 8:

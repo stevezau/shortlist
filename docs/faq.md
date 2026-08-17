@@ -34,8 +34,9 @@ Yes, and it has to. Plex shows a collection to anyone who isn't explicitly told 
 Shortlist only touched the accounts you gave rows to, **everyone else would see those private
 rows**.
 
-So it adds hide-this-label rules to every account your server is shared with. Nothing else in their
-settings is touched. Shortlist reads what's there, adds only its own entries, and leaves the rest
+So it adds hide-this-label rules to every account your server is shared with — unless you've asked
+it to leave one alone, which you can do per person if their own Plex restrictions clash with ours.
+Nothing else in their settings is touched. Shortlist reads what's there, adds only its own entries, and leaves the rest
 exactly as they were. The original is saved first, and Uninstall restores all of them.
 
 ## Do I get a row myself?
