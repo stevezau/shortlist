@@ -4,6 +4,37 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [1.6.1] - 2026-08-17
+
+### Added
+
+- **Leave one person's Plex sharing settings alone**
+  ([#92](https://github.com/stevezau/shortlist/discussions/92)). To keep each row private, Shortlist
+  adds label exclusions to every other account's Plex restrictions — which is right until it collides
+  with a restriction you set yourself. The case that surfaced it: a child's managed account with an
+  **allow only** label list, where the whole point is that the account sees nothing but the labels you
+  named, and Shortlist's exclusions were fighting it. Switching that person off in Shortlist did not
+  help, because off means "no row for them", not "stop touching their account".
+
+  Open the person, go to **Settings → Plex sharing**, and turn off **Manage their Plex sharing
+  settings**. Shortlist takes back out the exclusions it added and never touches that account again;
+  the Users list badges them **Sharing untouched** so it is visible at a glance, and Support → Sharing
+  lists them separately rather than reporting them as a fault. Said plainly at the switch: that
+  account can then see other people's rows, unless — as with an allow-only list — its own Plex
+  restrictions already keep it away from them.
+
+  Two things stay true regardless. Everyone else still hides *that* person's row, so leaving one
+  account alone never makes their row public. And a **shared row you have limited to certain people**
+  stays hidden from them: that exclusion is the only thing keeping the row away from people you did
+  not pick, so removing it would undo a choice you made on the row itself. The trade-off to know is
+  that later changes to who a shared row is for stop reaching a left-alone account — turn management
+  back on if you need them picked up.
+
+### Changed
+
+- Frontend dependencies bumped (lucide-react, sonner, eslint, typescript-eslint, testing-library),
+  and the CI checkout action brought in line with the rest of the workflow.
+
 ## [1.6.0] - 2026-08-17
 
 ### Added
