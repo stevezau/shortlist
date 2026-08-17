@@ -15,6 +15,7 @@ import httpx
 import pytest
 import respx
 
+from shortlist.engine.clients import arr as arr_mod
 from shortlist.engine.clients.arr import ArrError, RadarrClient, SonarrClient
 from shortlist.engine.models import ArrTarget
 
@@ -550,3 +551,39 @@ class TestArrQueuePaging:
 
         assert status[11] == "queued"  # 11 never appeared in any page, so no crash — just not found
         assert RadarrClient(RADARR)._MAX_QUEUE_PAGES == 50
+
+
+class TestTheWriteClockBelongsToTheServer:
+    """Audit round 6, 2026-08-18: per-row request settings mean several clients can point at ONE
+    Radarr with different root folders. A rate limiter each would multiply the write rate to that
+    server by the number of rows — the opposite of what plex-safety rule 6 asks for."""
+
+    def test_two_clients_on_one_server_share_a_clock(self, monkeypatch):
+        waits: list[float] = []
+        monkeypatch.setattr(
+            arr_mod.http_retry,
+            "throttle",
+            lambda last, interval, on_wait=None: (waits.append(interval - last), 10.0)[1],
+        )
+        clock = [0.0]
+        kids = ArrTarget(url="http://radarr", api_key="k", quality_profile_id=9, root_folder="/kids")
+        main = ArrTarget(url="http://radarr", api_key="k", quality_profile_id=1, root_folder="/movies")
+
+        a = RadarrClient(kids, min_write_interval=1.0, write_clock=clock)
+        b = RadarrClient(main, min_write_interval=1.0, write_clock=clock)
+        a._throttle()
+        b._throttle()
+
+        # The second client saw the first one's write, so it spaced itself against it.
+        assert clock == [10.0]
+        assert waits[1] == 1.0 - 10.0, "the second client throttled against the shared clock"
+
+    def test_a_lone_client_still_owns_its_clock(self):
+        """Nothing else in the codebase passes one, so the default must keep working unchanged."""
+        target = ArrTarget(url="http://radarr", api_key="k", quality_profile_id=1, root_folder="/m")
+        assert RadarrClient(target)._write_clock == [0.0]
+
+    def test_clients_on_different_servers_do_not_share(self):
+        one = RadarrClient(ArrTarget(url="http://a", api_key="k", quality_profile_id=1, root_folder="/m"))
+        two = RadarrClient(ArrTarget(url="http://b", api_key="k", quality_profile_id=1, root_folder="/m"))
+        assert one._write_clock is not two._write_clock

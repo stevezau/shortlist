@@ -196,6 +196,80 @@ def _within_year_window(year: int | None, min_year: int, max_year: int) -> bool:
     return (min_year <= 0 or year >= min_year) and (max_year <= 0 or year <= max_year)
 
 
+def _gate_rows(
+    rows: list[RowRequest],
+    handled: set[tuple[int, str]],
+    report: RequestReport,
+    *,
+    mdblist: MdbListClient | None,
+    budget: int,
+) -> list[tuple[str, RequestConfig, list[MissingTitle]]]:
+    """Apply each row's base floors and then its rating gate, sharing one lookup budget between them.
+
+    Each row gets an even share of what is LEFT rather than a fixed slice, so a row that spends
+    little hands the rest on automatically — the same redistribution the slot allocator does.
+
+    A spent MDBList quota (``ratings_rate_limited``) short-circuits every LATER row straight to TMDB:
+    the allowance is gone for the day, so asking again can only produce another 429. Without it each
+    row fired its own doomed request and logged its own "daily limit reached", turning one event into
+    N wasted calls against an API already refusing us.
+    """
+    gated: list[tuple[str, RequestConfig, list[MissingTitle]]] = []
+    for index, row in enumerate(rows):
+        pool = [
+            m
+            for m in row.demand.values()
+            if (m.tmdb_id, str(m.media_type)) not in handled
+            and m.demand >= row.cfg.min_demand
+            and _within_year_window(m.year, row.cfg.min_year, row.cfg.max_year)
+        ]
+        report.pool_size += len(pool)
+        report.pool_by_row[row.slug] = len(pool)
+        share = -(-(budget - report.lookups_spent) // (len(rows) - index))  # ceiling division
+        before_examined = report.examined
+        if row.cfg.rating_source != "tmdb" and mdblist is not None and not report.ratings_rate_limited:
+            qualifying = _gate_by_source(row.cfg, mdblist, pool, report, budget=share)
+        else:
+            qualifying = _gate_by_tmdb(row.cfg, pool)
+            report.examined += len(pool)  # the TMDB gate reads the whole pool and bills nothing
+        report.examined_by_row[row.slug] = report.examined - before_examined
+        gated.append((row.slug, row.cfg, qualifying))
+    return gated
+
+
+def _auto_eligible(
+    cfg: RequestConfig, survivors: list[MissingTitle], blocked: Counter[str]
+) -> tuple[list[MissingTitle], list[MissingTitle]]:
+    """Split one row's qualifying titles into ``(eligible, held_back)`` on its auto-send bar.
+
+    Both lists are returned rather than deriving one from the other by membership: ``MissingTitle`` is
+    a plain dataclass, so ``in`` compares by VALUE, and two distinct titles that happen to match
+    field-for-field would collapse into one.
+
+    The run cap is deliberately NOT applied here: allocation decides who gets the slots, so no row can
+    fill the cap before another has been considered. A held-back title keeps its reason ON itself —
+    that is what the DB row and the run trace carry, and the only answer to "why didn't THIS one go?".
+    """
+    eligible: list[MissingTitle] = []
+    held_back: list[MissingTitle] = []
+    for m in survivors:  # already ranked best-first by the gate
+        if not cfg.auto_send:
+            reason = "auto-send is off"
+        elif m.excluded:
+            reason = "on an Arr exclusion list"
+        elif m.demand < cfg.auto_min_demand:
+            reason = f"demand below auto_min_demand ({cfg.auto_min_demand})"
+        elif m.rating < cfg.auto_min_rating:
+            reason = f"rating below auto_min_rating ({cfg.auto_min_rating})"
+        else:
+            eligible.append(m)
+            continue
+        blocked[reason] += 1
+        m.detail = reason
+        held_back.append(m)
+    return eligible, held_back
+
+
 class RowRequest(NamedTuple):
     """One row's slice of the request pass: its slug, its effective config, and its own demand map."""
 
@@ -233,29 +307,7 @@ def request_missing(
     handled = already_handled or set()
     budget = _lookup_budget(base_cfg.max_per_run)
 
-    # 1. Floors, then the rating gate, per row. Each row gets an even share of what is LEFT of the
-    #    budget rather than a fixed slice, so a row that spends little hands the rest on automatically.
-    gated: list[tuple[str, RequestConfig, list[MissingTitle]]] = []
-    for index, row in enumerate(rows):
-        pool = [
-            m
-            for m in row.demand.values()
-            if (m.tmdb_id, str(m.media_type)) not in handled
-            and m.demand >= row.cfg.min_demand
-            and _within_year_window(m.year, row.cfg.min_year, row.cfg.max_year)
-        ]
-        report.pool_size += len(pool)
-        report.pool_by_row[row.slug] = len(pool)
-        remaining_rows = len(rows) - index
-        share = -(-(budget - report.lookups_spent) // remaining_rows) if remaining_rows else 0
-        before_examined = report.examined
-        if row.cfg.rating_source != "tmdb" and mdblist is not None:
-            qualifying = _gate_by_source(row.cfg, mdblist, pool, report, budget=share)
-        else:
-            qualifying = _gate_by_tmdb(row.cfg, pool)
-            report.examined += len(pool)
-        report.examined_by_row[row.slug] = report.examined - before_examined
-        gated.append((row.slug, row.cfg, qualifying))
+    gated = _gate_rows(rows, handled, report, mdblist=mdblist, budget=budget)
 
     # 2. One Arr reconcile for the whole run: what Radarr/Sonarr already hold is a fact about the
     #    server, not about a row, and the per-row targets differ only in profile and root folder.
@@ -280,25 +332,8 @@ def request_missing(
         report.considered_by_row[slug] = len(survivors)
         cfg_by_row[slug] = cfg
         _enrich(tmdb, survivors)
-        eligible: list[MissingTitle] = []
-        for m in survivors:  # already ranked best-first by the gate
-            if not cfg.auto_send:
-                reason = "auto-send is off"
-            elif m.excluded:
-                reason = "on an Arr exclusion list"
-            elif m.demand < cfg.auto_min_demand:
-                reason = f"demand below auto_min_demand ({cfg.auto_min_demand})"
-            elif m.rating < cfg.auto_min_rating:
-                reason = f"rating below auto_min_rating ({cfg.auto_min_rating})"
-            else:
-                eligible.append(m)
-                continue
-            blocked[reason] += 1
-            # Keep the reason ON the title, not just in the aggregate log line below. It is what the DB
-            # row and the run trace carry, and it is the only answer to "why didn't THIS one go?" — the
-            # question the requests inbox exists to be asked.
-            m.detail = reason
-            report.queued.append(m)
+        eligible, held_back = _auto_eligible(cfg, survivors, blocked)
+        report.queued.extend(held_back)
         auto_by_row.append((slug, eligible))
 
     # 4. Divide the run's slots between the rows (even split, surplus redistributed, one slot per
@@ -426,24 +461,32 @@ def _send_claims(
     and its rate limiter — the plex-safety throttle is per client, and one per row would multiply the
     write rate by the number of rows.
     """
-    radarr_cache: dict[ArrTarget, RadarrClient] = {}
-    sonarr_cache: dict[ArrTarget, SonarrClient] = {}
+    clients: dict[ArrTarget, RadarrClient | SonarrClient] = {}
+    clocks: dict[str, list[float]] = {}
     outcomes: list[RequestOutcome] = []
     for slug, title in claims:
         cfg = cfg_by_row[slug]
-        radarr = _cached_client(radarr_cache, cfg.radarr, RadarrClient, min_write_interval)
-        sonarr = _cached_client(sonarr_cache, cfg.sonarr, SonarrClient, min_write_interval)
+        radarr = _cached_client(clients, clocks, cfg.radarr, RadarrClient, min_write_interval)
+        sonarr = _cached_client(clients, clocks, cfg.sonarr, SonarrClient, min_write_interval)
         outcomes.append(_request_one(title, radarr, sonarr, tmdb, dry_run=dry_run))
     return outcomes
 
 
-def _cached_client(cache: dict, target: ArrTarget | None, factory, min_write_interval: float):
-    """One client per distinct target, so rows sharing a target share its rate limiter."""
+def _cached_client(
+    clients: dict, clocks: dict[str, list[float]], target: ArrTarget | None, factory, min_write_interval: float
+):
+    """One client per distinct target, but one write clock per SERVER.
+
+    Rows differ only in root folder and quality profile, so several targets are usually the same
+    Radarr. A client each is fine — they are cheap and hold per-target state — but a rate limiter each
+    would multiply the write rate to that one server by the number of rows (plex-safety rule 6).
+    """
     if target is None:
         return None
-    if target not in cache:
-        cache[target] = factory(target, min_write_interval=min_write_interval)
-    return cache[target]
+    if target not in clients:
+        clock = clocks.setdefault(target.url.rstrip("/"), [0.0])
+        clients[target] = factory(target, min_write_interval=min_write_interval, write_clock=clock)
+    return clients[target]
 
 
 def request_titles(

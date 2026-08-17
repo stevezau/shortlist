@@ -306,3 +306,56 @@ class TestDegenerateCases:
             base, FakeTmdb(tvdb={550: 900}), _rows(("a", base, _demand(movie, show))), dry_run=False
         )
         assert len(report.sent) == 2
+
+
+class TestTheRateLimitStopsTheWholeRun:
+    """Audit round 2, 2026-08-18: once MDBList's daily quota is spent, asking again can only produce
+    another 429 — but every remaining row fired its own doomed request and logged its own "daily
+    limit reached", so one event became N wasted calls and N warnings against an API already
+    refusing us."""
+
+    @staticmethod
+    def _demand_of(n: int, start: int):
+        return {(t.tmdb_id, t.media_type): t for t in (_title(start + i) for i in range(n))}
+
+    def test_later_rows_do_not_re_ask_a_spent_quota(self, radarr):
+        base = _cfg(rating_source="imdb", mdblist_api_key="k", max_per_run=10)
+        mdb = FakeMdbList({}, rate_limit_after=2)
+        rows = _rows(*[(f"r{i}", base, self._demand_of(20, i * 100)) for i in range(4)])
+
+        report = requests_mod.request_missing(base, FakeTmdb(), rows, dry_run=True, mdblist=mdb)
+
+        # 2 successful + the one that discovers the 429. Four rows must not mean four discoveries.
+        assert mdb.live_lookups == 3
+        assert report.ratings_rate_limited is True
+
+    def test_the_run_still_completes_on_tmdb_ratings(self, radarr):
+        """Falling back is the point — a spent quota must degrade the run, never end it."""
+        base = _cfg(rating_source="imdb", mdblist_api_key="k", max_per_run=10)
+        mdb = FakeMdbList({}, rate_limit_after=2)
+        rows = _rows(*[(f"r{i}", base, self._demand_of(20, i * 100)) for i in range(4)])
+
+        report = requests_mod.request_missing(base, FakeTmdb(), rows, dry_run=True, mdblist=mdb)
+
+        assert len(report.sent) == 10, "the run still fills its cap from TMDB scores"
+        assert all(report.examined_by_row[f"r{i}"] > 0 for i in range(1, 4)), "no row is left unrated"
+
+
+class TestTwoTitlesThatLookAlike:
+    """Audit round 5: `MissingTitle` is a plain dataclass, so `==` compares field-for-field. Any code
+    that identifies a title by value rather than by identity will collapse two distinct rows' copies
+    of the same title — or two genuinely different titles that happen to match."""
+
+    def test_identical_titles_in_one_row_are_both_accounted_for(self, radarr):
+        base = _cfg(max_per_run=1)  # one sends, the other must be QUEUED rather than vanish
+        twin_a = _title(1)
+        twin_b = _title(2)
+        twin_b.title = twin_a.title  # same name, same rating, same year — different tmdb_id
+
+        report = requests_mod.request_missing(
+            base, FakeTmdb(), _rows(("a", base, _demand(twin_a, twin_b))), dry_run=False
+        )
+
+        assert len(report.sent) == 1
+        assert len(report.queued) == 1, "the twin must be queued, not swallowed by a value comparison"
+        assert {m.tmdb_id for m in report.sent} | {m.tmdb_id for m in report.queued} == {1, 2}

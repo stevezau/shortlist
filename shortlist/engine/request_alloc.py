@@ -78,7 +78,8 @@ def _can_take(
     claimed: set[tuple[int, MediaType]],
 ) -> bool:
     """Whether this row has both an unclaimed title left and room under its own cap."""
-    if taken[slug] >= row_caps.get(slug, len(queues[slug]) + taken[slug]):
+    cap = row_caps.get(slug)
+    if cap is not None and taken[slug] >= cap:
         return False
     return any(_key(title) not in claimed for title in queues[slug])
 
