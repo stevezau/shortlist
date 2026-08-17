@@ -2606,3 +2606,45 @@ def test_leaving_an_account_alone_does_not_make_that_persons_own_row_public(fake
     for account_id in (201, 203):
         visible = {collection_id_from_hub(h) for h in plex.user_hubs(f"server-{account_id}")}
         assert not (mike_rows & visible), f"account {account_id} sees mike's row on their Home"
+
+
+def test_an_account_that_is_both_switched_off_and_left_alone_keeps_the_shared_row_hidden(fakes, tmp_path):
+    """The fourth cell of the `enabled` / `manage_sharing` matrix — the only one where they interact.
+
+    Switching someone off normally hides even the PUBLIC shared rows from them
+    (`hide_shared_from_disabled`); leaving them alone means we do not write their filter at all. So
+    for a user with both switches off, "left alone" wins and the disabled-user hiding never applies.
+    That is the intended precedence — "don't touch this account" is the stronger statement — but it
+    is the cell where the docs' unconditional "off still writes their filters" stops being true, so
+    it is pinned rather than left to be rediscovered.
+
+    What must NOT change is the restricted shared row: its exclude is the only thing keeping the row
+    away from someone outside its audience, so it survives both switches.
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(row_size=12, min_history=5, candidates_pre_rank=40, max_seeds=12),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+    # 203 is switched off in Shortlist AND left alone, and already carries both kinds of exclude.
+    state.users[203].filters["filterMovies"] = "label!=shortlist__shared_date_night,Shortlist_sarah|label=Kids"
+    ctx.disabled_account_ids = {203}
+    ctx.unmanaged_account_ids = {203}
+
+    sarah = UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED)
+    report = engine_run(ctx, [sarah])
+
+    assert report.ok
+    after = state.users[203].filters["filterMovies"]
+    # The per-person exclude goes (that is the setting doing its job)...
+    assert "Shortlist_sarah" not in after
+    # ...the restricted shared row's does NOT, and their own condition is untouched.
+    assert "shortlist__shared_date_night" in after
+    assert "label=Kids" in after

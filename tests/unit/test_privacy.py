@@ -1340,6 +1340,32 @@ class TestLeavingAnAccountsSharingAlone:
 
         assert written["filterMovies"][1] == ""
 
+    def test_a_restricted_shared_rows_exclude_is_kept(self, mock_plextv):
+        """The one exclude "leave them alone" must NOT remove.
+
+        `SHARED_LABEL_PREFIX` is `shortlist__shared_`, which starts with `shortlist_` — so the
+        obvious "remove every label of ours" also strips a shared row's exclude. For a shared row
+        limited to an audience, that exclude is the ONLY thing hiding it from everyone outside the
+        audience, and nothing re-adds it: the next run skips this account entirely. So the account
+        would silently gain a row the owner restricted on the row itself.
+        """
+        kid = make_profile("kid", user_type=UserType.MANAGED, account_id=500)
+        remote = self._remote("label!=shortlist__shared_date_night,Shortlist_mike")
+
+        written = privacy.clear_our_excludes(mock_plextv, kid, remote)
+
+        assert written["filterMovies"][1] == "label!=shortlist__shared_date_night"
+
+    def test_a_filter_holding_only_a_shared_exclude_is_not_written_at_all(self, mock_plextv):
+        """The steady state for an account whose only exclude of ours is a shared row's: nothing to
+        do, so no write. Without this the run would rewrite that filter to itself every night."""
+        kid = make_profile("kid", user_type=UserType.MANAGED, account_id=500)
+
+        written = privacy.clear_our_excludes(mock_plextv, kid, self._remote("label!=shortlist__shared_date_night"))
+
+        assert written is None
+        mock_plextv.update_user_filters.assert_not_called()
+
     def test_the_owner_is_never_written_to(self, mock_plextv):
         """Rule 5. The owner has no share, so "leave their sharing alone" is the only possible state
         and there is nothing to clear."""

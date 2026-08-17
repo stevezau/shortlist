@@ -392,6 +392,21 @@ class TestUsersApi:
         client.patch(f"/api/users/{target['id']}", json={"manage_sharing": True, "nickname": "Michael"})
         assert len(reasons) == 2
 
+    def test_the_owner_cannot_be_marked_left_alone(self, client: TestClient):
+        """Plex has no share filters for the account that owns the server (rule 5), so the flag can
+        never mean anything for them. The UI hides the switch; the API has to agree, or the Users
+        list badges the owner with a state that does not exist."""
+        with client.app.state.sessions() as session:
+            owner = session.query(User).filter_by(username="sarah").one()
+            owner.user_type = "owner"
+            session.commit()
+            owner_id = owner.id
+
+        r = client.patch(f"/api/users/{owner_id}", json={"manage_sharing": False})
+
+        assert r.status_code == 200
+        assert r.json()["manage_sharing"] is True, "the owner is always 'managed', because there is nothing to manage"
+
     def test_leaving_sharing_alone_is_independent_of_the_enabled_switch(self, client: TestClient):
         """The two are different axes, not three states of one control: a user can have a row AND
         untouched sharing. If this ever collapses into one flag, someone disabled months ago for an

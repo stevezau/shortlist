@@ -1019,6 +1019,11 @@ class RunReport:
     # the run would punish everyone for one account. It is reported instead, because an exposure the
     # owner is not told about is the actual failure (see privacy.unhidden_rows_visible_to).
     unhideable_rows: dict[str, list[int]] = field(default_factory=dict)
+    # {plex account id: why} — accounts the owner asked us to LEAVE ALONE whose excludes we could not
+    # actually take back off. Not a blocker (failing to remove an exclude leaves them more private
+    # than asked, never less), but it is a state change the owner made that did not reach Plex, and
+    # §12's whole register is that shape. `pipeline._leave_sharing_alone` fills it.
+    left_alone_failures: dict[int, str] = field(default_factory=dict)
     # Whether this run actually GOT AS FAR AS looking. An empty `unhideable_rows` is ambiguous on its
     # own — "we checked and nobody is exposed" and "we died in the sweep phase" produce the same
     # dict — and the readers treat the latest measuring run as the truth. Without this flag a run

@@ -62,7 +62,8 @@ export function UserSharing({ user }: { user: User }) {
               so the only personal row they see is their own. Turn this off to
               leave their Plex sharing exactly as you set it — Shortlist takes
               back out the exclusions it added and never touches that account
-              again.
+              again. A shared row you&rsquo;ve limited to certain people stays
+              hidden from them either way.
             </p>
           </div>
           <Switch

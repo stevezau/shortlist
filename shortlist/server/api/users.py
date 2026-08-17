@@ -367,6 +367,12 @@ async def patch_user(user_id: int, patch: UserPatch, request: Request) -> dict:
                 # Their own row is a rebuild, so that part still waits for the next run.
                 enabled_slug = user.slug
             user.enabled = patch.enabled
+        if patch.manage_sharing is not None and user.user_type == "owner":
+            # Plex has no share filters for the account that owns the server (rule 5), so this flag
+            # can never mean anything for them. Ignored rather than stored: persisting it would badge
+            # the owner "Sharing untouched" in the Users list, which describes a state that does not
+            # exist. The UI already hides the switch for them; this is the same answer at the API.
+            patch.manage_sharing = None
         if patch.manage_sharing is not None and patch.manage_sharing != user.manage_sharing:
             # Both directions need the same pass, and it is the same pass everything else uses:
             # `privacy.sync` is `engine_run(ctx, [])`, which walks every account's filter and builds,

@@ -236,6 +236,13 @@ def _register_privacy_sync(scheduler: AsyncIOScheduler, app) -> None:
     write ordering is the only remaining guarantee. This pass is the cheapest safety net against
     drift: it builds nothing, delivers nothing and promotes nothing, so it can only ever make the
     server more private.
+
+    ONE EXCEPTION, and it is bounded: for an account the owner set `manage_sharing=0` ("leave their Plex sharing
+    alone"), the pass REMOVES our per-person excludes from that one account instead of merging into it
+    (`pipeline._leave_sharing_alone`). That widens what that account sees, by request. It stays handler-safe
+    because it creates and promotes nothing — no row becomes visible that was not already on the server — and it
+    touches nobody else's filter, so every other account still excludes that person's row. Anything else that
+    widens visibility needs its own argument; rule 1 does not cover it.
     """
     cron = _resolve_cron(app, "privacy.sync_cron", DEFAULT_CRONS["privacy.sync_cron"])
 

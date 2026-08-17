@@ -620,10 +620,12 @@ def clear_our_excludes(
     rows. Every OTHER account still excludes this one's label, so nothing here exposes a row to anyone
     but the person the owner named.
 
-    Idempotent by construction — it converges on "no `shortlist_*` value anywhere in this filter", so
-    the steady state writes nothing and a single pass after the switch is flipped is enough. Foreign
-    conditions are byte-preserved (`remove_label_excludes`), so a filter that holds only somebody
-    else's rules comes back untouched.
+    Idempotent by construction — it converges on "no per-person `shortlist_<slug>` value anywhere in
+    this filter", so the steady state writes nothing and a single pass after the switch is flipped is
+    enough. Foreign conditions are byte-preserved (`remove_label_excludes`), so a filter that holds
+    only somebody else's rules comes back untouched.
+
+    A RESTRICTED shared row's exclude is deliberately NOT removed — see the loop below.
 
     No snapshot is taken (rule 2 covers writes that RESTRICT). An account with our labels in its
     filter has been through `sync_user_restrictions`, which snapshotted the true pre-Shortlist value
@@ -654,7 +656,22 @@ def clear_our_excludes(
         current = remote.filters.get(fieldname, "")
         if not current:
             continue
-        ours = shortlist_labels_in(current, label_prefix)
+        # PER-PERSON excludes only. `SHARED_LABEL_PREFIX` is `shortlist__shared_`, which starts with
+        # `shortlist_` — so the obvious `shortlist_labels_in()` also matches a shared row's label, and
+        # stripping one would hand this account a shared row whose audience the owner RESTRICTED in
+        # the audience picker. That exclude is the only thing hiding it, and nothing re-adds it: the
+        # next run skips this account entirely.
+        #
+        # Two explicit owner decisions collide here — "leave this account's sharing alone" and "this
+        # row is only for those people" — and the tie goes to the one whose failure mode is a leak.
+        # The cost is that a later audience WIDENING never reaches a left-alone account, so their
+        # exclude goes stale in the direction of seeing less; switching management back on resyncs it.
+        # #92's actual complaint is the accumulating per-person excludes, which this still clears.
+        ours = {
+            label
+            for label in shortlist_labels_in(current, label_prefix)
+            if not unquote(label).lower().startswith(SHARED_LABEL_PREFIX.lower())
+        }
         if not ours:
             continue
         cleaned = remove_label_excludes(current, ours)

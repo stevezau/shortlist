@@ -184,6 +184,7 @@ Every case, and where it is handled. **E** = eagerly (job, seconds). **R** = rec
 | **Shared row, audience shrunk**     | one collection, nothing to delete                               | **E `filters.apply`** for the dropped accounts              |
 | **Row disabled**                    | E `row.reconcile` (per-person today; shared rows are a gap, F5) | R — union-only, stays excluded                              |
 | **Owner**                           | own row only                                                    | ⚠️ **structurally impossible** — no share with yourself     |
+| **Left alone (`manage_sharing=0`)** | unaffected — they still get a row if enabled                    | **none, by request** — E removes ours; a RESTRICTED shared row's exclude is kept |
 
 ---
 
@@ -450,8 +451,9 @@ and every OTHER account still excludes this person's label. Anything else that e
 from a handler needs its own argument; do not read this as a general licence.
 
 Callers: a shared row's audience changing in either direction (C1), a build flip, a shared row deleted,
-someone turned off (H5/H6) or back on, un-paused, an account demoted out of `owner` (H12), and the
-`hide_shared_from_disabled` toggle (H4).
+someone turned off (H5/H6) or back on, un-paused, an account demoted out of `owner` (H12), the
+`hide_shared_from_disabled` toggle (H4), and `users.manage_sharing` flipped in either direction
+(`api/users.py`, the exception described above).
 
 ### Ordering — and why the queue is NOT the mechanism
 

@@ -499,7 +499,20 @@ def _leave_sharing_alone(ctx: EngineContext, user, remote, report: RunReport) ->
     """
     try:
         written = clear_our_excludes(ctx.plextv, user, remote, label_prefix=LABEL_PREFIX, dry_run=ctx.config.dry_run)
+    except FilterWriteRefused as e:
+        # PERMANENT. plex.tv refuses label filters outright while a parental profile is set, so "we
+        # will try again tonight" is a lie — the account keeps our excludes until somebody clears the
+        # profile in Plex. Recorded rather than only logged, because the owner has flipped a switch
+        # whose UI promises the excludes come out, and nothing else would tell them it didn't.
+        report.left_alone_failures[user.plex_account_id] = f"{user.username}: plex.tv refused the write ({e})"
+        logger.warning(
+            "{}: plex.tv will not accept a filter write for this account, so Shortlist's excludes "
+            "STAY on it — clear its Plex restriction profile if you want them gone",
+            user.username,
+        )
+        return
     except Exception as e:
+        report.left_alone_failures[user.plex_account_id] = f"{user.username}: {type(e).__name__}: {e}"
         logger.warning(
             "{}: could not remove Shortlist's excludes from this left-alone account ({}) — retried next run",
             user.username,

@@ -2025,10 +2025,26 @@ async def sharing(request: Request) -> dict:
         block.line(f"{healthy} of {managed_total} {counted} hide every row that is not theirs.")
         block.line(f"({len(all_labels)} per-person row(s) exist on Plex right now.)")
         if left_alone:
-            block.line(
-                f"Left alone by choice, so they hide nothing and can see other people's rows: "
-                f"{', '.join(left_alone[:8])}"
-            )
+            # Split on what the FILTER actually says, not on the setting. The setting is the owner's
+            # intent; whether our excludes really came off is a fact about plex.tv, and they are not
+            # the same thing while a write is owed or permanently refused (a parental profile makes
+            # plex.tv reject the removal for ever). Reporting intent as fact here would re-create
+            # exactly what the comment at the top of this function exists to prevent.
+            cleared = [r["user"] for r in rows if not r["manage_sharing"] and not r["shortlist_excludes"]]
+            still_held = [r for r in rows if not r["manage_sharing"] and r["shortlist_excludes"]]
+            if cleared:
+                block.line(
+                    f"Left alone by choice, so they hide nothing and can see other people's rows: "
+                    f"{', '.join(cleared[:8])}"
+                )
+                if len(cleared) > 8:
+                    block.line(f"  …and {len(cleared) - 8} more")
+            for row in still_held[:8]:
+                held = ", ".join(row["shortlist_excludes"][:6])
+                block.line(f"{row['user']} (#{row['account_id']}) is set to be left alone, but our exclusions are")
+                block.line(f"  STILL on this account — the removal has not gone through: {held}")
+            if len(still_held) > 8:
+                block.line(f"  …and {len(still_held) - 8} more account(s) in the same state")
         for row in (r for r in rows if r["missing"] and r["manage_sharing"]):
             block.line(f"{row['user']} (#{row['account_id']})")
             block.line(f"  hides {len(row['shortlist_excludes'])} of {len(row['should_hide'])} other rows")

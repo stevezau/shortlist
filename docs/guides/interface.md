@@ -71,8 +71,15 @@ person's row as normal, so leaving one account alone never exposes their row to 
 server.
 
 This is not the same as switching someone **off**. Off means "no row for them" and still rewrites
-their filters so they stop seeing everyone else's rows. The two are independent: someone can have a
-row _and_ untouched sharing.
+their filters so they stop seeing everyone else's rows — unless you have also left their sharing
+alone, which wins, because it means "don't touch this account" full stop. The two are independent:
+someone can have a row _and_ untouched sharing.
+
+One thing is deliberately left in place: if you have a **shared row limited to certain people**, the
+entry hiding it from everyone else stays. That entry is the only thing keeping that row away from
+people you didn't pick, so removing it would undo a choice you made on the row itself. The catch is
+that later changes to who a shared row is for stop reaching a left-alone account — turn management
+back on if you need them to pick those up.
 
 ### When someone leaves your server
 

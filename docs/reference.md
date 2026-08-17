@@ -119,7 +119,15 @@ already kept away from Shortlist's rows by that list, and our exclusions were fi
 OTHER account still excludes this person's own row label, so leaving one account alone never exposes
 their row to the rest of the server. Changing it either way rewrites the filters straight away rather
 than waiting for a run. Turning someone OFF (`enabled=false`) still writes their filters — it means
-"no row for them", not "let them see everyone else's".
+"no row for them", not "let them see everyone else's" — unless you have also left their sharing
+alone, in which case that wins and nothing is written for them at all.
+
+A **restricted shared row**'s exclusion is the exception that is NOT removed. A shared row limited to
+an audience is hidden from everyone outside it by that exclusion alone, so dropping it would hand the
+account a row you explicitly restricted; "leave their sharing alone" clears the per-person exclusions
+it accumulated, not that. The consequence to know: while an account is left alone, later changes to a
+shared row's audience never reach it, so its exclusion can go stale in the direction of seeing less.
+Switching management back on resyncs it.
 
 ```
 GET  /api/users/{id}/rows · PUT /api/users/{id}/rows/{collection_id} {muted?, row_size?, recent_count?} (per-person, per-row: `recent_count` (1–25) overrides how many recent watches the `llm_web` source searches for this person on this row; null on any field clears it back to the row's own setting)
