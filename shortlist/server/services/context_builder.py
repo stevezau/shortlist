@@ -32,6 +32,7 @@ from shortlist.engine.models import (
     Pick,
     PosterSpec,
     RequestConfig,
+    RequestOverrides,
     RowOverride,
     RowSpec,
     UserProfile,
@@ -149,6 +150,37 @@ def _refuse_a_different_server(session, machine_id: str) -> None:
         f"Plex at this URL reports machine {machine_id}, but Shortlist is linked to {server.machine_id}. "
         "Refusing to run against a different server — re-link from setup if the move is intentional."
     )
+
+
+def row_request_overrides(collection: Collection) -> RequestOverrides | None:
+    """This row's own request floors and target, or None when it overrides nothing.
+
+    None rather than an all-None ``RequestOverrides`` so the engine can skip the resolve entirely
+    for the overwhelmingly common case of a row that inherits everything.
+
+    Shared rows never get one: a shared row is built from titles people have already WATCHED,
+    which are by definition already on the server, so it surfaces nothing missing to request
+    (`_shared_row` is passed no demand map at all). Handing it request settings would put controls
+    in the editor that could not do anything.
+    """
+    if collection.build == "shared":
+        return None
+    overrides = RequestOverrides(
+        min_rating=collection.req_min_rating,
+        min_votes=collection.req_min_votes,
+        min_demand=collection.req_min_demand,
+        min_year=collection.req_min_year,
+        max_year=collection.req_max_year,
+        auto_send=collection.req_auto_send,
+        auto_min_demand=collection.req_auto_min_demand,
+        auto_min_rating=collection.req_auto_min_rating,
+        max_per_row=collection.req_max_per_row,
+        radarr_quality_profile_id=collection.req_radarr_quality_profile_id,
+        radarr_root_folder=collection.req_radarr_root_folder or None,
+        sonarr_quality_profile_id=collection.req_sonarr_quality_profile_id,
+        sonarr_root_folder=collection.req_sonarr_root_folder or None,
+    )
+    return overrides if overrides != RequestOverrides() else None
 
 
 class ContextBuilder:
@@ -855,6 +887,7 @@ class ContextBuilder:
                     hub_anchors=self._row_hub_anchors(collection),
                     library_keys=[str(k) for k in (collection.library_keys or [])],
                     poster=self._build_poster(session, collection),
+                    request_overrides=row_request_overrides(collection),
                 )
             )
         return specs

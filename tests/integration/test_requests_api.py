@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from shortlist.engine import requests as requests_mod
 from shortlist.engine.models import ArrTarget, MediaType, RequestConfig
 from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
-from shortlist.server.db.models import RequestCandidate, Server
+from shortlist.server.db.models import Collection, RequestCandidate, Server
 from shortlist.server.main import create_app
 
 pytestmark = pytest.mark.integration
@@ -390,3 +390,69 @@ class TestArrStatusEndpoint:
     def test_requests_not_configured_returns_empty(self, client: TestClient, monkeypatch):
         monkeypatch.setattr(client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(None))
         assert client.get("/api/requests/status").json() == {"statuses": {}, "radarr": "off", "sonarr": "off"}
+
+
+class TestApprovalUsesTheClaimingRowsTarget:
+    """An approval is just a delayed send, so it must land where a same-night send would have.
+
+    The trap this closes: `why[].row` is the RENDERED row name, carrying the person's display name
+    and their own seed title, so it identifies nothing stable. Without the stored `row_slug`, a title
+    queued under a kids row and approved next month went to the global root folder instead.
+    """
+
+    @staticmethod
+    def _kids_row(client: TestClient, **overrides):
+        with client.app.state.sessions() as session:
+            session.add(
+                Collection(
+                    slug="kids",
+                    name="Kids",
+                    build="per_person",
+                    req_radarr_root_folder="/kids",
+                    req_radarr_quality_profile_id=9,
+                    **overrides,
+                )
+            )
+            row = session.query(RequestCandidate).filter_by(id=1).one()
+            row.row_slug = "kids"
+            session.commit()
+
+    def _send(self, client: TestClient, monkeypatch) -> dict:
+        made: dict[tuple, FakeArr] = {}
+
+        def factory(target, **kw):
+            made.setdefault((target.root_folder, target.quality_profile_id), FakeArr())
+            return made[(target.root_folder, target.quality_profile_id)]
+
+        monkeypatch.setattr(requests_mod, "RadarrClient", factory)
+        cfg = RequestConfig(enabled=True, radarr=_RADARR)
+        monkeypatch.setattr(client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(cfg))
+        client.post("/api/requests/send", json={"ids": [1]})
+        return made
+
+    def test_it_files_into_the_rows_folder_and_profile(self, client: TestClient, monkeypatch):
+        self._kids_row(client)
+        made = self._send(client, monkeypatch)
+        assert [t for t, _ in made[("/kids", 9)].movie_calls] == [10]
+        assert ("/movies", 1) not in made
+
+    def test_a_candidate_with_no_row_falls_back_to_the_global_target(self, client: TestClient, monkeypatch):
+        """Everything queued before per-row settings existed has a NULL slug, and must still send."""
+        made = self._send(client, monkeypatch)
+        assert [t for t, _ in made[("/movies", 1)].movie_calls] == [10]
+
+    def test_a_slug_whose_row_was_deleted_falls_back_rather_than_failing(self, client: TestClient, monkeypatch):
+        """A row can be deleted while its titles sit in the inbox. Approving them must still work."""
+        with client.app.state.sessions() as session:
+            session.query(RequestCandidate).filter_by(id=1).one().row_slug = "deleted-row"
+            session.commit()
+        made = self._send(client, monkeypatch)
+        assert [t for t, _ in made[("/movies", 1)].movie_calls] == [10]
+
+    def test_a_row_that_overrides_nothing_uses_the_global_target(self, client: TestClient, monkeypatch):
+        with client.app.state.sessions() as session:
+            session.add(Collection(slug="plain", name="Plain", build="per_person"))
+            session.query(RequestCandidate).filter_by(id=1).one().row_slug = "plain"
+            session.commit()
+        made = self._send(client, monkeypatch)
+        assert [t for t, _ in made[("/movies", 1)].movie_calls] == [10]

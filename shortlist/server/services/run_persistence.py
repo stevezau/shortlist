@@ -82,8 +82,12 @@ def _forget_removed_deliveries(session: Session, user_slug: str, removed: list[d
 
 
 def _why_json(why) -> list[dict]:
-    """Serialize a missing title's provenance for storage + the API: [{user, row, seed, source}]."""
-    return [{"user": w.user, "row": w.row, "seed": w.seed, "source": w.source} for w in why]
+    """Serialize a missing title's provenance for storage + the API: [{user, row, seed, source, row_slug}].
+
+    `row` is the RENDERED name the person sees; `row_slug` is the stable identity beside it, which is
+    what resolves the row's Sonarr/Radarr target when the owner approves months later.
+    """
+    return [{"user": w.user, "row": w.row, "seed": w.seed, "source": w.source, "row_slug": w.row_slug} for w in why]
 
 
 def _is_failure_detail(detail: str | None) -> bool:
@@ -113,6 +117,9 @@ def _refresh_pending(row: RequestCandidate, m) -> None:
     row.tags = sorted(m.tags)
     row.wanters = sorted(m.wanters)
     row.why = _why_json(m.why)
+    # A row re-queued under a different row keeps the newest claim: that is the row whose target it
+    # would be sent to if approved now, and the inbox shows the same provenance.
+    row.row_slug = _row_slug(m) or row.row_slug
     # A queued title now always carries a reason ("max_per_run (5) already filled"), so a plain
     # `m.detail or row.detail` would overwrite yesterday's REAL failure ("Sonarr returned HTTP 503")
     # with today's threshold note — erasing the only record that Sonarr was broken. A failure detail
@@ -142,8 +149,20 @@ def _candidate_row(m, run_id: int, *, status: str) -> RequestCandidate:
         detail=m.detail,  # why it is not here yet: a threshold, or a real send failure
         excluded=m.excluded,  # on a Sonarr/Radarr exclusion list — flagged in the inbox
         arr_slug=m.arr_slug,  # set for auto-sent titles, so the inbox deep-links to the arr page
+        row_slug=_row_slug(m),
         first_seen_run_id=run_id,
     )
+
+
+def _row_slug(m) -> str | None:
+    """Which row this title came from, for resolving its Sonarr/Radarr target on a later approval.
+
+    Every `why` entry on one title carries the same slug: demand is accumulated per row, so a title
+    surfaced by two rows is two separate objects, each with only its own row's provenance. Taking the
+    first is therefore taking the only one. None for a title with no provenance at all, which falls
+    back to the global config — the same behaviour as every row queued before per-row settings.
+    """
+    return next((w.row_slug for w in (m.why or []) if w.row_slug), None)
 
 
 def reconcile_watched(sessions: sessionmaker[Session], profiles) -> None:

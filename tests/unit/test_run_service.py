@@ -637,7 +637,15 @@ class TestRunExecution:
             assert row.detail == "added to Radarr"
             # ...and the provenance persisted, so the log can say which row/person wanted it and why.
             assert row.why == [
-                {"user": "Sarah", "row": "Sarah's Picks", "seed": "Blade Runner", "source": "tmdb_similar"}
+                # `row_slug` sits beside the rendered `row` name: the name carries Sarah's own seed
+                # title, so only the slug can resolve this row's Arr target on a later approval.
+                {
+                    "user": "Sarah",
+                    "row": "Sarah's Picks",
+                    "seed": "Blade Runner",
+                    "source": "tmdb_similar",
+                    "row_slug": "",
+                }
             ]
             # ...and the next run's engine context therefore excludes it.
             handled = ContextBuilder._handled_requests(session)

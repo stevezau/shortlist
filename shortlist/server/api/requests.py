@@ -17,10 +17,12 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from shortlist.engine.models import MediaType, MissingTitle
+from shortlist.engine.request_config import resolve_request_config
 from shortlist.engine.requests import request_titles
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
-from shortlist.server.db.models import Event, RequestCandidate, iso_utc
+from shortlist.server.db.models import Collection, Event, RequestCandidate, iso_utc
+from shortlist.server.services.context_builder import row_request_overrides
 
 router = APIRouter(prefix="/requests", tags=["requests"], dependencies=[Depends(require_owner)])
 
@@ -391,8 +393,9 @@ async def send_requests(body: RequestAction, request: Request) -> dict:
                 .filter(RequestCandidate.id.in_(body.ids), RequestCandidate.status == "pending")
                 .all()
             )
-            titles = [
-                MissingTitle(
+
+            def _title(row: RequestCandidate) -> MissingTitle:
+                return MissingTitle(
                     tmdb_id=row.tmdb_id,
                     title=row.title,
                     media_type=MediaType(row.media_type),
@@ -402,10 +405,28 @@ async def send_requests(body: RequestAction, request: Request) -> dict:
                     demand=row.demand,
                     tags=set(row.tags or []),
                 )
-                for row in rows
-            ]
-            report = request_titles(cfg, tmdb, titles, dry_run=body.dry_run)
-            by_key = {(o.tmdb_id, o.media_type.value): o for o in report.outcomes}
+
+            # Send each title under the target of the ROW that surfaced it — the whole point of
+            # per-row settings is that a kids row files into a different folder, and an approval is
+            # just a delayed send. Grouped so rows sharing a target share one client and its rate
+            # limiter (the plex-safety throttle lives on the client).
+            #
+            # `row_slug` is NULL on everything queued before per-row settings existed, and on a title
+            # whose row has since been deleted; both fall back to the global config, which is exactly
+            # what they were queued under.
+            overrides = {
+                c.slug: row_request_overrides(c) for c in session.query(Collection).all() if c.build != "shared"
+            }
+            grouped: dict[str | None, list[RequestCandidate]] = {}
+            for row in rows:
+                slug = row.row_slug if row.row_slug in overrides else None
+                grouped.setdefault(slug, []).append(row)
+
+            by_key: dict[tuple[int, str], object] = {}
+            for slug, group in grouped.items():
+                row_cfg = cfg if slug is None else resolve_request_config(cfg, overrides[slug])
+                report = request_titles(row_cfg, tmdb, [_title(r) for r in group], dry_run=body.dry_run)
+                by_key.update({(o.tmdb_id, o.media_type.value): o for o in report.outcomes})
             outcomes = []
             for row in rows:
                 outcome = by_key.get((row.tmdb_id, row.media_type))
