@@ -265,6 +265,26 @@ class TestTransferWatchHistory:
             session.query(WatchedTitle).filter(WatchedTitle.user_id == 2).one().viewed_at.replace(tzinfo=UTC) == NEWER
         )
 
+    def test_an_empty_source_history_is_reported_as_such_not_as_a_copy_of_nothing(self, session):
+        """ "Copied 0" has two opposite meanings and the caller must be able to tell them apart.
+
+        "They already had everything" is success; "Shortlist has never read your watch history" is
+        the copy being impossible. Reported as the same bare 0, the setup wizard offered a transfer
+        that could not do anything and said nothing about why — the reporter in #88 concluded the
+        feature was broken and wrote their own script.
+        """
+        report = transfer_watch_history(session, from_user_id=1, to_user_id=2)
+
+        assert report.copied == 0
+        assert report.source_empty is True
+
+    def test_a_source_that_has_history_is_never_reported_empty(self, session):
+        watched(session, 1, "Dune", key=100, viewed_at=OLD)
+
+        report = transfer_watch_history(session, from_user_id=1, to_user_id=2)
+
+        assert (report.copied, report.source_empty) == (1, False)
+
     def test_dry_run_writes_nothing_but_still_counts(self, session):
         watched(session, 1, "Dune", key=100, viewed_at=OLD)
         plex = MagicMock()

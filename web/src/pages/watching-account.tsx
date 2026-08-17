@@ -166,7 +166,8 @@ export function WatchingAccountPage() {
           but the <strong className="text-foreground">Recommended shelf</strong>{" "}
           inside Movies and TV Shows shows you{" "}
           <strong className="text-foreground">everyone&rsquo;s row</strong>
-          {others.length > 0 && ` — there are ${others.length} other ${others.length === 1 ? "person" : "people"} on this server`}
+          {others.length > 0 &&
+            ` — there are ${others.length} other ${others.length === 1 ? "person" : "people"} on this server`}
           . Everyone else still sees only their own. This is a Plex limitation,
           not something Shortlist can switch off.
         </p>
@@ -239,9 +240,10 @@ export function WatchingAccountPage() {
 
         {chose === "shelf-off" && (
           <p className="rounded-md border border-dashed bg-muted/30 p-3 text-sm">
-            Saved. Plex still shows the rows until each one is rebuilt &mdash; placement is applied
-            by a row&rsquo;s next run, not straight away. Rows with a schedule clear on their next
-            one; for any without, use <strong>Run now</strong> on the Rows page.
+            Saved. Plex still shows the rows until each one is rebuilt &mdash;
+            placement is applied by a row&rsquo;s next run, not straight away.
+            Rows with a schedule clear on their next one; for any without, use{" "}
+            <strong>Run now</strong> on the Rows page.
           </p>
         )}
 
@@ -298,6 +300,16 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
   const [scrobble, setScrobble] = useState(false);
   const [preview, setPreview] = useState<TransferResult | null>(null);
   const transfer = useTransferWatchHistory();
+  // Offered right here rather than as "go and run the watch sync": until setup finishes every route
+  // redirects back to /setup, so a wizard reading "go to Jobs" is being sent somewhere it cannot go.
+  const readHistory = useMutation({
+    mutationFn: () => api.runJob("sync.history", {}, true),
+  });
+
+  // Nothing has ever been read for the owner, so the copy could not have copied anything. Kept
+  // apart from `copied === 0` — as a bare count it reads as a feature that worked and found
+  // nothing, which is exactly how it went unnoticed (#88).
+  const nothingToCopy = transfer.isSuccess && transfer.data.source_empty;
 
   // The transfer keys on Shortlist's own user id, which only exists once a user sync has picked the
   // new Home account up. Anyone not yet synced is shown with that as the next step, rather than
@@ -317,168 +329,211 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
   return (
     <div ref={ref} className="scroll-mt-6">
       <Step n={numbered ? 3 : undefined} title="Set up the watching account">
-      <div className="space-y-2">
-        <p className="text-sm text-muted-foreground">
-          Create the account in Plex &mdash;{" "}
-          <strong className="text-foreground">
-            Settings &rarr; Home &rarr; Add user
-          </strong>{" "}
-          &mdash; and share the same libraries you can see. Then pick it here.
-        </p>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => candidates.refetch()}
-          disabled={candidates.isFetching}
-        >
-          {candidates.isFetching && (
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          )}
-          I&rsquo;ve made it &mdash; look again
-        </Button>
-      </div>
-
-      <QueryBoundary
-        query={candidates}
-        skeleton={<Skeleton className="h-24 w-full" />}
-        isEmpty={(list) => list.length === 0}
-        empty={
-          <EmptyState
-            title="No other Plex Home users yet"
-            hint="Add one in Plex under Settings → Home, share your libraries with it, then use the button above."
-          />
-        }
-      >
-        {(list) => (
-          <div className="space-y-2">
-            {list.map((candidate) => {
-              const known = byAccount.get(candidate.plex_account_id);
-              const blocked = candidate.already_a_shortlist_user || !known;
-              return (
-                <label
-                  key={candidate.plex_account_id}
-                  className={`flex items-start gap-3 rounded-md border p-3 text-sm ${blocked ? "opacity-60" : "cursor-pointer"}`}
-                >
-                  <input
-                    type="radio"
-                    name="watching-account"
-                    className="mt-1"
-                    disabled={blocked}
-                    checked={known ? target === known.id : false}
-                    onChange={() => known && setTarget(known.id)}
-                  />
-                  <span className="min-w-0">
-                    <span className="font-medium">{candidate.title}</span>
-                    {candidate.already_a_shortlist_user && (
-                      <span className="block text-xs text-muted-foreground">
-                        Already has a row of its own &mdash; copying your
-                        history onto it would blend two people&rsquo;s taste
-                        into one.
-                      </span>
-                    )}
-                    {!known && !candidate.already_a_shortlist_user && (
-                      <span className="block text-xs text-muted-foreground">
-                        Shortlist hasn&rsquo;t picked this account up yet. Run{" "}
-                        <strong className="text-foreground">Sync users</strong>{" "}
-                        in Jobs, then come back.
-                      </span>
-                    )}
-                    {candidate.protected && (
-                      <span className="block text-xs text-muted-foreground">
-                        PIN-protected, so Shortlist can&rsquo;t sign in as it
-                        &mdash; the Plex checkmarks option below won&rsquo;t
-                        work for this account.
-                      </span>
-                    )}
-                  </span>
-                </label>
-              );
-            })}
-          </div>
-        )}
-      </QueryBoundary>
-
-      <label className="flex items-start gap-3 rounded-md border border-dashed p-3 text-sm">
-        <input
-          type="checkbox"
-          className="mt-1"
-          checked={scrobble}
-          onChange={(e) => setScrobble(e.target.checked)}
-        />
-        <span>
-          <span className="font-medium">
-            Also carry your watched status across in Plex
-          </span>
-          <span className="block text-xs text-muted-foreground">
-            Leave this off and Shortlist knows what you&rsquo;ve seen but Plex
-            doesn&rsquo;t &mdash; the new account starts with everything
-            unwatched, no ticks, and half-finished shows missing from Continue
-            Watching. Turn it on and each title is marked watched on the new
-            account, one write apiece.{" "}
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground">
+            Create the account in Plex &mdash;{" "}
             <strong className="text-foreground">
-              Plex records them all as watched today
+              Settings &rarr; Home &rarr; Add user
             </strong>{" "}
-            &mdash; it has no way to store the original dates. Shortlist keeps
-            the real ones itself either way, so your recommendations are
-            unaffected.
-          </span>
-        </span>
-      </label>
+            &mdash; and share the same libraries you can see. Then pick it here.
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => candidates.refetch()}
+            disabled={candidates.isFetching}
+          >
+            {candidates.isFetching && (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            )}
+            I&rsquo;ve made it &mdash; look again
+          </Button>
+        </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          variant="outline"
-          disabled={target === null || transfer.isPending}
-          onClick={() => run(true)}
+        <QueryBoundary
+          query={candidates}
+          skeleton={<Skeleton className="h-24 w-full" />}
+          isEmpty={(list) => list.length === 0}
+          empty={
+            <EmptyState
+              title="No other Plex Home users yet"
+              hint="Add one in Plex under Settings → Home, share your libraries with it, then use the button above."
+            />
+          }
         >
-          {transfer.isPending && (
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          {(list) => (
+            <div className="space-y-2">
+              {list.map((candidate) => {
+                const known = byAccount.get(candidate.plex_account_id);
+                const blocked = candidate.already_a_shortlist_user || !known;
+                return (
+                  <label
+                    key={candidate.plex_account_id}
+                    className={`flex items-start gap-3 rounded-md border p-3 text-sm ${blocked ? "opacity-60" : "cursor-pointer"}`}
+                  >
+                    <input
+                      type="radio"
+                      name="watching-account"
+                      className="mt-1"
+                      disabled={blocked}
+                      checked={known ? target === known.id : false}
+                      onChange={() => known && setTarget(known.id)}
+                    />
+                    <span className="min-w-0">
+                      <span className="font-medium">{candidate.title}</span>
+                      {candidate.already_a_shortlist_user && (
+                        <span className="block text-xs text-muted-foreground">
+                          Already has a row of its own &mdash; copying your
+                          history onto it would blend two people&rsquo;s taste
+                          into one.
+                        </span>
+                      )}
+                      {!known && !candidate.already_a_shortlist_user && (
+                        <span className="block text-xs text-muted-foreground">
+                          Shortlist hasn&rsquo;t picked this account up yet. Run{" "}
+                          <strong className="text-foreground">
+                            Sync users
+                          </strong>{" "}
+                          in Jobs, then come back.
+                        </span>
+                      )}
+                      {candidate.protected && (
+                        <span className="block text-xs text-muted-foreground">
+                          PIN-protected, so Shortlist can&rsquo;t sign in as it
+                          &mdash; the Plex checkmarks option below won&rsquo;t
+                          work for this account.
+                        </span>
+                      )}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
           )}
-          Preview
-        </Button>
-        <Button
-          disabled={target === null || transfer.isPending}
-          onClick={() => run(false)}
-        >
-          Move my history across
-        </Button>
-      </div>
+        </QueryBoundary>
 
-      {preview && (
-        <p className="rounded-md border border-dashed bg-muted/30 p-3 text-sm">
-          Would copy <strong>{preview.copied}</strong> titles
-          {preview.already_present > 0 &&
-            `, leaving ${preview.already_present} they've already watched alone`}
-          {scrobble && `, and mark ${preview.scrobbled} of them watched in Plex`}
-          . Nothing has been changed yet.
-        </p>
-      )}
-
-      {transfer.isSuccess && !transfer.data.dry_run && (
-        <p className="flex items-start gap-2 rounded-md border bg-muted/40 p-3 text-sm">
-          <Check
-            className="mt-0.5 h-4 w-4 shrink-0 text-success"
-            aria-hidden="true"
+        <label className="flex items-start gap-3 rounded-md border border-dashed p-3 text-sm">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={scrobble}
+            onChange={(e) => setScrobble(e.target.checked)}
           />
           <span>
-            Copied <strong>{transfer.data.copied}</strong> titles
-            {transfer.data.scrobbled > 0 &&
-              ` and marked ${transfer.data.scrobbled} watched in Plex`}
-            . Switch to that account in your Plex app and watch there from now
-            on &mdash; its row fills in on the next run.
+            <span className="font-medium">
+              Also carry your watched status across in Plex
+            </span>
+            <span className="block text-xs text-muted-foreground">
+              Leave this off and Shortlist knows what you&rsquo;ve seen but Plex
+              doesn&rsquo;t &mdash; the new account starts with everything
+              unwatched, no ticks, and half-finished shows missing from Continue
+              Watching. Turn it on and each title is marked watched on the new
+              account, one write apiece.{" "}
+              <strong className="text-foreground">
+                Plex records them all as watched today
+              </strong>{" "}
+              &mdash; it has no way to store the original dates. Shortlist keeps
+              the real ones itself either way, so your recommendations are
+              unaffected.
+            </span>
           </span>
-        </p>
-      )}
+        </label>
 
-      {transfer.isError && (
-        <p className="text-sm text-destructive">
-          Couldn&rsquo;t move the history:{" "}
-          {apiErrorMessage(
-            transfer.error,
-            "something went wrong talking to Plex.",
-          )}
-        </p>
-      )}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            disabled={target === null || transfer.isPending}
+            onClick={() => run(true)}
+          >
+            {transfer.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            )}
+            Preview
+          </Button>
+          <Button
+            disabled={target === null || transfer.isPending}
+            onClick={() => run(false)}
+          >
+            Move my history across
+          </Button>
+        </div>
+
+        {nothingToCopy && (
+          <div className="space-y-2 rounded-md border border-dashed p-3 text-sm">
+            <p>
+              Shortlist hasn&rsquo;t read your watch history yet, so there is
+              nothing to copy across. It reads everyone&rsquo;s overnight
+              &mdash; or you can do it now and come straight back.
+            </p>
+            {readHistory.isSuccess ? (
+              <p className="text-muted-foreground">
+                Reading your watch history. On a large library this takes a few
+                minutes &mdash; try the copy again once it has finished. If it
+                still comes up empty, the read didn&rsquo;t get through: check{" "}
+                <strong className="text-foreground">Sync watch history</strong>{" "}
+                on the Jobs page.
+              </p>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => readHistory.mutate()}
+                disabled={readHistory.isPending}
+              >
+                {readHistory.isPending && (
+                  <Loader2
+                    className="h-4 w-4 animate-spin"
+                    aria-hidden="true"
+                  />
+                )}
+                Read my watch history now
+              </Button>
+            )}
+            {readHistory.isError && (
+              <p className="text-destructive">
+                Couldn&rsquo;t start the read:{" "}
+                {apiErrorMessage(readHistory.error, "please try again.")}
+              </p>
+            )}
+          </div>
+        )}
+
+        {preview && !nothingToCopy && (
+          <p className="rounded-md border border-dashed bg-muted/30 p-3 text-sm">
+            Would copy <strong>{preview.copied}</strong> titles
+            {preview.already_present > 0 &&
+              `, leaving ${preview.already_present} they've already watched alone`}
+            {scrobble &&
+              `, and mark ${preview.scrobbled} of them watched in Plex`}
+            . Nothing has been changed yet.
+          </p>
+        )}
+
+        {transfer.isSuccess && !transfer.data.dry_run && !nothingToCopy && (
+          <p className="flex items-start gap-2 rounded-md border bg-muted/40 p-3 text-sm">
+            <Check
+              className="mt-0.5 h-4 w-4 shrink-0 text-success"
+              aria-hidden="true"
+            />
+            <span>
+              Copied <strong>{transfer.data.copied}</strong> titles
+              {transfer.data.scrobbled > 0 &&
+                ` and marked ${transfer.data.scrobbled} watched in Plex`}
+              . Switch to that account in your Plex app and watch there from now
+              on &mdash; its row fills in on the next run.
+            </span>
+          </p>
+        )}
+
+        {transfer.isError && (
+          <p className="text-sm text-destructive">
+            Couldn&rsquo;t move the history:{" "}
+            {apiErrorMessage(
+              transfer.error,
+              "something went wrong talking to Plex.",
+            )}
+          </p>
+        )}
       </Step>
     </div>
   );

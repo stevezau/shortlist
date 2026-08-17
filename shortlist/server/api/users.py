@@ -223,9 +223,9 @@ def _watch_depths(session) -> dict[int, int]:
 
     ``prefs["history_depth"]`` is the count of their watched set from the last read, which the
     share-token source returns as one item per distinct title (a 40-episode binge is one title). The
-    daily ``sync_watched`` job refreshes it for EVERY enabled user, not just ones a run processed — so
-    a skipped or never-run user no longer shows "0 titles" forever (the beta bug that reported 0 for
-    all 42 accounts while the log showed watches synced).
+    daily ``sync_watched`` job refreshes it for EVERY enabled user (and the owner), not just ones a
+    run processed — so a skipped or never-run user no longer shows "0 titles" forever (the beta bug
+    that reported 0 for all 42 accounts while the log showed watches synced).
     """
     depths: dict[int, int] = {}
     for user in session.query(User).all():

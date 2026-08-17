@@ -940,7 +940,11 @@ async def _sync_users(state, payload: dict) -> dict:
 
 @handler("sync.history")
 async def _sync_history(state, payload: dict) -> dict:
-    """Re-read every enabled user's watched set. Durable for the same reason `sync.users` is.
+    """Re-read every enabled user's watched set, plus the owner's. Durable for the same reason
+    `sync.users` is.
+
+    The owner is included whether or not they have a row: `user_sync` creates them `enabled=False`,
+    and their watched set is what the watching-account transfer copies FROM (#88).
 
     Watch history drives every recommendation, so a silent failure here degrades picks server-wide
     while everything still looks healthy. Reads only — nothing on Plex changes.
@@ -954,7 +958,7 @@ async def _sync_history(state, payload: dict) -> dict:
     if _plex_busy(state):
         return {"detail": "Skipped — a run is already reading watch history"}
     await state.run_service.sync_watched()
-    return {"detail": "Watch history re-read for every enabled user"}
+    return {"detail": "Watch history re-read for every enabled user, plus the owner"}
 
 
 @handler("backup.take")

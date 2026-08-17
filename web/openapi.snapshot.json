@@ -5036,6 +5036,10 @@
           "scrobbled": {
             "title": "Scrobbled",
             "type": "integer"
+          },
+          "source_empty": {
+            "title": "Source Empty",
+            "type": "boolean"
           }
         },
         "required": [
@@ -5044,6 +5048,7 @@
           "scrobbled",
           "scrobble_skipped",
           "dry_run",
+          "source_empty",
           "errors"
         ],
         "title": "TransferOut",

@@ -54,6 +54,9 @@ class TransferOut(PassthroughModel):
     scrobbled: int
     scrobble_skipped: int
     dry_run: bool
+    # Nothing had ever been cached for the owner, so there was nothing to copy — told apart from a
+    # plain `copied == 0` because the UI has to say something completely different about it (#88).
+    source_empty: bool
     errors: list[str]
 
 

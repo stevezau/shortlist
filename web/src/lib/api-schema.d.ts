@@ -4686,6 +4686,8 @@ export interface components {
             scrobble_skipped: number;
             /** Scrobbled */
             scrobbled: number;
+            /** Source Empty */
+            source_empty: boolean;
         } & {
             [key: string]: unknown;
         };

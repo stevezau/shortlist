@@ -39,6 +39,11 @@ class TransferReport:
     scrobbled: int = 0
     scrobble_skipped: int = 0
     dry_run: bool = False
+    #: Shortlist has never cached a single watched title for the SOURCE, so there was nothing this
+    #: transfer could ever have copied. Reported apart from `copied == 0` because the two are
+    #: opposites — "they already had everything" is success, this is the copy being impossible —
+    #: and collapsing them into one bare 0 is what made the setup wizard silently useless (#88).
+    source_empty: bool = False
     errors: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
@@ -48,6 +53,7 @@ class TransferReport:
             "scrobbled": self.scrobbled,
             "scrobble_skipped": self.scrobble_skipped,
             "dry_run": self.dry_run,
+            "source_empty": self.source_empty,
             "errors": self.errors,
         }
 
@@ -136,6 +142,7 @@ def transfer_watch_history(
         )
     }
     rows = session.query(WatchedTitle).filter(WatchedTitle.user_id == from_user_id).all()
+    report.source_empty = not rows
 
     for row in rows:
         already = (row.section_key, row.rating_key) in existing
