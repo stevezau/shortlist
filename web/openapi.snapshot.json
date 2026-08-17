@@ -672,6 +672,166 @@
             ],
             "title": "Refresh Days"
           },
+          "req_auto_min_demand": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Auto Min Demand"
+          },
+          "req_auto_min_rating": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Auto Min Rating"
+          },
+          "req_auto_send": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Auto Send"
+          },
+          "req_max_per_row": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Max Per Row"
+          },
+          "req_max_year": {
+            "anyOf": [
+              {
+                "maximum": 2999.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Max Year"
+          },
+          "req_min_demand": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Min Demand"
+          },
+          "req_min_rating": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Min Rating"
+          },
+          "req_min_votes": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Min Votes"
+          },
+          "req_min_year": {
+            "anyOf": [
+              {
+                "maximum": 2999.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Min Year"
+          },
+          "req_radarr_quality_profile_id": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Radarr Quality Profile Id"
+          },
+          "req_radarr_root_folder": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Radarr Root Folder"
+          },
+          "req_sonarr_quality_profile_id": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Sonarr Quality Profile Id"
+          },
+          "req_sonarr_root_folder": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Sonarr Root Folder"
+          },
           "request_tag": {
             "default": "",
             "maxLength": 64,
@@ -931,6 +1091,149 @@
             ],
             "title": "Refresh Days"
           },
+          "req_auto_min_demand": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Auto Min Demand"
+          },
+          "req_auto_min_rating": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Auto Min Rating"
+          },
+          "req_auto_send": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Auto Send"
+          },
+          "req_max_per_row": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Max Per Row"
+          },
+          "req_max_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Max Year"
+          },
+          "req_min_demand": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Min Demand"
+          },
+          "req_min_rating": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Min Rating"
+          },
+          "req_min_votes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Min Votes"
+          },
+          "req_min_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Min Year"
+          },
+          "req_radarr_quality_profile_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Radarr Quality Profile Id"
+          },
+          "req_radarr_root_folder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Radarr Root Folder"
+          },
+          "req_sonarr_quality_profile_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Sonarr Quality Profile Id"
+          },
+          "req_sonarr_root_folder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Sonarr Root Folder"
+          },
           "request_tag": {
             "title": "Request Tag",
             "type": "string"
@@ -1002,6 +1305,19 @@
           "max_seeds",
           "cold_start",
           "seed_window",
+          "req_min_rating",
+          "req_min_votes",
+          "req_min_demand",
+          "req_min_year",
+          "req_max_year",
+          "req_auto_send",
+          "req_auto_min_demand",
+          "req_auto_min_rating",
+          "req_max_per_row",
+          "req_radarr_quality_profile_id",
+          "req_radarr_root_folder",
+          "req_sonarr_quality_profile_id",
+          "req_sonarr_root_folder",
           "pick_order",
           "placement",
           "placement_friends",
