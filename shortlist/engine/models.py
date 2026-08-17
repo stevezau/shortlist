@@ -398,6 +398,12 @@ class RowSpec:
     # Added LAST, deliberately: several call sites build a RowSpec positionally, so a new field in
     # the middle silently shifts every argument after it. The same hazard bit HubAnchor.anchor_row.
     fallback_name: str = ""
+    # This row's own Sonarr/Radarr target and request floors; None -> inherit the global RequestConfig
+    # entirely. Grouped into one dataclass rather than a dozen flat fields for the reason directly
+    # above. Only per-person rows can carry these: a shared row is built from titles people have
+    # already WATCHED, which are by definition already on the server, so it surfaces nothing missing
+    # to request (see `_shared_row`, and `_record_demand` being reached only from `_warm_start`).
+    request_overrides: RequestOverrides | None = None
     # How many of this person's most recent watches this row may be built from, of which ONE (per media
     # type) is chosen each run — the row cycles a step a day rather than sitting on their newest watch
     # for ever. 1 (the default) is the original behaviour: always the most recent.
@@ -533,6 +539,49 @@ class RequestConfig:
     # Populated by the context builder when a target was connected (URL+key) but incomplete (no
     # profile or folder selected). Surfaces in the run report so the UI can explain the skip.
     incomplete_targets: list[str] = field(default_factory=list)
+    # This ROW's own ceiling on how many titles it may contribute to the run, for the allocator.
+    # Only ever <= `max_per_run`: the run ceiling is what protects the library from ballooning, so a
+    # row may make itself more restrictive and never less (`resolve_request_config` enforces it).
+    # Defaults to `max_per_run` — "as much as the run allows", which is still divided between rows.
+    max_per_row: int = 0
+
+    def __post_init__(self) -> None:
+        if self.max_per_row <= 0:
+            self.max_per_row = self.max_per_run
+
+
+@dataclass(frozen=True)
+class RequestOverrides:
+    """One row's per-row request settings. Every field is optional; None/"" means inherit the global.
+
+    Kept as its own dataclass rather than ten more flat ``RowSpec`` fields because several call sites
+    build a ``RowSpec`` positionally, so a run of new fields in the middle silently shifts every
+    argument after it — the hazard ``RowSpec.fallback_name`` and ``HubAnchor.anchor_row`` both record.
+    One optional field appended at the end is safe; ten in the middle are not.
+
+    Deliberately absent: ``enabled``, ``rating_source``, ``mdblist_api_key``, ``max_per_run``, the
+    rating-lookup budget and ``tag``. Those are the run's ceilings and its single API account — a row
+    that could raise one would turn the owner's global setting into a suggestion.
+
+    The Arr overrides are PROFILE and ROOT FOLDER only. URL and API key stay global: the case this
+    serves is one Radarr filing a kids row into ``/data/Kids`` at a lower profile, not a second
+    Radarr. Overriding either on a row whose global target is unconfigured does nothing at all,
+    because there is no URL or key to send to.
+    """
+
+    min_rating: float | None = None
+    min_votes: int | None = None
+    min_demand: int | None = None
+    min_year: int | None = None
+    max_year: int | None = None
+    auto_send: bool | None = None
+    auto_min_demand: int | None = None
+    auto_min_rating: float | None = None
+    max_per_row: int | None = None
+    radarr_quality_profile_id: int | None = None
+    radarr_root_folder: str | None = None
+    sonarr_quality_profile_id: int | None = None
+    sonarr_root_folder: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1032,6 +1081,13 @@ class RunReport:
     # than asked, never less), but it is a state change the owner made that did not reach Plex, and
     # §12's whole register is that shape. `pipeline._leave_sharing_alone` fills it.
     left_alone_failures: dict[int, str] = field(default_factory=dict)
+    # {username: [ratingKey, ...]} — accounts whose share filter Shortlist DID write, that can still
+    # see other people's rows. The read-back proves plex.tv STORED our exclusions; this is the only
+    # thing that asks whether Plex ACTS on them. Distinct from `unhideable_rows`, which is the
+    # accounts Plex refuses a filter for: the remedy there is "clear the restriction profile", and
+    # here there isn't one the owner can apply — a filter that is present and ignored is ours or
+    # Plex's to explain, so it is reported as a fault, not as a setting.
+    filters_not_enforced: dict[str, list[int]] = field(default_factory=dict)
     # Whether this run actually GOT AS FAR AS looking. An empty `unhideable_rows` is ambiguous on its
     # own — "we checked and nobody is exposed" and "we died in the sweep phase" produce the same
     # dict — and the readers treat the latest measuring run as the truth. Without this flag a run
