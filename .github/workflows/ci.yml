@@ -196,8 +196,13 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements.lock
+      # uv, matching test-python. This job used pip with setup-python's cache and spent 16s on the
+      # two installs where test-python spends 3s for the same dependencies — a straight 13s off the
+      # longest job on the board, for no behaviour change.
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements.lock
       # Same pnpm setup as test-web — version comes from web/package.json's `packageManager`, so the
       # two jobs and the Dockerfile cannot drift apart.
       - uses: pnpm/action-setup@v6
@@ -211,8 +216,8 @@ jobs:
       - run: pnpm -C web install --frozen-lockfile
       - run: pnpm -C web build
       # Same ordering as test-python: pinned runtime deps first, dev tooling on top.
-      - run: pip install -r requirements.lock
-      - run: pip install -e ".[dev]"
+      - run: uv pip install --system -r requirements.lock
+      - run: uv pip install --system -e ".[dev]"
       # Cache the downloaded browser. Keyed on the resolved playwright version rather than
       # on pyproject, because the pin is a floor (">=1.45") — keying on the manifest would
       # keep serving a stale browser after pip resolved a newer playwright.

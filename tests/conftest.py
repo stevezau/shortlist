@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import socket
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -68,6 +69,26 @@ class MemorySnapshotStore:
 
     def save(self, snapshot: FilterSnapshot) -> None:
         self.saved[snapshot.plex_account_id] = snapshot
+
+
+# This module's docstring has always claimed no test touches the network. It was not true, and the
+# cost was measurable: e2e resolved `llama.local` 8 times at a 5.0s mDNS timeout each (40s of an
+# 88s run), and the version checker called the real api.github.com 10 times. Both now fail fast.
+#
+# Loopback stays open — e2e genuinely serves uvicorn and fake_plex over 127.0.0.1. Everything else
+# raises the same gaierror a nonexistent host already raised, just without the wait, so tests that
+# assert on an unreachable host are unaffected.
+_ALLOWED_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0", "", None})
+_real_getaddrinfo = socket.getaddrinfo
+
+
+def _no_external_dns(host, port, *args, **kwargs):
+    if host not in _ALLOWED_HOSTS and not str(host).startswith("127."):
+        raise socket.gaierror(socket.EAI_NONAME, f"blocked by tests/conftest.py: {host!r}")
+    return _real_getaddrinfo(host, port, *args, **kwargs)
+
+
+socket.getaddrinfo = _no_external_dns
 
 
 # Modules that test the migration machinery itself. They must build a schema the real way — a
