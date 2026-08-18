@@ -68,6 +68,35 @@ class MemorySnapshotStore:
         self.saved[snapshot.plex_account_id] = snapshot
 
 
+@pytest.fixture(autouse=True)
+def _no_retry_backoff_waits(monkeypatch):
+    """Keep every retry ATTEMPT, drop the wall-clock WAIT between them.
+
+    The clients retry unreachable hosts on a real clock: ``plex_pms``'s urllib3 adapter waits
+    0s+3s+6s per exhausted request, and ``http_retry`` waits ~1s+2s. Tests point at hostnames that
+    do not resolve (``http://pms:32400`` and friends), so any test reaching a client pays the full
+    backoff for nothing — measured at 22% of total suite wall-clock, and it lands hardest under
+    xdist, where a sleeping worker is a worker not running tests.
+
+    Only the sleeps go. Attempt counts, ordering and every assertion about retry behaviour are
+    unchanged, and ``time.sleep`` is still called (with 0), so the tests that COUNT backoffs still
+    see them. A test that needs real waits overrides this with its own ``monkeypatch``, which is
+    applied after this fixture and therefore wins.
+
+    ``_backoff`` is patched rather than ``BASE_BACKOFF_S``: ``_send`` binds that constant as a
+    default argument at import time, so rebinding the module attribute would silently do nothing.
+    A server-sent ``Retry-After`` is deliberately left alone — it is asserted by value in
+    ``test_http_retry.py``, which stubs its own sleep anyway.
+    """
+    from urllib3.util.retry import Retry
+
+    from shortlist.engine.clients import http_retry
+
+    monkeypatch.setattr(Retry, "sleep", lambda self, response=None: None, raising=False)
+    monkeypatch.setattr(Retry, "sleep_for_retry", lambda self, response=None: False, raising=False)
+    monkeypatch.setattr(http_retry, "_backoff", lambda attempt, base, cap: 0.0)
+
+
 @pytest.fixture
 def engine_config() -> EngineConfig:
     return EngineConfig(row_size=5, min_history=3, candidates_pre_rank=10, max_seeds=10)
