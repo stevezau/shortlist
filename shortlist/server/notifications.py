@@ -252,13 +252,14 @@ def _requests_found_nothing(session: Session) -> dict | None:
         )
     elif data.get("exhausted_pool"):
         body = (
-            f"The last {len(events)} runs rated every one of the {pool} titles people wanted, and none "
-            "cleared your minimum rating. Lower it, or widen the year range, to let some through."
+            f"The last {len(events)} runs rated every title they checked ({pool} checks across the rows), "
+            "and none cleared your minimum rating. Lower it, or widen the year range, to let some "
+            "through."
         )
     else:
         body = (
-            f"The last {len(events)} runs got through {examined} of the {pool} titles people wanted "
-            "before running out of rating lookups, and none of those cleared your minimum rating. "
+            f"The last {len(events)} runs got through {examined} of {pool} checks before running out of "
+            "rating lookups, and none of those cleared your minimum rating. "
             "Raise how many to auto-request per run so each run looks further, or lower the minimum."
         )
     return {

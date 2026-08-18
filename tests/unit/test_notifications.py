@@ -227,7 +227,12 @@ class TestRequestsFoundNothing:
         result = notif._requests_found_nothing(session)
 
         assert result["severity"] == "warning"
-        assert "100 of the 400" in result["body"]
+        assert "100 of 400 checks" in result["body"]
+        # Not "of the 400 titles people wanted": `pool_size` is a sum of per-row checks, so on a
+        # multi-row run it double-counts a title two rows share, while the `wanted` on the same
+        # card is distinct. Calling both "titles wanted" made them contradict each other in print
+        # (release review 2026-08-18).
+        assert "titles people wanted" not in result["body"]
         assert "looks further" in result["body"], "the actionable half: the gate never saw the rest"
 
     def test_blames_the_floor_when_the_whole_pool_was_rated(self, session):
@@ -238,7 +243,8 @@ class TestRequestsFoundNothing:
 
         body = notif._requests_found_nothing(session)["body"]
 
-        assert "rated every one of the 40" in body
+        assert "40 checks" in body
+        assert "titles people wanted" not in body
         assert "looks further" not in body
 
     def test_does_not_fire_for_events_older_than_the_window(self, session):

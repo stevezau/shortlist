@@ -49,13 +49,18 @@ describe("the REQUESTED tile", () => {
 
   it("says how far the gate got when it stopped short — the actionable case", () => {
     renderTiles({ requests_pool: 400, requests_examined: 100 });
-    expect(screen.getByText(/rated 100 of 400 wanted/)).toBeInTheDocument();
+    expect(screen.getByText(/rated 100 of 400/)).toBeInTheDocument();
+    // Not "wanted": both numbers are sums of per-row checks, so on a multi-row run they double-count
+    // a title two rows share — while the `requests_wanted` on the same card is distinct. The two
+    // disagreed in print (release review 2026-08-18).
+    expect(screen.queryByText(/of 400 wanted/)).not.toBeInTheDocument();
   });
 
   it("blames the rating limit when everything was rated", () => {
     // Telling this owner to raise the lookup budget would be advice that cannot possibly work.
     renderTiles({ requests_pool: 40, requests_examined: 40 });
-    expect(screen.getByText(/rated all 40 wanted/)).toBeInTheDocument();
+    expect(screen.getByText(/rated all 40/)).toBeInTheDocument();
+    expect(screen.queryByText(/40 wanted/)).not.toBeInTheDocument();
   });
 
   it("goes back to the plain hint once something was sent", () => {
@@ -110,7 +115,7 @@ describe("the REQUESTED tile when titles are waiting", () => {
 
   it("still blames the gate when nothing qualified at all", () => {
     renderTiles({ requests_queued: 0, requests_pool: 100, requests_examined: 88 });
-    expect(screen.getByText(/rated 88 of 100 wanted/)).toBeInTheDocument();
+    expect(screen.getByText(/rated 88 of 100/)).toBeInTheDocument();
   });
 });
 

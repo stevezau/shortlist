@@ -58,6 +58,18 @@ from shortlist.engine.request_config import resolve_request_config
 _ENFORCEMENT_SPOT_CHECK_ATTEMPTS = 3
 
 
+def _distinct_wanted(demand: dict[str, dict]) -> int:
+    """How many titles the owner is actually missing across every row.
+
+    DISTINCT, matching what `RequestReport.wanted` records when the run finishes — not a sum over
+    rows. A title two rows both want is one title the owner does not have, and the allocator already
+    charges it one slot. Emitting the sum made the live progress line read 3,000 while the same run
+    recorded 1,000 on the way out, so the number appeared to move backwards as it ended (release
+    review 2026-08-18).
+    """
+    return len({key for row_demand in demand.values() for key in row_demand})
+
+
 def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     """Run the pipeline for every enabled user. Users are independent — one failure never
     stops the run (per-user try/except; plex-safety rule 6 resume-safety).
@@ -170,7 +182,7 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
 
     # Sonarr/Radarr requests, dead LAST — after every Plex write is done.
     if requests_on:
-        _emit(ctx, "Shortlist", "requesting", {"wanted": sum(len(m) for m in demand.values())})
+        _emit(ctx, "Shortlist", "requesting", {"wanted": _distinct_wanted(demand)})
     _request_phase(ctx, requests_on, demand, report)
 
     report.finished_at = datetime.now(UTC)

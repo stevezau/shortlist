@@ -246,3 +246,51 @@ class TestTheSpotCheckGivesUp:
 
         assert reads == ["established"]
         assert report.filters_enforcement_measured is True
+
+
+class TestTheLiveWantedCountMatchesTheRecordedOne:
+    """Release review, 2026-08-18 (LOW). The progress line emitted a SUM over rows while the finished
+    run recorded DISTINCT titles, so on a multi-row server the number moved backwards as the run
+    ended — 3,000 wanted while it worked, 1,000 wanted once it stopped. Nothing was wrong with the
+    requesting itself (the allocator already charges a shared title one slot); the two surfaces just
+    counted different things and were read as the same thing.
+
+    Lives here rather than in `test_requests.py` because it is about what the PIPELINE emits.
+    """
+
+    def _demand_two_rows_sharing_a_title(self):
+        from shortlist.engine.models import MediaType, MissingTitle
+
+        def t(tmdb_id: int, title: str):
+            return MissingTitle(tmdb_id, title, MediaType.MOVIE, 2021, 0.0, 0, demand=1)
+
+        shared = t(1, "Both rows want this")
+        return {
+            "row-a": {(1, MediaType.MOVIE): shared, (2, MediaType.MOVIE): t(2, "only a")},
+            "row-b": {(1, MediaType.MOVIE): shared, (3, MediaType.MOVIE): t(3, "only b")},
+        }
+
+    def test_it_counts_a_shared_title_once(self):
+        from shortlist.engine.pipeline import _distinct_wanted
+
+        demand = self._demand_two_rows_sharing_a_title()
+
+        assert _distinct_wanted(demand) == 3, "three distinct titles are missing across the two rows"
+        assert sum(len(m) for m in demand.values()) == 4, (
+            "precondition: the naive sum double-counts the title both rows want, so this case can tell the two apart"
+        )
+
+    def test_it_matches_what_the_finished_run_records(self):
+        """The whole point: the live number and the recorded one must be the same KIND of number.
+        `RequestReport.wanted` is built from the merged demand, so these two must not drift apart."""
+        from shortlist.engine.pipeline import _distinct_wanted
+
+        demand = self._demand_two_rows_sharing_a_title()
+        merged = {key for row_demand in demand.values() for key in row_demand}
+
+        assert _distinct_wanted(demand) == len(merged)
+
+    def test_no_rows_is_zero_not_an_error(self):
+        from shortlist.engine.pipeline import _distinct_wanted
+
+        assert _distinct_wanted({}) == 0

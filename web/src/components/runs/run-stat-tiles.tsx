@@ -43,9 +43,12 @@ function requestHint(s: RunDetail["stats"]): string {
   const pool = s.requests_pool ?? 0;
   if (pool === 0) return "nothing cleared the demand or year limits";
   const examined = s.requests_examined ?? 0;
-  if (examined < pool)
-    return `rated ${examined} of ${pool} wanted — none good enough`;
-  return `rated all ${pool} wanted — none cleared the rating limit`;
+  // Neither number is a count of TITLES once a run has several rows: both are sums of per-row
+  // checks, so a title two rows want is counted twice — while `requests_wanted` above is distinct.
+  // Printing "of 3000 wanted" beside "1000 wanted" made the two disagree on the same card, so the
+  // word does not appear here at all (release review 2026-08-18).
+  if (examined < pool) return `rated ${examined} of ${pool} — none good enough`;
+  return `rated all ${pool} — none cleared the rating limit`;
 }
 
 export function RunStatTiles({ run }: { run: RunDetail }) {
