@@ -14,6 +14,24 @@ import { tokenStepBreakdown } from "@/lib/run-format";
 import type { RunDetail } from "@/lib/types";
 
 /** The finished-run stats as at-a-glance tiles (Dashboard style) rather than one dense text line. */
+
+/** What "0 requested" was arrived at from.
+ *
+ * A bare zero reads identically whether nothing was wanted, the floors emptied the pool, or the
+ * rating gate ran out of lookups before reaching anything good — and only the last is something the
+ * owner can act on. It took reading the container log by hand to tell them apart (2026-08-18).
+ */
+function requestHint(s: RunDetail["stats"]): string {
+  const requested = s.titles_requested ?? 0;
+  if (requested > 0) return "to Sonarr / Radarr";
+  const pool = s.requests_pool ?? 0;
+  if (pool === 0) return "nothing cleared the demand or year limits";
+  const examined = s.requests_examined ?? 0;
+  if (examined < pool)
+    return `rated ${examined} of ${pool} wanted — none good enough`;
+  return `rated all ${pool} wanted — none cleared the rating limit`;
+}
+
 export function RunStatTiles({ run }: { run: RunDetail }) {
   const s = run.stats;
   const elapsed = runElapsedMs(run.began_at, run.finished_at);
@@ -119,7 +137,7 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
         hint={
           s.requests_warnings?.length
             ? s.requests_warnings.join("; ")
-            : "to Sonarr / Radarr"
+            : requestHint(s)
         }
         tone={s.requests_warnings?.length ? "warning" : undefined}
       />

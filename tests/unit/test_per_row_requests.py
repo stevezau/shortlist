@@ -14,6 +14,7 @@ import pytest
 
 from shortlist.engine import requests as requests_mod
 from shortlist.engine.models import (
+    ArrTarget,
     MediaType,
     MissingTitle,
     RequestConfig,
@@ -460,3 +461,70 @@ class TestTagsSurviveTheRowSplit:
         )
 
         assert report.pool_by_row == {"strict": 0, "loose": 1}, "the strict row must not borrow demand"
+
+
+class TestTaggingEndToEnd:
+    """All three tag layers must still reach Radarr once demand is split per row.
+
+    The guide promises a requested title carries the global tag, the tag of every PERSON who wanted
+    it, and the tag of every ROW they're in. Per-row demand made the last two accumulate separately,
+    which is where a layer could silently go missing.
+    """
+
+    def test_all_three_layers_reach_the_arr(self, radarr):
+        tagged = ArrTarget(
+            url="http://radarr.test", api_key="rk", quality_profile_id=1, root_folder="/movies", tag="shortlist"
+        )
+        base = _cfg(radarr=tagged)
+        title = _title(550)
+        title.tags = {"sarah", "picked-for-family"}  # person tag + row tag, as _record_demand builds them
+
+        requests_mod.request_missing(base, FakeTmdb(), _rows(("picked", base, _demand(title))), dry_run=False)
+
+        # The engine passes the per-user/per-row tags as extra_tags; the client unions the target's
+        # own global tag onto them (`arr.py::_tag_ids`), so the engine must not drop either layer.
+        assert radarr[("/movies", 1)].tag_calls == [{"sarah", "picked-for-family"}]
+
+    def test_a_rows_own_target_keeps_the_global_tag(self, radarr):
+        """A per-row folder override must not strip the global tag off the target it copies."""
+        tagged = ArrTarget(
+            url="http://radarr.test", api_key="rk", quality_profile_id=1, root_folder="/movies", tag="shortlist"
+        )
+        kids = resolve_request_config(_cfg(radarr=tagged), RequestOverrides(radarr_root_folder="/kids"))
+        assert kids.radarr.tag == "shortlist"
+
+    def test_a_title_two_rows_want_carries_both_rows_tags(self, radarr):
+        base = _cfg()
+        kids, prestige = _title(550), _title(550)
+        kids.tags, prestige.tags = {"kids"}, {"prestige"}
+
+        requests_mod.request_missing(
+            base,
+            FakeTmdb(),
+            _rows(("kids", base, _demand(kids)), ("prestige", base, _demand(prestige))),
+            dry_run=False,
+        )
+
+        assert radarr[("/movies", 1)].tag_calls == [{"kids", "prestige"}]
+
+    def test_a_queued_title_keeps_its_tags_for_the_later_approval(self, radarr):
+        """The inbox row is what an approval months later is built from, so the tags have to survive
+        being queued, not just being sent."""
+        base = _cfg(auto_send=False)
+        title = _title(550)
+        title.tags = {"sarah", "kids"}
+
+        report = requests_mod.request_missing(base, FakeTmdb(), _rows(("kids", base, _demand(title))), dry_run=False)
+
+        assert report.queued[0].tags == {"sarah", "kids"}
+
+    def test_shows_route_to_sonarr_with_their_tags(self, radarr, monkeypatch):
+        sonarr_fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "SonarrClient", lambda *a, **k: sonarr_fake)
+        base = _cfg()
+        show = MissingTitle(70, "show", MediaType.SHOW, 2021, 8.0, 500, demand=1)
+        show.tags = {"sarah", "tv-row"}
+
+        requests_mod.request_missing(base, FakeTmdb(tvdb={70: 900}), _rows(("tv", base, _demand(show))), dry_run=False)
+
+        assert sonarr_fake.tag_calls == [{"sarah", "tv-row"}]

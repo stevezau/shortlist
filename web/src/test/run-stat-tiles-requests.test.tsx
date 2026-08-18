@@ -1,0 +1,71 @@
+/**
+ * The REQUESTED tile has to explain its own zero.
+ *
+ * Audit round 16, 2026-08-18: `requests_pool` / `requests_examined` reached the run stats but nothing
+ * read them, so "0 requested" still said nothing — and the guide told the owner to look at numbers
+ * the UI never showed. A bare zero reads the same whether nothing was wanted, the floors emptied the
+ * pool, or the gate ran out of lookups before reaching anything good. Only the last is actionable,
+ * and telling them apart used to mean reading the container log by hand.
+ */
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+
+import { RunStatTiles } from "@/components/runs/run-stat-tiles";
+import type { RunDetail } from "@/lib/types";
+
+function renderTiles(stats: Record<string, unknown>) {
+  const run = {
+    id: 1,
+    trigger: "manual",
+    status: "ok",
+    dry_run: false,
+    started_at: "2026-08-18T04:18:00Z",
+    began_at: "2026-08-18T04:18:00Z",
+    finished_at: "2026-08-18T04:24:00Z",
+    users: [],
+    shared_rows: [],
+    error: null,
+    promotion_blockers: [],
+    stats: { users_ok: 1, users_error: 0, titles_requested: 0, ...stats },
+  } as unknown as RunDetail;
+  render(<RunStatTiles run={run} />);
+}
+
+describe("the REQUESTED tile", () => {
+  it("names the floors when they emptied the pool", () => {
+    renderTiles({ requests_pool: 0 });
+    expect(
+      screen.getByText(/nothing cleared the demand or year limits/),
+    ).toBeInTheDocument();
+  });
+
+  it("says how far the gate got when it stopped short — the actionable case", () => {
+    renderTiles({ requests_pool: 400, requests_examined: 100 });
+    expect(screen.getByText(/rated 100 of 400 wanted/)).toBeInTheDocument();
+  });
+
+  it("blames the rating limit when everything was rated", () => {
+    // Telling this owner to raise the lookup budget would be advice that cannot possibly work.
+    renderTiles({ requests_pool: 40, requests_examined: 40 });
+    expect(screen.getByText(/rated all 40 wanted/)).toBeInTheDocument();
+  });
+
+  it("goes back to the plain hint once something was sent", () => {
+    renderTiles({
+      titles_requested: 3,
+      requests_pool: 40,
+      requests_examined: 40,
+    });
+    expect(screen.getByText(/to Sonarr \/ Radarr/)).toBeInTheDocument();
+  });
+
+  it("still prefers a real config warning over the explanation", () => {
+    renderTiles({
+      requests_pool: 0,
+      requests_warnings: ["Radarr not fully configured"],
+    });
+    expect(
+      screen.getByText(/Radarr not fully configured/),
+    ).toBeInTheDocument();
+  });
+});
