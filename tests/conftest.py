@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import socket
+import ssl
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -89,6 +90,20 @@ def _no_external_dns(host, port, *args, **kwargs):
 
 
 socket.getaddrinfo = _no_external_dns
+
+
+# Every httpx/requests client construction builds an SSLContext and re-parses the system CA bundle
+# off disk: measured 12.9s across 4232 calls, 3.04ms each, and it was the second-largest single
+# entry in a CPU profile of the suite. None of it can matter — the DNS guard above means no test
+# reaches a TLS host, so these certificate stores are built and then never used to verify anything.
+_real_load_verify_locations = ssl.SSLContext.load_verify_locations
+
+
+def _skip_ca_bundle(self, cafile=None, capath=None, cadata=None):
+    return None
+
+
+ssl.SSLContext.load_verify_locations = _skip_ca_bundle
 
 
 # Modules that test the migration machinery itself. They must build a schema the real way — a
