@@ -59,10 +59,12 @@ def test_no_overrides_returns_the_global_config_unchanged():
     base = _cfg(min_rating=7.0, max_per_run=10)
     assert resolve_request_config(base, None) == base
 
+
 def test_an_override_replaces_only_that_field():
     base = _cfg(min_rating=7.0, min_year=2000)
     out = resolve_request_config(base, RequestOverrides(min_rating=8.5))
     assert (out.min_rating, out.min_year) == (8.5, 2000)
+
 
 def test_a_row_cannot_widen_the_run_ceiling():
     """max_per_run is the library's protection; a row may never raise it."""
@@ -70,11 +72,13 @@ def test_a_row_cannot_widen_the_run_ceiling():
     out = resolve_request_config(base, RequestOverrides(max_per_row=999))
     assert out.max_per_run == 10
 
+
 def test_a_row_target_overrides_profile_and_folder_but_keeps_url_and_key():
     base = _cfg(radarr=ArrTarget(url="http://r", api_key="k", quality_profile_id=1, root_folder="/m"))
     out = resolve_request_config(base, RequestOverrides(radarr_quality_profile_id=9, radarr_root_folder="/kids"))
     assert (out.radarr.url, out.radarr.api_key) == ("http://r", "k")
     assert (out.radarr.quality_profile_id, out.radarr.root_folder) == (9, "/kids")
+
 
 def test_a_target_override_on_an_unconfigured_arr_stays_none():
     """No global Radarr means no Radarr — a row override must not conjure one without a URL/key."""
@@ -118,6 +122,7 @@ def test_demand_is_counted_per_row_not_across_rows():
     assert demand["picked"][(550, MediaType.MOVIE)].demand == 1
     assert demand["because"][(550, MediaType.MOVIE)].demand == 1
 
+
 def test_two_people_in_the_same_row_accumulate():
     demand: RowDemand = {}
     _record_demand(_policy(user="sarah", specs=[_spec("picked")]), demand)
@@ -152,24 +157,29 @@ def test_a_single_row_gets_its_own_max_not_the_global():
     out = allocate([("picked", _titles(20))], cap=10, row_caps={"picked": 3})
     assert len(out) == 3
 
+
 def test_two_rows_split_the_global_cap_evenly():
     out = allocate([("a", _titles(20)), ("b", _titles(20))], cap=10, row_caps={})
     assert Counter(slug for slug, _ in out) == {"a": 5, "b": 5}
+
 
 def test_a_row_that_cannot_fill_its_share_hands_the_surplus_back():
     """global 10, A capped at 3, B uncapped -> 3 + 7, not 3 + 5 with two slots idle."""
     out = allocate([("a", _titles(20)), ("b", _titles(20))], cap=10, row_caps={"a": 3})
     assert Counter(slug for slug, _ in out) == {"a": 3, "b": 7}
 
+
 def test_a_row_short_of_titles_also_hands_its_surplus_back():
     out = allocate([("a", _titles(2)), ("b", _titles(20))], cap=10, row_caps={})
     assert Counter(slug for slug, _ in out) == {"a": 2, "b": 8}
+
 
 def test_a_title_in_two_rows_is_claimed_once_by_the_earlier_row():
     shared = _title(550)
     out = allocate([("a", [shared]), ("b", [shared] + _titles(5))], cap=10, row_caps={})
     assert [(s, t.tmdb_id) for s, t in out].count(("a", 550)) == 1
     assert all(not (s == "b" and t.tmdb_id == 550) for s, t in out)
+
 
 def test_a_claimed_title_frees_the_other_rows_slot_for_its_next_pick():
     """One title consumes ONE slot in total, so 10 slots still yield 10 titles."""
@@ -178,15 +188,19 @@ def test_a_claimed_title_frees_the_other_rows_slot_for_its_next_pick():
     assert len(out) == 10
     assert len({t.tmdb_id for _, t in out}) == 10
 
+
 def test_everything_is_short_so_the_cap_is_not_reached():
     out = allocate([("a", _titles(1)), ("b", _titles(1))], cap=10, row_caps={})
     assert len(out) == 2
 
+
 def test_no_rows_yields_nothing():
     assert allocate([], cap=10, row_caps={}) == []
 
+
 def test_a_zero_cap_sends_nothing():
     assert allocate([("a", _titles(5))], cap=0, row_caps={}) == []
+
 
 def test_rounding_favours_the_earlier_row():
     """10 slots across 3 rows: 4/3/3, deterministic by run order."""
@@ -222,26 +236,57 @@ nothing rated to put in its slots — the starvation bug of 2026-08-18, one leve
 ```python
 def test_each_row_gets_a_share_of_the_lookup_budget():
     """Row A's 500 candidates must not consume every lookup and leave B unrated."""
-    report = request_missing(base, FakeTmdb(), {"a": _demand(500), "b": _demand(500)},
-                             {"a": base, "b": base}, row_order=["a", "b"], dry_run=True, mdblist=mdb)
+    report = request_missing(
+        base,
+        FakeTmdb(),
+        {"a": _demand(500), "b": _demand(500)},
+        {"a": base, "b": base},
+        row_order=["a", "b"],
+        dry_run=True,
+        mdblist=mdb,
+    )
     assert report.examined_by_row["b"] > 0
 
+
 def test_an_unused_lookup_share_is_returned_to_the_other_rows():
-    report = request_missing(base, FakeTmdb(), {"a": _demand(2), "b": _demand(500)},
-                             {"a": base, "b": base}, row_order=["a", "b"], dry_run=True, mdblist=mdb)
+    report = request_missing(
+        base,
+        FakeTmdb(),
+        {"a": _demand(2), "b": _demand(500)},
+        {"a": base, "b": base},
+        row_order=["a", "b"],
+        dry_run=True,
+        mdblist=mdb,
+    )
     assert mdb.live_lookups == requests_mod._lookup_budget(base.max_per_run)
+
 
 def test_a_title_in_two_rows_costs_one_live_lookup():
     """The second row's read is a cache hit — free — so overlap never doubles quota spend."""
     same = _demand_with(550)
-    request_missing(base, FakeTmdb(), {"a": same, "b": same}, {"a": base, "b": base},
-                    row_order=["a", "b"], dry_run=True, mdblist=mdb)
+    request_missing(
+        base,
+        FakeTmdb(),
+        {"a": same, "b": same},
+        {"a": base, "b": base},
+        row_order=["a", "b"],
+        dry_run=True,
+        mdblist=mdb,
+    )
     assert mdb.live_lookups == 1
+
 
 def test_each_row_gates_on_its_own_floors():
     strict = replace(base, min_rating=9.0)
-    report = request_missing(base, FakeTmdb(), {"a": _demand_rated(7.5), "b": _demand_rated(7.5)},
-                             {"a": strict, "b": base}, row_order=["a", "b"], dry_run=True, mdblist=mdb)
+    report = request_missing(
+        base,
+        FakeTmdb(),
+        {"a": _demand_rated(7.5), "b": _demand_rated(7.5)},
+        {"a": strict, "b": base},
+        row_order=["a", "b"],
+        dry_run=True,
+        mdblist=mdb,
+    )
     assert report.considered_by_row == {"a": 0, "b": 1}
 ```
 
@@ -268,6 +313,7 @@ def test_each_title_is_sent_to_its_claiming_rows_target():
     ...
     assert fake_by_folder["/kids"] == ["Luca"]
     assert fake_by_folder["/movies"] == ["Dune"]
+
 
 def test_a_row_with_auto_send_off_queues_while_another_row_sends():
     """auto_send is per row: one row queueing must not stop another sending."""
