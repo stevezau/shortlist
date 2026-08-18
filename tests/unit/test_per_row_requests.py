@@ -572,3 +572,61 @@ class TestARowSetToNeverAskDoesNotAsk:
             dry_run=False,
         )
         assert {m.row_slug for m in report.sent} == {"a", "b"}
+
+
+class TestTheClaimingRowSurvivesTheRequeuePath:
+    """Second architecture review HIGH, 2026-08-18. The claiming slug was stamped only on the CLAIMED
+    object — but when an earlier row also held the title back, that row's copy is already in
+    `report.queued`, and `_dedupe_queued` keeps the earliest. So the surviving inbox row had no slug
+    and fell back to the earliest `why` entry: the mis-file the stamp exists to prevent.
+
+    Scenario: a kids row (earlier, auto-send off, /kids) and a main row (later, auto-send on,
+    /movies) both want a title. Main claims it, Radarr errors, the title is queued — and a later
+    approval must send it to /movies, not /kids.
+    """
+
+    def _rows_for(self, radarr_fail: bool):
+        base = _cfg(max_per_run=5)
+        kids = replace(base, auto_send=False)
+        return base, _rows(("kids", kids, _demand(_title(1))), ("main", base, _demand(_title(1))))
+
+    def test_the_queued_row_carries_the_row_that_actually_claimed_it(self, monkeypatch):
+        fake = FakeArr(raise_on=1)  # Radarr rejects it, so the claim is requeued
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        base, rows = self._rows_for(True)
+
+        report = requests_mod.request_missing(base, FakeTmdb(), rows, dry_run=False)
+
+        assert len(report.queued) == 1
+        assert report.queued[0].row_slug == "main", "the inbox row must name the row that sent it"
+
+    def test_the_queued_row_carries_the_real_failure_not_a_threshold_note(self, monkeypatch):
+        """The earlier row's copy said "auto-send is off". That is not why it is not here — Radarr
+        rejected it — and losing that re-opens "a failed auto-send used to vanish"."""
+        fake = FakeArr(raise_on=1)
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        base, rows = self._rows_for(True)
+
+        report = requests_mod.request_missing(base, FakeTmdb(), rows, dry_run=False)
+
+        assert "boom" in report.queued[0].detail
+        assert "auto-send is off" not in report.queued[0].detail
+
+    def test_a_row_held_by_its_own_cap_is_told_so(self, radarr):
+        """And not "max_per_run already filled", which points at a global setting the owner can
+        raise forever without effect."""
+        base = _cfg(max_per_run=5)
+        capped = resolve_request_config(base, RequestOverrides(max_per_row=1))
+        report = requests_mod.request_missing(
+            base, FakeTmdb(), _rows(("capped", capped, _demand(_title(1), _title(2)))), dry_run=False
+        )
+        assert len(report.sent) == 1
+        assert "this row's own limit (1)" in report.queued[0].detail
+
+    def test_a_row_merely_inheriting_the_run_cap_still_blames_the_run(self, radarr):
+        """The mirror: a row that never set a limit must not be told its own limit bound."""
+        base = _cfg(max_per_run=1)
+        report = requests_mod.request_missing(
+            base, FakeTmdb(), _rows(("plain", base, _demand(_title(1), _title(2)))), dry_run=False
+        )
+        assert "max_per_run (1) already filled" in report.queued[0].detail

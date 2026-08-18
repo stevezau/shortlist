@@ -167,9 +167,11 @@ describe("a run with nothing missing is not a floors problem", () => {
     render(<RunStatTiles run={run} />);
   }
 
-  it("says nothing was missing rather than blaming the floors", () => {
+  it("says nothing NEW was missing rather than blaming the floors", () => {
+    // "new" because `wanted` is net of handled: a run whose whole inbox was rejected lands here too,
+    // and those titles are still missing — just already dealt with.
     renderTiles({ requests_wanted: 0, requests_pool: 0 });
-    expect(screen.getByText(/nothing was missing/)).toBeInTheDocument();
+    expect(screen.getByText(/nothing new was missing/)).toBeInTheDocument();
   });
 
   it("still blames the floors when titles were wanted and none got through", () => {

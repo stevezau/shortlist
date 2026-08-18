@@ -182,6 +182,21 @@ class TestAllocatorInvariants:
         for slug, title in claims:
             assert (title.tmdb_id, title.media_type) in offered[slug], "a row claimed what it never offered"
 
+        # Ownership: a title is claimed by the earliest row that offered it and had room, so any
+        # EARLIER row that also offered it must have ended at its own cap. Suggested by the second
+        # architecture review — one line here is cheaper than more hand-written cells if the
+        # allocator is touched again.
+        for slug, title in claims:
+            key = (title.tmdb_id, title.media_type)
+            for earlier, titles in deduped:
+                if earlier == slug:
+                    break
+                if key in {(t.tmdb_id, t.media_type) for t in titles}:
+                    cap = caps.get(earlier)
+                    assert cap is not None and per_row.get(earlier, 0) >= cap, (
+                        f"{earlier} offered {key} first and had room, but {slug} claimed it"
+                    )
+
         # Work-conserving: an unused slot must mean no row could have filled it. This is the one that
         # catches a redistribution that gives up early.
         if len(claims) < max(0, cap):

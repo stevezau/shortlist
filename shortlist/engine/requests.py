@@ -186,6 +186,7 @@ def accumulate(
 # restating the strings in the classifier is what would let them drift apart silently.
 QUEUE_REASON_PREFIXES = (
     "auto-send is off",
+    "this row's own limit",
     "on an Arr exclusion list",
     "demand below",
     "rating below",
@@ -365,22 +366,46 @@ def request_missing(
         cap=base_cfg.max_per_run,
         row_caps={slug: cfg.max_per_row for slug, cfg in cfg_by_row.items()},
     )
-    for slug, title in claims:
-        # Which row's target this went out under. `why` lists every row that WANTED it, so it cannot
-        # answer that once provenance is merged across rows — and a later approval has to reuse the
-        # row the run actually used, or it files into a different folder.
-        title.row_slug = slug
+    # Which row's target this went out under. `why` lists every row that WANTED it, so it cannot
+    # answer that once provenance is merged across rows — and a later approval has to reuse the row
+    # the run actually used, or it files into a different folder.
+    #
+    # Stamped on EVERY copy of the key, not only the claimed object. A title an earlier row held back
+    # is already in `report.queued` as that row's copy, and `_dedupe_queued` keeps the earliest — so
+    # stamping only the claim left the surviving inbox row with no slug, falling back to the earliest
+    # `why` entry: exactly the mis-file this is meant to prevent.
+    claimer_of = {(m.tmdb_id, m.media_type): slug for slug, m in claims}
+    for copy in [m for _, eligible in auto_by_row for m in eligible] + report.queued:
+        owner = claimer_of.get((copy.tmdb_id, copy.media_type))
+        if owner is not None:
+            copy.row_slug = owner
     claimed = {(slug, m.tmdb_id, m.media_type) for slug, m in claims}
 
     # 4. Anything auto-worthy that missed out is queued rather than lost — including a title a LATER
     #    row offered that an earlier row already claimed, which is not the owner's problem to see
     #    twice, so it is only queued when nobody claimed it at all.
     won = {(m.tmdb_id, m.media_type) for _, m in claims}
+    taken_by_row: dict[str, list[MissingTitle]] = {}
+    for slug, m in claims:
+        taken_by_row.setdefault(slug, []).append(m)
     for slug, eligible in auto_by_row:
         for m in eligible:
             if (slug, m.tmdb_id, m.media_type) in claimed or (m.tmdb_id, m.media_type) in won:
                 continue
-            m.detail = f"max_per_run ({base_cfg.max_per_run}) already filled"
+            # Name the limit that ACTUALLY bound. A row the owner capped (0 = "never asks on its
+            # own") was told "max_per_run already filled", pointing at a global setting they could
+            # raise forever without effect.
+            # The row's own limit only counts as the cause when the owner set one BELOW the run
+            # cap and this row reached it. A row that merely INHERITS the run cap is bound by the
+            # run, not by itself — and saying otherwise would point at a per-row setting they never
+            # touched, the mirror of the bug this fixes.
+            row_cap = cfg_by_row[slug].max_per_row
+            row_bound = row_cap < base_cfg.max_per_run and len(taken_by_row.get(slug, [])) >= row_cap
+            m.detail = (
+                f"this row's own limit ({row_cap}) — held for your approval"
+                if row_bound
+                else f"max_per_run ({base_cfg.max_per_run}) already filled"
+            )
             blocked[m.detail] += 1
             report.queued.append(m)
 
@@ -430,10 +455,21 @@ def request_missing(
     # never reached the inbox and retried blindly every night. Queue it WITH the reason. Only "error"
     # — the skips are settled facts (already in the Arr, or no TVDB id) and surfacing them is noise.
     fail_detail = {(o.tmdb_id, o.media_type): o.detail for o in report.outcomes if o.status == "error"}
+    already_queued = {(m.tmdb_id, m.media_type): m for m in report.queued}
     for _, m in claims:
-        if (m.tmdb_id, m.media_type) in fail_detail:
-            m.detail = fail_detail[(m.tmdb_id, m.media_type)]
-            report.queued.append(m)
+        key = (m.tmdb_id, m.media_type)
+        if key not in fail_detail:
+            continue
+        # An earlier row may already have queued its own copy of this title for a threshold reason.
+        # That copy is the one `_dedupe_queued` keeps, so the REAL failure has to land on it — else
+        # the inbox says "auto-send is off" for a title Radarr actually rejected, re-opening the bug
+        # this block exists to fix.
+        existing = already_queued.get(key)
+        if existing is not None:
+            existing.detail = fail_detail[key]
+            continue
+        m.detail = fail_detail[key]
+        report.queued.append(m)
     report.queued = _dedupe_queued(report.queued, {(m.tmdb_id, m.media_type) for m in report.sent})
     logger.info(
         "requests: {} of {} auto-{}, {} queued for approval ({} considered across {} row(s))",

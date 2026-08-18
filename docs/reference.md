@@ -98,7 +98,7 @@ and NULL always means "inherit the global `requests.*` setting".
 | `req_auto_send`                 | `requests.auto_send`                                              |
 | `req_auto_min_demand`           | `requests.auto_min_demand`                                        |
 | `req_auto_min_rating`           | `requests.auto_min_rating`                                        |
-| `req_max_per_row`               | this row's share of `requests.max_per_run`; may only restrict it  |
+| `req_max_per_row`               | this row's share of `requests.max_per_run`; may only restrict it. Blank = inherit the global; `0` = this row never auto-sends, and its picks queue for approval instead |
 | `req_radarr_root_folder`        | `requests.radarr.root_folder`                                     |
 | `req_radarr_quality_profile_id` | `requests.radarr.quality_profile_id`                              |
 | `req_sonarr_root_folder`        | `requests.sonarr.root_folder`                                     |

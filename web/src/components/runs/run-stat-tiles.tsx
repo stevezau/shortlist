@@ -37,7 +37,9 @@ function requestHint(s: RunDetail["stats"]): string {
   const wanted = s.requests_wanted;
   // A healthy run on a complete library also lands on pool === 0, so blaming the floors there would
   // report a fault where there is none. `wanted` is what tells the two apart.
-  if (wanted === 0) return "nothing was missing";
+  // "new" is doing real work: `wanted` is net of titles already sent or rejected, so a run whose
+  // whole inbox was actioned also lands here. Titles ARE missing; they have all been dealt with.
+  if (wanted === 0) return "nothing new was missing";
   const pool = s.requests_pool ?? 0;
   if (pool === 0) return "nothing cleared the demand or year limits";
   const examined = s.requests_examined ?? 0;
