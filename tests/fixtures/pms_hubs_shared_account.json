@@ -1,0 +1,296 @@
+{
+  "_recorded": "PMS 1.43.3 GET /hubs, 2026-08-18, fetched with a SHARED account's own server token on a server carrying 46 per-person rows.",
+  "_sanitized": [
+    "The real response had 33 hubs (25 collection hubs, 8 home hubs); this keeps 9 collection hubs and 2 home hubs — enough for every case below, not the whole library.",
+    "Each hub's Metadata array is real in STRUCTURE and reduced to 2 items from 6, with `size` and `hubKey` reduced to match so the file stays internally consistent. Item fields are a subset: the real items carry ~30 keys each (Media, Genre, Role, guid, thumb, summary...).",
+    "Titles are replaced with neutral ones and the server name with 'Example Server'. The two 'Because you watched X' rows name real titles a real person watched, which is watch history and does not belong in a public repo; the zero-width marker suffixes are kept verbatim because the tests read them.",
+    "ratingKeys, hub `key`/`hubIdentifier`/`context`/`type`/`style`/`promoted`, and the Metadata item TYPES are verbatim."
+  ],
+  "_what_it_proves": [
+    "A per-person row appears on Home as its OWN hub, not as a Metadata item inside one — the row's identity lives in `key` (/library/collections/<id>/children), which is what `_HUB_COLLECTION_KEY` matches. Every hub here carries Metadata and not one of those items is of type 'collection', so a detector that scanned Metadata for collections would find nothing on a real server.",
+    "A real PMS DOES apply a share `label!=` filter to /hubs. This account's filter carries Shortlist's exclusions and its Home shows its own four rows plus the shared row — and not one of the other 45 people's rows. Previously assumed; measured here.",
+    "Home also carries hubs that are not collections at all (Continue Watching, Recently Added). They must never be mistaken for a row.",
+    "Rows from other tools (Kometa) sit in the same response and must be left alone — plex-safety rule 4 coexistence, in the wild."
+  ],
+  "MediaContainer": {
+    "Hub": [
+      {
+        "key": "/hubs/home/continueWatching",
+        "hubIdentifier": "home.continue",
+        "type": "mixed",
+        "title": "Continue Watching",
+        "hubKey": "/library/metadata/577295,575807",
+        "context": "hub.home.continue",
+        "size": 2,
+        "more": true,
+        "style": "hero",
+        "promoted": true,
+        "Metadata": [
+          {
+            "ratingKey": "577295",
+            "type": "movie",
+            "title": "A Sample Film",
+            "year": 2019
+          },
+          {
+            "ratingKey": "575807",
+            "type": "episode",
+            "title": "A Sample Episode",
+            "index": 3
+          }
+        ]
+      },
+      {
+        "key": "/hubs/home/recentlyAdded?type=1",
+        "hubIdentifier": "home.movies.recent",
+        "type": "movie",
+        "title": "Recently Added Movies",
+        "hubKey": "/library/metadata/587329,587204",
+        "context": "hub.home.movies.recent",
+        "size": 2,
+        "more": true,
+        "style": "shelf",
+        "promoted": true,
+        "Metadata": [
+          {
+            "ratingKey": "587329",
+            "type": "movie",
+            "title": "Another Sample Film",
+            "year": 2024
+          },
+          {
+            "ratingKey": "587204",
+            "type": "movie",
+            "title": "A Third Sample Film",
+            "year": 2023
+          }
+        ]
+      },
+      {
+        "key": "/library/collections/577628/children",
+        "hubIdentifier": "custom.collection.1.577628.577628",
+        "type": "movie",
+        "title": "👥 Popular Movies on Example Server​​​​",
+        "hubKey": "/library/metadata/316920,144023",
+        "context": "hub.custom.collection",
+        "size": 2,
+        "more": false,
+        "promoted": true,
+        "Metadata": [
+          {
+            "ratingKey": "316920",
+            "type": "movie",
+            "title": "Sample Popular Film",
+            "year": 2016
+          },
+          {
+            "ratingKey": "144023",
+            "type": "movie",
+            "title": "Sample Popular Film Two",
+            "year": 2011
+          }
+        ]
+      },
+      {
+        "key": "/library/collections/506410/children",
+        "hubIdentifier": "custom.collection.1.506410.506410",
+        "type": "movie",
+        "title": "Movies Trending (Unwatched)",
+        "hubKey": "/library/metadata/579357,163796",
+        "context": "hub.custom.collection",
+        "size": 2,
+        "more": false,
+        "promoted": true,
+        "Metadata": [
+          {
+            "ratingKey": "579357",
+            "type": "movie",
+            "title": "Sample Trending Film",
+            "year": 2025
+          },
+          {
+            "ratingKey": "163796",
+            "type": "movie",
+            "title": "Sample Trending Film Two",
+            "year": 2012
+          }
+        ]
+      },
+      {
+        "key": "/library/collections/527794/children",
+        "hubIdentifier": "custom.collection.1.527794.527794",
+        "type": "movie",
+        "title": "Family Friendly Movies",
+        "hubKey": "/library/metadata/578794,577283",
+        "context": "hub.custom.collection",
+        "size": 2,
+        "more": false,
+        "promoted": true,
+        "Metadata": [
+          {
+            "ratingKey": "578794",
+            "type": "movie",
+            "title": "Sample Family Film",
+            "year": 2021
+          },
+          {
+            "ratingKey": "577283",
+            "type": "movie",
+            "title": "Sample Family Film Two",
+            "year": 2018
+          }
+        ]
+      },
+      {
+        "key": "/library/collections/624682/children",
+        "hubIdentifier": "custom.collection.1.624682.624682",
+        "type": "movie",
+        "title": "✨ Movies Picked for You​‌​‌​‌​‌",
+        "hubKey": "/library/metadata/150428,529560",
+        "context": "hub.custom.collection",
+        "size": 2,
+        "more": false,
+        "promoted": true,
+        "Metadata": [
+          {
+            "ratingKey": "150428",
+            "type": "movie",
+            "title": "Sample Picked Film",
+            "year": 2014
+          },
+          {
+            "ratingKey": "529560",
+            "type": "movie",
+            "title": "Sample Picked Film Two",
+            "year": 2022
+          }
+        ]
+      },
+      {
+        "key": "/library/collections/624690/children",
+        "hubIdentifier": "custom.collection.1.624690.624690",
+        "type": "movie",
+        "title": "🎯 Because you watched A Sample Film​‌​‌​‌​‌",
+        "hubKey": "/library/metadata/500189,618251",
+        "context": "hub.custom.collection",
+        "size": 2,
+        "more": false,
+        "promoted": true,
+        "Metadata": [
+          {
+            "ratingKey": "500189",
+            "type": "movie",
+            "title": "Sample Similar Film",
+            "year": 2013
+          },
+          {
+            "ratingKey": "618251",
+            "type": "movie",
+            "title": "Sample Similar Film Two",
+            "year": 2020
+          }
+        ]
+      },
+      {
+        "key": "/library/collections/577629/children",
+        "hubIdentifier": "custom.collection.2.577629.577629",
+        "type": "show",
+        "title": "👥 Popular TV Shows on Example Server​​​​",
+        "hubKey": "/library/metadata/344833,166637",
+        "context": "hub.custom.collection",
+        "size": 2,
+        "more": false,
+        "promoted": true,
+        "Metadata": [
+          {
+            "ratingKey": "344833",
+            "type": "show",
+            "title": "Sample Popular Show",
+            "year": 2017
+          },
+          {
+            "ratingKey": "166637",
+            "type": "show",
+            "title": "Sample Popular Show Two",
+            "year": 2013
+          }
+        ]
+      },
+      {
+        "key": "/library/collections/343591/children",
+        "hubIdentifier": "custom.collection.2.343591.343591",
+        "type": "show",
+        "title": "IMDb Popular Shows",
+        "hubKey": "/library/metadata/166637,599452",
+        "context": "hub.custom.collection",
+        "size": 2,
+        "more": false,
+        "promoted": true,
+        "Metadata": [
+          {
+            "ratingKey": "166637",
+            "type": "show",
+            "title": "Sample Popular Show Two",
+            "year": 2013
+          },
+          {
+            "ratingKey": "599452",
+            "type": "show",
+            "title": "Sample Popular Show Three",
+            "year": 2024
+          }
+        ]
+      },
+      {
+        "key": "/library/collections/624683/children",
+        "hubIdentifier": "custom.collection.2.624683.624683",
+        "type": "show",
+        "title": "✨ TV Shows Picked for You​‌​‌​‌​‌",
+        "hubKey": "/library/metadata/210293,563158",
+        "context": "hub.custom.collection",
+        "size": 2,
+        "more": false,
+        "promoted": true,
+        "Metadata": [
+          {
+            "ratingKey": "210293",
+            "type": "show",
+            "title": "Sample Picked Show",
+            "year": 2015
+          },
+          {
+            "ratingKey": "563158",
+            "type": "show",
+            "title": "Sample Picked Show Two",
+            "year": 2021
+          }
+        ]
+      },
+      {
+        "key": "/library/collections/624691/children",
+        "hubIdentifier": "custom.collection.2.624691.624691",
+        "type": "show",
+        "title": "🎯 Because you watched A Sample Show​‌​‌​‌​‌",
+        "hubKey": "/library/metadata/604075,600695",
+        "context": "hub.custom.collection",
+        "size": 2,
+        "more": false,
+        "promoted": true,
+        "Metadata": [
+          {
+            "ratingKey": "604075",
+            "type": "show",
+            "title": "Sample Similar Show",
+            "year": 2022
+          },
+          {
+            "ratingKey": "600695",
+            "type": "show",
+            "title": "Sample Similar Show Two",
+            "year": 2019
+          }
+        ]
+      }
+    ]
+  }
+}

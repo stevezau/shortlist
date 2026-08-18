@@ -54,6 +54,9 @@ from shortlist.engine.privacy import (
 )
 from shortlist.engine.request_config import resolve_request_config
 
+#: How many accounts of one type the filter-enforcement spot-check may try before giving up.
+_ENFORCEMENT_SPOT_CHECK_ATTEMPTS = 3
+
 
 def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     """Run the pipeline for every enabled user. Users are independent — one failure never
@@ -528,7 +531,7 @@ def _leave_sharing_alone(ctx: EngineContext, user, remote, report: RunReport) ->
         report.filter_writes[user.plex_account_id] = {"username": user.username, "fields": written}
 
 
-def _verify_filters_enforced(ctx, audience, roster, owned, collections_known, own_slugs, report) -> None:
+def _verify_filters_enforced(ctx, audience, roster, owned, collections_known, report) -> None:
     """Look through a real account's eyes and check our exclusions are actually being APPLIED.
 
     The gap this closes. The read-back above proves plex.tv STORED the filter string; nothing proved
@@ -542,8 +545,9 @@ def _verify_filters_enforced(ctx, audience, roster, owned, collections_known, ow
     A CANARY, not an audit, and the distinction is what makes it affordable. "Does Plex enforce our
     exclusions for this kind of account on this server" is a property of the server and the account
     type, not of each person — so one account per `user_type` is enough to catch a systemic failure,
-    at a cost of at most two extra PMS reads per run rather than one per account (a 48-account server
-    already spends minutes in this phase; rule 6).
+    at a cost of at most `_ENFORCEMENT_SPOT_CHECK_ATTEMPTS` reads per type rather than one per account
+    (plus, for an account with no share token of its own, the plex.tv canary exchange that fetching one
+    costs). A 48-account server already spends minutes in this phase; rule 6.
 
     NOT a gate, deliberately. The automatic Privacy Check that blocked writes was removed at the
     owner's request on 2026-07-16 and this does not reinstate it: it never blocks a write, never
@@ -559,6 +563,13 @@ def _verify_filters_enforced(ctx, audience, roster, owned, collections_known, ow
         # none of ours" would be an artefact of the failed read rather than a finding.
         return
     seen_types: set[str] = set()
+    # A spot-check needs ONE working account per type, so a failure moves to the next candidate.
+    # Without a cap that retry is the whole roster: on a server where these reads are broken (PMS
+    # down, tokens stale) a 46-user run pays 46 sequential hub reads to learn nothing. Give up after
+    # a few and let the run get on with it. Giving up is per TYPE, and what the run may then claim is
+    # settled at the bottom of this function — a type that never produced a reading must not be
+    # reported as clean on the strength of a different type that did.
+    attempts: dict[str, int] = {}
     for user in audience:
         if user.user_type is UserType.OWNER or user.plex_account_id in ctx.unmanaged_account_ids:
             continue
@@ -573,6 +584,9 @@ def _verify_filters_enforced(ctx, audience, roster, owned, collections_known, ow
         # exposure that no filter ever claimed to prevent.
         if not any(shortlist_labels_in(remote.filters.get(f, ""), LABEL_PREFIX) for f in RESTRICTED_FILTER_FIELDS):
             continue
+        if attempts.get(kind, 0) >= _ENFORCEMENT_SPOT_CHECK_ATTEMPTS:
+            continue
+        attempts[kind] = attempts.get(kind, 0) + 1
         try:
             token = ctx.token_for_user(user)
             if token is None:
@@ -584,9 +598,6 @@ def _verify_filters_enforced(ctx, audience, roster, owned, collections_known, ow
             )
             continue
         seen_types.add(kind)  # only a check that actually RAN counts as covering this type
-        # At least one account was successfully looked at, so an empty result now MEANS "clean"
-        # rather than "never ran" — which is what lets a fixed server clear the alert.
-        report.filters_enforcement_measured = True
         if exposed:
             report.filters_not_enforced[user.username] = exposed
             logger.error(
@@ -599,6 +610,15 @@ def _verify_filters_enforced(ctx, audience, roster, owned, collections_known, ow
             )
         else:
             logger.debug("{}: filter enforcement confirmed for {} accounts", user.username, kind)
+
+    # What this run is entitled to CLAIM, which is not the same as what it looked at. A finding always
+    # publishes. An empty result may only publish as "all clear" when every account type that spent
+    # attempts actually produced a reading — otherwise one type's success speaks for a type whose
+    # whole budget went on failures, the run persists `filters_not_enforced: {}`, and the "Plex is
+    # ignoring the privacy filter" card CLEARS while the leak is live. `attempts` is per type and
+    # this flag is one bool for the run, which is exactly how that slips past (review 2026-08-18).
+    fully_covered = bool(seen_types) and set(attempts) <= seen_types
+    report.filters_enforcement_measured = bool(report.filters_not_enforced) or fully_covered
 
 
 def _privacy_sync_phase(
@@ -853,7 +873,7 @@ def _privacy_sync_phase(
     # guard, because a run that could not write one account's filter is exactly a run whose other
     # accounts are worth spot-checking. Reports only — it cannot change `sync_failed` (see the
     # function's own docstring on why this is not the removed write gate).
-    _verify_filters_enforced(ctx, audience, roster, owned, collections_known, own_slugs, report)
+    _verify_filters_enforced(ctx, audience, roster, owned, collections_known, report)
 
     return not sync_failed
 
