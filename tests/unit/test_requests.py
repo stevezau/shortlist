@@ -946,7 +946,9 @@ class TestRequestTitles:
         ]
         # Floors set impossibly high: request_titles must ignore them because the owner chose by hand.
         cfg = RequestConfig(enabled=True, radarr=RADARR, sonarr=SONARR, min_rating=9.9, min_votes=99999, min_demand=99)
-        report = requests_mod.request_titles(cfg, FakeTmdb({20: 7777}), titles, dry_run=False)
+        report = requests_mod.request_titles_by_row(
+            {"r": cfg}, FakeTmdb({20: 7777}), [("r", t) for t in titles], dry_run=False
+        )
         assert radarr.movie_calls == [(10, False)]
         assert sonarr.series_calls == [(7777, False)]  # routed by TVDB id, same path as the auto pass
         assert report.requested == 2
@@ -956,13 +958,15 @@ class TestRequestTitles:
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
         titles = [MissingTitle(10, "film", MediaType.MOVIE, 2020, rating=8.0, vote_count=500)]
         cfg = RequestConfig(enabled=True, radarr=RADARR)
-        report = requests_mod.request_titles(cfg, FakeTmdb(), titles, dry_run=True)
+        report = requests_mod.request_titles_by_row({"r": cfg}, FakeTmdb(), [("r", t) for t in titles], dry_run=True)
         assert fake.movie_calls == [(10, True)]
         assert report.outcomes[0].status == "would_request"
 
     def test_empty_list_sends_nothing(self, monkeypatch):
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: FakeArr())
-        report = requests_mod.request_titles(RequestConfig(enabled=True, radarr=RADARR), FakeTmdb(), [], dry_run=False)
+        report = requests_mod.request_titles_by_row(
+            {"r": RequestConfig(enabled=True, radarr=RADARR)}, FakeTmdb(), [], dry_run=False
+        )
         assert report.outcomes == []
         assert report.considered == 0
 

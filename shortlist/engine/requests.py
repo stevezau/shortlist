@@ -568,21 +568,24 @@ def _cached_client(
     return clients[target]
 
 
-def request_titles(
-    cfg: RequestConfig,
+def request_titles_by_row(
+    cfg_by_row: dict[str, RequestConfig],
     tmdb: TmdbClient,
-    titles: list[MissingTitle],
+    claims: list[tuple[str, MissingTitle]],
     *,
     dry_run: bool,
     min_write_interval: float = 1.0,
 ) -> RequestReport:
-    """Request an explicit list of titles the owner approved from the inbox — no gating.
+    """Send titles the owner approved from the inbox, each under its own row's target.
 
-    The thresholds already decided these were worth surfacing, and the owner picked them by hand, so
-    this skips every floor and just sends. Each title's failure is its own outcome, never a raise.
+    An approval is a delayed send, so it must land exactly where a same-night send would have — which
+    means one config per row, not one for the batch. Routed through ``_send_claims`` (the same path a
+    run uses) rather than a loop of per-group sends: a loop builds a fresh client per group,
+    and several rows are usually the SAME Radarr with different folders, so each group would get its
+    own rate limiter and multiply the write rate to one server (plex-safety rule 6).
     """
-    report = RequestReport(considered=len(titles))
-    report.outcomes = _send(cfg, tmdb, titles, dry_run=dry_run, min_write_interval=min_write_interval)
+    report = RequestReport(considered=len(claims))
+    report.outcomes = _send_claims(claims, cfg_by_row, tmdb, dry_run=dry_run, min_write_interval=min_write_interval)
     return report
 
 

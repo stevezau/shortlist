@@ -456,3 +456,36 @@ class TestApprovalUsesTheClaimingRowsTarget:
             session.commit()
         made = self._send(client, monkeypatch)
         assert [t for t, _ in made[("/movies", 1)].movie_calls] == [10]
+
+
+class TestApprovingAcrossRowsSharesOneClient:
+    """Audit round 27, 2026-08-18: the approve path grouped by row and sent each group separately, so
+    approving titles from three rows built three Radarr clients — and several rows are usually the
+    SAME Radarr with different folders, so each got its own rate limiter and multiplied the write
+    rate to one server (plex-safety rule 6)."""
+
+    def test_two_rows_on_one_server_share_a_write_clock(self, client: TestClient, monkeypatch):
+        made: list = []
+
+        def factory(target, **kw):
+            made.append(kw.get("write_clock"))
+            return FakeArr()
+
+        monkeypatch.setattr(requests_mod, "RadarrClient", factory)
+        with client.app.state.sessions() as session:
+            session.add(Collection(slug="kids", name="Kids", build="per_person", req_radarr_root_folder="/kids"))
+            session.add(Collection(slug="main", name="Main", build="per_person", req_radarr_root_folder="/main"))
+            rows = session.query(RequestCandidate).all()
+            rows[0].row_slug = "kids"
+            if len(rows) > 1:
+                rows[1].row_slug = "main"
+            session.commit()
+            ids = [r.id for r in rows]
+
+        cfg = RequestConfig(enabled=True, radarr=_RADARR)
+        monkeypatch.setattr(client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(cfg))
+        client.post("/api/requests/send", json={"ids": ids})
+
+        clocks = [c for c in made if c is not None]
+        assert clocks, "clients must be built with a shared clock, not their own"
+        assert all(c is clocks[0] for c in clocks), "one server, one write clock"

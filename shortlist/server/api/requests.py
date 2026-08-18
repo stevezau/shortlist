@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from shortlist.engine.models import MediaType, MissingTitle
 from shortlist.engine.request_config import resolve_request_config
-from shortlist.engine.requests import request_titles
+from shortlist.engine.requests import request_titles_by_row
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import Collection, Event, RequestCandidate, iso_utc
@@ -417,16 +417,13 @@ async def send_requests(body: RequestAction, request: Request) -> dict:
             overrides = {
                 c.slug: row_request_overrides(c) for c in session.query(Collection).all() if c.build != "shared"
             }
-            grouped: dict[str | None, list[RequestCandidate]] = {}
-            for row in rows:
-                slug = row.row_slug if row.row_slug in overrides else None
-                grouped.setdefault(slug, []).append(row)
-
-            by_key: dict[tuple[int, str], object] = {}
-            for slug, group in grouped.items():
-                row_cfg = cfg if slug is None else resolve_request_config(cfg, overrides[slug])
-                report = request_titles(row_cfg, tmdb, [_title(r) for r in group], dry_run=body.dry_run)
-                by_key.update({(o.tmdb_id, o.media_type.value): o for o in report.outcomes})
+            # One claim per title tagged with its row, then a single send — so rows sharing a Radarr
+            # share one client and one rate limiter. A loop of per-group sends would give each group
+            # its own, multiplying the write rate to that server (plex-safety rule 6).
+            cfg_by_row = {"": cfg} | {slug: resolve_request_config(cfg, ov) for slug, ov in overrides.items()}
+            claims = [(row.row_slug if row.row_slug in cfg_by_row else "", _title(row)) for row in rows]
+            report = request_titles_by_row(cfg_by_row, tmdb, claims, dry_run=body.dry_run)
+            by_key = {(o.tmdb_id, o.media_type.value): o for o in report.outcomes}
             outcomes = []
             for row in rows:
                 outcome = by_key.get((row.tmdb_id, row.media_type))
