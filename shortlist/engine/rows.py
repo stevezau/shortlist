@@ -1708,17 +1708,23 @@ def _warm_start(
     report.status = "ok"
 
 
-def _record_demand(policy: RowPolicy, demand: requests_mod.DemandMap) -> None:
+def _record_demand(policy: RowPolicy, demand: requests_mod.RowDemand) -> None:
     """Record what this user wanted that the server doesn't have, for the run-wide request pass.
 
     A missing title is attributed to exactly the rows whose pool surfaced it: it gets the user's own
-    request tag plus the tag of each such row. Deduped per user so demand counts them once.
+    request tag plus the tag of each such row. Deduped per user AND PER ROW, so demand counts each
+    person once within a row.
+
+    Kept in a separate map per row, not one flat map, because ``min_demand`` is a per-row floor. One
+    shared map would have a row set to "3 people" counting wanters from rows it has nothing to do
+    with — the number would silently change meaning the moment the setting became per-row, and change
+    it in a direction nobody would notice.
     """
     ctx, user, cfg = policy.ctx, policy.user, policy.cfg
     user_tag = {user.request_tag} if user.request_tag else set()
-    first_seen: dict[tuple[int, MediaType], Candidate] = {}
-    title_tags: dict[tuple[int, MediaType], set[str]] = {}
-    title_why: dict[tuple[int, MediaType], list[RequestWhy]] = {}
+    first_seen: dict[str, dict[tuple[int, MediaType], Candidate]] = {}
+    title_tags: dict[str, dict[tuple[int, MediaType], set[str]]] = {}
+    title_why: dict[str, dict[tuple[int, MediaType], list[RequestWhy]]] = {}
     for spec in policy.specs:
         pools = policy.pools_for(spec)
         if pools is None:
@@ -1732,10 +1738,13 @@ def _record_demand(policy: RowPolicy, demand: requests_mod.DemandMap) -> None:
         media_library: dict[MediaType, str] = {}
         for section in target_sections(ctx.delivery_sections, spec):
             media_library.setdefault(section_kind(section), getattr(section, "title", "") or "")
+        row_seen = first_seen.setdefault(spec.slug, {})
+        row_tags = title_tags.setdefault(spec.slug, {})
+        row_why = title_why.setdefault(spec.slug, {})
         for c in requests_mod.collect_missing(pools[0], policy.library_index):
             key = (c.tmdb_id, c.media_type)
-            first_seen.setdefault(key, c)
-            tags = title_tags.setdefault(key, set())
+            row_seen.setdefault(key, c)
+            tags = row_tags.setdefault(key, set())
             tags |= user_tag  # the user wanted it, whatever the row's media
             # ...but a row's tag only applies to titles that row could actually show, so a
             # shows-only row never tags a missing movie (its pool holds both until delivery).
@@ -1757,15 +1766,24 @@ def _record_demand(policy: RowPolicy, demand: requests_mod.DemandMap) -> None:
                 row=row_name,
                 seed=seed_title,
                 source=(sorted(c.sources)[0] if c.sources else ""),
+                row_slug=spec.slug,
             )
-            why = title_why.setdefault(key, [])
+            why = row_why.setdefault(key, [])
             if entry not in why:
                 why.append(entry)
     # `demand` is the run-wide shared map; the per-user tally above is local, so only this
     # merge needs the lock (Stage 3 parallel runs).
     with ctx.write_lock:
-        for key, cand in first_seen.items():
-            requests_mod.accumulate(demand, [cand], tags=title_tags[key], wanter=user.username, why=title_why[key])
+        for slug, seen in first_seen.items():
+            row_demand = demand.setdefault(slug, {})
+            for key, cand in seen.items():
+                requests_mod.accumulate(
+                    row_demand,
+                    [cand],
+                    tags=title_tags[slug][key],
+                    wanter=user.username,
+                    why=title_why[slug][key],
+                )
 
 
 def _build_section_picks(

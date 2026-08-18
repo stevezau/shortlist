@@ -130,3 +130,61 @@ export function recentCountSeed(settings: Settings | undefined): number {
 export function maxSeedsSeed(settings: Settings | undefined): number {
   return num(settings, "recommendations.max_seeds") ?? MAX_SEEDS_DEFAULT;
 }
+
+/** The request globals a row can inherit, phrased for the caption under its inherit toggle.
+ *
+ * Same contract as the recommendation getters above: `null` while settings are loading, so the UI
+ * omits the line rather than claiming a default that may not be this server's. */
+export function requestRatingGlobal(
+  settings: Settings | undefined,
+): string | null {
+  const rating = num(settings, "requests.min_rating");
+  return rating === null ? null : `at least ${rating}`;
+}
+
+export function requestDemandGlobal(
+  settings: Settings | undefined,
+): string | null {
+  const demand = num(settings, "requests.min_demand");
+  if (demand === null) return null;
+  return `${demand} ${demand === 1 ? "person" : "people"}`;
+}
+
+export function requestYearGlobal(
+  settings: Settings | undefined,
+): string | null {
+  const from = num(settings, "requests.min_year");
+  const to = num(settings, "requests.max_year");
+  if (from === null && to === null) return null;
+  if (!from && !to) return "any year";
+  if (from && !to) return `${from} or newer`;
+  if (!from && to) return `${to} or older`;
+  return `${from}–${to}`;
+}
+
+export function requestAutoSendGlobal(
+  settings: Settings | undefined,
+): string | null {
+  if (!settings) return null;
+  const raw = settings["requests.auto_send"];
+  if (typeof raw !== "boolean") return null;
+  return raw ? "send automatically" : "wait for approval";
+}
+
+/** The run-wide cap, which a row may only ever restrict BELOW — never raise. */
+export function requestMaxPerRunGlobal(
+  settings: Settings | undefined,
+): string | null {
+  const cap = num(settings, "requests.max_per_run");
+  if (cap === null) return null;
+  return `up to ${cap} per run, shared between rows`;
+}
+
+export function requestRootFolderGlobal(
+  settings: Settings | undefined,
+  app: "radarr" | "sonarr",
+): string | null {
+  if (!settings) return null;
+  const raw = settings[`requests.${app}.root_folder`];
+  return typeof raw === "string" && raw ? raw : null;
+}

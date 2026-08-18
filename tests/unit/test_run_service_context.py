@@ -571,6 +571,167 @@ class TestSyncWatched:
         with sessions() as s:
             assert s.query(PickRow).filter_by(tmdb_id=42).one().watched_at is not None
 
+    def test_the_owner_is_synced_even_though_they_have_no_row_of_their_own(self, service, sessions, monkeypatch):
+        """The owner's watched set has one consumer that has nothing to do with giving them a row.
+
+        `user_sync` creates the owner with `enabled=False`, so `enabled_profiles` leaves them out of
+        every sync — correctly, since they get no row. But the watching-account transfer copies FROM
+        the owner's cached watched set, and nothing else ever fills it: an owner who never gave
+        themselves a row had an empty cache for ever, so the wizard's "Shortlist copies your watch
+        history across" copied nothing, silently, on every attempt (#88).
+        """
+        import asyncio
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from shortlist.engine.models import MediaType, WatchedItem
+        from shortlist.server.db.models import User, WatchedTitle
+
+        with sessions() as s:
+            s.add(User(username="steve", slug="steve", plex_account_id=1, user_type="owner", enabled=False))
+            s.commit()
+
+        watch = WatchedItem(
+            title="Dune", media_type=MediaType.MOVIE, watched_at=datetime.now(UTC), tmdb_id=42, rating_key=7
+        )
+        fake_ctx = SimpleNamespace(
+            plex=SimpleNamespace(sections=lambda: [SimpleNamespace(key="1", type="movie")]),
+            history_source=SimpleNamespace(
+                fetch=lambda p, **k: [watch],
+                fetch_section=lambda p, section, media_type, since=None: [watch],
+            ),
+            config=SimpleNamespace(min_completion=0.7),
+        )
+        monkeypatch.setattr(service, "build_context", lambda **k: fake_ctx)
+
+        asyncio.run(service.sync_watched())
+
+        with sessions() as s:
+            owner_id = s.query(User).filter_by(slug="steve").one().id
+            assert [t.title for t in s.query(WatchedTitle).filter_by(user_id=owner_id)] == ["Dune"]
+
+    def test_the_owner_is_read_AS_the_owner_so_the_admin_token_is_the_one_used(self, service, sessions, monkeypatch):
+        """`user_type` is the entire token branch for the profile the sweep adds.
+
+        `ShareTokenWatchSource._token_for` hands back the admin token only for an OWNER; any other
+        type sends the owner's `plex_account_id` through the roster (which never lists the owner)
+        and then a canary exchange against the admin account. That failure is caught and logged as
+        "treating as no watch history" — so it looks exactly like the empty cache this whole change
+        exists to fix, and nothing would have caught it.
+        """
+        import asyncio
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from shortlist.engine.models import MediaType, UserType, WatchedItem
+        from shortlist.server.db.models import User
+
+        with sessions() as s:
+            s.add(User(username="steve", slug="steve", plex_account_id=1, user_type="owner", enabled=False))
+            s.commit()
+
+        asked: list[tuple] = []
+        watch = WatchedItem(
+            title="Dune", media_type=MediaType.MOVIE, watched_at=datetime.now(UTC), tmdb_id=42, rating_key=7
+        )
+
+        def fetch_section(profile, section, media_type, since=None):
+            asked.append((profile.user_type, profile.slug, profile.plex_account_id))
+            return [watch]
+
+        fake_ctx = SimpleNamespace(
+            plex=SimpleNamespace(sections=lambda: [SimpleNamespace(key="1", type="movie")]),
+            history_source=SimpleNamespace(fetch=lambda p, **k: [watch], fetch_section=fetch_section),
+            config=SimpleNamespace(min_completion=0.7),
+        )
+        monkeypatch.setattr(service, "build_context", lambda **k: fake_ctx)
+
+        asyncio.run(service.sync_watched())
+
+        assert asked == [(UserType.OWNER, "steve", 1)]
+
+    def test_a_paused_owner_is_left_alone_like_any_other_paused_person(self, service, sessions, monkeypatch):
+        """Pausing someone stops Shortlist reading them, and the owner can be paused like anyone
+        else. `enabled_profiles` drops a paused user — topping the owner back up afterwards would
+        undo that for the one account nobody thought to check."""
+        import asyncio
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from shortlist.engine.models import MediaType, WatchedItem
+        from shortlist.server.db.models import User, WatchedTitle
+
+        with sessions() as s:
+            s.add(
+                User(
+                    username="steve",
+                    slug="steve",
+                    plex_account_id=1,
+                    user_type="owner",
+                    enabled=True,
+                    prefs={"paused": True},
+                )
+            )
+            s.commit()
+
+        watch = WatchedItem(
+            title="Dune", media_type=MediaType.MOVIE, watched_at=datetime.now(UTC), tmdb_id=42, rating_key=7
+        )
+        fake_ctx = SimpleNamespace(
+            plex=SimpleNamespace(sections=lambda: [SimpleNamespace(key="1", type="movie")]),
+            history_source=SimpleNamespace(
+                fetch=lambda p, **k: [watch],
+                fetch_section=lambda p, section, media_type, since=None: [watch],
+            ),
+            config=SimpleNamespace(min_completion=0.7),
+        )
+        monkeypatch.setattr(service, "build_context", lambda **k: fake_ctx)
+
+        asyncio.run(service.sync_watched())
+
+        with sessions() as s:
+            assert s.query(WatchedTitle).count() == 0
+
+    def test_a_second_owner_row_does_not_take_the_whole_sweep_down_with_it(self, service, sessions, monkeypatch):
+        """Looking the owner up is a top-up, not a precondition. `.one_or_none()` raised on a
+        duplicate owner row, and `sync_watched` swallows everything at INFO — so one anomalous row
+        silently stopped EVERY user's history being read, with the log saying only "skipped"."""
+        import asyncio
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from shortlist.engine.models import MediaType, WatchedItem
+        from shortlist.server.db.models import User, WatchedTitle
+
+        with sessions() as s:
+            s.add_all(
+                [
+                    User(username="steve", slug="steve", plex_account_id=1, user_type="owner", enabled=False),
+                    User(username="ghost", slug="ghost", plex_account_id=2, user_type="owner", enabled=False),
+                    User(username="sarah", slug="sarah", plex_account_id=3, user_type="shared", enabled=True),
+                ]
+            )
+            s.commit()
+
+        watch = WatchedItem(
+            title="Dune", media_type=MediaType.MOVIE, watched_at=datetime.now(UTC), tmdb_id=42, rating_key=7
+        )
+        fake_ctx = SimpleNamespace(
+            plex=SimpleNamespace(sections=lambda: [SimpleNamespace(key="1", type="movie")]),
+            history_source=SimpleNamespace(
+                fetch=lambda p, **k: [watch],
+                fetch_section=lambda p, section, media_type, since=None: [watch],
+            ),
+            config=SimpleNamespace(min_completion=0.7),
+        )
+        monkeypatch.setattr(service, "build_context", lambda **k: fake_ctx)
+
+        asyncio.run(service.sync_watched())
+
+        with sessions() as s:
+            sarah = s.query(User).filter_by(slug="sarah").one().id
+            assert [t.title for t in s.query(WatchedTitle).filter_by(user_id=sarah)] == ["Dune"]
+
     def test_an_unreadable_library_falls_back_to_a_complete_read(self, service, sessions, monkeypatch):
         """A PARTIAL cache must never be served as if it were complete.
 

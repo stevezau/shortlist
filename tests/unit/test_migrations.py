@@ -1014,3 +1014,73 @@ class TestManageSharingDefaultsToManaged:
             column = next(c for c in db.execute("PRAGMA table_info(users)") if c[1] == "manage_sharing")
         assert column[3] == 1  # notnull
         assert column[4].strip("'") == "1"  # server default
+
+
+class TestPerRowRequestSettings0074:
+    """0074 adds this row's own Sonarr/Radarr floors and target, plus the row slug on a queued request.
+
+    Every column is nullable with no backfill, because NULL is what "inherit the global setting"
+    means — the same convention `watched_pct` and `cold_start` already use. That is what makes the
+    upgrade a no-op on a live server: nothing changes until the owner sets an override.
+    """
+
+    _ROW_COLUMNS = (
+        "req_min_rating",
+        "req_min_votes",
+        "req_min_demand",
+        "req_min_year",
+        "req_max_year",
+        "req_auto_send",
+        "req_auto_min_demand",
+        "req_auto_min_rating",
+        "req_max_per_row",
+        "req_radarr_quality_profile_id",
+        "req_radarr_root_folder",
+        "req_sonarr_quality_profile_id",
+        "req_sonarr_root_folder",
+    )
+
+    @staticmethod
+    def _columns(config_dir: Path, table: str) -> dict[str, bool]:
+        """column -> whether it is NOT NULL."""
+        con = sqlite3.connect(config_dir / "shortlist.db")
+        try:
+            return {r[1]: bool(r[3]) for r in con.execute(f"PRAGMA table_info({table})")}
+        finally:
+            con.close()
+
+    def test_every_new_column_is_nullable_so_an_existing_row_inherits(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        collections = self._columns(tmp_path, "collections")
+        for name in self._ROW_COLUMNS:
+            assert name in collections, f"{name} missing after upgrade"
+            assert not collections[name], f"{name} must be nullable — NULL is how a row inherits"
+
+    def test_the_seeded_default_row_reads_null_for_every_override(self, tmp_path: Path):
+        """The upgrade must not opt the existing row into anything. A server that upgrades tonight
+        keeps filing everything exactly where it filed it yesterday."""
+        run_migrations(tmp_path)
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        try:
+            cols = ", ".join(self._ROW_COLUMNS)
+            rows = con.execute(f"SELECT {cols} FROM collections").fetchall()
+        finally:
+            con.close()
+        assert rows, "expected the seeded default row"
+        for row in rows:
+            assert set(row) == {None}
+
+    def test_a_queued_request_carries_a_nullable_row_slug(self, tmp_path: Path):
+        """NULL on everything queued before per-row settings existed; the approve path falls back to
+        the global config for those, which is what they were queued under anyway."""
+        run_migrations(tmp_path)
+        candidates = self._columns(tmp_path, "request_candidates")
+        assert "row_slug" in candidates
+        assert not candidates["row_slug"]
+
+    def test_the_downgrade_removes_them_again(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0073")
+        collections = self._columns(tmp_path, "collections")
+        assert not [name for name in self._ROW_COLUMNS if name in collections]
+        assert "row_slug" not in self._columns(tmp_path, "request_candidates")

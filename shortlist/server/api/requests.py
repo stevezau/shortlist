@@ -17,10 +17,12 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from shortlist.engine.models import MediaType, MissingTitle
-from shortlist.engine.requests import request_titles
+from shortlist.engine.request_config import resolve_request_config
+from shortlist.engine.requests import request_titles_by_row
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
-from shortlist.server.db.models import Event, RequestCandidate, iso_utc
+from shortlist.server.db.models import Collection, Event, RequestCandidate, iso_utc
+from shortlist.server.services.context_builder import row_request_overrides
 
 router = APIRouter(prefix="/requests", tags=["requests"], dependencies=[Depends(require_owner)])
 
@@ -60,6 +62,9 @@ class RequestCandidateOut(PassthroughModel):
     # Live Arr download status is fetched separately via GET /requests/status (one round-trip for the
     # whole inbox) and merged in the UI — it is NOT carried on the list payload, which would force an
     # Arr call per row on every list fetch.
+    # Which row claimed it — what decides the Sonarr/Radarr target an approval will use.
+    # Null for anything queued before per-row settings, which falls back to the global config.
+    row_slug: str | None = None
 
 
 class RequestAction(BaseModel):
@@ -139,6 +144,7 @@ def list_requests(
             detail=r.detail,
             excluded=bool(r.excluded),
             arr_slug=r.arr_slug,
+            row_slug=r.row_slug,
             updated_at=iso_utc(r.updated_at),
         )
         for r in rows
@@ -391,8 +397,9 @@ async def send_requests(body: RequestAction, request: Request) -> dict:
                 .filter(RequestCandidate.id.in_(body.ids), RequestCandidate.status == "pending")
                 .all()
             )
-            titles = [
-                MissingTitle(
+
+            def _title(row: RequestCandidate) -> MissingTitle:
+                return MissingTitle(
                     tmdb_id=row.tmdb_id,
                     title=row.title,
                     media_type=MediaType(row.media_type),
@@ -402,9 +409,24 @@ async def send_requests(body: RequestAction, request: Request) -> dict:
                     demand=row.demand,
                     tags=set(row.tags or []),
                 )
-                for row in rows
-            ]
-            report = request_titles(cfg, tmdb, titles, dry_run=body.dry_run)
+
+            # Send each title under the target of the ROW that surfaced it — the whole point of
+            # per-row settings is that a kids row files into a different folder, and an approval is
+            # just a delayed send. Grouped so rows sharing a target share one client and its rate
+            # limiter (the plex-safety throttle lives on the client).
+            #
+            # `row_slug` is NULL on everything queued before per-row settings existed, and on a title
+            # whose row has since been deleted; both fall back to the global config, which is exactly
+            # what they were queued under.
+            overrides = {
+                c.slug: row_request_overrides(c) for c in session.query(Collection).all() if c.build != "shared"
+            }
+            # One claim per title tagged with its row, then a single send — so rows sharing a Radarr
+            # share one client and one rate limiter. A loop of per-group sends would give each group
+            # its own, multiplying the write rate to that server (plex-safety rule 6).
+            cfg_by_row = {"": cfg} | {slug: resolve_request_config(cfg, ov) for slug, ov in overrides.items()}
+            claims = [(row.row_slug if row.row_slug in cfg_by_row else "", _title(row)) for row in rows]
+            report = request_titles_by_row(cfg_by_row, tmdb, claims, dry_run=body.dry_run)
             by_key = {(o.tmdb_id, o.media_type.value): o for o in report.outcomes}
             outcomes = []
             for row in rows:

@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from shortlist.engine import requests as requests_mod
 from shortlist.engine.models import ArrTarget, MediaType, RequestConfig
 from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
-from shortlist.server.db.models import RequestCandidate, Server
+from shortlist.server.db.models import Collection, RequestCandidate, Server
 from shortlist.server.main import create_app
 
 pytestmark = pytest.mark.integration
@@ -390,3 +390,124 @@ class TestArrStatusEndpoint:
     def test_requests_not_configured_returns_empty(self, client: TestClient, monkeypatch):
         monkeypatch.setattr(client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(None))
         assert client.get("/api/requests/status").json() == {"statuses": {}, "radarr": "off", "sonarr": "off"}
+
+
+class TestApprovalUsesTheClaimingRowsTarget:
+    """An approval is just a delayed send, so it must land where a same-night send would have.
+
+    The trap this closes: `why[].row` is the RENDERED row name, carrying the person's display name
+    and their own seed title, so it identifies nothing stable. Without the stored `row_slug`, a title
+    queued under a kids row and approved next month went to the global root folder instead.
+    """
+
+    @staticmethod
+    def _kids_row(client: TestClient, **overrides):
+        with client.app.state.sessions() as session:
+            session.add(
+                Collection(
+                    slug="kids",
+                    name="Kids",
+                    build="per_person",
+                    req_radarr_root_folder="/kids",
+                    req_radarr_quality_profile_id=9,
+                    **overrides,
+                )
+            )
+            row = session.query(RequestCandidate).filter_by(id=1).one()
+            row.row_slug = "kids"
+            session.commit()
+
+    def _send(self, client: TestClient, monkeypatch) -> dict:
+        made: dict[tuple, FakeArr] = {}
+
+        def factory(target, **kw):
+            made.setdefault((target.root_folder, target.quality_profile_id), FakeArr())
+            return made[(target.root_folder, target.quality_profile_id)]
+
+        monkeypatch.setattr(requests_mod, "RadarrClient", factory)
+        cfg = RequestConfig(enabled=True, radarr=_RADARR)
+        monkeypatch.setattr(client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(cfg))
+        client.post("/api/requests/send", json={"ids": [1]})
+        return made
+
+    def test_it_files_into_the_rows_folder_and_profile(self, client: TestClient, monkeypatch):
+        self._kids_row(client)
+        made = self._send(client, monkeypatch)
+        assert [t for t, _ in made[("/kids", 9)].movie_calls] == [10]
+        assert ("/movies", 1) not in made
+
+    def test_a_candidate_with_no_row_falls_back_to_the_global_target(self, client: TestClient, monkeypatch):
+        """Everything queued before per-row settings existed has a NULL slug, and must still send."""
+        made = self._send(client, monkeypatch)
+        assert [t for t, _ in made[("/movies", 1)].movie_calls] == [10]
+
+    def test_a_slug_whose_row_was_deleted_falls_back_rather_than_failing(self, client: TestClient, monkeypatch):
+        """A row can be deleted while its titles sit in the inbox. Approving them must still work."""
+        with client.app.state.sessions() as session:
+            session.query(RequestCandidate).filter_by(id=1).one().row_slug = "deleted-row"
+            session.commit()
+        made = self._send(client, monkeypatch)
+        assert [t for t, _ in made[("/movies", 1)].movie_calls] == [10]
+
+    def test_a_row_that_overrides_nothing_uses_the_global_target(self, client: TestClient, monkeypatch):
+        with client.app.state.sessions() as session:
+            session.add(Collection(slug="plain", name="Plain", build="per_person"))
+            session.query(RequestCandidate).filter_by(id=1).one().row_slug = "plain"
+            session.commit()
+        made = self._send(client, monkeypatch)
+        assert [t for t, _ in made[("/movies", 1)].movie_calls] == [10]
+
+
+class TestApprovingAcrossRowsSharesOneClient:
+    """Audit round 27, 2026-08-18: the approve path grouped by row and sent each group separately, so
+    approving titles from three rows built three Radarr clients — and several rows are usually the
+    SAME Radarr with different folders, so each got its own rate limiter and multiplied the write
+    rate to one server (plex-safety rule 6)."""
+
+    def test_two_rows_on_one_server_share_a_write_clock(self, client: TestClient, monkeypatch):
+        made: list = []
+
+        def factory(target, **kw):
+            made.append(kw.get("write_clock"))
+            return FakeArr()
+
+        monkeypatch.setattr(requests_mod, "RadarrClient", factory)
+        with client.app.state.sessions() as session:
+            session.add(Collection(slug="kids", name="Kids", build="per_person", req_radarr_root_folder="/kids"))
+            session.add(Collection(slug="main", name="Main", build="per_person", req_radarr_root_folder="/main"))
+            rows = session.query(RequestCandidate).all()
+            rows[0].row_slug = "kids"
+            if len(rows) > 1:
+                rows[1].row_slug = "main"
+            session.commit()
+            ids = [r.id for r in rows]
+
+        cfg = RequestConfig(enabled=True, radarr=_RADARR)
+        monkeypatch.setattr(client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(cfg))
+        client.post("/api/requests/send", json={"ids": ids})
+
+        clocks = [c for c in made if c is not None]
+        assert clocks, "clients must be built with a shared clock, not their own"
+        assert all(c is clocks[0] for c in clocks), "one server, one write clock"
+
+
+class TestTheInboxNamesTheRowThatClaimedIt:
+    """`row_slug` decides which Sonarr/Radarr target an approval uses, and the inbox could not show
+    it: the column was persisted correctly but never serialised, so the UI had no way to tell the
+    owner where an approval would land. Found while interpreting a live two-row run (2026-08-18)."""
+
+    def test_the_claiming_row_is_exposed(self, client: TestClient):
+        with client.app.state.sessions() as session:
+            session.query(RequestCandidate).filter_by(id=1).one().row_slug = "kids"
+            session.commit()
+
+        row = next(r for r in client.get("/api/requests").json() if r["id"] == 1)
+
+        assert row["row_slug"] == "kids"
+
+    def test_a_pre_per_row_candidate_reports_null_rather_than_guessing(self, client: TestClient):
+        """Null is the honest answer for anything queued before per-row settings — it falls back to
+        the global config, and inventing a row here would name one that never claimed it."""
+        row = next(r for r in client.get("/api/requests").json() if r["id"] == 2)
+
+        assert row["row_slug"] is None

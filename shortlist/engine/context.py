@@ -64,6 +64,10 @@ class EngineContext:
     # CHECK what an account Plex refuses a hide-list for can actually see, rather than assume. None on
     # direct engine runs, where the check is simply skipped.
     pms_for_user: Callable[[UserProfile], object] | None = None
+    # That same account's server TOKEN, for reads that go through the owner's client rather than a
+    # per-user one — `PlexClient.user_hubs` takes a token, because Home is read from the owner's URL
+    # as somebody else. None on direct engine runs, where the enforcement canary is skipped.
+    token_for_user: Callable[[UserProfile], str | None] | None = None
     #: Slugs of people our own database says are GONE from Plex — plex.tv stopped listing them, or the
     #: owner removed them. The second of the two guards that let a private-row exclude be pruned (see
     #: `privacy.sync_user_restrictions`). Positive evidence on purpose: it must be something a partial

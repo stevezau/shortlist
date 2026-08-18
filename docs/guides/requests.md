@@ -99,15 +99,85 @@ Requires Radarr v3+ / Sonarr v4+ reachable from the Shortlist container.
 ### Why is a title still waiting?
 
 The bar for sending on its own is higher than the bar for being requestable at all: a title is sent
-without asking only if it clears **both** `requests.auto_min_demand` (default 3 distinct people) and
+without asking only if it clears **both** `requests.auto_min_demand` (default 3 distinct people, counted **within one row**) and
 `requests.auto_min_rating` (default 8.0). A 7.9 wanted by twenty people still waits. Beyond that:
 
 - **On an exclusion list** — a past delete in Radarr/Sonarr leaves the title on an import-exclusion
   list, and Shortlist will never auto-send one (the app would refuse the add anyway). The card says
   so; clear it in Radarr/Sonarr first, then approve.
 - **Over the per-run cap** — `requests.max_per_run` auto-worthy titles go per run; the rest wait.
+- **The run never rated it** — when `requests.rating_source` is not `tmdb`, a run only rates as many
+  titles as its lookup budget allows (see below).
 - **Already in Radarr/Sonarr** — the card shows a **Downloaded / Downloading / Searching / Not
   monitored** badge if either app already tracks it, which normally means it was added by hand after
   it landed here. Films drop off the list on the next run. **Shows only drop off on Sonarr v4**,
   because matching them back to the request needs Sonarr's own TMDB id, which v3 doesn't report. On v3
   the badge appears but the entry stays until you clear it yourself.
+
+### Nothing is being requested at all
+
+If runs keep finishing with **0 requested** and the inbox stays empty, the rating gate is rejecting
+everything it managed to rate. The run's stats carry the three numbers that tell you which:
+
+- `requests_pool` — titles that cleared the base floors (`min_demand`, the year window). If this is
+  **0**, those floors are the problem, not the ratings: `requests.min_year` and `requests.min_demand`
+  are the ones to loosen.
+- `requests_examined` — how many of that pool the run actually rated.
+- `requests_lookups` — how many of those cost an MDBList API call. Cached ratings are free.
+
+When `examined` is well below `pool`, the run ran out of lookup budget before it reached anything
+good. That is the case to act on, and it is what `requests.none_qualified` in the event log means.
+Raise `requests.max_per_run` (the budget is 4x it, floor 20) so each run rates more, or lower
+`requests.min_rating`.
+
+Why the two can disagree so sharply: the run rates titles in **demand** order — most-wanted first —
+but judges them on **rating**. On a large library the most-wanted _missing_ titles are often the ones
+nobody thought worth adding, so the top of the list can be the worst-rated part of it, and the titles
+that would pass sit further down. A bigger budget reaches them.
+
+## Different settings per row
+
+Everything above is the server-wide default. Any per-person row can override most of it in the row
+editor, under **Requests** — a kids row can file into its own folder at a lower quality profile, ask
+for a lower rating, and hold itself to one title a night, while your main row carries on as it was.
+
+A field left on "use the setting from Settings › Requests" follows the global, and follows it as you
+change it. Only the ones you deliberately override differ.
+
+Two things stay server-wide on purpose:
+
+- **How many a run may request.** This is what stops a library ballooning, so a row can only ever ask
+  for *less* of it, never more.
+- **The rating source and its MDBList key.** One account, one place to set it.
+
+### How rows share the limit
+
+Rows split the run's limit evenly, and any row that can't fill its share hands it back to the rows
+that can. With the limit at 10 and two rows:
+
+```
+Row A capped at 3, Row B uncapped
+  even split -> 5 each
+  A takes 3 (its own limit)
+  A's spare 2 goes to B -> B takes 7
+                           -------
+                           10 total
+```
+
+A run that builds one row is simply that row on its own, so a row capped at 3 asks for 3.
+
+Rows on the **same schedule build together as one run** and share one limit. Rows on different
+schedules are different runs, each with the full limit — so three rows on three different times can
+ask for three times as much in a day as the same three rows on one schedule.
+
+### When two rows want the same title
+
+It's requested once, by the first row in your row order whose settings it passes — so it lands in
+that row's folder, and the other row's slot frees up for its next pick. Ten slots always mean ten
+titles. The Requests inbox shows every row that wanted it, not just the one that asked.
+
+### Shared rows
+
+A shared row ("Popular on your server") has no request settings, and the editor doesn't show the
+section for one. It's built from titles people have already watched, which are by definition already
+on your server — so there is never anything missing for it to ask for.

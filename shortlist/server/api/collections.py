@@ -169,6 +169,24 @@ class CollectionIn(BaseModel):
         json_schema_extra={"enum": [*sorted(COLD_STARTS), None]},
         description="What this row does for someone with too little watch history; null inherits the global setting.",
     )
+    # This row's own Sonarr/Radarr settings; null -> inherit the global `requests.*` setting. Only
+    # the profile and root folder are per row — URL and API key stay global (one Radarr, different
+    # folders). `max_per_run` and the rating source are deliberately NOT here: they are the run's
+    # ceiling and its one MDBList account, and `req_max_per_row` may only restrict below the former.
+    # Meaningless on a shared row, which surfaces nothing missing to request.
+    req_min_rating: float | None = Field(default=None, ge=0.0, le=10.0)
+    req_min_votes: int | None = Field(default=None, ge=0)
+    req_min_demand: int | None = Field(default=None, ge=1)
+    req_min_year: int | None = Field(default=None, ge=0, le=2999)
+    req_max_year: int | None = Field(default=None, ge=0, le=2999)
+    req_auto_send: bool | None = None
+    req_auto_min_demand: int | None = Field(default=None, ge=1)
+    req_auto_min_rating: float | None = Field(default=None, ge=0.0, le=10.0)
+    req_max_per_row: int | None = Field(default=None, ge=0, le=100)
+    req_radarr_quality_profile_id: int | None = Field(default=None, ge=1)
+    req_radarr_root_folder: str | None = Field(default=None, max_length=512)
+    req_sonarr_quality_profile_id: int | None = Field(default=None, ge=1)
+    req_sonarr_root_folder: str | None = Field(default=None, max_length=512)
     # How many recent watches the row cycles between, one per run. 1 = always the most recent.
     # Capped at 20: past that the "recent" the row's title claims stops being true, and the cycle takes
     # three weeks to come round — indistinguishable from the stuck row this exists to fix.
@@ -238,6 +256,19 @@ class CollectionOut(PassthroughModel):
         description="What this row does for someone with too little watch history; null inherits the global setting.",
     )
     seed_window: int
+    req_min_rating: float | None
+    req_min_votes: int | None
+    req_min_demand: int | None
+    req_min_year: int | None
+    req_max_year: int | None
+    req_auto_send: bool | None
+    req_auto_min_demand: int | None
+    req_auto_min_rating: float | None
+    req_max_per_row: int | None
+    req_radarr_quality_profile_id: int | None
+    req_radarr_root_folder: str | None
+    req_sonarr_quality_profile_id: int | None
+    req_sonarr_root_folder: str | None
     pick_order: str = _closed_set_out(ORDERS, "How the delivered collection is ordered.")
     placement: str = _closed_set_out(PLACEMENTS, "Where the OWNER's own collection appears.")
     placement_friends: str = _closed_set_out(PLACEMENTS, "Where each FRIEND's own collection appears.")
@@ -478,6 +509,19 @@ def _serialize(session, collection: Collection) -> dict:
         "max_seeds": collection.max_seeds,
         "cold_start": collection.cold_start,
         "seed_window": int(collection.seed_window or 1),
+        "req_min_rating": collection.req_min_rating,
+        "req_min_votes": collection.req_min_votes,
+        "req_min_demand": collection.req_min_demand,
+        "req_min_year": collection.req_min_year,
+        "req_max_year": collection.req_max_year,
+        "req_auto_send": collection.req_auto_send,
+        "req_auto_min_demand": collection.req_auto_min_demand,
+        "req_auto_min_rating": collection.req_auto_min_rating,
+        "req_max_per_row": collection.req_max_per_row,
+        "req_radarr_quality_profile_id": collection.req_radarr_quality_profile_id,
+        "req_radarr_root_folder": collection.req_radarr_root_folder,
+        "req_sonarr_quality_profile_id": collection.req_sonarr_quality_profile_id,
+        "req_sonarr_root_folder": collection.req_sonarr_root_folder,
         "pick_order": collection.pick_order or "best",
         "placement": collection.placement or "both",
         "placement_friends": collection.placement_friends or "both",
@@ -643,6 +687,20 @@ _PATCHABLE_COLUMNS = (
     "max_seeds",
     "cold_start",
     "seed_window",
+    # This row's own request floors and Arr target; null on any of them means inherit the global.
+    "req_min_rating",
+    "req_min_votes",
+    "req_min_demand",
+    "req_min_year",
+    "req_max_year",
+    "req_auto_send",
+    "req_auto_min_demand",
+    "req_auto_min_rating",
+    "req_max_per_row",
+    "req_radarr_quality_profile_id",
+    "req_radarr_root_folder",
+    "req_sonarr_quality_profile_id",
+    "req_sonarr_root_folder",
     "pick_order",
     "placement",
     "placement_friends",

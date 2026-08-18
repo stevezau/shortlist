@@ -91,6 +91,37 @@ class TestTransfer:
             # Every copied row carries the real date, which the watch sync must never overwrite.
             assert all(row.source_viewed_at is not None for row in rows)
 
+    def test_an_owner_with_no_cached_history_is_told_so_not_handed_a_bare_zero(self, client):
+        """The wizard offers this transfer before anything has ever read the owner's history, so
+        the honest answer is "there is nothing to copy yet" — not a 200 saying 0 titles moved (#88)."""
+        app = client.app
+        with app.state.sessions() as session:
+            owner = User(plex_account_id=555000001, username="steve", slug="steve", user_type="owner")
+            target = User(plex_account_id=555000300, username="steve-tv", slug="steve-tv", user_type="managed")
+            session.add_all([owner, target])
+            session.commit()
+            target_id = target.id
+
+        r = client.post("/api/watching-account/transfer", json={"to_user_id": target_id})
+
+        assert r.status_code == 200
+        assert r.json()["source_empty"] is True
+
+    def test_the_schema_declares_source_empty_so_the_generated_web_types_carry_it(self, client):
+        """`PassthroughModel` lets the field reach the wire whether or not it is declared, but the
+        web types are GENERATED from this schema — an undeclared field is one the UI cannot read
+        without hand-writing a type, which the frontend rules forbid."""
+        properties = client.app.openapi()["components"]["schemas"]["TransferOut"]["properties"]
+
+        assert "source_empty" in properties
+
+    def test_a_copy_with_something_to_copy_is_not_flagged_empty(self, client):
+        _owner_id, target_id = _seed_owner_and_target(client)
+
+        r = client.post("/api/watching-account/transfer", json={"to_user_id": target_id})
+
+        assert (r.json()["copied"], r.json()["source_empty"]) == (2, False)
+
     def test_dry_run_reaches_the_service_and_writes_nothing(self, client):
         _owner_id, target_id = _seed_owner_and_target(client)
 
@@ -103,6 +134,7 @@ class TestTransfer:
             "scrobbled": 0,
             "scrobble_skipped": 0,
             "dry_run": True,
+            "source_empty": False,
             "errors": [],
         }
         with client.app.state.sessions() as session:
@@ -126,6 +158,7 @@ class TestTransfer:
                     "scrobbled": 2,
                     "scrobble_skipped": 0,
                     "dry_run": False,
+                    "source_empty": False,
                     "errors": [],
                 },
                 copied=2,
@@ -158,6 +191,7 @@ class TestTransfer:
                     "scrobbled": 0,
                     "scrobble_skipped": 0,
                     "dry_run": True,
+                    "source_empty": False,
                     "errors": [],
                 },
                 copied=0,
@@ -233,3 +267,54 @@ class TestTransfer:
     def test_needs_the_owner_session(self, client):
         client.cookies.clear()
         assert client.post("/api/watching-account/transfer", json={"to_user_id": 1}).status_code in (401, 403)
+
+
+class TestTheWholeLoopAWizardWalksThrough:
+    """Read the history, then copy it — the two halves the setup wizard has to chain.
+
+    Each half is covered on its own elsewhere. This is the join, and the join is where the bug in
+    #88 lived: the copy read a table that nothing ever filled for an owner without a row of their
+    own, so it reported 0 for ever and the wizard's offer to bring the history across was a dead
+    end. The history SOURCE is faked (so token selection is not exercised here — that is
+    `test_run_service_context.py::test_the_owner_is_read_AS_the_owner_so_the_admin_token_is_the_one_used`);
+    the job, the sweep, the cache and the copy are all real.
+    """
+
+    def test_syncing_the_history_first_makes_the_copy_land(self, client):
+        from types import SimpleNamespace
+
+        from shortlist.engine.models import MediaType, WatchedItem
+
+        app = client.app
+        with app.state.sessions() as session:
+            # `enabled=False`, exactly as `user_sync` creates the owner: they get no row of their
+            # own, which is the case that used to leave their watched set permanently empty.
+            owner = User(plex_account_id=555000001, username="steve", slug="steve", user_type="owner", enabled=False)
+            target = User(plex_account_id=555000300, username="steve-tv", slug="steve-tv", user_type="managed")
+            session.add_all([owner, target])
+            session.commit()
+            owner_id, target_id = owner.id, target.id
+
+        seen = WatchedItem(title="Dune", media_type=MediaType.MOVIE, watched_at=utcnow(), tmdb_id=42, rating_key=7)
+        fake_ctx = SimpleNamespace(
+            plex=SimpleNamespace(sections=lambda: [SimpleNamespace(key="1", type="movie")]),
+            history_source=SimpleNamespace(
+                fetch=lambda p, **k: [seen],
+                fetch_section=lambda p, section, media_type, since=None: [seen],
+            ),
+            config=SimpleNamespace(min_completion=0.7),
+        )
+
+        with patch.object(app.state.run_service, "build_context", return_value=fake_ctx):
+            before = client.post("/api/watching-account/transfer", json={"to_user_id": target_id, "dry_run": True})
+            assert before.json()["source_empty"] is True
+
+            job = client.post("/api/system/jobs", json={"kind": "sync.history"})
+            assert job.status_code == 200, job.text
+
+            after = client.post("/api/watching-account/transfer", json={"to_user_id": target_id})
+
+        assert (after.json()["copied"], after.json()["source_empty"]) == (1, False)
+        with app.state.sessions() as session:
+            assert session.query(WatchedTitle).filter_by(user_id=owner_id).count() == 1
+            assert [t.title for t in session.query(WatchedTitle).filter_by(user_id=target_id)] == ["Dune"]

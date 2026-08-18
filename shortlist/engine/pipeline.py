@@ -44,12 +44,18 @@ from shortlist.engine.models import (
     UserType,
 )
 from shortlist.engine.privacy import (
+    RESTRICTED_FILTER_FIELDS,
     clear_our_excludes,
     shared_label_audiences,
     shortlist_labels_in,
     sync_user_restrictions,
+    unhidden_rows_on_home,
     unhidden_rows_visible_to,
 )
+from shortlist.engine.request_config import resolve_request_config
+
+#: How many accounts of one type the filter-enforcement spot-check may try before giving up.
+_ENFORCEMENT_SPOT_CHECK_ATTEMPTS = 3
 
 
 def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
@@ -102,7 +108,7 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     # Missing-title demand, accumulated across users only when requests are on — the common case
     # (feature off) pays nothing for it. None -> _run_user does no missing-title bookkeeping at all.
     requests_on = bool(ctx.config.requests and ctx.config.requests.enabled)
-    demand: requests_mod.DemandMap = {}
+    demand: requests_mod.RowDemand = {}
 
     # Collection item-ordering is deferred to a best-effort pass AFTER promotion (see
     # _collection_order_phase): each (collection, ranked_keys) delivery records here, so the expensive
@@ -164,7 +170,7 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
 
     # Sonarr/Radarr requests, dead LAST — after every Plex write is done.
     if requests_on:
-        _emit(ctx, "Shortlist", "requesting", {"wanted": len(demand)})
+        _emit(ctx, "Shortlist", "requesting", {"wanted": sum(len(m) for m in demand.values())})
     _request_phase(ctx, requests_on, demand, report)
 
     report.finished_at = datetime.now(UTC)
@@ -328,7 +334,7 @@ def _deliver_phase(
     library_index: dict[MediaType, dict[int, int]],
     stored_labels: dict[str, str],
     report: RunReport,
-    demand: requests_mod.DemandMap | None,
+    demand: requests_mod.RowDemand | None,
     order_work: list[tuple],
 ) -> tuple[list[UserProfile], list[tuple[RowSpec, UserProfile]]]:
     """Deliver every per-person and shared row, all UNPROMOTED. Returns the promotion candidates."""
@@ -523,6 +529,96 @@ def _leave_sharing_alone(ctx: EngineContext, user, remote, report: RunReport) ->
         # Audited like any other share write (rule 10): this one changes who can see what, and it is
         # the only write in the run that widens rather than narrows.
         report.filter_writes[user.plex_account_id] = {"username": user.username, "fields": written}
+
+
+def _verify_filters_enforced(ctx, audience, roster, owned, collections_known, report) -> None:
+    """Look through a real account's eyes and check our exclusions are actually being APPLIED.
+
+    The gap this closes. The read-back above proves plex.tv STORED the filter string; nothing proved
+    Plex acts on it. Those are different failures, and only the second one reaches the people using
+    the server: a filter that is present and ignored looks perfect from every screen Shortlist has.
+    Reported on discussion #88 — six Plex Home accounts, no restriction profile on any of them, each
+    seeing all six per-person rows — which is precisely the shape no existing check could see. Every
+    other look-through-their-eyes check (`_record_unhideable`) is gated on the account having a
+    restriction profile, so the accounts we successfully write filters for had no verification at all.
+
+    A CANARY, not an audit, and the distinction is what makes it affordable. "Does Plex enforce our
+    exclusions for this kind of account on this server" is a property of the server and the account
+    type, not of each person — so one account per `user_type` is enough to catch a systemic failure,
+    at a cost of at most `_ENFORCEMENT_SPOT_CHECK_ATTEMPTS` reads per type rather than one per account
+    (plus, for an account with no share token of its own, the plex.tv canary exchange that fetching one
+    costs). A 48-account server already spends minutes in this phase; rule 6.
+
+    NOT a gate, deliberately. The automatic Privacy Check that blocked writes was removed at the
+    owner's request on 2026-07-16 and this does not reinstate it: it never blocks a write, never
+    blocks promotion, and never raises. It measures and tells the owner, which is the same answer
+    `_record_unhideable` already gives for the accounts Plex refuses.
+
+    Never raises: a diagnostic that fails must not fail the run that produced it.
+    """
+    if ctx.token_for_user is None or ctx.config.dry_run:
+        return
+    if not collections_known or not owned:
+        # Same refusal as `_record_unhideable`: with no reliable picture of which rows exist, "sees
+        # none of ours" would be an artefact of the failed read rather than a finding.
+        return
+    seen_types: set[str] = set()
+    # A spot-check needs ONE working account per type, so a failure moves to the next candidate.
+    # Without a cap that retry is the whole roster: on a server where these reads are broken (PMS
+    # down, tokens stale) a 46-user run pays 46 sequential hub reads to learn nothing. Give up after
+    # a few and let the run get on with it. Giving up is per TYPE, and what the run may then claim is
+    # settled at the bottom of this function — a type that never produced a reading must not be
+    # reported as clean on the strength of a different type that did.
+    attempts: dict[str, int] = {}
+    for user in audience:
+        if user.user_type is UserType.OWNER or user.plex_account_id in ctx.unmanaged_account_ids:
+            continue
+        remote = roster.get(user.plex_account_id)
+        if remote is None or getattr(remote, "restriction_profile", ""):
+            continue  # profiled accounts are `_record_unhideable`'s job, and have a different remedy
+        kind = str(user.user_type)
+        if kind in seen_types:
+            continue
+        # Only an account that HAS our exclusions can demonstrate they are being ignored. One with
+        # none is either brand new or nothing has been written for it yet, and it would report an
+        # exposure that no filter ever claimed to prevent.
+        if not any(shortlist_labels_in(remote.filters.get(f, ""), LABEL_PREFIX) for f in RESTRICTED_FILTER_FIELDS):
+            continue
+        if attempts.get(kind, 0) >= _ENFORCEMENT_SPOT_CHECK_ATTEMPTS:
+            continue
+        attempts[kind] = attempts.get(kind, 0) + 1
+        try:
+            token = ctx.token_for_user(user)
+            if token is None:
+                continue  # no token for this one; try the next account of this type
+            exposed = unhidden_rows_on_home(ctx.plex.user_hubs(token), owned, user.slug)
+        except Exception as e:
+            logger.debug(
+                "{}: could not spot-check whether the filter is enforced ({})", user.username, type(e).__name__
+            )
+            continue
+        seen_types.add(kind)  # only a check that actually RAN counts as covering this type
+        if exposed:
+            report.filters_not_enforced[user.username] = exposed
+            logger.error(
+                "{}: this account's share filter carries Shortlist's exclusions and Plex is showing "
+                "it {} row(s) belonging to other people anyway — the exclusions are stored but not "
+                "being applied ({} account)",
+                user.username,
+                len(exposed),
+                kind,
+            )
+        else:
+            logger.debug("{}: filter enforcement confirmed for {} accounts", user.username, kind)
+
+    # What this run is entitled to CLAIM, which is not the same as what it looked at. A finding always
+    # publishes. An empty result may only publish as "all clear" when every account type that spent
+    # attempts actually produced a reading — otherwise one type's success speaks for a type whose
+    # whole budget went on failures, the run persists `filters_not_enforced: {}`, and the "Plex is
+    # ignoring the privacy filter" card CLEARS while the leak is live. `attempts` is per type and
+    # this flag is one bool for the run, which is exactly how that slips past (review 2026-08-18).
+    fully_covered = bool(seen_types) and set(attempts) <= seen_types
+    report.filters_enforcement_measured = bool(report.filters_not_enforced) or fully_covered
 
 
 def _privacy_sync_phase(
@@ -772,6 +868,12 @@ def _privacy_sync_phase(
                         else:
                             report.error = f"{report.error} | {msg}" if report.error else msg
                         logger.error("privacy verify: {}", msg)
+
+    # Stored is not the same as enforced. Runs after the read-back and OUTSIDE its `sync_failed`
+    # guard, because a run that could not write one account's filter is exactly a run whose other
+    # accounts are worth spot-checking. Reports only — it cannot change `sync_failed` (see the
+    # function's own docstring on why this is not the removed write gate).
+    _verify_filters_enforced(ctx, audience, roster, owned, collections_known, report)
 
     return not sync_failed
 
@@ -1424,7 +1526,28 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
             )
 
 
-def _request_phase(ctx: EngineContext, requests_on: bool, demand: requests_mod.DemandMap, report: RunReport) -> None:
+def _rows_to_request(ctx: EngineContext, demand: requests_mod.RowDemand) -> list[requests_mod.RowRequest]:
+    """This run's rows that actually wanted something, each with its own effective request config.
+
+    In SPEC ORDER, not demand order — the order decides both the even-split remainder and which row
+    claims a title several rows want, and spec order is the owner's own row ordering, which they
+    control by dragging rows. A demand-ordered list would hand the tie-break to whichever row happened
+    to surface the most titles that night.
+
+    Rows the run did not build contribute no demand and are simply absent, so a per-row scheduled run
+    divides its slots between its own rows only.
+    """
+    rows: list[requests_mod.RowRequest] = []
+    for spec in ctx.config.per_person_rows():
+        row_demand = demand.get(spec.slug)
+        if not row_demand:
+            continue
+        cfg = resolve_request_config(ctx.config.requests, spec.request_overrides)
+        rows.append(requests_mod.RowRequest(spec.slug, cfg, row_demand))
+    return rows
+
+
+def _request_phase(ctx: EngineContext, requests_on: bool, demand: requests_mod.RowDemand, report: RunReport) -> None:
     """Sonarr/Radarr requests for picks the library lacks — dead LAST, after every Plex write is done.
 
     It touches no Plex object, and running it here (not before the privacy sync) keeps its "never
@@ -1437,7 +1560,7 @@ def _request_phase(ctx: EngineContext, requests_on: bool, demand: requests_mod.D
             report.requests = requests_mod.request_missing(
                 ctx.config.requests,
                 ctx.tmdb,
-                demand,
+                _rows_to_request(ctx, demand),
                 dry_run=ctx.config.dry_run,
                 already_handled=ctx.handled_requests,
                 mdblist=ctx.mdblist,

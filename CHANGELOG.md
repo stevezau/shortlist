@@ -4,6 +4,60 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [1.7.0] - 2026-08-18
+
+### Added
+
+- **Each row can have its own Sonarr/Radarr settings.** Until now every row asked for titles under
+  one set of rules, which is wrong the moment your rows are for different people. A kids' row and a
+  film-buff row want different rating floors, different quality profiles, and different folders — and
+  a run with three rows was really one pass that mixed them together.
+
+  Open a row, go to **Requests**, and override what that row needs: rating and vote floors, year
+  bounds, how many titles it may ask for, whether it sends automatically, and which quality profile
+  and root folder it files into. Anything you leave alone is inherited from the global settings, so a
+  row you never touch behaves exactly as it does today.
+
+  Two limits stay global on purpose. **Max per run** is the ceiling for the whole run and a row can
+  only ask for *less* than it, never more — otherwise the one setting protecting your download queue
+  would be a suggestion. And the rating source (plus its API key) stays global, because it is one
+  account shared by everything.
+
+  When several rows want titles in the same run, the run's slots are split evenly between them, and
+  each row is evaluated on its own rules. A row that wants fewer than its share hands the remainder
+  back to the others rather than wasting it. **A title two rows both want costs one slot, not two** —
+  it is requested once, and the run says which row claimed it.
+
+- **A share filter that Plex stores but does not apply is now caught and reported**
+  ([#88](https://github.com/stevezau/shortlist/discussions/88)). Shortlist keeps each row private by
+  adding label exclusions to everyone else's Plex share, and every check it had said the same thing:
+  the exclusions were written, plex.tv stored them, and reading them back confirmed it. None of that
+  proves Plex is *applying* them. Six Home accounts saw all six rows anyway, and the first person to
+  notice was a user rather than the owner.
+
+  Each run now looks at one account's home screen through that account's own eyes and reports it if
+  rows belonging to other people are showing. It never blocks anything — it measures and tells you,
+  because nothing you change in Plex fixes it and the useful action is a bug report.
+
+### Fixed
+
+- **Nothing was reaching Sonarr or Radarr, and nothing said why.** Titles were being examined and
+  discarded before any request could be made, and every screen reported a confident zero. The cause
+  was a lookup budget spent on cached answers, so a run could exhaust it without ever asking about a
+  new title. Rating lookups are now billed only when they actually cost something, and rejections are
+  remembered rather than re-fetched nightly.
+- **The screens that said "0 requested" now explain their own zero** — whether nothing cleared the
+  bar, or titles are sitting in the queue waiting for you to approve them, which the old wording
+  reported as if none had been good enough.
+- **A row's delivery no longer collapses because one title was deleted from Plex.** A title that
+  disappears between being picked and being delivered took the whole row down with it. Runs also now
+  report what Plex actually accepted rather than what was asked for, so a partial delivery reads as
+  partial instead of complete.
+- **Copying a watching account's history moved nothing**, because the owner's own history was never
+  read.
+- Approvals for titles from different rows each get their own Radarr/Sonarr connection, so a title
+  approved from one row can no longer be filed using another row's settings.
+
 ## [1.6.1] - 2026-08-17
 
 ### Added

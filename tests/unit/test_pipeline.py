@@ -73,7 +73,9 @@ def ctx(engine_config: EngineConfig, mock_plextv, mock_tmdb, mock_curator) -> En
     plex.owned_collections.return_value = {}
     plex.find_owned_collections.return_value = []  # delivery finds by title; promotion enumerates rows
     plex.stored_label.side_effect = lambda collection, label: label.replace("shortlist", "Shortlist", 1)
-    plex.fetch_items.side_effect = lambda keys: [fake_media_item(k, f"item{k}") for k in keys]
+    # (items, missing) — the real client reports what Plex no longer has, because a partial batch
+    # omits dead keys silently and delivery must not claim it delivered them.
+    plex.fetch_items.side_effect = lambda keys: ([fake_media_item(k, f"item{k}") for k in keys], [])
 
     history = MagicMock()
     history.fetch.return_value = [make_watched("Fargo", days_ago=i, rating_key=999) for i in range(1, 5)]
@@ -2534,14 +2536,21 @@ class TestRequestsWiring:
 
         report = pipeline_mod.run(ctx, [sarah])
 
+        # One RowRequest per row that wanted something, carrying that row's OWN demand map.
+        rows = {row.slug: row.demand for row in captured["demand"]}
+        assert list(rows) == ["picked"]
         # The missing title reached the request pass; the in-library one did not.
-        assert (30, MT.MOVIE) in captured["demand"]
-        assert (10, MT.MOVIE) not in captured["demand"]
-        assert captured["demand"][(30, MT.MOVIE)].demand == 1
+        assert (30, MT.MOVIE) in rows["picked"]
+        assert (10, MT.MOVIE) not in rows["picked"]
+        assert rows["picked"][(30, MT.MOVIE)].demand == 1
         # Its provenance names the row per library: a missing MOVIE renders {library_name} as the
-        # movie library ("Movies"), so the inbox shows the same name the row is actually called.
-        why = captured["demand"][(30, MT.MOVIE)].why
+        # movie library ("Movies"), so the inbox shows the same name the row is actually called...
+        why = rows["picked"][(30, MT.MOVIE)].why
         assert why and why[0].row == "✨ Movies Picked for You"
+        # ...and the SLUG beside it, which is the stable identity an approval months later needs to
+        # resolve this row's Sonarr/Radarr target. The rendered name cannot serve: it carries the
+        # person's display name and their own seed title.
+        assert why[0].row_slug == "picked"
         assert report.requests is sentinel
 
     def test_per_row_pool_attributes_tags_to_the_row_that_surfaced_the_title(
@@ -2582,7 +2591,10 @@ class TestRequestsWiring:
 
         report = pipeline_mod.run(ctx, [sarah])
 
-        missing = captured["demand"][(30, MT.MOVIE)]
+        rows = {row.slug: row.demand for row in captured["demand"]}
+        # Only the row whose pool actually surfaced a missing title is in the request pass at all.
+        assert list(rows) == ["gems"]
+        missing = rows["gems"][(30, MT.MOVIE)]
         assert missing.tags == {"sarah", "gems"}  # user tag + the row whose pool surfaced it, not "picked"
         assert missing.demand == 1  # counted once for this user despite multiple rows/pools
         # Distinct-union candidate count spans both pools: {10,20} (similar) and {30} (discover).

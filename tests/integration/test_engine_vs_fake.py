@@ -2648,3 +2648,80 @@ def test_an_account_that_is_both_switched_off_and_left_alone_keeps_the_shared_ro
     # ...the restricted shared row's does NOT, and their own condition is untouched.
     assert "shortlist__shared_date_night" in after
     assert "label=Kids" in after
+
+
+def test_a_filter_plex_stores_but_ignores_is_caught_and_reported(fakes, tmp_path, monkeypatch):
+    """Discussion #88's shape, which nothing could see before.
+
+    Six Plex Home accounts, restriction profile None on every one, each seeing all six per-person
+    rows. Everything Shortlist checked said the server was healthy: the filters were written, plex.tv
+    stored them, and the read-back before promotion confirmed the exclusions were present. The one
+    check that looks through a real account's eyes was gated on the account having a restriction
+    profile — so the accounts we successfully write filters FOR had no verification at all, and the
+    first person to notice was a user, not the owner.
+
+    Modelled by making the fake PMS store the filter and not act on it (`excluded_labels` -> empty),
+    which is precisely the difference between "stored" and "enforced".
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+
+    ctx = EngineContext(
+        config=EngineConfig(row_size=12, min_history=5, candidates_pre_rank=40, max_seeds=12),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+        token_for_user=lambda profile: f"server-{profile.plex_account_id}",
+    )
+
+    sarah = UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED)
+    mike = UserProfile(username="mike", plex_account_id=202, user_type=UserType.SHARED)
+    # First run builds the rows and writes everyone's filters, with Plex behaving normally.
+    engine_run(ctx, [sarah, mike])
+    assert plex.owned_collections()["sarah"].rating_keys
+
+    # Now Plex starts storing the exclusions without applying them. Nothing else changes: the filter
+    # strings stay exactly where they were, so every existing check still reports a healthy server.
+    monkeypatch.setattr(type(state), "excluded_labels", staticmethod(lambda _user: set()))
+    report = engine_run(ctx, [sarah, mike])
+
+    # Both account KINDS must be represented: the check samples one per type, and the managed
+    # (Plex Home) arm is the exact shape #88 reported. Asserting only "something was reported" would
+    # stay green if the canary/managed path broke entirely.
+    assert sorted(report.filters_not_enforced) == ["canary", "sarah"]
+    assert report.filters_enforcement_measured is True, "a filter that is stored but ignored has to be reported"
+    exposed = next(iter(report.filters_not_enforced.values()))
+    assert exposed, "the finding names the rows the account can actually see"
+    # And it stays a REPORT: the removed write gate is not coming back, so the run still completes
+    # and still promotes.
+    assert report.ok
+    assert not report.promotion_blockers
+
+
+def test_a_server_that_enforces_its_filters_reports_nothing(fakes, tmp_path):
+    """The other half: on a healthy server this check must be silent, or it is noise that gets
+    ignored on the one night it matters."""
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(row_size=12, min_history=5, candidates_pre_rank=40, max_seeds=12),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+        token_for_user=lambda profile: f"server-{profile.plex_account_id}",
+    )
+    sarah = UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED)
+    mike = UserProfile(username="mike", plex_account_id=202, user_type=UserType.SHARED)
+
+    engine_run(ctx, [sarah, mike])
+    report = engine_run(ctx, [sarah, mike])
+
+    assert report.filters_not_enforced == {}

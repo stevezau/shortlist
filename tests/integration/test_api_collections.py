@@ -47,6 +47,20 @@ COLLECTION_KEYS = {
     "max_seeds",
     "cold_start",
     "seed_window",
+    # This row's own request floors and Arr target; null on any of them means inherit the global.
+    "req_min_rating",
+    "req_min_votes",
+    "req_min_demand",
+    "req_min_year",
+    "req_max_year",
+    "req_auto_send",
+    "req_auto_min_demand",
+    "req_auto_min_rating",
+    "req_max_per_row",
+    "req_radarr_quality_profile_id",
+    "req_radarr_root_folder",
+    "req_sonarr_quality_profile_id",
+    "req_sonarr_root_folder",
     "pick_order",
     "placement",
     "placement_friends",
@@ -2550,3 +2564,71 @@ class TestRowEffectiveness:
 
         assert body["first_delivered_at"] < body["last_delivered_at"]
         assert body["last_delivered_at"].startswith((datetime.now(UTC) - timedelta(days=3)).strftime("%Y-%m-%d"))
+
+
+class TestPerRowRequestSettingsApi:
+    """A row's own Sonarr/Radarr floors and target, over the API.
+
+    NULL is the "inherit the global" signal throughout, so the round-trip that matters is that a
+    value the caller never sent stays null rather than being defaulted to something concrete.
+    """
+
+    def test_a_new_row_inherits_everything_by_default(self, client: TestClient):
+        created = client.post("/api/collections", json={"name": "Plain", "build": "per_person"}).json()
+        assert created["req_min_rating"] is None
+        assert created["req_radarr_root_folder"] is None
+        assert created["req_max_per_row"] is None
+
+    def test_overrides_round_trip(self, client: TestClient):
+        created = client.post("/api/collections", json={"name": "Kids", "build": "per_person"}).json()
+        resp = client.patch(
+            f"/api/collections/{created['id']}",
+            json={
+                "name": "Kids",
+                "req_min_rating": 6.0,
+                "req_max_per_row": 2,
+                "req_radarr_root_folder": "/data/Kids",
+                "req_radarr_quality_profile_id": 9,
+                "req_auto_send": False,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        patched = resp.json()
+        assert patched["req_min_rating"] == 6.0
+        assert patched["req_max_per_row"] == 2
+        assert patched["req_radarr_root_folder"] == "/data/Kids"
+        assert patched["req_radarr_quality_profile_id"] == 9
+        assert patched["req_auto_send"] is False
+        # Untouched fields stay null — patching one override must not concrete the rest.
+        assert patched["req_min_year"] is None
+        assert patched["req_sonarr_root_folder"] is None
+
+    def test_an_override_can_be_cleared_back_to_inherit(self, client: TestClient):
+        created = client.post("/api/collections", json={"name": "Kids", "build": "per_person"}).json()
+        client.patch(f"/api/collections/{created['id']}", json={"name": "Kids", "req_min_rating": 6.0})
+        cleared = client.patch(
+            f"/api/collections/{created['id']}", json={"name": "Kids", "req_min_rating": None}
+        ).json()
+        assert cleared["req_min_rating"] is None
+
+    def test_false_is_stored_rather_than_read_as_unset(self, client: TestClient):
+        """`auto_send=False` means "queue everything from this row", which is a real choice — it must
+        not be confused with "inherit". Only null inherits."""
+        created = client.post("/api/collections", json={"name": "Manual", "build": "per_person"}).json()
+        patched = client.patch(
+            f"/api/collections/{created['id']}", json={"name": "Manual", "req_auto_send": False}
+        ).json()
+        assert patched["req_auto_send"] is False
+
+    def test_zero_is_stored_rather_than_read_as_unset(self, client: TestClient):
+        """`req_max_per_row=0` means "never auto-send from this row" — also a real choice."""
+        created = client.post("/api/collections", json={"name": "Never", "build": "per_person"}).json()
+        patched = client.patch(f"/api/collections/{created['id']}", json={"name": "Never", "req_max_per_row": 0}).json()
+        assert patched["req_max_per_row"] == 0
+
+    def test_an_out_of_range_rating_is_refused(self, client: TestClient):
+        created = client.post("/api/collections", json={"name": "Bad", "build": "per_person"}).json()
+        assert (
+            client.patch(f"/api/collections/{created['id']}", json={"name": "Bad", "req_min_rating": 11.0}).status_code
+            == 422
+        )

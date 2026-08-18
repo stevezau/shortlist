@@ -187,6 +187,69 @@ class TestMdblistQuota:
         assert notif._mdblist_quota(session) is None
 
 
+class TestRequestsFoundNothing:
+    """A run that sends nothing AND queues nothing looked exactly like a run with nothing to do:
+    "0 requested" on a green run, no inbox rows, no event. Production sat that way for five days."""
+
+    @staticmethod
+    def _event(**message):
+        return Event(scope="requests.none_qualified", level="warning", ts=datetime.now(UTC), message=message)
+
+    def test_names_the_floors_when_nothing_cleared_them(self, session):
+        """The most actionable shape there is, and the one keying on `pool_size` used to skip: 702
+        titles wanted, none past the base floors. That is what the maintainer's server was doing."""
+        session.add_all([self._event(wanted=702, pool_size=0, examined=0, exhausted_pool=False) for _ in range(2)])
+        session.commit()
+
+        body = notif._requests_found_nothing(session)["body"]
+
+        assert "702 titles" in body
+        assert "minimum number of people or your release-year range" in body
+
+    def test_stays_silent_when_nothing_was_missing_at_all(self, session):
+        """`wanted == 0` is not a problem to report — the library simply had everything."""
+        session.add_all([self._event(wanted=0, pool_size=0, examined=0) for _ in range(3)])
+        session.commit()
+
+        assert notif._requests_found_nothing(session) is None
+
+    def test_does_not_fire_for_a_single_quiet_night(self, session):
+        """One run finding nothing is ordinary — nagging about it would train the owner to ignore it."""
+        session.add(self._event(wanted=900, pool_size=400, examined=100, exhausted_pool=False))
+        session.commit()
+
+        assert notif._requests_found_nothing(session) is None
+
+    def test_tells_the_owner_to_look_further_when_the_gate_ran_out(self, session):
+        session.add_all([self._event(wanted=900, pool_size=400, examined=100, exhausted_pool=False) for _ in range(2)])
+        session.commit()
+
+        result = notif._requests_found_nothing(session)
+
+        assert result["severity"] == "warning"
+        assert "100 of the 400" in result["body"]
+        assert "looks further" in result["body"], "the actionable half: the gate never saw the rest"
+
+    def test_blames_the_floor_when_the_whole_pool_was_rated(self, session):
+        """The other shape of the same zero — everything WAS rated and none of it was good enough.
+        Telling this owner to raise max_per_run would be advice that cannot possibly work."""
+        session.add_all([self._event(wanted=90, pool_size=40, examined=40, exhausted_pool=True) for _ in range(2)])
+        session.commit()
+
+        body = notif._requests_found_nothing(session)["body"]
+
+        assert "rated every one of the 40" in body
+        assert "looks further" not in body
+
+    def test_does_not_fire_for_events_older_than_the_window(self, session):
+        old = datetime.now(UTC) - timedelta(days=5)
+        for _ in range(3):
+            session.add(Event(scope="requests.none_qualified", level="warning", ts=old, message={}))
+        session.commit()
+
+        assert notif._requests_found_nothing(session) is None
+
+
 class TestFailedJobs:
     def test_fires_when_a_job_exhausts_its_retries(self, session):
         job = Job(kind="user.cleanup", status="failed")
@@ -795,3 +858,44 @@ class TestRowsWithNoNameForNewcomers:
         second = notif._rows_with_no_name_for_newcomers(session, SettingsStore(session))
 
         assert second["id"] != first["id"], "a newly affected row must not stay hidden behind an old dismissal"
+
+
+class TestTheEnforcementAlertCanClearItself:
+    """Architecture review, 2026-08-18. `filters_not_enforced` was written to run stats only when
+    NON-EMPTY, while the notification scans the last 50 runs for the first carrying the key — so one
+    bad night pinned an error-severity, undismissable card through 49 clean runs afterwards. The
+    sibling check (`unhideable_rows`) already solved this by writing on every MEASURED run."""
+
+    @staticmethod
+    def _run(session, exposed, *, finished):
+        run = Run(trigger="schedule", status="ok", finished_at=finished, stats={"filters_not_enforced": exposed})
+        session.add(run)
+        session.commit()
+        return run
+
+    def test_a_clean_run_after_a_bad_one_clears_the_alert(self, session):
+        self._run(session, {"sarah": [1, 2]}, finished=datetime.now(UTC) - timedelta(hours=2))
+        assert notif._filters_not_enforced(session) is not None  # the bad night fires
+
+        self._run(session, {}, finished=datetime.now(UTC))  # a measured, clean run
+
+        assert notif._filters_not_enforced(session) is None, "a fixed server must be able to clear it"
+
+    def test_a_run_that_never_measured_does_not_clear_it(self, session):
+        """Absent is not clean. A run that died before the spot-check writes no key at all, and must
+        not silence a real finding."""
+        self._run(session, {"sarah": [1]}, finished=datetime.now(UTC) - timedelta(hours=2))
+        session.add(Run(trigger="manual", status="error", finished_at=datetime.now(UTC), stats={}))
+        session.commit()
+
+        assert notif._filters_not_enforced(session) is not None
+
+    def test_the_copy_says_the_check_is_a_sample(self, session):
+        """It looks at one account per KIND, so naming one person reads as "one person's problem"
+        when the fault is server-wide."""
+        self._run(session, {"sarah": [1]}, finished=datetime.now(UTC))
+
+        body = notif._filters_not_enforced(session)["body"]
+
+        assert "ONE account of each kind" in body
+        assert "every shared or managed account" in body

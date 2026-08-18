@@ -235,6 +235,13 @@ class TestRunExecution:
             "titles_removed": 0,
             "titles_requested": 0,
             "requests_warnings": [],
+            # Beside the count, because "0 requested" cannot be read without them: how many titles
+            # cleared the base floors, how many the rating gate rated, what that cost MDBList.
+            "requests_queued": 0,
+            "requests_wanted": 0,
+            "requests_pool": 0,
+            "requests_examined": 0,
+            "requests_lookups": 0,
             "llm_tokens": 0,
             "llm_tokens_by_step": {},
             "exa_searches": 0,
@@ -632,7 +639,15 @@ class TestRunExecution:
             assert row.detail == "added to Radarr"
             # ...and the provenance persisted, so the log can say which row/person wanted it and why.
             assert row.why == [
-                {"user": "Sarah", "row": "Sarah's Picks", "seed": "Blade Runner", "source": "tmdb_similar"}
+                # `row_slug` sits beside the rendered `row` name: the name carries Sarah's own seed
+                # title, so only the slug can resolve this row's Arr target on a later approval.
+                {
+                    "user": "Sarah",
+                    "row": "Sarah's Picks",
+                    "seed": "Blade Runner",
+                    "source": "tmdb_similar",
+                    "row_slug": "",
+                }
             ]
             # ...and the next run's engine context therefore excludes it.
             handled = ContextBuilder._handled_requests(session)
@@ -1019,3 +1034,53 @@ class TestCancellingAQueuedRunIsImmediate:
             assert run.status == "running", "a running run stops cooperatively, not by decree"
             assert run.stats["cancel_requested"] is True
         assert service._cancels[run_id].is_set()
+
+
+class TestThePerRowRequestBreakdownIsPersisted:
+    """The four per-row dicts on RequestReport were populated by the engine and written nowhere, so
+    the run page could not answer "which row was starved" — the question they were added for. Found
+    when a live two-row experiment could not be interpreted from its own run record (2026-08-18)."""
+
+    def test_the_breakdown_reaches_the_run_stats(self, sessions, tmp_path, monkeypatch):
+        from shortlist.engine.models import RequestReport
+
+        report = fake_report()
+        report.requests = RequestReport(
+            pool_by_row={"picked": 400, "because": 23},
+            examined_by_row={"picked": 100, "because": 32},
+            considered_by_row={"picked": 12, "because": 0},
+            claimed_by_row={"picked": 6, "because": 1},
+            sent_by_row={"picked": 5},
+        )
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+        monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: report)
+
+        async def scenario():
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        stats = asyncio.run(scenario()).stats
+        # `claimed` is what the caps allocated; `sent` is what the Arr accepted. They differ when a
+        # claim is skipped (no TheTVDB id), which is exactly what made a live two-row test read as
+        # "because got nothing" when its cap had in fact allocated it one.
+        assert stats["requests_by_row"]["because"] == {
+            "pool": 23,
+            "examined": 32,
+            "considered": 0,
+            "claimed": 1,
+            "sent": 0,
+        }
+        assert stats["requests_by_row"]["picked"]["sent"] == 5
+
+    def test_a_run_with_no_request_phase_records_no_empty_dict(self, sessions, tmp_path, monkeypatch):
+        """An empty key would read as "measured, and every row was zero" — it wasn't measured."""
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+        monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: fake_report())
+
+        async def scenario():
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        assert "requests_by_row" not in asyncio.run(scenario()).stats

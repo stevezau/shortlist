@@ -216,6 +216,62 @@ def _mdblist_quota(session: Session) -> dict | None:
     }
 
 
+def _requests_found_nothing(session: Session) -> dict | None:
+    """Recent runs wanted titles but the rating gate passed none of them, so nothing reached
+    Sonarr/Radarr and nothing reached the inbox either.
+
+    This is the one request outcome with no trace anywhere the owner looks: a run that sends nothing
+    and queues nothing shows "0 requested" on a green run, which is also what a run with nothing to
+    do shows. It went unnoticed for five days in production. Fires only after TWO runs, so a single
+    quiet night — genuinely common — never nags.
+    """
+    since = datetime.now(UTC) - timedelta(days=3)
+    events = (
+        session.query(Event)
+        .filter(Event.scope == "requests.none_qualified", Event.ts >= since)
+        .order_by(Event.ts.desc())
+        .limit(5)
+        .all()
+    )
+    if len(events) < 2:
+        return None
+    latest = events[0]
+    data = latest.message if isinstance(latest.message, dict) else {}
+    wanted, pool = data.get("wanted", 0), data.get("pool_size", 0)
+    examined = data.get("examined", 0)
+    # Two different problems wearing the same "0 requested". Only one is about the rating floor.
+    if not wanted and not pool:
+        # Nothing missing, or an event written before `wanted` was recorded. Either way there is no
+        # honest sentence to write — "found 0 titles you don't have" reads as a fault and isn't one.
+        return None
+    if not pool:
+        body = (
+            f"The last {len(events)} runs found {wanted} titles people wanted that you don't have, and "
+            "none of them cleared your minimum number of people or your release-year range. Loosen "
+            "either to let some through."
+        )
+    elif data.get("exhausted_pool"):
+        body = (
+            f"The last {len(events)} runs rated every one of the {pool} titles people wanted, and none "
+            "cleared your minimum rating. Lower it, or widen the year range, to let some through."
+        )
+    else:
+        body = (
+            f"The last {len(events)} runs got through {examined} of the {pool} titles people wanted "
+            "before running out of rating lookups, and none of those cleared your minimum rating. "
+            "Raise how many to auto-request per run so each run looks further, or lower the minimum."
+        )
+    return {
+        "id": f"requests-none-qualified-{latest.ts.date().isoformat()}",
+        "severity": "warning",
+        "title": "Nothing is being requested",
+        "body": body,
+        "action_url": "/settings#requests",
+        "action_label": "Requests settings",
+        "dismissable": True,
+    }
+
+
 def _owner_sees_all_rows(session: Session) -> dict | None:
     """The owner has per-person rows on a library's Recommended shelf, so their own shelf shows
     everyone's row — Plex hides rows through each person's SHARE, and the owner has no share.
@@ -453,6 +509,54 @@ def _shelf_contention(session: Session) -> dict | None:
     }
 
 
+def _filters_not_enforced(session: Session) -> dict | None:
+    """Plex is showing an account rows that its share filter says to hide.
+
+    A different fault from `_rows_we_cannot_hide`, and the difference is the whole point. There, Plex
+    REFUSES the filter and the owner has a remedy (clear the restriction profile). Here the filter was
+    accepted, stored, and read back — and Plex is serving the rows anyway. Nothing the owner does in
+    Plex fixes that, so this alert asks for a bug report instead of an action, and says plainly that
+    the rows are visible now rather than implying a setting is wrong.
+
+    Reported on discussion #88: six Plex Home accounts, restriction profile None on every one of them,
+    each seeing all six per-person rows. Nothing could see it — the read-back proves plex.tv STORED the
+    filter, and the only look-through-their-eyes check was gated on the account having a profile.
+    """
+    from shortlist.server.db.models import Run
+
+    run = next(
+        (
+            r
+            for r in session.query(Run).filter(Run.finished_at.isnot(None)).order_by(Run.finished_at.desc()).limit(50)
+            if "filters_not_enforced" in (r.stats or {})
+        ),
+        None,
+    )
+    exposed = ((run.stats or {}).get("filters_not_enforced") or {}) if run else {}
+    if not exposed:
+        return None
+    names = sorted(exposed)
+    who = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+    return {
+        "id": f"filters-not-enforced-{run.id}",
+        "severity": "error",
+        "title": "Plex is ignoring the privacy filter",
+        "body": (
+            f"{who} can see rows belonging to other people, even though Shortlist wrote the hide "
+            "rules to their Plex account and confirmed Plex saved them. Their Restriction Profile is "
+            "already None, so there is nothing to clear — Plex is storing the rule and not applying "
+            "it. Those rows are visible to them right now. Shortlist spot-checks ONE account of each "
+            "kind, so this is likely every shared or managed account on the server, not only the "
+            f"{'one' if len(names) == 1 else 'ones'} named. Please open an issue and include this "
+            "run's id — the Sharing report will look healthy, because every hide rule really is "
+            "present and read back correctly; that is the fault."
+        ),
+        "action_url": f"/runs/{run.id}",
+        "action_label": "See the run",
+        "dismissable": False,
+    }
+
+
 def build_notifications(session: Session, store: SettingsStore, current_version: str) -> list[dict]:
     """Every currently-firing notification the owner hasn't dismissed, most severe first. Dismissal is
     by id, and each dismissable id encodes its state (the run id, the version), so a NEW failure or a
@@ -463,9 +567,11 @@ def build_notifications(session: Session, store: SettingsStore, current_version:
         _last_run_problem(session),
         _failed_jobs(session),
         _mdblist_quota(session),
+        _requests_found_nothing(session),
         _recent_service_errors(session),
         _rows_with_no_name_for_newcomers(session, store),
         _rows_we_cannot_hide(session),
+        _filters_not_enforced(session),
         _owner_sees_all_rows(session),
         _shelf_contention(session),
     ]

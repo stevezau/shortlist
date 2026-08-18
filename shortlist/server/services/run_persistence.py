@@ -82,8 +82,12 @@ def _forget_removed_deliveries(session: Session, user_slug: str, removed: list[d
 
 
 def _why_json(why) -> list[dict]:
-    """Serialize a missing title's provenance for storage + the API: [{user, row, seed, source}]."""
-    return [{"user": w.user, "row": w.row, "seed": w.seed, "source": w.source} for w in why]
+    """Serialize a missing title's provenance for storage + the API: [{user, row, seed, source, row_slug}].
+
+    `row` is the RENDERED name the person sees; `row_slug` is the stable identity beside it, which is
+    what resolves the row's Sonarr/Radarr target when the owner approves months later.
+    """
+    return [{"user": w.user, "row": w.row, "seed": w.seed, "source": w.source, "row_slug": w.row_slug} for w in why]
 
 
 def _is_failure_detail(detail: str | None) -> bool:
@@ -113,6 +117,8 @@ def _refresh_pending(row: RequestCandidate, m) -> None:
     row.tags = sorted(m.tags)
     row.wanters = sorted(m.wanters)
     row.why = _why_json(m.why)
+    # Keep the newest claim: that is the row whose target an approval would use now.
+    row.row_slug = _row_slug(m) or row.row_slug
     # A queued title now always carries a reason ("max_per_run (5) already filled"), so a plain
     # `m.detail or row.detail` would overwrite yesterday's REAL failure ("Sonarr returned HTTP 503")
     # with today's threshold note — erasing the only record that Sonarr was broken. A failure detail
@@ -142,8 +148,26 @@ def _candidate_row(m, run_id: int, *, status: str) -> RequestCandidate:
         detail=m.detail,  # why it is not here yet: a threshold, or a real send failure
         excluded=m.excluded,  # on a Sonarr/Radarr exclusion list — flagged in the inbox
         arr_slug=m.arr_slug,  # set for auto-sent titles, so the inbox deep-links to the arr page
+        row_slug=_row_slug(m),
         first_seen_run_id=run_id,
     )
+
+
+def _row_slug(m) -> str | None:
+    """Which row this title came from, for resolving its Sonarr/Radarr target on a later approval.
+
+    Reads the slug the ENGINE recorded on the title, not the first `why` entry. Those diverged the
+    moment `_merge_across_rows` began unioning provenance across rows: a title two rows wanted now
+    carries both their slugs in `why`, and the one that matters is the row that actually CLAIMED it —
+    the row whose Sonarr/Radarr target the run used, and the one a later approval must reuse.
+
+    Falls back to the first recorded slug for a title that was never claimed (everything queued), and
+    to None when there is no provenance at all — which sends the approval to the global config, the
+    same behaviour as every row queued before per-row settings existed.
+    """
+    if getattr(m, "row_slug", None):
+        return m.row_slug
+    return next((w.row_slug for w in (m.why or []) if w.row_slug), None)
 
 
 def reconcile_watched(sessions: sessionmaker[Session], profiles) -> None:
@@ -647,6 +671,29 @@ def _emit_request_events(session: Session, run_id: int, report) -> None:
             _add_event(session, "requests.incomplete_config", "warning", run_id, dry_run=report.dry_run, detail=msg)
     if report.requests is not None and report.requests.ratings_rate_limited:
         _add_event(session, "requests.rate_limited", "warning", run_id, dry_run=report.dry_run)
+    # A run that asked for nothing used to emit nothing at all, so "Shortlist has sent Radarr nothing
+    # for five days" left no trace in the app — the only record was a single INFO line in the
+    # container log. Record the shape of the zero: how many titles cleared the base floors, how many
+    # the rating gate got to rate, and what that cost. A gate that stopped short of the pool is the
+    # actionable case (raise max_per_run / lower the floor); one that rated everything and still
+    # passed nothing means the floors themselves are too high for this library.
+    # Fires on `wanted`, not on `pool_size`: a run that wanted 702 titles and passed none of them
+    # through the base floors is the MOST actionable shape there is (loosen min_demand or the year
+    # window), and keying on the pool skipped exactly that case. `wanted == 0` stays silent — nothing
+    # was missing, which is not a problem to report.
+    if report.requests is not None and report.requests.wanted and not report.requests.considered:
+        _add_event(
+            session,
+            "requests.none_qualified",
+            "warning",
+            run_id,
+            dry_run=report.dry_run,
+            wanted=report.requests.wanted,
+            pool_size=report.requests.pool_size,
+            examined=report.requests.examined,
+            lookups_spent=report.requests.lookups_spent,
+            exhausted_pool=report.requests.examined >= report.requests.pool_size,
+        )
     if report.requests is None or not report.requests.outcomes:
         return
     _add_event(
@@ -755,6 +802,34 @@ def _finalize_run(
         "titles_removed": titles_removed,
         "titles_requested": report.requests.requested if report.requests else 0,
         "requests_warnings": report.requests.warnings if report.requests else [],
+        # What "0 requested" was arrived at from — see RequestReport. Kept beside the count because a
+        # zero on its own is unreadable, and the run page is where it gets read.
+        # How many are WAITING for the owner. Without it "0 requested" reads as a failure even when
+        # the run worked perfectly and simply put five titles in the inbox for approval.
+        "requests_queued": len(report.requests.queued) if report.requests else 0,
+        "requests_wanted": report.requests.wanted if report.requests else 0,
+        # Per row, because the aggregates cannot answer the question the feature exists to make
+        # answerable: WHICH row was starved. Written only when there is something to say — a run with
+        # requests off, or one that never reached the request phase, records no empty dicts.
+        **(
+            {
+                "requests_by_row": {
+                    slug: {
+                        "pool": report.requests.pool_by_row.get(slug, 0),
+                        "examined": report.requests.examined_by_row.get(slug, 0),
+                        "considered": report.requests.considered_by_row.get(slug, 0),
+                        "claimed": report.requests.claimed_by_row.get(slug, 0),
+                        "sent": report.requests.sent_by_row.get(slug, 0),
+                    }
+                    for slug in report.requests.pool_by_row
+                }
+            }
+            if report.requests and report.requests.pool_by_row
+            else {}
+        ),
+        "requests_pool": report.requests.pool_size if report.requests else 0,
+        "requests_examined": report.requests.examined if report.requests else 0,
+        "requests_lookups": report.requests.lookups_spent if report.requests else 0,
         "llm_tokens": sum(u.llm_tokens for u in report.users),
         "llm_tokens_by_step": tokens_by_step,
         "exa_searches": sum(u.exa_searches for u in report.users),
@@ -779,6 +854,13 @@ def _finalize_run(
         stats["unhideable_rows"] = {name: list(keys) for name, keys in report.unhideable_rows.items()}
     # Accounts the owner left alone whose excludes could not be taken back off. Written only when
     # non-empty: an empty key would read as a measurement on every run that never got this far.
+    # Accounts whose filter Shortlist wrote and Plex is not applying. Written on every run that
+    # actually MEASURED, empty included — that empty dict is what lets a fixed server clear the
+    # alert. Keyed on the measured flag rather than on emptiness, because the notification reads the
+    # newest run carrying the key: writing only when non-empty pinned an undismissable error card
+    # through every clean run that followed one bad night.
+    if report.filters_enforcement_measured:
+        stats["filters_not_enforced"] = {name: list(keys) for name, keys in report.filters_not_enforced.items()}
     if report.left_alone_failures:
         stats["left_alone_failures"] = {str(account): why for account, why in report.left_alone_failures.items()}
     # Assigned whole rather than mutated in place: `stats` is a JSON column, and an in-place edit

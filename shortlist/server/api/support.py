@@ -2412,6 +2412,12 @@ async def recent_runs(request: Request) -> dict:
         stats = run["stats"]
         if stats:
             block.line(f"    {', '.join(f'{k}={v}' for k, v in list(stats.items())[:6])}")
+            # The 6-key truncation above is a readability cap on ordinary counters, but two keys
+            # report a privacy FAULT — and both sort late enough to fall outside it. A bundle that
+            # silently dropped them is exactly the artifact someone attaches when reporting the leak.
+            for key in ("filters_not_enforced", "left_alone_failures"):
+                if stats.get(key):
+                    block.line(f"    !! {key}={stats[key]}")
         for failure in run["failed"][:5]:
             block.line(f"    FAILED {failure['user']}: {failure['error'] or '(no message)'}")
     return {"runs": out, "text": block.render()}

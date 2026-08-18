@@ -504,6 +504,32 @@ export interface RunStats {
   titles_requested?: number;
   /** Warnings about incomplete Arr config (e.g. missing quality profile or root folder). */
   requests_warnings?: string[];
+  /** How "0 requested" was arrived at. A bare zero reads the same whether nothing was missing, the
+   *  floors emptied the pool, the rating gate ran out of lookups, or titles simply went to the inbox
+   *  for approval — and only some of those are a problem. Absent on runs before 2026-08-18. */
+  requests_wanted?: number;
+  /** Titles that cleared the base floors (demand, year) — what the rating gate was handed. */
+  requests_pool?: number;
+  /** Of those, how many the rating gate actually rated. */
+  requests_examined?: number;
+  /** Live rating-API calls that cost quota; cached ratings are free and not counted. */
+  requests_lookups?: number;
+  /** Titles waiting in the inbox for the owner to approve. */
+  requests_queued?: number;
+  /** The same figures per row, which is what answers "why did THAT row send nothing". Absent when
+   *  requests are off or the run never reached the request phase. */
+  requests_by_row?: Record<
+    string,
+    {
+      pool: number;
+      examined: number;
+      considered: number;
+      /** What the caps allocated to this row — the figure that answers "did my row limit bind". */
+      claimed: number;
+      /** Of those, how many the Arr accepted; a claim can still be skipped (no TheTVDB id). */
+      sent: number;
+    }
+  >;
   /** Total AI tokens this run cost (curate + the AI candidate sources). Absent on legacy runs. */
   llm_tokens?: number;
   /** That total split by where it went: { curate, llm_web, llm_library }. */

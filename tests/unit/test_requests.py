@@ -159,7 +159,13 @@ class FakeMdbList:
     """Stand-in MDBList client returning preset (rating, votes) by TMDB id, counting lookups.
 
     ``error_on`` raises a generic error for one title (drops just that title); ``rate_limit_after``
-    raises MdbListRateLimitError once that many lookups have happened (drives the TMDB fallback).
+    raises MdbListRateLimitError once that many LIVE lookups have happened (drives the TMDB fallback).
+
+    ``cached`` are the ids whose rating is already in the persistent cache. Modelling it is not
+    optional detail: the real client answers a cached title from SQLite and never calls the API, so a
+    fake that bills every lookup as a request is EASIER than the real thing in the one dimension the
+    budget is spent in — and that is precisely how a five-day production outage passed a green suite
+    (see TestACachedHeadOfTheListMustNotStarveTheGate).
     """
 
     def __init__(
@@ -168,19 +174,44 @@ class FakeMdbList:
         *,
         error_on: int | None = None,
         rate_limit_after: int | None = None,
+        cached: set[int] | None = None,
     ):
         self._ratings = ratings
         self._error_on = error_on
         self._rate_limit_after = rate_limit_after
-        self.calls = 0
+        self._cached = set(cached or ())
+        self.calls = 0  # every lookup asked for, cached or not
+        self.live_lookups = 0  # only those that cost an API call — what the daily quota actually sees
+        self.deferred: dict[int, int] = {}  # tmdb_id -> the TTL the gate asked to hold its score for
 
     def rating(self, tmdb_id: int, media_type: MediaType, source: str) -> tuple[float, int] | None:
         self.calls += 1
-        if self._rate_limit_after is not None and self.calls > self._rate_limit_after:
-            raise MdbListRateLimitError("quota spent")
+        if tmdb_id not in self._cached:
+            self.live_lookups += 1
+            # The real client caches the whole rating set on first fetch, so a second read of the
+            # same title — by another row, or another source — is free. A fake that re-bills it is
+            # HARDER than the real thing, and would make the cross-row overlap contract untestable.
+            self._cached.add(tmdb_id)
+            if self._rate_limit_after is not None and self.live_lookups > self._rate_limit_after:
+                raise MdbListRateLimitError("quota spent")
         if tmdb_id == self._error_on:
             raise RuntimeError("MDBList hiccup")
         return self._ratings.get(tmdb_id, (8.0, 500))  # default: a passing score
+
+    def defer_recheck(self, tmdb_id: int, media_type: MediaType, ttl_s: int) -> None:
+        self.deferred[tmdb_id] = ttl_s
+        self._cached.add(tmdb_id)  # as the real cache does: it stays readable, and readable is free
+
+
+def _request_missing(cfg: RequestConfig, tmdb, demand, **kw):
+    """A single-row `request_missing` call — the shape every test in this module was written against.
+
+    The per-row split has its own module (test_per_row_requests.py). What these tests exercise —
+    floors, the rating gate, the Arr reconcile, the hybrid auto-vs-queue split, routing and failure
+    handling — are all per-ROW concerns, which one row expresses exactly. Passing the same config as
+    both the run's base and the row's own reproduces the pre-per-row behaviour byte for byte.
+    """
+    return requests_mod.request_missing(cfg, tmdb, [requests_mod.RowRequest("picked", cfg, demand)], **kw)
 
 
 class TestCollectMissing:
@@ -292,7 +323,7 @@ class TestRequestMissing:
         )
         cfg = _cfg(radarr=RADARR, max_per_run=2, auto_min_demand=1, auto_min_rating=8.0)
 
-        report = requests_mod.request_missing(
+        report = _request_missing(
             cfg,
             FakeTmdb(),
             demand,
@@ -313,7 +344,7 @@ class TestRequestMissing:
         )
         cfg = _cfg(radarr=RADARR, auto_min_demand=1, auto_min_rating=8.0)
 
-        report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False, already_handled={(9, "movie")})
+        report = _request_missing(cfg, FakeTmdb(), demand, dry_run=False, already_handled={(9, "movie")})
 
         assert fake.movie_calls == []
         assert report.queued == []  # nor does it clutter the inbox again
@@ -330,9 +361,7 @@ class TestRequestMissing:
         cfg = _cfg(radarr=RADARR, sonarr=SONARR, auto_min_demand=1, auto_min_rating=8.0)
 
         # The show needs a TVDB id to be requestable at all.
-        requests_mod.request_missing(
-            cfg, FakeTmdb({550: 1550}), demand, dry_run=False, already_handled={(550, "movie")}
-        )
+        _request_missing(cfg, FakeTmdb({550: 1550}), demand, dry_run=False, already_handled={(550, "movie")})
 
         assert fake.movie_calls == []  # the MOVIE was handled
         assert len(fake.series_calls) == 1  # ...but the show that shares its id was still requested
@@ -346,7 +375,7 @@ class TestRequestMissing:
             MissingTitle(3, "thin votes", MediaType.MOVIE, 2020, rating=9.0, vote_count=12),
         )
         cfg = _cfg(radarr=RADARR)
-        report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
+        report = _request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         assert report.considered == 1  # only the well-rated, widely-voted title
         assert [c[0] for c in fake.movie_calls] == [1]
 
@@ -359,7 +388,7 @@ class TestRequestMissing:
             MissingTitle(2, "From TMDB", MediaType.MOVIE, 2020, rating=8.0, vote_count=500, poster_path="/already.jpg"),
         )
         tmdb = FakeTmdb()
-        report = requests_mod.request_missing(_cfg(radarr=RADARR), tmdb, demand, dry_run=False)
+        report = _request_missing(_cfg(radarr=RADARR), tmdb, demand, dry_run=False)
         by_title = {m.title: m for m in report.sent}
         assert by_title["From Trakt"].poster_path == "/poster-1.jpg"  # looked up
         assert by_title["From TMDB"].poster_path == "/already.jpg"  # left alone
@@ -375,7 +404,7 @@ class TestRequestMissing:
             MissingTitle(2, "From TMDB", MediaType.MOVIE, 2020, rating=8.0, vote_count=500, overview="Already known."),
         )
         tmdb = FakeTmdb()
-        report = requests_mod.request_missing(_cfg(radarr=RADARR), tmdb, demand, dry_run=False)
+        report = _request_missing(_cfg(radarr=RADARR), tmdb, demand, dry_run=False)
         by_title = {m.title: m for m in report.sent}
         assert by_title["From Trakt"].overview == "synopsis for 1"  # looked up
         assert by_title["From TMDB"].overview == "Already known."  # left alone
@@ -386,9 +415,7 @@ class TestRequestMissing:
         fake = FakeArr()
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
         demand = self._demand(MissingTitle(1, "no text", MediaType.MOVIE, 2020, rating=8.0, vote_count=500))
-        report = requests_mod.request_missing(
-            _cfg(radarr=RADARR), FakeTmdb(overview_raises=True), demand, dry_run=False
-        )
+        report = _request_missing(_cfg(radarr=RADARR), FakeTmdb(overview_raises=True), demand, dry_run=False)
         # Still requested, and carrying "" — never None, which the NOT NULL column rejects.
         assert [m.title for m in report.sent] == ["no text"]
         assert report.sent[0].overview == ""
@@ -400,7 +427,7 @@ class TestRequestMissing:
         demand = self._demand(
             MissingTitle(1, "no art", MediaType.MOVIE, 2020, rating=8.0, vote_count=500, poster_path="")
         )
-        report = requests_mod.request_missing(_cfg(radarr=RADARR), FakeTmdb(poster_raises=True), demand, dry_run=False)
+        report = _request_missing(_cfg(radarr=RADARR), FakeTmdb(poster_raises=True), demand, dry_run=False)
         # The title is still requested, and carries "" — never None, which the NOT NULL column rejects.
         assert [m.title for m in report.sent] == ["no art"]
         assert report.sent[0].poster_path == ""
@@ -413,7 +440,7 @@ class TestRequestMissing:
             MissingTitle(10, "already downloading", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, poster_path="")
         )
         tmdb = FakeTmdb()
-        report = requests_mod.request_missing(_cfg(radarr=RADARR), tmdb, demand, dry_run=False)
+        report = _request_missing(_cfg(radarr=RADARR), tmdb, demand, dry_run=False)
         assert report.sent == []  # dropped as already-present
         # Asserting the CALL, not the outcome: the engine swallows a failed poster lookup, so a test
         # that only checked the result would pass whether or not the wasted call was made.
@@ -428,7 +455,7 @@ class TestRequestMissing:
             MissingTitle(3, "two wanters", MediaType.MOVIE, 2020, rating=7.0, vote_count=200, demand=2),
         )
         cfg = _cfg(radarr=RADARR, max_per_run=2)
-        requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
+        _request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         # Highest demand first (3 wanters, then 2), capped at 2 — the lone-wanter high score is dropped.
         assert [c[0] for c in fake.movie_calls] == [2, 3]
 
@@ -442,7 +469,7 @@ class TestRequestMissing:
         )
         cfg = _cfg(radarr=RADARR, sonarr=SONARR)
         tmdb = FakeTmdb({20: 55555})  # the show's TVDB id
-        requests_mod.request_missing(cfg, tmdb, demand, dry_run=False)
+        _request_missing(cfg, tmdb, demand, dry_run=False)
         assert radarr.movie_calls == [(10, False)]
         assert sonarr.series_calls == [(55555, False)]  # requested by TVDB id, not TMDB id
 
@@ -452,7 +479,7 @@ class TestRequestMissing:
         fake = FakeArr(present={5})
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
         demand = self._demand(MissingTitle(5, "have it", MediaType.MOVIE, 2020, rating=8.0, vote_count=500))
-        report = requests_mod.request_missing(_cfg(radarr=RADARR), FakeTmdb(), demand, dry_run=False)
+        report = _request_missing(_cfg(radarr=RADARR), FakeTmdb(), demand, dry_run=False)
         assert fake.movie_calls == []
         assert report.queued == [] and report.sent == []
 
@@ -461,14 +488,14 @@ class TestRequestMissing:
         sonarr = FakeArr(present={55555})
         monkeypatch.setattr(requests_mod, "SonarrClient", lambda *a, **k: sonarr)
         demand = self._demand(MissingTitle(20, "have show", MediaType.SHOW, 2020, rating=8.0, vote_count=500))
-        report = requests_mod.request_missing(_cfg(sonarr=SONARR), FakeTmdb({20: 55555}), demand, dry_run=False)
+        report = _request_missing(_cfg(sonarr=SONARR), FakeTmdb({20: 55555}), demand, dry_run=False)
         assert sonarr.series_calls == [] and report.queued == []
 
     def test_an_excluded_title_is_queued_with_a_reason_never_auto_sent(self, monkeypatch):
         fake = FakeArr(excluded={5})
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
         demand = self._demand(MissingTitle(5, "excluded film", MediaType.MOVIE, 2020, rating=8.0, vote_count=500))
-        report = requests_mod.request_missing(_cfg(radarr=RADARR), FakeTmdb(), demand, dry_run=False)
+        report = _request_missing(_cfg(radarr=RADARR), FakeTmdb(), demand, dry_run=False)
         assert fake.movie_calls == []  # the Arr would refuse it, so it's never auto-sent
         assert len(report.queued) == 1
         assert report.queued[0].excluded is True  # surfaced as a flag, not a mislabelled "last attempt"
@@ -479,7 +506,7 @@ class TestRequestMissing:
         fake.library_tmdb_ids = lambda: (_ for _ in ()).throw(ArrError("radarr down"))
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
         demand = self._demand(MissingTitle(5, "film", MediaType.MOVIE, 2020, rating=8.0, vote_count=500))
-        report = requests_mod.request_missing(_cfg(radarr=RADARR), FakeTmdb(), demand, dry_run=False)
+        report = _request_missing(_cfg(radarr=RADARR), FakeTmdb(), demand, dry_run=False)
         assert fake.movie_calls == [(5, False)] and report.requested == 1
 
     def test_a_non_arr_error_on_the_state_fetch_also_fails_open(self, monkeypatch):
@@ -489,7 +516,7 @@ class TestRequestMissing:
         fake.library_tmdb_ids = lambda: (_ for _ in ()).throw(ValueError("expecting value"))
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
         demand = self._demand(MissingTitle(5, "film", MediaType.MOVIE, 2020, rating=8.0, vote_count=500))
-        report = requests_mod.request_missing(_cfg(radarr=RADARR), FakeTmdb(), demand, dry_run=False)
+        report = _request_missing(_cfg(radarr=RADARR), FakeTmdb(), demand, dry_run=False)
         assert fake.movie_calls == [(5, False)] and report.requested == 1
 
     def test_an_excluded_show_is_flagged_via_tvdb_never_auto_sent(self, monkeypatch):
@@ -497,7 +524,7 @@ class TestRequestMissing:
         sonarr = FakeArr(excluded={55555})
         monkeypatch.setattr(requests_mod, "SonarrClient", lambda *a, **k: sonarr)
         demand = self._demand(MissingTitle(20, "excluded show", MediaType.SHOW, 2020, rating=8.0, vote_count=500))
-        report = requests_mod.request_missing(_cfg(sonarr=SONARR), FakeTmdb({20: 55555}), demand, dry_run=False)
+        report = _request_missing(_cfg(sonarr=SONARR), FakeTmdb({20: 55555}), demand, dry_run=False)
         assert sonarr.series_calls == []
         assert len(report.queued) == 1 and report.queued[0].excluded is True
 
@@ -513,9 +540,7 @@ class TestRequestMissing:
             MissingTitle(5, "tracked film", MediaType.MOVIE, 2020, rating=8.0, vote_count=500),
             MissingTitle(20, "tracked show", MediaType.SHOW, 2020, rating=8.0, vote_count=500),
         )
-        report = requests_mod.request_missing(
-            _cfg(radarr=RADARR, sonarr=SONARR), FakeTmdb({20: 55555}), demand, dry_run=False
-        )
+        report = _request_missing(_cfg(radarr=RADARR, sonarr=SONARR), FakeTmdb({20: 55555}), demand, dry_run=False)
         assert report.arr_present == {(5, "movie"), (6, "movie"), (20, "show"), (21, "show")}
         assert radarr.movie_calls == [] and sonarr.series_calls == []  # both tracked -> neither sent
 
@@ -524,7 +549,7 @@ class TestRequestMissing:
         monkeypatch.setattr(requests_mod, "SonarrClient", lambda *a, **k: sonarr)
         demand = self._demand(MissingTitle(20, "show", MediaType.SHOW, 2020, rating=8.0, vote_count=500))
         cfg = _cfg(sonarr=SONARR)
-        report = requests_mod.request_missing(cfg, FakeTmdb({20: None}), demand, dry_run=False)
+        report = _request_missing(cfg, FakeTmdb({20: None}), demand, dry_run=False)
         assert sonarr.series_calls == []
         assert report.outcomes[0].status == "skipped_no_tvdb"
         # The reason is what the operator READS on the Requests page, so it has to end their search
@@ -551,7 +576,7 @@ class TestRequestMissing:
         sonarr = FakeArr()
         monkeypatch.setattr(requests_mod, "SonarrClient", lambda *a, **k: sonarr)
         demand = self._demand(MissingTitle(20, "show", MediaType.SHOW, 2020, rating=8.0, vote_count=500))
-        report = requests_mod.request_missing(_cfg(sonarr=SONARR), Exploding(), demand, dry_run=False)
+        report = _request_missing(_cfg(sonarr=SONARR), Exploding(), demand, dry_run=False)
 
         assert report.outcomes[0].status == "error"
         assert "may work next run" in report.outcomes[0].detail
@@ -561,7 +586,7 @@ class TestRequestMissing:
         # Movies wanted but only Sonarr configured -> skipped_no_target, never an error.
         demand = self._demand(MissingTitle(10, "film", MediaType.MOVIE, 2020, rating=8.0, vote_count=500))
         cfg = _cfg(sonarr=SONARR)
-        report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
+        report = _request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         assert report.outcomes[0].status == "skipped_no_target"
         assert report.requested == 0
 
@@ -570,7 +595,7 @@ class TestRequestMissing:
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
         demand = self._demand(MissingTitle(10, "film", MediaType.MOVIE, 2020, rating=8.0, vote_count=500))
         cfg = _cfg(radarr=RADARR)
-        report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=True)
+        report = _request_missing(cfg, FakeTmdb(), demand, dry_run=True)
         assert fake.movie_calls == [(10, True)]
         assert report.outcomes[0].status == "would_request"
 
@@ -583,7 +608,7 @@ class TestRequestMissing:
             MissingTitle(20, "show", MediaType.SHOW, 2020, rating=8.0, vote_count=500, tags={"mike"}),
         )
         cfg = _cfg(radarr=RADARR, sonarr=SONARR)
-        requests_mod.request_missing(cfg, FakeTmdb({20: 55555}), demand, dry_run=False)
+        _request_missing(cfg, FakeTmdb({20: 55555}), demand, dry_run=False)
         assert radarr.tag_calls == [{"sarah", "kids"}]  # the movie's per-user/per-row tags
         assert sonarr.tag_calls == [{"mike"}]
 
@@ -595,7 +620,7 @@ class TestRequestMissing:
             MissingTitle(2, "two wanters", MediaType.MOVIE, 2020, rating=8.0, vote_count=900, demand=2),
         )
         cfg = _cfg(radarr=RADARR, min_demand=2)
-        requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
+        _request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         assert [c[0] for c in fake.movie_calls] == [2]  # the lone-wanter title is filtered out
 
     def test_min_year_excludes_older_titles(self, monkeypatch):
@@ -607,7 +632,7 @@ class TestRequestMissing:
             MissingTitle(3, "no year", MediaType.MOVIE, None, rating=8.5, vote_count=900),
         )
         cfg = _cfg(radarr=RADARR, min_year=2000)
-        requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
+        _request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         assert [c[0] for c in fake.movie_calls] == [2]  # 1998 and unknown-year both excluded
 
     def test_max_year_excludes_newer_titles(self, monkeypatch):
@@ -619,7 +644,7 @@ class TestRequestMissing:
             MissingTitle(3, "no year", MediaType.MOVIE, None, rating=8.5, vote_count=900),
         )
         cfg = _cfg(radarr=RADARR, max_year=1990)
-        requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
+        _request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         assert [c[0] for c in fake.movie_calls] == [1]  # 2021 and unknown-year both excluded
 
     def test_year_window_keeps_only_titles_inside_both_bounds(self, monkeypatch):
@@ -631,7 +656,7 @@ class TestRequestMissing:
             MissingTitle(3, "too new", MediaType.MOVIE, 2024, rating=8.5, vote_count=900),
         )
         cfg = _cfg(radarr=RADARR, min_year=2000, max_year=2020)
-        requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
+        _request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         assert [c[0] for c in fake.movie_calls] == [2]  # only the 2010 title is inside [2000, 2020]
 
     def test_impossible_year_window_requests_nothing_and_does_not_raise(self, monkeypatch):
@@ -642,7 +667,7 @@ class TestRequestMissing:
             MissingTitle(2, "b", MediaType.MOVIE, 2015, rating=8.0, vote_count=900),
         )
         cfg = _cfg(radarr=RADARR, min_year=2020, max_year=2010)  # max < min -> matches nothing
-        report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
+        report = _request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         assert fake.movie_calls == []  # fails safe: no request, no crash
         assert report.considered == 0
 
@@ -656,7 +681,7 @@ class TestRequestMissing:
             MissingTitle(2, "imdb-loved", MediaType.MOVIE, 2020, rating=7.5, vote_count=900),
         )
         cfg = _cfg(radarr=RADARR, rating_source="imdb", mdblist_api_key="k")
-        report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
+        report = _request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
         assert [c[0] for c in fake.movie_calls] == [2]
         assert report.considered == 1
 
@@ -669,7 +694,7 @@ class TestRequestMissing:
             MissingTitle(2, "fine", MediaType.MOVIE, 2020, rating=8.0, vote_count=900, demand=1),
         )
         cfg = _cfg(radarr=RADARR, rating_source="imdb", mdblist_api_key="k")
-        requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
+        _request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
         assert [c[0] for c in fake.movie_calls] == [2]  # the raising lookup is skipped, the rest survive
 
     def test_mdblist_lookups_are_bounded_to_the_shortlist(self, monkeypatch):
@@ -682,7 +707,7 @@ class TestRequestMissing:
             ]
         )
         cfg = _cfg(radarr=RADARR, rating_source="imdb", mdblist_api_key="k", max_per_run=5)
-        requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
+        _request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
         assert mdblist.calls <= requests_mod._lookup_budget(5)  # daily-cap guard holds
 
     def test_non_tmdb_source_without_a_client_falls_back_to_tmdb(self, monkeypatch):
@@ -691,7 +716,7 @@ class TestRequestMissing:
         demand = self._demand(MissingTitle(1, "film", MediaType.MOVIE, 2020, rating=8.0, vote_count=900))
         # rating_source imdb but no MDBList key/client -> gate on TMDB (never silently request nothing).
         cfg = _cfg(radarr=RADARR, rating_source="imdb", mdblist_api_key="")
-        requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=None)
+        _request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=None)
         assert [c[0] for c in fake.movie_calls] == [1]
 
     def test_critic_source_skips_the_vote_floor_but_still_enforces_rating(self, monkeypatch):
@@ -705,7 +730,7 @@ class TestRequestMissing:
             MissingTitle(2, "panned", MediaType.MOVIE, 2020, rating=9.9, vote_count=10),
         )
         cfg = _cfg(radarr=RADARR, rating_source="tomatoes", mdblist_api_key="k", min_votes=100)
-        requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
+        _request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
         assert [c[0] for c in fake.movie_calls] == [1]  # 9.0 clears despite 0 votes; 5.5 rejected
 
     def test_mdblist_quota_exhaustion_falls_back_to_tmdb_and_flags(self, monkeypatch):
@@ -718,7 +743,7 @@ class TestRequestMissing:
             MissingTitle(2, "b", MediaType.MOVIE, 2020, rating=8.0, vote_count=900, demand=1),
         )
         cfg = _cfg(radarr=RADARR, rating_source="imdb", mdblist_api_key="k")
-        report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
+        report = _request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
         assert report.ratings_rate_limited is True
         assert sorted(c[0] for c in fake.movie_calls) == [1, 2]  # both requested via the TMDB fallback
 
@@ -727,7 +752,7 @@ class TestRequestMissing:
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
         demand = self._demand(MissingTitle(10, "film", MediaType.MOVIE, 2020, rating=9.0, vote_count=900))
         cfg = _cfg(radarr=RADARR, max_per_run=0)
-        report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
+        report = _request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         assert fake.movie_calls == []  # the cap of 0 selects nothing, even though a title qualified
         assert report.requested == 0
         assert report.considered == 1  # it still counts as considered — it was gated by the cap, not thresholds
@@ -743,7 +768,7 @@ class TestRequestMissing:
             MissingTitle(20, "cursed show", MediaType.SHOW, 2020, rating=8.0, vote_count=500),
         )
         cfg = _cfg(radarr=RADARR, sonarr=SONARR)
-        report = requests_mod.request_missing(cfg, FakeTmdb(raise_on=20), demand, dry_run=False)
+        report = _request_missing(cfg, FakeTmdb(raise_on=20), demand, dry_run=False)
         statuses = {o.tmdb_id: o.status for o in report.outcomes}
         assert statuses == {10: "requested", 20: "error"}  # both recorded; the movie still went through
         assert sonarr.series_calls == []  # the failed lookup never reached Sonarr
@@ -756,7 +781,7 @@ class TestRequestMissing:
             MissingTitle(11, "fine", MediaType.MOVIE, 2020, rating=8.0, vote_count=500, demand=1),
         )
         cfg = _cfg(radarr=RADARR)
-        report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
+        report = _request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         statuses = {o.tmdb_id: o.status for o in report.outcomes}
         assert statuses == {10: "error", 11: "requested"}  # the second still went through
 
@@ -767,7 +792,7 @@ class TestRequestMissing:
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
         demand = self._demand(MissingTitle(10, "boom", MediaType.MOVIE, 2020, rating=9.9, vote_count=999, demand=5))
         cfg = _cfg(radarr=RADARR)
-        report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
+        report = _request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         assert report.requested == 0  # it didn't land
         assert [m.tmdb_id for m in report.queued] == [10]  # queued for the inbox, not lost
         outcome_detail = next(o.detail for o in report.outcomes if o.tmdb_id == 10)
@@ -779,7 +804,7 @@ class TestRequestMissing:
         fake = FakeArr(skip_present={10})
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
         demand = self._demand(MissingTitle(10, "have it", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, demand=5))
-        report = requests_mod.request_missing(_cfg(radarr=RADARR), FakeTmdb(), demand, dry_run=False)
+        report = _request_missing(_cfg(radarr=RADARR), FakeTmdb(), demand, dry_run=False)
         assert [o.status for o in report.outcomes] == ["skipped_present"]
         assert report.queued == [] and report.sent == []  # handled elsewhere — kept out of the inbox
 
@@ -813,7 +838,7 @@ class TestHybridSplit:
             MissingTitle(2, "few wanters", MediaType.MOVIE, 2020, rating=8.5, vote_count=900, demand=1),  # base only
             MissingTitle(3, "lower rated", MediaType.MOVIE, 2020, rating=7.2, vote_count=900, demand=5),  # base only
         )
-        report = requests_mod.request_missing(self._hybrid(), FakeTmdb(), demand, dry_run=False)
+        report = _request_missing(self._hybrid(), FakeTmdb(), demand, dry_run=False)
         assert [c[0] for c in fake.movie_calls] == [1]  # only the title clearing BOTH auto bars is sent
         assert sorted(m.tmdb_id for m in report.queued) == [2, 3]  # the borderline ones wait for approval
         assert report.considered == 3
@@ -824,7 +849,7 @@ class TestHybridSplit:
         lines: list[str] = []
         sink = requests_mod.logger.add(lines.append, level="INFO", format="{message}")
         try:
-            requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
+            _request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         finally:
             requests_mod.logger.remove(sink)
         return "\n".join(lines)
@@ -870,7 +895,7 @@ class TestHybridSplit:
         fake = FakeArr()
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
         demand = self._demand(MissingTitle(1, "strong", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, demand=9))
-        report = requests_mod.request_missing(self._hybrid(auto_send=False), FakeTmdb(), demand, dry_run=False)
+        report = _request_missing(self._hybrid(auto_send=False), FakeTmdb(), demand, dry_run=False)
         assert fake.movie_calls == []  # fully manual: even a clear winner waits
         assert [m.tmdb_id for m in report.queued] == [1]
 
@@ -880,7 +905,7 @@ class TestHybridSplit:
         demand = self._demand(
             *[MissingTitle(i, f"t{i}", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, demand=5) for i in range(4)]
         )
-        report = requests_mod.request_missing(self._hybrid(max_per_run=2), FakeTmdb(), demand, dry_run=False)
+        report = _request_missing(self._hybrid(max_per_run=2), FakeTmdb(), demand, dry_run=False)
         assert len(fake.movie_calls) == 2  # only max_per_run auto-sent
         assert len(report.queued) == 2  # the two that overflowed the cap wait for approval, not dropped
 
@@ -888,7 +913,7 @@ class TestHybridSplit:
         fake = FakeArr()
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
         demand = self._demand(MissingTitle(1, "too low", MediaType.MOVIE, 2020, rating=5.0, vote_count=900, demand=9))
-        report = requests_mod.request_missing(self._hybrid(), FakeTmdb(), demand, dry_run=False)
+        report = _request_missing(self._hybrid(), FakeTmdb(), demand, dry_run=False)
         assert fake.movie_calls == []
         assert report.queued == []  # below the base rating floor -> not even worth queuing
         assert report.considered == 0
@@ -902,7 +927,7 @@ class TestHybridSplit:
             MissingTitle(1, "imdb-loved", MediaType.MOVIE, 2020, rating=7.1, vote_count=120, demand=1),
         )
         cfg = self._hybrid(rating_source="imdb", mdblist_api_key="k")
-        report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
+        report = _request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
         assert len(report.queued) == 1
         assert report.queued[0].rating == 8.8  # IMDb, not the 7.1 TMDB value it arrived with
         assert report.queued[0].vote_count == 250000
@@ -921,7 +946,9 @@ class TestRequestTitles:
         ]
         # Floors set impossibly high: request_titles must ignore them because the owner chose by hand.
         cfg = RequestConfig(enabled=True, radarr=RADARR, sonarr=SONARR, min_rating=9.9, min_votes=99999, min_demand=99)
-        report = requests_mod.request_titles(cfg, FakeTmdb({20: 7777}), titles, dry_run=False)
+        report = requests_mod.request_titles_by_row(
+            {"r": cfg}, FakeTmdb({20: 7777}), [("r", t) for t in titles], dry_run=False
+        )
         assert radarr.movie_calls == [(10, False)]
         assert sonarr.series_calls == [(7777, False)]  # routed by TVDB id, same path as the auto pass
         assert report.requested == 2
@@ -931,13 +958,15 @@ class TestRequestTitles:
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
         titles = [MissingTitle(10, "film", MediaType.MOVIE, 2020, rating=8.0, vote_count=500)]
         cfg = RequestConfig(enabled=True, radarr=RADARR)
-        report = requests_mod.request_titles(cfg, FakeTmdb(), titles, dry_run=True)
+        report = requests_mod.request_titles_by_row({"r": cfg}, FakeTmdb(), [("r", t) for t in titles], dry_run=True)
         assert fake.movie_calls == [(10, True)]
         assert report.outcomes[0].status == "would_request"
 
     def test_empty_list_sends_nothing(self, monkeypatch):
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: FakeArr())
-        report = requests_mod.request_titles(RequestConfig(enabled=True, radarr=RADARR), FakeTmdb(), [], dry_run=False)
+        report = requests_mod.request_titles_by_row(
+            {"r": RequestConfig(enabled=True, radarr=RADARR)}, FakeTmdb(), [], dry_run=False
+        )
         assert report.outcomes == []
         assert report.considered == 0
 
@@ -957,7 +986,7 @@ class TestWhyATitleWasNotSent:
 
     def test_a_title_below_the_auto_rating_bar_says_so(self):
         cfg = _cfg(radarr=RADARR, auto_min_demand=1, auto_min_rating=8.0, min_rating=7.0)
-        report = requests_mod.request_missing(
+        report = _request_missing(
             cfg,
             FakeTmdb(),
             self._demand(MissingTitle(1, "Nearly", MediaType.MOVIE, 2020, rating=7.5, vote_count=900, demand=5)),
@@ -968,7 +997,7 @@ class TestWhyATitleWasNotSent:
 
     def test_a_title_below_the_auto_demand_bar_says_so(self):
         cfg = _cfg(radarr=RADARR, auto_min_demand=3, auto_min_rating=0.0, min_rating=7.0)
-        report = requests_mod.request_missing(
+        report = _request_missing(
             cfg,
             FakeTmdb(),
             self._demand(MissingTitle(1, "Lonely", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, demand=1)),
@@ -980,7 +1009,7 @@ class TestWhyATitleWasNotSent:
         # The cap only fills if the first send SUCCEEDS, so the Arr client is faked like its siblings.
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: FakeArr())
         cfg = _cfg(radarr=RADARR, max_per_run=1, auto_min_demand=1, auto_min_rating=0.0, min_rating=7.0)
-        report = requests_mod.request_missing(
+        report = _request_missing(
             cfg,
             FakeTmdb(),
             self._demand(
@@ -994,7 +1023,7 @@ class TestWhyATitleWasNotSent:
 
     def test_auto_send_switched_off_says_so(self):
         cfg = _cfg(radarr=RADARR, auto_send=False, min_rating=7.0)
-        report = requests_mod.request_missing(
+        report = _request_missing(
             cfg,
             FakeTmdb(),
             self._demand(MissingTitle(1, "Waiting", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, demand=9)),
@@ -1006,7 +1035,7 @@ class TestWhyATitleWasNotSent:
         cfg = _cfg(radarr=RADARR, auto_min_demand=1, auto_min_rating=0.0, min_rating=7.0)
         title = MissingTitle(1, "Blocked", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, demand=9)
         title.excluded = True
-        report = requests_mod.request_missing(cfg, FakeTmdb(), self._demand(title), dry_run=True)
+        report = _request_missing(cfg, FakeTmdb(), self._demand(title), dry_run=True)
         assert "exclusion list" in report.queued[0].detail
 
 
@@ -1019,21 +1048,29 @@ class TestTheLookupBudgetFollowsTheOwnersRequestCap:
     shape: a hidden number quietly overriding a visible one.
     """
 
-    def test_the_default_cap_is_unchanged(self):
-        """5 x 4 = 20, exactly the old flat value — nobody on defaults sees any difference."""
-        assert requests_mod._lookup_budget(5) == 20
-
     def test_a_raised_cap_raises_the_pool(self):
         """The bug: at max_per_run=40 the old flat 20 could not even supply the run, let alone let
         the rating floors reject anything."""
         assert requests_mod._lookup_budget(40) > 40, "the pool must exceed the cap, or the run cannot fill"
         assert requests_mod._lookup_budget(100) == 400
 
-    def test_a_small_cap_still_gets_a_real_pool(self):
-        """A floor, so max_per_run=1 inspects a sensible pool rather than 4 titles — the gate rejects
-        most of what it sees, so a pool of 4 would usually yield nothing at all."""
-        assert requests_mod._lookup_budget(1) == 20
-        assert requests_mod._lookup_budget(0) == 20
+    def test_a_low_send_rate_does_not_mean_a_shallow_look(self):
+        """`max_per_run` is how many to SEND — everything else qualifying goes to the Waiting inbox.
+        Choosing 3 a night says "add a little to my library", not "and barely look". The floor is what
+        keeps those apart, and at 20 it did not: 20 lookups at the observed ~10% pass rate yield about
+        two qualifying titles, so a modest cap silently meant a run that found nothing at all."""
+        assert requests_mod._lookup_budget(3) == 100
+        assert requests_mod._lookup_budget(1) == 100
+        assert requests_mod._lookup_budget(0) == 100
+
+    def test_the_walk_limit_tracks_the_budget(self):
+        """A flat walk bound becomes the binding constraint the moment the cap goes up — rejects are
+        held for 60 days, so ~60 runs' worth can sit in front of the frontier. That is the same flat
+        number this module has already been bitten by twice."""
+        assert requests_mod._walk_limit(requests_mod._lookup_budget(3)) > 100 * 60
+        assert requests_mod._walk_limit(requests_mod._lookup_budget(100)) > requests_mod._walk_limit(
+            requests_mod._lookup_budget(3)
+        )
 
     @staticmethod
     def _demand(*titles: MissingTitle) -> requests_mod.DemandMap:
@@ -1052,7 +1089,238 @@ class TestTheLookupBudgetFollowsTheOwnersRequestCap:
         )
         cfg = _cfg(radarr=RADARR, rating_source="imdb", mdblist_api_key="k", max_per_run=40)
 
-        requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
+        _request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
 
         assert mdblist.calls > 20, "a raised max_per_run must widen the MDBList shortlist past the old flat 20"
         assert mdblist.calls <= requests_mod._lookup_budget(40)
+
+
+class TestACachedHeadOfTheListMustNotStarveTheGate:
+    """Production, 2026-08-10..18: 10,488 titles wanted, `0 qualifying, 0 auto-sent, 0 queued`, every
+    night for five days, and nothing sent to Radarr/Sonarr since the 13th.
+
+    The gate rated the top `_lookup_budget` titles BY DEMAND and stopped there. Ratings cache for a
+    week and the demand ranking barely moves, so the same head was re-inspected every night — the
+    server's own cache showed 18 of 20 slots going to titles already rated and already rejected —
+    while every title that WOULD have cleared the floor sat below the cut and was never looked at.
+
+    The budget exists to protect MDBList's daily quota. A cache hit costs no quota, so billing one
+    against the budget protects nothing and pins the run to the titles it has already rejected. Budget
+    the API calls, and the walk can read straight past a stale head for free.
+
+    The demand-vs-rating mismatch is what makes it permanent rather than unlucky: the shortlist is
+    ordered by how many people want a title, the gate asks how well-rated it is, and on a large server
+    the most-wanted MISSING titles are the ones nobody bothered to add — so the head of the list is
+    systematically the worst-rated part of it.
+    """
+
+    @staticmethod
+    def _demand(*titles: MissingTitle) -> requests_mod.DemandMap:
+        return {(t.tmdb_id, t.media_type): t for t in titles}
+
+    def _cfg_imdb(self, **kw) -> RequestConfig:
+        return _cfg(
+            **{
+                "radarr": RADARR,
+                "rating_source": "imdb",
+                "mdblist_api_key": "k",
+                "max_per_run": 3,
+                "min_rating": 7.3,
+                "min_votes": 100,
+                "min_demand": 1,
+                "auto_min_demand": 1,
+                "auto_min_rating": 7.5,
+                **kw,
+            }
+        )
+
+    def test_a_qualifying_title_below_a_cached_head_is_still_found(self, monkeypatch):
+        """The outage, minimised: 30 cached titles that all fail, one that passes ranked beneath them.
+
+        At `max_per_run=3` the budget is 20, so the old slice never reached title 99 — not on this
+        run, and not on any later one, because the head's ratings stay cached and its demand stays top.
+        """
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        losers = [MissingTitle(i, f"loser{i}", MediaType.MOVIE, 2021, 0.0, 0, demand=100 - i) for i in range(1, 31)]
+        winner = MissingTitle(99, "winner", MediaType.MOVIE, 2021, 0.0, 0, demand=2)
+        ratings: dict[int, tuple[float, int] | None] = {t.tmdb_id: (6.1, 5000) for t in losers}
+        ratings[99] = (8.4, 9000)
+        mdblist = FakeMdbList(ratings, cached={t.tmdb_id for t in losers})
+
+        report = _request_missing(
+            self._cfg_imdb(), FakeTmdb(), self._demand(*losers, winner), dry_run=False, mdblist=mdblist
+        )
+
+        assert [m.title for m in report.sent] == ["winner"]
+        assert fake.movie_calls == [(99, False)]
+
+    def test_reading_past_the_cached_head_costs_no_quota(self, monkeypatch):
+        """The daily-cap guard is the reason the budget exists — it must survive the fix intact.
+
+        Only the one uncached title may cost an API call, however far down the list it sits.
+        """
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        losers = [MissingTitle(i, f"loser{i}", MediaType.MOVIE, 2021, 0.0, 0, demand=100 - i) for i in range(1, 61)]
+        winner = MissingTitle(99, "winner", MediaType.MOVIE, 2021, 0.0, 0, demand=2)
+        ratings: dict[int, tuple[float, int] | None] = {t.tmdb_id: (6.1, 5000) for t in losers}
+        ratings[99] = (8.4, 9000)
+        mdblist = FakeMdbList(ratings, cached={t.tmdb_id for t in losers})
+
+        _request_missing(self._cfg_imdb(), FakeTmdb(), self._demand(*losers, winner), dry_run=False, mdblist=mdblist)
+
+        assert mdblist.live_lookups == 1, "60 cached titles must not bill a single request against the cap"
+        assert mdblist.calls == 61, "but all 61 must actually have been consulted"
+
+    def test_uncached_titles_still_stop_at_the_budget(self, monkeypatch):
+        """The other half of the guard: when nothing is cached, the walk must stop at the budget and
+        NOT read on through a 10,000-title pool spending a live request on each."""
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        budget = requests_mod._lookup_budget(3)
+        # Flat demand, deliberately: a descending `100 - i` goes non-positive partway down and
+        # `min_demand` then trims the pool below the budget, so the assertion would pass by running
+        # out of titles rather than by the budget stopping the walk.
+        pool = [MissingTitle(i, f"t{i}", MediaType.MOVIE, 2021, 0.0, 0, demand=5) for i in range(1, budget * 3)]
+        mdblist = FakeMdbList({t.tmdb_id: (6.1, 5000) for t in pool})  # nothing cached, nothing passes
+
+        _request_missing(self._cfg_imdb(), FakeTmdb(), self._demand(*pool), dry_run=False, mdblist=mdblist)
+
+        assert mdblist.live_lookups == budget
+
+    def test_a_clear_reject_is_not_re_rated_next_week(self, monkeypatch):
+        """Without this the fix undoes itself in about a week.
+
+        Everything rated is cached for 7 days, so in a steady state the titles expiring each night
+        equal the titles rated each night — which is the budget. The whole allowance would go back to
+        re-rating the same high-demand rejects and the walk would stop advancing again. A title far
+        below the bar is held much longer; a near miss keeps the weekly re-check, because that is the
+        one that can actually cross.
+        """
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        hopeless = MissingTitle(1, "hopeless", MediaType.MOVIE, 2021, 0.0, 0, demand=9)
+        near_miss = MissingTitle(2, "near miss", MediaType.MOVIE, 2021, 0.0, 0, demand=8)
+        mdblist = FakeMdbList({1: (5.0, 5000), 2: (7.1, 5000)})  # floor is 7.3
+
+        _request_missing(
+            self._cfg_imdb(), FakeTmdb(), self._demand(hopeless, near_miss), dry_run=False, mdblist=mdblist
+        )
+
+        assert mdblist.deferred == {1: requests_mod._REJECT_RECHECK_TTL_S}
+        assert 2 not in mdblist.deferred, "a title 0.2 off the bar must still be re-checked weekly"
+
+    def test_a_deferred_title_is_still_admitted_when_the_floor_drops(self, monkeypatch):
+        """Deferral holds the SCORE, not a verdict — so lowering min_rating admits it next run, free."""
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        title = MissingTitle(1, "held", MediaType.MOVIE, 2021, 0.0, 0, demand=9)
+        mdblist = FakeMdbList({1: (6.0, 5000)})
+        _request_missing(self._cfg_imdb(), FakeTmdb(), self._demand(title), dry_run=False, mdblist=mdblist)
+        assert mdblist.deferred and not fake.movie_calls  # rejected at 7.3, and its score is held
+
+        report = _request_missing(
+            self._cfg_imdb(min_rating=5.5, auto_min_rating=5.5),
+            FakeTmdb(),
+            self._demand(MissingTitle(1, "held", MediaType.MOVIE, 2021, 0.0, 0, demand=9)),
+            dry_run=False,
+            mdblist=mdblist,
+        )
+
+        assert [m.title for m in report.sent] == ["held"]
+        assert mdblist.live_lookups == 1, "the second run must read the held score, not re-buy it"
+
+    def test_the_free_walk_is_still_bounded(self, monkeypatch):
+        """Cache hits are free but not instant — each is a local read. A pool whose head is an
+        unbounded run of cached titles must still terminate rather than scan the lot."""
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        limit = requests_mod._walk_limit(requests_mod._lookup_budget(3))
+        pool = [MissingTitle(i, f"t{i}", MediaType.MOVIE, 2021, 0.0, 0, demand=1) for i in range(1, limit + 200)]
+        mdblist = FakeMdbList({t.tmdb_id: (6.1, 5000) for t in pool}, cached={t.tmdb_id for t in pool})
+
+        report = _request_missing(self._cfg_imdb(), FakeTmdb(), self._demand(*pool), dry_run=False, mdblist=mdblist)
+
+        assert mdblist.calls == limit
+        assert report.examined == limit
+
+    def test_zero_qualifying_says_how_far_it_looked(self, monkeypatch):
+        """The second half of the outage: it was SILENT. `0 qualifying, 0 auto-sent, 0 queued` is the
+        same sentence whether the floors emptied the pool or the gate never reached the good titles,
+        and neither the run stats nor the inbox carried the difference — the only way to tell them
+        apart was reading the container's log by hand."""
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        pool = [MissingTitle(i, f"t{i}", MediaType.MOVIE, 2021, 0.0, 0, demand=100 - i) for i in range(1, 51)]
+        mdblist = FakeMdbList({t.tmdb_id: (6.1, 5000) for t in pool}, cached={t.tmdb_id for t in pool})
+
+        report = _request_missing(self._cfg_imdb(), FakeTmdb(), self._demand(*pool), dry_run=False, mdblist=mdblist)
+
+        assert report.considered == 0
+        assert report.pool_size == 50, "how many titles cleared the base floors"
+        assert report.examined == 50, "how many the rating gate actually rated"
+        assert report.lookups_spent == 0, "and what that cost against the daily cap"
+
+
+class TestTheCachedHeadStarvesRowsToo:
+    """Release review, 2026-08-18 (MEDIUM). The same outage this module was rewritten for, rotated
+    onto the row axis — and it only appears once a run has three or more rows whose pools overlap.
+
+    The lookup budget is split between rows, which is right: it is an API quota. But the WALK limit
+    was derived from each row's share of it, while the rating cache the walk has to get past is
+    global to the run. So the first rows stop inside a head of already-cached titles, spend nothing,
+    and hand their share to later rows — which then have a bigger walk limit and clear the head. The
+    run looks healthy (budget fully spent, titles considered, no "nothing qualified" alert), while
+    the rows at the TOP of the owner's row order get zero, every night.
+
+    Not hypothetical for the server this was found on: it builds four per-person rows per user, two
+    of them over the same movie pool.
+    """
+
+    def _demand(self, *titles: MissingTitle) -> requests_mod.DemandMap:
+        return {(t.tmdb_id, t.media_type): t for t in titles}
+
+    def _cfg(self, **kw) -> RequestConfig:
+        return _cfg(
+            **{
+                "radarr": RADARR,
+                "rating_source": "imdb",
+                "mdblist_api_key": "k",
+                "max_per_run": 4,
+                "min_rating": 7.3,
+                "min_votes": 100,
+                "min_demand": 1,
+                "auto_min_demand": 1,
+                "auto_min_rating": 7.5,
+                **kw,
+            }
+        )
+
+    def test_the_first_row_is_not_starved_by_a_head_the_last_row_can_clear(self, monkeypatch):
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        cfg = self._cfg()
+        rows = ["r0", "r1", "r2", "r3"]
+        # A head every row must walk past, sized between one row's share of the budget and the whole
+        # run's: short enough that the run CAN see past it, long enough that a quarter-share cannot.
+        head_len = requests_mod._walk_limit(requests_mod._lookup_budget(cfg.max_per_run) // len(rows)) + 50
+        head = [MissingTitle(i, f"cached{i}", MediaType.MOVIE, 2021, 0.0, 0, demand=90) for i in range(1, head_len)]
+        winners = [MissingTitle(90_000 + i, f"win{i}", MediaType.MOVIE, 2021, 0.0, 0, demand=5) for i in range(4)]
+        scores = {t.tmdb_id: (6.0, 5000) for t in head} | {w.tmdb_id: (8.9, 5000) for w in winners}
+        mdblist = FakeMdbList(scores, cached={t.tmdb_id for t in head})
+        pool = self._demand(*head, *winners)
+
+        report = requests_mod.request_missing(
+            cfg,
+            FakeTmdb(),
+            [requests_mod.RowRequest(slug, cfg, pool) for slug in rows],
+            dry_run=False,
+            mdblist=mdblist,
+        )
+
+        assert report.examined_by_row["r0"] >= head_len, (
+            f"row r0 stopped at {report.examined_by_row['r0']} inside a {head_len}-title cached head — "
+            "it spends nothing and hands its share to a later row, which then clears the head"
+        )
+        assert report.sent or report.queued, "the run as a whole must still find the good titles"

@@ -10,13 +10,20 @@ can fail without affecting a single row's visibility.
 from __future__ import annotations
 
 from collections import Counter
+from typing import NamedTuple
 
 from loguru import logger
 
 from shortlist.engine.clients.arr import ArrError, RadarrClient, SonarrClient
-from shortlist.engine.clients.mdblist import VOTE_SOURCES, MdbListClient, MdbListRateLimitError
+from shortlist.engine.clients.mdblist import (
+    RATING_CACHE_TTL_S,
+    VOTE_SOURCES,
+    MdbListClient,
+    MdbListRateLimitError,
+)
 from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.models import (
+    ArrTarget,
     Candidate,
     MediaType,
     MissingTitle,
@@ -25,34 +32,88 @@ from shortlist.engine.models import (
     RequestReport,
     RequestWhy,
 )
+from shortlist.engine.request_alloc import allocate
 
-# When gating on a non-TMDB source, only the top-by-demand candidates are looked up on MDBList per
-# run, so a large missing pool can't blow the daily cap (each title's whole rating set is also cached,
-# so re-runs mostly hit the cache). DERIVED from the owner's own `requests.max_per_run`, never a flat
-# number: the gate exists to reject most of what it inspects, so the pool it inspects has to be a
-# multiple of what the run may actually send, or the run cannot fill.
+# When gating on a non-TMDB source, only so many candidates are rated on MDBList per run, so a large
+# missing pool can't blow the daily cap (each title's whole rating set is cached, so re-runs mostly
+# hit the cache). It scales with `requests.max_per_run` so that raising the cap really does let a run
+# look harder — but it does NOT bottom out at the cap, and that floor is the important part.
 #
-# It WAS a flat 20, described as "a generous multiple of the request cap" — which it was at the
-# default cap of 5, and was not above 20, where `max_per_run` is accepted all the way to 100 and was
-# then silently capped at 20. The TMDB path (`_gate_by_tmdb`) filters the whole pool and has never had
-# a limit, so the same setting meant two different things depending on the rating source, with nothing
-# saying so. `_MIN_LOOKUP_POOL` keeps the default behaviour byte-identical (5 x 4 = 20).
+# `max_per_run` means "how many to auto-send per run"; everything qualifying beyond it overflows into
+# the Waiting inbox rather than being lost. So it is a SEND rate, and the owner sets it low on purpose
+# — 3 a night is a perfectly sane answer to "how much should this add to my library". Deriving the
+# evaluation depth from it alone made a modest send rate also mean "and barely look", which is not
+# what the setting says and not what anyone choosing 3 is asking for. The floor is what keeps the two
+# apart: a run figures out the field properly, sends `max_per_run` of it, and queues the rest.
 #
-# The MDBList quota is protected by the rate-limit fallback below (a 429 stops the gate, falls back to
-# TMDB for the whole run and raises an owner notification), not by quietly honouring a smaller number
-# than the owner asked for.
+# The floor WAS 20, chosen to keep the then-default (5 x 4) byte-identical. In production that turned
+# out to be far too shallow: at the observed ~10% pass rate, 20 lookups yield ~2 qualifying titles,
+# and against a pool of thousands the run simply never saw anything good (2026-08-13..18, five days
+# at `0 qualifying`). 100 costs ~10% of MDBList's free daily allowance for a nightly run and gives
+# the gate enough to actually find something.
+#
+# The quota is protected by the rate-limit fallback below (a 429 stops the gate, falls back to TMDB
+# for the whole run and raises an owner notification), not by quietly honouring a smaller number than
+# the owner asked for.
 _LOOKUP_HEADROOM = 4
-_MIN_LOOKUP_POOL = 20
+_MIN_LOOKUP_POOL = 100
+
+
+def _walk_limit(budget: int) -> int:
+    """A hard stop on how far the gate will WALK, distinct from what it may SPEND.
+
+    Quota is capped by the caller's budget; this only bounds the pathological pool whose head is
+    thousands of already-cached titles, where every step is a cheap local read and the loop would
+    otherwise scan the lot.
+
+    Derived, never flat, because the head is made of cached ratings and its length is a function of
+    the spend rate. Two things pile up in front of the frontier, and the walk has to clear BOTH or the
+    row is starved again by its own cache — the very bug this module was fixed for:
+
+        deferred rejects   budget/day for _REJECT_RECHECK_TTL_S   (60 days)
+        near misses        budget/day for RATING_CACHE_TTL_S      (7 days, the normal re-check)
+
+    Plus one more budget, so a run always has room to reach that much NEW ground beyond the head.
+    Counting only the rejects left a 60-day head against a 61-budget walk, which the weekly-cached
+    near misses then overflowed — measured at 3,350 against 3,050 for a two-row split of 100.
+    """
+    days = (_REJECT_RECHECK_TTL_S + RATING_CACHE_TTL_S) // (24 * 3600)
+    return budget * (days + 1)
+
+
+# How long a title that missed the rating floor by MORE than `_NEAR_MISS` keeps its cached score,
+# instead of the usual week. This is what stops the starvation fix from undoing itself.
+#
+# Ratings cache for 7 days, so in a steady state the number of titles expiring each night equals the
+# number rated each night, which equals the budget — the whole allowance would go on re-rating the
+# same high-demand rejects and the walk would stop advancing again, about a week after the fix. A
+# title 0.5 below the bar does not climb over it in a week, so re-asking is pure cost. Near misses
+# are deliberately NOT deferred: those are the ones that genuinely can cross, so they keep the normal
+# weekly re-check.
+#
+# It defers RE-FETCHING, never the verdict: the score stays readable, so lowering `min_rating` still
+# admits a deferred title on the very next run, for free.
+_NEAR_MISS = 0.5
+_REJECT_RECHECK_TTL_S = 60 * 24 * 3600
 
 
 def _lookup_budget(max_per_run: int) -> int:
-    """How many candidates may be rated on MDBList this run, from the owner's own request cap."""
+    """How many BILLABLE MDBList lookups this run may spend, from the owner's own request cap.
+
+    A budget of calls, not of titles: cached ratings cost nothing and are walked past for free (see
+    ``_gate_by_source``), so this is the number of titles the run may rate that it has not rated
+    recently — which is what MDBList's daily allowance actually meters.
+    """
     return max(_MIN_LOOKUP_POOL, max(0, max_per_run) * _LOOKUP_HEADROOM)
 
 
 # Demand accumulator: (tmdb_id, media_type) -> the missing title and how many users wanted it. The
 # pair, never the bare id — movie 1399 and TV 1399 are different titles (see filter_candidates).
 DemandMap = dict[tuple[int, MediaType], MissingTitle]
+
+# One demand map PER ROW, keyed by row slug, in run order. `min_demand` is a per-row floor, so a
+# single flat map would have a row set to "3 people" counting wanters from other rows entirely.
+RowDemand = dict[str, DemandMap]
 
 
 def collect_missing(pool: list[Candidate], library_index: dict[MediaType, dict[int, int]]) -> list[Candidate]:
@@ -125,6 +186,7 @@ def accumulate(
 # restating the strings in the classifier is what would let them drift apart silently.
 QUEUE_REASON_PREFIXES = (
     "auto-send is off",
+    "this row's own limit",
     "on an Arr exclusion list",
     "demand below",
     "rating below",
@@ -147,66 +209,360 @@ def _within_year_window(year: int | None, min_year: int, max_year: int) -> bool:
     return (min_year <= 0 or year >= min_year) and (max_year <= 0 or year <= max_year)
 
 
+def _gate_rows(
+    rows: list[RowRequest],
+    handled: set[tuple[int, str]],
+    report: RequestReport,
+    *,
+    mdblist: MdbListClient | None,
+    budget: int,
+) -> list[tuple[str, RequestConfig, list[MissingTitle]]]:
+    """Apply each row's base floors and then its rating gate, sharing one lookup budget between them.
+
+    Each row gets an even share of what is LEFT rather than a fixed slice, so a row that spends
+    little hands the rest on automatically — the same redistribution the slot allocator does.
+
+    A spent MDBList quota (``ratings_rate_limited``) short-circuits every LATER row straight to TMDB:
+    the allowance is gone for the day, so asking again can only produce another 429. Without it each
+    row fired its own doomed request and logged its own "daily limit reached", turning one event into
+    N wasted calls against an API already refusing us.
+    """
+    gated: list[tuple[str, RequestConfig, list[MissingTitle]]] = []
+    # From the RUN's budget, not a row's share of it — see `_gate_by_source`. Every row walks past the
+    # same run-wide rating cache, so every row gets the same allowance for getting past it.
+    walk_limit = _walk_limit(budget)
+    for index, row in enumerate(rows):
+        pool = [
+            m
+            for m in row.demand.values()
+            if (m.tmdb_id, str(m.media_type)) not in handled
+            and m.demand >= row.cfg.min_demand
+            and _within_year_window(m.year, row.cfg.min_year, row.cfg.max_year)
+        ]
+        report.pool_size += len(pool)
+        report.pool_by_row[row.slug] = len(pool)
+        share = -(-(budget - report.lookups_spent) // (len(rows) - index))  # ceiling division
+        before_examined = report.examined
+        if row.cfg.rating_source != "tmdb" and mdblist is not None and not report.ratings_rate_limited:
+            qualifying = _gate_by_source(row.cfg, mdblist, pool, report, budget=share, walk_limit=walk_limit)
+        else:
+            qualifying = _gate_by_tmdb(row.cfg, pool)
+            report.examined += len(pool)  # the TMDB gate reads the whole pool and bills nothing
+        report.examined_by_row[row.slug] = report.examined - before_examined
+        gated.append((row.slug, row.cfg, qualifying))
+    return gated
+
+
+def _auto_eligible(
+    cfg: RequestConfig, survivors: list[MissingTitle], blocked: Counter[str]
+) -> tuple[list[MissingTitle], list[MissingTitle]]:
+    """Split one row's qualifying titles into ``(eligible, held_back)`` on its auto-send bar.
+
+    Both lists are returned rather than deriving one from the other by membership: ``MissingTitle`` is
+    a plain dataclass, so ``in`` compares by VALUE, and two distinct titles that happen to match
+    field-for-field would collapse into one.
+
+    The run cap is deliberately NOT applied here: allocation decides who gets the slots, so no row can
+    fill the cap before another has been considered. A held-back title keeps its reason ON itself —
+    that is what the DB row and the run trace carry, and the only answer to "why didn't THIS one go?".
+    """
+    eligible: list[MissingTitle] = []
+    held_back: list[MissingTitle] = []
+    for m in survivors:  # already ranked best-first by the gate
+        if not cfg.auto_send:
+            reason = "auto-send is off"
+        elif m.excluded:
+            reason = "on an Arr exclusion list"
+        elif m.demand < cfg.auto_min_demand:
+            reason = f"demand below auto_min_demand ({cfg.auto_min_demand})"
+        elif m.rating < cfg.auto_min_rating:
+            reason = f"rating below auto_min_rating ({cfg.auto_min_rating})"
+        else:
+            eligible.append(m)
+            continue
+        blocked[reason] += 1
+        m.detail = reason
+        held_back.append(m)
+    return eligible, held_back
+
+
+class RowRequest(NamedTuple):
+    """One row's slice of the request pass: its slug, its effective config, and its own demand map."""
+
+    slug: str
+    cfg: RequestConfig
+    demand: DemandMap
+
+
 def request_missing(
-    cfg: RequestConfig,
+    base_cfg: RequestConfig,
     tmdb: TmdbClient,
-    demand: DemandMap,
+    rows: list[RowRequest],
     *,
     dry_run: bool,
     min_write_interval: float = 1.0,
     already_handled: set[tuple[int, str]] | None = None,
     mdblist: MdbListClient | None = None,
 ) -> RequestReport:
-    """Auto-request the strongest missing titles; queue the rest for the owner to approve.
+    """Auto-request the strongest missing titles per row; queue the rest for the owner to approve.
 
-    Base floors first (``min_demand``, the ``min_year``..``max_year`` window, then the chosen
-    ``rating_source`` rating/vote floors): a title must clear all of them to be requestable at all.
-    Among the survivors, those that also
-    clear the higher auto-send bar (``auto_min_demand`` and ``auto_min_rating``) are requested now —
-    ranked by demand, then rating, then votes, and capped at ``max_per_run``. Everyone else, including
-    auto-worthy titles that overflowed the cap, is returned in ``report.queued`` for manual review.
+    Each row is gated on ITS OWN floors and its own share of the rating-lookup budget, so one row can
+    neither spend the whole allowance nor take every slot. ``rows`` is in RUN ORDER, which decides the
+    even-split remainder and which row claims a title several rows want.
+
+    The two ceilings stay global and come from ``base_cfg``: ``max_per_run`` (the run's request cap)
+    and the lookup budget derived from it. A row may only make itself more restrictive.
+
     One title's failure never stops the rest: each is caught and recorded as its own outcome.
     """
-    report = RequestReport(warnings=list(cfg.incomplete_targets))
+    report = RequestReport(warnings=list(base_cfg.incomplete_targets))
     # Titles the owner has already actioned — asked for, or said no to — are out of the running
     # entirely. Two bugs lived here: a title still DOWNLOADING was still "missing", so it re-won a
     # slot every night and `max_per_run` starved forever on the same five titles; and a REJECTED
     # title could still be auto-sent later, so a "no" wasn't a no.
     handled = already_handled or set()
-    # Cheap, source-independent floors first: enough distinct wanters, and inside the year window.
-    pool = [
-        m
-        for m in demand.values()
-        if (m.tmdb_id, str(m.media_type)) not in handled
-        and m.demand >= cfg.min_demand
-        and _within_year_window(m.year, cfg.min_year, cfg.max_year)
-    ]
-    # Then the rating gate, from whichever source the owner chose (it ranks the survivors too). A
-    # non-TMDB source needs MDBList; if it isn't available, or its quota runs out mid-gate, we fall
-    # back to TMDB so the run still completes (and flag it so the owner is told — see _gate_by_source).
-    if cfg.rating_source != "tmdb" and mdblist is not None:
-        qualifying = _gate_by_source(cfg, mdblist, pool, report)
-    else:
-        qualifying = _gate_by_tmdb(cfg, pool)
-    report.considered = len(qualifying)
+    budget = _lookup_budget(base_cfg.max_per_run)
+    # Counted BEFORE any floor, and deduplicated across rows: it is what separates "nothing was
+    # missing" (fine) from "plenty was missing and your floors rejected all of it" (actionable).
+    # Counted NET of titles the owner already actioned. A server whose whole inbox was rejected sits
+    # permanently at "wanted > 0, pool == 0" — the titles were rejected, so they are never requested,
+    # so they stay missing, so they stay in demand — and the alert then tells the owner to loosen
+    # floors that were never the reason. Only titles still in play count as wanted.
+    report.wanted = len({key for row in rows for key in row.demand if (key[0], str(key[1])) not in handled})
 
-    # Build the Arr clients once (reused for the state check below and the send), then reconcile the
-    # pool against what the Arrs already know: drop titles they already track (not really "missing" —
-    # a downloading title isn't in Plex yet), and flag titles on an exclusion list so the owner sees
-    # why approving them would be a no-op. Fails OPEN — a fetch error skips the check, never drops.
-    radarr = RadarrClient(cfg.radarr, min_write_interval=min_write_interval) if cfg.radarr else None
-    sonarr = SonarrClient(cfg.sonarr, min_write_interval=min_write_interval) if cfg.sonarr else None
-    qualifying, in_arr, report.arr_present = _apply_arr_state(tmdb, qualifying, radarr, sonarr)
+    gated = _gate_rows(rows, handled, report, mdblist=mdblist, budget=budget)
+
+    # 1. One Arr reconcile for the whole run: what Radarr/Sonarr already hold is a fact about the
+    #    server, not about a row, and the per-row targets differ only in profile and root folder.
+    #    Built from `base_cfg` for the same reason. Fails OPEN — see `_apply_arr_state`.
+    radarr = RadarrClient(base_cfg.radarr, min_write_interval=min_write_interval) if base_cfg.radarr else None
+    sonarr = SonarrClient(base_cfg.sonarr, min_write_interval=min_write_interval) if base_cfg.sonarr else None
+    flat = [m for _, _, qualifying in gated for m in qualifying]
+    kept, in_arr, report.arr_present = _apply_arr_state(tmdb, flat, radarr, sonarr)
+    kept_keys = {(m.tmdb_id, m.media_type) for m in kept}
+    # Fold every row's evidence about a title into every copy of it, BEFORE one of them is claimed
+    # and sent — the claimed copy has to carry all of it (see _merge_across_rows).
+    _merge_across_rows(gated)
     if in_arr:
         logger.info("requests: {} qualifying already in Sonarr/Radarr — dropped", in_arr)
 
-    # Enrich only the titles that SURVIVED the Arr drop: the inbox's IMDb deep-link, its poster and
-    # its synopsis. Deliberately after `_apply_arr_state`, not before — enriching first paid a TMDB
-    # detail call per title the very next line then discarded, and nothing ever read the result. All
-    # three lookups are best-effort: a miss leaves the IMDb search fallback / a placeholder tile / no
-    # synopsis paragraph, never a failed run. The poster and synopsis calls only fire for a title a
-    # NON-TMDB source surfaced (Trakt, the web search); anything from a TMDB list arrived with both.
-    for m in qualifying:
+    # 2. Per row: keep what survived the Arr drop, enrich it, and split auto-eligible from queued on
+    #    THIS row's auto-send bar. The run cap is deliberately NOT applied here — allocation below
+    #    decides who gets the slots, so no row can fill the cap before another is considered.
+    blocked: Counter[str] = Counter()
+    auto_by_row: list[tuple[str, list[MissingTitle]]] = []
+    cfg_by_row: dict[str, RequestConfig] = {}
+    for slug, cfg, qualifying in gated:
+        survivors = [m for m in qualifying if (m.tmdb_id, m.media_type) in kept_keys]
+        report.considered += len(survivors)
+        report.considered_by_row[slug] = len(survivors)
+        cfg_by_row[slug] = cfg
+        _enrich(tmdb, survivors)
+        eligible, held_back = _auto_eligible(cfg, survivors, blocked)
+        report.queued.extend(held_back)
+        auto_by_row.append((slug, eligible))
+
+    # 3. Divide the run's slots between the rows (even split, surplus redistributed, one slot per
+    #    title however many rows wanted it).
+    claims = allocate(
+        auto_by_row,
+        cap=base_cfg.max_per_run,
+        row_caps={slug: cfg.max_per_row for slug, cfg in cfg_by_row.items()},
+    )
+    # Which row's target this went out under. `why` lists every row that WANTED it, so it cannot
+    # answer that once provenance is merged across rows — and a later approval has to reuse the row
+    # the run actually used, or it files into a different folder.
+    #
+    # Stamped on EVERY copy of the key, not only the claimed object. A title an earlier row held back
+    # is already in `report.queued` as that row's copy, and `_dedupe_queued` keeps the earliest — so
+    # stamping only the claim left the surviving inbox row with no slug, falling back to the earliest
+    # `why` entry: exactly the mis-file this is meant to prevent.
+    claimer_of = {(m.tmdb_id, m.media_type): slug for slug, m in claims}
+    for copy in [m for _, eligible in auto_by_row for m in eligible] + report.queued:
+        owner = claimer_of.get((copy.tmdb_id, copy.media_type))
+        if owner is not None:
+            copy.row_slug = owner
+    claimed = {(slug, m.tmdb_id, m.media_type) for slug, m in claims}
+    for slug, _m in claims:
+        report.claimed_by_row[slug] = report.claimed_by_row.get(slug, 0) + 1
+
+    # 4. Anything auto-worthy that missed out is queued rather than lost — including a title a LATER
+    #    row offered that an earlier row already claimed, which is not the owner's problem to see
+    #    twice, so it is only queued when nobody claimed it at all.
+    won = {(m.tmdb_id, m.media_type) for _, m in claims}
+    taken_by_row: dict[str, list[MissingTitle]] = {}
+    for slug, m in claims:
+        taken_by_row.setdefault(slug, []).append(m)
+    for slug, eligible in auto_by_row:
+        for m in eligible:
+            if (slug, m.tmdb_id, m.media_type) in claimed or (m.tmdb_id, m.media_type) in won:
+                continue
+            # Name the limit that ACTUALLY bound. A row the owner capped (0 = "never asks on its
+            # own") was told "max_per_run already filled", pointing at a global setting they could
+            # raise forever without effect.
+            # The row's own limit only counts as the cause when the owner set one BELOW the run
+            # cap and this row reached it. A row that merely INHERITS the run cap is bound by the
+            # run, not by itself — and saying otherwise would point at a per-row setting they never
+            # touched, the mirror of the bug this fixes.
+            row_cap = cfg_by_row[slug].max_per_row
+            row_bound = row_cap < base_cfg.max_per_run and len(taken_by_row.get(slug, [])) >= row_cap
+            m.detail = (
+                f"this row's own limit ({row_cap}) — held for your approval"
+                if row_bound
+                else f"max_per_run ({base_cfg.max_per_run}) already filled"
+            )
+            blocked[m.detail] += 1
+            report.queued.append(m)
+
+    if blocked:
+        logger.info(
+            "requests: {} queued rather than auto-sent — {}",
+            sum(blocked.values()),
+            "; ".join(f"{n} {reason}" for reason, n in blocked.most_common()),
+        )
+
+    if not claims:
+        report.queued = _dedupe_queued(report.queued, set())
+        # Say how far it LOOKED, not just what it found. A bare "0 qualifying" reads identically
+        # whether the floors emptied the pool, the gate rejected everything it rated, or it ran out of
+        # budget before reaching anything good — and the third is the one the owner can act on.
+        logger.info(
+            "requests: {} qualifying, 0 auto-sent, {} queued for approval "
+            "({} past the floors, {} rated, {} live lookups)",
+            report.considered,
+            len(report.queued),
+            report.pool_size,
+            report.examined,
+            report.lookups_spent,
+        )
+        if report.pool_size and not report.considered and report.examined < report.pool_size:
+            logger.warning(
+                "requests: the rating gate stopped {} titles into a pool of {} — nothing it rated "
+                "cleared the rating floor. Raise requests.max_per_run to rate more per run, or lower it.",
+                report.examined,
+                report.pool_size,
+            )
+        return report
+
+    # 5. Send, each title under the target of the row that claimed it.
+    report.outcomes = _send_claims(claims, cfg_by_row, tmdb, dry_run=dry_run, min_write_interval=min_write_interval)
+    # Only the ones the Arr actually accepted. A send that failed, or was skipped for want of a TVDB
+    # id, must stay requestable — suppressing it would lose the title silently.
+    landed = {(o.tmdb_id, o.media_type) for o in report.outcomes if o.status in ("requested", "would_request")}
+    report.sent = [m for _, m in claims if (m.tmdb_id, m.media_type) in landed]
+    for slug, m in claims:
+        if (m.tmdb_id, m.media_type) in landed:
+            report.sent_by_row[slug] = report.sent_by_row.get(slug, 0) + 1
+    slug_by_key = {(o.tmdb_id, o.media_type): o.arr_slug for o in report.outcomes}
+    for m in report.sent:
+        m.arr_slug = slug_by_key.get((m.tmdb_id, m.media_type))
+    # A failed auto-send (status "error") used to vanish: it was in neither `sent` nor `queued`, so it
+    # never reached the inbox and retried blindly every night. Queue it WITH the reason. Only "error"
+    # — the skips are settled facts (already in the Arr, or no TVDB id) and surfacing them is noise.
+    fail_detail = {(o.tmdb_id, o.media_type): o.detail for o in report.outcomes if o.status == "error"}
+    # EVERY queued copy of a key, not one of them. A dict comprehension here kept the LAST copy while
+    # `_dedupe_queued` keeps the FIRST, so with three or more rows holding a title back the Arr's
+    # failure was written onto a copy dedupe then discarded — and `detail` is the one field dedupe
+    # does not merge. Two rows was not enough to show it; the first version's test used two.
+    # Stamping all of them is order-independent and survives dedupe changing its keeper rule.
+    queued_by_key: dict[tuple[int, MediaType], list[MissingTitle]] = {}
+    for queued in report.queued:
+        queued_by_key.setdefault((queued.tmdb_id, queued.media_type), []).append(queued)
+    for _, m in claims:
+        key = (m.tmdb_id, m.media_type)
+        if key not in fail_detail:
+            continue
+        copies = queued_by_key.get(key)
+        if copies:
+            # An earlier row already queued this for a threshold reason. The REAL failure has to land
+            # on whichever copy survives, else the inbox says "auto-send is off" for a title Radarr
+            # rejected — and `_is_failure_detail` reads that as a mere threshold note, so it is not
+            # even protected from being overwritten next run.
+            for copy in copies:
+                copy.detail = fail_detail[key]
+            continue
+        m.detail = fail_detail[key]
+        report.queued.append(m)
+    report.queued = _dedupe_queued(report.queued, {(m.tmdb_id, m.media_type) for m in report.sent})
+    logger.info(
+        "requests: {} of {} auto-{}, {} queued for approval ({} considered across {} row(s))",
+        report.requested,
+        len(claims),
+        "would-send" if dry_run else "sent",
+        len(report.queued),
+        report.considered,
+        len(rows),
+    )
+    return report
+
+
+def _merge_across_rows(gated: list[tuple[str, RequestConfig, list[MissingTitle]]]) -> None:
+    """Give every row's copy of a title the tags, wanters and provenance of ALL of them.
+
+    Per-row demand splits one title into one object per row, and only the claiming row's object is
+    ever sent — so without this a title two rows wanted went to Radarr carrying one row's tag. That
+    contradicts the documented contract ("the tags of every per-person row they're in") and breaks
+    exactly the thing the tag is for: hanging Radarr/Sonarr rules on which rows asked.
+
+    Demand stays each row's own — it is the floor `min_demand` is checked against, and merging it
+    would let one row's popularity satisfy another row's threshold.
+    """
+    merged: dict[tuple[int, MediaType], tuple[set[str], set[str], list[RequestWhy]]] = {}
+    for _slug, _cfg, titles in gated:
+        for m in titles:
+            tags, wanters, why = merged.setdefault((m.tmdb_id, m.media_type), (set(), set(), []))
+            tags |= m.tags
+            wanters |= m.wanters
+            for reason in m.why:
+                if reason not in why:
+                    why.append(reason)
+    for _slug, _cfg, titles in gated:
+        for m in titles:
+            tags, wanters, why = merged[(m.tmdb_id, m.media_type)]
+            m.tags = set(tags)
+            m.wanters = set(wanters)
+            m.why = list(why)
+
+
+def _dedupe_queued(queued: list[MissingTitle], sent: set[tuple[int, MediaType]]) -> list[MissingTitle]:
+    """One inbox row per title, however many rows wanted it — and none for a title already sent.
+
+    Per-row demand means a title several rows want exists as several MissingTitle objects, one per
+    row. Both used to reach `report.queued`, and `request_candidates` has a UNIQUE constraint on
+    (tmdb_id, media_type), so persisting that run died with an IntegrityError — the whole inbox write
+    lost, not just the duplicate.
+
+    The earliest row's copy wins, matching the collision rule in `allocate`, but the others' evidence
+    is folded in: the inbox exists to say WHO wanted a title and from WHICH row, and dropping a copy
+    silently would drop half that answer. `demand` takes the max rather than the sum — a person in two
+    rows is one person, and summing would inflate them into two.
+    """
+    first: dict[tuple[int, MediaType], MissingTitle] = {}
+    for m in queued:
+        key = (m.tmdb_id, m.media_type)
+        if key in sent:
+            continue  # it went out under another row; an inbox row would name a title Radarr has
+        keeper = first.get(key)
+        if keeper is None:
+            first[key] = m
+            continue
+        keeper.tags |= m.tags
+        keeper.wanters |= m.wanters
+        keeper.demand = max(keeper.demand, m.demand)
+        for reason in m.why:
+            if reason not in keeper.why:
+                keeper.why.append(reason)
+    return list(first.values())
+
+
+def _enrich(tmdb: TmdbClient, titles: list[MissingTitle]) -> None:
+    """Fill the inbox's IMDb deep-link, poster and synopsis for titles that survived the Arr drop.
+
+    Deliberately after `_apply_arr_state`, not before — enriching first paid a TMDB detail call per
+    title the very next line then discarded. All three are best-effort: a miss leaves the IMDb search
+    fallback / a placeholder tile / no synopsis paragraph, never a failed run.
+    """
+    for m in titles:
         if not m.imdb_id:
             try:
                 m.imdb_id = tmdb.imdb_id(m.tmdb_id, m.media_type) or ""
@@ -227,118 +583,68 @@ def request_missing(
             except Exception as e:  # never fail the run for a paragraph of text
                 logger.debug("synopsis lookup for {!r} failed: {}", m.title, e)
 
-    # Hybrid split: the strongest clear the auto-send bar and go now (capped); the rest wait for the
-    # owner. Auto-worthy titles beyond the cap fall through to the queue rather than being lost. An
-    # excluded title is never auto-sent (the Arr would refuse it) — it's surfaced for a manual call.
-    cap = max(0, cfg.max_per_run)
-    auto: list[MissingTitle] = []
-    # Which bar stopped each title, tallied. "0 auto-sent" on its own is unanswerable: every setting
-    # here is owner-tunable and the run may have used values since changed, so reconstructing the
-    # reason afterwards means diffing settings timestamps against run times against persisted
-    # ratings (a full forensic pass, 2026-08-01). The run has all four facts in hand — say so.
-    blocked: Counter[str] = Counter()
-    for m in qualifying:  # already ranked best-first by the gate
-        if not cfg.auto_send:
-            reason = "auto-send is off"
-        elif m.excluded:
-            reason = "on an Arr exclusion list"
-        elif m.demand < cfg.auto_min_demand:
-            reason = f"demand below auto_min_demand ({cfg.auto_min_demand})"
-        elif m.rating < cfg.auto_min_rating:
-            reason = f"rating below auto_min_rating ({cfg.auto_min_rating})"
-        elif len(auto) >= cap:
-            reason = f"max_per_run ({cap}) already filled"
-        else:
-            auto.append(m)
-            continue
-        blocked[reason] += 1
-        # Keep the reason ON the title, not just in the aggregate log line below. It is what the DB
-        # row and the run trace carry, and it is the only answer to "why didn't THIS one go?" — the
-        # question the requests inbox exists to be asked. Counting it and dropping it left every
-        # queued row with an empty detail while every sent row had one.
-        m.detail = reason
-        report.queued.append(m)
 
-    if blocked:
-        logger.info(
-            "requests: {} queued rather than auto-sent — {}",
-            sum(blocked.values()),
-            "; ".join(f"{n} {reason}" for reason, n in blocked.most_common()),
-        )
-
-    if not auto:
-        logger.info("requests: {} qualifying, 0 auto-sent, {} queued for approval", len(qualifying), len(report.queued))
-        return report
-
-    report.outcomes = _send(
-        cfg, tmdb, auto, dry_run=dry_run, min_write_interval=min_write_interval, radarr=radarr, sonarr=sonarr
-    )
-    # Only the ones the Arr actually accepted. A send that failed, or was skipped for want of a TVDB
-    # id, must stay requestable — suppressing it would lose the title silently.
-    # Keyed by (tmdb_id, media_type), never the bare id — movie 550 and TV 550 are different titles,
-    # and both can land in one auto batch (see filter_candidates for the same rule).
-    landed = {(o.tmdb_id, o.media_type) for o in report.outcomes if o.status in ("requested", "would_request")}
-    report.sent = [m for m in auto if (m.tmdb_id, m.media_type) in landed]
-    # Carry each arr's titleSlug onto the sent title so the persisted candidate can deep-link to it.
-    slug_by_key = {(o.tmdb_id, o.media_type): o.arr_slug for o in report.outcomes}
-    for m in report.sent:
-        m.arr_slug = slug_by_key.get((m.tmdb_id, m.media_type))
-    # A failed auto-send (status "error" — e.g. a Sonarr/Radarr lookup 5xx) used to vanish: it was in
-    # neither `sent` nor `queued`, so it never reached the inbox, retried blindly every night, and its
-    # reason was invisible. Queue it WITH the reason so it shows in Waiting, retriable by hand. Only
-    # "error" — the skips are deliberately NOT queued: skipped_present is already in the Arr (handled),
-    # and skipped_no_tvdb/skipped_no_target can never be requested, so surfacing them is just noise.
-    fail_detail = {(o.tmdb_id, o.media_type): o.detail for o in report.outcomes if o.status == "error"}
-    for m in auto:
-        if (m.tmdb_id, m.media_type) in fail_detail:
-            m.detail = fail_detail[(m.tmdb_id, m.media_type)]
-            report.queued.append(m)
-    logger.info(
-        "requests: {} of {} auto-{}, {} queued for approval ({} considered)",
-        report.requested,
-        len(auto),
-        "would-send" if dry_run else "sent",
-        len(report.queued),
-        report.considered,
-    )
-    return report
-
-
-def request_titles(
-    cfg: RequestConfig,
+def _send_claims(
+    claims: list[tuple[str, MissingTitle]],
+    cfg_by_row: dict[str, RequestConfig],
     tmdb: TmdbClient,
-    titles: list[MissingTitle],
+    *,
+    dry_run: bool,
+    min_write_interval: float,
+) -> list[RequestOutcome]:
+    """Send each claimed title under the target of the row that claimed it.
+
+    Clients are cached by their whole target, so rows sharing a profile and folder share one client
+    and its rate limiter — the plex-safety throttle is per client, and one per row would multiply the
+    write rate by the number of rows.
+    """
+    clients: dict[ArrTarget, RadarrClient | SonarrClient] = {}
+    clocks: dict[str, list[float]] = {}
+    outcomes: list[RequestOutcome] = []
+    for slug, title in claims:
+        cfg = cfg_by_row[slug]
+        radarr = _cached_client(clients, clocks, cfg.radarr, RadarrClient, min_write_interval)
+        sonarr = _cached_client(clients, clocks, cfg.sonarr, SonarrClient, min_write_interval)
+        outcomes.append(_request_one(title, radarr, sonarr, tmdb, dry_run=dry_run))
+    return outcomes
+
+
+def _cached_client(
+    clients: dict, clocks: dict[str, list[float]], target: ArrTarget | None, factory, min_write_interval: float
+):
+    """One client per distinct target, but one write clock per SERVER.
+
+    Rows differ only in root folder and quality profile, so several targets are usually the same
+    Radarr. A client each is fine — they are cheap and hold per-target state — but a rate limiter each
+    would multiply the write rate to that one server by the number of rows (plex-safety rule 6).
+    """
+    if target is None:
+        return None
+    if target not in clients:
+        clock = clocks.setdefault(target.url.rstrip("/"), [0.0])
+        clients[target] = factory(target, min_write_interval=min_write_interval, write_clock=clock)
+    return clients[target]
+
+
+def request_titles_by_row(
+    cfg_by_row: dict[str, RequestConfig],
+    tmdb: TmdbClient,
+    claims: list[tuple[str, MissingTitle]],
     *,
     dry_run: bool,
     min_write_interval: float = 1.0,
 ) -> RequestReport:
-    """Request an explicit list of titles the owner approved from the inbox — no gating.
+    """Send titles the owner approved from the inbox, each under its own row's target.
 
-    The thresholds already decided these were worth surfacing, and the owner picked them by hand, so
-    this skips every floor and just sends. Each title's failure is its own outcome, never a raise.
+    An approval is a delayed send, so it must land exactly where a same-night send would have — which
+    means one config per row, not one for the batch. Routed through ``_send_claims`` (the same path a
+    run uses) rather than a loop of per-group sends: a loop builds a fresh client per group,
+    and several rows are usually the SAME Radarr with different folders, so each group would get its
+    own rate limiter and multiply the write rate to one server (plex-safety rule 6).
     """
-    report = RequestReport(considered=len(titles))
-    report.outcomes = _send(cfg, tmdb, titles, dry_run=dry_run, min_write_interval=min_write_interval)
+    report = RequestReport(considered=len(claims))
+    report.outcomes = _send_claims(claims, cfg_by_row, tmdb, dry_run=dry_run, min_write_interval=min_write_interval)
     return report
-
-
-def _send(
-    cfg: RequestConfig,
-    tmdb: TmdbClient,
-    titles: list[MissingTitle],
-    *,
-    dry_run: bool,
-    min_write_interval: float,
-    radarr: RadarrClient | None = None,
-    sonarr: SonarrClient | None = None,
-) -> list[RequestOutcome]:
-    """Route every title to its Arr. Clients are built at most once — passed in when the caller
-    already built them (so the arr-state check and the send share one), else built here."""
-    if radarr is None and cfg.radarr:
-        radarr = RadarrClient(cfg.radarr, min_write_interval=min_write_interval)
-    if sonarr is None and cfg.sonarr:
-        sonarr = SonarrClient(cfg.sonarr, min_write_interval=min_write_interval)
-    return [_request_one(title, radarr, sonarr, tmdb, dry_run=dry_run) for title in titles]
 
 
 def _apply_arr_state(
@@ -433,31 +739,72 @@ def _gate_by_tmdb(cfg: RequestConfig, pool: list[MissingTitle]) -> list[MissingT
     return qualifying
 
 
+def _live_lookups(mdblist: object) -> int | None:
+    """Billable calls this rating client has made so far, or None if it cannot report its own spend.
+
+    None falls the caller back to billing every inspection — the behaviour before 2026-08-18, which
+    is merely over-cautious rather than wrong. Only a client that doesn't track its spend takes it.
+    """
+    value = getattr(mdblist, "live_lookups", None)
+    return value if isinstance(value, int) else None
+
+
 def _gate_by_source(
-    cfg: RequestConfig, mdblist: MdbListClient, pool: list[MissingTitle], report: RequestReport
+    cfg: RequestConfig,
+    mdblist: MdbListClient,
+    pool: list[MissingTitle],
+    report: RequestReport,
+    *,
+    budget: int,
+    walk_limit: int,
 ) -> list[MissingTitle]:
     """Keep titles clearing the chosen MDBList source's rating/vote floors, ranked by demand then score.
 
-    Only a shortlist (top by demand, then TMDB score as a cheap proxy) is looked up, so a big missing
-    pool stays well under MDBList's daily cap — and every source is cached per title, so re-runs mostly
-    hit the cache. Its size comes from ``max_per_run`` (see ``_lookup_budget``) rather than a flat
-    number, so raising the request cap raises what this may inspect instead of silently capping the
-    run below the figure the owner set. A lookup that fails or has no score for this source just
-    drops that title. If the
-    daily quota runs out mid-gate, we stop, flag the run, and fall back to TMDB for the WHOLE pool so
-    the run still completes (the owner is alerted from the flag).
+    Walks the demand-ranked pool and rates titles until ``_lookup_budget`` LIVE lookups have been
+    spent, so a big missing pool stays well under MDBList's daily cap. A lookup that fails or has no
+    score for this source just drops that title. If the daily quota runs out mid-gate, we stop, flag
+    the run, and fall back to TMDB for the WHOLE pool so the run still completes (the owner is alerted
+    from the flag).
+
+    The budget counts API CALLS, not titles inspected, and the difference is the whole point. Ratings
+    cache for a week (``RATING_CACHE_TTL_S``) and the demand ranking barely moves between nights, so
+    the head of this list is mostly titles already rated on an earlier run. Charging those cache hits
+    against the budget — which is what taking a fixed ``[:budget]`` slice did — spent the allowance
+    re-reading the same rejects every night and never reached the titles below them. In production
+    that stuck at ``0 qualifying`` for five days across 10,488 wanted titles, and the ranking makes it
+    permanent rather than unlucky: the list is ordered by how many people want a title while the gate
+    asks how well-rated it is, and on a big server the most-wanted MISSING titles are exactly the ones
+    nobody thought worth adding. Reading past a stale head costs nothing, so it is no longer paid for.
+
+    ``budget`` is this row's share of the run's lookups; ``walk_limit`` is derived from the whole
+    run's, and the two are deliberately not the same number. The cache the walk has to get past is
+    global to the run, so a row scaled to a fraction of it stops INSIDE that head, spends nothing and
+    hands its share to the next row — starving whichever rows the owner happens to have put first,
+    while the run reports every slot filled. Splitting the quota is right; splitting the free walk is
+    not (release review 2026-08-18).
     """
     source = cfg.rating_source
     enforce_votes = source in VOTE_SOURCES  # RT/Metacritic are critic scores — no audience-vote floor
-    budget = _lookup_budget(cfg.max_per_run)
-    shortlist = sorted(pool, key=lambda m: (m.demand, m.rating, m.vote_count), reverse=True)[:budget]
+    ranked = sorted(pool, key=lambda m: (m.demand, m.rating, m.vote_count), reverse=True)
+    start = _live_lookups(mdblist)
     scored: list[tuple[MissingTitle, float, int]] = []
-    for title in shortlist:
+    examined = 0
+
+    def spent() -> int:
+        now = _live_lookups(mdblist)
+        return examined if start is None or now is None else now - start
+
+    for title in ranked:
+        if spent() >= budget or examined >= walk_limit:
+            break
+        examined += 1
         try:
             score = mdblist.rating(title.tmdb_id, title.media_type, source)
         except MdbListRateLimitError:
             logger.warning("MDBList daily limit reached — falling back to TMDB ratings for this run")
             report.ratings_rate_limited = True
+            report.examined += examined
+            report.lookups_spent += spent()
             return _gate_by_tmdb(cfg, pool)
         except Exception as e:  # a single lookup hiccup drops that title, never the whole gate
             logger.warning("{} rating lookup for {!r} failed: {}", source, title.title, e)
@@ -471,6 +818,12 @@ def _gate_by_source(
             title.rating = rating
             title.vote_count = votes
             scored.append((title, rating, votes))
+        elif rating < cfg.min_rating - _NEAR_MISS:
+            # Nowhere near the bar. Hold the score so next week's run reads it for free instead of
+            # spending one of its lookups re-learning the same answer (see _REJECT_RECHECK_TTL_S).
+            mdblist.defer_recheck(title.tmdb_id, title.media_type, _REJECT_RECHECK_TTL_S)
+    report.examined += examined
+    report.lookups_spent += spent()
     scored.sort(key=lambda row: (row[0].demand, row[1], row[2]), reverse=True)
     return [title for title, _, _ in scored]
 

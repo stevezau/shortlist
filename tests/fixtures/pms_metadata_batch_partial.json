@@ -1,0 +1,17 @@
+{
+  "_recorded": "SFLIX (PMS 1.43.3.10793) 2026-08-18 \u2014 GET /library/metadata/<live>,<deleted>",
+  "_why": "Plex returns the FOUND SUBSET for a partial batch and 404s only when NO requested key exists. plex_pms.fetch_items depends on this: a NotFound there means every key is gone.",
+  "requested": [
+    "<live key>",
+    "<deleted key>"
+  ],
+  "MediaContainer": {
+    "size": 1,
+    "Metadata": [
+      {
+        "ratingKey": "<live key>",
+        "type": "movie"
+      }
+    ]
+  }
+}

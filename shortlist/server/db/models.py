@@ -235,6 +235,32 @@ class Collection(Base):
     # Dead as of the curate removal (migration 0036 clears it): the LLM no longer ranks a candidate
     # pool, so there is no per-row curation recipe. Column kept — dropping it would rebuild the whole
     # table (inbound FKs); a future migration can remove it.
+    # This row's own Sonarr/Radarr request settings. NULL -> inherit the global `requests.*` setting,
+    # the same convention `watched_pct` / `recency` / `refresh_days` / `cold_start` already use, so an
+    # upgrade changes nothing until the owner sets one.
+    #
+    # Only PROFILE and ROOT FOLDER are per row; URL and API key stay global. The case this serves is
+    # one Radarr filing a kids row into /data/Kids at a lower profile, not a second Radarr.
+    #
+    # `max_per_run` and the rating source are deliberately absent: they are the run's ceiling and its
+    # one MDBList account, and a row able to raise either would make the global setting a suggestion.
+    # `req_max_per_row` may only ever RESTRICT below it (`resolve_request_config` clamps).
+    #
+    # Meaningless on a shared row, which is built from titles people have already WATCHED and so are
+    # already on the server — it surfaces nothing missing to request. The editor hides the section.
+    req_min_rating: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    req_min_votes: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    req_min_demand: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    req_min_year: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    req_max_year: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    req_auto_send: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
+    req_auto_min_demand: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    req_auto_min_rating: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    req_max_per_row: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    req_radarr_quality_profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    req_radarr_root_folder: Mapped[str | None] = mapped_column(String(512), nullable=True, default=None)
+    req_sonarr_quality_profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    req_sonarr_root_folder: Mapped[str | None] = mapped_column(String(512), nullable=True, default=None)
     prompt: Mapped[dict] = mapped_column(JSON, default=dict)
     # Custom collection poster for this row. {} -> Plex's own artwork. Shape:
     # {"mode": "upload"|"generate", "title", "subtitle", "style"}. No image bytes live here — an
@@ -676,6 +702,12 @@ class RequestCandidate(Base):
     # synopsis is worse than a long one the UI clamps. Empty on pre-0071 rows and for titles TMDB has
     # no synopsis for — the inbox omits the paragraph rather than drawing an empty gap.
     overview: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Which ROW claimed this title, so an approval months later can resolve that row's Sonarr/Radarr
+    # target. `why[].row` is the rendered name ("Because you watched Bluey") and carries the person's
+    # display name and their own seed, so it identifies nothing stable. NULL on rows queued before
+    # per-row settings existed; those fall back to the global config, which is what they were queued
+    # under anyway.
+    row_slug: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
     rating: Mapped[float] = mapped_column(Float, default=0.0)  # on the chosen source (TMDB, or IMDb)
     vote_count: Mapped[int] = mapped_column(Integer, default=0)  # vote count on that same source
     demand: Mapped[int] = mapped_column(Integer, default=1)  # distinct users whose picks wanted it

@@ -20,11 +20,46 @@ from loguru import logger
 from sqlalchemy.orm import Session, sessionmaker
 
 from shortlist.engine.clients.plex_pms import SectionNotShared
-from shortlist.engine.models import MediaType
+from shortlist.engine.models import MediaType, UserProfile, UserType
 from shortlist.server.db.models import User
 from shortlist.server.services.sse import EventBus
 from shortlist.server.services.watch_cache import DEFAULT_FULL_EVERY, WatchCache
 from shortlist.server.settings_store import SettingsStore
+
+
+def _with_owner(session: Session, profiles: list) -> list:
+    """Add the owner to a sweep that would otherwise skip them.
+
+    `enabled` decides who gets a ROW, and the owner is created with it off — most never turn it on,
+    because Plex shows them everyone's rows anyway. Their watched set still has a consumer: the
+    watching-account transfer copies FROM it, and this sweep is the only thing that ever fills it.
+    Without this an owner who never gave themselves a row had an empty cache for ever, and the
+    wizard's offer to copy their history across silently copied nothing (#88).
+
+    Read-only, like everything else this list drives — it decides whose history is re-read, never
+    who gets a row or what is written to Plex.
+    """
+    # `.first()`, like every other owner lookup here (`notifications.py`, `api/watching_account.py`,
+    # `context_builder.py`). This is a top-up, not a precondition: it runs outside any per-profile
+    # try/except, and `sync_watched` swallows what escapes it at INFO — so raising on a duplicate
+    # owner row would stop EVERY user's history being read and say only "watch-sync skipped".
+    owner = session.query(User).filter_by(user_type=UserType.OWNER.value).first()
+    if owner is None or any(p.plex_account_id == owner.plex_account_id for p in profiles):
+        return profiles
+    # Paused is the per-user half of the same switch the caller checks globally. `enabled_profiles`
+    # drops a paused person; topping the owner back up regardless would undo that for the one
+    # account whose pause nobody thinks to check.
+    if (owner.prefs or {}).get("paused"):
+        return profiles
+    return [
+        *profiles,
+        UserProfile(
+            username=owner.username,
+            plex_account_id=owner.plex_account_id,
+            user_type=UserType.OWNER,
+            slug=owner.slug,
+        ),
+    ]
 
 
 class WatchSync:
@@ -241,9 +276,10 @@ class WatchSync:
         reconcile_watched: Callable[[list], None],
         run_lock: asyncio.Lock,
     ) -> None:
-        """Refresh every enabled user's ``watched_at`` from their current watch history WITHOUT
-        rebuilding rows or writing to Plex — a read-only reconcile so the effectiveness report stays
-        fresh daily even when a row's own cron is weekly (or a user has no scheduled row at all).
+        """Refresh every enabled user's ``watched_at`` (and the owner's — see ``_with_owner``) from
+        their current watch history WITHOUT rebuilding rows or writing to Plex — a read-only
+        reconcile so the effectiveness report stays fresh daily even when a row's own cron is weekly
+        (or a user has no scheduled row at all).
 
         Skips quietly if Plex isn't configured (build_context raises), and a per-user history-fetch
         failure is logged and skipped rather than aborting the sweep. Serialized against runs by
@@ -268,6 +304,11 @@ class WatchSync:
                 store = SettingsStore(session)
                 incremental = bool(store.get("sync.watch_incremental"))
                 force_full = self._full_resync_due(store)
+                # After the pause check, not before it: `enabled_profiles` returns nothing at all
+                # while "pause all" is on, and topping the owner back up would quietly make the
+                # switch stop meaning "everything".
+                if not store.get("paused_all"):
+                    profiles = _with_owner(session, profiles)
             total = len(profiles)
             emit("sync.progress", {"done": 0, "total": total})
             for i, profile in enumerate(profiles, start=1):

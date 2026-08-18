@@ -1725,6 +1725,50 @@ class TestTheReportCarriesWhatABugReportActuallyNeeds:
         assert body["runs"][0]["failed"] == [{"user": "sarah", "error": "no token for sarah"}]
         assert "FAILED sarah: no token for sarah" in body["text"]
 
+    def test_a_privacy_exposure_survives_the_six_key_stats_truncation(self, client):
+        """Architecture review, 2026-08-18 (MEDIUM). The run line prints the first six stats keys so
+        it stays pasteable — but `filters_not_enforced` reports Plex serving one person another
+        person's row, and it sorts well outside the first six. The bundle that silently dropped it is
+        exactly the artifact someone attaches when reporting that leak.
+        """
+        from shortlist.server.db.models import Run
+
+        with client.app.state.sessions() as session:
+            session.add(
+                Run(
+                    trigger="schedule",
+                    status="ok",
+                    stats={
+                        "a": 1,
+                        "b": 2,
+                        "c": 3,
+                        "d": 4,
+                        "e": 5,
+                        "f": 6,
+                        "g": 7,
+                        "filters_not_enforced": {"sarah": [101, 102]},
+                    },
+                )
+            )
+            session.commit()
+        _enable(client)
+
+        text = client.get("/api/support/runs").json()["text"]
+
+        assert "filters_not_enforced" in text, "a privacy exposure must never be truncated out"
+        assert "sarah" in text and "101" in text, "and it has to name who, and which rows"
+
+    def test_an_ordinary_run_does_not_grow_the_privacy_line(self, client):
+        """The `!!` line is a fault report; a clean run must not carry one, or it becomes wallpaper."""
+        from shortlist.server.db.models import Run
+
+        with client.app.state.sessions() as session:
+            session.add(Run(trigger="schedule", status="ok", stats={"filters_not_enforced": {}, "picked": 4}))
+            session.commit()
+        _enable(client)
+
+        assert "!! filters_not_enforced" not in client.get("/api/support/runs").json()["text"]
+
     def test_a_missing_log_directory_degrades_instead_of_500ing(self, client):
         """A fresh install has no log file yet, and this must not be the thing that breaks."""
         _enable(client)

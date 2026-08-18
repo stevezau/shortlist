@@ -2774,6 +2774,32 @@ export interface components {
             recent_count?: number | null;
             /** Refresh Days */
             refresh_days?: number | null;
+            /** Req Auto Min Demand */
+            req_auto_min_demand?: number | null;
+            /** Req Auto Min Rating */
+            req_auto_min_rating?: number | null;
+            /** Req Auto Send */
+            req_auto_send?: boolean | null;
+            /** Req Max Per Row */
+            req_max_per_row?: number | null;
+            /** Req Max Year */
+            req_max_year?: number | null;
+            /** Req Min Demand */
+            req_min_demand?: number | null;
+            /** Req Min Rating */
+            req_min_rating?: number | null;
+            /** Req Min Votes */
+            req_min_votes?: number | null;
+            /** Req Min Year */
+            req_min_year?: number | null;
+            /** Req Radarr Quality Profile Id */
+            req_radarr_quality_profile_id?: number | null;
+            /** Req Radarr Root Folder */
+            req_radarr_root_folder?: string | null;
+            /** Req Sonarr Quality Profile Id */
+            req_sonarr_quality_profile_id?: number | null;
+            /** Req Sonarr Root Folder */
+            req_sonarr_root_folder?: string | null;
             /**
              * Request Tag
              * @default
@@ -2894,6 +2920,32 @@ export interface components {
             recent_count: number | null;
             /** Refresh Days */
             refresh_days: number | null;
+            /** Req Auto Min Demand */
+            req_auto_min_demand: number | null;
+            /** Req Auto Min Rating */
+            req_auto_min_rating: number | null;
+            /** Req Auto Send */
+            req_auto_send: boolean | null;
+            /** Req Max Per Row */
+            req_max_per_row: number | null;
+            /** Req Max Year */
+            req_max_year: number | null;
+            /** Req Min Demand */
+            req_min_demand: number | null;
+            /** Req Min Rating */
+            req_min_rating: number | null;
+            /** Req Min Votes */
+            req_min_votes: number | null;
+            /** Req Min Year */
+            req_min_year: number | null;
+            /** Req Radarr Quality Profile Id */
+            req_radarr_quality_profile_id: number | null;
+            /** Req Radarr Root Folder */
+            req_radarr_root_folder: string | null;
+            /** Req Sonarr Quality Profile Id */
+            req_sonarr_quality_profile_id: number | null;
+            /** Req Sonarr Root Folder */
+            req_sonarr_root_folder: string | null;
             /** Request Tag */
             request_tag: string;
             /** Rewatch */
@@ -3869,6 +3921,8 @@ export interface components {
             poster_path: string;
             /** Rating */
             rating: number;
+            /** Row Slug */
+            row_slug?: string | null;
             /** Status */
             status: string;
             /** Tags */
@@ -4686,6 +4740,8 @@ export interface components {
             scrobble_skipped: number;
             /** Scrobbled */
             scrobbled: number;
+            /** Source Empty */
+            source_empty: boolean;
         } & {
             [key: string]: unknown;
         };

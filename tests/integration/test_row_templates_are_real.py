@@ -167,7 +167,8 @@ def engine_ctx(engine_config: EngineConfig, mock_plextv, mock_tmdb, mock_curator
     plex.owned_collections.return_value = {}
     plex.find_owned_collections.return_value = []
     plex.stored_label.side_effect = lambda collection, label: label.replace("shortlist", "Shortlist", 1)
-    plex.fetch_items.side_effect = lambda keys: [fake_media_item(k, f"item{k}") for k in keys]
+    # (items, missing) — see PlexClient.fetch_items: a partial batch drops dead keys silently.
+    plex.fetch_items.side_effect = lambda keys: ([fake_media_item(k, f"item{k}") for k in keys], [])
 
     history = MagicMock()
     mock_tmdb.genre_names.return_value = {}

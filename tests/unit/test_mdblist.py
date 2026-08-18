@@ -6,7 +6,7 @@ import httpx
 import pytest
 import respx
 
-from shortlist.engine.clients.mdblist import MdbListClient, MdbListRateLimitError
+from shortlist.engine.clients.mdblist import RATING_CACHE_TTL_S, MdbListClient, MdbListRateLimitError
 from shortlist.engine.models import MediaType
 
 pytestmark = pytest.mark.integration
@@ -29,12 +29,14 @@ class _DictCache:
 
     def __init__(self):
         self.store: dict[str, str] = {}
+        self.ttls: dict[str, int] = {}  # last TTL each key was written with — `defer_recheck` re-stamps it
 
     def get(self, key):
         return self.store.get(key)
 
     def set(self, key, value, ttl_s):
         self.store[key] = value
+        self.ttls[key] = ttl_s
 
 
 class TestMdbListRating:
@@ -68,6 +70,40 @@ class TestMdbListRating:
         # A different source for the SAME title is served from cache — no second HTTP call.
         assert client.rating(273481, MediaType.MOVIE, "metacritic")[0] == 7.5
         assert route.call_count == 1
+        # Only the first cost quota. The request gate budgets against THIS, not against how many
+        # titles it inspected — billing cache hits is what starved it in production.
+        assert client.live_lookups == 1
+
+    @respx.mock
+    def test_a_failed_call_still_counts_against_the_quota(self):
+        respx.get("https://api.mdblist.com/tmdb/movie/9").mock(return_value=httpx.Response(500))
+        client = MdbListClient("k", cache=_DictCache())
+        assert client.rating(9, MediaType.MOVIE, "imdb") is None
+        assert client.live_lookups == 1, "MDBList bills the request, not the useful answer"
+
+    @respx.mock
+    def test_defer_recheck_restamps_the_ttl_without_refetching(self):
+        route = respx.get("https://api.mdblist.com/tmdb/movie/273481").mock(
+            return_value=httpx.Response(200, json=RATINGS)
+        )
+        cache = _DictCache()
+        client = MdbListClient("k", cache=cache)
+        client.rating(273481, MediaType.MOVIE, "imdb")
+        assert cache.ttls["movie:273481"] == RATING_CACHE_TTL_S
+
+        client.defer_recheck(273481, MediaType.MOVIE, 60 * 24 * 3600)
+
+        assert cache.ttls["movie:273481"] == 60 * 24 * 3600
+        assert route.call_count == 1, "holding a score must not buy it again"
+        assert client.live_lookups == 1
+        # The score itself is untouched, so a later run reads the real value — a deferral holds the
+        # rating, never a verdict, and a lowered floor admits the title straight away.
+        assert client.rating(273481, MediaType.MOVIE, "imdb") == (8.2, 102000)
+
+    def test_defer_recheck_on_an_uncached_title_is_a_no_op(self):
+        cache = _DictCache()
+        MdbListClient("k", cache=cache).defer_recheck(1, MediaType.MOVIE, 999)
+        assert cache.store == {}, "there is no verdict to hold on to, and none may be invented"
 
     @respx.mock
     def test_shows_hit_the_show_path(self):

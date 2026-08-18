@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { Link } from "react-router";
 
+import { RowRequestSettings } from "@/components/rows/row-request-settings";
 import { AudiencePicker } from "@/components/rows/audience-picker";
 import { GlobalDefaultToggle } from "@/components/rows/global-default-row";
 import { LibraryPicker } from "@/components/rows/library-picker";
@@ -1185,7 +1186,7 @@ export function RowEditor({
 
           <SettingsGroup
             title="Requests"
-            description="Mark the titles people ask for from this row, so you can spot them in Radarr and Sonarr — the apps that go and fetch them. Optional."
+            description="What this row asks Sonarr and Radarr for when a pick isn't on the server yet, and where those titles land."
             summary={requestSummary}
             defaultOpen={false}
           >
@@ -1206,6 +1207,17 @@ export function RowEditor({
                   nothing.
                 </p>
               </div>
+            )}
+            {/* Per-person rows only. A shared row is built from titles people have already WATCHED,
+                which are by definition already on the server, so it can never surface a missing
+                title to request — these controls would be offered and then silently ignored. */}
+            {!isSharedRow && (
+              <RowRequestSettings
+                input={input}
+                set={set}
+                settings={settings.data}
+                requestsEnabled={settings.data?.["requests.enabled"] === true}
+              />
             )}
           </SettingsGroup>
 

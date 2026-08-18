@@ -70,12 +70,18 @@ class _ArrClient:
         # already generous for a local call, so no override is needed.
         timeout: float = http_retry.DEFAULT_TIMEOUT_S,
         min_write_interval: float = 1.0,
+        write_clock: list[float] | None = None,
     ):
         self._target = target
         self._base = target.url.rstrip("/")
         self._timeout = timeout
         self._min_write_interval = min_write_interval
-        self._last_write = 0.0
+        # The write clock belongs to the SERVER, not to this client. Per-row request settings mean
+        # several clients can point at ONE Radarr with different root folders, and a clock each would
+        # multiply the write rate to that server by the number of rows — exactly what rule 6 exists to
+        # prevent. Callers building more than one client for the same URL pass a shared list; a lone
+        # client owns its own, so nothing else has to change.
+        self._write_clock = write_clock if write_clock is not None else [0.0]
         self._existing_tags: dict[str, int] | None = None  # lowercased label -> id, fetched once per run
         self._resolved: dict[str, int] = {}  # lowercased label -> id, memoised across titles
 
@@ -121,7 +127,7 @@ class _ArrClient:
 
     def _throttle(self) -> None:
         """At most one write per ``min_write_interval`` seconds — be a polite client (rule 6 spirit)."""
-        self._last_write = http_retry.throttle(self._last_write, self._min_write_interval)
+        self._write_clock[0] = http_retry.throttle(self._write_clock[0], self._min_write_interval)
 
     def ping(self) -> str:
         """A tiny authenticated call for the settings 'Test' button; returns a friendly version line."""
