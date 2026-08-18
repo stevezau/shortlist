@@ -663,3 +663,21 @@ class TestTheClaimingRowSurvivesTheRequeuePath:
         )
         assert report.sent == []
         assert "this row's own limit (0)" in report.queued[0].detail
+
+    def test_claims_are_reported_separately_from_sends(self, radarr, monkeypatch):
+        """A claim can still be skipped at the send — no TheTVDB id, an Arr that refuses it. The caps
+        decide CLAIMS, so a breakdown that only reports sends cannot answer "did my row limit bind".
+        Measured live: sent read picked:3/because:0 while the caps had allocated picked:4/because:1."""
+        monkeypatch.setattr(requests_mod, "SonarrClient", lambda *a, **k: FakeArr())
+        base = _cfg(max_per_run=4)
+        show = MissingTitle(70, "no-tvdb", MediaType.SHOW, 2021, 8.0, 500, demand=1)
+
+        report = requests_mod.request_missing(
+            base,
+            FakeTmdb(tvdb={70: None}),  # TMDB has no TheTVDB id, so Sonarr cannot take it
+            _rows(("tv", base, _demand(show))),
+            dry_run=False,
+        )
+
+        assert report.claimed_by_row == {"tv": 1}, "the cap allocated it"
+        assert report.sent_by_row == {}, "...and the Arr could not take it"

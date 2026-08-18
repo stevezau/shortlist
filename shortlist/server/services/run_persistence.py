@@ -818,6 +818,7 @@ def _finalize_run(
                         "pool": report.requests.pool_by_row.get(slug, 0),
                         "examined": report.requests.examined_by_row.get(slug, 0),
                         "considered": report.requests.considered_by_row.get(slug, 0),
+                        "claimed": report.requests.claimed_by_row.get(slug, 0),
                         "sent": report.requests.sent_by_row.get(slug, 0),
                     }
                     for slug in report.requests.pool_by_row

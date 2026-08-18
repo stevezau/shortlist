@@ -380,6 +380,8 @@ def request_missing(
         if owner is not None:
             copy.row_slug = owner
     claimed = {(slug, m.tmdb_id, m.media_type) for slug, m in claims}
+    for slug, _m in claims:
+        report.claimed_by_row[slug] = report.claimed_by_row.get(slug, 0) + 1
 
     # 4. Anything auto-worthy that missed out is queued rather than lost — including a title a LATER
     #    row offered that an earlier row already claimed, which is not the owner's problem to see

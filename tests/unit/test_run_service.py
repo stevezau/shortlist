@@ -1049,6 +1049,7 @@ class TestThePerRowRequestBreakdownIsPersisted:
             pool_by_row={"picked": 400, "because": 23},
             examined_by_row={"picked": 100, "because": 32},
             considered_by_row={"picked": 12, "because": 0},
+            claimed_by_row={"picked": 6, "because": 1},
             sent_by_row={"picked": 5},
         )
         service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
@@ -1060,10 +1061,14 @@ class TestThePerRowRequestBreakdownIsPersisted:
             return await _wait_for_run(sessions, run_id)
 
         stats = asyncio.run(scenario()).stats
+        # `claimed` is what the caps allocated; `sent` is what the Arr accepted. They differ when a
+        # claim is skipped (no TheTVDB id), which is exactly what made a live two-row test read as
+        # "because got nothing" when its cap had in fact allocated it one.
         assert stats["requests_by_row"]["because"] == {
             "pool": 23,
             "examined": 32,
             "considered": 0,
+            "claimed": 1,
             "sent": 0,
         }
         assert stats["requests_by_row"]["picked"]["sent"] == 5

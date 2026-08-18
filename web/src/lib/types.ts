@@ -520,7 +520,15 @@ export interface RunStats {
    *  requests are off or the run never reached the request phase. */
   requests_by_row?: Record<
     string,
-    { pool: number; examined: number; considered: number; sent: number }
+    {
+      pool: number;
+      examined: number;
+      considered: number;
+      /** What the caps allocated to this row — the figure that answers "did my row limit bind". */
+      claimed: number;
+      /** Of those, how many the Arr accepted; a claim can still be skipped (no TheTVDB id). */
+      sent: number;
+    }
   >;
   /** Total AI tokens this run cost (curate + the AI candidate sources). Absent on legacy runs. */
   llm_tokens?: number;

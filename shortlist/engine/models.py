@@ -698,6 +698,11 @@ class RequestReport:
     examined_by_row: dict[str, int] = field(default_factory=dict)
     considered_by_row: dict[str, int] = field(default_factory=dict)
     sent_by_row: dict[str, int] = field(default_factory=dict)
+    # What each row CLAIMED, which is not what it sent: a claim can still be skipped at the send (no
+    # TheTVDB id, an Arr that refuses it). Claims are what the caps actually decide, so this is the
+    # figure that answers "did my row limit bind" — measured live on 2026-08-18, where sent_by_row
+    # read picked:3/because:0 while the caps had in fact allocated picked:4/because:1.
+    claimed_by_row: dict[str, int] = field(default_factory=dict)
     outcomes: list[RequestOutcome] = field(default_factory=list)
     # Titles handed back for the server to persist as pending so the owner can approve them by hand:
     # those that cleared the base floors but not the auto-send bar (or overflowed max_per_run), PLUS
