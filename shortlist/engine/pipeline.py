@@ -44,10 +44,12 @@ from shortlist.engine.models import (
     UserType,
 )
 from shortlist.engine.privacy import (
+    RESTRICTED_FILTER_FIELDS,
     clear_our_excludes,
     shared_label_audiences,
     shortlist_labels_in,
     sync_user_restrictions,
+    unhidden_rows_on_home,
     unhidden_rows_visible_to,
 )
 from shortlist.engine.request_config import resolve_request_config
@@ -526,6 +528,79 @@ def _leave_sharing_alone(ctx: EngineContext, user, remote, report: RunReport) ->
         report.filter_writes[user.plex_account_id] = {"username": user.username, "fields": written}
 
 
+def _verify_filters_enforced(ctx, audience, roster, owned, collections_known, own_slugs, report) -> None:
+    """Look through a real account's eyes and check our exclusions are actually being APPLIED.
+
+    The gap this closes. The read-back above proves plex.tv STORED the filter string; nothing proved
+    Plex acts on it. Those are different failures, and only the second one reaches the people using
+    the server: a filter that is present and ignored looks perfect from every screen Shortlist has.
+    Reported on discussion #88 — six Plex Home accounts, no restriction profile on any of them, each
+    seeing all six per-person rows — which is precisely the shape no existing check could see. Every
+    other look-through-their-eyes check (`_record_unhideable`) is gated on the account having a
+    restriction profile, so the accounts we successfully write filters for had no verification at all.
+
+    A CANARY, not an audit, and the distinction is what makes it affordable. "Does Plex enforce our
+    exclusions for this kind of account on this server" is a property of the server and the account
+    type, not of each person — so one account per `user_type` is enough to catch a systemic failure,
+    at a cost of at most two extra PMS reads per run rather than one per account (a 48-account server
+    already spends minutes in this phase; rule 6).
+
+    NOT a gate, deliberately. The automatic Privacy Check that blocked writes was removed at the
+    owner's request on 2026-07-16 and this does not reinstate it: it never blocks a write, never
+    blocks promotion, and never raises. It measures and tells the owner, which is the same answer
+    `_record_unhideable` already gives for the accounts Plex refuses.
+
+    Never raises: a diagnostic that fails must not fail the run that produced it.
+    """
+    if ctx.token_for_user is None or ctx.config.dry_run:
+        return
+    if not collections_known or not owned:
+        # Same refusal as `_record_unhideable`: with no reliable picture of which rows exist, "sees
+        # none of ours" would be an artefact of the failed read rather than a finding.
+        return
+    seen_types: set[str] = set()
+    for user in audience:
+        if user.user_type is UserType.OWNER or user.plex_account_id in ctx.unmanaged_account_ids:
+            continue
+        remote = roster.get(user.plex_account_id)
+        if remote is None or getattr(remote, "restriction_profile", ""):
+            continue  # profiled accounts are `_record_unhideable`'s job, and have a different remedy
+        kind = str(user.user_type)
+        if kind in seen_types:
+            continue
+        # Only an account that HAS our exclusions can demonstrate they are being ignored. One with
+        # none is either brand new or nothing has been written for it yet, and it would report an
+        # exposure that no filter ever claimed to prevent.
+        if not any(shortlist_labels_in(remote.filters.get(f, ""), LABEL_PREFIX) for f in RESTRICTED_FILTER_FIELDS):
+            continue
+        try:
+            token = ctx.token_for_user(user)
+            if token is None:
+                continue  # no token for this one; try the next account of this type
+            exposed = unhidden_rows_on_home(ctx.plex.user_hubs(token), owned, user.slug)
+        except Exception as e:
+            logger.debug(
+                "{}: could not spot-check whether the filter is enforced ({})", user.username, type(e).__name__
+            )
+            continue
+        seen_types.add(kind)  # only a check that actually RAN counts as covering this type
+        # At least one account was successfully looked at, so an empty result now MEANS "clean"
+        # rather than "never ran" — which is what lets a fixed server clear the alert.
+        report.filters_enforcement_measured = True
+        if exposed:
+            report.filters_not_enforced[user.username] = exposed
+            logger.error(
+                "{}: this account's share filter carries Shortlist's exclusions and Plex is showing "
+                "it {} row(s) belonging to other people anyway — the exclusions are stored but not "
+                "being applied ({} account)",
+                user.username,
+                len(exposed),
+                kind,
+            )
+        else:
+            logger.debug("{}: filter enforcement confirmed for {} accounts", user.username, kind)
+
+
 def _privacy_sync_phase(
     ctx: EngineContext, users: list[UserProfile], stored_labels: dict[str, str], report: RunReport
 ) -> bool | None:
@@ -773,6 +848,12 @@ def _privacy_sync_phase(
                         else:
                             report.error = f"{report.error} | {msg}" if report.error else msg
                         logger.error("privacy verify: {}", msg)
+
+    # Stored is not the same as enforced. Runs after the read-back and OUTSIDE its `sync_failed`
+    # guard, because a run that could not write one account's filter is exactly a run whose other
+    # accounts are worth spot-checking. Reports only — it cannot change `sync_failed` (see the
+    # function's own docstring on why this is not the removed write gate).
+    _verify_filters_enforced(ctx, audience, roster, owned, collections_known, own_slugs, report)
 
     return not sync_failed
 

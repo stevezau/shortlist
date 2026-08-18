@@ -858,3 +858,44 @@ class TestRowsWithNoNameForNewcomers:
         second = notif._rows_with_no_name_for_newcomers(session, SettingsStore(session))
 
         assert second["id"] != first["id"], "a newly affected row must not stay hidden behind an old dismissal"
+
+
+class TestTheEnforcementAlertCanClearItself:
+    """Architecture review, 2026-08-18. `filters_not_enforced` was written to run stats only when
+    NON-EMPTY, while the notification scans the last 50 runs for the first carrying the key — so one
+    bad night pinned an error-severity, undismissable card through 49 clean runs afterwards. The
+    sibling check (`unhideable_rows`) already solved this by writing on every MEASURED run."""
+
+    @staticmethod
+    def _run(session, exposed, *, finished):
+        run = Run(trigger="schedule", status="ok", finished_at=finished, stats={"filters_not_enforced": exposed})
+        session.add(run)
+        session.commit()
+        return run
+
+    def test_a_clean_run_after_a_bad_one_clears_the_alert(self, session):
+        self._run(session, {"sarah": [1, 2]}, finished=datetime.now(UTC) - timedelta(hours=2))
+        assert notif._filters_not_enforced(session) is not None  # the bad night fires
+
+        self._run(session, {}, finished=datetime.now(UTC))  # a measured, clean run
+
+        assert notif._filters_not_enforced(session) is None, "a fixed server must be able to clear it"
+
+    def test_a_run_that_never_measured_does_not_clear_it(self, session):
+        """Absent is not clean. A run that died before the spot-check writes no key at all, and must
+        not silence a real finding."""
+        self._run(session, {"sarah": [1]}, finished=datetime.now(UTC) - timedelta(hours=2))
+        session.add(Run(trigger="manual", status="error", finished_at=datetime.now(UTC), stats={}))
+        session.commit()
+
+        assert notif._filters_not_enforced(session) is not None
+
+    def test_the_copy_says_the_check_is_a_sample(self, session):
+        """It looks at one account per KIND, so naming one person reads as "one person's problem"
+        when the fault is server-wide."""
+        self._run(session, {"sarah": [1]}, finished=datetime.now(UTC))
+
+        body = notif._filters_not_enforced(session)["body"]
+
+        assert "ONE account of each kind" in body
+        assert "every shared or managed account" in body

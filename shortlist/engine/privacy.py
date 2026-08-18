@@ -758,6 +758,51 @@ def restore_user_restrictions(
     return True
 
 
+_HUB_COLLECTION_KEY = re.compile(r"/library/collections/(\d+)")
+
+
+def unhidden_rows_on_home(hubs: list[dict], owned: dict[str, object], user_slug: str) -> list[int]:
+    """ratingKeys of OUR per-person rows on this account's HOME that are not its own.
+
+    The hub twin of `unhidden_rows_visible_to`, and the surface deliberately chosen for the
+    filter-enforcement canary. Two reasons it is the right one. It is what the complaint is actually
+    about — "every user could see all six rows on the home screen" (#88) — and it is one read rather
+    than a walk of every library's collections, which matters for something that runs each night.
+
+    The other surface is left alone on purpose: whether a real PMS applies a share `label!=` filter to
+    the library COLLECTIONS listing (as opposed to Home) is not something this repo has a recorded
+    answer for, and plex-safety rule 11 says an assumption about PMS behaviour needs a fixture from a
+    real server before code leans on it. Reporting a leak from an unverified assumption would be the
+    worst of both worlds: a privacy alarm nobody can act on.
+
+    Args:
+        hubs: `PlexClient.user_hubs(token)` for the account under test — their Home, as they see it.
+        owned: `PlexClient.owned_collections()`, label-slug -> row with `rating_keys`.
+        user_slug: Whose account this is, so their own row is not reported against them.
+
+    Returns:
+        Sorted ratingKeys of other people's rows on this account's Home. Empty means clean.
+    """
+    shared_marker = SHARED_LABEL_PREFIX[len(LABEL_PREFIX) + 1 :].lower()
+    ours: set[int] = set()
+    theirs: set[int] = set()
+    for slug, row in owned.items():
+        if slug.lower().startswith(shared_marker):
+            continue  # a shared row is meant to be seen; its audience is enforced elsewhere
+        keys = {int(k) for k in getattr(row, "rating_keys", ())}
+        ours |= keys
+        if slug.lower() == user_slug.lower():
+            theirs |= keys
+    if not ours:
+        return []
+    visible: set[int] = set()
+    for hub in hubs:
+        match = _HUB_COLLECTION_KEY.search(str(hub.get("key") or hub.get("hubKey") or ""))
+        if match:
+            visible.add(int(match.group(1)))
+    return sorted((visible & ours) - theirs)
+
+
 def unhidden_rows_visible_to(pms_as_user, owned: dict[str, object], user_slug: str) -> list[int]:
     """ratingKeys of OUR per-person rows this account can see that are not its own.
 

@@ -854,6 +854,13 @@ def _finalize_run(
         stats["unhideable_rows"] = {name: list(keys) for name, keys in report.unhideable_rows.items()}
     # Accounts the owner left alone whose excludes could not be taken back off. Written only when
     # non-empty: an empty key would read as a measurement on every run that never got this far.
+    # Accounts whose filter Shortlist wrote and Plex is not applying. Written on every run that
+    # actually MEASURED, empty included — that empty dict is what lets a fixed server clear the
+    # alert. Keyed on the measured flag rather than on emptiness, because the notification reads the
+    # newest run carrying the key: writing only when non-empty pinned an undismissable error card
+    # through every clean run that followed one bad night.
+    if report.filters_enforcement_measured:
+        stats["filters_not_enforced"] = {name: list(keys) for name, keys in report.filters_not_enforced.items()}
     if report.left_alone_failures:
         stats["left_alone_failures"] = {str(account): why for account, why in report.left_alone_failures.items()}
     # Assigned whole rather than mutated in place: `stats` is a JSON column, and an in-place edit

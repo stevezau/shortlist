@@ -1118,6 +1118,11 @@ class RunReport:
     # in `dev` alone the field is currently written and read by nobody. It is left in place because
     # removing it breaks that working tree; it becomes live when the privacy work lands.
     filters_not_enforced: dict[str, list[int]] = field(default_factory=dict)
+    # Whether the enforcement spot-check actually RAN. Without it an empty result is ambiguous — "we
+    # looked and every account was clean" and "we never got that far" are the same empty dict — so the
+    # alert could never clear itself: written only when non-empty, one bad night pinned an
+    # undismissable red card through every clean run after it. Same shape as `unhideable_measured`.
+    filters_enforcement_measured: bool = False
     # Whether this run actually GOT AS FAR AS looking. An empty `unhideable_rows` is ambiguous on its
     # own — "we checked and nobody is exposed" and "we died in the sweep phase" produce the same
     # dict — and the readers treat the latest measuring run as the truth. Without this flag a run

@@ -321,6 +321,9 @@ class ContextBuilder:
                 previous_recipes=previous_recipes,
                 delivered_keys=delivered_keys,
                 pms_for_user=_pms_for_user,
+                # Same token `_pms_for_user` builds its client from — including the canary fallback
+                # for a Home profile that was never separately shared.
+                token_for_user=lambda profile, _history=history: _history._token_for(profile),
                 disabled_account_ids=disabled_account_ids,
                 unmanaged_account_ids=unmanaged_account_ids,
                 known_slugs=known_slugs,

@@ -509,6 +509,54 @@ def _shelf_contention(session: Session) -> dict | None:
     }
 
 
+def _filters_not_enforced(session: Session) -> dict | None:
+    """Plex is showing an account rows that its share filter says to hide.
+
+    A different fault from `_rows_we_cannot_hide`, and the difference is the whole point. There, Plex
+    REFUSES the filter and the owner has a remedy (clear the restriction profile). Here the filter was
+    accepted, stored, and read back — and Plex is serving the rows anyway. Nothing the owner does in
+    Plex fixes that, so this alert asks for a bug report instead of an action, and says plainly that
+    the rows are visible now rather than implying a setting is wrong.
+
+    Reported on discussion #88: six Plex Home accounts, restriction profile None on every one of them,
+    each seeing all six per-person rows. Nothing could see it — the read-back proves plex.tv STORED the
+    filter, and the only look-through-their-eyes check was gated on the account having a profile.
+    """
+    from shortlist.server.db.models import Run
+
+    run = next(
+        (
+            r
+            for r in session.query(Run).filter(Run.finished_at.isnot(None)).order_by(Run.finished_at.desc()).limit(50)
+            if "filters_not_enforced" in (r.stats or {})
+        ),
+        None,
+    )
+    exposed = ((run.stats or {}).get("filters_not_enforced") or {}) if run else {}
+    if not exposed:
+        return None
+    names = sorted(exposed)
+    who = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+    return {
+        "id": f"filters-not-enforced-{run.id}",
+        "severity": "error",
+        "title": "Plex is ignoring the privacy filter",
+        "body": (
+            f"{who} can see rows belonging to other people, even though Shortlist wrote the hide "
+            "rules to their Plex account and confirmed Plex saved them. Their Restriction Profile is "
+            "already None, so there is nothing to clear — Plex is storing the rule and not applying "
+            "it. Those rows are visible to them right now. Shortlist spot-checks ONE account of each "
+            "kind, so this is likely every shared or managed account on the server, not only the "
+            f"{'one' if len(names) == 1 else 'ones'} named. Please open an issue and include this "
+            "run's id — the Sharing report will look healthy, because every hide rule really is "
+            "present and read back correctly; that is the fault."
+        ),
+        "action_url": f"/runs/{run.id}",
+        "action_label": "See the run",
+        "dismissable": False,
+    }
+
+
 def build_notifications(session: Session, store: SettingsStore, current_version: str) -> list[dict]:
     """Every currently-firing notification the owner hasn't dismissed, most severe first. Dismissal is
     by id, and each dismissable id encodes its state (the run id, the version), so a NEW failure or a
@@ -523,6 +571,7 @@ def build_notifications(session: Session, store: SettingsStore, current_version:
         _recent_service_errors(session),
         _rows_with_no_name_for_newcomers(session, store),
         _rows_we_cannot_hide(session),
+        _filters_not_enforced(session),
         _owner_sees_all_rows(session),
         _shelf_contention(session),
     ]
