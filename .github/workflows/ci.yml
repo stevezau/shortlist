@@ -2,10 +2,14 @@ name: CI
 
 on:
   push:
-    # master included so the stable branch gets its own CI signal after a promotion
-    # PR merges. It never publishes — see the docker job's `if:`, which is pinned to
-    # dev + tags rather than to "any push".
-    branches: [dev, master]
+    # NOT master. It used to be here "so the stable branch gets its own CI signal after a
+    # promotion", which sounds right and buys nothing: master only ever advances by merging a PR
+    # that just ran this whole workflow on the same content, and a master push publishes nothing
+    # (see the docker job's `if:`). Worse, the release tag points AT the merge commit, so master
+    # and the tag were running the identical SHA twice — v1.7.0 ran the full suite four times over
+    # one tree. The two runs that matter are kept: the PR (what protection gates the merge on) and
+    # the tag (the last gate before an image reaches other people's servers).
+    branches: [dev]
     tags: ["v*"]
   pull_request:
     branches: [master, dev]
