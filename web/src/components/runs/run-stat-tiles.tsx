@@ -24,6 +24,12 @@ import type { RunDetail } from "@/lib/types";
 function requestHint(s: RunDetail["stats"]): string {
   const requested = s.titles_requested ?? 0;
   if (requested > 0) return "to Sonarr / Radarr";
+  // Queued FIRST, and before any talk of the floors: a run that put five titles in the inbox worked
+  // exactly as configured, and "none good enough" would send the owner hunting a rating problem that
+  // does not exist. Caught on a real run whose auto_min_demand had just been raised (2026-08-18).
+  const queued = s.requests_queued ?? 0;
+  if (queued > 0)
+    return `${queued} waiting for you to approve in Requests`;
   const pool = s.requests_pool ?? 0;
   if (pool === 0) return "nothing cleared the demand or year limits";
   const examined = s.requests_examined ?? 0;

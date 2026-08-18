@@ -799,6 +799,9 @@ def _finalize_run(
         "requests_warnings": report.requests.warnings if report.requests else [],
         # What "0 requested" was arrived at from — see RequestReport. Kept beside the count because a
         # zero on its own is unreadable, and the run page is where it gets read.
+        # How many are WAITING for the owner. Without it "0 requested" reads as a failure even when
+        # the run worked perfectly and simply put five titles in the inbox for approval.
+        "requests_queued": len(report.requests.queued) if report.requests else 0,
         "requests_pool": report.requests.pool_size if report.requests else 0,
         "requests_examined": report.requests.examined if report.requests else 0,
         "requests_lookups": report.requests.lookups_spent if report.requests else 0,

@@ -69,3 +69,39 @@ describe("the REQUESTED tile", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("the REQUESTED tile when titles are waiting", () => {
+  // Round 31, 2026-08-18: caught on a REAL run. `auto_min_demand` had just been raised, so five
+  // titles cleared the gate and went to the inbox — and the tile said "none good enough", which is
+  // false and points at the wrong setting entirely.
+  function renderTiles(stats: Record<string, unknown>) {
+    const run = {
+      id: 1,
+      trigger: "manual",
+      status: "ok",
+      dry_run: false,
+      started_at: "2026-08-18T04:18:00Z",
+      began_at: "2026-08-18T04:18:00Z",
+      finished_at: "2026-08-18T04:24:00Z",
+      users: [],
+      shared_rows: [],
+      error: null,
+      promotion_blockers: [],
+      stats: { users_ok: 1, users_error: 0, titles_requested: 0, ...stats },
+    } as unknown as RunDetail;
+    render(<RunStatTiles run={run} />);
+  }
+
+  it("says how many are waiting rather than blaming the rating", () => {
+    renderTiles({ requests_queued: 5, requests_pool: 100, requests_examined: 88 });
+    expect(
+      screen.getByText(/5 waiting for you to approve in Requests/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/none good enough/)).toBeNull();
+  });
+
+  it("still blames the gate when nothing qualified at all", () => {
+    renderTiles({ requests_queued: 0, requests_pool: 100, requests_examined: 88 });
+    expect(screen.getByText(/rated 88 of 100 wanted/)).toBeInTheDocument();
+  });
+});
