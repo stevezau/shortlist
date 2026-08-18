@@ -3414,6 +3414,17 @@
             "title": "Rating",
             "type": "number"
           },
+          "row_slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Row Slug"
+          },
           "status": {
             "title": "Status",
             "type": "string"

@@ -489,3 +489,25 @@ class TestApprovingAcrossRowsSharesOneClient:
         clocks = [c for c in made if c is not None]
         assert clocks, "clients must be built with a shared clock, not their own"
         assert all(c is clocks[0] for c in clocks), "one server, one write clock"
+
+
+class TestTheInboxNamesTheRowThatClaimedIt:
+    """`row_slug` decides which Sonarr/Radarr target an approval uses, and the inbox could not show
+    it: the column was persisted correctly but never serialised, so the UI had no way to tell the
+    owner where an approval would land. Found while interpreting a live two-row run (2026-08-18)."""
+
+    def test_the_claiming_row_is_exposed(self, client: TestClient):
+        with client.app.state.sessions() as session:
+            session.query(RequestCandidate).filter_by(id=1).one().row_slug = "kids"
+            session.commit()
+
+        row = next(r for r in client.get("/api/requests").json() if r["id"] == 1)
+
+        assert row["row_slug"] == "kids"
+
+    def test_a_pre_per_row_candidate_reports_null_rather_than_guessing(self, client: TestClient):
+        """Null is the honest answer for anything queued before per-row settings — it falls back to
+        the global config, and inventing a row here would name one that never claimed it."""
+        row = next(r for r in client.get("/api/requests").json() if r["id"] == 2)
+
+        assert row["row_slug"] is None

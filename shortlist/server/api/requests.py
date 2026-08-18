@@ -62,6 +62,9 @@ class RequestCandidateOut(PassthroughModel):
     # Live Arr download status is fetched separately via GET /requests/status (one round-trip for the
     # whole inbox) and merged in the UI — it is NOT carried on the list payload, which would force an
     # Arr call per row on every list fetch.
+    # Which row claimed it — what decides the Sonarr/Radarr target an approval will use.
+    # Null for anything queued before per-row settings, which falls back to the global config.
+    row_slug: str | None = None
 
 
 class RequestAction(BaseModel):
@@ -141,6 +144,7 @@ def list_requests(
             detail=r.detail,
             excluded=bool(r.excluded),
             arr_slug=r.arr_slug,
+            row_slug=r.row_slug,
             updated_at=iso_utc(r.updated_at),
         )
         for r in rows

@@ -1197,9 +1197,10 @@ def _deliver_one(
         return diff, stored
 
     # Fetch ONLY the items being added (the delta), not all N picks — most are already in the
-    # collection on a steady run, so this is a handful of items instead of the whole row. Skip the
-    # fetch entirely when nothing is new (fetch_items([]) raises NotFound on a real PMS).
-    add_items = plex.fetch_items(to_add_keys) if to_add_keys else []
+    # collection on a steady run, so this is a handful of items instead of the whole row. An empty
+    # delta short-circuits inside `fetch_items`, which also absorbs the case where every key in the
+    # delta has been deleted from the library since the picks were made.
+    add_items = plex.fetch_items(to_add_keys)
     plex.set_items(collection, existing_items, add_items, wanted_keys)
     if order_work is not None:
         order_work.append((collection, wanted_keys))

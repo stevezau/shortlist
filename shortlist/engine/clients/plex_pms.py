@@ -22,6 +22,7 @@ from itertools import pairwise
 import requests
 from loguru import logger
 from plexapi.collection import Collection
+from plexapi.exceptions import NotFound
 from plexapi.library import LibrarySection
 from plexapi.server import PlexServer
 from requests.adapters import HTTPAdapter
@@ -1157,7 +1158,33 @@ class PlexClient:
         self._invalidate_collections()  # a removed collection changes the section's list
 
     def fetch_items(self, rating_keys: list[int]) -> list:
-        return self._server.fetchItems(rating_keys)
+        """The items behind these ratingKeys, tolerating ones Plex no longer has.
+
+        A partial batch needs no handling at all: Plex returns the FOUND SUBSET with a 200 and simply
+        omits what has gone (recorded: ``tests/fixtures/pms_metadata_batch_partial.json``, from a real
+        PMS 1.43.3.10793). It 404s only when NOT ONE of the requested keys exists — so a ``NotFound``
+        here means every one of them has been deleted, and the honest answer is an empty list.
+
+        That case is ordinary and must not fail the run. ``to_add_keys`` is the DELTA against what the
+        collection already holds, so on a steady night where the only change was a title being removed
+        from the library, the delta IS the dead keys and the batch is all-missing. Live on the
+        maintainer's server (2026-08-18, run #17) that raised, taking down one person's whole delivery
+        and the shared row while the other 45 people were fine.
+
+        An expired token (401 -> Unauthorized), an unreachable server, and a 5xx all still raise: they
+        are not NotFound, so a real outage cannot be mistaken for a tidied library.
+        """
+        if not rating_keys:
+            return []
+        try:
+            return self._server.fetchItems(rating_keys)
+        except NotFound:
+            logger.warning(
+                "PMS · none of the {} requested ratingKey(s) still exist; delivering without them: {}",
+                len(rating_keys),
+                ", ".join(str(k) for k in rating_keys[:10]),
+            )
+            return []
 
     def user_hubs(self, canary_token: str, path: str = "/hubs") -> list[dict]:
         """Fetch hubs AS another user (for visibility checks). Uses that user's server token, not the owner's."""

@@ -3921,6 +3921,8 @@ export interface components {
             poster_path: string;
             /** Rating */
             rating: number;
+            /** Row Slug */
+            row_slug?: string | null;
             /** Status */
             status: string;
             /** Tags */
