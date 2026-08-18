@@ -26,7 +26,15 @@ function renderTiles(stats: Record<string, unknown>) {
     shared_rows: [],
     error: null,
     promotion_blockers: [],
-    stats: { users_ok: 1, users_error: 0, titles_requested: 0, ...stats },
+    stats: {
+      users_ok: 1,
+      users_error: 0,
+      titles_requested: 0,
+      // Emitted by every current run; 0 means "known: nothing is waiting", which is what separates
+      // these cases from a historic run that cannot say either way.
+      requests_queued: 0,
+      ...stats,
+    },
   } as unknown as RunDetail;
   render(<RunStatTiles run={run} />);
 }
@@ -103,5 +111,36 @@ describe("the REQUESTED tile when titles are waiting", () => {
   it("still blames the gate when nothing qualified at all", () => {
     renderTiles({ requests_queued: 0, requests_pool: 100, requests_examined: 88 });
     expect(screen.getByText(/rated 88 of 100 wanted/)).toBeInTheDocument();
+  });
+});
+
+describe("a run recorded before the queued count existed", () => {
+  it("does not claim none were good enough", () => {
+    // ABSENT is not zero. The stats blob is a record of what THAT run reported, so a historic run
+    // cannot tell us whether titles are waiting — asserting "none good enough" would point the
+    // reader at the rating floor on no evidence.
+    const run = {
+      id: 1,
+      trigger: "schedule",
+      status: "ok",
+      dry_run: false,
+      started_at: "2026-08-18T04:18:00Z",
+      began_at: "2026-08-18T04:18:00Z",
+      finished_at: "2026-08-18T04:24:00Z",
+      users: [],
+      shared_rows: [],
+      error: null,
+      promotion_blockers: [],
+      stats: {
+        users_ok: 1,
+        users_error: 0,
+        titles_requested: 0,
+        requests_pool: 100,
+        requests_examined: 88,
+      },
+    } as unknown as RunDetail;
+    render(<RunStatTiles run={run} />);
+    expect(screen.queryByText(/none good enough/)).toBeNull();
+    expect(screen.getByText(/see Requests for anything waiting/)).toBeInTheDocument();
   });
 });

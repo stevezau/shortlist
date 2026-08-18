@@ -27,9 +27,13 @@ function requestHint(s: RunDetail["stats"]): string {
   // Queued FIRST, and before any talk of the floors: a run that put five titles in the inbox worked
   // exactly as configured, and "none good enough" would send the owner hunting a rating problem that
   // does not exist. Caught on a real run whose auto_min_demand had just been raised (2026-08-18).
-  const queued = s.requests_queued ?? 0;
-  if (queued > 0)
-    return `${queued} waiting for you to approve in Requests`;
+  const queued = s.requests_queued;
+  if (queued) return `${queued} waiting for you to approve in Requests`;
+  // ABSENT is not zero. A run recorded before this key existed cannot tell us whether titles are
+  // waiting, so claiming "none were good enough" asserts something the data does not support — and
+  // sends the reader at the rating floor when the auto-send bar may be what held them. Same trap as
+  // `wanted` in the notification builder.
+  if (queued === undefined) return "see Requests for anything waiting";
   const pool = s.requests_pool ?? 0;
   if (pool === 0) return "nothing cleared the demand or year limits";
   const examined = s.requests_examined ?? 0;
