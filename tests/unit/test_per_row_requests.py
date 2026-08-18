@@ -630,3 +630,36 @@ class TestTheClaimingRowSurvivesTheRequeuePath:
             base, FakeTmdb(), _rows(("plain", base, _demand(_title(1), _title(2)))), dry_run=False
         )
         assert "max_per_run (1) already filled" in report.queued[0].detail
+
+    def test_three_rows_holding_it_back_still_get_the_real_failure(self, monkeypatch):
+        """Third architecture review HIGH: the fix above kept the LAST queued copy while
+        `_dedupe_queued` keeps the FIRST, so with three rows the Arr's failure landed on a copy that
+        was then discarded — and `detail` is the one field dedupe does not merge. Two rows passed."""
+        fake = FakeArr(raise_on=1)
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        base = _cfg(max_per_run=5)
+        manual = replace(base, auto_send=False)
+        report = requests_mod.request_missing(
+            base,
+            FakeTmdb(),
+            _rows(
+                ("kids", manual, _demand(_title(1))),
+                ("teen", manual, _demand(_title(1))),
+                ("main", base, _demand(_title(1))),
+            ),
+            dry_run=False,
+        )
+
+        assert len(report.queued) == 1
+        assert "boom" in report.queued[0].detail, "the surviving copy must carry the Arr's reason"
+        assert report.queued[0].row_slug == "main"
+
+    def test_a_row_capped_at_zero_names_its_own_limit(self, radarr):
+        """The cell the previous commit's message was about, and the one it had no test for."""
+        base = _cfg(max_per_run=5)
+        never = resolve_request_config(base, RequestOverrides(max_per_row=0))
+        report = requests_mod.request_missing(
+            base, FakeTmdb(), _rows(("never", never, _demand(_title(1)))), dry_run=False
+        )
+        assert report.sent == []
+        assert "this row's own limit (0)" in report.queued[0].detail

@@ -455,18 +455,26 @@ def request_missing(
     # never reached the inbox and retried blindly every night. Queue it WITH the reason. Only "error"
     # — the skips are settled facts (already in the Arr, or no TVDB id) and surfacing them is noise.
     fail_detail = {(o.tmdb_id, o.media_type): o.detail for o in report.outcomes if o.status == "error"}
-    already_queued = {(m.tmdb_id, m.media_type): m for m in report.queued}
+    # EVERY queued copy of a key, not one of them. A dict comprehension here kept the LAST copy while
+    # `_dedupe_queued` keeps the FIRST, so with three or more rows holding a title back the Arr's
+    # failure was written onto a copy dedupe then discarded — and `detail` is the one field dedupe
+    # does not merge. Two rows was not enough to show it; the first version's test used two.
+    # Stamping all of them is order-independent and survives dedupe changing its keeper rule.
+    queued_by_key: dict[tuple[int, MediaType], list[MissingTitle]] = {}
+    for queued in report.queued:
+        queued_by_key.setdefault((queued.tmdb_id, queued.media_type), []).append(queued)
     for _, m in claims:
         key = (m.tmdb_id, m.media_type)
         if key not in fail_detail:
             continue
-        # An earlier row may already have queued its own copy of this title for a threshold reason.
-        # That copy is the one `_dedupe_queued` keeps, so the REAL failure has to land on it — else
-        # the inbox says "auto-send is off" for a title Radarr actually rejected, re-opening the bug
-        # this block exists to fix.
-        existing = already_queued.get(key)
-        if existing is not None:
-            existing.detail = fail_detail[key]
+        copies = queued_by_key.get(key)
+        if copies:
+            # An earlier row already queued this for a threshold reason. The REAL failure has to land
+            # on whichever copy survives, else the inbox says "auto-send is off" for a title Radarr
+            # rejected — and `_is_failure_detail` reads that as a mere threshold note, so it is not
+            # even protected from being overwritten next run.
+            for copy in copies:
+                copy.detail = fail_detail[key]
             continue
         m.detail = fail_detail[key]
         report.queued.append(m)

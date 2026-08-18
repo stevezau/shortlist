@@ -192,8 +192,12 @@ class TestAllocatorInvariants:
                 if earlier == slug:
                     break
                 if key in {(t.tmdb_id, t.media_type) for t in titles}:
-                    cap = caps.get(earlier)
-                    assert cap is not None and per_row.get(earlier, 0) >= cap, (
+                    # `earlier_cap`, NOT `cap` — rebinding the hypothesis parameter silently gated
+                    # the work-conserving check below against a ROW cap instead of the run ceiling,
+                    # skipping it entirely in 20 of 3000 generated shapes. A test that quietly stops
+                    # testing is worse than no test.
+                    earlier_cap = caps.get(earlier)
+                    assert earlier_cap is not None and per_row.get(earlier, 0) >= earlier_cap, (
                         f"{earlier} offered {key} first and had room, but {slug} claimed it"
                     )
 
