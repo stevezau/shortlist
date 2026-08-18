@@ -99,7 +99,7 @@ Requires Radarr v3+ / Sonarr v4+ reachable from the Shortlist container.
 ### Why is a title still waiting?
 
 The bar for sending on its own is higher than the bar for being requestable at all: a title is sent
-without asking only if it clears **both** `requests.auto_min_demand` (default 3 distinct people) and
+without asking only if it clears **both** `requests.auto_min_demand` (default 3 distinct people, counted **within one row**) and
 `requests.auto_min_rating` (default 8.0). A 7.9 wanted by twenty people still waits. Beyond that:
 
 - **On an exclusion list** — a past delete in Radarr/Sonarr leaves the title on an import-exclusion

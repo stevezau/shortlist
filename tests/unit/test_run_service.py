@@ -238,6 +238,7 @@ class TestRunExecution:
             # Beside the count, because "0 requested" cannot be read without them: how many titles
             # cleared the base floors, how many the rating gate rated, what that cost MDBList.
             "requests_queued": 0,
+            "requests_wanted": 0,
             "requests_pool": 0,
             "requests_examined": 0,
             "requests_lookups": 0,

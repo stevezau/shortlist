@@ -320,7 +320,11 @@ def request_missing(
     budget = _lookup_budget(base_cfg.max_per_run)
     # Counted BEFORE any floor, and deduplicated across rows: it is what separates "nothing was
     # missing" (fine) from "plenty was missing and your floors rejected all of it" (actionable).
-    report.wanted = len({key for row in rows for key in row.demand})
+    # Counted NET of titles the owner already actioned. A server whose whole inbox was rejected sits
+    # permanently at "wanted > 0, pool == 0" — the titles were rejected, so they are never requested,
+    # so they stay missing, so they stay in demand — and the alert then tells the owner to loosen
+    # floors that were never the reason. Only titles still in play count as wanted.
+    report.wanted = len({key for row in rows for key in row.demand if (key[0], str(key[1])) not in handled})
 
     gated = _gate_rows(rows, handled, report, mdblist=mdblist, budget=budget)
 
@@ -361,6 +365,11 @@ def request_missing(
         cap=base_cfg.max_per_run,
         row_caps={slug: cfg.max_per_row for slug, cfg in cfg_by_row.items()},
     )
+    for slug, title in claims:
+        # Which row's target this went out under. `why` lists every row that WANTED it, so it cannot
+        # answer that once provenance is merged across rows — and a later approval has to reuse the
+        # row the run actually used, or it files into a different folder.
+        title.row_slug = slug
     claimed = {(slug, m.tmdb_id, m.media_type) for slug, m in claims}
 
     # 4. Anything auto-worthy that missed out is queued rather than lost — including a title a LATER
@@ -587,25 +596,6 @@ def request_titles_by_row(
     report = RequestReport(considered=len(claims))
     report.outcomes = _send_claims(claims, cfg_by_row, tmdb, dry_run=dry_run, min_write_interval=min_write_interval)
     return report
-
-
-def _send(
-    cfg: RequestConfig,
-    tmdb: TmdbClient,
-    titles: list[MissingTitle],
-    *,
-    dry_run: bool,
-    min_write_interval: float,
-    radarr: RadarrClient | None = None,
-    sonarr: SonarrClient | None = None,
-) -> list[RequestOutcome]:
-    """Route every title to its Arr. Clients are built at most once — passed in when the caller
-    already built them (so the arr-state check and the send share one), else built here."""
-    if radarr is None and cfg.radarr:
-        radarr = RadarrClient(cfg.radarr, min_write_interval=min_write_interval)
-    if sonarr is None and cfg.sonarr:
-        sonarr = SonarrClient(cfg.sonarr, min_write_interval=min_write_interval)
-    return [_request_one(title, radarr, sonarr, tmdb, dry_run=dry_run) for title in titles]
 
 
 def _apply_arr_state(

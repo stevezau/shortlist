@@ -117,8 +117,7 @@ def _refresh_pending(row: RequestCandidate, m) -> None:
     row.tags = sorted(m.tags)
     row.wanters = sorted(m.wanters)
     row.why = _why_json(m.why)
-    # A row re-queued under a different row keeps the newest claim: that is the row whose target it
-    # would be sent to if approved now, and the inbox shows the same provenance.
+    # Keep the newest claim: that is the row whose target an approval would use now.
     row.row_slug = _row_slug(m) or row.row_slug
     # A queued title now always carries a reason ("max_per_run (5) already filled"), so a plain
     # `m.detail or row.detail` would overwrite yesterday's REAL failure ("Sonarr returned HTTP 503")
@@ -157,11 +156,17 @@ def _candidate_row(m, run_id: int, *, status: str) -> RequestCandidate:
 def _row_slug(m) -> str | None:
     """Which row this title came from, for resolving its Sonarr/Radarr target on a later approval.
 
-    Every `why` entry on one title carries the same slug: demand is accumulated per row, so a title
-    surfaced by two rows is two separate objects, each with only its own row's provenance. Taking the
-    first is therefore taking the only one. None for a title with no provenance at all, which falls
-    back to the global config — the same behaviour as every row queued before per-row settings.
+    Reads the slug the ENGINE recorded on the title, not the first `why` entry. Those diverged the
+    moment `_merge_across_rows` began unioning provenance across rows: a title two rows wanted now
+    carries both their slugs in `why`, and the one that matters is the row that actually CLAIMED it —
+    the row whose Sonarr/Radarr target the run used, and the one a later approval must reuse.
+
+    Falls back to the first recorded slug for a title that was never claimed (everything queued), and
+    to None when there is no provenance at all — which sends the approval to the global config, the
+    same behaviour as every row queued before per-row settings existed.
     """
+    if getattr(m, "row_slug", None):
+        return m.row_slug
     return next((w.row_slug for w in (m.why or []) if w.row_slug), None)
 
 
@@ -802,6 +807,7 @@ def _finalize_run(
         # How many are WAITING for the owner. Without it "0 requested" reads as a failure even when
         # the run worked perfectly and simply put five titles in the inbox for approval.
         "requests_queued": len(report.requests.queued) if report.requests else 0,
+        "requests_wanted": report.requests.wanted if report.requests else 0,
         "requests_pool": report.requests.pool_size if report.requests else 0,
         "requests_examined": report.requests.examined if report.requests else 0,
         "requests_lookups": report.requests.lookups_spent if report.requests else 0,

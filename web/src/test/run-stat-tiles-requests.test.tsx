@@ -144,3 +144,38 @@ describe("a run recorded before the queued count existed", () => {
     expect(screen.getByText(/see Requests for anything waiting/)).toBeInTheDocument();
   });
 });
+
+describe("a run with nothing missing is not a floors problem", () => {
+  // Architecture review, 2026-08-18: `pool === 0` is ALSO what a healthy run on a complete library
+  // produces, so "nothing cleared the demand or year limits" reported a fault where there is none.
+  // `requests_wanted` was declared in the types but never emitted, so the tile could not tell.
+  function renderTiles(stats: Record<string, unknown>) {
+    const run = {
+      id: 1,
+      trigger: "schedule",
+      status: "ok",
+      dry_run: false,
+      started_at: "2026-08-18T04:18:00Z",
+      began_at: "2026-08-18T04:18:00Z",
+      finished_at: "2026-08-18T04:24:00Z",
+      users: [],
+      shared_rows: [],
+      error: null,
+      promotion_blockers: [],
+      stats: { users_ok: 1, users_error: 0, titles_requested: 0, requests_queued: 0, ...stats },
+    } as unknown as RunDetail;
+    render(<RunStatTiles run={run} />);
+  }
+
+  it("says nothing was missing rather than blaming the floors", () => {
+    renderTiles({ requests_wanted: 0, requests_pool: 0 });
+    expect(screen.getByText(/nothing was missing/)).toBeInTheDocument();
+  });
+
+  it("still blames the floors when titles were wanted and none got through", () => {
+    renderTiles({ requests_wanted: 700, requests_pool: 0 });
+    expect(
+      screen.getByText(/nothing cleared the demand or year limits/),
+    ).toBeInTheDocument();
+  });
+});

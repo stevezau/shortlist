@@ -219,3 +219,43 @@ class TestTheWalkClearsItsOwnCachedHead:
         budget = 100
         head = budget * ((_REJECT_RECHECK_TTL_S + RATING_CACHE_TTL_S) // day)
         assert _walk_limit(budget) - head >= budget
+
+
+class TestTheEarlierRowOwnsAContestedTitle:
+    """Architecture review, 2026-08-18 (HIGH). `allocate`'s docstring, `_dedupe_queued` and the
+    shipped guide all promise the FIRST row in run order gets a title several rows want — and the
+    code gave it to whichever row's per-round allowance happened to reach it first. That decides
+    which root folder and quality profile it lands in, so the owner sees the mis-file in Radarr."""
+
+    def test_the_earlier_row_wins_at_every_cap(self):
+        """main's own slot went to a higher-demand title, so kids used to take the contested one."""
+        shared = _title(9)
+        for cap in (2, 3, 4):
+            claims = allocate([("main", [_title(100), shared]), ("kids", [shared])], cap=cap, row_caps={})
+            owner = next(slug for slug, t in claims if t.tmdb_id == 9)
+            assert owner == "main", f"at cap {cap} the later row took it"
+
+    def test_ownership_falls_through_when_the_earlier_row_has_no_room(self):
+        """ "The first row whose settings it passes" — a row at its own cap does not pass. Holding the
+        title there would leave a slot idle while a later row had it ready."""
+        shared = _title(9)
+        claims = allocate([("capped", [_title(100), shared]), ("open", [shared])], cap=5, row_caps={"capped": 1})
+        assert ("open", 9) in [(s, t.tmdb_id) for s, t in claims]
+        assert len(claims) == 2, "the surplus slot must still be usable"
+
+    def test_a_row_that_can_never_take_does_not_hold_a_title_hostage(self):
+        shared = _title(9)
+        claims = allocate([("zero", [shared]), ("open", [shared])], cap=3, row_caps={"zero": 0})
+        assert [(s, t.tmdb_id) for s, t in claims] == [("open", 9)]
+
+    def test_a_skipped_title_is_not_discarded_from_the_later_rows_queue(self):
+        """It is only borrowed by the earlier row's claim on it. Popping it while passing lost it for
+        good, so the run came up short — which is what the property test caught."""
+        shared = _title(4)
+        claims = allocate(
+            [("a", [_title(1), _title(2), _title(3), _title(6), shared]), ("b", [shared, _title(5)])],
+            cap=6,
+            row_caps={"a": 4},
+        )
+        assert len(claims) == 6
+        assert ("b", 4) in [(s, t.tmdb_id) for s, t in claims]

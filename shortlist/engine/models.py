@@ -542,11 +542,14 @@ class RequestConfig:
     # This ROW's own ceiling on how many titles it may contribute to the run, for the allocator.
     # Only ever <= `max_per_run`: the run ceiling is what protects the library from ballooning, so a
     # row may make itself more restrictive and never less (`resolve_request_config` enforces it).
-    # Defaults to `max_per_run` — "as much as the run allows", which is still divided between rows.
-    max_per_row: int = 0
+    #
+    # None — not 0 — means "inherit the run ceiling". 0 is a REAL choice the UI offers and promises
+    # ("this row never asks for anything on its own"), so using it as the unset sentinel handed such
+    # a row the FULL run cap: the exact inverse of the control, on a path that adds titles to Radarr.
+    max_per_row: int | None = None
 
     def __post_init__(self) -> None:
-        if self.max_per_row <= 0:
+        if self.max_per_row is None:
             self.max_per_row = self.max_per_run
 
 
@@ -649,6 +652,10 @@ class MissingTitle:
     # The arr titleSlug of a sent title, captured at send time so the inbox links straight to its
     # Sonarr/Radarr page. None until sent / for a title that never resolved on the arr.
     arr_slug: str | None = None
+    # The row that CLAIMED this title, stamped by the request pass. Distinct from the slugs in `why`,
+    # which after `_merge_across_rows` list every row that WANTED it — only one row's target was
+    # actually used, and a later approval has to reuse that one.
+    row_slug: str | None = None
     # True when the title sits on Sonarr/Radarr's import-exclusion list (from a past delete): it's
     # surfaced for the owner but never auto-sent, since the Arr would refuse it until un-excluded.
     excluded: bool = False
@@ -1097,11 +1104,14 @@ class RunReport:
     # §12's whole register is that shape. `pipeline._leave_sharing_alone` fills it.
     left_alone_failures: dict[int, str] = field(default_factory=dict)
     # {username: [ratingKey, ...]} — accounts whose share filter Shortlist DID write, that can still
-    # see other people's rows. The read-back proves plex.tv STORED our exclusions; this is the only
-    # thing that asks whether Plex ACTS on them. Distinct from `unhideable_rows`, which is the
-    # accounts Plex refuses a filter for: the remedy there is "clear the restriction profile", and
-    # here there isn't one the owner can apply — a filter that is present and ignored is ours or
-    # Plex's to explain, so it is reported as a fault, not as a setting.
+    # see other people's rows. The read-back proves plex.tv STORED our exclusions; this asks whether
+    # Plex ACTS on them.
+    #
+    # NOTE (2026-08-18): this field reached `dev` inside a per-row-requests commit by mistake — the
+    # first commit of that branch staged the whole of models.py while the maintainer's privacy work
+    # was uncommitted in the same file. Its producer and consumer live on that in-flight branch, so
+    # in `dev` alone the field is currently written and read by nobody. It is left in place because
+    # removing it breaks that working tree; it becomes live when the privacy work lands.
     filters_not_enforced: dict[str, list[int]] = field(default_factory=dict)
     # Whether this run actually GOT AS FAR AS looking. An empty `unhideable_rows` is ambiguous on its
     # own — "we checked and nobody is exposed" and "we died in the sweep phase" produce the same

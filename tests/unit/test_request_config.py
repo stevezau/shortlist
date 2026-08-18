@@ -119,3 +119,22 @@ class TestTargetOverrides:
         tagged = ArrTarget(url="u", api_key="k", quality_profile_id=1, root_folder="/m", tag="shortlist")
         out = resolve_request_config(_cfg(radarr=tagged), RequestOverrides(radarr_root_folder="/kids"))
         assert out.radarr.tag == "shortlist"
+
+
+class TestZeroIsARealChoiceNotAnUnsetSentinel:
+    """Architecture review, 2026-08-18 (HIGH). `max_per_row` used 0 as its "inherit" sentinel, so a
+    row set to 0 — which the editor offers, and describes as "this row never asks for anything on its
+    own" — was handed the FULL run cap. The exact inverse of the control, on the path that adds
+    titles to Radarr. The 0 cell was the only one this class did not cover."""
+
+    def test_zero_means_zero(self):
+        out = resolve_request_config(_cfg(max_per_run=5), RequestOverrides(max_per_row=0))
+        assert out.max_per_row == 0
+
+    def test_none_still_means_inherit(self):
+        assert resolve_request_config(_cfg(max_per_run=5), RequestOverrides(max_per_row=None)).max_per_row == 5
+        assert resolve_request_config(_cfg(max_per_run=5), None).max_per_row == 5
+
+    def test_a_bare_config_still_defaults_to_its_own_run_cap(self):
+        """Nothing else in the codebase passes `max_per_row`, so the default must keep working."""
+        assert _cfg(max_per_run=7).max_per_row == 7

@@ -34,6 +34,10 @@ function requestHint(s: RunDetail["stats"]): string {
   // sends the reader at the rating floor when the auto-send bar may be what held them. Same trap as
   // `wanted` in the notification builder.
   if (queued === undefined) return "see Requests for anything waiting";
+  const wanted = s.requests_wanted;
+  // A healthy run on a complete library also lands on pool === 0, so blaming the floors there would
+  // report a fault where there is none. `wanted` is what tells the two apart.
+  if (wanted === 0) return "nothing was missing";
   const pool = s.requests_pool ?? 0;
   if (pool === 0) return "nothing cleared the demand or year limits";
   const examined = s.requests_examined ?? 0;

@@ -45,6 +45,19 @@ def allocate(
     # Keyed on (id, media_type), never the bare id: movie 550 and show 550 are different titles, the
     # same rule `filter_candidates` and the demand map follow.
     claimed: set[tuple[int, MediaType]] = set()
+    # Which row OWNS each contested title, decided up front by run order rather than by whichever
+    # row's per-round allowance happens to reach it first. Those are not the same thing: with
+    # `main=[100, 9]` and `kids=[9]` at cap 2, main's single slot went to 100 and `kids` took 9 —
+    # so a title the main row wanted was filed into the kids folder at the kids quality profile.
+    # The docstring, `_dedupe_queued` and the shipped guide all promise the earlier row, and the
+    # owner sees the result in Radarr, so the code is what moves.
+    # ...and the fall-through matters: a row that cannot take anything (its own cap is 0, or it is
+    # full) must not hold a title hostage, or a slot goes idle while a later row had it available.
+    # "The first row in your row order whose settings it passes" — a row at its cap does not pass.
+    offered_by: dict[tuple[int, MediaType], list[str]] = {}
+    for slug, titles in per_row:
+        for title in titles:
+            offered_by.setdefault(_key(title), []).append(slug)
     claims: list[tuple[str, MissingTitle]] = []
     taken: dict[str, int] = {slug: 0 for slug, _ in per_row}
     # Each row's own remaining queue, consumed as titles are claimed or found already claimed.
@@ -52,7 +65,7 @@ def allocate(
     order = [slug for slug, _ in per_row]
 
     while len(claims) < budget:
-        live = [slug for slug in order if _can_take(slug, queues, taken, row_caps, claimed)]
+        live = [slug for slug in order if _can_take(slug, queues, taken, row_caps, claimed, offered_by)]
         if not live:
             break
         # Re-derived every round rather than computed once: a row that just ran dry returns its share
@@ -64,7 +77,7 @@ def allocate(
             allowance = share + (1 if position < extra else 0)
             if allowance == 0:
                 continue
-            _drain(slug, allowance, queues, taken, row_caps, claimed, claims, budget)
+            _drain(slug, allowance, queues, taken, row_caps, claimed, offered_by, claims, budget)
             if len(claims) >= budget:
                 break
     return claims
@@ -76,12 +89,13 @@ def _can_take(
     taken: dict[str, int],
     row_caps: dict[str, int],
     claimed: set[tuple[int, MediaType]],
+    offered_by: dict[tuple[int, MediaType], list[str]],
 ) -> bool:
     """Whether this row has both an unclaimed title left and room under its own cap."""
     cap = row_caps.get(slug)
     if cap is not None and taken[slug] >= cap:
         return False
-    return any(_key(title) not in claimed for title in queues[slug])
+    return any(_key(t) not in claimed and _owner(_key(t), offered_by, taken, row_caps) == slug for t in queues[slug])
 
 
 def _drain(
@@ -91,18 +105,32 @@ def _drain(
     taken: dict[str, int],
     row_caps: dict[str, int],
     claimed: set[tuple[int, MediaType]],
+    offered_by: dict[tuple[int, MediaType], list[str]],
     claims: list[tuple[str, MissingTitle]],
     budget: int,
 ) -> None:
-    """Take up to ``allowance`` titles for one row, skipping any an earlier row already claimed."""
+    """Take up to ``allowance`` titles for one row, skipping any an earlier row owns.
+
+    Scans rather than pops, and that distinction is load-bearing: ownership is not fixed. A title
+    belongs to the earliest row with ROOM, so when that row fills up the title falls to the next row
+    that offered it — and discarding it on the way past would lose it for good. Only a title that is
+    actually claimed, by anyone, leaves the queue.
+    """
     row_cap = row_caps.get(slug)
-    while allowance > 0 and queues[slug] and len(claims) < budget:
+    queue = queues[slug]
+    index = 0
+    while allowance > 0 and index < len(queue) and len(claims) < budget:
         if row_cap is not None and taken[slug] >= row_cap:
             return
-        title = queues[slug].pop(0)
+        title = queue[index]
         key = _key(title)
         if key in claimed:
-            continue  # an earlier row got it; this row's slot is still free for its next pick
+            queue.pop(index)  # gone for good — someone claimed it
+            continue
+        if _owner(key, offered_by, taken, row_caps) != slug:
+            index += 1  # an earlier row owns it FOR NOW; keep it in case that changes
+            continue
+        queue.pop(index)
         claimed.add(key)
         claims.append((slug, title))
         taken[slug] += 1
@@ -111,3 +139,23 @@ def _drain(
 
 def _key(title: MissingTitle) -> tuple[int, MediaType]:
     return (title.tmdb_id, title.media_type)
+
+
+def _owner(
+    key: tuple[int, MediaType],
+    offered_by: dict[tuple[int, MediaType], list[str]],
+    taken: dict[str, int],
+    row_caps: dict[str, int],
+) -> str:
+    """Which row gets this title: the earliest that offered it AND still has room under its own cap.
+
+    Earliest-in-run-order is the contract three separate texts promise, and it is what decides which
+    root folder and quality profile the title lands in. The room check is what keeps that from
+    wasting a slot: a row capped at 0 offered the title but can never take it, so holding it there
+    would leave the run short while a later row had it ready.
+    """
+    for slug in offered_by[key]:
+        cap = row_caps.get(slug)
+        if cap is None or taken[slug] < cap:
+            return slug
+    return offered_by[key][-1]  # nobody has room; the loop's cap checks will skip it anyway
