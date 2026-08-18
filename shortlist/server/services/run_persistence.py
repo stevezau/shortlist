@@ -808,6 +808,24 @@ def _finalize_run(
         # the run worked perfectly and simply put five titles in the inbox for approval.
         "requests_queued": len(report.requests.queued) if report.requests else 0,
         "requests_wanted": report.requests.wanted if report.requests else 0,
+        # Per row, because the aggregates cannot answer the question the feature exists to make
+        # answerable: WHICH row was starved. Written only when there is something to say — a run with
+        # requests off, or one that never reached the request phase, records no empty dicts.
+        **(
+            {
+                "requests_by_row": {
+                    slug: {
+                        "pool": report.requests.pool_by_row.get(slug, 0),
+                        "examined": report.requests.examined_by_row.get(slug, 0),
+                        "considered": report.requests.considered_by_row.get(slug, 0),
+                        "sent": report.requests.sent_by_row.get(slug, 0),
+                    }
+                    for slug in report.requests.pool_by_row
+                }
+            }
+            if report.requests and report.requests.pool_by_row
+            else {}
+        ),
         "requests_pool": report.requests.pool_size if report.requests else 0,
         "requests_examined": report.requests.examined if report.requests else 0,
         "requests_lookups": report.requests.lookups_spent if report.requests else 0,

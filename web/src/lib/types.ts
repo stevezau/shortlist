@@ -516,6 +516,12 @@ export interface RunStats {
   requests_lookups?: number;
   /** Titles waiting in the inbox for the owner to approve. */
   requests_queued?: number;
+  /** The same figures per row, which is what answers "why did THAT row send nothing". Absent when
+   *  requests are off or the run never reached the request phase. */
+  requests_by_row?: Record<
+    string,
+    { pool: number; examined: number; considered: number; sent: number }
+  >;
   /** Total AI tokens this run cost (curate + the AI candidate sources). Absent on legacy runs. */
   llm_tokens?: number;
   /** That total split by where it went: { curate, llm_web, llm_library }. */
