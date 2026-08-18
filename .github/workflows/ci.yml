@@ -113,6 +113,12 @@ jobs:
       - run: >-
           pytest --splits 3 --group ${{ matrix.shard }}
           --splitting-algorithm least_duration --cov-fail-under=0 --durations=25
+        env:
+          # PEP 669 sys.monitoring instead of sys.settrace for coverage — 3.12+ and coverage>=7.4,
+          # both of which this job pins. Verified locally to report the SAME 94.38%; it changes how
+          # coverage observes the interpreter, not what it records. (Local wall-clock here is too
+          # noisy to size the win — the same code timed 106s-218s — so this run is the measurement.)
+          COVERAGE_CORE: sysmon
       # Renamed off the dotfile so upload-artifact keeps it — v4 silently drops hidden files, and
       # a missing shard here would combine into a QUIETLY LOWER coverage number, not an error.
       - run: mv .coverage coverage-data-${{ matrix.shard }}

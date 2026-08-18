@@ -14,6 +14,8 @@ offending element, not just a pass/fail.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from playwright.sync_api import Browser, Page
 
@@ -157,7 +159,9 @@ def _routes(app: ShortlistApp) -> list[tuple[str, str, str | None]]:
         ("users", "/users", "sarah"),
         ("user detail", f"/users/{sarah}", "Because you watched|sarah"),
         ("runs", "/runs", "succeeded|ok"),
-        ("run detail", f"/runs/{run_id}", "AI tokens|Summary|user"),
+        # "AI tokens|Summary|user" matched nothing this page renders — it shows DURATION,
+        # ROWS BUILT, PEOPLE. It only ever "passed" by falling through the 8s timeout.
+        ("run detail", f"/runs/{run_id}", "ROWS BUILT|DURATION|Run #"),
         ("requests", "/requests", "request"),
         ("jobs", "/jobs", "Schedules|job|Backup"),
         ("logs", "/logs", "log|level"),
@@ -170,7 +174,18 @@ def _audit(page: Page, label: str, path: str, wait: str | None) -> tuple[list, l
     page.goto(path)  # no networkidle: the app holds an SSE stream open, so it never goes idle
     if wait:
         try:
-            page.get_by_text(__import__("re").compile(wait, __import__("re").I)).first.wait_for(timeout=8000)
+            # Scoped to <main>, and that scope is load-bearing rather than tidiness. Unscoped, the
+            # match ran against the WHOLE page, where the nav rail (app-shell.tsx:320,
+            # `hidden ... md:flex`) and the settings sub-nav (settings-nav.tsx:43) still exist in
+            # the DOM while hidden below `md`. So on a phone `.first` picked the hidden nav link —
+            # "run" hit Runs, "user" hit Users, "job" hit Jobs, "log" hit Logs, "request" hit
+            # Requests — and wait_for(state="visible") then waited out the full 8s on something
+            # that is never going to be visible at this width.
+            #
+            # Six of thirteen routes did that: 9.6s each instead of 0.5s, and the audit then ran on
+            # whatever had rendered by then, so these routes were never really waiting for their
+            # content at all. Measured 64.4s for this test at 390px, ~110s across both widths.
+            page.locator("main").get_by_text(re.compile(wait, re.I)).first.wait_for(timeout=8000)
         except Exception:
             page.wait_for_timeout(1200)  # audit whatever rendered; this is a layout check, not a content test
     else:
@@ -276,18 +291,32 @@ def test_no_dialog_scrolls_sideways_on_a_phone(browser: Browser, app: ShortlistA
     context = _phone(browser, app, width=width)
     page = context.new_page()
     overflow: dict[str, list] = {}
+    audited: list[str] = []
+    skipped: list[str] = []
     try:
         for label, path, opener, proof in DIALOGS:
             page.goto(path)
-            page.wait_for_timeout(1200)
             button = page.get_by_role("button", name=opener).first
-            if button.count() == 0:
+            try:
+                # Replaces a blind 1200ms sleep, and is stricter too: that sleep was the only thing
+                # stopping a slow render from reading count()==0 and skipping the dialog silently.
+                # Kept SHORT deliberately — "Rename" and "Remove from Plex" are genuinely absent at
+                # phone width, so this budget is paid in full on every run and a 5s one cost 10s.
+                button.wait_for(timeout=1500)
+            except Exception:
+                skipped.append(label)
                 continue  # the control is not on this page in this state; the route sweep covers that
             try:
                 button.click(timeout=5000)
-                page.get_by_text(__import__("re").compile(proof, __import__("re").I)).first.wait_for(timeout=5000)
+                # Scoped to the dialog for the same reason the route sweep scopes to <main>: matched
+                # against the whole page, "Run|rows|select" hit the nav rail's own "Runs"/"Rows"
+                # links, which are in the DOM but hidden below `md`. That resolved instantly and the
+                # test then measured the PAGE while believing it had a dialog open.
+                dialog = page.get_by_role("dialog")
+                dialog.get_by_text(re.compile(proof, re.I)).first.wait_for(timeout=5000)
             except Exception:
                 continue  # could not open it; not this test's job to assert the interaction
+            audited.append(label)
             page.wait_for_timeout(400)  # the panel zooms in — measuring mid-transform reports a phantom
             scroll = page.evaluate(PAGE_SCROLLS)
             if scroll["overflowBy"] > SLOP:
@@ -299,5 +328,14 @@ def test_no_dialog_scrolls_sideways_on_a_phone(browser: Browser, app: ShortlistA
             page.wait_for_timeout(200)
     finally:
         context.close()
+
+    # Every `continue` above is a dialog that went unmeasured. Without this the test could audit
+    # nothing at all and still pass green, which is exactly how the nav-link match hid for so long.
+    assert audited, f"opened no dialogs at {width}px — expected {[d[0] for d in DIALOGS]}"
+    # Only 2 of the 4 open at phone width — "Rename" and "Remove from Plex" are not reachable there.
+    # Printed rather than asserted: this test measures layout, and which controls a phone exposes is
+    # a product question. But it should be VISIBLE, not silently skipped as it was before.
+    if skipped:
+        print(f"\nNOT REACHABLE at {width}px, so unmeasured: {skipped}")
 
     assert not overflow, _report(overflow, "HORIZONTAL OVERFLOW (dialogs)")
