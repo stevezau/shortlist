@@ -15,7 +15,12 @@ from typing import NamedTuple
 from loguru import logger
 
 from shortlist.engine.clients.arr import ArrError, RadarrClient, SonarrClient
-from shortlist.engine.clients.mdblist import VOTE_SOURCES, MdbListClient, MdbListRateLimitError
+from shortlist.engine.clients.mdblist import (
+    RATING_CACHE_TTL_S,
+    VOTE_SOURCES,
+    MdbListClient,
+    MdbListRateLimitError,
+)
 from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.models import (
     ArrTarget,
@@ -57,16 +62,23 @@ _MIN_LOOKUP_POOL = 100
 def _walk_limit(budget: int) -> int:
     """A hard stop on how far the gate will WALK, distinct from what it may SPEND.
 
-    Quota is capped by ``_lookup_budget``; this only bounds the pathological pool whose head is
+    Quota is capped by the caller's budget; this only bounds the pathological pool whose head is
     thousands of already-cached titles, where every step is a cheap local read and the loop would
     otherwise scan the lot.
 
-    Derived from the budget, never flat, because rejects are deliberately held for
-    ``_REJECT_RECHECK_TTL_S`` — so up to one run's budget per day of them can pile up in front of the
-    frontier, and a flat bound would become the new binding constraint the moment the owner raised
-    the cap. That is the same shape as the flat 20 this module has already been bitten by twice.
+    Derived, never flat, because the head is made of cached ratings and its length is a function of
+    the spend rate. Two things pile up in front of the frontier, and the walk has to clear BOTH or the
+    row is starved again by its own cache — the very bug this module was fixed for:
+
+        deferred rejects   budget/day for _REJECT_RECHECK_TTL_S   (60 days)
+        near misses        budget/day for RATING_CACHE_TTL_S      (7 days, the normal re-check)
+
+    Plus one more budget, so a run always has room to reach that much NEW ground beyond the head.
+    Counting only the rejects left a 60-day head against a 61-budget walk, which the weekly-cached
+    near misses then overflowed — measured at 3,350 against 3,050 for a two-row split of 100.
     """
-    return budget * (_REJECT_RECHECK_TTL_S // (24 * 3600) + 1)
+    days = (_REJECT_RECHECK_TTL_S + RATING_CACHE_TTL_S) // (24 * 3600)
+    return budget * (days + 1)
 
 
 # How long a title that missed the rating floor by MORE than `_NEAR_MISS` keeps its cached score,

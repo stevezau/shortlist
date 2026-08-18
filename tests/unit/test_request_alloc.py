@@ -190,3 +190,32 @@ class TestAllocatorInvariants:
                 room = caps.get(slug, 10**9) - per_row.get(slug, 0)
                 leftover = [t for t in titles if (t.tmdb_id, t.media_type) not in claimed]
                 assert room <= 0 or not leftover, f"{slug} could still have filled a slot"
+
+
+class TestTheWalkClearsItsOwnCachedHead:
+    """Audit round 24, 2026-08-18: the walk limit has to be longer than the head of cached titles the
+    gate's own caching creates, or a row is starved by its own cache — the original bug, in miniature.
+
+    Two things pile up in front of the frontier at the spend rate: deferred rejects (60 days) and
+    near misses on the normal weekly re-check (7 days). Counting only the rejects left a 60-day head
+    against a 61-budget walk, which the near misses then overflowed.
+    """
+
+    def test_the_walk_outlasts_both_kinds_of_cached_head(self):
+        from shortlist.engine.clients.mdblist import RATING_CACHE_TTL_S
+        from shortlist.engine.requests import _REJECT_RECHECK_TTL_S, _walk_limit
+
+        day = 24 * 3600
+        for budget in (20, 50, 100, 400):
+            head = budget * (_REJECT_RECHECK_TTL_S // day) + budget * (RATING_CACHE_TTL_S // day)
+            assert _walk_limit(budget) > head, f"a {budget} budget cannot see past its own cache"
+
+    def test_it_leaves_room_for_a_whole_run_of_new_ground(self):
+        """Clearing the head by one title would let a run reach exactly one new title a night."""
+        from shortlist.engine.clients.mdblist import RATING_CACHE_TTL_S
+        from shortlist.engine.requests import _REJECT_RECHECK_TTL_S, _walk_limit
+
+        day = 24 * 3600
+        budget = 100
+        head = budget * ((_REJECT_RECHECK_TTL_S + RATING_CACHE_TTL_S) // day)
+        assert _walk_limit(budget) - head >= budget
