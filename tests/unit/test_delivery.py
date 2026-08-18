@@ -271,7 +271,12 @@ class TestAnUnnameableRowTouchesNothing:
 
 
 def _labelling_plex_mock(plex: MagicMock) -> MagicMock:
-    """Make `stored_label` leave the label ON the collection, as the real one does.
+    """Make `stored_label` leave the label ON the collection, as the real one does, and give
+    `fetch_items` the `(items, missing)` shape the real client returns.
+
+    `fetch_items` reports what Plex still HAS and what has GONE, because a partial batch omits dead
+    keys silently — a mock returning a bare list would let delivery claim it delivered titles the row
+    does not contain. Default: nothing missing.
 
     Not decoration: `_apply_shortlist_label` refuses to write unless the owner label is already in
     `collection.labels`, because plexapi's addLabel PUTs an ABSOLUTE tag set built from that list —
@@ -280,6 +285,11 @@ def _labelling_plex_mock(plex: MagicMock) -> MagicMock:
     mock that ignored the guard entirely would let a regression through. Testing rule: the fake must
     be no easier than the real server.
     """
+
+    # `fetch_items` returns (items, missing): a partial batch omits dead keys silently, so delivery
+    # has to be told what went. A bare MagicMock ITERATES EMPTY rather than raising, so unpacking it
+    # would quietly yield nothing — the mock must carry the real shape.
+    plex.fetch_items.return_value = ([], [])
 
     def stored_label(collection, label):
         stored = label.replace("shortlist", "Shortlist", 1)
@@ -314,10 +324,12 @@ class TestDeliverRows:
 
     def _plex(self, movies: MagicMock, shows: MagicMock) -> MagicMock:
         plex = MagicMock(spec=PlexClient)
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = [movies, shows]
         plex.sections_by_type.return_value = {MediaType.MOVIE: movies, MediaType.SHOW: shows}
         plex.find_owned_collections.return_value = []
         plex.matches_section.return_value = True
+        plex.fetch_items.return_value = ([], [])
         return _labelling_plex_mock(plex)
 
     def test_library_keys_target_one_library_and_remap_its_rating_keys(self, engine_config: EngineConfig):
@@ -453,7 +465,7 @@ class TestDeliverRows:
         assert plex.set_items.call_args.args == (
             existing,
             existing.items.return_value,
-            plex.fetch_items.return_value,
+            plex.fetch_items.return_value[0],
             [1001, 1002],
         )
         existing.items.assert_called_once()  # membership read exactly once, not twice
@@ -638,6 +650,7 @@ class TestDeliverRows:
     def test_picks_for_a_library_the_server_lacks_are_dropped(self, engine_config: EngineConfig, movies):
         """A movies-only server must not crash on a show pick — it just can't deliver it."""
         plex = MagicMock(spec=PlexClient)
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = [movies]
         plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
         plex.find_owned_collections.return_value = []
@@ -716,6 +729,7 @@ class TestServerWithTwoLibrariesOfTheSameType:
 
     def _plex(self, *sections: MagicMock) -> MagicMock:
         plex = MagicMock(spec=PlexClient)
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = list(sections)
         plex.find_owned_collections.return_value = []
         plex.matches_section.return_value = True
@@ -813,6 +827,7 @@ class TestSweepBrokenRows:
 
     def _plex(self, movies: MagicMock, shows: MagicMock, *collections: MagicMock) -> MagicMock:
         plex = MagicMock(spec=PlexClient)
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = [movies, shows]
         movies.collections.return_value = [c for c in collections if c.section is movies]
         shows.collections.return_value = [c for c in collections if c.section is shows]
@@ -1049,6 +1064,7 @@ class TestAnUnlabelledRowIsNeverLeftBehind:
         movies = _section("Movies", "movie", 1)
         created = MagicMock()
         plex = MagicMock(spec=PlexClient)
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = [movies]
         plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
         plex.find_owned_collections.return_value = []
@@ -1068,6 +1084,7 @@ class TestAnUnlabelledRowIsNeverLeftBehind:
         created = MagicMock()
         created.delete.side_effect = RuntimeError("PMS still down")
         plex = MagicMock(spec=PlexClient)
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = [movies]
         plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
         plex.find_owned_collections.return_value = []
@@ -1092,6 +1109,7 @@ class TestARowSharingItsTagWithOthers:
 
     def _plex(self, movies: MagicMock, shows: MagicMock) -> MagicMock:
         plex = MagicMock(spec=PlexClient)
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = [movies, shows]
         plex.sections_by_type.return_value = {MediaType.MOVIE: movies, MediaType.SHOW: shows}
         plex.matches_section.return_value = True
@@ -1124,6 +1142,7 @@ class TestFindThisRowsCollection:
 
     def _plex(self, matches_section: bool = True) -> MagicMock:
         plex = MagicMock(spec=PlexClient)
+        plex.fetch_items.return_value = ([], [])
         plex.matches_section.return_value = matches_section
         return plex
 
@@ -1239,6 +1258,7 @@ class TestTheSweepRemovesSharedTagRows:
 
     def _plex(self, movies: MagicMock, shows: MagicMock, *collections: MagicMock) -> MagicMock:
         plex = MagicMock(spec=PlexClient)
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = [movies, shows]
         plex.matches_section.return_value = True  # correctly typed: only the TAG is wrong
         movies.collections.return_value = [c for c in collections if c.section is movies]
@@ -1304,6 +1324,7 @@ class TestRemoveRowCollections:
         keep = MagicMock(title="💎 Hidden Gems" + row_marker(100))
         drop = MagicMock(title="✨ Picked for You" + row_marker(100))
         plex = MagicMock(spec=PlexClient)
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = [movies]
         plex.find_owned_collections.side_effect = lambda section, label: [keep, drop]
 
@@ -1320,6 +1341,7 @@ class TestRemoveRowCollections:
         m = MagicMock(title="🔥 Popular" + row_marker(0))
         s = MagicMock(title="🔥 Popular" + row_marker(0))
         plex = MagicMock(spec=PlexClient)
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = [movies, shows]
         plex.find_owned_collections.side_effect = lambda section, label: [m] if section is movies else [s]
 
@@ -1338,6 +1360,7 @@ class TestRemoveRowCollections:
 
         c = MagicMock(title="✨ Picked for You" + row_marker(100))
         plex = MagicMock(spec=PlexClient)
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = [movies]
         plex.find_owned_collections.side_effect = lambda section, label: [c]
 
@@ -1359,6 +1382,7 @@ class TestRenameRowCollections:
         target = MagicMock(title="Old Gems" + marker)
         other = MagicMock(title="Popular" + marker)  # a different row of the same user — must be untouched
         plex = MagicMock(spec=PlexClient)
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = [movies]
         plex.find_owned_collections.side_effect = lambda section, label: [target, other]
 
@@ -1384,6 +1408,7 @@ class TestRenameRowCollections:
         m = MagicMock(title="Old Gems" + marker)
         s = MagicMock(title="Old Gems" + marker)
         plex = MagicMock(spec=PlexClient)
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = [movies, shows]
         plex.find_owned_collections.side_effect = lambda section, label: [m] if section is movies else [s]
 
@@ -1407,6 +1432,7 @@ class TestRenameRowCollections:
         marker = row_marker(100)
         already = MagicMock(title="New Gems" + marker)  # its stripped title != old_display → not matched
         plex = MagicMock(spec=PlexClient)
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = [movies]
         plex.find_owned_collections.side_effect = lambda section, label: [already]
 
@@ -1429,6 +1455,7 @@ class TestRenameRowCollections:
         marker = row_marker(100)
         c = MagicMock(title="Old Gems" + marker)
         plex = MagicMock(spec=PlexClient)
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = [movies]
         plex.find_owned_collections.side_effect = lambda section, label: [c]
 
@@ -1653,6 +1680,7 @@ class TestTheConstantLabel:
 
     def _plex(self, movies):
         plex = MagicMock(spec=PlexClient)
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = [movies]
         plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
         plex.find_owned_collections.return_value = []
@@ -1715,6 +1743,8 @@ class TestTheConstantLabel:
         from shortlist.engine.delivery import _apply_shortlist_label
 
         plex = MagicMock(spec=PlexClient)
+
+        plex.fetch_items.return_value = ([], [])
         blind = MagicMock()
         blind.title = "✨ Movies Picked for You"
         blind.labels = []  # Plex answered, and said this row has no labels at all
@@ -1728,6 +1758,8 @@ class TestTheConstantLabel:
         from shortlist.engine.delivery import _apply_shortlist_label
 
         plex = MagicMock(spec=PlexClient)
+
+        plex.fetch_items.return_value = ([], [])
         collection = MagicMock()
         collection.title = "✨ Movies Picked for You"
         collection.labels = [SimpleNamespace(tag="Shortlist_sarah")]
@@ -1742,6 +1774,8 @@ class TestTheConstantLabel:
         from shortlist.engine.delivery import _apply_shortlist_label
 
         plex = MagicMock(spec=PlexClient)
+
+        plex.fetch_items.return_value = ([], [])
         collection = MagicMock()
         collection.title = "✨ Movies Picked for You"
         collection.labels = [SimpleNamespace(tag="Shortlist_sarah"), SimpleNamespace(tag="Shortlist")]
@@ -1797,6 +1831,7 @@ class TestTheOwnerPrefixIsLoadBearing:
         collection.ratingKey = 9001
         collection.labels = [SimpleNamespace(tag="Shortlist"), SimpleNamespace(tag="Shortlist_sarah")]
         plex = MagicMock(spec=PlexClient)
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = [movies]
         plex.owned_collections.return_value = {}
         plex._section_collections = lambda _s: [collection]
@@ -1818,6 +1853,8 @@ class TestTheConstantLabelCannotSelectEveryRow:
         from shortlist.engine.delivery import remove_row_collections
 
         plex = MagicMock(spec=PlexClient)
+
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = [movies]
         plex.find_owned_collections.return_value = [MagicMock(title="✨ Movies Picked for You")]
 
@@ -1837,6 +1874,8 @@ class TestTheConstantLabelCannotSelectEveryRow:
         from shortlist.engine.delivery import rename_row_collections, reset_row_posters
 
         plex = MagicMock(spec=PlexClient)
+
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = [movies]
 
         assert (
@@ -1867,6 +1906,8 @@ class TestTheConstantLabelCannotSelectEveryRow:
         from shortlist.engine.delivery import rename_row_collections, reset_row_posters
 
         plex = MagicMock(spec=PlexClient)
+
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = [movies]
         plex.find_owned_collections.return_value = []
 
@@ -1913,10 +1954,12 @@ class TestAConflictingRenameDoesNotTakeThePersonDown:
 
     def _plex(self, movies, shows):
         plex = MagicMock(spec=PlexClient)
+        plex.fetch_items.return_value = ([], [])
         plex.sections.return_value = [movies, shows]
         plex.sections_by_type.return_value = {MediaType.MOVIE: movies, MediaType.SHOW: shows}
         plex.find_owned_collections.return_value = []
         plex.matches_section.return_value = True
+        plex.fetch_items.return_value = ([], [])
         return _labelling_plex_mock(plex)
 
     def _existing(self, profile, raiser):
@@ -1982,3 +2025,43 @@ class TestAConflictingRenameDoesNotTakeThePersonDown:
 
         with pytest.raises(Exception, match="401"):
             deliver_rows(plex, profile, picks(), engine_config)
+
+
+class TestTheDiffReportsWhatLandedNotWhatWasAsked:
+    """Architecture review, 2026-08-18. A partial batch omits dead keys silently, so `diff.added` was
+    computed from what we ASKED for: a 25-pick row that lost 2 reported "25 added" while Plex held
+    23, and `titles_added` in the run stats inherited the same lie. "Why isn't X in my row when the
+    run says it delivered it" is exactly what plex-safety rule 10 exists to make answerable."""
+
+    def test_a_vanished_pick_is_not_reported_as_added(self, engine_config: EngineConfig):
+        from shortlist.engine.delivery import deliver_rows
+        from shortlist.engine.models import RowSpec
+
+        movies = _section("Movies", "movie", "1")
+        plex = _labelling_plex_mock(MagicMock(spec=PlexClient))
+        plex.sections.return_value = [movies]
+        plex.find_owned_collections.return_value = []
+        kept = MagicMock()
+        kept.ratingKey = 101
+        # Plex still holds 101; 202 was deleted between the pick being made and delivery.
+        plex.fetch_items.return_value = ([kept], [202])
+
+        alive = Pick(1, 101, "Still Here", rank=1, reason="r", media_type=MediaType.MOVIE)
+        gone = Pick(2, 202, "Deleted Since", rank=2, reason="r", media_type=MediaType.MOVIE)
+
+        reports = deliver_rows(
+            plex,
+            make_profile(),
+            [alive, gone],
+            engine_config,
+            RowSpec(slug="picked", name_template="Picked", size=10, media="movie"),
+            sections=[movies],
+            section_picks={movies.key: [alive, gone]},
+            dry_run=False,
+        )
+
+        # `deliver_rows` returns (diff, label) — the diff is what the run report and the stats read.
+        diff = reports[0] if isinstance(reports, tuple) else reports
+        added = diff.added if hasattr(diff, "added") else diff[0].added
+        assert "Still Here" in added
+        assert "Deleted Since" not in added, "the run must not claim it delivered a title Plex dropped"

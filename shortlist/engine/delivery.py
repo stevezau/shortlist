@@ -879,7 +879,18 @@ def _create_labelled_collection(
     Returns the stored (Plex title-cased) label and the new collection's ratingKey — the ledger's
     handle on it, and the only one that survives a title the next run renders differently.
     """
-    items = plex.fetch_items([p.rating_key for p in picks])
+    items, vanished = plex.fetch_items([p.rating_key for p in picks])
+    if vanished:
+        # Deleted from the library since the picks were made. The row is created from the survivors;
+        # naming them keeps the audit trail honest about what it actually contains (rule 10).
+        gone = {p.title for p in picks if p.rating_key in set(vanished)}
+        logger.warning(
+            "{}: {} pick(s) vanished from Plex before '{}' was created: {}",
+            profile.username,
+            len(vanished),
+            title,
+            ", ".join(sorted(gone)),
+        )
     collection = plex.create_collection(section, title, items)
     try:
         stored = plex.stored_label(collection, label)
@@ -914,7 +925,7 @@ def _create_labelled_collection(
         len(picks),
         stored,
     )
-    return stored, _rating_key(collection)
+    return stored, _rating_key(collection), vanished
 
 
 def _find_this_rows_collection(
@@ -1092,7 +1103,7 @@ def _deliver_one(
             )
             apply_poster(plex, None, poster, profile, picks, library_name=section.title, artist=artist, dry_run=True)
             return diff, label
-        stored, diff.rating_key = _create_labelled_collection(
+        stored, diff.rating_key, vanished = _create_labelled_collection(
             plex,
             section,
             profile,
@@ -1104,6 +1115,12 @@ def _deliver_one(
             artist=artist,
             order_work=order_work,
         )
+        if vanished:
+            # Deleted from Plex between the picks being made and the row being created. The row holds
+            # the survivors, so the diff must name only those — otherwise the run reports having
+            # delivered a title the row does not contain (plex-safety rule 10).
+            dead = set(vanished)
+            diff.added = [p.title for p in picks if p.rating_key not in dead]
         return diff, stored
 
     existing_items = collection.items()  # ONE read of current membership, reused for the diff AND set_items
@@ -1159,7 +1176,7 @@ def _deliver_one(
             to_remove_count,
         )
         plex.delete_owned_collection(collection, label_prefix)
-        stored, diff.rating_key = _create_labelled_collection(
+        stored, diff.rating_key, vanished = _create_labelled_collection(
             plex,
             section,
             profile,
@@ -1171,6 +1188,12 @@ def _deliver_one(
             artist=artist,
             order_work=order_work,
         )
+        if vanished:
+            # Deleted from Plex between the picks being made and the row being created. The row holds
+            # the survivors, so the diff must name only those — otherwise the run reports having
+            # delivered a title the row does not contain (plex-safety rule 10).
+            dead = set(vanished)
+            diff.added = [p.title for p in picks if p.rating_key not in dead]
         return diff, stored
 
     if collection.title != title:
@@ -1200,7 +1223,22 @@ def _deliver_one(
     # collection on a steady run, so this is a handful of items instead of the whole row. An empty
     # delta short-circuits inside `fetch_items`, which also absorbs the case where every key in the
     # delta has been deleted from the library since the picks were made.
-    add_items = plex.fetch_items(to_add_keys)
+    add_items, vanished = plex.fetch_items(to_add_keys)
+    if vanished:
+        # A partial miss is silent (a 200 with the dead keys omitted), so without this the run
+        # reports having added titles the row does not contain — "25 added" while Plex holds 23 —
+        # and `titles_added` in the run stats inherits the same lie (plex-safety rule 10).
+        dead = set(vanished)
+        gone = {title_by_key.get(k, str(k)) for k in vanished}
+        diff.added = [t for t in diff.added if t not in gone]
+        wanted_keys = [k for k in wanted_keys if k not in dead]
+        logger.warning(
+            "{}: {} pick(s) vanished from Plex before delivery of '{}': {}",
+            profile.username,
+            len(vanished),
+            display,
+            ", ".join(sorted(gone)),
+        )
     plex.set_items(collection, existing_items, add_items, wanted_keys)
     if order_work is not None:
         order_work.append((collection, wanted_keys))

@@ -73,7 +73,9 @@ def ctx(engine_config: EngineConfig, mock_plextv, mock_tmdb, mock_curator) -> En
     plex.owned_collections.return_value = {}
     plex.find_owned_collections.return_value = []  # delivery finds by title; promotion enumerates rows
     plex.stored_label.side_effect = lambda collection, label: label.replace("shortlist", "Shortlist", 1)
-    plex.fetch_items.side_effect = lambda keys: [fake_media_item(k, f"item{k}") for k in keys]
+    # (items, missing) — the real client reports what Plex no longer has, because a partial batch
+    # omits dead keys silently and delivery must not claim it delivered them.
+    plex.fetch_items.side_effect = lambda keys: ([fake_media_item(k, f"item{k}") for k in keys], [])
 
     history = MagicMock()
     history.fetch.return_value = [make_watched("Fargo", days_ago=i, rating_key=999) for i in range(1, 5)]

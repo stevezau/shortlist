@@ -653,3 +653,26 @@ the token) if either is reverted.
 one caller in a module makes it deletable-by-accident along with that caller. Anything derived from
 an exception message goes through it — check for the import surviving whenever a module's last
 `redact()` user is removed.
+
+## Delivery over-reports titles Plex silently dropped (open)
+
+**Found:** architecture review, 2026-08-18, while fixing the run-#17 delivery failure.
+
+A batch `fetchItems` returns 200 with only the titles that still exist (recorded:
+`tests/fixtures/pms_metadata_batch_partial.json`); the deleted ones are simply absent. But
+`_deliver_one` computes `diff.added` from `wanted_keys`, not from what came back — so a 25-pick row
+that lost 2 titles mid-run reports "25 added" while Plex holds 23. `run_persistence` sums those diffs
+into `titles_added`, so the run page and the events row both overstate it, and "why isn't X in my
+row when the run says it delivered it" is unanswerable from the audit trail. That is the one thing
+plex-safety rule 10 exists to guarantee.
+
+**Pre-existing** — not introduced by the per-row requests work. `fetch_items` now at least logs the
+dropped keys (`plex_pms.py`), so there is a record, but the diff is still wrong.
+
+**Why it is not fixed yet:** the correct fix changes `fetch_items`'s return contract (items AND what
+was missing) and every caller, then filters `diff.added`/`wanted_keys` on both the create and update
+paths. That is meaningful churn in `delivery.py`, the highest-risk file in the repo, and it was
+identified on release eve. Deliberately deferred rather than bundled into a release.
+
+**When doing it:** cover all three delivery strategies (create / in-place update / rebuild) with a
+dead key, and assert the persisted `titles_added` matches what Plex actually holds.

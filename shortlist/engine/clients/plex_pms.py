@@ -1157,34 +1157,46 @@ class PlexClient:
         collection.delete()
         self._invalidate_collections()  # a removed collection changes the section's list
 
-    def fetch_items(self, rating_keys: list[int]) -> list:
-        """The items behind these ratingKeys, tolerating ones Plex no longer has.
+    def fetch_items(self, rating_keys: list[int]) -> tuple[list, list[int]]:
+        """``(items, missing)`` for these ratingKeys — what Plex still has, and what has gone.
 
-        A partial batch needs no handling at all: Plex returns the FOUND SUBSET with a 200 and simply
-        omits what has gone (recorded: ``tests/fixtures/pms_metadata_batch_partial.json``, from a real
-        PMS 1.43.3.10793). It 404s only when NOT ONE of the requested keys exists — so a ``NotFound``
-        here means every one of them has been deleted, and the honest answer is an empty list.
+        Returns BOTH because a caller cannot otherwise tell: a partial batch comes back as a 200 with
+        the dead keys simply absent (recorded: ``tests/fixtures/pms_metadata_batch_partial.json``,
+        from a real PMS 1.43.3.10793), so the omission is silent. Reporting a row as having delivered
+        a title Plex does not hold makes "why isn't X in my row" unanswerable from the audit trail,
+        which is the one thing plex-safety rule 10 exists to guarantee.
 
-        That case is ordinary and must not fail the run. ``to_add_keys`` is the DELTA against what the
-        collection already holds, so on a steady night where the only change was a title being removed
-        from the library, the delta IS the dead keys and the batch is all-missing. Live on the
-        maintainer's server (2026-08-18, run #17) that raised, taking down one person's whole delivery
-        and the shared row while the other 45 people were fine.
+        Plex 404s only when NOT ONE requested key exists — so a ``NotFound`` here means every one has
+        been deleted, and the honest answer is nothing found, everything missing. That case is
+        ordinary and must not fail the run: ``to_add_keys`` is the DELTA, so on a steady night whose
+        only change was a deletion, the delta IS the dead keys. Live on the maintainer's server
+        (2026-08-18, run #17) that raised, taking down one person's whole delivery and the shared row
+        while the other 45 were fine.
 
-        An expired token (401 -> Unauthorized), an unreachable server, and a 5xx all still raise: they
-        are not NotFound, so a real outage cannot be mistaken for a tidied library.
+        An expired token (401 -> Unauthorized), an unreachable server and a 5xx all still raise: none
+        is a NotFound, so a real outage can never be mistaken for a tidied library.
         """
         if not rating_keys:
-            return []
+            return [], []
         try:
-            return self._server.fetchItems(rating_keys)
+            items = self._server.fetchItems(rating_keys)
         except NotFound:
             logger.warning(
-                "PMS · none of the {} requested ratingKey(s) still exist; delivering without them: {}",
+                "PMS · none of the {} requested ratingKey(s) still exist: {}",
                 len(rating_keys),
                 ", ".join(str(k) for k in rating_keys[:10]),
             )
-            return []
+            return [], list(rating_keys)
+        got = {int(k) for i in items if (k := getattr(i, "ratingKey", None)) is not None}
+        missing = [k for k in rating_keys if k not in got]
+        if missing:
+            logger.warning(
+                "PMS · {} of {} ratingKey(s) no longer exist: {}",
+                len(missing),
+                len(rating_keys),
+                ", ".join(str(k) for k in missing[:10]),
+            )
+        return items, missing
 
     def user_hubs(self, canary_token: str, path: str = "/hubs") -> list[dict]:
         """Fetch hubs AS another user (for visibility checks). Uses that user's server token, not the owner's."""
