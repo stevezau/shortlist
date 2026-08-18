@@ -528,3 +528,47 @@ class TestTaggingEndToEnd:
         requests_mod.request_missing(base, FakeTmdb(tvdb={70: 900}), _rows(("tv", base, _demand(show))), dry_run=False)
 
         assert sonarr_fake.tag_calls == [{"sarah", "tv-row"}]
+
+
+class TestARowSetToNeverAskDoesNotAsk:
+    """Architecture review HIGH, 2026-08-18, end to end. `max_per_row` used 0 as its "inherit"
+    sentinel, so a row the editor describes as "never asks for anything on its own" was handed the
+    FULL run cap and could auto-send that many titles into Radarr. The unit fix is in
+    `resolve_request_config`; this asserts it survives the whole path the owner's setting travels."""
+
+    def test_zero_sends_nothing_while_the_other_row_still_works(self, radarr):
+        base = _cfg(max_per_run=6)
+        never = resolve_request_config(base, RequestOverrides(max_per_row=0))
+        report = requests_mod.request_missing(
+            base,
+            FakeTmdb(),
+            _rows(
+                ("never", never, _demand(*[_title(i) for i in range(1, 9)])),
+                ("normal", base, _demand(*[_title(i) for i in range(100, 109)])),
+            ),
+            dry_run=False,
+        )
+        assert report.sent_by_row.get("never", 0) == 0, "a row set to 0 must send nothing"
+        assert report.sent_by_row["normal"] == 6, "and must hand its whole share to the other row"
+
+    def test_its_titles_still_reach_the_inbox_for_approval(self, radarr):
+        """The caption promises exactly this: "its picks still wait in Requests for you to approve"."""
+        base = _cfg(max_per_run=6)
+        never = resolve_request_config(base, RequestOverrides(max_per_row=0))
+        report = requests_mod.request_missing(
+            base, FakeTmdb(), _rows(("never", never, _demand(_title(1), _title(2)))), dry_run=False
+        )
+        assert report.sent == []
+        assert {m.tmdb_id for m in report.queued} == {1, 2}
+
+    def test_the_claiming_row_is_stamped_on_every_sent_title(self, radarr):
+        """`row_slug` is what an approval months later uses to pick the right Arr target, and it can
+        no longer be derived from `why` now that provenance is merged across rows."""
+        base = _cfg(max_per_run=4)
+        report = requests_mod.request_missing(
+            base,
+            FakeTmdb(),
+            _rows(("a", base, _demand(_title(1))), ("b", base, _demand(_title(2)))),
+            dry_run=False,
+        )
+        assert {m.row_slug for m in report.sent} == {"a", "b"}

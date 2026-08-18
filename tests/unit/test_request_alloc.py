@@ -259,3 +259,22 @@ class TestTheEarlierRowOwnsAContestedTitle:
         )
         assert len(claims) == 6
         assert ("b", 4) in [(s, t.tmdb_id) for s, t in claims]
+
+    def test_a_later_row_cannot_take_a_title_the_earlier_row_still_owns(self):
+        """The case `_can_take` alone does not cover, found by mutation testing (round 35).
+
+        Row A's allowance runs out mid-round while it still owns an unclaimed title. A is live, B is
+        live, and B's queue reaches A's title before B's own — so without the ownership check inside
+        `_drain`, B claims a title A owns and files it into B's folder. `_can_take` cannot catch it:
+        B legitimately owns something else, so it IS live.
+
+        Verified to bite: with `_drain`'s ownership check stubbed out this returns
+        [('a', 1), ('b', 2)] — b taking a's title. (An earlier attempt at this mutation silently
+        matched nothing after the check was split across two `if`s, and appeared to prove the line
+        redundant. A mutation that changes no behaviour is a mutation that did not apply.)
+        """
+        x, z, w = _title(1), _title(2), _title(3)
+        claims = allocate([("a", [x, z]), ("b", [z, w])], cap=2, row_caps={})
+
+        assert [(s, t.tmdb_id) for s, t in claims] == [("a", 1), ("b", 3)]
+        assert 2 not in [t.tmdb_id for _, t in claims], "z is owned by a, which had no slot left"
