@@ -71,6 +71,17 @@ jobs:
           PY
 
   test-python:
+    # SHARDED, reversing the note that used to sit here. That note was right when it was written
+    # and its premise has since expired: it measured this job at 2m52 and off the critical path
+    # ("the critical path is e2e + docker"). The suite has since gone from 15k to 52k lines, this
+    # job to ~411s, and it is now the longest thing on the board by 165s — e2e is 246s. Three
+    # duration-balanced shards put it at ~185s, which hands the critical path back to e2e.
+    strategy:
+      # Every shard reports. fail-fast would hide failures in shards 2 and 3 behind shard 1,
+      # turning one red run into three re-runs.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -89,15 +100,61 @@ jobs:
       # different dependency versions than production actually runs.
       - run: uv pip install --system -r requirements.lock
       - run: uv pip install --system -e ".[dev]"
-      # --cov-report=xml adds an XML report on top of the term-missing one in
-      # pyproject addopts, so Codecov has a file to ingest (badge stays "unknown"
-      # without it).
-      #
-      # NOT sharded across a matrix. It was, briefly: three duration-balanced shards took this job
-      # from 2m52 to 1m31 — and the whole workflow from 4m17 to 4m03, because the critical path is
-      # e2e + docker and this job is no longer on it. Fourteen seconds did not justify a split
-      # dependency, a committed durations file, a coverage-combine job and artifact plumbing.
-      - run: pytest --cov-report=xml
+      # Shards write coverage DATA, not a report: the report (and its fail_under gate) belongs to
+      # the `coverage` job below, which combines all three. --cov-fail-under=0 is what stops a
+      # shard failing on its own partial ~35%.
+      # least_duration bin-packs by recorded cost; the default contiguous-chunk algorithm put
+      # 52% of the work in one shard (measured), which is no better than not sharding by much.
+      # .test_durations only affects BALANCE — a stale entry makes a shard uneven, never skips a
+      # test. Refresh it with: pytest --store-durations
+      # --durations=25 costs nothing and makes every run self-diagnosing: when this job creeps up
+      # again, the log already says which tests did it. A laptop cannot measure this — local
+      # wall-clock here varied 106s-218s for the SAME code — so CI is the only honest instrument.
+      - run: >-
+          pytest --splits 3 --group ${{ matrix.shard }}
+          --splitting-algorithm least_duration --cov-fail-under=0 --durations=25
+      # Renamed off the dotfile so upload-artifact keeps it — v4 silently drops hidden files, and
+      # a missing shard here would combine into a QUIETLY LOWER coverage number, not an error.
+      - run: mv .coverage coverage-data-${{ matrix.shard }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-data-${{ matrix.shard }}
+          path: coverage-data-${{ matrix.shard }}
+          if-no-files-found: error
+          retention-days: 1
+
+  # The coverage gate the shards can no longer apply individually. Runs off the critical path —
+  # it starts when the shards finish (~185s) and lands well inside e2e's ~246s, so it costs the
+  # workflow nothing while keeping fail_under real.
+  coverage:
+    needs: [test-python]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install coverage
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: coverage-data-*
+          merge-multiple: true
+      # `coverage combine` only picks up files named `.coverage.*`; the shards uploaded them under
+      # a visible name to survive the artifact step, so rename them back first.
+      - name: Combine the shards and apply the coverage gate
+        run: |
+          set -euo pipefail
+          n=0
+          for f in coverage-data-*; do
+            mv "$f" ".coverage.$(basename "$f" | sed 's/coverage-data-//')"
+            n=$((n + 1))
+          done
+          # A shard whose data went missing would lower the combined number silently. Three shards
+          # in, three data files out — anything else is a broken pipeline, not a coverage drop.
+          [ "$n" -eq 3 ] || { echo "expected 3 shard coverage files, found $n"; exit 1; }
+          coverage combine
+          coverage report --show-missing
+          coverage xml
       - uses: codecov/codecov-action@v7
         continue-on-error: true
         with:
@@ -252,7 +309,7 @@ jobs:
     # rule below is gated on dev-or-tag, so a master push would reach build-push-action
     # with `push: true` and an EMPTY tag list.
     # dev push -> :dev; tag push -> :latest + :<version> + :dev.
-    needs: [lint, test-python, test-web, e2e, docker-smoke]
+    needs: [lint, test-python, coverage, test-web, e2e, docker-smoke]
     if: >-
       github.event_name == 'push'
       && (github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/tags/v'))

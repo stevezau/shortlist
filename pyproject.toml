@@ -45,6 +45,9 @@ dev = [
     "pytest>=8.0",
     "pytest-xdist>=3.5",
     "pytest-cov>=5.0",
+    # Duration-balanced CI sharding (see ci.yml's test-python matrix). Splitting by test
+    # COUNT instead would be badly skewed — measured 51% of the suite's work in one third.
+    "pytest-split>=0.9",
     "hypothesis>=6.100",
     "ruff>=0.5",
     "respx>=0.21",
