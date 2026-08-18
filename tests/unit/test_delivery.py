@@ -470,6 +470,35 @@ class TestDeliverRows:
         )
         existing.items.assert_called_once()  # membership read exactly once, not twice
 
+    def test_a_vanished_pick_does_not_erase_a_live_pick_that_shares_its_title(
+        self, engine_config: EngineConfig, movies, shows
+    ):
+        """Release review, 2026-08-18 (LOW). On the UPDATE path the vanished filter matched on TITLE
+        while everything around it diffs by ratingKey. Two picks can legitimately share a title — a
+        remake, or a film and its 4K edition surfacing under one name — so dropping 'Movie 1' because
+        one of them vanished also erased the copy Plex still holds, and `titles_added` in the run
+        stats inherited it. Same "the audit disagrees with the row" fault the block exists to
+        prevent (plex-safety rule 10), inverted."""
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        existing = MagicMock()
+        existing.title = "Old Name" + row_marker(profile.plex_account_id)
+        existing.items.return_value = []  # empty row: both picks are in the add-delta
+        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+        twins = [
+            Pick(1, 1001, "Dune", rank=1, reason="r", media_type=MediaType.MOVIE),
+            Pick(2, 1002, "Dune", rank=2, reason="r", media_type=MediaType.MOVIE),
+        ]
+        survivor = MagicMock(title="Dune", ratingKey=1001)
+        plex.fetch_items.return_value = ([survivor], [1002])  # 1002 deleted from Plex since the pick
+
+        diff, _ = deliver_rows(plex, profile, twins, engine_config)
+
+        assert diff.added == ["Dune"], (
+            f"the surviving copy must still be reported as added, got {diff.added!r} — "
+            "one vanished key erased both because the filter matched on title"
+        )
+
     def test_unchanged_row_makes_no_membership_write(self, engine_config, movies, shows):
         """A row already holding exactly the wanted picks writes NOTHING — no add/remove/sortUpdate.
         It used to fire a sortUpdate every run (a real write on a slow library, for nothing)."""

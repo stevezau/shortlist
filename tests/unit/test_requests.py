@@ -1261,3 +1261,66 @@ class TestACachedHeadOfTheListMustNotStarveTheGate:
         assert report.pool_size == 50, "how many titles cleared the base floors"
         assert report.examined == 50, "how many the rating gate actually rated"
         assert report.lookups_spent == 0, "and what that cost against the daily cap"
+
+
+class TestTheCachedHeadStarvesRowsToo:
+    """Release review, 2026-08-18 (MEDIUM). The same outage this module was rewritten for, rotated
+    onto the row axis — and it only appears once a run has three or more rows whose pools overlap.
+
+    The lookup budget is split between rows, which is right: it is an API quota. But the WALK limit
+    was derived from each row's share of it, while the rating cache the walk has to get past is
+    global to the run. So the first rows stop inside a head of already-cached titles, spend nothing,
+    and hand their share to later rows — which then have a bigger walk limit and clear the head. The
+    run looks healthy (budget fully spent, titles considered, no "nothing qualified" alert), while
+    the rows at the TOP of the owner's row order get zero, every night.
+
+    Not hypothetical for the server this was found on: it builds four per-person rows per user, two
+    of them over the same movie pool.
+    """
+
+    def _demand(self, *titles: MissingTitle) -> requests_mod.DemandMap:
+        return {(t.tmdb_id, t.media_type): t for t in titles}
+
+    def _cfg(self, **kw) -> RequestConfig:
+        return _cfg(
+            **{
+                "radarr": RADARR,
+                "rating_source": "imdb",
+                "mdblist_api_key": "k",
+                "max_per_run": 4,
+                "min_rating": 7.3,
+                "min_votes": 100,
+                "min_demand": 1,
+                "auto_min_demand": 1,
+                "auto_min_rating": 7.5,
+                **kw,
+            }
+        )
+
+    def test_the_first_row_is_not_starved_by_a_head_the_last_row_can_clear(self, monkeypatch):
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        cfg = self._cfg()
+        rows = ["r0", "r1", "r2", "r3"]
+        # A head every row must walk past, sized between one row's share of the budget and the whole
+        # run's: short enough that the run CAN see past it, long enough that a quarter-share cannot.
+        head_len = requests_mod._walk_limit(requests_mod._lookup_budget(cfg.max_per_run) // len(rows)) + 50
+        head = [MissingTitle(i, f"cached{i}", MediaType.MOVIE, 2021, 0.0, 0, demand=90) for i in range(1, head_len)]
+        winners = [MissingTitle(90_000 + i, f"win{i}", MediaType.MOVIE, 2021, 0.0, 0, demand=5) for i in range(4)]
+        scores = {t.tmdb_id: (6.0, 5000) for t in head} | {w.tmdb_id: (8.9, 5000) for w in winners}
+        mdblist = FakeMdbList(scores, cached={t.tmdb_id for t in head})
+        pool = self._demand(*head, *winners)
+
+        report = requests_mod.request_missing(
+            cfg,
+            FakeTmdb(),
+            [requests_mod.RowRequest(slug, cfg, pool) for slug in rows],
+            dry_run=False,
+            mdblist=mdblist,
+        )
+
+        assert report.examined_by_row["r0"] >= head_len, (
+            f"row r0 stopped at {report.examined_by_row['r0']} inside a {head_len}-title cached head — "
+            "it spends nothing and hands its share to a later row, which then clears the head"
+        )
+        assert report.sent or report.queued, "the run as a whole must still find the good titles"

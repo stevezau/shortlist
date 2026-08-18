@@ -1230,7 +1230,11 @@ def _deliver_one(
         # and `titles_added` in the run stats inherits the same lie (plex-safety rule 10).
         dead = set(vanished)
         gone = {title_by_key.get(k, str(k)) for k in vanished}
-        diff.added = [t for t in diff.added if t not in gone]
+        # Rebuilt from KEYS, like every other diff here. Filtering the title list by a set of dead
+        # TITLES also drops a live pick that happens to share one — a remake, or a film and its 4K
+        # edition under one name — which is the same "the audit disagrees with the row" fault this
+        # block exists to prevent, in the other direction (release review 2026-08-18).
+        diff.added = [title_by_key.get(k, str(k)) for k in to_add_keys if k not in dead]
         wanted_keys = [k for k in wanted_keys if k not in dead]
         logger.warning(
             "{}: {} pick(s) vanished from Plex before delivery of '{}': {}",

@@ -228,6 +228,9 @@ def _gate_rows(
     N wasted calls against an API already refusing us.
     """
     gated: list[tuple[str, RequestConfig, list[MissingTitle]]] = []
+    # From the RUN's budget, not a row's share of it — see `_gate_by_source`. Every row walks past the
+    # same run-wide rating cache, so every row gets the same allowance for getting past it.
+    walk_limit = _walk_limit(budget)
     for index, row in enumerate(rows):
         pool = [
             m
@@ -241,7 +244,7 @@ def _gate_rows(
         share = -(-(budget - report.lookups_spent) // (len(rows) - index))  # ceiling division
         before_examined = report.examined
         if row.cfg.rating_source != "tmdb" and mdblist is not None and not report.ratings_rate_limited:
-            qualifying = _gate_by_source(row.cfg, mdblist, pool, report, budget=share)
+            qualifying = _gate_by_source(row.cfg, mdblist, pool, report, budget=share, walk_limit=walk_limit)
         else:
             qualifying = _gate_by_tmdb(row.cfg, pool)
             report.examined += len(pool)  # the TMDB gate reads the whole pool and bills nothing
@@ -753,6 +756,7 @@ def _gate_by_source(
     report: RequestReport,
     *,
     budget: int,
+    walk_limit: int,
 ) -> list[MissingTitle]:
     """Keep titles clearing the chosen MDBList source's rating/vote floors, ranked by demand then score.
 
@@ -771,6 +775,13 @@ def _gate_by_source(
     permanent rather than unlucky: the list is ordered by how many people want a title while the gate
     asks how well-rated it is, and on a big server the most-wanted MISSING titles are exactly the ones
     nobody thought worth adding. Reading past a stale head costs nothing, so it is no longer paid for.
+
+    ``budget`` is this row's share of the run's lookups; ``walk_limit`` is derived from the whole
+    run's, and the two are deliberately not the same number. The cache the walk has to get past is
+    global to the run, so a row scaled to a fraction of it stops INSIDE that head, spends nothing and
+    hands its share to the next row — starving whichever rows the owner happens to have put first,
+    while the run reports every slot filled. Splitting the quota is right; splitting the free walk is
+    not (release review 2026-08-18).
     """
     source = cfg.rating_source
     enforce_votes = source in VOTE_SOURCES  # RT/Metacritic are critic scores — no audience-vote floor
@@ -783,7 +794,6 @@ def _gate_by_source(
         now = _live_lookups(mdblist)
         return examined if start is None or now is None else now - start
 
-    walk_limit = _walk_limit(budget)
     for title in ranked:
         if spent() >= budget or examined >= walk_limit:
             break
