@@ -324,7 +324,7 @@ def request_missing(
 
     gated = _gate_rows(rows, handled, report, mdblist=mdblist, budget=budget)
 
-    # 2. One Arr reconcile for the whole run: what Radarr/Sonarr already hold is a fact about the
+    # 1. One Arr reconcile for the whole run: what Radarr/Sonarr already hold is a fact about the
     #    server, not about a row, and the per-row targets differ only in profile and root folder.
     #    Built from `base_cfg` for the same reason. Fails OPEN — see `_apply_arr_state`.
     radarr = RadarrClient(base_cfg.radarr, min_write_interval=min_write_interval) if base_cfg.radarr else None
@@ -338,7 +338,7 @@ def request_missing(
     if in_arr:
         logger.info("requests: {} qualifying already in Sonarr/Radarr — dropped", in_arr)
 
-    # 3. Per row: keep what survived the Arr drop, enrich it, and split auto-eligible from queued on
+    # 2. Per row: keep what survived the Arr drop, enrich it, and split auto-eligible from queued on
     #    THIS row's auto-send bar. The run cap is deliberately NOT applied here — allocation below
     #    decides who gets the slots, so no row can fill the cap before another is considered.
     blocked: Counter[str] = Counter()
@@ -354,7 +354,7 @@ def request_missing(
         report.queued.extend(held_back)
         auto_by_row.append((slug, eligible))
 
-    # 4. Divide the run's slots between the rows (even split, surplus redistributed, one slot per
+    # 3. Divide the run's slots between the rows (even split, surplus redistributed, one slot per
     #    title however many rows wanted it).
     claims = allocate(
         auto_by_row,
@@ -363,7 +363,7 @@ def request_missing(
     )
     claimed = {(slug, m.tmdb_id, m.media_type) for slug, m in claims}
 
-    # 5. Anything auto-worthy that missed out is queued rather than lost — including a title a LATER
+    # 4. Anything auto-worthy that missed out is queued rather than lost — including a title a LATER
     #    row offered that an earlier row already claimed, which is not the owner's problem to see
     #    twice, so it is only queued when nobody claimed it at all.
     won = {(m.tmdb_id, m.media_type) for _, m in claims}
@@ -382,8 +382,8 @@ def request_missing(
             "; ".join(f"{n} {reason}" for reason, n in blocked.most_common()),
         )
 
-    report.queued = _dedupe_queued(report.queued, set())
     if not claims:
+        report.queued = _dedupe_queued(report.queued, set())
         # Say how far it LOOKED, not just what it found. A bare "0 qualifying" reads identically
         # whether the floors emptied the pool, the gate rejected everything it rated, or it ran out of
         # budget before reaching anything good — and the third is the one the owner can act on.
@@ -405,7 +405,7 @@ def request_missing(
             )
         return report
 
-    # 6. Send, each title under the target of the row that claimed it.
+    # 5. Send, each title under the target of the row that claimed it.
     report.outcomes = _send_claims(claims, cfg_by_row, tmdb, dry_run=dry_run, min_write_interval=min_write_interval)
     # Only the ones the Arr actually accepted. A send that failed, or was skipped for want of a TVDB
     # id, must stay requestable — suppressing it would lose the title silently.
