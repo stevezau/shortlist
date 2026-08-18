@@ -680,6 +680,7 @@ class RequestReport:
     # everything it rated, or the gate ran out of lookup budget before reaching anything good — and
     # for five days in production (2026-08-13..18) it was the third, with nothing anywhere saying so.
     # Reconstructing it afterwards meant diffing settings timestamps against the rating cache by hand.
+    wanted: int = 0  # missing titles the run collected at all, BEFORE any floor
     pool_size: int = 0  # titles that cleared the base floors (demand, year) — what the gate was handed
     examined: int = 0  # of those, how many the rating gate actually rated
     lookups_spent: int = 0  # live rating-API calls that cost; cached ratings are free and are not counted

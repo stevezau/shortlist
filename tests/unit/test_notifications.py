@@ -195,15 +195,33 @@ class TestRequestsFoundNothing:
     def _event(**message):
         return Event(scope="requests.none_qualified", level="warning", ts=datetime.now(UTC), message=message)
 
+    def test_names_the_floors_when_nothing_cleared_them(self, session):
+        """The most actionable shape there is, and the one keying on `pool_size` used to skip: 702
+        titles wanted, none past the base floors. That is what the maintainer's server was doing."""
+        session.add_all([self._event(wanted=702, pool_size=0, examined=0, exhausted_pool=False) for _ in range(2)])
+        session.commit()
+
+        body = notif._requests_found_nothing(session)["body"]
+
+        assert "702 titles" in body
+        assert "minimum number of people or your release-year range" in body
+
+    def test_stays_silent_when_nothing_was_missing_at_all(self, session):
+        """`wanted == 0` is not a problem to report — the library simply had everything."""
+        session.add_all([self._event(wanted=0, pool_size=0, examined=0) for _ in range(3)])
+        session.commit()
+
+        assert notif._requests_found_nothing(session) is None
+
     def test_does_not_fire_for_a_single_quiet_night(self, session):
         """One run finding nothing is ordinary — nagging about it would train the owner to ignore it."""
-        session.add(self._event(pool_size=400, examined=100, exhausted_pool=False))
+        session.add(self._event(wanted=900, pool_size=400, examined=100, exhausted_pool=False))
         session.commit()
 
         assert notif._requests_found_nothing(session) is None
 
     def test_tells_the_owner_to_look_further_when_the_gate_ran_out(self, session):
-        session.add_all([self._event(pool_size=400, examined=100, exhausted_pool=False) for _ in range(2)])
+        session.add_all([self._event(wanted=900, pool_size=400, examined=100, exhausted_pool=False) for _ in range(2)])
         session.commit()
 
         result = notif._requests_found_nothing(session)
@@ -215,7 +233,7 @@ class TestRequestsFoundNothing:
     def test_blames_the_floor_when_the_whole_pool_was_rated(self, session):
         """The other shape of the same zero — everything WAS rated and none of it was good enough.
         Telling this owner to raise max_per_run would be advice that cannot possibly work."""
-        session.add_all([self._event(pool_size=40, examined=40, exhausted_pool=True) for _ in range(2)])
+        session.add_all([self._event(wanted=90, pool_size=40, examined=40, exhausted_pool=True) for _ in range(2)])
         session.commit()
 
         body = notif._requests_found_nothing(session)["body"]

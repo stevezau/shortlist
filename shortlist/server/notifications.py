@@ -237,9 +237,20 @@ def _requests_found_nothing(session: Session) -> dict | None:
         return None
     latest = events[0]
     data = latest.message if isinstance(latest.message, dict) else {}
-    pool, examined = data.get("pool_size", 0), data.get("examined", 0)
+    wanted, pool = data.get("wanted", 0), data.get("pool_size", 0)
+    examined = data.get("examined", 0)
     # Two different problems wearing the same "0 requested". Only one is about the rating floor.
-    if data.get("exhausted_pool"):
+    if not wanted and not pool:
+        # Nothing missing, or an event written before `wanted` was recorded. Either way there is no
+        # honest sentence to write — "found 0 titles you don't have" reads as a fault and isn't one.
+        return None
+    if not pool:
+        body = (
+            f"The last {len(events)} runs found {wanted} titles people wanted that you don't have, and "
+            "none of them cleared your minimum number of people or your release-year range. Loosen "
+            "either to let some through."
+        )
+    elif data.get("exhausted_pool"):
         body = (
             f"The last {len(events)} runs rated every one of the {pool} titles people wanted, and none "
             "cleared your minimum rating. Lower it, or widen the year range, to let some through."

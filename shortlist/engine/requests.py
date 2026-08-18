@@ -306,6 +306,9 @@ def request_missing(
     # title could still be auto-sent later, so a "no" wasn't a no.
     handled = already_handled or set()
     budget = _lookup_budget(base_cfg.max_per_run)
+    # Counted BEFORE any floor, and deduplicated across rows: it is what separates "nothing was
+    # missing" (fine) from "plenty was missing and your floors rejected all of it" (actionable).
+    report.wanted = len({key for row in rows for key in row.demand})
 
     gated = _gate_rows(rows, handled, report, mdblist=mdblist, budget=budget)
 
