@@ -88,6 +88,7 @@ markers = [
     "integration: crosses module boundaries",
     "plex: requires a real Plex server (skipped in CI)",
     "slow: long-running",
+    "real_migrations: needs an empty config dir, not the pre-seeded schema template",
     "e2e: Playwright vs an in-process app (uvicorn + built SPA) + fake_plex",
 ]
 

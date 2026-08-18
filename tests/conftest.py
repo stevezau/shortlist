@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import shutil
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -66,6 +68,42 @@ class MemorySnapshotStore:
 
     def save(self, snapshot: FilterSnapshot) -> None:
         self.saved[snapshot.plex_account_id] = snapshot
+
+
+# Modules that test the migration machinery itself. They must build a schema the real way — a
+# pre-seeded database would short-circuit the very thing under test.
+_REAL_MIGRATION_MODULES = ("test_migrations", "test_migration_initial")
+
+
+@pytest.fixture(scope="session")
+def _schema_template(tmp_path_factory) -> Path:
+    """One migrated SQLite database per xdist worker, built once and copied from thereafter."""
+    from shortlist.server.db.session import run_migrations
+
+    d = tmp_path_factory.mktemp("schema-template")
+    run_migrations(d)
+    return d / "shortlist.db"
+
+
+@pytest.fixture(autouse=True)
+def _preseed_schema(request, tmp_path: Path, _schema_template: Path) -> None:
+    """Hand each test a database already at head, so `run_migrations` has nothing to do.
+
+    About 1040 fixtures per run call `run_migrations(tmp_path)`, and each rebuilt all 47 revisions
+    from scratch: 80.8ms measured, ~60% of the suite's wall-clock once xdist contention on the
+    resulting disk I/O is counted. Copying a template instead takes run_migrations to 7.3ms — the
+    real function still runs, still opens the database, still checks; it just finds head already
+    stamped and returns.
+
+    Nothing is patched, so a test that builds its schema some other way is unaffected, and the
+    migration chain is still executed for real once per worker (a broken revision fails here).
+    Opt out with `@pytest.mark.real_migrations` when a test needs an empty config dir.
+    """
+    if request.node.get_closest_marker("real_migrations"):
+        return
+    if any(m in request.node.nodeid for m in _REAL_MIGRATION_MODULES):
+        return
+    shutil.copyfile(_schema_template, tmp_path / "shortlist.db")
 
 
 @pytest.fixture(autouse=True)
