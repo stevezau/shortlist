@@ -196,6 +196,14 @@ jobs:
   # takes that wait off the critical path. The cost is one extra `vite build` (and its install) —
   # more CI minutes, less wall-clock, which is the trade asked for.
   e2e:
+    # Two shards, not three. Setup here is 58s of fixed cost per job (pnpm + vite build + the
+    # chromium apt deps), so shards stop paying quickly: measured 110s of pytest splits to 56s at
+    # two and 38s at three, i.e. 114s vs 96s per job. Two already puts e2e under test-web, which
+    # becomes the critical path, so a third shard would buy CI minutes and no wall-clock.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -238,7 +246,13 @@ jobs:
       # the browser download itself is skipped when the cache above hits.
       - run: playwright install-deps chromium
       - run: playwright install chromium
-      - run: pytest -m e2e --no-cov --reruns 2 --reruns-delay 5
+      # Its own durations file: .test_durations covers the unit suite, which is collected under
+      # `-m 'not e2e'` and so has no entry for any of these.
+      - run: >-
+          pytest -m e2e --no-cov --reruns 2 --reruns-delay 5
+          --splits 2 --group ${{ matrix.shard }}
+          --splitting-algorithm least_duration --durations-path .test_durations_e2e
+          --durations=15
 
   docker-smoke:
     # The ONLY thing that runs the actual image. Every other job tests the source: e2e boots
