@@ -2083,7 +2083,7 @@
       },
       "LandingOut": {
         "additionalProperties": true,
-        "description": "The landing rate over a matured cohort \u2014 picks old enough to have had their full 30 days.",
+        "description": "The landing rate over a matured cohort \u2014 picks old enough to have had their chance.",
         "properties": {
           "cohort_from": {
             "anyOf": [

@@ -844,7 +844,7 @@ function ReportBody({
 
         <Section
           title="Picks that get watched"
-          hint={`The share of delivered picks watched within ${landing.matured_days} days of landing.`}
+          hint="The share of delivered picks watched while the row was still showing them."
         >
           {landing.rate === null ? (
             // Say what it is waiting FOR and when it arrives — not the rule and a cutoff date the
@@ -1050,7 +1050,7 @@ function RecentlyWatched({
  *
  * Windowed on purpose. Every figure here used to be lifetime-cumulative, which made each ratio a
  * measure of how long Shortlist had been installed rather than of how good the picks were: a pick
- * can only be credited within 30 days of delivery, but the old denominator kept every pick ever
+ * stops being creditable once the row drops it, but the old denominator kept every pick ever
  * delivered, forever.
  */
 export function ImpactReport() {

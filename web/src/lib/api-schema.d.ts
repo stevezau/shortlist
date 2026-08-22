@@ -3306,7 +3306,7 @@ export interface components {
         };
         /**
          * LandingOut
-         * @description The landing rate over a matured cohort — picks old enough to have had their full 30 days.
+         * @description The landing rate over a matured cohort — picks old enough to have had their chance.
          */
         LandingOut: {
             /** Cohort From */

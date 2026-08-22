@@ -168,7 +168,8 @@ def _landing(session: Session, now: datetime, days: int | None) -> dict:
     """The landing rate, over a MATURED cohort.
 
     The equally-long window ending ``HIT_WINDOW_DAYS`` ago — i.e. the most recent stretch of picks
-    that have all had their full 30 days. Anything younger cannot have been credited yet, so
+    that have all had their chance. A pick's chance actually ends when its row drops it, which is
+    usually sooner; this stays the conservative outer bound, and a younger pick is excluded because
     including it would recreate the very bug this rewrite exists to fix, inside a smaller box. Note
     this is a SHIFTED window, not an intersection with the selected one: for `window=30` the cohort
     is [now-60d, now-30d). The UI prints `cohort_from`/`cohort_to` so the dates are never left to be
@@ -194,8 +195,8 @@ def _landing(session: Session, now: datetime, days: int | None) -> dict:
     return {
         "delivered": delivered,
         "watched": watched,
-        # Same matured cohort, stricter numerator. Both rates are over the picks that have had their
-        # full 30 days, so they are directly comparable with each other.
+        # Same matured cohort, stricter numerator. Both rates are over the same picks, so they are
+        # directly comparable with each other.
         "finished": finished,
         "finished_rate": _rate(finished, delivered),
         "rate": _rate(watched, delivered),
@@ -571,8 +572,10 @@ def row_effectiveness(session: Session, slug: str, now: datetime | None = None) 
     print three numbers on a settings page is the wrong trade. This is four queries against the same
     columns and the same definitions, so the two can never disagree about what a "hit" is.
 
-    The rate comes from a MATURED cohort — picks old enough to have had their full
-    ``HIT_WINDOW_DAYS`` to be watched. Everything younger is counted in the all-time totals but kept
+    The rate comes from a MATURED cohort — picks delivered at least ``HIT_WINDOW_DAYS`` ago, so all
+    of them have had their chance. A pick's chance actually ends when its row drops it, which is
+    usually sooner; this stays the conservative outer bound. Everything younger is counted in the
+    all-time totals but kept
     out of the rate, because a row delivered last night has a 0% rate for no reason other than time,
     and a settings page that told someone their new row was failing would send them to change
     settings that were never the problem. `matured` is None until such a cohort exists, and the UI is

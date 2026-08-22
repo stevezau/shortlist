@@ -211,7 +211,7 @@ class RunsDeletedOut(PassthroughModel):
 
 
 class LandingOut(PassthroughModel):
-    """The landing rate over a matured cohort — picks old enough to have had their full 30 days."""
+    """The landing rate over a matured cohort — picks old enough to have had their chance."""
 
     delivered: int
     watched: int

@@ -550,7 +550,7 @@ class TestSyncWatched:
         from types import SimpleNamespace
 
         from shortlist.engine.models import UserProfile, UserType, WatchedItem
-        from shortlist.server.db.models import PickRow, Run, User
+        from shortlist.server.db.models import DEFAULT_SLUG, Delivery, PickRow, Run, User
 
         with sessions() as s:
             user = User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True)
@@ -559,9 +559,21 @@ class TestSyncWatched:
             run = Run(trigger="manual", status="ok", started_at=datetime.now(UTC) - timedelta(days=1))
             s.add(run)
             s.flush()
+            # In her row, and the collection is still on Plex (the ledger entry): a pick is only
+            # creditable while the person could actually have been looking at it
+            # (`run_persistence.live_pick_ids`).
+            s.add(Delivery(collection_slug=DEFAULT_SLUG, user_slug="sarah", library_key="1", rating_key=7))
             s.add(
                 PickRow(
-                    run_id=run.id, user_id=user.id, tmdb_id=42, media_type="movie", rating_key=1, rank=1, title="Dune"
+                    run_id=run.id,
+                    user_id=user.id,
+                    collection_slug=DEFAULT_SLUG,
+                    section_key="1",
+                    tmdb_id=42,
+                    media_type="movie",
+                    rating_key=1,
+                    rank=1,
+                    title="Dune",
                 )
             )
             s.commit()

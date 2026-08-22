@@ -11,14 +11,15 @@ sync, and ``DELETE /report/deleted-rows`` permanently deletes the pick history o
 exist — the one destructive action on the dashboard.
 
 **Everything here is windowed** (``?window=7|30|90|all``, default 30). It used to be lifetime-cumulative,
-which made every ratio meaningless: a pick can only ever be CREDITED within ``HIT_WINDOW_DAYS`` of
-delivery, but the old denominator counted every pick ever delivered, forever. Each night therefore
-added ~60 permanently-uncreditable picks per person to the bottom of the fraction, so the number
-measured how long Shortlist had been installed rather than how good the picks were.
+which made every ratio meaningless: a pick stops being creditable once the row drops it
+(``run_persistence.reconcile_watched``), but the old denominator counted every pick ever delivered,
+forever. Each night therefore added ~60 permanently-uncreditable picks per person to the bottom of
+the fraction, so the number measured how long Shortlist had been installed rather than how good the
+picks were.
 
 The one ratio that survives — ``overall.landing`` — is computed over a **matured cohort**: picks
-delivered in the window *and* old enough to have had their full 30 days. Numerator and denominator
-then describe the same set of picks, which is the only way the rate means anything.
+delivered in the window *and* old enough (``HIT_WINDOW_DAYS``) to have had their chance. Numerator and
+denominator then describe the same set of picks, which is the only way the rate means anything.
 """
 
 from __future__ import annotations

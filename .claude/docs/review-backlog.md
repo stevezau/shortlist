@@ -676,3 +676,22 @@ identified on release eve. Deliberately deferred rather than bundled into a rele
 
 **When doing it:** cover all three delivery strategies (create / in-place update / rebuild) with a
 dead key, and assert the persisted `titles_added` matches what Plex actually holds.
+
+---
+
+## Open: shared-row watches are invisible to the hit rate (found 2026-08-23)
+
+A shared row files its result under `shared_<slug>` (`engine/rows.py:2492`), which is nobody's user
+slug, so `persist_report` routes it to `_persist_shared_row_report` — and that writes
+`RunSharedRow.picks` as JSON and **no `PickRow` at all**. `reconcile_watched` only ever stamps
+`PickRow`, so a title watched from a shared row has never counted toward anyone's hit rate, and never
+appears in the dashboard's "Recently watched from Shortlist".
+
+Predates the membership rule and is unrelated to it; found while auditing that change. It means every
+hit-rate figure the app has ever shown measures per-person rows only.
+
+Not fixed here because it is a schema question, not a bug fix: a shared row's picks are one set
+delivered to N people, so crediting them needs a decision about whether to fan them out into one
+`PickRow` per audience member (which is what the report's `(person, title)` unit assumes, and what
+would make `per_row` work) or to track shared rows on their own axis. Worth deciding before the next
+report change.

@@ -144,12 +144,41 @@ class TestTheRealSyncStampsTheRightColumn:
         raise AssertionError("the sync job never finished")
 
     def _pick(self, app: ShortlistApp, uid: int, tmdb_id: int, media_type: str, title: str) -> None:
+        """One pick delivered by a real run, two days ago.
+
+        The `run_id` is not decoration: the reconcile only credits a title that is in a LIVE row, and
+        a row's live contents are the picks from the newest run that delivered it. A pick with no run
+        belongs to no delivery, so it reads as a title the row has already dropped.
+        """
         with sqlite3.connect(app.config_dir / "shortlist.db") as con:
+            delivered = (datetime.now(UTC) - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")
+            # The newest run is REUSED across calls, not one run per pick: a later run delivering the
+            # same row is precisely what makes an earlier pick stale, so a run each would leave every
+            # pick but the last one out of the live row.
+            row = con.execute("SELECT id FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+            run_id = (
+                row[0]
+                if row
+                else con.execute(
+                    "INSERT INTO runs (trigger, started_at, finished_at, status, dry_run, stats) "
+                    "VALUES ('schedule', ?, ?, 'ok', 0, '{}')",
+                    (delivered, delivered),
+                ).lastrowid
+            )
+            # The delivery-ledger entry a real run writes alongside the picks. Liveness means the
+            # collection is still ON PLEX, and this is the only record of that — without it the row
+            # reads as one Plex no longer has and nothing is creditable.
             con.execute(
-                "INSERT INTO picks (user_id, tmdb_id, media_type, rating_key, rank, collection_slug, "
+                "INSERT OR REPLACE INTO deliveries (collection_slug, user_slug, library_key, rating_key, title, "
+                "updated_at) VALUES ('picked', 'sarah', ?, ?, 'Picked for You', ?)",
+                ("2" if media_type == "show" else "1", 900 + tmdb_id % 100, delivered),
+            )
+            con.execute(
+                "INSERT INTO picks (run_id, user_id, tmdb_id, media_type, rating_key, rank, collection_slug, "
                 "section_key, library, title, reason, sources, affinity, created_at, watched_at, finished_at) "
-                "VALUES (?,?,?,?,1,'picked',?,?,?,'','tmdb',1.0,?,NULL,NULL)",
+                "VALUES (?,?,?,?,?,1,'picked',?,?,?,'','tmdb',1.0,?,NULL,NULL)",
                 (
+                    run_id,
                     uid,
                     tmdb_id,
                     media_type,
@@ -157,7 +186,7 @@ class TestTheRealSyncStampsTheRightColumn:
                     "2" if media_type == "show" else "1",
                     "TV Shows" if media_type == "show" else "Movies",
                     title,
-                    (datetime.now(UTC) - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S"),
+                    delivered,
                 ),
             )
             con.commit()

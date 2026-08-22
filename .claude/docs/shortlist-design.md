@@ -178,8 +178,10 @@ Plex-adjacent accent color, responsive (phone-usable — owners administer from 
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Hit rate** = % of recommended items the user actually watched within 30 days — the app's own
-  proof of value, computed from the same history source. Shown globally and per user.
+- **Hit rate** = % of recommended items the user actually watched **while the row was still showing
+  them** — the app's own proof of value, computed from the same history source. Shown globally and
+  per user. A title the row has since dropped is not credited: they cannot have started it from a
+  shelf that no longer lists it. See `run_persistence.reconcile_watched`.
 
 ### User detail
 

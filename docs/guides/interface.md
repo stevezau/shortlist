@@ -243,13 +243,19 @@ Each row's run schedule lives in that row's editor, not here. See [Schedules](sc
 Everything on the dashboard is scoped to the window selected at the top, **the last 30 days** by
 default. That matters more than it sounds: these figures used to be lifetime totals, which made
 every ratio a measure of how long Shortlist had been installed rather than of how good the picks
-were. A pick can only ever be credited as watched within **30 days** of being delivered, but the old
+were. A pick can only ever be credited **while its row is still showing it**, but the old
 denominator kept every pick ever delivered, for ever, so each night added ~60 permanently
 uncreditable picks per person to the bottom of the fraction and the number could only sink.
 
 **Watched** — picks people STARTED in the window. A pick delivered last month and watched this week
-counts here: this figure is about watching, not delivery. For a series it counts from the **first
-finished episode**, because that is Plex's own definition and Plex offers no other — see Finished.
+counts here, as long as the row was still showing it: this figure is about watching, not delivery.
+For a series it counts from the **first finished episode**, because that is Plex's own definition and
+Plex offers no other — see Finished.
+
+A watch is credited only when the title was **in one of that person's rows at the time**. If a row
+rebuilt and swapped a title out, and they watched it afterwards, it does not count — they found it
+some other way. Once a pick is credited it stays credited, and finishing a series months later still
+upgrades it from started to finished.
 
 **Finished** — of those, the ones they saw out: a film played, or a series with every episode
 watched. The two are worth reading together. On the maintainer's own server, of 158 series picks
@@ -263,9 +269,10 @@ real one. A big Watched with a small Finished means people are sampling, not sta
 titles first watched in the window. Lower is better, and the change arrow is coloured accordingly.
 
 **Landing rate** — the one percentage, and the only one computed carefully enough to trust. It is the
-share of picks watched within 30 days of delivery, measured over a **settled group**: picks
-delivered in the window _and_ at least 30 days ago. A pick delivered yesterday cannot have been
-"watched within 30 days" yet, so counting it would drag the rate toward zero for no reason. On a
+share of picks watched while their row was still showing them, measured over a **settled group**:
+picks delivered in the window _and_ at least 30 days ago. A pick delivered yesterday is still sitting
+in the row — it has not yet had its chance to be watched and dropped — so counting it would drag the
+rate toward zero for no reason. On a
 7-day window there is usually no settled group at all, and the card says so instead of showing a
 misleading number.
 
