@@ -1721,7 +1721,13 @@ def _record_demand(policy: RowPolicy, demand: requests_mod.RowDemand) -> None:
     it in a direction nobody would notice.
     """
     ctx, user, cfg = policy.ctx, policy.user, policy.cfg
-    user_tag = {user.request_tag} if user.request_tag else set()
+    # An EXPLICIT per-user tag always wins: the owner typed it, so it replaces the automatic slug
+    # rather than stacking with it — carrying both is the clutter that got auto-tagging dropped once
+    # already (2026-07-20). Only when there is no explicit tag does `auto_user_tag` supply the slug,
+    # and that decision is per row, so it is resolved inside the loop.
+    explicit_tag = {user.request_tag} if user.request_tag else set()
+    auto_tag = {user.slug} if user.slug else set()
+    global_auto = bool(cfg.requests and cfg.requests.auto_user_tag)
     first_seen: dict[str, dict[tuple[int, MediaType], Candidate]] = {}
     title_tags: dict[str, dict[tuple[int, MediaType], set[str]]] = {}
     title_why: dict[str, dict[tuple[int, MediaType], list[RequestWhy]]] = {}
@@ -1732,6 +1738,8 @@ def _record_demand(policy: RowPolicy, demand: requests_mod.RowDemand) -> None:
         # The row's own name (the same one the user sees), so the inbox can say WHICH row a
         # request came from. Fill the placeholders the template may carry.
         row_template = resolve_row_template(spec, user, cfg)
+        # None -> inherit the global switch; True/False is this row's own answer.
+        row_auto = global_auto if spec.auto_user_tag is None else spec.auto_user_tag
         # A missing title still has a media type, so {library_name} renders as the library that
         # type would land in ("TV Shows" for a missing show). Keyed by media type; the first
         # library of that type wins when the row spans several.
@@ -1745,7 +1753,9 @@ def _record_demand(policy: RowPolicy, demand: requests_mod.RowDemand) -> None:
             key = (c.tmdb_id, c.media_type)
             row_seen.setdefault(key, c)
             tags = row_tags.setdefault(key, set())
-            tags |= user_tag  # the user wanted it, whatever the row's media
+            # The user wanted it, whatever the row's media — so their tag is not media-gated the way
+            # the row's own tag is below.
+            tags |= explicit_tag or (auto_tag if row_auto else set())
             # ...but a row's tag only applies to titles that row could actually show, so a
             # shows-only row never tags a missing movie (its pool holds both until delivery).
             if spec.request_tag and spec.media in ("both", c.media_type.value):

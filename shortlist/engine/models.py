@@ -341,6 +341,11 @@ class RowSpec:
     # qualify, so no one person's solo viewing can reach a public row (aggregate-privacy floor).
     min_watchers: int = 2
     request_tag: str = ""  # tag added to titles requested because they surfaced in this row
+    # Whether requests from this row also carry the WANTING PERSON'S slug as a tag, so the owner
+    # can tell in Sonarr/Radarr who a title was added for. None -> inherit the global
+    # `requests.auto_user_tag`; True/False overrides it for this row alone. Governs only the
+    # automatic slug — a tag the owner typed on a person is theirs and is never dropped here.
+    auto_user_tag: bool | None = None
     # Per-row override of which discovery sources feed this row; empty -> inherit EngineConfig.candidate_sources.
     candidate_sources: list[str] = field(default_factory=list)
     # Per-row cap on already-watched titles, as a fraction of the row (0.0 = all fresh, 1.0 = no
@@ -536,6 +541,14 @@ class RequestConfig:
     auto_send: bool = True
     auto_min_demand: int = 3  # auto-send only titles wanted by at least this many distinct people
     auto_min_rating: float = 8.0  # ...and rated at least this high on the chosen source
+    # Tag every request with the wanting person's slug (`moo_house` -> `moo-house`, the Arr charset),
+    # so the owner can see IN Sonarr/Radarr who a title was added for — the Requests inbox why-line
+    # never reaches the Arr. Off by default. A row may override it either way (`RowSpec.auto_user_tag`),
+    # and an explicit per-user tag replaces the slug rather than stacking with it.
+    #
+    # The tag records who TRIGGERED the add, not everyone who has since wanted the title: a title the
+    # Arr already tracks is skipped whole (`clients/arr.py` `add_movie`/`add_series`), tags included.
+    auto_user_tag: bool = False
     # Populated by the context builder when a target was connected (URL+key) but incomplete (no
     # profile or folder selected). Surfaces in the run report so the UI can explain the skip.
     incomplete_targets: list[str] = field(default_factory=list)

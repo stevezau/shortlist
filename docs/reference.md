@@ -82,6 +82,7 @@ heading: Reference
 | `requests.auto_min_demand`                            | `3`                                | auto-send only titles wanted by ≥ N distinct people **within one row** (see `requests.min_demand`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `requests.auto_min_rating`                            | `8.0`                              | ...and rated ≥ this on the chosen source; rest are queued                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `requests.tag`                                        | `shortlist`                        | global tag on every requested title (created in the app; `""` = no tag)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `requests.auto_user_tag`                              | `false`                            | also tag each requested title with the WANTING PERSON'S slug, so the Arr shows who it was added for. Off by default; a per-user `request_tag` replaces the slug rather than stacking with it, and a row may override this either way (`req_auto_user_tag`). The tag records who TRIGGERED the add: a title the Arr already tracks is skipped whole, tags included. |
 
 
 ### Per-row request overrides
@@ -103,6 +104,7 @@ and NULL always means "inherit the global `requests.*` setting".
 | `req_radarr_quality_profile_id` | `requests.radarr.quality_profile_id`                              |
 | `req_sonarr_root_folder`        | `requests.sonarr.root_folder`                                     |
 | `req_sonarr_quality_profile_id` | `requests.sonarr.quality_profile_id`                              |
+| `req_auto_user_tag`             | `requests.auto_user_tag`                                          |
 
 `requests.enabled`, `requests.rating_source`, `requests.mdblist.apikey`, `requests.max_per_run` and
 the Arr URLs and API keys are server-wide and cannot be overridden per row — the first four are the
@@ -475,6 +477,19 @@ Request tags are three-layered: the global `requests.tag` setting, a per-user `r
 shared rows never request). A requested title is tagged with the union of the global tag, every
 wanting user's tag, and the tag of every per-person row that user is in the audience of; the queued
 tags round-trip through `GET /api/requests` (`tags[]`) and are applied on `send`.
+
+The per-user layer can also be filled in automatically. With `requests.auto_user_tag` on, a user who
+has no `request_tag` of their own contributes their SLUG instead, so every request is attributable to
+a person in Sonarr/Radarr without hand-setting a tag on each user. An explicit `request_tag` REPLACES
+the slug rather than stacking with it — carrying both is the clutter the automatic tag was dropped
+for in 2026-07. A row may override the switch either way (`req_auto_user_tag`; NULL inherits), and
+the override governs only the automatic slug: a tag the owner typed on a person is never dropped.
+
+Slugs are sanitized to the Arr tag charset (`a-z`, `0-9`, `-`) before being sent, so `moo_house`
+becomes `moo-house`. Note what the tag can and cannot tell you: a title the Arr ALREADY tracks is
+skipped entirely by `add_movie`/`add_series`, tags included, so the tag records who triggered the
+original add — not everyone who has wanted the title since. The full wanters list lives in the
+Requests inbox (`why[]`), which never reaches the Arr.
 
 Before queuing, the request pass reconciles the missing pool against the Arrs (one bulk fetch each,
 failing open on error): a title Sonarr/Radarr already tracks is dropped, since it is not really "missing", just

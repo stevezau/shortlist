@@ -187,6 +187,8 @@ class CollectionIn(BaseModel):
     req_radarr_root_folder: str | None = Field(default=None, max_length=512)
     req_sonarr_quality_profile_id: int | None = Field(default=None, ge=1)
     req_sonarr_root_folder: str | None = Field(default=None, max_length=512)
+    # Tag this row's requests with the wanting person's slug; null inherits requests.auto_user_tag.
+    req_auto_user_tag: bool | None = None
     # How many recent watches the row cycles between, one per run. 1 = always the most recent.
     # Capped at 20: past that the "recent" the row's title claims stops being true, and the cycle takes
     # three weeks to come round — indistinguishable from the stuck row this exists to fix.
@@ -269,6 +271,13 @@ class CollectionOut(PassthroughModel):
     req_radarr_root_folder: str | None
     req_sonarr_quality_profile_id: int | None
     req_sonarr_root_folder: str | None
+    req_auto_user_tag: bool | None = Field(
+        default=None,
+        description=(
+            "Tag this row's Sonarr/Radarr requests with the wanting person's slug; "
+            "null inherits the global requests.auto_user_tag."
+        ),
+    )
     pick_order: str = _closed_set_out(ORDERS, "How the delivered collection is ordered.")
     placement: str = _closed_set_out(PLACEMENTS, "Where the OWNER's own collection appears.")
     placement_friends: str = _closed_set_out(PLACEMENTS, "Where each FRIEND's own collection appears.")
@@ -522,6 +531,7 @@ def _serialize(session, collection: Collection) -> dict:
         "req_radarr_root_folder": collection.req_radarr_root_folder,
         "req_sonarr_quality_profile_id": collection.req_sonarr_quality_profile_id,
         "req_sonarr_root_folder": collection.req_sonarr_root_folder,
+        "req_auto_user_tag": collection.req_auto_user_tag,
         "pick_order": collection.pick_order or "best",
         "placement": collection.placement or "both",
         "placement_friends": collection.placement_friends or "both",
@@ -701,6 +711,7 @@ _PATCHABLE_COLUMNS = (
     "req_radarr_root_folder",
     "req_sonarr_quality_profile_id",
     "req_sonarr_root_folder",
+    "req_auto_user_tag",
     "pick_order",
     "placement",
     "placement_friends",

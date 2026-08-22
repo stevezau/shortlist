@@ -708,6 +708,17 @@
             ],
             "title": "Req Auto Send"
           },
+          "req_auto_user_tag": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Auto User Tag"
+          },
           "req_max_per_row": {
             "anyOf": [
               {
@@ -1123,6 +1134,18 @@
               }
             ],
             "title": "Req Auto Send"
+          },
+          "req_auto_user_tag": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tag this row's Sonarr/Radarr requests with the wanting person's slug; null inherits the global requests.auto_user_tag.",
+            "title": "Req Auto User Tag"
           },
           "req_max_per_row": {
             "anyOf": [

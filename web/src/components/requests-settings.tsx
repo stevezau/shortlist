@@ -42,6 +42,7 @@ interface RequestsForm {
   autoMinDemand: number;
   autoMinRating: number;
   tag: string;
+  autoUserTag: boolean;
 }
 
 function readArr(settings: Settings, prefix: string): ArrForm {
@@ -81,6 +82,7 @@ function readForm(settings: Settings): RequestsForm {
     autoMinDemand: settingNumber(settings, "requests.auto_min_demand", 3),
     autoMinRating: settingNumber(settings, "requests.auto_min_rating", 8),
     tag: settingString(settings, "requests.tag", "shortlist"),
+    autoUserTag: settingBool(settings, "requests.auto_user_tag"),
   };
 }
 
@@ -223,6 +225,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
   const autoDemandId = useId();
   const autoRatingId = useId();
   const tagId = useId();
+  const autoUserTagId = useId();
   const ratingLabel = RATING_LABELS[form.ratingSource];
   // MDBList reports a vote count only for the audience-scored sources; the engine's rating gate
   // skips the vote floor for the two critic scores (`VOTE_SOURCES` in clients/mdblist.py).
@@ -265,6 +268,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
       "requests.auto_min_demand": form.autoMinDemand,
       "requests.auto_min_rating": form.autoMinRating,
       "requests.tag": form.tag.trim(),
+      "requests.auto_user_tag": form.autoUserTag,
     };
     return values;
   });
@@ -352,6 +356,25 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                 lets you spot or filter what Shortlist added. Leave blank for no
                 tag.
               </p>
+            </div>
+
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <Label htmlFor={autoUserTagId}>Also tag by person</Label>
+                <p className="text-sm text-muted-foreground">
+                  Adds the name of whoever a title was picked for as a second
+                  tag, so you can tell in Radarr/Sonarr who it was added for
+                  &mdash; without setting a tag on every user by hand. Someone
+                  with their own tag keeps it. Individual rows can opt in or out
+                  in the row editor.
+                </p>
+              </div>
+              <Switch
+                id={autoUserTagId}
+                checked={form.autoUserTag}
+                onCheckedChange={(on) => set({ autoUserTag: on })}
+                aria-label="Also tag requests with the name of the person they're for"
+              />
             </div>
 
             {/* Deliberately BEFORE Guardrails. Read the other way round, "Minimum rating 7" looked

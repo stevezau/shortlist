@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   requestAutoSendGlobal,
+  requestAutoUserTagGlobal,
   requestDemandGlobal,
   requestMaxPerRunGlobal,
   requestRatingGlobal,
@@ -38,6 +39,7 @@ export type RowRequestInput = {
   req_min_year: number | null;
   req_max_year: number | null;
   req_auto_send: boolean | null;
+  req_auto_user_tag: boolean | null;
   req_max_per_row: number | null;
   req_radarr_root_folder: string | null;
   req_radarr_quality_profile_id: number | null;
@@ -235,6 +237,26 @@ export function RowRequestSettings({
             className="h-4 w-4"
           />
           <span>Ask automatically</span>
+        </label>
+      </Field>
+
+      <Field
+        label="Tag requests with who they're for"
+        description="Adds each person's name as a Sonarr/Radarr tag, so you can tell at a glance in there who a title was added for. Someone with their own tag set on their user page keeps that instead."
+        ariaLabel="Use the global tag-by-person setting for this row"
+        inheriting={input.req_auto_user_tag === null}
+        globalValue={requestAutoUserTagGlobal(settings)}
+        onToggle={(on) => set({ req_auto_user_tag: on ? null : false })}
+      >
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={input.req_auto_user_tag ?? false}
+            aria-label="Tag this row's requests by person"
+            onChange={(e) => set({ req_auto_user_tag: e.target.checked })}
+            className="h-4 w-4"
+          />
+          <span>Tag by person</span>
         </label>
       </Field>
 

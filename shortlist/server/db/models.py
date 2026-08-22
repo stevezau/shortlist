@@ -261,6 +261,13 @@ class Collection(Base):
     req_radarr_root_folder: Mapped[str | None] = mapped_column(String(512), nullable=True, default=None)
     req_sonarr_quality_profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     req_sonarr_root_folder: Mapped[str | None] = mapped_column(String(512), nullable=True, default=None)
+    # Tag this row's requests with the wanting person's slug, so the owner can see in Sonarr/Radarr
+    # who a title was added for. NULL -> inherit the global `requests.auto_user_tag`.
+    #
+    # Meaningless on a shared row, which is built from what the whole server watched and belongs to
+    # nobody in particular — there is no one person to name. The editor hides it there, exactly as it
+    # already hides `request_tag`.
+    req_auto_user_tag: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
     prompt: Mapped[dict] = mapped_column(JSON, default=dict)
     # Custom collection poster for this row. {} -> Plex's own artwork. Shape:
     # {"mode": "upload"|"generate", "title", "subtitle", "style"}. No image bytes live here — an

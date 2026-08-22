@@ -171,6 +171,16 @@ export function requestAutoSendGlobal(
   return raw ? "send automatically" : "wait for approval";
 }
 
+/** Whether requests are globally tagged with the wanting person's slug. */
+export function requestAutoUserTagGlobal(
+  settings: Settings | undefined,
+): string | null {
+  if (!settings) return null;
+  const raw = settings["requests.auto_user_tag"];
+  if (typeof raw !== "boolean") return null;
+  return raw ? "tag by person" : "no person tag";
+}
+
 /** The run-wide cap, which a row may only ever restrict BELOW — never raise. */
 export function requestMaxPerRunGlobal(
   settings: Settings | undefined,

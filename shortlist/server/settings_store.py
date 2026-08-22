@@ -49,6 +49,9 @@ DEFAULTS: dict[str, Any] = {
     "requests.auto_min_demand": 3,  # auto-send only titles wanted by at least this many people
     "requests.auto_min_rating": 8.0,  # ...and rated at least this high on the chosen source
     "requests.tag": "shortlist",  # tag applied to every title Shortlist adds ("" = no tag)
+    # Also tag each request with the WANTING PERSON'S slug, so the owner can tell in Sonarr/Radarr
+    # who a title was added for. Off by default; a row may override it either way.
+    "requests.auto_user_tag": False,
     # (per-row schedules replaced the old global `schedule.cron` — each row carries its own cron on
     # the collections table; see Collection.schedule and shortlist/server/scheduler.py)
     # Where Shortlist's rows sit in each library's Plex "Recommended" shelf, keyed by library (section)
@@ -252,7 +255,6 @@ LEGACY_KEYS = {
     "api.token_hint",
     "requests.omdb.apikey",
     "staleness_runs",
-    "requests.auto_user_tag",
     "agregarr.url",
     "agregarr.apikey",
 }

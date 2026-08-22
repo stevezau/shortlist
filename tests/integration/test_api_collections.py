@@ -61,6 +61,7 @@ COLLECTION_KEYS = {
     "req_radarr_root_folder",
     "req_sonarr_quality_profile_id",
     "req_sonarr_root_folder",
+    "req_auto_user_tag",
     "pick_order",
     "placement",
     "placement_friends",
@@ -272,6 +273,29 @@ class TestCollectionsSeed:
         with client.app.state.sessions() as session:
             specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
         assert next(s for s in specs if s.slug == "rewatch_row").watched_pct == 0.5
+
+    def test_per_row_auto_user_tag_round_trips_and_reaches_the_spec(self, client: TestClient):
+        """The seam a typo would hide in: a row's tag-by-person override has to survive the PATCH,
+        the serializer AND the spec build, or it silently reads as "inherit the global" for ever."""
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        created = client.post("/api/collections", json={"name": "Kids Row"})
+        assert created.status_code == 201
+        assert created.json()["req_auto_user_tag"] is None  # a new row inherits
+
+        row_id = created.json()["id"]
+        # False is a real answer ("never tag this row by person"), not "unset" — it must not be
+        # coerced back to None on the way through, or the global would switch it straight on again.
+        patched = client.patch(f"/api/collections/{row_id}", json={"name": "Kids Row", "req_auto_user_tag": False})
+        assert patched.status_code == 200 and patched.json()["req_auto_user_tag"] is False
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+        assert next(s for s in specs if s.slug == "kids_row").auto_user_tag is False
+        # ...and the untouched default row still inherits, so one row's override reaches no other.
+        assert next(s for s in specs if s.slug == "picked").auto_user_tag is None
 
     def test_per_row_cadence_round_trips_and_reaches_the_spec(self, client: TestClient):
         from shortlist.server.services.context_builder import ContextBuilder

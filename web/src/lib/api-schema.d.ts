@@ -2780,6 +2780,8 @@ export interface components {
             req_auto_min_rating?: number | null;
             /** Req Auto Send */
             req_auto_send?: boolean | null;
+            /** Req Auto User Tag */
+            req_auto_user_tag?: boolean | null;
             /** Req Max Per Row */
             req_max_per_row?: number | null;
             /** Req Max Year */
@@ -2926,6 +2928,11 @@ export interface components {
             req_auto_min_rating: number | null;
             /** Req Auto Send */
             req_auto_send: boolean | null;
+            /**
+             * Req Auto User Tag
+             * @description Tag this row's Sonarr/Radarr requests with the wanting person's slug; null inherits the global requests.auto_user_tag.
+             */
+            req_auto_user_tag?: boolean | null;
             /** Req Max Per Row */
             req_max_per_row: number | null;
             /** Req Max Year */

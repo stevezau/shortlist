@@ -109,6 +109,21 @@ describe("RequestsSettings", () => {
     expect(payload).not.toHaveProperty("requests.sonarr.url");
   });
 
+  it("saves the tag-by-person switch, off unless the owner turns it on", async () => {
+    renderPanel({ "requests.enabled": true });
+    const toggle = await screen.findByLabelText(
+      /Also tag requests with the name of the person/i,
+    );
+    expect(toggle).not.toBeChecked();
+
+    await userEvent.click(toggle);
+    await waitFor(() =>
+      expect(putSettings.mock.calls.at(-1)?.[0]).toMatchObject({
+        "requests.auto_user_tag": true,
+      }),
+    );
+  });
+
   it("saves an upper year bound and warns when the range can match nothing", async () => {
     renderPanel({ "requests.enabled": true });
 

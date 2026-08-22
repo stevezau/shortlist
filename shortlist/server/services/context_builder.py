@@ -707,10 +707,9 @@ class ContextBuilder:
             prefs = user.prefs or {}
             if prefs.get("paused"):
                 continue
-            # Only an EXPLICIT per-user tag adds a per-person tag in Sonarr/Radarr. Automatic
-            # username-tagging was removed (owner decision 2026-07-20): who wanted a title is already
-            # shown in the Requests inbox why-line, so tagging every title with a username just
-            # cluttered the Arr.
+            # The tag the owner typed on this person, if any. The AUTOMATIC alternative — their slug,
+            # under `requests.auto_user_tag` — is applied in the engine, not here: it is overridable
+            # per row, so it cannot be baked into one value that every row then shares.
             request_tag = (user.request_tag or "").strip()
             profiles.append(
                 UserProfile(
@@ -870,6 +869,7 @@ class ContextBuilder:
                     audience=audience,
                     min_watchers=collection.min_watchers,
                     request_tag=(collection.request_tag or "").strip(),
+                    auto_user_tag=collection.req_auto_user_tag,  # None -> inherit the global switch
                     candidate_sources=list(collection.candidate_sources or []),
                     watched_pct=collection.watched_pct,  # None -> inherit the global watched cap
                     rewatch=bool(collection.rewatch),
@@ -1079,4 +1079,5 @@ class ContextBuilder:
             auto_send=bool(store.get("requests.auto_send")),
             auto_min_demand=int(store.get("requests.auto_min_demand")),
             auto_min_rating=float(store.get("requests.auto_min_rating")),
+            auto_user_tag=bool(store.get("requests.auto_user_tag")),
         )

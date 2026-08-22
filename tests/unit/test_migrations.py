@@ -1084,3 +1084,38 @@ class TestPerRowRequestSettings0074:
         collections = self._columns(tmp_path, "collections")
         assert not [name for name in self._ROW_COLUMNS if name in collections]
         assert "row_slug" not in self._columns(tmp_path, "request_candidates")
+
+
+class TestRowAutoUserTag0075:
+    """0075 adds the per-row override for tagging requests with the wanting person's slug.
+
+    Nullable, no backfill, no server default — NULL is "inherit the global switch". A FALSE backfill
+    would pin every existing row to "off", and the global switch would then reach none of them.
+    """
+
+    @staticmethod
+    def _columns(config_dir: Path) -> dict[str, bool]:
+        """column -> whether it is NOT NULL."""
+        con = sqlite3.connect(config_dir / "shortlist.db")
+        try:
+            return {r[1]: bool(r[3]) for r in con.execute("PRAGMA table_info(collections)")}
+        finally:
+            con.close()
+
+    def test_the_column_is_nullable_and_the_seeded_row_inherits(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        columns = self._columns(tmp_path)
+        assert "req_auto_user_tag" in columns
+        assert not columns["req_auto_user_tag"], "NULL is how a row inherits the global switch"
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        try:
+            rows = con.execute("SELECT req_auto_user_tag FROM collections").fetchall()
+        finally:
+            con.close()
+        assert rows, "expected the seeded default row"
+        assert {r[0] for r in rows} == {None}
+
+    def test_the_downgrade_removes_it_again(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0074")
+        assert "req_auto_user_tag" not in self._columns(tmp_path)
