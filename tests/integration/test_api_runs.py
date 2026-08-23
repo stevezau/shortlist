@@ -913,6 +913,8 @@ class TestRunsApi:
             "watched_prev",
             "watched_delta",
             "finished",
+            "bounced",
+            "dropped",
             "avg_days_to_watch",
             "avg_days_to_watch_delta",
             "landing",

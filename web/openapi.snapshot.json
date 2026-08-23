@@ -1687,6 +1687,144 @@
         "title": "EffectivenessReportOut",
         "type": "object"
       },
+      "EngagementOut": {
+        "additionalProperties": true,
+        "properties": {
+          "losing": {
+            "items": {
+              "$ref": "#/components/schemas/LosingTitleOut"
+            },
+            "title": "Losing",
+            "type": "array"
+          },
+          "people": {
+            "items": {
+              "$ref": "#/components/schemas/EngagementPersonOut"
+            },
+            "title": "People",
+            "type": "array"
+          },
+          "stop_points": {
+            "items": {
+              "$ref": "#/components/schemas/StopPointOut"
+            },
+            "title": "Stop Points",
+            "type": "array"
+          },
+          "window": {
+            "title": "Window",
+            "type": "string"
+          }
+        },
+        "required": [
+          "window",
+          "people",
+          "losing",
+          "stop_points"
+        ],
+        "title": "EngagementOut",
+        "type": "object"
+      },
+      "EngagementPersonOut": {
+        "additionalProperties": true,
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "picks": {
+            "items": {
+              "$ref": "#/components/schemas/EngagementPickOut"
+            },
+            "title": "Picks",
+            "type": "array"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "display_name",
+          "picks"
+        ],
+        "title": "EngagementPersonOut",
+        "type": "object"
+      },
+      "EngagementPickOut": {
+        "additionalProperties": true,
+        "description": "One pick and what became of it.\n\n`percent` is NULL where no live session ever observed the play \u2014 which is not 0%. Plex's watched\nflag cannot see a partial play at all, so \"we never watched this happen\" and \"they bailed at the\nstart\" are genuinely different states and are not collapsed.",
+        "properties": {
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "percent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Percent"
+          },
+          "row": {
+            "title": "Row",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "watched_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watched At"
+          }
+        },
+        "required": [
+          "title",
+          "row",
+          "media_type",
+          "outcome",
+          "percent",
+          "watched_at",
+          "finished_at"
+        ],
+        "title": "EngagementPickOut",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -2383,6 +2521,48 @@
         "title": "LogsOut",
         "type": "object"
       },
+      "LosingTitleOut": {
+        "additionalProperties": true,
+        "description": "A pick several people started and few finished. One person abandoning something is a night;\nthe pattern across people is what makes it a bad recommendation.",
+        "properties": {
+          "finished": {
+            "title": "Finished",
+            "type": "integer"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "started": {
+            "title": "Started",
+            "type": "integer"
+          },
+          "stops_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stops At"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "media_type",
+          "started",
+          "finished",
+          "stops_at"
+        ],
+        "title": "LosingTitleOut",
+        "type": "object"
+      },
       "NotificationOut": {
         "additionalProperties": true,
         "description": "One alert as the React bell renders it \u2014 plain text throughout, no HTML.\n\n``extra=\"allow\"`` (here and on the wrapper) is not optional: a strict Pydantic response model\nsilently DROPS any key it does not declare, so a field missed here would vanish from the payload\ninstead of failing loudly.",
@@ -2487,8 +2667,16 @@
             ],
             "title": "Avg Days To Watch Delta"
           },
+          "bounced": {
+            "title": "Bounced",
+            "type": "integer"
+          },
           "delivered": {
             "title": "Delivered",
+            "type": "integer"
+          },
+          "dropped": {
+            "title": "Dropped",
             "type": "integer"
           },
           "finished": {
@@ -2534,6 +2722,8 @@
           "watched_prev",
           "watched_delta",
           "finished",
+          "bounced",
+          "dropped",
           "avg_days_to_watch",
           "avg_days_to_watch_delta",
           "landing"
@@ -5003,6 +5193,25 @@
           "seconds_remaining"
         ],
         "title": "StatusOut",
+        "type": "object"
+      },
+      "StopPointOut": {
+        "additionalProperties": true,
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "count"
+        ],
+        "title": "StopPointOut",
         "type": "object"
       },
       "SyncFinishedEvent": {
@@ -7510,6 +7719,52 @@
           }
         },
         "summary": "Deleted Rows",
+        "tags": [
+          "report"
+        ]
+      }
+    },
+    "/api/report/engagement": {
+      "get": {
+        "description": "What people did with their picks: per person, per title, and where abandons cluster.\n\nThe detail behind the dashboard's Dropped tile. Sync like `effectiveness` and for the same reason\n\u2014 it is a scan of `picks`, and running that on the event loop stalls SSE and every other request.",
+        "operationId": "engagement_api_report_engagement_get",
+        "parameters": [
+          {
+            "description": "Report window in days: 7, 30, 90, or 'all'.",
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "default": "30",
+              "description": "Report window in days: 7, 30, 90, or 'all'.",
+              "title": "Window",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EngagementOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Engagement",
         "tags": [
           "report"
         ]

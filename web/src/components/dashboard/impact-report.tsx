@@ -1,6 +1,7 @@
 import {
   CalendarClock,
   CheckCircle2,
+  CircleSlash,
   Clock,
   RefreshCw,
   Send,
@@ -11,6 +12,7 @@ import {
 import { useState } from "react";
 import { Link } from "react-router";
 
+import { Engagement } from "@/components/dashboard/engagement";
 import { QueryBoundary } from "@/components/query-boundary";
 import { Segmented } from "@/components/segmented";
 import { StatTile } from "@/components/stat-tile";
@@ -758,12 +760,11 @@ function ReportBody({
       {selector}
 
       {/* Is it working? Counts for the window, each against the previous equal period. */}
-      {/* Five tiles never divide evenly, so the last one spans the full width on a phone rather
-          than sitting alone in a half-width cell with a gap beside it. And five ACROSS starts at
-          `xl`, not `lg`: at 1024 five columns are ~148px each, which wraps "PEOPLE WATCHING" and
-          "TIME TO WATCH" onto two lines while their neighbours stay on one, so the row of tiles
-          comes out different heights. Three columns at that width fit every label on one line. */}
-      <div className="grid grid-cols-2 gap-3 [&>*:last-child]:col-span-2 sm:grid-cols-3 sm:[&>*:last-child]:col-span-1 xl:grid-cols-5">
+      {/* SIX tiles now, which divides evenly at 2 and 3 — so the odd-one-out span the five-tile
+          layout needed is gone. Six ACROSS still starts at `xl`, not `lg`: at 1024 the columns are
+          narrow enough to wrap "PEOPLE WATCHING" and "TIME TO WATCH" onto two lines while their
+          neighbours stay on one, leaving the row of tiles at different heights. */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
         <StatTile
           icon={TrendingUp}
           label="Watched"
@@ -791,6 +792,22 @@ function ReportBody({
               : "nothing watched yet"
           }
           title="Of the picks watched, the ones they saw out: a film played, or a series with every episode watched. Plex publishes no finished flag for a series, so this counts episodes."
+        />
+        {/* The one number here that Plex's watched flag cannot produce. A pick nobody opened and a
+            pick someone played for three minutes are both "not watched" to Plex, and they say
+            opposite things: one never got their attention, the other got it and lost it. Only live
+            playback can tell them apart, so this tile is empty until the listener has seen some. */}
+        <StatTile
+          icon={CircleSlash}
+          label="Dropped"
+          value={overall.dropped + overall.bounced}
+          tone={overall.dropped + overall.bounced > 0 ? "warning" : "default"}
+          hint={
+            overall.bounced > 0
+              ? `${overall.bounced} barely started`
+              : "started, never finished"
+          }
+          title="Picks someone started and gave up on. Counted from live playback, so it only covers what we watched happen — a title nobody has played since watch tracking started is not in here. 'Barely started' is under 5% in: opened and closed, rather than a fair go."
         />
         <StatTile
           icon={UsersIcon}
@@ -964,6 +981,12 @@ function ReportBody({
       </div>
 
       {report.recent.length > 0 && <RecentlyWatched recent={report.recent} />}
+
+      {/* The detail behind the Dropped tile: who dropped what, and where people stop. Its own
+          component because it is a separate request — the engagement scan is per-pick where the
+          report above is aggregate, and making the dashboard wait on both would delay the numbers
+          that are ready. */}
+      <Engagement reportWindow={reportWindow} />
     </div>
   );
 }

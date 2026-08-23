@@ -239,6 +239,12 @@ class OverallOut(PassthroughModel):
     #: of now while the previous window's had an extra period to complete, so a steady server reports
     #: a permanent decline. See `report_service.effectiveness`.
     finished: int
+    #: The engagement split, from live playback rather than Plex's flag. `bounced` got under 5% in —
+    #: opened and closed, which reads as "wrong pick entirely"; `dropped` got further and still never
+    #: finished. Both count only picks a live session actually observed, so a title we never watched
+    #: anyone play is in neither: unknown is not the same as zero.
+    bounced: int
+    dropped: int
     avg_days_to_watch: float | None
     avg_days_to_watch_delta: int | float | None
     landing: LandingOut
@@ -370,3 +376,52 @@ class SyncStartedOut(PassthroughModel):
     started: bool
     #: The queued `sync.history` job, so the caller can follow it like any other job.
     job_id: int
+
+
+class EngagementPickOut(PassthroughModel):
+    """One pick and what became of it.
+
+    `percent` is NULL where no live session ever observed the play — which is not 0%. Plex's watched
+    flag cannot see a partial play at all, so "we never watched this happen" and "they bailed at the
+    start" are genuinely different states and are not collapsed.
+    """
+
+    title: str
+    row: str
+    media_type: str
+    #: finished | dropped | bounced | watching (credited, but no session told us how far)
+    outcome: str
+    percent: int | None
+    watched_at: str | None
+    finished_at: str | None
+
+
+class EngagementPersonOut(PassthroughModel):
+    username: str
+    display_name: str | None
+    picks: list[EngagementPickOut]
+
+
+class LosingTitleOut(PassthroughModel):
+    """A pick several people started and few finished. One person abandoning something is a night;
+    the pattern across people is what makes it a bad recommendation."""
+
+    title: str
+    media_type: str
+    started: int
+    finished: int
+    #: The median point people stop at, as a percentage. An early number is a pick problem; a late one
+    #: is usually the title rather than the recommendation.
+    stops_at: int | None
+
+
+class StopPointOut(PassthroughModel):
+    label: str
+    count: int
+
+
+class EngagementOut(PassthroughModel):
+    window: str
+    people: list[EngagementPersonOut]
+    losing: list[LosingTitleOut]
+    stop_points: list[StopPointOut]

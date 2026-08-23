@@ -12,6 +12,7 @@ import type {
   BlockedSeed,
   DeletedRowHistory,
   EffectivenessReport,
+  EngagementReport,
   OwnedCollectionsAudit,
   PlexLibrary,
   ConnectionTestResult,
@@ -506,6 +507,10 @@ export const api = {
   /** The effectiveness report: delivered-vs-watched hit rates + a recent-watches feed. */
   getReport: (window: ReportWindow = "30"): Promise<EffectivenessReport> =>
     request(`/api/report?window=${window}`),
+
+  /** What people did with their picks: per person, per title, and where abandons cluster. */
+  getEngagement: (window: ReportWindow = "30"): Promise<EngagementReport> =>
+    request(`/api/report/engagement?window=${window}`),
 
   /** Pick history belonging to rows that no longer exist, and how much of it there is. */
   getDeletedRows: (): Promise<DeletedRowHistory[]> =>

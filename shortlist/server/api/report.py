@@ -33,6 +33,7 @@ from shortlist.server.api.schemas_runs import (
     ClearedDeletedRowsOut,
     DeletedRowOut,
     EffectivenessReportOut,
+    EngagementOut,
     SyncStartedOut,
 )
 from shortlist.server.auth import require_owner
@@ -197,3 +198,17 @@ def effectiveness(
     next_watch_sync = iso_utc(job.next_run_time) if job and job.next_run_time else None
     with request.app.state.sessions() as session:
         return report_service.effectiveness(session, window, next_watch_sync=next_watch_sync)
+
+
+@router.get("/engagement", response_model=EngagementOut)
+def engagement(
+    request: Request,
+    window: str = Query(DEFAULT_WINDOW, description="Report window in days: 7, 30, 90, or 'all'."),
+) -> dict:
+    """What people did with their picks: per person, per title, and where abandons cluster.
+
+    The detail behind the dashboard's Dropped tile. Sync like `effectiveness` and for the same reason
+    — it is a scan of `picks`, and running that on the event loop stalls SSE and every other request.
+    """
+    with request.app.state.sessions() as session:
+        return report_service.engagement(session, window)

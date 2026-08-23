@@ -263,6 +263,16 @@ credited as watched only 21 had actually been finished and 31 were a single epis
 "watched" count makes a TV row look better than a movie row for a structural reason rather than a
 real one. A big Watched with a small Finished means people are sampling, not staying.
 
+**Dropped** — picks someone started and gave up on. This is the one number Plex's own watched flag
+cannot produce: to Plex, a pick nobody opened and a pick someone played for three minutes are both
+"not watched", and they say opposite things. One never got their attention; the other got it and lost
+it. The hint splits off the ones that barely started at all — under 5% in, which reads as "wrong pick
+entirely" rather than "fair go, didn't hold me".
+
+It counts only what Shortlist watched happen live, so it starts empty and fills in from the moment
+watch tracking is running. A title nobody has played since then is in neither count — unknown is not
+the same as zero.
+
 **People watching** — how many people watched at least one pick, out of everyone currently enabled.
 
 **Avg to watch** — average days from a title first being recommended to it first being watched, over

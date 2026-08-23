@@ -14,18 +14,28 @@ import type {
 
 type ClearedRows = { cleared: number; picks: number; slugs: string[] };
 
-const { getReport, syncWatched, getDeletedRows, clearDeletedRows } = vi.hoisted(
-  () => ({
-    getReport: vi.fn(),
+const {
+  getReport,
+  getEngagement,
+  syncWatched,
+  getDeletedRows,
+  clearDeletedRows,
+} = vi.hoisted(() => ({
+  getReport: vi.fn(),
     syncWatched: vi.fn(() => Promise.resolve({ started: true })),
     getDeletedRows: vi.fn<() => Promise<DeletedRowHistory[]>>(() =>
       Promise.resolve([]),
     ),
-    clearDeletedRows: vi.fn<(slug?: string) => Promise<ClearedRows>>(() =>
-      Promise.resolve({ cleared: 1, picks: 5, slugs: ["zz-claude-test"] }),
-    ),
-  }),
-);
+  clearDeletedRows: vi.fn<(slug?: string) => Promise<ClearedRows>>(() =>
+    Promise.resolve({ cleared: 1, picks: 5, slugs: ["zz-claude-test"] }),
+  ),
+  // The engagement panel is a SECOND request inside the dashboard. Left unmocked it rejects, and
+  // its error boundary renders another `role="alert"` — which broke three unrelated assertions
+  // here on multiple-alert ambiguity rather than on anything they were testing.
+  getEngagement: vi.fn((_window: ReportWindow) =>
+    Promise.resolve({ window: "30", people: [], losing: [], stop_points: [] }),
+  ),
+}));
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>();
@@ -33,6 +43,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     api: {
       getReport: (window: ReportWindow) => getReport(window),
+      getEngagement: (window: ReportWindow) => getEngagement(window),
       syncWatched: () => syncWatched(),
       getDeletedRows: () => getDeletedRows(),
       clearDeletedRows: (slug?: string) => clearDeletedRows(slug),
@@ -97,6 +108,8 @@ const REPORT: EffectivenessReport = {
     watched_prev: 2,
     watched_delta: 2,
     finished: 3,
+    bounced: 1,
+    dropped: 2,
     avg_days_to_watch: 3.5,
     avg_days_to_watch_delta: -0.8,
     landing: LANDING,
@@ -790,5 +803,32 @@ describe("ImpactReport — the recent feed says which kind of watch it was", () 
       expect(line).toHaveTextContent(/watched/i);
       expect(line).not.toHaveTextContent(/started|finished/i);
     }
+  });
+});
+
+describe("ImpactReport — the engagement split", () => {
+  it("shows dropped and bounced together, with the bounces named in the hint", async () => {
+    getReport.mockResolvedValue(REPORT);
+    renderReport();
+
+    expect(await screen.findByText("Dropped")).toBeInTheDocument();
+    // 2 dropped + 1 bounced. One number, because the tile answers "how many did we lose after they
+    // pressed play" — the split lives in the hint, where it explains rather than competes.
+    const tile = screen.getByText("Dropped").closest("div")!.parentElement!;
+    expect(tile).toHaveTextContent("3");
+    expect(tile).toHaveTextContent(/1 barely started/i);
+  });
+
+  it("says what the number means rather than reading zero when nothing has been observed", async () => {
+    getReport.mockResolvedValue({
+      ...REPORT,
+      overall: { ...REPORT.overall, bounced: 0, dropped: 0 },
+    });
+    renderReport();
+
+    expect(await screen.findByText("Dropped")).toBeInTheDocument();
+    expect(
+      screen.getByText(/started, never finished/i),
+    ).toBeInTheDocument();
   });
 });

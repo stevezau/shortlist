@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hmac
 import logging
@@ -42,6 +43,7 @@ from shortlist.server.scheduler import build_scheduler
 from shortlist.server.services.run_service import RunService
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.services.sse import EventBus
+from shortlist.server.services.watch_stream import WatchStream
 from shortlist.server.settings_store import SECRET_KEYS, SettingsStore
 
 WEB_DIST = Path(__file__).parent.parent.parent / "web" / "dist"
@@ -246,6 +248,16 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         scheduler = build_scheduler(app)
         scheduler.start()
         app.state.scheduler = scheduler
+
+        # The live playback listener. A long-lived socket rather than a scheduled job, because the
+        # thing it captures — someone STARTING something and giving up — exists nowhere else: Plex's
+        # own history log records completions only, so a poll of any frequency would miss it. It
+        # reconnects on its own and every gap it leaves is repaired by the play log on the next sweep,
+        # so a failure here degrades the data rather than breaking the app.
+        watch_stream = WatchStream(app.state.sessions, app.state.run_service.build_context)
+        app.state.watch_stream = watch_stream
+        stream_task = asyncio.create_task(watch_stream.run())
+
         from shortlist.server.safe_mode import force_dry_run, misconfigured_dry_run
 
         if force_dry_run():
@@ -259,6 +271,14 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
             yield
         finally:
             scheduler.shutdown(wait=False)
+            watch_stream.stop()
+            # Awaited, not just cancelled: `run()` closes every in-flight session on its way out, and
+            # cancelling immediately makes that unreachable — every open session would survive the
+            # restart with no `ended_at`, reading as "still playing" for ever.
+            try:
+                await asyncio.wait_for(stream_task, timeout=5)
+            except (TimeoutError, asyncio.CancelledError):
+                stream_task.cancel()
 
     # The interactive API docs + schema disclose the whole API surface unauthenticated. They're off
     # by default (nothing sensitive, but no reason to advertise); set SHORTLIST_ENABLE_DOCS=1 to

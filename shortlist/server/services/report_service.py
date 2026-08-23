@@ -14,9 +14,10 @@ rather than how good the picks were.
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import String, case, cast, func
+from sqlalchemy import String, case, cast, func, or_
 from sqlalchemy.orm import Session
 
 from shortlist.engine.models import DEFAULT_ROW_TEMPLATE
@@ -314,6 +315,47 @@ def _requests_summary(session: Session, since: datetime | None) -> dict:
     }
 
 
+#: Below this, a start is "opened and closed" rather than "gave it a go". Two minutes of a film is a
+#: different signal from forty, and collapsing them loses the one that says "wrong pick entirely".
+BOUNCE_PERCENT = 5
+
+
+def _engagement_split(session: Session, since: datetime | None) -> tuple[int, int]:
+    """(bounced, dropped) — started and abandoned, split by how far they got.
+
+    Counted per (person, title) like every other figure here, and only over picks we actually watched
+    someone play: `max_percent IS NULL` means no live session was seen, which is not the same as 0%
+    and must not be counted as a bounce.
+    """
+    # NOT gated on `watched_at`. That column comes from Plex's binary flag, and a partial watch never
+    # sets it — which would have made the one thing this split exists to count structurally
+    # impossible: a film abandoned at 40% has no flag, so it could never appear. `max_percent IS NOT
+    # NULL` already means "a live session watched them play it", which is the real precondition.
+    #
+    # Windowed on `watched_at` where there is one and on the delivery otherwise, because a
+    # session-only pick has no credit timestamp to window on and would otherwise fall out of every
+    # window including `all`.
+    when = func.coalesce(PickRow.watched_at, PickRow.created_at)
+    started = [
+        PickRow.finished_at.is_(None),
+        PickRow.max_percent.isnot(None),
+        *_in_period(when, since, None),
+    ]
+    bounced = (
+        session.query(func.count(func.distinct(_PERSON_TITLE)))
+        .filter(*started, PickRow.max_percent < BOUNCE_PERCENT)
+        .scalar()
+        or 0
+    )
+    dropped = (
+        session.query(func.count(func.distinct(_PERSON_TITLE)))
+        .filter(*started, PickRow.max_percent >= BOUNCE_PERCENT)
+        .scalar()
+        or 0
+    )
+    return bounced, dropped
+
+
 def _recent_watches(session: Session, users: dict[int, User], namer: _RowNamer, since: datetime | None) -> list[dict]:
     """The recent-watches feed: one line per (person, title), like every other figure here.
 
@@ -504,6 +546,7 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
             "deleted": namer.template(key[0]) is None,
         },
     )
+    bounced_now, dropped_now = _engagement_split(session, since)
     recent = _recent_watches(session, users, namer, since)
 
     return {
@@ -534,6 +577,13 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
             # on this page someone would act on. Measuring the change honestly needs a matured-cohort
             # comparison (what `landing` does), not a shifted window.
             "finished": finished_now,
+            # The engagement split, which `watched` alone cannot draw. A pick nobody opened and a pick
+            # someone played for three minutes and abandoned are both "not watched" to Plex's flag,
+            # and they say opposite things about the recommendation: one never got their attention,
+            # the other got it and lost it. `max_percent` comes from live sessions, so it is NULL for
+            # anything we did not watch happen — those count as neither, rather than as 0%.
+            "bounced": bounced_now,
+            "dropped": dropped_now,
             "avg_days_to_watch": avg_now,
             "avg_days_to_watch_delta": _delta(avg_now, avg_prev),
             "landing": landing,
@@ -676,4 +726,119 @@ def row_effectiveness(session: Session, slug: str, now: datetime | None = None) 
             else None
         ),
         "per_library": per_library,
+    }
+
+
+def engagement(session: Session, window: str) -> dict:
+    """What people did with their picks, per title — the detail behind the Dropped tile.
+
+    Two views of the same rows, because they answer different questions. `people` is "what did THIS
+    person do with their row", which is the one an owner opens when someone says the picks are no
+    good. `titles` is "what does everyone do with THIS pick", which is the one that says a title is a
+    bad recommendation rather than a bad night.
+
+    Only picks a live session actually observed carry a percentage. A pick with `max_percent IS NULL`
+    was never watched happening, which is not 0% — it is unknown, and it is left out of both rather
+    than counted as an abandonment.
+    """
+    days = WINDOWS.get(window, WINDOWS[DEFAULT_WINDOW])
+    since = datetime.now(UTC) - timedelta(days=days) if days else None
+    users = {u.id: u for u in session.query(User).all()}
+    namer = _RowNamer(session, SettingsStore(session).get("row.name_template") or DEFAULT_ROW_TEMPLATE)
+
+    # `watched_at OR max_percent`: a partial watch sets no Plex flag, so requiring a credit here
+    # would hide exactly the picks this page is about. Ordered and windowed on whichever timestamp
+    # the row actually has.
+    when = func.coalesce(PickRow.watched_at, PickRow.created_at)
+    rows = (
+        session.query(PickRow)
+        .filter(
+            or_(PickRow.watched_at.isnot(None), PickRow.max_percent.isnot(None)),
+            *_in_period(when, since, None),
+        )
+        .order_by(when.desc())
+        .all()
+    )
+
+    def outcome(pick: PickRow) -> str:
+        """One of four, and the split between the first two is the whole point of this page."""
+        if pick.finished_at is not None:
+            return "finished"
+        if pick.max_percent is None:
+            return "watching"  # credited, but no live session ever told us how far
+        return "bounced" if pick.max_percent < BOUNCE_PERCENT else "dropped"
+
+    # Deduped per (person, title): a title redelivered over several nights is one thing that happened
+    # to one person, exactly as every other figure in this report counts it.
+    seen: set[tuple[int, int, str]] = set()
+    people: dict[int, list[dict]] = defaultdict(list)
+    per_title: dict[tuple[int, str], dict] = {}
+    for pick in rows:
+        slot = (pick.user_id, pick.tmdb_id, pick.media_type)
+        if slot in seen:
+            continue
+        seen.add(slot)
+        state = outcome(pick)
+        entry = {
+            "title": pick.title,
+            "row": namer.label(pick.collection_slug, pick.library),
+            "media_type": pick.media_type,
+            "outcome": state,
+            "percent": pick.max_percent,
+            "watched_at": iso_utc(pick.watched_at),
+            "finished_at": iso_utc(pick.finished_at) if pick.finished_at else None,
+        }
+        user = users.get(pick.user_id)
+        if user is not None:
+            people[pick.user_id].append(entry)
+
+        key = (pick.tmdb_id, pick.media_type)
+        agg = per_title.setdefault(
+            key,
+            {"title": pick.title, "media_type": pick.media_type, "started": 0, "finished": 0, "percents": []},
+        )
+        agg["started"] += 1
+        if state == "finished":
+            agg["finished"] += 1
+        elif pick.max_percent is not None:
+            agg["percents"].append(pick.max_percent)
+
+    def median(values: list[int]) -> int | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        return ordered[len(ordered) // 2]
+
+    # Titles that LOSE people: started by more than one person and finished by few. A single person
+    # abandoning something is a night, not a signal — the pattern is what makes it a bad pick.
+    losing = [
+        {
+            "title": agg["title"],
+            "media_type": agg["media_type"],
+            "started": agg["started"],
+            "finished": agg["finished"],
+            "stops_at": median(agg["percents"]),
+        }
+        for agg in per_title.values()
+        if agg["started"] >= 2 and agg["finished"] * 2 <= agg["started"] and agg["percents"]
+    ]
+    losing.sort(key=lambda t: (-t["started"], t["stops_at"] or 0))
+
+    # Where abandons happen, which is the shape that says whether picks are wrong or merely long.
+    buckets = [("0-10%", 0, 10), ("10-25%", 10, 25), ("25-50%", 25, 50), ("50-75%", 50, 75), ("75%+", 75, 101)]
+    abandoned = [p.max_percent for p in rows if p.finished_at is None and p.max_percent is not None]
+    return {
+        "window": window,
+        "people": [
+            {
+                "username": users[uid].username,
+                "display_name": users[uid].display_name,
+                "picks": entries[:40],
+            }
+            for uid, entries in sorted(people.items(), key=lambda kv: -len(kv[1]))
+        ],
+        "losing": losing[:20],
+        "stop_points": [
+            {"label": label, "count": sum(1 for p in abandoned if lo <= p < hi)} for label, lo, hi in buckets
+        ],
     }

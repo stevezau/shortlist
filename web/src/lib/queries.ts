@@ -62,6 +62,7 @@ export const queryKeys = {
   // what each windowed query itself is keyed on.
   report: ["report"] as const,
   reportWindow: (window: ReportWindow) => ["report", window] as const,
+  engagement: (window: ReportWindow) => ["report", "engagement", window] as const,
   deletedRows: ["report", "deleted-rows"] as const,
   schedule: ["schedule"] as const,
   libraries: ["libraries"] as const,
@@ -673,6 +674,13 @@ export function useVersion() {
     queryFn: api.getVersion,
     staleTime: 3600_000, // check once per hour
     refetchOnWindowFocus: false,
+  });
+}
+
+export function useEngagement(window: ReportWindow = "30") {
+  return useQuery({
+    queryKey: queryKeys.engagement(window),
+    queryFn: () => api.getEngagement(window),
   });
 }
 

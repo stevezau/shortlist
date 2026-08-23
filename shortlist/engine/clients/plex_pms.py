@@ -36,6 +36,23 @@ MIN_PMS_VERSION = (1, 43, 2, 10687)
 
 
 @dataclass(frozen=True)
+class PlayEvent:
+    """One play from the server's own history log — who, what, exactly when.
+
+    Deliberately not a `WatchedItem`: that models watched STATE for a title (counts, flags, a
+    high-water timestamp), while this is a single event with no notion of how much was seen.
+    """
+
+    plex_account_id: int
+    rating_key: int
+    show_rating_key: int | None
+    media_type: str
+    viewed_at: datetime
+    #: Plex's own row id, unique per event — the dedupe key, since the log repeats itself.
+    history_key: str | None
+
+
+@dataclass(frozen=True)
 class WatchedRead:
     """One library's watched titles, and whether the read can be trusted to be COMPLETE for its window.
 
@@ -313,6 +330,10 @@ class PlexClient:
             # plexapi issues the requests and would otherwise have to be trusted to pass the flag.
             _forbid_redirects(session)
         self._server = PlexServer(base_url, token, session=session, timeout=timeout)
+        # The ADMIN token, kept for the raw reads that are deliberately server-wide rather than
+        # per-user: `play_history` is one call covering every account, where the watched-state read is
+        # made as each user with their own share token.
+        self._token = token
         # Every raw (non-plexapi) PMS read in this class must use THIS, not a hardcoded number —
         # plexapi's own calls already get `timeout` via the PlexServer above; `user_hubs` and
         # `_read_watched_page` used to hardcode 30/45 here, silently ignoring the operator's
@@ -1242,6 +1263,150 @@ class PlexClient:
     # single response to hold them all (a silent cap here would hide older watches from the
     # already-watched filter — the very 200-row bug the share-token read exists to end).
     _WATCHED_PAGE = 500
+    #: History pages. Both container headers are required — see `play_history`.
+    _HISTORY_PAGE = 1000
+
+    @property
+    def token(self) -> str:
+        """The admin token, for the callers that must send it themselves (the notification socket)."""
+        return self._token
+
+    def notification_socket_url(self) -> str:
+        """The PMS notification websocket, WITHOUT the token.
+
+        Token-free on purpose: this URL is passed to a websocket library that puts it in log lines and
+        exception messages, and rule 9 says a token never reaches either. The caller sends it as a
+        header instead.
+        """
+        base = self._server._baseurl.rstrip("/")
+        scheme = "wss" if base.startswith("https://") else "ws"
+        return f"{scheme}://{base.split('://', 1)[1]}/:/websockets/notifications"
+
+    def active_sessions(self) -> dict[str, dict]:
+        """What is playing right now, keyed by Plex's `sessionKey`.
+
+        The notification socket carries no user and no runtime — only a session key, a rating key and
+        an offset — so this read is what turns an anonymous position update into "this person is 40%
+        through this title". `<User id>` here IS the plex.tv account id (verified against a live
+        server: 14136324 is the account we hold for that user), which is what makes it joinable where
+        a display name would not be.
+        """
+        r = http_retry.get(
+            self._server.url("/status/sessions", includeToken=False),
+            headers={"X-Plex-Token": self._token},
+            timeout=self._timeout,
+        )
+        r.raise_for_status()
+        out: dict[str, dict] = {}
+        for el in ET.fromstring(r.text):
+            key = el.get("sessionKey")
+            if not key:
+                continue
+            user = el.find("User")
+            grandparent = (el.get("grandparentRatingKey") or "").strip()
+            out[key] = {
+                "account_id": int(user.get("id")) if user is not None and (user.get("id") or "").isdigit() else None,
+                "rating_key": int(el.get("ratingKey") or 0) or None,
+                "show_rating_key": int(grandparent) if grandparent.isdigit() else None,
+                "media_type": el.get("type") or "",
+                # Milliseconds, and the denominator for every percentage we report. Absent on some
+                # live items, so it stays optional rather than defaulting to something wrong.
+                "duration_ms": int(el.get("duration") or 0) or None,
+                "state": (el.find("Player").get("state") if el.find("Player") is not None else "") or "",
+            }
+        return out
+
+    def play_history(self, *, since: datetime | None = None, limit: int = 20000) -> list[PlayEvent]:
+        """Every play the SERVER recorded, newest first, as the admin — one call for all users.
+
+        This is `/status/sessions/history/all`, the durable log Shortlist never read. It is the only
+        source of an exact per-play timestamp: the library read exposes `lastViewedAt`, which is the
+        LATEST view, so a rewatch erases the date of the first one. It is also self-healing — the log
+        lives on the server (101,604 rows reaching back to 2020-10-26 on the maintainer's box), so
+        anything missed while Shortlist was down is still there afterwards.
+
+        It records COMPLETIONS only. Probed live: an episode at 73% with no `viewCount` had no entry.
+        Starts come from the websocket, never from here.
+
+        Args:
+            since: Only plays at or after this moment. Unlike the library read — where `lastViewedAt>=`
+                is silently ignored by this PMS build — `viewedAt>` IS honoured here, verified against
+                a real server (101,604 rows unfiltered, 2,049 for 30 days, 102 for 24 hours). So the
+                incremental read is genuinely incremental rather than a sort-and-stop.
+            limit: Stop after this many events. A backstop for a first read with no cursor, which
+                would otherwise pull six years of history in one go.
+
+        Returns:
+            Newest first, so a caller that hits `limit` keeps the RECENT end rather than 2020's.
+        """
+        out: list[PlayEvent] = []
+        start = 0
+        while start < limit:
+            params: dict[str, object] = {"sort": "viewedAt:desc"}
+            if since is not None:
+                params["viewedAt>"] = int(since.timestamp())
+            root = self._history_page(params, start)
+            page = [event for el in root if (event := self._play_event(el)) is not None]
+            out.extend(page)
+            # `size` is what this page returned; a short page is the end. `totalSize` is the whole
+            # filtered set and is only present when the container headers are sent.
+            if len(list(root)) < self._HISTORY_PAGE:
+                break
+            start += self._HISTORY_PAGE
+        return out[:limit]
+
+    def _history_page(self, params: dict[str, object], start: int) -> ET.Element:
+        """One page of the play history.
+
+        BOTH container headers or nothing: `X-Plex-Container-Size` alone is IGNORED by this PMS and
+        the server returns the entire log — 101,604 rows, ~40 MB, on a request that asked for 1,000.
+        Live-probed 2026-08-23. Sending Start as well makes it honour both and fill in `totalSize`.
+        """
+        r = http_retry.get(
+            self._server.url("/status/sessions/history/all", includeToken=False),
+            params=params,
+            headers={
+                "X-Plex-Token": self._token,
+                "X-Plex-Container-Start": str(start),
+                "X-Plex-Container-Size": str(self._HISTORY_PAGE),
+            },
+            timeout=self._timeout,
+        )
+        r.raise_for_status()
+        return ET.fromstring(r.text)
+
+    @staticmethod
+    def _play_event(el: ET.Element) -> PlayEvent | None:
+        """One `<Video>` history row, or None if it carries nothing we can attribute.
+
+        A history row is thin — `accountID`, `ratingKey`, `viewedAt`, `type`, and for an episode the
+        show's `grandparentKey`. There is no duration, no viewOffset and no TMDB guid, so this cannot
+        say how much was watched and does not pretend to.
+        """
+        try:
+            account_id = int(el.get("accountID") or 0)
+            rating_key = int(el.get("ratingKey") or 0)
+            viewed_at = int(el.get("viewedAt") or 0)
+        except ValueError:
+            return None
+        if not account_id or not rating_key or not viewed_at:
+            return None
+        # The SHOW's key, dug out of `/library/metadata/592373` — history entries carry no
+        # `grandparentRatingKey` attribute, only the path. This is the field that actually matches a
+        # pick: a series pick stores the show's key while history reports the episode played, and over
+        # 30 days of real history 46 of 78 matches were reachable only this way.
+        show_key: int | None = None
+        tail = (el.get("grandparentKey") or "").rsplit("/", 1)[-1]
+        if tail.isdigit():
+            show_key = int(tail)
+        return PlayEvent(
+            plex_account_id=account_id,
+            rating_key=rating_key,
+            show_rating_key=show_key,
+            media_type=el.get("type") or "",
+            viewed_at=datetime.fromtimestamp(viewed_at, tz=UTC),
+            history_key=el.get("historyKey") or None,
+        )
 
     def watched_titles(
         self,

@@ -395,6 +395,8 @@ export type ReportWindow = Schemas["EffectivenessReportOut"]["window"];
  * a percentage is noise dressed as precision, and sorting by it put 1/31 above 3/103.
  */
 export type EffectivenessReport = Schemas["EffectivenessReportOut"];
+export type EngagementReport = Schemas["EngagementOut"];
+export type EngagementPick = Schemas["EngagementPickOut"];
 
 /** GET /api/report/deleted-rows — pick history left behind by a row that no longer exists. */
 export type DeletedRowHistory = Schemas["DeletedRowOut"];

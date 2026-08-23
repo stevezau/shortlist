@@ -414,6 +414,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/report/engagement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Engagement
+         * @description What people did with their picks: per person, per title, and where abandons cluster.
+         *
+         *     The detail behind the dashboard's Dropped tile. Sync like `effectiveness` and for the same reason
+         *     — it is a scan of `picks`, and running that on the event loop stalls SSE and every other request.
+         */
+        get: operations["engagement_api_report_engagement_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/report/sync": {
         parameters: {
             query?: never;
@@ -3104,6 +3127,56 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** EngagementOut */
+        EngagementOut: {
+            /** Losing */
+            losing: components["schemas"]["LosingTitleOut"][];
+            /** People */
+            people: components["schemas"]["EngagementPersonOut"][];
+            /** Stop Points */
+            stop_points: components["schemas"]["StopPointOut"][];
+            /** Window */
+            window: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** EngagementPersonOut */
+        EngagementPersonOut: {
+            /** Display Name */
+            display_name: string | null;
+            /** Picks */
+            picks: components["schemas"]["EngagementPickOut"][];
+            /** Username */
+            username: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * EngagementPickOut
+         * @description One pick and what became of it.
+         *
+         *     `percent` is NULL where no live session ever observed the play — which is not 0%. Plex's watched
+         *     flag cannot see a partial play at all, so "we never watched this happen" and "they bailed at the
+         *     start" are genuinely different states and are not collapsed.
+         */
+        EngagementPickOut: {
+            /** Finished At */
+            finished_at: string | null;
+            /** Media Type */
+            media_type: string;
+            /** Outcome */
+            outcome: string;
+            /** Percent */
+            percent: number | null;
+            /** Row */
+            row: string;
+            /** Title */
+            title: string;
+            /** Watched At */
+            watched_at: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -3441,6 +3514,25 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * LosingTitleOut
+         * @description A pick several people started and few finished. One person abandoning something is a night;
+         *     the pattern across people is what makes it a bad recommendation.
+         */
+        LosingTitleOut: {
+            /** Finished */
+            finished: number;
+            /** Media Type */
+            media_type: string;
+            /** Started */
+            started: number;
+            /** Stops At */
+            stops_at: number | null;
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * NotificationOut
          * @description One alert as the React bell renders it — plain text throughout, no HTML.
          *
@@ -3487,8 +3579,12 @@ export interface components {
             avg_days_to_watch: number | null;
             /** Avg Days To Watch Delta */
             avg_days_to_watch_delta: number | null;
+            /** Bounced */
+            bounced: number;
             /** Delivered */
             delivered: number;
+            /** Dropped */
+            dropped: number;
             /** Finished */
             finished: number;
             landing: components["schemas"]["LandingOut"];
@@ -4585,6 +4681,15 @@ export interface components {
             expires_at: string | null;
             /** Seconds Remaining */
             seconds_remaining: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /** StopPointOut */
+        StopPointOut: {
+            /** Count */
+            count: number;
+            /** Label */
+            label: string;
         } & {
             [key: string]: unknown;
         };
@@ -5854,6 +5959,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ClearedDeletedRowsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    engagement_api_report_engagement_get: {
+        parameters: {
+            query?: {
+                /** @description Report window in days: 7, 30, 90, or 'all'. */
+                window?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngagementOut"];
                 };
             };
             /** @description Validation Error */

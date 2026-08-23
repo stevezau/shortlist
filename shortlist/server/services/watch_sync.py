@@ -24,6 +24,7 @@ from shortlist.engine.models import MediaType, UserProfile, UserType
 from shortlist.server.db.models import User
 from shortlist.server.services.sse import EventBus
 from shortlist.server.services.watch_cache import DEFAULT_FULL_EVERY, WatchCache
+from shortlist.server.services.watch_events import ingest_play_history
 from shortlist.server.settings_store import SettingsStore
 
 
@@ -317,6 +318,21 @@ class WatchSync:
                 except Exception as e:
                     logger.warning("watch-sync: history fetch failed for {}: {}", profile.slug, type(e).__name__)
                 emit("sync.progress", {"done": i, "total": total})
+            # The server's own play log, one admin call for every account. Deliberately AFTER the
+            # per-user reads and inside the same lock: it is the source of exact play TIMES, which is
+            # what lets the reconcile ask "was this in their row at the time" instead of "is it in
+            # their row now". Its failure must not cost us the watched-state refresh above, which is
+            # what the engine depends on — hence its own try.
+            try:
+                with self._sessions() as session:
+                    added = ingest_play_history(session, ctx.plex, SettingsStore(session))
+                    session.commit()
+                if added:
+                    emit("sync.progress", {"done": total, "total": total, "events": added})
+            except Exception as e:
+                logger.warning(
+                    "watch-sync: play-history read failed ({}) — watched state is still fresh", type(e).__name__
+                )
             reconcile_watched(profiles)
             with self._sessions() as session:
                 store = SettingsStore(session)

@@ -429,6 +429,11 @@ class RunSharedRow(Base):
     trace: Mapped[dict] = mapped_column(JSON, default=dict)
     #: The delivered picks, same field set the API renders for a user's picks.
     picks: Mapped[list] = mapped_column(JSON, default=list)
+    #: Which plex account ids could SEE this row when it was delivered; NULL = everyone, and also what
+    #: every pre-0076 row carries. `collection_audience` is current state with no history, so without
+    #: this snapshot, adding someone to a subset row today would retroactively credit their older
+    #: watches to a row they could not see at the time.
+    audience: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
 
     run: Mapped[Run] = relationship(back_populates="shared_rows")
 
@@ -488,6 +493,10 @@ class PickRow(Base):
     # (rows.py `_watched_titles`), which answers "engaged enough not to re-recommend?", a different
     # question from "did they finish it?". Two thresholds, on purpose.
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    # The furthest they got, 0-100, from `watch_sessions`. Denormalised so the report does not join
+    # sessions on every read, and NULL where we never saw a live session — which is not 0%: "we did
+    # not watch them watch it" and "they bailed immediately" are different facts.
+    max_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class RestrictionSnapshotRow(Base):
@@ -781,3 +790,88 @@ class Job(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WatchEvent(Base):
+    """One play Plex's own history log recorded — who, what, and exactly when.
+
+    The log (`/status/sessions/history/all`) is the signal Shortlist never read. It is server-side and
+    deep (101,604 rows back to 2020-10-26 on the maintainer's box), it carries the plex.tv
+    `accountID` rather than a display name, and `viewedAt>` filtering works on it — which the library
+    read's equivalent does not. So it survives our downtime completely: whatever we miss is still
+    there on the next sweep, with the right timestamps.
+
+    It records COMPLETIONS, not starts. Verified against a live server: an episode being played at 73%
+    with no `viewCount` had no entry. Starts live in :class:`WatchSession`.
+    """
+
+    __tablename__ = "watch_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: The plex.tv account id, deliberately NOT a FK to `users.id`: an event can arrive for an account
+    #: with no user row yet, and dropping it would lose history the moment someone is invited.
+    plex_account_id: Mapped[int] = mapped_column(Integer, index=True)
+    #: The movie, or the EPISODE that was played.
+    rating_key: Mapped[int] = mapped_column(Integer, index=True)
+    #: The SHOW, for an episode — parsed out of `grandparentKey`'s path, because history entries carry
+    #: no `grandparentRatingKey` attribute. This is what actually matches a pick: a pick for a series
+    #: stores the show's key, and over 30 days of real history 46 of 78 matches were reachable ONLY
+    #: through this column.
+    show_rating_key: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    media_type: Mapped[str] = mapped_column(String(16))
+    viewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    source: Mapped[str] = mapped_column(String(16), default="history")
+    #: Plex's own row id. Unique, because the log repeats itself — the same item for the same account
+    #: seconds apart, and twice within one second on one device (both observed live). Deduping on this
+    #: needs no time-window heuristic and cannot drop a genuine rewatch.
+    history_key: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class WatchSession(Base):
+    """One playback session as it happened — the only place a PARTIAL watch exists.
+
+    Plex publishes no partial-play API. The notification websocket pushes position
+    (`PlaySessionStateNotification`: `sessionKey`, `ratingKey`, `viewOffset`, `state`) and nothing
+    else — no user, no runtime — so this row is assembled: identity by resolving `session_key` against
+    `/status/sessions` on the first PLAYING event, runtime from metadata, progress from `viewOffset`.
+    That assembly is why Tautulli keeps its own database, and it is what we are doing here.
+
+    Measured on a live server before this existed: events arrive per session about every 10s, roughly
+    one a second across the whole server, and `viewOffset` advances 1:1 with wall clock. So state is
+    held in memory and flushed on a throttle — a write per event would be a write per second to record
+    that ten seconds passed.
+    """
+
+    __tablename__ = "watch_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    plex_account_id: Mapped[int] = mapped_column(Integer, index=True)
+    #: Plex's session key — unique only while the session is LIVE, and reused afterwards. The open
+    #: session is the one with `ended_at IS NULL`, never "the newest row with this key".
+    session_key: Mapped[str] = mapped_column(String(32), index=True)
+    rating_key: Mapped[int] = mapped_column(Integer, index=True)
+    show_rating_key: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    media_type: Mapped[str] = mapped_column(String(16))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    max_offset_ms: Mapped[int] = mapped_column(Integer, default=0)
+    #: NULL until the runtime is known. A percentage of an unknown runtime is worse than none.
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: stopped | timeout | replaced. `timeout` is recorded rather than dressed up as a stop: a client
+    #: that crashes or drops off the network never sends one, which is why Tautulli schedules a
+    #: force-stop instead of waiting for it, and why we do too.
+    end_reason: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    @property
+    def percent(self) -> int | None:
+        """How far they got, 0-100, or None when the runtime is unknown.
+
+        Capped at 100: a re-scanned library or a bulk mark can leave an offset past the runtime, and
+        `test_a_series_watched_beyond_its_episode_count_is_finished` records the same shape being
+        observed live at 145%.
+        """
+        if not self.duration_ms:
+            return None
+        return min(100, round(100 * self.max_offset_ms / self.duration_ms))

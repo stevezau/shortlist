@@ -34,6 +34,13 @@ dependencies = [
     "itsdangerous>=2.1",
     "cryptography>=42.0",
     "python-multipart>=0.0.9",
+    # The PMS notification socket (`watch_stream`). Already in the lock transitively via uvicorn's
+    # standard extras, but declared here because we import it directly — a transitive dependency that
+    # disappears when uvicorn changes its extras would break the only source of partial-watch data.
+    # >=14, not >=13: `websockets.connect` only became the asyncio client in 14.0. On 13.x it is the
+    # legacy client, which takes `extra_headers` rather than `additional_headers` and whose `recv()`
+    # is not documented as cancellation-safe — and `_listen` wraps it in `asyncio.wait_for`.
+    "websockets>=14",
 ]
 
 [project.optional-dependencies]
