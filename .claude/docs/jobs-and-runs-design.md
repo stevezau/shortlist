@@ -511,6 +511,67 @@ second covers marking, which writes nothing to Plex but UNLOCKS Remove, and Remo
 history for good. `owner` is excluded from both by TYPE rather than by id: `/api/users` never returns
 the account owning the server, so an owner row is off-roster by construction.
 
+**The third site: uninstall's restore loop (2026-08-23, issue #96).** Same empty-roster hazard,
+opposite direction — here the omission is failing to WRITE. `restore_user_restrictions` asked plex.tv
+for each account as it went, so an account that had left raised `LookupError` through a loop with no
+per-user guard: the 500 aborted the remaining restores AND the collection deletion and row disabling
+that followed, so the rows rebuilt on the next scheduled run, after the operator had typed UNINSTALL.
+`privacy.resolve_restore_targets` now resolves every snapshot against ONE roster read.
+
+It is bounded by CORROBORATION rather than by a veto, and that difference is the whole design:
+
+- **Three buckets, not two**, and they stay three all the way out to the API
+  (`filters_skipped` / `filters_unreachable` / `filters_failed`) so no consumer has to match on an
+  error string to tell them apart. An account the roster omits is *departed* only if `user_sync`
+  already recorded it gone (`departed_at`/`removed_at`) — two independent observations, days apart.
+  Otherwise it is *unreachable*: our records say it is here, so the roster disagreeing with them is
+  what a partial or empty read looks like. Unreachable is reported as retryable, never as gone.
+- **The preview says it too.** The dry run is the rehearsal the FAQ tells people to trust (rule 8),
+  so "plex.tv could not see N of your accounts" belongs there most of all — it is the one signal that
+  should stop an operator typing UNINSTALL. It was reported only on the real run at first.
+- **plex.tv listing NONE of our accounts is its own message.** The two readings — the owner really
+  has un-shared everybody, or the read failed — are indistinguishable here, so it says both instead
+  of "run it again to retry", which for the first owner is a loop that can never close.
+- **No hard refusal, and this is the trap to avoid re-introducing.** The first fix raised on an empty
+  roster. That is a permanent dead end for the exact operator it was meant to protect: an owner who
+  has wound down every share gets an EMPTY roster, and the sweep above never marks anyone departed
+  from an empty roster (`gone = ... if roster else []`), so no amount of waiting or re-syncing could
+  ever clear them and they could never uninstall at all. Reporting is what keeps a bad read honest;
+  refusing just moves the failure.
+- **No ratio veto either.** Skipping a restore is an omission, not a destructive act, and the operator
+  has explicitly typed UNINSTALL. A ratio veto would block a legitimate uninstall to prevent an
+  omission that is already named in the response, the events and on the page.
+
+Two ordering bugs were fixed with it, both found by review rather than by any test:
+
+- **Rows are switched off FIRST**, before anything touches Plex. Disabling them last meant a failure
+  in any Plex phase left `rows_disabled == 0` with the schedule still armed — so the nightly run
+  rebuilt the collections and re-merged the excludes the operator had just paid to remove. The 500
+  said "run it again"; the scheduler could get there first.
+- **Collections are deleted BEFORE the excludes hiding them are restored** — rule 1 in reverse.
+  Restoring first strips each account's `label!=shortlist_*` while the rows still exist and are still
+  promoted, which is issue #88's state, for as long as a full section walk takes. Delete-first cannot
+  leak: a failure there leaves the excludes in place, which is an omission rather than exposure.
+
+A run ALREADY in flight is refused with a 409 rather than waited on: clearing the schedule does not
+cancel a run that is mid-flight, and that run keeps merging `label!=shortlist_*` from a roster it
+loaded earlier into accounts the restore has just put back. A 409 rather than blocking on the writer
+lock, because the lock would hold the request silently for minutes and one TV-library write costs
+~16s on the maintainer's server.
+
+It also takes `jobs.plex_writer_lock()` now, which it never did. Uninstall deletes collections and
+merges share filters, so it is a writer like any run or writer job — and without the lock a privacy
+sync firing mid-uninstall re-merges the `label!=shortlist_*` excludes onto accounts the restore loop
+has already put back. That is the read-modify-write clobber rule 3 exists for, and nothing has caught
+it since the Privacy Check was removed on 2026-07-16.
+
+The audit was fixed too. Events were written after the whole job, so an exception in a later phase
+discarded the record of what had already changed on Plex (rule 10) — and a restore whose read-back
+disagreed reported an error with no diff, even though the PUT had landed and the account's filters had
+already changed. `RestoreVerificationError` now carries what was written, the handler audits it as a
+write it could not confirm, and the summary event carries `stopped_by` so a partial uninstall's row
+never asserts a clean one.
+
 ### Safe mode is per call site, not per client
 
 `SHORTLIST_DRY_RUN=1` makes `build_context` OR the flag into `ctx.config.dry_run` — but neither

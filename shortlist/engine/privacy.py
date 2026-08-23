@@ -724,20 +724,117 @@ def summarise_filter_diff(diff: dict[str, tuple[str, str]], label_prefix: str) -
     return "; ".join(parts) or "no change"
 
 
+class RestoreVerificationError(RuntimeError):
+    """A restore write reached plex.tv but could not be confirmed.
+
+    Carries `attempted` — the fields that were PUT — because by the time this is raised the account's
+    filters have ALREADY changed on plex.tv. The caller has to be able to audit what was written even
+    though it could not verify it (rule 10): a failed restore with no recorded diff is a write nobody
+    has a record of, on the most privacy-sensitive path in the product.
+    """
+
+    def __init__(self, message: str, attempted: dict[str, str]) -> None:
+        super().__init__(message)
+        self.attempted = attempted
+
+
+def resolve_restore_targets(
+    plextv: PlexTvClient,
+    snapshots: list[FilterSnapshot],
+    *,
+    believed_departed: frozenset[int] = frozenset(),
+) -> tuple[list[tuple[FilterSnapshot, PlexTvUser]], list[FilterSnapshot], list[FilterSnapshot]]:
+    """Sort every snapshot into restorable, gone-for-good, and could-not-reach.
+
+    ONE roster read for the whole restore, and it fixes two things. `get_user` re-fetched
+    `/api/users` on every call, so a 40-user uninstall paid ~80 round-trips before the read-backs
+    even started; and an account that has since left the server raised `LookupError` straight out of
+    the per-user restore, which had no guard — so one departed user aborted the entire loop and left
+    every account after them carrying Shortlist's excludes for ever, after the operator had already
+    typed UNINSTALL (issue #96).
+
+    The third bucket is the point. "plex.tv does not list this account" has two very different
+    meanings, and collapsing them is how a truncated roster read becomes permanent pollution reported
+    as success — uninstall is ONE SHOT (it switches every row off and clears every schedule), so
+    unlike the nightly sweep there is no later pass to notice and self-correct:
+
+    * **departed** — the roster omits them AND `user_sync` already recorded them as gone
+      (`believed_departed`). Two independent observations, days apart. There is nothing to restore and
+      never will be; this needs no action from anyone.
+    * **unreachable** — the roster omits them but our own records say they were here. That is one
+      observation disagreeing with another, which is what a partial or empty read looks like. Their
+      filters still carry Shortlist's entries, so this is worth retrying and must be SAID.
+
+    This deliberately does not veto the uninstall the way `user_sync`'s departure sweep vetoes itself
+    on a suspicious roster. Two reasons. Skipping a restore is an omission rather than a destructive
+    act, and the operator has explicitly typed UNINSTALL — refusing outright would strand the one
+    person the veto is meant to protect. An owner who has genuinely wound down every share gets an
+    EMPTY roster, and `user_sync` never marks anyone departed from an empty roster
+    (`gone = ... if roster else []`), so no amount of corroboration would ever clear them: a hard stop
+    here is a permanent dead end with no override. Reporting is what keeps a bad read honest.
+
+    Args:
+        plextv: plex.tv client — the roster is read once, here.
+        snapshots: every snapshot the restore intends to apply.
+        believed_departed: plex account ids our own records already mark as gone (`users.departed_at`
+            / `users.removed_at`), which is what turns "missing from the roster" into corroborated.
+
+    Returns:
+        `(targets, departed, unreachable)`. Each target pairs a snapshot with that account as plex.tv
+        lists it now.
+    """
+    if not snapshots:
+        return [], [], []
+    roster = {u.id: u for u in plextv.list_users()}
+    targets: list[tuple[FilterSnapshot, PlexTvUser]] = []
+    departed: list[FilterSnapshot] = []
+    unreachable: list[FilterSnapshot] = []
+    for snapshot in snapshots:
+        remote = roster.get(snapshot.plex_account_id)
+        if remote is not None:
+            targets.append((snapshot, remote))
+        elif snapshot.plex_account_id in believed_departed:
+            departed.append(snapshot)
+        else:
+            unreachable.append(snapshot)
+    if unreachable:
+        logger.warning(
+            "uninstall: plex.tv did not list {} account(s) our records say are on this server — "
+            "their filters keep Shortlist's entries until a retry",
+            len(unreachable),
+        )
+    return targets, departed, unreachable
+
+
 def restore_user_restrictions(
     plextv: PlexTvClient,
     snapshot: FilterSnapshot,
+    remote: PlexTvUser,
     *,
     dry_run: bool = False,
 ) -> bool:
-    """Restore a user's filters byte-identical from their pre-Shortlist snapshot (uninstall path)."""
-    remote = plextv.get_user(snapshot.plex_account_id)
+    """Restore a user's filters byte-identical from their pre-Shortlist snapshot (uninstall path).
+
+    Args:
+        plextv: plex.tv client, for the write and its read-back verification.
+        snapshot: the pre-Shortlist filters to put back.
+        remote: that account as plex.tv lists it NOW, from `resolve_restore_targets`. Resolved by the
+            caller on purpose: an account that has left is skipped there rather than raising through
+            here, which is what issue #96 was.
+        dry_run: log the would-be restore and write nothing (rule 8).
+
+    Returns:
+        True if a write was needed (or would be, under dry-run); False if the account already matches
+        its snapshot.
+
+    Raises:
+        RestoreVerificationError: the write reached plex.tv but the read-back disagreed or could not
+            be made. Carries `attempted` so the caller can audit a write it could not confirm.
+    """
     # `.get` on BOTH sides. `snapshot.filters` is a JSON column holding whatever was persisted at
     # snapshot time, not a validated five-field dict — so a snapshot missing a field the remote now
-    # has raised KeyError here. The caller has no per-user guard, so one such snapshot aborted the
-    # whole restore loop and left every remaining account carrying Shortlist's excludes for ever,
-    # after the operator had already typed UNINSTALL. A missing field restores as empty, which is
-    # what "this user had no filter here" means.
+    # has raised KeyError here, and back then that aborted the whole restore loop. A missing field
+    # restores as empty, which is what "this user had no filter here" means.
     changed = {
         k: snapshot.filters.get(k, "")
         for k in FILTER_FIELDS
@@ -749,11 +846,25 @@ def restore_user_restrictions(
         # Field names only: a restore payload is the user's ENTIRE original filter string per field.
         logger.info("[dry-run] {}: would restore {} from the snapshot", snapshot.username, ", ".join(sorted(changed)))
         return True
-    plextv.update_user_filters(snapshot.plex_account_id, changed)
-    readback = plextv.get_user(snapshot.plex_account_id)
-    for fieldname, expected in changed.items():
-        if readback.filters.get(fieldname, "") != expected:
-            raise RuntimeError(f"{snapshot.username}: restore mismatch on {fieldname}")
+    # The PUT is INSIDE the try, not before it. `update_user_filters` retries the failures that
+    # provably never reached plex.tv (connect errors, pool timeouts) and deliberately lets a READ
+    # timeout propagate, precisely because "the write may have applied" — so at or past this line the
+    # account's filters may already have changed. Every failure from here therefore carries
+    # `changed`: the caller has to audit a write it could not confirm (rule 10), and the ambiguous
+    # case is the one where that audit row is the only record anyone will ever have.
+    try:
+        plextv.update_user_filters(snapshot.plex_account_id, changed)
+        readback = plextv.get_user(snapshot.plex_account_id)
+        for fieldname, expected in changed.items():
+            if readback.filters.get(fieldname, "") != expected:
+                raise RestoreVerificationError(f"{snapshot.username}: restore mismatch on {fieldname}", changed)
+    except RestoreVerificationError:
+        raise
+    except Exception as e:
+        raise RestoreVerificationError(
+            f"{snapshot.username}: the restore may have applied but could not be confirmed ({type(e).__name__}: {e})",
+            changed,
+        ) from e
     logger.info("{}: filters restored from snapshot", snapshot.username)
     return True
 

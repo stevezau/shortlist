@@ -5428,6 +5428,26 @@
         "title": "TrendPointOut",
         "type": "object"
       },
+      "UninstallFailedOut": {
+        "additionalProperties": true,
+        "description": "An account plex.tv refused. The rest of the uninstall still ran (issue #96).",
+        "properties": {
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "user": {
+            "title": "User",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user",
+          "error"
+        ],
+        "title": "UninstallFailedOut",
+        "type": "object"
+      },
       "UninstallOut": {
         "additionalProperties": true,
         "properties": {
@@ -5442,9 +5462,30 @@
             "title": "Dry Run",
             "type": "boolean"
           },
+          "filters_failed": {
+            "items": {
+              "$ref": "#/components/schemas/UninstallFailedOut"
+            },
+            "title": "Filters Failed",
+            "type": "array"
+          },
           "filters_restored": {
             "title": "Filters Restored",
             "type": "integer"
+          },
+          "filters_skipped": {
+            "items": {
+              "$ref": "#/components/schemas/UninstallSkippedOut"
+            },
+            "title": "Filters Skipped",
+            "type": "array"
+          },
+          "filters_unreachable": {
+            "items": {
+              "$ref": "#/components/schemas/UninstallUnreachableOut"
+            },
+            "title": "Filters Unreachable",
+            "type": "array"
           },
           "message": {
             "title": "Message",
@@ -5457,6 +5498,9 @@
         },
         "required": [
           "filters_restored",
+          "filters_skipped",
+          "filters_unreachable",
+          "filters_failed",
           "collections_deleted",
           "rows_disabled",
           "dry_run",
@@ -5516,6 +5560,56 @@
           }
         },
         "title": "UninstallRequest",
+        "type": "object"
+      },
+      "UninstallSkippedOut": {
+        "additionalProperties": true,
+        "description": "An account that has left this Plex server, so its snapshot can never be restored.",
+        "properties": {
+          "plex_account_id": {
+            "title": "Plex Account Id",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "user": {
+            "title": "User",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user",
+          "plex_account_id",
+          "reason"
+        ],
+        "title": "UninstallSkippedOut",
+        "type": "object"
+      },
+      "UninstallUnreachableOut": {
+        "additionalProperties": true,
+        "description": "An account plex.tv's roster did not list, but that our own records say IS on this server.\n\nIts own field rather than folded into `filters_failed`, because the two need different things\nfrom the operator \u2014 a refused write is worth retrying, an absent roster entry means plex.tv gave\nan answer we don't believe \u2014 and a consumer should never have to match on an error string to\ntell them apart.",
+        "properties": {
+          "plex_account_id": {
+            "title": "Plex Account Id",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "user": {
+            "title": "User",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user",
+          "plex_account_id",
+          "reason"
+        ],
+        "title": "UninstallUnreachableOut",
         "type": "object"
       },
       "UserOut": {

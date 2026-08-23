@@ -128,6 +128,10 @@ One flow, with a preview first. Every account's sharing settings are restored fr
 before Shortlist's first change, every Shortlist collection is deleted, and you get a report of
 exactly what changed. Your server ends up as we found it.
 
+The one exception is an account that has since left your server. Shortlist can no longer reach a
+departed account's settings on plex.tv, so there is nothing there to put back — the report names
+those accounts rather than quietly counting them as restored, and the uninstall finishes regardless.
+
 You can also rehearse the whole thing before trusting it: start the container with
 `SHORTLIST_DRY_RUN=1` and every run logs exactly what it _would_ change while writing nothing to
 Plex.

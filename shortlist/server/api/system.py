@@ -20,6 +20,7 @@ the router with ``POST /system/uninstall``, ``GET /system/debug`` and ``GET /sys
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import platform
 import secrets as pysecrets
@@ -34,13 +35,14 @@ from loguru import logger
 from pydantic import BaseModel
 
 import shortlist
+from shortlist.engine.clients.http_retry import redact
 from shortlist.logging_config import normalize_level
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import API_TOKEN_KEY, API_TOKEN_PREFIX, require_owner
 from shortlist.server.db.models import Collection, Event, RestrictionSnapshotRow, User, iso_utc
 from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.scheduler import rebuild_schedule
-from shortlist.server.services import log_reader
+from shortlist.server.services import jobs, log_reader
 from shortlist.server.settings_store import SettingsStore
 
 _TOKEN_CREATED_KEY = "api.token_created_at"
@@ -588,12 +590,101 @@ class UninstallRequest(BaseModel):
     dry_run: bool = False  # preview: report what WOULD be restored/deleted (rule 8)
 
 
+class UninstallSkippedOut(PassthroughModel):
+    """An account that has left this Plex server, so its snapshot can never be restored."""
+
+    user: str
+    plex_account_id: int
+    reason: str
+
+
+class UninstallFailedOut(PassthroughModel):
+    """An account plex.tv refused. The rest of the uninstall still ran (issue #96)."""
+
+    user: str
+    error: str
+
+
+class UninstallUnreachableOut(PassthroughModel):
+    """An account plex.tv's roster did not list, but that our own records say IS on this server.
+
+    Its own field rather than folded into `filters_failed`, because the two need different things
+    from the operator — a refused write is worth retrying, an absent roster entry means plex.tv gave
+    an answer we don't believe — and a consumer should never have to match on an error string to
+    tell them apart.
+    """
+
+    user: str
+    plex_account_id: int
+    reason: str
+
+
 class UninstallOut(PassthroughModel):
     filters_restored: int
+    filters_skipped: list[UninstallSkippedOut]  # gone for good — named so the report is honest
+    filters_unreachable: list[UninstallUnreachableOut]  # roster disagreed with us — worth retrying
+    filters_failed: list[UninstallFailedOut]
     collections_deleted: list[str]  # titles, so the preview names what would go
     rows_disabled: int
     dry_run: bool
     message: str
+
+
+def _uninstall_message(result: dict, *, dry_run: bool) -> str:
+    """The one line the Uninstall page shows, and the only one an API consumer gets.
+
+    "Your server is as we found it" is the whole claim the operator is trusting, so it is said only
+    when it is TRUE. Every caveat composes rather than short-circuits: an uninstall with both
+    failures and departures used to report only the failures, so the departed accounts vanished from
+    every consumer reading this line rather than the page — the API and the audit event included.
+    """
+    skipped = len(result["filters_skipped"])
+    unreachable = len(result["filters_unreachable"])
+    failed = len(result["filters_failed"])
+
+    def accounts(n: int) -> str:
+        return f"{n} account{'' if n == 1 else 's'}"
+
+    # plex.tv listed NONE of the accounts on file. Two readings, and nothing here can tell them
+    # apart: the owner really has stopped sharing with everybody, or the roster read failed. Saying
+    # "run it again to retry" sends an owner in the first case round a loop that can never close —
+    # `user_sync` never stamps `departed_at` from an empty roster, so their last account can never
+    # become corroborated and would report this on every attempt, for ever.
+    #
+    # Gated on how many accounts the ROSTER carried, never on how many were restored. `restored`
+    # counts accounts that NEEDED a write, so an account already matching its snapshot doesn't
+    # increment it — and a second uninstall run (the retry the page instructs) has everyone matching
+    # already. Keyed on `restored`, that run told an operator whose roster was perfectly healthy that
+    # they might have unshared everybody, which is the opposite of the truth and stops them retrying
+    # the one account that still carries our labels.
+    if unreachable and not result["accounts_listed"]:
+        lead = "Preview only — nothing was changed. " if dry_run else ""
+        on_file = accounts(unreachable + skipped)
+        return (
+            f"{lead}plex.tv listed none of the {on_file} on file. If you have already stopped sharing "
+            "this server with those people, there is nothing left to put back — otherwise this looks "
+            "like a failed read, so try again."
+        )
+
+    parts = []
+    if failed:
+        parts.append(f"{failed} share filter{'' if failed == 1 else 's'} could not be restored — see the event log.")
+    if unreachable:
+        says = "is" if unreachable == 1 else "are"
+        parts.append(f"plex.tv did not list {accounts(unreachable)} our records say {says} on this server.")
+    if skipped:
+        parts.append(f"{accounts(skipped)} {'has' if skipped == 1 else 'have'} since left this server.")
+
+    if dry_run:
+        # The preview is the rehearsal the FAQ tells people to trust (rule 8). Swallowing "plex.tv
+        # could not see N of your accounts" here hides the one signal that should make an operator
+        # wait before typing UNINSTALL.
+        return " ".join(["Preview only — nothing was changed.", *parts])
+    if not parts:
+        return "Your server is as we found it."
+    if failed or unreachable:
+        return " ".join(["Finished, with some accounts left over:", *parts])
+    return " ".join(["Your server is as we found it, apart from this:", *parts])
 
 
 @_authed.post("/uninstall", response_model=UninstallOut)
@@ -611,6 +702,20 @@ async def uninstall(body: UninstallRequest, request: Request) -> dict:
     if not body.dry_run and body.confirm != "UNINSTALL":
         raise HTTPException(status_code=422, detail='type "UNINSTALL" to confirm')
     state = request.app.state
+    # An ALREADY-RUNNING engine run is the one case row-disable-first cannot cover: clearing the
+    # schedule does not cancel a run in flight, and that run holds a pre-loaded roster and row list
+    # it will keep merging `label!=shortlist_*` from — into accounts this uninstall has just
+    # restored.
+    #
+    # The policy is: 409 for a RUN, the writer lock (below) for everything else. A run can last many
+    # minutes — one TV-library write alone costs ~16s on a real server — so waiting on the lock would
+    # leave the request hanging with nothing on screen to say why. A writer JOB is short enough to
+    # wait for, and the lock covers it.
+    if not body.dry_run and state.run_service.is_running():
+        raise HTTPException(
+            status_code=409,
+            detail="A run is in progress — wait for it to finish or cancel it, then uninstall.",
+        )
     loop = asyncio.get_running_loop()
 
     def emit(label: str, **extra: object) -> None:
@@ -620,82 +725,238 @@ async def uninstall(body: UninstallRequest, request: Request) -> dict:
         if not body.dry_run:
             loop.call_soon_threadsafe(state.bus.publish, "uninstall.progress", {"label": label, **extra})
 
-    def do_uninstall() -> tuple[dict, list[dict]]:
-        from shortlist.engine.models import FilterSnapshot
-        from shortlist.engine.privacy import restore_user_restrictions
+    # PHASE 1, before anything reaches Plex: switch every row off and clear its schedule.
+    #
+    # First, not last, and that ordering is load-bearing. It is a local DB write — the cheapest and
+    # most reversible step in the whole flow — and doing it first means every failure below lands on
+    # a Shortlist that is genuinely switched off. Run it last (as this did) and a crash anywhere in
+    # the Plex phases leaves `rows_disabled == 0` with the schedule still armed, so the nightly run
+    # rebuilds the collections and re-merges the excludes the operator just paid to remove. The 500
+    # says "run it again to finish the rest"; the scheduler could get there first.
+    with state.sessions() as session:
+        enabled_rows = session.query(Collection).filter_by(enabled=True).all()
+        rows_disabled = len(enabled_rows)
+        if not body.dry_run:
+            for row in enabled_rows:
+                row.enabled = False
+            session.commit()
+    if not body.dry_run:
+        rebuild_schedule(request.app)
+        emit(f"Switched off {rows_disabled} row{'' if rows_disabled == 1 else 's'} and cleared their schedules")
 
-        service = state.run_service
-        ctx = service.build_context(dry_run=body.dry_run)
+    def do_uninstall() -> tuple[dict, list[dict], Exception | None]:
+        from shortlist.engine.models import FilterSnapshot
+        from shortlist.engine.privacy import (
+            RestoreVerificationError,
+            resolve_restore_targets,
+            restore_user_restrictions,
+        )
+
         per_user_events: list[dict] = []
         restored = 0
+        skipped: list[dict] = []
+        unreachable_out: list[dict] = []
+        failed: list[dict] = []
+        accounts_listed = 0
+        deleted: list[str] = []
+
+        def report() -> dict:
+            # Built from whatever has actually happened so far, so a run that dies partway still
+            # returns a truthful report to be audited (rule 10) instead of losing it with the frame.
+            return {
+                "filters_restored": restored,
+                "filters_skipped": skipped,
+                "filters_unreachable": unreachable_out,
+                "filters_failed": failed,
+                "collections_deleted": deleted,
+                "rows_disabled": rows_disabled,
+                "dry_run": body.dry_run,
+                # How many of our snapshotted accounts plex.tv's roster carried. Stripped from the
+                # API response, but KEPT in the audit event on purpose: it is what distinguishes a
+                # failed roster read from a no-op run after the fact. It exists because the summary
+                # line has to tell "the roster listed nobody" apart from "nobody needed a write",
+                # which produce the same number of restores.
+                "accounts_listed": accounts_listed,
+            }
+
+        # Built here, inside the guard, rather than at the top: Phase 1 has ALREADY switched every
+        # row off by this point, so a failure to build a Plex client (no server row, a token that
+        # will not decrypt) must still reach the audit log and the "your rows are switched off"
+        # message — not escape the executor as a bare 500 that says nothing about what it left behind.
+        try:
+            ctx = state.run_service.build_context(dry_run=body.dry_run)
+        except Exception as e:
+            return report(), per_user_events, e
+
+        # PHASE 2: delete the rows BEFORE restoring the filters that hide them.
+        #
+        # Rule 1 in reverse. Restoring first strips each account's `label!=shortlist_*` while the rows
+        # still exist and are still promoted to Shared Home — issue #88's exact state, for as long as
+        # a full section+collection walk takes. Deleting first cannot leak: a failure here leaves the
+        # excludes in place, which is an omission, not exposure. There is no failure mode where
+        # restore-first wins.
+        try:
+            emit("Reading your Plex libraries to find Shortlist collections…")
+            for section in ctx.plex.sections():
+                for collection in section.collections():
+                    if any(label.tag.lower().startswith("shortlist_") for label in collection.labels):
+                        deleted.append(collection.title)
+                        if not body.dry_run:
+                            emit(f"Deleting collection “{collection.title}” from Plex…")
+                            ctx.plex.delete_owned_collection(collection, "shortlist")
+        except Exception as e:
+            return report(), per_user_events, e
+
+        # PHASE 3: put every account's share filters back.
         with state.sessions() as session:
             users = {u.id: u for u in session.query(User).all()}
-            snapshots = session.query(RestrictionSnapshotRow).filter_by(reason="initial").all()
-            total = len(snapshots)
-            emit(
-                f"Restoring share filters for {total} user{'' if total == 1 else 's'} via plex.tv "
-                f"(as fast as plex.tv accepts; backs off only if rate-limited)…"
-            )
-            i = 0
-            for row in snapshots:
-                user = users.get(row.user_id)
-                if user is None:
-                    continue
-                i += 1
-                emit(f"[{i}/{total}] Restoring {user.username}'s share filter on plex.tv…")
-                snapshot = FilterSnapshot(
+            snapshots = [
+                FilterSnapshot(
                     plex_account_id=user.plex_account_id,
                     username=user.username,
                     taken_at=row.taken_at,
                     filters=row.filters_before,
                 )
-                if restore_user_restrictions(ctx.plextv, snapshot, dry_run=body.dry_run):
+                for row in session.query(RestrictionSnapshotRow).filter_by(reason="initial").all()
+                # A snapshot whose users row has gone: nothing left to name it by (migration 0064).
+                if (user := users.get(row.user_id)) is not None
+            ]
+            # What our OWN records say about who has left, so "the roster omits them" can be
+            # corroborated rather than guessed at. See `resolve_restore_targets`.
+            believed_departed = frozenset(
+                u.plex_account_id
+                for u in session.query(User).filter((User.departed_at.isnot(None)) | (User.removed_at.isnot(None)))
+            )
+
+        if snapshots:
+            # Narrated BEFORE the read, not after: this is a plex.tv round-trip. Resolving first left
+            # the page silent through it — on the scariest button in the product a wordless pause
+            # reads as a hang.
+            emit("Checking which of these accounts are still on your Plex server…")
+        try:
+            targets, departed, unreachable = resolve_restore_targets(
+                ctx.plextv, snapshots, believed_departed=believed_departed
+            )
+        except Exception as e:
+            return report(), per_user_events, e
+        # Set the moment `targets` exists, so nothing between here and the summary line can leave it
+        # reading a stale 0 — which would report "plex.tv listed nobody" over a healthy roster.
+        accounts_listed = len(targets)
+
+        for snapshot in departed:
+            logger.info("uninstall: {} is no longer on this Plex server — nothing to restore", snapshot.username)
+            skipped.append(
+                {
+                    "user": snapshot.username,
+                    "plex_account_id": snapshot.plex_account_id,
+                    "reason": "no longer on this Plex server",
+                }
+            )
+        for snapshot in unreachable:
+            # Distinct from departed on purpose: our records say this account IS here, so a roster
+            # that omits it is a disagreement, not a departure. Their filters keep Shortlist's
+            # entries, and saying so is the only thing that makes a partial read actionable.
+            logger.warning("uninstall: plex.tv did not list {}, who our records say is here", snapshot.username)
+            unreachable_out.append(
+                {
+                    "user": snapshot.username,
+                    "plex_account_id": snapshot.plex_account_id,
+                    "reason": "plex.tv did not list this account, but our records say it is on this server",
+                }
+            )
+
+        total = len(targets)
+        if total:
+            emit(
+                f"Restoring share filters for {total} user{'' if total == 1 else 's'} via plex.tv "
+                f"(as fast as plex.tv accepts; backs off only if rate-limited)…"
+            )
+        if skipped:
+            emit(
+                f"Skipping {len(skipped)} account{'' if len(skipped) == 1 else 's'} no longer on your server — "
+                "their settings can't be reached to restore"
+            )
+        if unreachable_out:
+            # Narrated too, not only reported at the end. The live log is what the operator watches;
+            # without this, accounts in this bucket are simply missing from it — "restoring 38 users"
+            # on a 40-account server, with nothing saying where the other two went.
+            emit(
+                f"plex.tv did not list {len(unreachable_out)} account"
+                f"{'' if len(unreachable_out) == 1 else 's'} our records say are on this server — "
+                "their filters keep Shortlist's entries until a retry"
+            )
+        for i, (snapshot, remote) in enumerate(targets, 1):
+            emit(f"[{i}/{total}] Restoring {snapshot.username}'s share filter on plex.tv…")
+            try:
+                if restore_user_restrictions(ctx.plextv, snapshot, remote, dry_run=body.dry_run):
                     restored += 1
                     per_user_events.append(
-                        {"user": user.username, "restored_to": row.filters_before, "dry_run": body.dry_run}
+                        {"user": snapshot.username, "restored_to": snapshot.filters, "dry_run": body.dry_run}
                     )
-                    emit(f"    ✓ {user.username} restored", done=restored, total=total)
-        emit("Reading your Plex libraries to find Shortlist collections…")
-        deleted = []
-        for section in ctx.plex.sections():
-            for collection in section.collections():
-                if any(label.tag.lower().startswith("shortlist_") for label in collection.labels):
-                    deleted.append(collection.title)
-                    if not body.dry_run:
-                        emit(f"Deleting collection “{collection.title}” from Plex…")
-                        ctx.plex.delete_owned_collection(collection, "shortlist")
-        # Disable every row too — otherwise the next scheduled run would rebuild the collections we
-        # just removed and re-apply the restrictions we just undid, silently "reinstalling" Shortlist.
-        with state.sessions() as session:
-            enabled_rows = session.query(Collection).filter_by(enabled=True).all()
-            rows_disabled = len(enabled_rows)
-            if not body.dry_run:
-                for row in enabled_rows:
-                    row.enabled = False
-                session.commit()
-                emit(f"Switched off {rows_disabled} row{'' if rows_disabled == 1 else 's'} and cleared their schedules")
-        return {
-            "filters_restored": restored,
-            "collections_deleted": deleted,
-            "rows_disabled": rows_disabled,
-            "dry_run": body.dry_run,
-        }, per_user_events
+                    emit(f"    ✓ {snapshot.username} restored", done=restored, total=total)
+            except Exception as e:
+                # One account must never abort the rest. The operator has already typed UNINSTALL, and
+                # every account the loop does not reach keeps Shortlist's excludes for ever (#96).
+                detail = redact(f"{type(e).__name__}: {e}")
+                logger.error("uninstall: {} could not be restored — {}", snapshot.username, detail)
+                failed.append({"user": snapshot.username, "error": detail})
+                # A write that plex.tv ACCEPTED and we then failed to verify still changed that
+                # account, so it is audited as a write we could not confirm rather than dropped
+                # (rule 10). Only RestoreVerificationError means the write may have reached plex.tv;
+                # a failure before the PUT changed nothing and has nothing to record.
+                if isinstance(e, RestoreVerificationError):
+                    per_user_events.append(
+                        {
+                            "user": snapshot.username,
+                            "attempted": e.attempted,
+                            "verified": False,
+                            "error": detail,
+                            "dry_run": body.dry_run,
+                        }
+                    )
+                emit(f"    ✗ {snapshot.username} could not be restored — {detail}")
 
-    result, per_user = await asyncio.get_running_loop().run_in_executor(None, do_uninstall)
-    if not body.dry_run:
-        # Rows are now all disabled, so this clears every per-row cron job — no run fires again until
-        # Shortlist is set up afresh.
-        rebuild_schedule(request.app)
+        return report(), per_user_events, None
+
+    # The one-writer lock for Plex/plex.tv, the same one engine runs and writer jobs take. A real
+    # uninstall deletes collections and merges share filters, so it is a writer like any other —
+    # without this a privacy sync firing mid-uninstall re-merges the `label!=shortlist_*` excludes
+    # onto accounts the restore loop has already put back, silently, with nothing to catch it since
+    # the Privacy Check was removed (2026-07-16). Held across the whole Plex phase, not per user.
+    #
+    # A PREVIEW never takes it. It writes nothing, so it has no business holding the one-writer lock
+    # — and taking it would quietly undo the `not body.dry_run` gate on the 409 above, leaving the
+    # preview to spin for the length of a run with nothing on screen to explain why.
+    writer = jobs.plex_writer_lock() if not body.dry_run else contextlib.nullcontext()
+    async with writer:
+        result, per_user, fatal = await asyncio.get_running_loop().run_in_executor(None, do_uninstall)
     with state.sessions() as session:
         for entry in per_user:
             session.add(Event(scope="uninstall.user", level="warning", message=entry))
-        session.add(
-            Event(scope="system.uninstall", level="warning", message={**result, "at": datetime.now(UTC).isoformat()})
-        )
+        summary = {**result, "at": datetime.now(UTC).isoformat()}
+        if fatal is not None:
+            # Without this the audit row asserts a clean uninstall that actually died partway.
+            summary["stopped_by"] = redact(f"{type(fatal).__name__}: {fatal}")
+        session.add(Event(scope="system.uninstall", level="warning", message=summary))
         session.commit()
+    if fatal is not None:
+        detail = redact(f"{type(fatal).__name__}: {fatal}")
+        logger.error("UNINSTALL stopped partway: {} — partial result {}", detail, result)
+        done = result["filters_restored"]
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Uninstall stopped after restoring {done} share filter{'' if done == 1 else 's'}: {detail}. "
+                "Your rows are switched off and what it did change is in the event log — "
+                "run it again to finish the rest."
+            ),
+        ) from fatal
     logger.warning("UNINSTALL {}: {}", "preview" if body.dry_run else "executed", result)
-    message = "Preview only — nothing was changed." if body.dry_run else "Your server is as we found it."
-    return {**result, "message": message}
+    message = _uninstall_message(result, dry_run=body.dry_run)
+    # `accounts_listed` is diagnostics for the message above, not part of the contract. Response
+    # models here are `extra="allow"` on purpose (an undeclared key must never be silently dropped),
+    # which means an internal key would ship as a public field unless it is taken out by hand.
+    return {**{k: v for k, v in result.items() if k != "accounts_listed"}, "message": message}
 
 
 # -- Backups -----------------------------------------------------------------------------------

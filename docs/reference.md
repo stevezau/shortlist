@@ -300,6 +300,7 @@ DELETE /api/report/deleted-rows?slug= -> {cleared, picks, slugs[]} (permanently 
 GET  /api/system/health -> {status} (the ONE unauthenticated endpoint — liveness only, for Docker's HEALTHCHECK; the version lives on the owner-gated /system/version)
 GET  /api/system/api-token -> {enabled, created_at, token} (owner-gated; token revealable) · POST /api/system/api-token -> {token, created_at} (generate/replace) · DELETE /api/system/api-token (revoke)
 GET  /api/setup/servers (Plex server picker during onboarding) · GET /api/setup/state
+POST /api/system/uninstall {confirm, dry_run?} -> {filters_restored, filters_skipped[], filters_unreachable[], filters_failed[], collections_deleted[], rows_disabled, dry_run, message} (the trust feature: switches every row off and clears its schedules, deletes every Shortlist collection, then restores each account's share filters from its pre-Shortlist snapshot — in that order, so the excludes hiding a row are never removed while the row still exists. `dry_run` previews; the real thing needs the literal string UNINSTALL, and 409s while an engine run is in flight. No single account can stop it: one that has left this server is reported in `filters_skipped`, one plex.tv's roster omits that Shortlist's own records say is here in `filters_unreachable` (worth retrying — that is what a partial roster read looks like), and one plex.tv refuses in `filters_failed`. A write plex.tv accepted but that could not be verified is still audited, with what was sent)
 ```
 
 ### Support checks ("Have an issue?")

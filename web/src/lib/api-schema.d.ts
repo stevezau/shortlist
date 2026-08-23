@@ -4763,14 +4763,32 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * UninstallFailedOut
+         * @description An account plex.tv refused. The rest of the uninstall still ran (issue #96).
+         */
+        UninstallFailedOut: {
+            /** Error */
+            error: string;
+            /** User */
+            user: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** UninstallOut */
         UninstallOut: {
             /** Collections Deleted */
             collections_deleted: string[];
             /** Dry Run */
             dry_run: boolean;
+            /** Filters Failed */
+            filters_failed: components["schemas"]["UninstallFailedOut"][];
             /** Filters Restored */
             filters_restored: number;
+            /** Filters Skipped */
+            filters_skipped: components["schemas"]["UninstallSkippedOut"][];
+            /** Filters Unreachable */
+            filters_unreachable: components["schemas"]["UninstallUnreachableOut"][];
             /** Message */
             message: string;
             /** Rows Disabled */
@@ -4805,6 +4823,39 @@ export interface components {
              * @default false
              */
             dry_run: boolean;
+        };
+        /**
+         * UninstallSkippedOut
+         * @description An account that has left this Plex server, so its snapshot can never be restored.
+         */
+        UninstallSkippedOut: {
+            /** Plex Account Id */
+            plex_account_id: number;
+            /** Reason */
+            reason: string;
+            /** User */
+            user: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * UninstallUnreachableOut
+         * @description An account plex.tv's roster did not list, but that our own records say IS on this server.
+         *
+         *     Its own field rather than folded into `filters_failed`, because the two need different things
+         *     from the operator — a refused write is worth retrying, an absent roster entry means plex.tv gave
+         *     an answer we don't believe — and a consumer should never have to match on an error string to
+         *     tell them apart.
+         */
+        UninstallUnreachableOut: {
+            /** Plex Account Id */
+            plex_account_id: number;
+            /** Reason */
+            reason: string;
+            /** User */
+            user: string;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * UserOut

@@ -98,6 +98,43 @@ class TestUninstall:
             assert user.filters["filterMovies"] == "", f"{user.username}'s share filter was not restored"
             assert user.filters["filterTelevision"] == ""
 
+    def test_uninstall_finishes_when_an_account_has_left_plex(self, page: Page, app: ShortlistApp, reset_fake_plex):
+        """Issue #96, reproduced end to end: a user with a snapshot who is gone from plex.tv.
+
+        This is the shape a real server reaches by simply un-sharing someone. The restore used to ask
+        plex.tv for each account as it went, so mike's absence raised `LookupError` out of a loop with
+        no per-user guard — a 500 that also skipped the collection deletion and row disabling that come
+        AFTER it, leaving the rows to rebuild on the next scheduled run.
+        """
+        state = reset_fake_plex
+        build_real_rows(app)
+        assert len(state.collections) == 5
+        # mike keeps his snapshot in Shortlist's database, but plex.tv no longer lists his account —
+        # exactly what removing someone's share does. The user sync is what turns that into a
+        # recorded departure (`departed_at`), and running the real one here rather than stamping the
+        # column keeps the whole chain — un-share, sweep, uninstall — under test.
+        departed = state.users.pop(202)
+        assert app.api("POST", "/api/users/sync").status_code == 200
+
+        page.goto("/settings")
+        page.get_by_role("link", name="Uninstall Shortlist…").click()
+        expect(page.get_by_role("heading", name="Uninstall Shortlist")).to_be_visible(timeout=LOAD)
+        page.get_by_role("textbox").fill("uninstall shortlist")
+        page.get_by_role("button", name="Uninstall and restore server").click()
+
+        # It finishes. Everything downstream of the restore loop is the proof it did not abort.
+        expect(page.get_by_text("Uninstall complete")).to_be_visible(timeout=SLOW)
+        assert state.collections == {}, "a Shortlist collection survived an uninstall with a departed user"
+
+        # The departed account is NAMED rather than quietly counted as restored, and the page stops
+        # short of claiming the server is untouched — mike's filters keep our labels for ever.
+        expect(page.get_by_text("No longer on this server")).to_be_visible()
+        expect(page.locator("body")).to_contain_text(departed.username)
+
+        for user in state.users.values():
+            assert user.filters["filterMovies"] == "", f"{user.username}'s share filter was not restored"
+            assert user.filters["filterTelevision"] == ""
+
     def test_uninstall_leaves_collections_shortlist_does_not_own_alone(
         self, page: Page, app: ShortlistApp, reset_fake_plex
     ):
