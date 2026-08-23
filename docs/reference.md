@@ -249,6 +249,18 @@ GET  /api/requests?wanted_by=&wanted_by= (the inbox, pending first then sent the
 ```
 GET  /api/events (SSE) · GET /api/events/log?scope=&limit=&before_id= (audit feed; `before_id` pages backwards — a cursor rather than an offset, since events are appended while you read)
 GET  /api/notifications -> {items[]} · POST /api/notifications/dismiss {id} (dismiss one alert)
+     One of them is "Playback tracking is offline", raised when the PMS notification socket has been unreachable for 45+ minutes.
+     Not dismissable (like "Runs are paused"): silencing it would leave you believing a feature is running that isn't. It clears
+     itself on reconnect and raises again on a new outage — being undismissable, it is never hidden in the first place.
+     The threshold is deliberately long — a container restart takes seconds and a Plex restart a minute or two, and alerting on
+     those trains you to ignore the bell. A dropped socket is normal: the listener retries for ever, backing off 5s -> 120s.
+     A socket that CONNECTS and immediately drops does not reset the clock: the handshake succeeding is not the same as frames
+     arriving, and since the backoff caps at 120s, every flap cycle is shorter than the threshold — so a server flapping all
+     night would otherwise have looked healthy. A connection has to survive 60s to count as recovery.
+     An unreachable-but-configured Plex counts as an outage too; an install that has not finished setup does not.
+     Worth alerting at all because the failure is SILENT: the nightly play-log sweep still credits finished watches, so every
+     number keeps looking plausible. What stops is the partial-watch signal, which only the live socket can see — and
+     "nobody abandoned anything this week" looks exactly like a healthy week.
 ```
 
 ### Settings and connections
@@ -272,6 +284,14 @@ GET  /api/report?window=7|30|90|all -> {window, since, first_pick, overall, tren
      `overall.bounced` / `overall.dropped` split the picks that were STARTED and abandoned, by how far they got (under 5%, and past it).
      They come from live playback (`watch_sessions`), not from Plex's watched flag, which cannot see a partial play at all — so both are 0
      until the playback listener has observed some, and a title nobody has played since tracking began is in neither.
+     SHARED rows count here too. They write no pick rows, so their credits live in `shared_row_watches` and are folded into the same
+     per-(person, title) outcome — a title on both a personal and a shared row is one thing that person watched, counted once.
+     A shared-row credit needs a play the delivery ledger and the run's own audience snapshot both agree that person could see at the time;
+     Plex's watched flag alone never credits one, because everyone sees a shared row and a popular title would otherwise credit for everyone.
+     Every figure that counts a WATCH includes them: `overall.watched`/`finished`/`watchers`, `bounced`/`dropped`, `trend`, `per_user`, `per_row`,
+     `top_titles` and `recent`. The one that does not is `delivered` (and `landing`, which is a ratio of delivered to watched): a shared row is ONE
+     collection for the whole server, so there is no per-person delivery to count and inventing one would be a number with no referent. A shared
+     row's `per_user`/`per_row` line therefore shows watched and finished with no "delivered" clause, which the UI already omits when it is zero.
      `overall.landing` is the one RATIO, and it is computed over a MATURED cohort: picks delivered in the window AND at least 30 days
      old. That matters — a pick stops being creditable once its row drops it, so counting a pick delivered
      yesterday in the denominator drags the rate toward zero for no reason. `per_user`/`per_row` return COUNTS, not rates, sorted by
@@ -290,14 +310,17 @@ GET  /api/report/engagement?window=7|30|90|all -> {window, people[], losing[], s
      each got, the titles several people start and few finish, and where abandons cluster). Outcomes are per (person, title): finished | dropped |
      bounced (under 5% in) | watching (credited, but no live session ever said how far). `percent` is null where no session observed the play —
      which is not 0%, and is the normal state for anything watched before playback tracking was running.
-GET  /api/report/deleted-rows -> [{slug, picks, first_seen, last_seen}] (pick history left behind by rows that no longer exist, biggest first; NOT windowed — "what can I clear" is a question about all of it)
+GET  /api/report/deleted-rows -> [{slug, picks, first_seen, last_seen}] (history left behind by rows that no longer exist, biggest first; NOT windowed — "what can I clear" is a question about all of it)
 DELETE /api/report/deleted-rows?slug= -> {cleared, picks, slugs[]} (permanently delete that history; omit `slug` to clear every deleted row)
-     Eligibility is recomputed server-side from `collections` vs `picks.collection_slug`, so naming a live row's slug deletes
-     nothing and returns `cleared: 0` rather than erroring. The DELETE re-checks it in the same statement (`NOT EXISTS`),
-     which closes the window in which a row re-created between the two would be treated as an orphan.
-     Only `picks` rows are removed. `deliveries` is deliberately untouched — it is the ledger of which Plex collection is
+     Eligibility is recomputed server-side from `collections` vs the slugs in `picks` AND `shared_row_watches`, so naming a
+     live row's slug deletes nothing and returns `cleared: 0` rather than erroring. The DELETE re-checks it in the same
+     statement (`NOT EXISTS`), which closes the window in which a row re-created between the two would be treated as an orphan.
+     `picks` rows AND `shared_row_watches` rows are removed — a SHARED row writes no picks at all, so its credits are the only
+     history it has. The `picks` FIELD in both responses counts both (the name is kept for wire compatibility); one slug can
+     carry both kinds, because a row's `build` can be switched from per-person to shared, and the GET's number is always what
+     the DELETE will remove. `deliveries` is deliberately untouched — it is the ledger of which Plex collection is
      which row, and clearing it would strand a real collection with nothing left to clean it up. Audited as
-     `report.clear_deleted_rows` with a per-slug count.
+     `report.clear_deleted_rows`, splitting the total into `pick_rows` + `shared_watches` with a per-slug count.
 ```
 
 ### Health, tokens and onboarding

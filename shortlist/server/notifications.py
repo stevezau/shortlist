@@ -22,6 +22,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from shortlist.server.db.models import Event, Run
+from shortlist.server.services.watch_stream import STREAM_DOWN_ALERT_MINUTES, STREAM_DOWN_SINCE_KEY
 from shortlist.server.settings_store import SettingsStore
 from shortlist.server.version_check import check_for_update
 
@@ -53,6 +54,67 @@ def _runs_paused(store: SettingsStore) -> dict | None:
         "body": "Scheduled and manual runs are paused, so no rows are being rebuilt. Resume in Settings.",
         "action_url": "/settings",
         "action_label": "Settings",
+        "dismissable": False,
+    }
+
+
+def _spell_duration(minutes: float) -> str:
+    """A duration the way the design doc's voice says one: "50 minutes", "an hour", "3 days".
+
+    The unit is chosen from the ROUNDED value, not the raw one. Choosing it from the raw value and
+    then rounding independently produced "1 hours" for anything from 60 to 89 minutes, and "60
+    minutes" at 59.6 — the two halves disagreeing about which unit they were in.
+    """
+    mins = round(minutes)
+    if mins < 60:
+        return f"{mins} minutes"
+    hours = round(mins / 60)
+    if hours < 24:
+        return "an hour" if hours == 1 else f"{hours} hours"
+    days = round(hours / 24)
+    return "a day" if days == 1 else f"{days} days"
+
+
+def _playback_listener_down(store: SettingsStore) -> dict | None:
+    """The playback listener has been unable to connect for a long time.
+
+    Worth telling the owner because the failure is SILENT in a way the other sources are not. The
+    nightly play-log sweep still runs and still credits completed watches, so the dashboard keeps
+    showing plausible numbers — what stops is the partial-watch signal, which only the live socket can
+    see (Plex records no progress for an unfinished title). "Nobody abandoned anything this week"
+    looks exactly like a healthy week.
+
+    Not dismissable, for the same reason "runs are paused" is not: a silenced alert would leave the
+    owner believing a feature is running that isn't. It clears itself the moment the socket connects.
+    """
+    down_since = store.get(STREAM_DOWN_SINCE_KEY)
+    if not down_since:
+        return None
+    try:
+        started = datetime.fromisoformat(str(down_since))
+    except ValueError:
+        return None
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=UTC)
+    minutes = (datetime.now(UTC) - started).total_seconds() / 60
+    if minutes < STREAM_DOWN_ALERT_MINUTES:
+        return None
+    return {
+        # A CONSTANT id, like `_runs_paused`. An earlier version encoded the outage's start hour so a
+        # new outage would "re-surface" — but `build_notifications` only consults the dismissed list
+        # for dismissable alerts, and this one is not, so the id was never compared against anything
+        # and the hour did nothing at all. The docs asserted the mechanism as fact; both are fixed.
+        "id": "playback-listener-down",
+        "severity": "warning",
+        "title": "Playback tracking is offline",
+        "body": (
+            f"Shortlist has not been able to watch playback for {_spell_duration(minutes)}. Finished "
+            "titles are still counted from Plex's own history, but partial watches — someone starting "
+            "a pick and giving up — are not being recorded while this is down. It retries on its own; "
+            "check that Plex is reachable."
+        ),
+        "action_url": "/logs",
+        "action_label": "Logs",
         "dismissable": False,
     }
 
@@ -575,6 +637,7 @@ def build_notifications(session: Session, store: SettingsStore, current_version:
         _filters_not_enforced(session),
         _owner_sees_all_rows(session),
         _shelf_contention(session),
+        _playback_listener_down(store),
     ]
     dismissed = set(store.get(DISMISSED_KEY) or [])
     order = {"error": 0, "warning": 1, "info": 2}

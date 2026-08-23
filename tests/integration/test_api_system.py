@@ -17,9 +17,22 @@ class TestLogsApi:
     """The in-app Logs view. Owner-only, and redacted — it exists to be copied into bug reports."""
 
     def _write_log(self, client: TestClient, *lines: str) -> None:
+        """Seed the log file these tests read back.
+
+        The app's own logger holds this file OPEN while we truncate it, so loguru's next write lands
+        at its stale offset and can leave a fragment of a real line spliced onto ours. That is why the
+        assertions below compare the first line of each message rather than the whole string: the
+        contract under test is "the endpoint filters by level", never "this file contains only what
+        the test put there", and asserting the latter made the test fail about one run in eight.
+        """
         logs = client.app.state.config_dir / "logs"
         logs.mkdir(parents=True, exist_ok=True)
         (logs / "shortlist.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    @staticmethod
+    def _messages(body: dict) -> list[str]:
+        """Each line's message, minus any fragment of a concurrent write spliced onto the end."""
+        return [x["message"].splitlines()[0] if x["message"] else "" for x in body["lines"]]
 
     LINE = "2026-07-21 07:27:18.100 | {level:<8} | shortlist.server.main:lifespan:168 - {message}"
 
@@ -32,7 +45,9 @@ class TestLogsApi:
 
         body = client.get("/api/system/logs?level=ERROR").json()
 
-        assert [x["message"] for x in body["lines"]] == ["loud"]
+        assert "loud" in self._messages(body), "the ERROR line must come back"
+        assert "quiet" not in self._messages(body), "the DEBUG line must not"
+        assert all(x["level"] == "ERROR" for x in body["lines"]), "nothing but ERROR"
         assert body["file"] == "shortlist.log"
         # Spelled out because the endpoint now declares a Pydantic response model, and a model that
         # forgot a key would DROP it from the payload rather than fail — the Logs page would simply

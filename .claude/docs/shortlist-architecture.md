@@ -141,6 +141,16 @@ run_users             run_id FK · user_id FK · status · error · reason · du
 picks                 id · run_id FK · user_id FK · tmdb_id · rating_key · rank · reason · seed_tmdb_id · seed_title
                       · collection_slug · section_key · library · sources · affinity
                       · created_at · watched_at NULL          ← watched_at backfilled nightly = hit-rate
+                      · finished_at NULL · max_percent NULL   ← finished = the stricter count; percent is FILMS ONLY
+watch_events          id · plex_account_id · rating_key · show_rating_key · media_type · viewed_at
+                      ← the PMS play log (`/status/sessions/history/all`), completions only; 6-month ceiling
+watch_sessions        id · plex_account_id · session_key · rating_key · show_rating_key · media_type
+                      · started_at · last_seen_at · ended_at · max_offset_ms · duration_ms · end_reason
+                      ← live playback off the PMS notification socket; the ONLY source that sees a partial watch
+shared_row_watches    user_id FK · collection_slug · tmdb_id · media_type (composite PK) · title
+                      · watched_at NULL · finished_at NULL · max_percent NULL
+                      ← shared rows write no `picks`, so their credits land here; folded into the same
+                        person-title outcome by `resolve_outcomes`. Survives retention, like `picks`.
 request_candidates    id · tmdb_id · media_type · title · year · imdb_id · poster_path · rating · demand
                       · status(waiting|sent|rejected) · why JSON · first_seen_run_id
 restriction_snapshots id · user_id FK · taken_at · reason(initial|sync|uninstall_restore) · filters_before JSON · filters_after JSON

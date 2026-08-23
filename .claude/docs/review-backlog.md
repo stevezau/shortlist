@@ -679,7 +679,25 @@ dead key, and assert the persisted `titles_added` matches what Plex actually hol
 
 ---
 
-## Open: shared-row watches are invisible to the hit rate (found 2026-08-23)
+## FIXED 2026-08-24: shared-row watches are invisible to the hit rate (found 2026-08-23)
+
+Fixed by giving shared rows their own credit table rather than fanning picks out. Migration 0078 adds
+`shared_row_watches` — one row per (person, shared row, title) carrying the same
+`watched_at`/`finished_at`/`max_percent` triple `picks` carries. `watch_events.shared_credits` is the
+twin of `event_credits`, differing only in the title pool (every title a live shared row has carried,
+from `RunSharedRow.picks`, because there are no pick rows to intersect against) and in asking
+`RowMembership.visible_shared_rows`, which additionally tests the run's own audience snapshot.
+`report_service.resolve_outcomes` folds them into the same person-title outcome, so a title on both a
+personal and a shared row is still one thing they watched.
+
+The two paths stay deliberately separate: letting a shared row satisfy PERSONAL membership would
+stamp someone's own pick for a title their own row had already dropped, because a different row was
+still showing it. Tests: `tests/unit/test_shared_row_watches.py`, including all four gates proven
+by breaking them — timeline, audience snapshot, delivery ledger, and earliest-credit.
+
+The decision the entry below asked for: NOT fanned out. The original text follows.
+
+### Original entry
 
 A shared row files its result under `shared_<slug>` (`engine/rows.py:2492`), which is nobody's user
 slug, so `persist_report` routes it to `_persist_shared_row_report` — and that writes

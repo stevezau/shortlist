@@ -386,7 +386,11 @@ export interface paths {
         };
         /**
          * Deleted Rows
-         * @description Pick history belonging to rows that no longer exist, with how much of it there is.
+         * @description History belonging to rows that no longer exist, with how much of it there is.
+         *
+         *     "History", not "pick history": a SHARED row writes no `picks` at all, so for one of those the
+         *     `picks` field counts its `shared_row_watches` credits. The field name is kept for wire
+         *     compatibility; see `DeletedRowOut.picks`.
          *
          *     Its own endpoint rather than a field on the report: the report is windowed, and "what can I clear"
          *     is a question about ALL of a deleted row's history, not the last 30 days of it.
@@ -396,14 +400,19 @@ export interface paths {
         post?: never;
         /**
          * Clear Deleted Rows
-         * @description Permanently delete the pick history of rows that no longer exist. `slug` clears just one.
+         * @description Permanently delete the history of rows that no longer exist. `slug` clears just one.
+         *
+         *     "History", not "pick history": a SHARED row writes no `picks` at all, so what is removed for one
+         *     is its `shared_row_watches` credits. The returned `picks` field counts BOTH (its name is kept for
+         *     wire compatibility); the audit event splits them as `pick_rows` + `shared_watches`.
          *
          *     This is the one destructive action on the dashboard, so it is deliberately narrow:
          *
          *     * Only slugs with no live Collection are eligible — the eligible set is recomputed here rather
          *       than trusted from the request, so naming a live row's slug deletes nothing.
-         *     * Only `picks` rows are touched. `deliveries` is left alone: it is the ledger of what still
-         *       exists on Plex, and clearing it would strand a real collection with nothing left to clean it up.
+         *     * Only `picks` and `shared_row_watches` rows are touched. `deliveries` is left alone: it is the
+         *       ledger of what still exists on Plex, and clearing it would strand a real collection with nothing
+         *       left to clean it up.
          *     * These picks disappear from everywhere they are counted — not just this dashboard. The per-user
          *       lifetime stats and a person's pick history on their own page are read from the same rows, so the
          *       UI has to say "history", not "the numbers above".
@@ -3067,7 +3076,7 @@ export interface components {
         };
         /**
          * DeletedRowOut
-         * @description Pick history belonging to a row that no longer exists.
+         * @description History belonging to a row that no longer exists.
          */
         DeletedRowOut: {
             /** First Seen */

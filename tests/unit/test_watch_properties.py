@@ -192,6 +192,35 @@ class TestPickInvariants:
         assert first == second
 
     @given(
+        delivered=days_ago,
+        watched=days_ago,
+        session_day=days_ago,
+        pct=percents,
+    )
+    @SETTINGS
+    def test_a_percentage_never_appears_on_a_title_that_was_never_credited(self, delivered, watched, session_day, pct):
+        """`max_percent` is a fact ABOUT a credited watch, never a reason to invent one.
+
+        This is the property that was missing, and its absence let a real defect through: reading a
+        `defaultdict` on the reject path minted an outcome for a title the snapshot had explicitly
+        refused to credit, which then collected a percentage and surfaced as a "dropped" pick dated to
+        today's delivery. Every other property here only inspects rows that already have `watched_at`,
+        so none of them could see it.
+        """
+        sessions = fresh()
+        _seed(sessions, [delivered], [], [(session_day, pct)])
+        history = [
+            WatchedItem(title="T", media_type=MediaType.MOVIE, watched_at=NOW - timedelta(days=watched), tmdb_id=500)
+        ]
+
+        reconcile_watched(sessions, [_profile(history)])
+
+        with sessions() as s:
+            for pick in s.query(PickRow):
+                if pick.max_percent is not None:
+                    assert pick.watched_at is not None, "a percentage on a title nothing ever credited"
+
+    @given(
         deliveries=st.lists(days_ago, min_size=1, max_size=3),
         sess=st.lists(st.tuples(days_ago, percents), max_size=3),
     )

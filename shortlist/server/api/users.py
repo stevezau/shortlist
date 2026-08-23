@@ -24,6 +24,7 @@ from shortlist.server.db.models import (
     PickRow,
     Run,
     RunUser,
+    SharedRowWatch,
     User,
     iso_utc,
 )
@@ -748,6 +749,10 @@ async def remove_departed_user(user_id: int, request: Request) -> dict:
                 detail=f"{user.display_name} still shares this server — turn them off instead of removing them",
             )
         picks = session.query(PickRow).filter_by(user_id=user_id).delete(synchronize_session=False)
+        # Shared-row watches go with the picks: they are the same fact about the same person for a row
+        # that happens to have no pick rows, and leaving them would keep a departed account in the
+        # engagement report after their history was dropped.
+        session.query(SharedRowWatch).filter_by(user_id=user_id).delete(synchronize_session=False)
         runs = session.query(RunUser).filter_by(user_id=user_id).delete(synchronize_session=False)
         user.removed_at = datetime.now(UTC)
         user.enabled = False

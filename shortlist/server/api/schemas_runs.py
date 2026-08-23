@@ -358,9 +358,12 @@ class EffectivenessReportOut(PassthroughModel):
 
 
 class DeletedRowOut(PassthroughModel):
-    """Pick history belonging to a row that no longer exists."""
+    """History belonging to a row that no longer exists."""
 
     slug: str
+    #: Pick rows PLUS shared-row watch credits. A shared row writes no picks at all, so for one of
+    #: those this number is entirely watch credits — the name is kept for wire compatibility, and it
+    #: always equals what the DELETE will remove.
     picks: int
     first_seen: str | None
     last_seen: str | None
@@ -368,6 +371,7 @@ class DeletedRowOut(PassthroughModel):
 
 class ClearedDeletedRowsOut(PassthroughModel):
     cleared: int
+    #: Pick rows PLUS shared-row watch credits removed — see `DeletedRowOut.picks`.
     picks: int
     slugs: list[str]
 

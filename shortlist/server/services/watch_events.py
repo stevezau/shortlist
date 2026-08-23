@@ -201,6 +201,10 @@ class RowMembership:
         self._on_plex = {(row.user_slug, row.collection_slug, row.library_key) for row in session.query(Delivery).all()}
         self._slug_by_user = {u.id: u.slug for u in session.query(User).all()}
         self._per_person = self._load_per_person()
+        # A shared row's delivery is filed under `shared_<slug>` (see `_persist_shared_row_report`),
+        # so the same ledger answers "is this collection actually on the server" for shared rows.
+        self._shared_on_plex = {slug for (user_slug, slug, _lib) in self._on_plex if user_slug == f"shared_{slug}"}
+        self._shared_titles: dict[tuple[int, str], str] = {}
         self._shared = self._load_shared()
         self._audience = self._load_audience()
 
@@ -261,26 +265,77 @@ class RowMembership:
         """Shared rows, same timeline shape, from `run_shared_rows.picks`.
 
         Shared rows write no pick rows at all — `RunSharedRow`'s docstring records why — so their
-        contents come out of that JSON. Pre-0076 rows carry no ids in it and simply never match, which
-        is correct: shared-row crediting did not exist before them.
+        contents come out of that JSON.
+
+        `picks` has carried `tmdb_id` since migration 0066; what older rows lack is `media_type` (added
+        to `_pick_dicts` 2026-08-24) and the `audience` snapshot (0076). Both absences make a row
+        un-creditable, via `_shared_key` and `_shared_visible_to` — and the second is the one that
+        matters, because NULL audience cannot be told apart from "public".
         """
         out: dict[str, list[tuple[datetime, set[tuple[int, str]]]]] = defaultdict(list)
-        for slug, run_id, picks in self._session.query(
-            RunSharedRow.collection_slug, RunSharedRow.run_id, RunSharedRow.picks
-        ).all():
+        # Oldest run first, so the title map below ends up holding the NEWEST rendering of each title
+        # rather than whichever row SQLite happened to return first.
+        for slug, run_id, picks in (
+            self._session.query(RunSharedRow.collection_slug, RunSharedRow.run_id, RunSharedRow.picks)
+            .order_by(RunSharedRow.run_id)
+            .all()
+        ):
             started = self._run_started.get(run_id)
             if started is None or slug not in self._live_slugs:
                 continue
             keys = {
-                (int(p["tmdb_id"]), str(p.get("media_type") or ""))
+                key
                 for p in (picks or [])
                 if isinstance(p, dict) and p.get("tmdb_id")
+                if (key := self._shared_key(p)) is not None
             }
             if keys:
                 out[slug].append((started, keys))
+            for p in picks or []:
+                if isinstance(p, dict) and p.get("tmdb_id"):
+                    key = self._shared_key(p)
+                    if key is not None:
+                        # Overwrite, not setdefault — later runs win, so a retitled item shows its
+                        # current name. Paired with the ORDER BY above; without it this was arbitrary.
+                        self._shared_titles[key] = str(p.get("title") or "")
         for timeline in out.values():
             timeline.sort(key=lambda entry: entry[0])
         return out
+
+    @staticmethod
+    def _shared_key(pick: dict) -> tuple[int, str] | None:
+        """`(tmdb_id, media_type)` for one shared-row pick, or None when the type is not recorded.
+
+        None rather than a guess, and the guess was tried and reverted. TMDB ids are namespaced per
+        type, so an id with the wrong type is a DIFFERENT title and would credit the row for something
+        nobody watched. Two ways deriving it from the pick's own rating key went wrong, both real:
+
+        * The key is live in this JSON, which looks like it makes it safe — but
+          `_forget_removed_deliveries` in this same package records that Plex REUSES
+          `metadata_items.id`. A legacy pick for a film whose key has since been reused by a series
+          resolves to a real, different title.
+        * Worse, the rows it rescued were exactly those written before migration 0076 — which are the
+          rows with NO `audience` snapshot, and `_shared_visible_to` reads NULL as "everyone". So the
+          rescue handed a SUBSET row's credits to people who were never in its audience. Refusing
+          those rows is what closes that hole; nothing else holds it shut.
+
+        Rows written from 2026-08-24 on carry `media_type` (`_pick_dicts`), so this is a one-run gap on
+        existing installs, not a permanent limit.
+        """
+        media_type = str(pick.get("media_type") or "")
+        return (int(pick["tmdb_id"]), media_type) if media_type else None
+
+    def shared_pool(self) -> set[tuple[int, str]]:
+        """Every title any live shared row has ever carried.
+
+        The shared-row twin of `event_credits`' `owned` set. It cannot be built from `picks` — that is
+        the entire reason shared rows needed their own path — so it comes from the delivered-picks JSON.
+        """
+        return {key for timeline in self._shared.values() for _at, keys in timeline for key in keys}
+
+    def shared_title(self, key: tuple[int, str]) -> str:
+        """The title text as a shared row rendered it, for the credit record's own display."""
+        return self._shared_titles.get(key, "")
 
     def _load_audience(self) -> dict[tuple[str, int], set[int] | None]:
         """Who could SEE each shared row, per delivery. None = everyone.
@@ -322,20 +377,28 @@ class RowMembership:
             for (user_id, slug, _section), timeline in self._per_person.items()
             if user_id == user.id and self._contained_at(timeline, keys, when)
         ]
-        # SHARED ROWS ARE DELIBERATELY NOT CONSULTED HERE, and this is a known gap rather than an
-        # oversight — see `.claude/docs/watch-tracking-build.md` §3.2.
-        #
-        # A shared row has no per-user pick row (`RunSharedRow` records why), so the only place a
-        # credit could land is somebody's PERSONAL pick for the same title. Letting a shared row
-        # satisfy membership therefore credits the wrong row: their personal row gets the hit for a
-        # title it had already dropped, because a different row was still showing it. And a title
-        # that lives ONLY in a shared row credits nothing at all, since there is no pick row to
-        # stamp — so the feature reads as working while doing neither thing correctly.
-        #
-        # The spec's answer is row-level shared credit, which needs somewhere to put it. Until that
-        # exists, refusing to answer is the honest behaviour: `_load_shared` and the audience
-        # snapshot below stay built and tested, ready for it, and are used by nothing.
+        # PERSONAL ROWS ONLY. Shared rows are answered by `visible_shared_rows` and credited into
+        # `shared_row_watches`, deliberately kept apart: a shared row has no per-user pick row, so
+        # letting one satisfy membership HERE would stamp somebody's personal pick for the same title
+        # — crediting a personal row for a title it had already dropped, because a different row was
+        # still showing it.
         return sorted(set(found))
+
+    def visible_shared_rows(self, user: User, keys: set[tuple[int, str]], when: datetime) -> list[str]:
+        """Every SHARED row slug that was showing this title to this person at `when`.
+
+        Three gates, all needed: the row still exists (`_live_slugs`, applied when the timeline is
+        built), the collection is on Plex (the delivery ledger — a shared row files under
+        `shared_<slug>`), and the person was in its audience at that delivery.
+        """
+        when = _as_utc(when)
+        return sorted(
+            slug
+            for slug, timeline in self._shared.items()
+            if slug in self._shared_on_plex
+            and self._contained_at(timeline, keys, when)
+            and self._shared_visible_to(slug, user, when)
+        )
 
     def _shared_visible_to(self, slug: str, user: User, when: datetime) -> bool:
         """Was this shared row visible to this person at `when`, per the delivery's own snapshot."""
@@ -365,8 +428,33 @@ def _attribution_floor(session: Session) -> datetime | None:
     return _as_utc(oldest) if oldest else None
 
 
+def _session_starts(
+    session: Session, since: datetime | None = None, tmdb_of: dict[int, tuple[int, str]] | None = None
+) -> list[tuple[WatchSession, set[tuple[int, str]]]]:
+    """Every session row with the title keys it resolves to — one entry per SITTING.
+
+    The credit scan needs each sitting on its own, because membership is asked of the moment: a first
+    sitting before the row existed says nothing about a second one that happened while the row was
+    showing it.
+
+    `tmdb_of` is passed in by the reconcile so the map is built ONCE per pass. Built here when absent,
+    which keeps the function callable on its own.
+    """
+    tmdb_of = tmdb_by_rating_key(session) if tmdb_of is None else tmdb_of
+    query = session.query(WatchSession)
+    if since is not None:
+        query = query.filter(WatchSession.started_at >= since)
+    out: list[tuple[WatchSession, set[tuple[int, str]]]] = []
+    for row in query.all():
+        raw = {row.rating_key} | ({row.show_rating_key} if row.show_rating_key else set())
+        keys = {tmdb_of[k] for k in raw if k in tmdb_of}
+        if keys:
+            out.append((row, keys))
+    return out
+
+
 def session_progress(
-    session: Session, since: datetime | None = None
+    session: Session, since: datetime | None = None, tmdb_of: dict[int, tuple[int, str]] | None = None
 ) -> dict[tuple[int, int, str], tuple[datetime, int | None]]:
     """`(plex_account_id, tmdb_id, media_type)` -> the earliest start we saw, and the furthest they got.
 
@@ -377,7 +465,7 @@ def session_progress(
     Keyed by TMDB id AND media type, never by rating key: a carried-forward pick's `rating_key` is 0
     (70% of rows on a real server), and the type is required because TMDB namespaces its ids.
     """
-    tmdb_of = tmdb_by_rating_key(session)
+    tmdb_of = tmdb_by_rating_key(session) if tmdb_of is None else tmdb_of
     out: dict[tuple[int, int, str], tuple[datetime, int | None]] = {}
     query = session.query(WatchSession)
     if since is not None:
@@ -405,8 +493,62 @@ def session_progress(
     return out
 
 
+def _scan_plays(
+    session: Session, tmdb_of: dict[int, tuple[int, str]] | None = None
+) -> list[tuple[int, datetime, set[tuple[int, str]]]]:
+    """Every credit-bearing play, oldest first: `(plex_account_id, when, resolved title keys)`.
+
+    One scan, two consumers — `event_credits` (personal rows) and `shared_credits` (shared rows) —
+    because the sources, the key resolution and the ordering must be identical for the two to agree
+    about what happened when. They differ only in which pool of titles they match against.
+
+    A START is evidence a completion cannot be: someone who plays twenty minutes of a film and gives
+    up never appears in Plex's history log at all, and by the time they finish it four days later the
+    row has moved on. Sessions are folded in as first-class events so the credit lands on the moment
+    the row worked.
+    """
+    # Everything below works in TMDB ids. A watch event carries a Plex rating key, and 70% of pick
+    # rows carry `rating_key = 0` — see `tmdb_by_rating_key` for why — so the rating key is only
+    # useful as a way to LOOK UP the tmdb id, never as the thing to match on.
+    tmdb_of = tmdb_by_rating_key(session) if tmdb_of is None else tmdb_of
+    floor = _attribution_floor(session)
+    # EVERY sitting, not just the earliest. `session_progress` collapses a title to its first start —
+    # right for reporting a percentage, wrong here: once someone had any session predating the row, the
+    # title could never be start-credited again, however many times they played it OFF the row
+    # afterwards. That is exactly the population this feature exists to measure, because a partial
+    # watch sets no Plex flag, so the engine keeps recommending it and there is no history-log row to
+    # fall back on.
+    starts = [
+        _StartEvent(
+            plex_account_id=row.plex_account_id,
+            viewed_at=_as_utc(row.started_at),
+            title_keys=frozenset(keys),
+        )
+        for row, keys in _session_starts(session, floor, tmdb_of)
+    ]
+    events = session.query(WatchEvent)
+    if floor is not None:
+        events = events.filter(WatchEvent.viewed_at >= floor)
+
+    out: list[tuple[int, datetime, set[tuple[int, str]]]] = []
+    for event in sorted([*events.all(), *starts], key=lambda e: _as_utc(e.viewed_at)):
+        # BOTH keys, resolved to `(tmdb_id, media_type)`: a pick for a series stores the show, the log
+        # reports the episode played, and on real history 46 of 78 matches were reachable only via the
+        # show. A session arrives already resolved.
+        if isinstance(event, _StartEvent):
+            keys = set(event.title_keys)
+        else:
+            raw = {event.rating_key} | ({event.show_rating_key} - {None})
+            keys = {tmdb_of[k] for k in raw if k in tmdb_of}
+        if keys:
+            out.append((event.plex_account_id, _as_utc(event.viewed_at), keys))
+    return out
+
+
 def event_credits(
-    session: Session, membership: RowMembership
+    session: Session,
+    membership: RowMembership,
+    scan: list[tuple[int, datetime, set[tuple[int, str]]]] | None = None,
 ) -> dict[tuple[int, int, str], tuple[datetime, frozenset[str]]]:
     """`(user_id, tmdb_id, media_type)` -> the EARLIEST play that a row can be credited for.
 
@@ -423,51 +565,28 @@ def event_credits(
     if not users:
         return {}
 
-    # Everything below works in TMDB ids. A watch event carries a Plex rating key, and 70% of pick
-    # rows carry `rating_key = 0` — see `tmdb_by_rating_key` for why — so the rating key is only
-    # useful as a way to LOOK UP the tmdb id, never as the thing to match on.
-    tmdb_of = tmdb_by_rating_key(session)
     owned: dict[int, set[tuple[int, str]]] = defaultdict(set)
     for user_id, tmdb_id, media_type in (
         session.query(PickRow.user_id, PickRow.tmdb_id, PickRow.media_type).distinct().all()
     ):
         owned[user_id].add((tmdb_id, media_type))
 
-    # A START is evidence a completion cannot be: someone who plays twenty minutes of a film and gives
-    # up never appears in Plex's history log at all, and by the time they finish it four days later
-    # the row has moved on. Sessions are folded in as first-class events so the credit lands on the
-    # moment the row worked.
-    floor = _attribution_floor(session)
-    starts = [
-        _StartEvent(plex_account_id=account_id, viewed_at=started, title_keys=frozenset({(tmdb_id, media_type)}))
-        for (account_id, tmdb_id, media_type), (started, _percent) in session_progress(session, floor).items()
-    ]
-    events = session.query(WatchEvent)
-    if floor is not None:
-        events = events.filter(WatchEvent.viewed_at >= floor)
-    scan = sorted([*events.all(), *starts], key=lambda e: _as_utc(e.viewed_at))
-
     out: dict[tuple[int, int, str], tuple[datetime, frozenset[str]]] = {}
-    for event in scan:
-        user = users.get(event.plex_account_id)
+    for account_id, when, keys in _scan_plays(session) if scan is None else scan:
+        user = users.get(account_id)
         if user is None:
             continue
-        # BOTH keys, resolved to `(tmdb_id, media_type)`: a pick for a series stores the show, the log
-        # reports the episode played, and on real history 46 of 78 matches were reachable only via the
-        # show. A session arrives already resolved.
-        if isinstance(event, _StartEvent):
-            keys = set(event.title_keys)
-        else:
-            raw = {event.rating_key} | ({event.show_rating_key} - {None})
-            keys = {tmdb_of[k] for k in raw if k in tmdb_of}
         titles = keys & owned.get(user.id, set())
         if not titles:
             continue
-        when = _as_utc(event.viewed_at)
-        rows = membership.visible_rows(user, titles, when)
-        if not rows:
-            continue
+        # Per key, not per event, matching `shared_credits`. One play resolves to as many as two keys
+        # (the episode's and its show's), and asking membership with the whole set lets one title's
+        # membership carry the other's credit. Only reachable when Plex has reused a metadata id, but
+        # it costs nothing to ask the precise question.
         for tmdb_id, media_type in titles:
+            rows = membership.visible_rows(user, {(tmdb_id, media_type)}, when)
+            if not rows:
+                continue
             slot = (user.id, tmdb_id, media_type)
             # The ROWS come out with the credit. `visible_rows` works out exactly which shelves were
             # showing the title, and throwing that away meant the stamp went onto every pick for the
@@ -476,4 +595,48 @@ def event_credits(
             # shelf could not have caused.
             if slot not in out or when < out[slot][0]:
                 out[slot] = (when, frozenset(rows))
+    return out
+
+
+def shared_credits(
+    session: Session,
+    membership: RowMembership,
+    scan: list[tuple[int, datetime, set[tuple[int, str]]]] | None = None,
+) -> dict[tuple[int, str, int, str], datetime]:
+    """`(user_id, row slug, tmdb_id, media_type)` -> the earliest play credited to that shared row.
+
+    The twin of `event_credits`, and separate from it for one reason: the title pool. `event_credits`
+    matches a play against the titles that person has a `picks` row for, and a shared row writes none
+    — so every shared-row watch fell out of that intersection before membership was ever consulted.
+    Here the pool is every title a live shared row has carried, and membership is asked of
+    `visible_shared_rows`, which additionally tests the run's own audience snapshot.
+
+    Earliest play, same as `event_credits`: the credit belongs to the moment the row got them to press
+    play, not to a rewatch three weeks later.
+    """
+    users = {u.plex_account_id: u for u in session.query(User).filter(User.removed_at.is_(None)).all()}
+    pool = membership.shared_pool()
+    if not users or not pool:
+        return {}
+
+    # Keyed PER ROW, not per title. Two shared rows can carry the same title in different windows, and
+    # each must keep its OWN earliest qualifying play: an earlier structure kept one timestamp per
+    # title and unioned the rows, so a row that only started showing the title later inherited the
+    # earlier play's date and was credited for a play made before it carried it.
+    out: dict[tuple[int, str, int, str], datetime] = {}
+    for account_id, when, keys in _scan_plays(session) if scan is None else scan:
+        user = users.get(account_id)
+        if user is None:
+            continue
+        titles = keys & pool
+        if not titles:
+            continue
+        # Per key, not per event: an episode play resolves to both the episode's and the show's keys,
+        # and two shared rows can hold one each. Asking with the whole set would credit both rows for
+        # whichever title either of them had.
+        for key in titles:
+            for slug in membership.visible_shared_rows(user, {key}, when):
+                slot = (user.id, slug, *key)
+                if slot not in out or when < out[slot]:
+                    out[slot] = when
     return out

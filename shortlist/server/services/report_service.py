@@ -17,7 +17,7 @@ import re
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import String, case, cast, func, or_
+from sqlalchemy import String, case, cast, func, literal, or_
 from sqlalchemy.orm import Session
 
 from shortlist.engine.models import DEFAULT_ROW_TEMPLATE
@@ -28,6 +28,7 @@ from shortlist.server.db.models import (
     RequestCandidate,
     Run,
     RunUser,
+    SharedRowWatch,
     User,
     iso_utc,
 )
@@ -49,6 +50,13 @@ TREND_WEEKS = 16
 _TITLE = cast(PickRow.tmdb_id, String).concat("-").concat(PickRow.media_type)
 # A title across everyone: prefix the person, so one film recommended to two people counts twice.
 _PERSON_TITLE = cast(PickRow.user_id, String).concat("-").concat(_TITLE)
+
+# The same identity for a SHARED-row watch. Shared rows write no `picks`, so their credits live in
+# `shared_row_watches` — and the headline counts must include them, because `overall.bounced` and
+# `overall.dropped` already do (they come off `resolve_outcomes`). Leaving them out of `watched` let
+# the Dropped tile exceed the Watched tile beside it: an abandonment with no start.
+_SHARED_TITLE = cast(SharedRowWatch.tmdb_id, String).concat("-").concat(SharedRowWatch.media_type)
+_SHARED_PERSON_TITLE = cast(SharedRowWatch.user_id, String).concat("-").concat(_SHARED_TITLE)
 
 
 def _rate(watched: int, delivered: int) -> float | None:
@@ -103,8 +111,41 @@ def _finished_in(start, end=None) -> list:
     return [PickRow.finished_at.isnot(None), *_watched_in(start, end)]
 
 
-def _counts(session: Session, group_cols, key_expr, start) -> dict:
-    """{group key -> (delivered, watched, finished)} distinct-title counts for one period, in three scans.
+def _rank_titles(counts: dict[tuple[int, str], int], limit: int) -> list[tuple[tuple[int, str], int]]:
+    """Most watchers first, ties broken by tmdb id then media type — a TOTAL order.
+
+    Its own function so the ordering can be tested directly. Driven from the database it cannot be:
+    SQLite emits `GROUP BY` output in ascending key order and Python's sort is stable, so a
+    DB-populated test is already in tie-break order before the tie-break runs, and passes with it
+    deleted. The only test with teeth hands this a dict whose insertion order is wrong.
+
+    Without the tie-break, equal-scoring titles reshuffle between two renders of identical data —
+    the list visibly jumping around on refresh.
+    """
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0][0], kv[0][1]))[:limit]
+
+
+def _grouped_union(session: Session, cols, key_expr, filters, s_cols, s_key, s_filters) -> dict:
+    """{group key -> count of DISTINCT identities} across `picks` and `shared_row_watches` together.
+
+    The grouped twin of :func:`_distinct_across_both`. The union is over `(group, identity)` PAIRS, so
+    an identity appearing on both sides under the same group is counted ONCE — which is what makes it
+    safe for `per_user`, where one person can watch a title carried by a personal row and a shared one
+    at the same time. Summing two grouped counts reports that person as having watched two titles.
+    """
+    both = (
+        session.query(*cols, key_expr.label("k"))
+        .filter(*filters)
+        .union(session.query(*s_cols, s_key.label("k")).filter(*s_filters))
+        .subquery()
+    )
+    group = [both.c[name] for name in list(both.c.keys())[:-1]]
+    rows = session.query(*group, func.count()).group_by(*group).all()
+    return {(r[:-1] if len(group) > 1 else r[0]): r[-1] for r in rows}
+
+
+def _counts(session: Session, group_cols, key_expr, start, shared_cols=None, shared_key=None) -> dict:
+    """{group key -> (delivered, watched, finished)} distinct-title counts for one period.
 
     `delivered` counts picks CREATED in the period; `watched` counts picks WATCHED in it —
     deliberately not the same set. A pick delivered last month and watched this week is a watch this
@@ -114,32 +155,92 @@ def _counts(session: Session, group_cols, key_expr, start) -> dict:
     `finished` is a subset of `watched`: the picks they saw out rather than sampled. The gap between
     the two is the whole point of the split — a TV row scores a `watched` on a single episode, so
     ranking rows on that number alone flatters television for a structural reason.
+
+    `shared_cols`/`shared_key` fold SHARED-row credits into `watched`/`finished` — needed because the
+    headline tiles count them, and a "People watching: 4" above a By-person section where every bar
+    reads 0 is the two being read as one population when they are not.
+
+    Deliberately NOT into `delivered`: a shared row is one collection for the whole server, so there
+    is no per-person delivery to count, and inventing one would be a number with no referent. The UI
+    renders `delivered` only when it is above zero and never as a fraction of `watched` (two counts
+    over different sets, by design), so a shared-only line reads "1 watched" with no delivery clause —
+    which is the truth.
     """
     cols = list(group_cols) if isinstance(group_cols, (list, tuple)) else [group_cols]
+    s_cols = (
+        (list(shared_cols) if isinstance(shared_cols, (list, tuple)) else [shared_cols])
+        if shared_cols is not None
+        else None
+    )
 
     def scan(*extra):
         rows = session.query(*cols, func.count(func.distinct(key_expr))).filter(*extra).group_by(*cols).all()
         return {(r[:-1] if len(cols) > 1 else r[0]): r[-1] for r in rows}
 
     delivered = scan(*_in_period(PickRow.created_at, start))
-    watched = scan(*_watched_in(start))
-    finished = scan(*_finished_in(start))
+    if s_cols is None:
+        watched = scan(*_watched_in(start))
+        finished = scan(*_finished_in(start))
+    else:
+        # A UNION per group, never a sum. Summing double-counts `per_user`: one person who watched a
+        # title carried by BOTH a personal and a shared row is one title watched, and each scan
+        # returns it. Pinned by
+        # `test_shared_row_watches.py::test_one_title_on_both_kinds_of_row_is_not_double_counted_for_a_person`,
+        # which caught exactly that when this was a sum.
+        watched = _grouped_union(
+            session, cols, key_expr, _watched_in(start), s_cols, shared_key, _shared_watched_in(start)
+        )
+        finished = _grouped_union(
+            session, cols, key_expr, _finished_in(start), s_cols, shared_key, _shared_finished_in(start)
+        )
     return {
         k: (delivered.get(k, 0), watched.get(k, 0), finished.get(k, 0))
         for k in set(delivered) | set(watched) | set(finished)
     }
 
 
+def _shared_watched_in(start, end=None) -> list:
+    """`_watched_in` for a shared-row credit — same column meaning, same window."""
+    return [SharedRowWatch.watched_at.isnot(None), *_in_period(SharedRowWatch.watched_at, start, end)]
+
+
+def _shared_finished_in(start, end=None) -> list:
+    """Windowed on `watched_at`, exactly like `_finished_in` and for the same reason: finished must
+    be a genuine subset of watched for the same window, or the UI draws a segment wider than its bar."""
+    return [SharedRowWatch.finished_at.isnot(None), *_shared_watched_in(start, end)]
+
+
+def _distinct_across_both(session: Session, picks_expr, picks_filters, shared_expr, shared_filters) -> int:
+    """Count distinct values of one identity across `picks` and `shared_row_watches` together.
+
+    A UNION, not a sum: someone who watched a title that was on BOTH a personal and a shared row is
+    one person-title, and adding two counts would report them twice. SQL `UNION` dedupes, which is the
+    same "one outcome per person-title" rule `resolve_outcomes` applies on the other side.
+    """
+    combined = (
+        session.query(picks_expr.label("k"))
+        .filter(*picks_filters)
+        .union(session.query(shared_expr.label("k")).filter(*shared_filters))
+    ).subquery()
+    return session.query(func.count()).select_from(combined).scalar() or 0
+
+
 def _watched_count(session: Session, start, end=None) -> int:
-    return session.query(func.count(func.distinct(_PERSON_TITLE))).filter(*_watched_in(start, end)).scalar() or 0
+    return _distinct_across_both(
+        session, _PERSON_TITLE, _watched_in(start, end), _SHARED_PERSON_TITLE, _shared_watched_in(start, end)
+    )
 
 
 def _finished_count(session: Session, start, end=None) -> int:
-    return session.query(func.count(func.distinct(_PERSON_TITLE))).filter(*_finished_in(start, end)).scalar() or 0
+    return _distinct_across_both(
+        session, _PERSON_TITLE, _finished_in(start, end), _SHARED_PERSON_TITLE, _shared_finished_in(start, end)
+    )
 
 
 def _watchers_count(session: Session, start, end=None) -> int:
-    return session.query(func.count(func.distinct(PickRow.user_id))).filter(*_watched_in(start, end)).scalar() or 0
+    return _distinct_across_both(
+        session, PickRow.user_id, _watched_in(start, end), SharedRowWatch.user_id, _shared_watched_in(start, end)
+    )
 
 
 def _avg_days_to_watch(session: Session, start, end=None) -> float | None:
@@ -379,6 +480,50 @@ def resolve_outcomes(session: Session, since: datetime | None) -> dict[tuple[int
         if entry["first_delivered"] is None or created < entry["first_delivered"]:
             entry["first_delivered"] = created
 
+    # SHARED rows, folded into the same person-title outcome. They write no pick rows, so their
+    # watches live in `shared_row_watches` (migration 0078) and were invisible to every figure here.
+    # Folded in rather than counted separately BECAUSE this function's whole job is one outcome per
+    # person-title: a title on both a personal row and a shared one is one thing they watched, and
+    # two independent tallies would report it twice and could disagree about how it ended.
+    for user_id, slug, tmdb_id, media_type, title, watched, finished, percent in session.query(
+        SharedRowWatch.user_id,
+        SharedRowWatch.collection_slug,
+        SharedRowWatch.tmdb_id,
+        SharedRowWatch.media_type,
+        SharedRowWatch.title,
+        SharedRowWatch.watched_at,
+        SharedRowWatch.finished_at,
+        SharedRowWatch.max_percent,
+    ):
+        key = (user_id, tmdb_id, media_type)
+        entry = out.setdefault(
+            key,
+            {
+                "title": title,
+                "media_type": media_type,
+                "row": slug,
+                "library": "",
+                "watched_at": None,
+                "finished_at": None,
+                "percent": None,
+                # A shared row has no per-person delivery, so the credit itself is the only moment
+                # this person can be said to have met the title. Left as the watch below.
+                "first_delivered": None,
+            },
+        )
+        if watched and (entry["watched_at"] is None or watched < entry["watched_at"]):
+            entry["watched_at"] = watched
+            # The library is cleared with the row, not kept. A shared row is not in the personal row's
+            # library, and `engagement` renders `namer.label(row, library)` — so keeping the old value
+            # printed a shared TV row under a Movies label.
+            entry["row"], entry["library"] = slug, ""
+        if finished and (entry["finished_at"] is None or finished > entry["finished_at"]):
+            entry["finished_at"] = finished
+        if percent is not None and (entry["percent"] is None or percent > entry["percent"]):
+            entry["percent"] = percent
+        if entry["first_delivered"] is None and watched:
+            entry["first_delivered"] = watched
+
     resolved: dict[tuple[int, int, str], dict] = {}
     for key, entry in out.items():
         observed = entry["watched_at"] or entry["first_delivered"]
@@ -430,23 +575,79 @@ def _recent_watches(session: Session, users: dict[int, User], namer: _RowNamer, 
         .limit(20)
         .subquery()
     )
-    return [
-        {
-            "username": users[p.user_id].username if p.user_id in users else "unknown",
-            "display_name": users[p.user_id].display_name if p.user_id in users else "unknown",
-            "title": p.title,
-            "media_type": p.media_type,
-            "row": namer.label(p.collection_slug, p.library),
-            "library": p.library,
-            "seed_title": p.seed_title or "",
-            "watched_at": iso_utc(watched),
-            "finished_at": iso_utc(finished) if finished else None,
+
+    def line(user_id: int, tmdb_id: int, media_type: str, at, **fields) -> dict:
+        user = users.get(user_id)
+        return {
+            # The identity travels WITH the line and is stripped at the end. Deduping on the rendered
+            # username collapsed two different removed accounts (both "unknown") into one line, and
+            # deduping on the title text split one person-title in two whenever the shared row's copy
+            # of the title differed from the pick row's.
+            "_key": (user_id, tmdb_id, media_type),
+            #: Sort key. Stripped with every other `_`-prefixed field before the response is built.
+            "_at": at,
+            "username": user.username if user else "unknown",
+            "display_name": user.display_name if user else "unknown",
+            "media_type": media_type,
+            **fields,
         }
+
+    feed = [
+        line(
+            p.user_id,
+            p.tmdb_id,
+            p.media_type,
+            watched,
+            title=p.title,
+            row=namer.label(p.collection_slug, p.library),
+            library=p.library,
+            seed_title=p.seed_title or "",
+            watched_at=iso_utc(watched),
+            finished_at=iso_utc(finished) if finished else None,
+        )
         for p, watched, finished in session.query(PickRow, latest.c.watched, latest.c.finished)
         .join(latest, PickRow.id == latest.c.pick_id)
         .order_by(latest.c.watched.desc())
         .all()
     ]
+
+    # SHARED rows belong in this feed too — "did someone watch something we recommended" is the
+    # question it answers, and a shared row recommends. They write no pick rows, so they cannot come
+    # out of the query above; they are merged in and the whole feed re-sorted and re-trimmed, so the
+    # 20 shown are the 20 most recent overall rather than the 20 most recent PERSONAL ones plus extras.
+    seen = {row["_key"] for row in feed}
+    for w in (
+        session.query(SharedRowWatch)
+        .filter(*_shared_watched_in(since))
+        .order_by(SharedRowWatch.watched_at.desc())
+        .limit(20)
+    ):
+        key = (w.user_id, w.tmdb_id, w.media_type)
+        # A title on both a personal and a shared row is ONE thing that person watched. The personal
+        # line wins because it carries the library and the seed that produced it.
+        if key in seen:
+            continue
+        seen.add(key)
+        feed.append(
+            line(
+                w.user_id,
+                w.tmdb_id,
+                w.media_type,
+                w.watched_at,
+                title=w.title,
+                row=namer.label(w.collection_slug, ""),
+                library="",
+                seed_title="",
+                watched_at=iso_utc(w.watched_at),
+                finished_at=iso_utc(w.finished_at) if w.finished_at else None,
+            )
+        )
+    # Sorted on the DATETIME, not the rendered string. `datetime.isoformat()` omits `.ffffff` when
+    # microseconds are zero, so the strings are variable width; string sort happens to be correct here
+    # (the first differing character is `+` against `.`, and `'+' < '.'`) but only by accident, and
+    # nothing would tell the next editor which property they had to preserve.
+    feed.sort(key=lambda row: row["_at"], reverse=True)
+    return [{k: v for k, v in row.items() if not k.startswith("_")} for row in feed[:20]]
 
 
 def effectiveness(session: Session, window: str, *, next_watch_sync: str | None = None) -> dict:
@@ -476,11 +677,18 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
     prev_since = now - timedelta(days=2 * days) if days is not None else None
 
     first_pick = iso_utc(session.query(func.min(PickRow.created_at)).scalar())
-    per_user_raw = _counts(session, PickRow.user_id, _TITLE, since)
+    per_user_raw = _counts(session, PickRow.user_id, _TITLE, since, SharedRowWatch.user_id, _SHARED_TITLE)
     # A row that targets >1 library is one Plex collection PER library, so it's tracked per
     # (row, library) — each library gets its own delivered/watched line, keyed (slug, section, library).
     per_row_raw = _counts(
-        session, [PickRow.collection_slug, PickRow.section_key, PickRow.library], _PERSON_TITLE, since
+        session,
+        [PickRow.collection_slug, PickRow.section_key, PickRow.library],
+        _PERSON_TITLE,
+        since,
+        # A shared row has no per-library split: it is ONE collection, so its line is keyed with empty
+        # section and library, which `_RowNamer.label` renders from the row's own name.
+        [SharedRowWatch.collection_slug, literal("").label("section_key"), literal("").label("library")],
+        _SHARED_PERSON_TITLE,
     )
 
     watched_now = _watched_count(session, since)
@@ -497,16 +705,21 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
     )
     landing = _landing(session, now, days)
 
-    # The trend ignores the window on purpose — see TREND_WEEKS.
-    trend_rows = (
-        session.query(func.strftime("%Y-%W", PickRow.watched_at), func.count(func.distinct(_PERSON_TITLE)))
-        .filter(PickRow.watched_at.isnot(None))
-        .group_by(func.strftime("%Y-%W", PickRow.watched_at))
-        .order_by(func.strftime("%Y-%W", PickRow.watched_at).desc())
-        .limit(TREND_WEEKS)
-        .all()
+    # The trend ignores the window on purpose — see TREND_WEEKS. SHARED rows are folded in like
+    # everywhere else that counts a WATCH: the chart sits directly under the Watched tile, and a bar
+    # that omitted what the tile counted would read as the same number failing to add up.
+    _week = func.strftime("%Y-%W", PickRow.watched_at)
+    _shared_week = func.strftime("%Y-%W", SharedRowWatch.watched_at)
+    trend_by_week = _grouped_union(
+        session,
+        [_week.label("week")],
+        _PERSON_TITLE,
+        [PickRow.watched_at.isnot(None)],
+        [_shared_week.label("week")],
+        _SHARED_PERSON_TITLE,
+        [SharedRowWatch.watched_at.isnot(None)],
     )
-    trend_rows = list(reversed(trend_rows))
+    trend_rows = sorted(trend_by_week.items())[-TREND_WEEKS:]
     # Of the picks CREDITED in each week, how many have since been finished — bucketed by
     # `watched_at`, the same key as the bar above, for the reason `_finished_in` explains: it is what
     # makes the segment a true subset of the column it is drawn inside.
@@ -514,11 +727,14 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
     # Consequence worth knowing: a past week's dark segment GROWS when someone finishes an old
     # series. That is the truth about a cohort, not a bug — the bar is "what became of what landed
     # that week", and that answer genuinely changes.
-    finished_by_week = dict(
-        session.query(func.strftime("%Y-%W", PickRow.watched_at), func.count(func.distinct(_PERSON_TITLE)))
-        .filter(PickRow.watched_at.isnot(None), PickRow.finished_at.isnot(None))
-        .group_by(func.strftime("%Y-%W", PickRow.watched_at))
-        .all()
+    finished_by_week = _grouped_union(
+        session,
+        [_week.label("week")],
+        _PERSON_TITLE,
+        [PickRow.watched_at.isnot(None), PickRow.finished_at.isnot(None)],
+        [_shared_week.label("week")],
+        _SHARED_PERSON_TITLE,
+        [SharedRowWatch.watched_at.isnot(None), SharedRowWatch.finished_at.isnot(None)],
     )
 
     store = SettingsStore(session)
@@ -556,20 +772,42 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
 
     requests = _requests_summary(session, since)
 
-    # The titles landing best: most distinct watchers among picks watched in the window.
-    top_rows = (
-        session.query(
-            PickRow.tmdb_id,
-            PickRow.media_type,
-            func.max(PickRow.title),
-            func.count(func.distinct(PickRow.user_id)),
-        )
-        .filter(*_watched_in(since))
-        .group_by(PickRow.tmdb_id, PickRow.media_type)
-        .order_by(func.count(func.distinct(PickRow.user_id)).desc())
-        .limit(8)
-        .all()
+    # The titles landing best: most distinct watchers among titles watched in the window. Shared rows
+    # count — a title everyone found through the shared row is exactly what "landing best" means.
+    top_watchers = _grouped_union(
+        session,
+        [PickRow.tmdb_id, PickRow.media_type],
+        PickRow.user_id,
+        _watched_in(since),
+        [SharedRowWatch.tmdb_id, SharedRowWatch.media_type],
+        SharedRowWatch.user_id,
+        _shared_watched_in(since),
     )
+    top_keys = _rank_titles(top_watchers, 8)
+
+    # Display titles for THOSE EIGHT only. Grouping the whole of `picks` to build a full title map ran
+    # a GROUP BY over 158,737 rows on every report render, for eight strings.
+    titles: dict[tuple[int, str], str] = {}
+    wanted = [key for key, _ in top_keys]
+    if wanted:
+        ids = {tmdb_id for tmdb_id, _mt in wanted}
+        for tmdb_id, media_type, title in (
+            session.query(SharedRowWatch.tmdb_id, SharedRowWatch.media_type, func.max(SharedRowWatch.title))
+            .filter(SharedRowWatch.tmdb_id.in_(ids))
+            .group_by(SharedRowWatch.tmdb_id, SharedRowWatch.media_type)
+        ):
+            titles[(tmdb_id, media_type)] = title
+        for tmdb_id, media_type, title in (
+            session.query(PickRow.tmdb_id, PickRow.media_type, func.max(PickRow.title))
+            .filter(PickRow.tmdb_id.in_(ids))
+            .group_by(PickRow.tmdb_id, PickRow.media_type)
+        ):
+            # A pick row's title wins — it is the delivered one — but only when it HAS one. Overwriting
+            # unconditionally blanked the name of any title whose pick rows carry an empty string,
+            # leaving a nameless line in "Titles landing best".
+            if title:
+                titles[(tmdb_id, media_type)] = title
+    top_rows = [(key[0], key[1], titles.get(key, ""), watchers) for key, watchers in top_keys]
 
     per_user = _breakdown(
         per_user_raw,

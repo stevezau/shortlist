@@ -943,3 +943,95 @@ class TestSeriesPercentagesAreCleared:
         with world() as s:
             assert s.query(PickRow).filter_by(media_type="show").one().max_percent is None
             assert s.query(PickRow).filter_by(media_type="movie").one().max_percent == 40
+
+
+class TestAPercentageNeverInventsACredit:
+    """A percentage is a fact ABOUT a credited watch, never a reason to invent one.
+
+    The concrete case the property test could not reliably generate: the person sampled the film
+    before it was ever recommended, so the snapshot path explicitly refuses to credit it — and a bare
+    `defaultdict` read on that reject path minted an outcome anyway, which then collected a percentage
+    and surfaced as a "dropped" pick dated to today's delivery.
+    """
+
+    def test_a_watch_predating_the_row_does_not_come_back_as_a_drop(self, world):
+        # An unrelated pick from long ago, so `_attribution_floor` reaches back far enough for the old
+        # session below to be in scope at all. Without it the floor is today and the session is simply
+        # never read — which is what made an earlier version of this test pass either way.
+        pick(world, 1, 999, rating_key=99, created=NOW - timedelta(days=60))
+        # The title under test is delivered for the FIRST time today.
+        pick(world, 2, 510, rating_key=10, created=NOW - timedelta(hours=2))
+        # But they sampled it 40 days ago — BEFORE the row ever carried it — and Plex has flagged it
+        # watched since. The session is real; it just had nothing to do with any recommendation.
+        with world() as s:
+            s.add(
+                WatchSession(
+                    plex_account_id=99,
+                    session_key="1",
+                    rating_key=10,
+                    media_type="movie",
+                    started_at=NOW - timedelta(days=40),
+                    last_seen_at=NOW - timedelta(days=40),
+                    ended_at=NOW - timedelta(days=40),
+                    max_offset_ms=1_200_000,
+                    duration_ms=6_000_000,
+                    end_reason="stopped",
+                )
+            )
+            s.commit()
+        history = [WatchedItem(title="T", media_type=MediaType.MOVIE, watched_at=NOW - timedelta(days=40), tmdb_id=510)]
+
+        reconcile_watched(world, [profile(history)])
+
+        with world() as s:
+            row = s.query(PickRow).filter_by(tmdb_id=510).one()
+        assert row.watched_at is None, "the watch predates the row — not a hit"
+        assert row.max_percent is None, "and so it cannot be an abandonment of that row either"
+
+
+class TestEverySittingIsConsidered:
+    def test_a_later_sitting_is_credited_even_though_the_first_predated_the_row(self, world):
+        """`session_progress` collapses a title to its EARLIEST start — right for reporting a
+        percentage, wrong for deciding a credit. Once someone had any session predating the row, the
+        title could never be start-credited again, however many times they played it off the row
+        afterwards. That is the population this feature exists to measure: a partial watch sets no
+        Plex flag, so the engine keeps recommending the title and no history-log row exists either."""
+        pick(world, 1, 999, rating_key=99, created=NOW - timedelta(days=60))  # gives the floor reach
+        pick(world, 2, 510, rating_key=10, created=NOW - timedelta(days=3))
+        with world() as s:
+            # Sitting one: 40 days ago, long before the row carried it.
+            s.add(
+                WatchSession(
+                    plex_account_id=99,
+                    session_key="1",
+                    rating_key=10,
+                    media_type="movie",
+                    started_at=NOW - timedelta(days=40),
+                    last_seen_at=NOW - timedelta(days=40),
+                    ended_at=NOW - timedelta(days=40),
+                    max_offset_ms=1_200_000,
+                    duration_ms=6_000_000,
+                    end_reason="stopped",
+                )
+            )
+            # Sitting two: yesterday, straight off the row.
+            s.add(
+                WatchSession(
+                    plex_account_id=99,
+                    session_key="2",
+                    rating_key=10,
+                    media_type="movie",
+                    started_at=NOW - timedelta(days=1),
+                    last_seen_at=NOW - timedelta(days=1),
+                    ended_at=NOW - timedelta(days=1),
+                    max_offset_ms=3_600_000,
+                    duration_ms=6_000_000,
+                    end_reason="stopped",
+                )
+            )
+            s.commit()
+
+        with world() as s:
+            credits = event_credits(s, RowMembership(s))
+
+        assert (1, 510, "movie") in credits, "the second sitting happened while the row was showing it"

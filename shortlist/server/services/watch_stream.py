@@ -43,7 +43,8 @@ import websockets
 from loguru import logger
 from sqlalchemy.orm import Session, sessionmaker
 
-from shortlist.server.db.models import WatchSession
+from shortlist.server.db.models import Setting, WatchSession
+from shortlist.server.settings_store import SettingsStore
 
 #: How long a session may go unheard-from before we call it over. Comfortably above the ~10s cadence
 #: and the 15s worst case measured live, so a slow client is not repeatedly closed and reopened.
@@ -103,6 +104,24 @@ class _Live:
         return (self.last_seen_at - self.started_at).total_seconds()
 
 
+#: When the socket last CONNECTED, and when the current outage began (cleared on every connect).
+#: `STREAM_DOWN_SINCE_KEY` is what `notifications._playback_listener_down` reads; the connected
+#: timestamp is a diagnostic breadcrumb — it answers "when did this last work" from the settings
+#: table when the log has already rotated past the answer. Both live here because this is what writes
+#: them, and a key spelled in two files is a key that drifts.
+STREAM_CONNECTED_KEY = "watch.stream_connected_at"
+STREAM_DOWN_SINCE_KEY = "watch.stream_down_since"
+
+#: How long the socket must be down before the owner is told. Deliberately far longer than any
+#: restart or redeploy: a container recreate takes seconds, a Plex restart a minute or two, and
+#: alerting on those would train the owner to ignore the bell. An outage this long is not a blip.
+STREAM_DOWN_ALERT_MINUTES = 45
+
+#: How long a connection must survive before it counts as RECOVERY rather than a flap. Comfortably
+#: above a handshake-then-drop, comfortably below the alert threshold.
+STABLE_AFTER_S = 60
+
+
 class WatchStream:
     """Holds the socket open, keeps live sessions in memory, and persists them as they settle."""
 
@@ -114,6 +133,15 @@ class WatchStream:
         self._snapshot_at: datetime | None = None
         self._stop = asyncio.Event()
         self._delay = 5
+        #: Whether the "no Plex context" line has already been written for the current outage. The
+        #: retry loop turns every 60s; without this it logs the same line 1,440 times a day.
+        self._context_logged = False
+        #: When the CURRENT connection came up, in memory only. Used to tell a real recovery from a
+        #: socket that is merely flapping.
+        self._up_since: datetime | None = None
+        #: The start of the outage this process is in, so a flap can resume it at its original time
+        #: rather than restarting the clock.
+        self._outage_since: str | None = None
         # Its OWN single thread, not the loop's default executor. That pool is shared with
         # `engine_run` (minutes to hours), `prefill_history`, the job worker and ~20 API handlers, and
         # is `min(32, cpu_count + 4)` wide — six slots on a 2-CPU box, several held for the length of a
@@ -121,6 +149,126 @@ class WatchStream:
         # the message loop parks behind them. One worker also serialises our own writes, so two
         # flushes for the same session can never race.
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="watch-stream")
+
+    # -- health --------------------------------------------------------------------------
+    #
+    # A dropped socket is normal and self-healing, so none of this escalates a blip: the loop below
+    # logs at INFO and retries for ever. What it could NOT do before is tell the owner apart a
+    # two-second reconnect from six hours down — both looked identical, and a listener that is quietly
+    # dead means partial watches (the one signal Plex's watched flag cannot give us) silently stop
+    # being recorded while every number on the dashboard still looks plausible.
+    #
+    # So two timestamps go in `settings`, and `notifications._playback_listener_down` turns them into
+    # a bell alert once the outage passes a threshold long enough that a restart never trips it.
+
+    async def _mark_connected(self) -> None:
+        """Reset the backoff and clear the outage, the DB half OFF the event loop.
+
+        `_delay` is set inline because it is a field assignment and must take effect before the next
+        drop. The health write is not: it opens a session and commits, and a SQLite write here can
+        park on `busy_timeout` for up to five seconds — on the very thread that is supposed to be
+        reading the socket. That is exactly what `self._pool` exists to prevent, and doing it inline
+        would have made the health reporting a cause of the missed playback it reports on.
+
+        Clearing here is OPTIMISTIC, and `_mark_dropped` can take it back. See `STABLE_AFTER_S`.
+        """
+        self._delay = 5
+        self._context_logged = False  # a NEW outage says so again
+        self._up_since = datetime.now(UTC)
+        await self._in_pool(lambda: self._write_health(connected=True))
+
+    async def _mark_dropped(self) -> None:
+        """The socket went away. Record the outage — but only start a NEW one if the connection that
+        just died had actually been working.
+
+        The health signal is "the handshake succeeded", not "frames are arriving", and those come
+        apart badly. A PMS under memory pressure, or a reverse proxy with a short idle timeout, ACCEPTS
+        the websocket and drops it seconds later. Every such cycle used to clear `down_since` and then
+        re-stamp it at *now* — and since the reconnect backoff caps at 120s, every cycle is shorter
+        than the 45-minute alert threshold. The clock could never run out, so a server flapping all
+        night looked healthy and the alert only ever worked for the narrower failure: a socket that
+        cannot be established at all.
+
+        So a connection that lasted less than `STABLE_AFTER_S` is not recovery, and the outage it
+        interrupted resumes from its ORIGINAL start.
+        """
+        up_since, self._up_since = self._up_since, None
+        brief = up_since is not None and (datetime.now(UTC) - up_since).total_seconds() < STABLE_AFTER_S
+        await self._in_pool(lambda: self._write_health(connected=False, resume=brief))
+
+    async def _note_context_failure(self) -> bool:
+        """Record a context-build failure and report whether Plex is configured — ONE pool round-trip.
+
+        Both halves need the database and both must stay off the event loop, so they share a hop
+        rather than taking one each on a loop that turns every 60 seconds.
+        """
+
+        def work() -> bool:
+            if not self._plex_is_configured():
+                return False
+            self._write_health(connected=False)
+            return True
+
+        return await self._in_pool(work)
+
+    def _plex_is_configured(self) -> bool:
+        """Has anyone finished setup? Read from settings, never inferred from the failure itself —
+        the exception type is the same whether the server is missing or merely unreachable.
+
+        Reads the rows directly rather than going through `SettingsStore`, and that is not a shortcut:
+        `plex.token` is a secret, and a store without a `SecretBox` RAISES on it rather than returning
+        a value (rule 9, `_require_box`). Going through the store would have thrown on every call, been
+        swallowed below, and returned False for ever — so the alert this exists to raise would never
+        have fired on a real server.
+
+        TRUTHINESS, not existence, and the difference is a bug the owner would have had to live with:
+        clearing the Plex fields in Settings leaves `{"v": ""}` rows behind, so an existence test says
+        "configured" while `build_plex_only` — which tests the values — raises "not configured yet".
+        The listener would then stamp an outage every 60 seconds and, 45 minutes later, raise a warning
+        that cannot be dismissed and can never clear, telling the owner to check a server that is not
+        broken. Both questions must have one answer.
+
+        Only the truthiness of the token is read, never its value, so nothing is decrypted and no token
+        comes near a log line — the same trick `SettingsStore.all_public` uses for redaction.
+        """
+        try:
+            with self._sessions() as session:
+                values = {
+                    key: value
+                    for key, value in session.query(Setting.key, Setting.value)
+                    .filter(Setting.key.in_(("plex.url", "plex.token")))
+                    .all()
+                }
+                return all(bool((values.get(k) or {}).get("v")) for k in ("plex.url", "plex.token"))
+        except Exception:
+            # Cannot tell. Stay quiet rather than alert on a database blip.
+            return False
+
+    def _write_health(self, *, connected: bool, resume: bool = False) -> None:
+        """Record the connect/disconnect moment. Never raises — health reporting must not be able to
+        take down the thing it reports on.
+
+        `resume` re-opens the outage this process was already in, at its original start, rather than
+        beginning a new one — see `_mark_dropped`.
+        """
+        try:
+            with self._sessions() as session:
+                store = SettingsStore(session)
+                now = datetime.now(UTC).isoformat()
+                if connected:
+                    store.set(STREAM_CONNECTED_KEY, now)
+                    store.set(STREAM_DOWN_SINCE_KEY, None)
+                elif resume and self._outage_since:
+                    store.set(STREAM_DOWN_SINCE_KEY, self._outage_since)
+                elif not store.get(STREAM_DOWN_SINCE_KEY):
+                    # FIRST failure only: the outage is dated from when it started, not from the most
+                    # recent retry, or the age would reset every few seconds and never cross a
+                    # threshold.
+                    self._outage_since = now
+                    store.set(STREAM_DOWN_SINCE_KEY, now)
+                session.commit()
+        except Exception as e:
+            logger.debug("watch-stream: could not record health ({})", type(e).__name__)
 
     # -- lifecycle -----------------------------------------------------------------------
 
@@ -163,8 +311,25 @@ class WatchStream:
         while not self._stop.is_set():
             try:
                 ctx = await self._in_pool(lambda: self._build_context(dry_run=True, plex_only=True))
-            except Exception as e:  # Plex not configured yet — nothing to listen to
-                logger.info("watch-stream: no Plex context ({}), retrying", type(e).__name__)
+            except Exception as e:
+                # TWO different failures land here and they need opposite treatment. Before setup
+                # there is no Plex to listen to, and telling a brand new install its playback listener
+                # is down reports the absence of a server nobody has connected yet. But
+                # `build_plex_only` also reaches the PMS (`plex.machine_id`), so a CONFIGURED server
+                # that is unreachable raises in exactly the same place — and that is the outage the
+                # alert exists for. Left undistinguished, the one case worth reporting was the one
+                # case that never reported.
+                configured = await self._note_context_failure()
+                # ONCE per outage, not once per retry. This loop turns every 60 seconds, so an install
+                # that has never finished setup would otherwise write 1,440 identical lines a day into
+                # the file the Logs page reads.
+                if not self._context_logged:
+                    self._context_logged = True
+                    logger.info(
+                        "watch-stream: no Plex context ({}), retrying every 60s{}",
+                        type(e).__name__,
+                        "" if configured else " (Plex not set up yet)",
+                    )
                 await self._sleep(60)
                 continue
             try:
@@ -172,11 +337,12 @@ class WatchStream:
                 # not when `_listen` returns — which only happens on shutdown. Every real drop goes
                 # through the `except` below, so the delay used to double monotonically for the life
                 # of the process and settle at two minutes of unobserved playback per blip.
-                await self._listen(ctx, on_connected=lambda: setattr(self, "_delay", 5))
+                await self._listen(ctx, on_connected=self._mark_connected)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 logger.info("watch-stream: socket closed ({}), reconnecting in {}s", type(e).__name__, self._delay)
+                await self._mark_dropped()
                 await self._sleep(self._delay)
                 self._delay = min(self._delay * 2, 120)
         await self._persist(self._close_all, "stopped")
@@ -213,7 +379,7 @@ class WatchStream:
         ) as socket:
             logger.info("watch-stream: listening for playback events")
             if on_connected is not None:
-                on_connected()
+                await on_connected()
             # A fresh connection means the PMS may have restarted, which is both what drops the
             # socket AND what restarts `sessionKey` numbering at 1. Anything still tracked belongs to
             # the old numbering and would silently absorb a new play's offsets.

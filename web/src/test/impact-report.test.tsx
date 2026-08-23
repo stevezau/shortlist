@@ -22,10 +22,10 @@ const {
   clearDeletedRows,
 } = vi.hoisted(() => ({
   getReport: vi.fn(),
-    syncWatched: vi.fn(() => Promise.resolve({ started: true })),
-    getDeletedRows: vi.fn<() => Promise<DeletedRowHistory[]>>(() =>
-      Promise.resolve([]),
-    ),
+  syncWatched: vi.fn(() => Promise.resolve({ started: true })),
+  getDeletedRows: vi.fn<() => Promise<DeletedRowHistory[]>>(() =>
+    Promise.resolve([]),
+  ),
   clearDeletedRows: vi.fn<(slug?: string) => Promise<ClearedRows>>(() =>
     Promise.resolve({ cleared: 1, picks: 5, slugs: ["zz-claude-test"] }),
   ),
@@ -33,7 +33,13 @@ const {
   // its error boundary renders another `role="alert"` — which broke three unrelated assertions
   // here on multiple-alert ambiguity rather than on anything they were testing.
   getEngagement: vi.fn((_window: ReportWindow) =>
-    Promise.resolve({ window: "30", people: [], losing: [], stop_points: [], observed: false }),
+    Promise.resolve({
+      window: "30",
+      people: [],
+      losing: [],
+      stop_points: [],
+      observed: false,
+    }),
   ),
 }));
 
@@ -302,7 +308,7 @@ describe("ImpactReport", () => {
     await userEvent.click(toggle);
 
     expect(screen.getByText("zz-claude-test")).toBeTruthy();
-    expect(screen.getByText(/still count in the totals above/i)).toBeTruthy();
+    expect(screen.getByText(/still counts in the totals above/i)).toBeTruthy();
   });
 
   it("can delete a deleted row's history for good, and says what that costs", async () => {
@@ -340,7 +346,16 @@ describe("ImpactReport", () => {
 
     // The count is the point of the confirm: "5 picks" is what makes the totals dropping expected
     // rather than a bug the owner reports later.
-    expect(screen.getByRole("alert")).toHaveTextContent(/5 picks in total/);
+    // "records", not "picks": for a SHARED row the number counts watch credits, because a shared row
+    // writes no pick rows at all.
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /5 history records in total/,
+    );
+    // The three sentences around the number must use the same noun. A shared-only deleted row has no
+    // picks at all, so "their picks" was literally false for it.
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /Their history disappears from every total that counts it/,
+    );
     // Clearing is never windowed, so the all-time total can exceed the lines above. Unexplained, that
     // difference reads as a bug — on the real server it was "20 picks" over a visible 5 + 5 + 5.
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -827,8 +842,6 @@ describe("ImpactReport — the engagement split", () => {
     renderReport();
 
     expect(await screen.findByText("Dropped")).toBeInTheDocument();
-    expect(
-      screen.getByText(/started, never finished/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/started, never finished/i)).toBeInTheDocument();
   });
 });

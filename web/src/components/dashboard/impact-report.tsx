@@ -602,7 +602,7 @@ function ByRow({
 
 /** Deleted rows, folded away — with a way to actually be rid of them.
  *
- *  Hiding is the default because their picks are real history that still counts in every total above.
+ *  Hiding is the default because their history is real and still counts in every total above.
  *  But "hidden for ever" is not the same as "gone", and a throwaway test row should not haunt the
  *  dashboard permanently, so clearing is offered too — explicitly, with what it costs stated. */
 function DeletedRows({
@@ -627,8 +627,8 @@ function DeletedRows({
       openLabel={`Hide ${count} deleted ${noun}`}
     >
       <p className="text-xs text-muted-foreground/80">
-        These rows were removed from Shortlist. Their picks still count in the
-        totals above.
+        These rows were removed from Shortlist. Their history still counts in
+        the totals above.
       </p>
       {children}
       {confirming ? (
@@ -637,15 +637,20 @@ function DeletedRows({
           className="mt-2 space-y-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs"
         >
           <p className="text-foreground">
-            Permanently delete the pick history of{" "}
+            Permanently delete the history of{" "}
             {count === 1 ? "this deleted row" : "these deleted rows"}?
           </p>
           {/* Name the all-time total, and why it exceeds the lines above. Clearing is never
-              windowed, so on a 30-day view "20 picks" sits next to a visible 5 + 5 + 5 and reads
-              as a bug unless the difference is said out loud. */}
+              windowed, so on a 30-day view "20 records" sits next to a visible 5 + 5 + 5 and reads
+              as a bug unless the difference is said out loud.
+
+              "Records", not "picks": for a SHARED row the number counts watch credits, because a
+              shared row writes no pick rows at all. Calling those picks is the noun drift the owner
+              already rejected once elsewhere on this page. */}
           {totalPicks > 0 && (
             <p className="text-foreground">
-              {totalPicks} picks in total
+              {totalPicks} history {totalPicks === 1 ? "record" : "records"} in
+              total
               {windowLabel && (
                 <> &mdash; the lines above show only {windowLabel}</>
               )}
@@ -655,9 +660,9 @@ function DeletedRows({
           {/* Say what it costs BEFORE asking. "The totals above" would under-warn: the same picks
               back each person's lifetime stats and their own pick history, so those drop too. */}
           <p className="text-muted-foreground">
-            Their picks disappear from every total that counts them &mdash; here
-            and on each person&rsquo;s page. This can&rsquo;t be undone. Rows
-            that still exist are never touched.
+            Their history disappears from every total that counts it &mdash;
+            here and on each person&rsquo;s page. This can&rsquo;t be undone.
+            Rows that still exist are never touched.
           </p>
           <div className="flex gap-2">
             <Button

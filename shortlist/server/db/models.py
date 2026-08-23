@@ -828,6 +828,37 @@ class WatchEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class SharedRowWatch(Base):
+    """One person's outcome for one title on one SHARED row.
+
+    The shared-row twin of the `watched_at`/`finished_at`/`max_percent` stamps on `picks`. A shared row
+    is built once for the whole server and has no per-user pick row to stamp, so without this a title
+    that lived only on a shared row credited nothing, and the feature quietly measured per-person rows
+    only. See migration 0078 for why it is neither a `picks` row nor a field on `run_shared_rows`.
+
+    Keyed by SLUG rather than by foreign key, like `deliveries` and for the same reason: the row this
+    describes may be deleted while the watch remains true.
+    """
+
+    __tablename__ = "shared_row_watches"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), primary_key=True)
+    collection_slug: Mapped[str] = mapped_column(String(255), primary_key=True)
+    tmdb_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: Part of the key: TMDB ids are namespaced per type, so movie 1399 is not show 1399.
+    media_type: Mapped[str] = mapped_column(String(16), primary_key=True)
+    title: Mapped[str] = mapped_column(String(512), default="")
+    # `timezone=True` to match every other DateTime in this file. SQLite ignores the flag, so this is
+    # not a behaviour change — but `_recent_watches` now sorts one list whose keys come from BOTH this
+    # column and `picks.watched_at`, and `deleted_rows` takes min/max across this and
+    # `picks.created_at`. Those are correct only because the two columns deserialise identically, and
+    # the odd one out reads as deliberate to the next editor.
+    watched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: Films only, same rule as `picks.max_percent` — an episode's progress is not the series'.
+    max_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
 class WatchSession(Base):
     """One playback session as it happened — the only place a PARTIAL watch exists.
 

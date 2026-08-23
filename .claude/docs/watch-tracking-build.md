@@ -72,8 +72,36 @@ watched into every per-user hit-rate and history query". Fanning 15 picks out ac
 would also add ~690 rows per shared row per run to the largest table in the schema, and would claim a
 personally-curated pick where none exists.
 
-So shared rows are credited **at row level, not per person**: a shared row's job is server-wide, and
-its honest metric is "how many people started something from it", not a per-person hit rate.
+So shared rows credit into **their own table**, `shared_row_watches` (migration 0078): one row per
+(person, shared row, title), carrying the same `watched_at`/`finished_at`/`max_percent` triple `picks`
+carries. Per person, but not by inventing pick rows — which keeps the per-person hit-rate and history
+queries reading only rows that were personally curated, while still answering "did this shared row get
+this person to press play".
+
+`shared_credits()` is the twin of `event_credits()`. Both walk the same `_scan_plays()` output, so
+they cannot disagree about what happened when; they differ only in the pool of titles they match
+against (`picks` vs `RunSharedRow.picks`) and in which membership question they ask.
+
+The two never cross-credit, and that is the reason they are separate tables rather than one shared
+membership test: if a shared row could satisfy PERSONAL membership, someone's own row would be
+credited for a title it had already dropped, purely because a different row was still showing it.
+
+**Three gates, all required, and each one was a live bug before it existed.** A shared row is visible
+to everyone, so a credit here is far easier to earn than a personal one:
+
+1. the row still exists and its collection is ON PLEX (the delivery ledger, filed under `shared_<slug>`);
+2. the title was in the row at the moment of the play (`_contained_at`, newest delivery at or before T);
+3. the person was in that delivery's OWN audience snapshot (`RunSharedRow.audience`).
+
+Gate 3 is why a row written before migration 0076 can never be credited: its `audience` is NULL, and
+NULL cannot be told apart from "public". An attempt to credit those rows anyway — by deriving the
+missing `media_type` from the pick's rating key — handed a subset row's credits to people who were
+never in its audience, and was reverted. See `_shared_key`.
+
+**In the report**, shared credits are folded into every figure that counts a watch, through
+`_grouped_union` (a UNION over `(group, identity)` pairs, never a sum — a title on both a personal and
+a shared row is ONE thing that person watched). They are deliberately absent from `delivered` and from
+`landing`: a shared row has no per-person delivery, so there is no denominator to be part of.
 
 Membership at T for a shared row:
 

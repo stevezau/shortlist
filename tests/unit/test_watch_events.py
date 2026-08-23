@@ -250,18 +250,17 @@ class TestMembershipIsAskedOfThePast:
             assert event_credits(s, RowMembership(s)) == {}
 
 
-class TestSharedRowsAreNotCreditedYet:
-    """Shared rows are deliberately NOT consulted for per-person credit — a known gap, pinned here.
+class TestTheSharedPathNeverCreditsAPersonalRow:
+    """Shared rows ARE credited — into `shared_row_watches`, by `shared_credits`. What must never
+    happen is a shared row satisfying PERSONAL membership, which is what `event_credits` decides.
 
-    A shared row has no per-user pick row (`RunSharedRow`'s docstring records why). So the only place
-    a shared-row credit could land is somebody's PERSONAL pick for the same title, which credits the
-    wrong row: their personal row gets the hit for a title it had already dropped, because a different
-    row was still showing it. And a title living only in a shared row credits nothing at all, there
-    being no pick row to stamp.
+    The two are separate because merging them misattributes: a shared row still showing a title would
+    hand the credit to the person's own pick for it, a row that had already dropped it. So every
+    assertion here is `event_credits(...) == {}` — the personal ledger stays clean — and the shared
+    ledger is asserted separately in `test_shared_row_watches.py`.
 
-    Answering "yes" to shared membership therefore misattributes while reading as done. The machinery
-    — the timeline, the audience snapshot, the mute snapshot — is built and tested, ready for the
-    row-level credit the spec describes; nothing consumes it. See §3.2 of the build spec.
+    This class was called `TestSharedRowsAreNotCreditedYet` while that gap was open. The tests did not
+    change when it closed; only what they mean did.
     """
 
     def _shared(self, sessions, run_id: int, tmdb_ids, audience=None):
@@ -278,8 +277,10 @@ class TestSharedRowsAreNotCreditedYet:
             )
             s.commit()
 
-    def test_a_shared_row_alone_credits_nothing(self, world):
-        """The title lives only in the shared row — no personal pick exists to carry a credit."""
+    def test_a_shared_row_alone_credits_no_personal_pick(self, world):
+        """The title lives only in the shared row, so there is no personal pick to carry a credit —
+        and none is invented. Where it DOES land is `shared_row_watches`; see
+        `test_shared_row_watches.py::TestASharedRowCanBeCredited`."""
         with world() as s:
             s.add(Collection(id=2, slug="popular", name="Popular", enabled=True, build="shared"))
             s.commit()
@@ -303,8 +304,9 @@ class TestSharedRowsAreNotCreditedYet:
         with world() as s:
             assert event_credits(s, RowMembership(s)) == {}
 
-    def test_the_audience_snapshot_is_still_recorded_for_when_it_is_used(self, world):
-        """Kept working and kept tested: the gap is in what CONSUMES this, not in what records it."""
+    def test_the_audience_snapshot_is_recorded(self, world):
+        """It is what `visible_shared_rows` gates every shared credit on — the row must record who
+        could see it AT DELIVERY, because `collection_audience` is current state with no history."""
         with world() as s:
             s.add(Collection(id=2, slug="popular", name="Popular", enabled=True, build="shared"))
             s.commit()
@@ -313,7 +315,8 @@ class TestSharedRowsAreNotCreditedYet:
         with world() as s:
             row = s.query(RunSharedRow).one()
         assert row.audience == [12345]
-        assert row.picks[0]["tmdb_id"] == 510, "ids are in the JSON now, which they were not before"
+        assert row.picks[0]["tmdb_id"] == 510
+        assert row.picks[0]["media_type"] == "movie", "the type is half the key — see `_shared_key`"
 
 
 class TestStartsCountEvenWhenTheFinishComesLater:

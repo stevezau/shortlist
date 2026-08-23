@@ -484,3 +484,424 @@ class TestCloseAllIsAllOrNothingInMemory:
         stream._close_all("replaced")
 
         assert stream._live == {}, "memory state must be correct even when persistence is not"
+
+
+class TestTheOwnerIsToldWhenTrackingIsOffline:
+    """A dropped socket is normal and self-healing, so nothing escalates a blip. But a listener that
+    is quietly dead stops the ONE signal Plex cannot give us — partial watches — while every number on
+    the dashboard still looks plausible. "Nobody abandoned anything this week" reads as a healthy week.
+    """
+
+    def _store(self, sessions):
+        from shortlist.server.settings_store import SettingsStore
+
+        return sessions, SettingsStore
+
+    def test_a_healthy_listener_raises_no_alert(self, sessions):
+        from shortlist.server.notifications import _playback_listener_down
+        from shortlist.server.settings_store import SettingsStore
+
+        with sessions() as s:
+            assert _playback_listener_down(SettingsStore(s)) is None
+
+    def test_a_brief_outage_raises_no_alert(self, sessions):
+        """A container recreate takes seconds and a Plex restart a minute or two. Alerting on those
+        would train the owner to ignore the bell."""
+        from shortlist.server.notifications import _playback_listener_down
+        from shortlist.server.services.watch_stream import STREAM_DOWN_SINCE_KEY
+        from shortlist.server.settings_store import SettingsStore
+
+        with sessions() as s:
+            SettingsStore(s).set(STREAM_DOWN_SINCE_KEY, (datetime.now(UTC) - timedelta(minutes=5)).isoformat())
+            s.commit()
+        with sessions() as s:
+            assert _playback_listener_down(SettingsStore(s)) is None
+
+    def test_a_long_outage_raises_a_warning_that_cannot_be_dismissed(self, sessions):
+        from shortlist.server.notifications import _playback_listener_down
+        from shortlist.server.services.watch_stream import STREAM_DOWN_SINCE_KEY
+        from shortlist.server.settings_store import SettingsStore
+
+        with sessions() as s:
+            SettingsStore(s).set(STREAM_DOWN_SINCE_KEY, (datetime.now(UTC) - timedelta(hours=6)).isoformat())
+            s.commit()
+        # Through `build_notifications`, the real entry point — asserting on the builder alone passes
+        # even when it is never wired into the list the bell renders.
+        import shortlist
+        from shortlist.server.notifications import build_notifications
+
+        with sessions() as s:
+            store = SettingsStore(s)
+            alert = next(
+                (n for n in build_notifications(s, store, shortlist.__version__) if "playback" in n["id"]), None
+            )
+        assert alert is not None, "the bell must actually carry it"
+        assert alert["severity"] == "warning"
+        assert alert["dismissable"] is False, "silencing it would hide a feature that has stopped"
+        assert "6 hours" in alert["body"]
+        assert _playback_listener_down(SettingsStore(s)) is not None
+
+    def test_connecting_clears_the_outage(self, sessions):
+        from shortlist.server.notifications import _playback_listener_down
+        from shortlist.server.services.watch_stream import STREAM_DOWN_SINCE_KEY, WatchStream
+        from shortlist.server.settings_store import SettingsStore
+
+        with sessions() as s:
+            SettingsStore(s).set(STREAM_DOWN_SINCE_KEY, (datetime.now(UTC) - timedelta(hours=6)).isoformat())
+            s.commit()
+
+        asyncio.run(WatchStream(sessions, lambda **_: None)._mark_connected())
+
+        import shortlist
+        from shortlist.server.notifications import build_notifications
+
+        with sessions() as s:
+            assert _playback_listener_down(SettingsStore(s)) is None
+            assert not [
+                n for n in build_notifications(s, SettingsStore(s), shortlist.__version__) if "playback" in n["id"]
+            ]
+
+    def test_the_outage_is_dated_from_its_START_not_the_latest_retry(self, sessions):
+        """The retry loop fires every few seconds. Re-stamping on each one would reset the age and the
+        alert could never cross its threshold, however long the outage ran."""
+        from shortlist.server.services.watch_stream import STREAM_DOWN_SINCE_KEY, WatchStream
+        from shortlist.server.settings_store import SettingsStore
+
+        stream = WatchStream(sessions, lambda **_: None)
+        stream._write_health(connected=False)
+        with sessions() as s:
+            first = SettingsStore(s).get(STREAM_DOWN_SINCE_KEY)
+        for _ in range(3):
+            stream._write_health(connected=False)
+
+        with sessions() as s:
+            assert SettingsStore(s).get(STREAM_DOWN_SINCE_KEY) == first
+
+    def test_health_reporting_cannot_take_down_the_listener(self, sessions):
+        """It runs inside the reconnect loop. A failure here must never be what stops the retries."""
+        from shortlist.server.services.watch_stream import WatchStream
+
+        def boom():
+            raise RuntimeError("db is gone")
+
+        stream = WatchStream(boom, lambda **_: None)
+        stream._write_health(connected=False)  # must not raise
+        asyncio.run(stream._mark_connected())  # must not raise
+
+
+class TestAnUnreachablePlexIsAnOutageToo:
+    """`build_plex_only` reaches the PMS (`plex.machine_id`), so a CONFIGURED-but-unreachable server
+    raises in the same place as a never-configured one. Treated alike, the single case the alert
+    exists for was the one case that never alerted."""
+
+    def test_a_configured_but_unreachable_plex_marks_the_listener_down(self, sessions):
+        # Written as raw rows, the way a box-less caller must: `plex.token` is a SECRET key and
+        # `SettingsStore` without a `SecretBox` raises on it rather than returning a value. That is
+        # exactly why `_plex_is_configured` asks whether the rows EXIST instead of reading them — an
+        # earlier version went through the store, threw on every call, and silently answered False.
+        from shortlist.server.db.models import Setting
+        from shortlist.server.services.watch_stream import STREAM_DOWN_SINCE_KEY, WatchStream
+        from shortlist.server.settings_store import SettingsStore
+
+        with sessions() as s:
+            s.add(Setting(key="plex.url", value={"v": "http://plex.local:32400"}))
+            s.add(Setting(key="plex.token", value={"v": "encrypted"}))
+            s.commit()
+
+        stream = WatchStream(sessions, lambda **_: None)
+        assert stream._plex_is_configured() is True
+        stream._write_health(connected=False)
+
+        with sessions() as s:
+            assert SettingsStore(s).get(STREAM_DOWN_SINCE_KEY), "a reachable-server outage must be recorded"
+
+    def test_an_install_that_never_finished_setup_is_not_an_outage(self, sessions):
+        from shortlist.server.services.watch_stream import WatchStream
+
+        stream = WatchStream(sessions, lambda **_: None)
+        assert stream._plex_is_configured() is False, "no url/token — nothing to be down"
+
+    def test_a_half_finished_setup_is_not_an_outage(self, sessions):
+        from shortlist.server.db.models import Setting
+        from shortlist.server.services.watch_stream import WatchStream
+
+        with sessions() as s:
+            s.add(Setting(key="plex.url", value={"v": "http://plex.local:32400"}))  # token missing
+            s.commit()
+        assert WatchStream(sessions, lambda **_: None)._plex_is_configured() is False
+
+    def test_a_database_failure_does_not_raise_an_alert(self, sessions):
+        """Cannot tell — stay quiet rather than alert on a database blip."""
+        from shortlist.server.services.watch_stream import WatchStream
+
+        def boom():
+            raise RuntimeError("db gone")
+
+        assert WatchStream(boom, lambda **_: None)._plex_is_configured() is False
+
+
+class TestTheReconnectLoopActuallyRecordsTheOutage:
+    """Driving `run()`, not `_write_health` directly. Asserting on the writer alone passes even when
+    the loop never calls it — which is the shape of half the fake tests found in this feature already.
+    """
+
+    def _configured(self, sessions):
+        from shortlist.server.db.models import Setting
+
+        with sessions() as s:
+            s.add(Setting(key="plex.url", value={"v": "http://plex.local:32400"}))
+            s.add(Setting(key="plex.token", value={"v": "encrypted"}))
+            s.commit()
+
+    def _run_one_pass(self, stream):
+        """One trip round the loop, then stop — `run()` otherwise reconnects for ever."""
+
+        async def stop_instead_of_sleeping(_seconds):
+            stream._stop.set()
+
+        stream._sleep = stop_instead_of_sleeping
+        asyncio.run(stream.run())
+
+    def test_a_context_failure_on_a_configured_server_is_recorded(self, sessions):
+        from shortlist.server.services.watch_stream import STREAM_DOWN_SINCE_KEY, WatchStream
+        from shortlist.server.settings_store import SettingsStore
+
+        self._configured(sessions)
+
+        def unreachable(**_):
+            raise OSError("connection refused")
+
+        self._run_one_pass(WatchStream(sessions, unreachable))
+
+        with sessions() as s:
+            assert SettingsStore(s).get(STREAM_DOWN_SINCE_KEY), "the loop must record what it could not do"
+
+    def test_a_context_failure_before_setup_is_not_recorded(self, sessions):
+        from shortlist.server.services.watch_stream import STREAM_DOWN_SINCE_KEY, WatchStream
+        from shortlist.server.settings_store import SettingsStore
+
+        def not_set_up(**_):
+            raise RuntimeError("Plex connection is not configured yet — finish setup first")
+
+        self._run_one_pass(WatchStream(sessions, not_set_up))
+
+        with sessions() as s:
+            assert not SettingsStore(s).get(STREAM_DOWN_SINCE_KEY), "nothing to be down before setup"
+
+
+class TestHealthWritesStayOffTheEventLoop:
+    """This listener has its own single-thread pool so that a DB write can never park the socket
+    reader. A SQLite write here can wait up to five seconds on `busy_timeout` — doing that inline
+    would make the health reporting a cause of the missed playback it reports on."""
+
+    def test_the_connect_write_runs_on_the_pool_thread(self, sessions):
+        import threading
+
+        from shortlist.server.services.watch_stream import WatchStream
+
+        stream = WatchStream(sessions, lambda **_: None)
+        seen: dict[str, str] = {}
+        real = stream._write_health
+
+        def record(**kw):
+            seen["thread"] = threading.current_thread().name
+            return real(**kw)
+
+        stream._write_health = record
+
+        async def drive():
+            seen["loop"] = threading.current_thread().name
+            await stream._mark_connected()
+
+        asyncio.run(drive())
+
+        assert seen["thread"].startswith("watch-stream"), f"ran on {seen['thread']}"
+        assert seen["thread"] != seen["loop"], "the write must not be on the loop's thread"
+
+    def test_the_backoff_reset_is_immediate_and_not_deferred(self, sessions):
+        """`_delay` is a field assignment and must take effect before the next drop, so it stays
+        inline even though the write beside it does not."""
+        from shortlist.server.services.watch_stream import WatchStream
+
+        stream = WatchStream(sessions, lambda **_: None)
+        stream._delay = 120
+        asyncio.run(stream._mark_connected())
+        assert stream._delay == 5
+
+
+class TestAFlappingSocketStillRaisesTheAlarm:
+    """The health signal is "the handshake succeeded", not "frames are arriving", and those come
+    apart. A PMS under memory pressure — or a proxy with a short idle timeout — ACCEPTS the socket and
+    drops it seconds later. Every such cycle cleared `down_since` and re-stamped it at now, and since
+    the backoff caps at 120s every cycle is shorter than the 45-minute threshold: the clock could
+    never run out, and a server flapping all night looked perfectly healthy."""
+
+    def test_repeated_connect_then_immediate_drop_keeps_the_original_outage(self, sessions):
+        from shortlist.server.services.watch_stream import STREAM_DOWN_SINCE_KEY, WatchStream
+        from shortlist.server.settings_store import SettingsStore
+
+        stream = WatchStream(sessions, lambda **_: None)
+        stream._write_health(connected=False)  # the outage begins
+        with sessions() as s:
+            began = SettingsStore(s).get(STREAM_DOWN_SINCE_KEY)
+
+        for _ in range(4):  # connect ... drop ... connect ... drop
+            asyncio.run(stream._mark_connected())
+            asyncio.run(stream._mark_dropped())
+
+        with sessions() as s:
+            assert SettingsStore(s).get(STREAM_DOWN_SINCE_KEY) == began, "a flap is not a recovery"
+
+    def test_a_connection_that_survives_is_a_real_recovery(self, sessions):
+        from shortlist.server.services.watch_stream import STABLE_AFTER_S, STREAM_DOWN_SINCE_KEY, WatchStream
+        from shortlist.server.settings_store import SettingsStore
+
+        stream = WatchStream(sessions, lambda **_: None)
+        stream._write_health(connected=False)
+        asyncio.run(stream._mark_connected())
+        # It has been up comfortably longer than the stability window.
+        stream._up_since = datetime.now(UTC) - timedelta(seconds=STABLE_AFTER_S + 30)
+        asyncio.run(stream._mark_dropped())
+
+        with sessions() as s:
+            down = SettingsStore(s).get(STREAM_DOWN_SINCE_KEY)
+        assert down, "the drop still starts an outage"
+        began = datetime.fromisoformat(str(down))
+        assert (datetime.now(UTC) - began).total_seconds() < 5, "but a NEW one, dated now"
+
+
+class TestTheAlertSaysHowLongInPlainEnglish:
+    """Copy the owner reads. The unit was picked from the raw value and the number rounded
+    independently, so 60-89 minutes rendered "1 hours" and 59.6 rendered "60 minutes"."""
+
+    @pytest.mark.parametrize(
+        ("minutes", "expected"),
+        [
+            (45, "45 minutes"),
+            (59.6, "an hour"),
+            (60, "an hour"),
+            (89, "an hour"),
+            (90, "2 hours"),
+            (1440, "a day"),
+            (4300, "3 days"),
+        ],
+    )
+    def test_it_reads_as_english(self, minutes, expected):
+        from shortlist.server.notifications import _spell_duration
+
+        assert _spell_duration(minutes) == expected
+
+    def test_the_alert_body_carries_it(self, sessions):
+        from shortlist.server.notifications import _playback_listener_down
+        from shortlist.server.services.watch_stream import STREAM_DOWN_SINCE_KEY
+        from shortlist.server.settings_store import SettingsStore
+
+        with sessions() as s:
+            SettingsStore(s).set(STREAM_DOWN_SINCE_KEY, (datetime.now(UTC) - timedelta(minutes=70)).isoformat())
+            s.commit()
+        with sessions() as s:
+            assert "for an hour." in _playback_listener_down(SettingsStore(s))["body"]
+
+
+class TestTheAlertSurvivesBadStoredValues:
+    """It runs on every bell poll. A parse error here would take out every OTHER notification too."""
+
+    def test_a_garbage_timestamp_raises_nothing(self, sessions):
+        from shortlist.server.notifications import _playback_listener_down
+        from shortlist.server.services.watch_stream import STREAM_DOWN_SINCE_KEY
+        from shortlist.server.settings_store import SettingsStore
+
+        with sessions() as s:
+            SettingsStore(s).set(STREAM_DOWN_SINCE_KEY, "not a timestamp")
+            s.commit()
+        with sessions() as s:
+            assert _playback_listener_down(SettingsStore(s)) is None
+
+    def test_a_naive_timestamp_is_read_as_utc(self, sessions):
+        """Every timestamp in this database is UTC; one written without a tzinfo must not be compared
+        as though it were local, which on a +10 server would read six hours as sixteen."""
+        from shortlist.server.notifications import _playback_listener_down
+        from shortlist.server.services.watch_stream import STREAM_DOWN_SINCE_KEY
+        from shortlist.server.settings_store import SettingsStore
+
+        naive = (datetime.now(UTC) - timedelta(hours=2)).replace(tzinfo=None)
+        with sessions() as s:
+            SettingsStore(s).set(STREAM_DOWN_SINCE_KEY, naive.isoformat())
+            s.commit()
+        with sessions() as s:
+            assert "2 hours" in _playback_listener_down(SettingsStore(s))["body"]
+
+    def test_the_threshold_boundary(self, sessions):
+        from shortlist.server.notifications import _playback_listener_down
+        from shortlist.server.services.watch_stream import STREAM_DOWN_ALERT_MINUTES, STREAM_DOWN_SINCE_KEY
+        from shortlist.server.settings_store import SettingsStore
+
+        for minutes, fires in ((STREAM_DOWN_ALERT_MINUTES - 1, False), (STREAM_DOWN_ALERT_MINUTES + 1, True)):
+            with sessions() as s:
+                SettingsStore(s).set(
+                    STREAM_DOWN_SINCE_KEY, (datetime.now(UTC) - timedelta(minutes=minutes)).isoformat()
+                )
+                s.commit()
+            with sessions() as s:
+                assert (_playback_listener_down(SettingsStore(s)) is not None) is fires, f"at {minutes} minutes"
+
+
+class TestTheDiagnosticBreadcrumb:
+    def test_connecting_records_when_it_last_worked(self, sessions):
+        """`watch.stream_connected_at` answers "when did this last work" from the settings table once
+        the log has rotated past the answer. It is the only record of that, so it is kept — and a key
+        that is written but never asserted is a key that can be deleted without anything noticing."""
+        from shortlist.server.services.watch_stream import STREAM_CONNECTED_KEY, WatchStream
+        from shortlist.server.settings_store import SettingsStore
+
+        asyncio.run(WatchStream(sessions, lambda **_: None)._mark_connected())
+
+        with sessions() as s:
+            recorded = SettingsStore(s).get(STREAM_CONNECTED_KEY)
+        assert recorded, "nothing else records when the socket last came up"
+        assert (datetime.now(UTC) - datetime.fromisoformat(str(recorded))).total_seconds() < 5
+
+    def test_it_is_not_writable_through_the_settings_api(self, sessions):
+        """It raises a NON-dismissable alert, so a settings write that could clear it would be a way
+        to silence exactly the warning that must not be silenceable."""
+        from shortlist.server.api.settings import KNOWN_KEYS
+
+        assert "watch.stream_down_since" not in KNOWN_KEYS
+        assert "watch.stream_connected_at" not in KNOWN_KEYS
+
+
+class TestBlankPlexFieldsAreNotConfigured:
+    """Clearing the Plex fields in Settings leaves `{"v": ""}` rows behind. An EXISTENCE test called
+    that configured while `build_plex_only` — which tests the values — raises "not configured yet", so
+    the listener stamped an outage every 60s and 45 minutes later raised an undismissable warning that
+    could never clear, telling the owner to check a server that was not broken."""
+
+    def test_a_blank_url_is_not_configured(self, sessions):
+        from shortlist.server.db.models import Setting
+        from shortlist.server.services.watch_stream import WatchStream
+
+        with sessions() as s:
+            s.add(Setting(key="plex.url", value={"v": ""}))
+            s.add(Setting(key="plex.token", value={"v": "encrypted"}))
+            s.commit()
+        assert WatchStream(sessions, lambda **_: None)._plex_is_configured() is False
+
+    def test_a_blank_token_is_not_configured(self, sessions):
+        from shortlist.server.db.models import Setting
+        from shortlist.server.services.watch_stream import WatchStream
+
+        with sessions() as s:
+            s.add(Setting(key="plex.url", value={"v": "http://plex.local:32400"}))
+            s.add(Setting(key="plex.token", value={"v": ""}))
+            s.commit()
+        assert WatchStream(sessions, lambda **_: None)._plex_is_configured() is False
+
+    def test_a_null_value_row_is_not_configured(self, sessions):
+        from shortlist.server.db.models import Setting
+        from shortlist.server.services.watch_stream import WatchStream
+
+        with sessions() as s:
+            s.add(Setting(key="plex.url", value={"v": None}))
+            s.add(Setting(key="plex.token", value={"v": None}))
+            s.commit()
+        assert WatchStream(sessions, lambda **_: None)._plex_is_configured() is False

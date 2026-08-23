@@ -240,6 +240,11 @@ PRIVATE_KEYS = {
     # own gate, and the whole point is that switching it on is audited and self-reversing. Its three
     # dedicated endpoints (`/support/status|enable|disable`) are the only way in.
     "support.enabled_until",
+    # The playback listener's own health. Facts it observes about itself, not preferences anyone sets:
+    # `watch.stream_down_since` is what raises a NON-dismissable alert, so a settings write that could
+    # clear it would be a way to silence exactly the warning that must not be silenceable.
+    "watch.stream_connected_at",
+    "watch.stream_down_since",
 }
 
 # Dropped keys purged from the settings table on boot, so stale rows don't linger.

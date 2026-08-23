@@ -2418,7 +2418,12 @@ class TestClearDeletedRows:
             event = session.query(Event).filter_by(scope="report.clear_deleted_rows").one()
         # Per-slug, not just a total: a "clear all" over six rows has to say which one's history went.
         assert event.message["rows"] == {"zz_throwaway": 2}
-        assert event.message["picks"] == 2
+        # SPLIT, not one number. `pick_rows` and `shared_watches` are different tables and a shared row
+        # has only the second, so a single `picks` key meant the audit and the API response used one
+        # word for two different totals.
+        assert event.message["pick_rows"] == 2
+        assert event.message["shared_watches"] == 0
+        assert event.message["total"] == 2
 
     def test_nothing_to_clear_is_not_an_error(self, client: TestClient):
         assert client.delete("/api/report/deleted-rows").json()["cleared"] == 0
