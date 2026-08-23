@@ -519,6 +519,73 @@ def _apply_shared(
             row.max_percent = out.max_percent
 
 
+def reconcile_from_events(sessions: sessionmaker[Session]) -> int:
+    """Apply the credits that PLAYBACK alone can justify, reading nothing from Plex. Returns the
+    number of people whose picks changed.
+
+    The cheap sibling of :func:`reconcile_watched`, for the moment a live session settles. Someone
+    watches twenty minutes of a pick and stops; the row earned that, and until this existed the fact
+    sat in `watch_sessions` until the next scheduled sync hours later — so the dashboard showed
+    nothing, and the owner reasonably concluded tracking was broken.
+
+    Deliberately NOT the full reconcile:
+
+    * **No Plex reads.** Everything here is already in our database. The full pass re-reads every
+      user's watched set from the PMS, which is minutes of work and pointless in response to one
+      person pressing stop.
+    * **No snapshot path.** That path exists for titles Plex flagged watched with no play behind
+      them; by definition a settling session is not one of those.
+    * **`history_depth` is not touched.** It means "how many titles this person has watched", answered
+      by the history read this function deliberately skips. Writing it from an empty history is
+      exactly the bug `reconcile_watched` documents — every user reading "0 titles watched".
+
+    Idempotent, like every job handler: it recomputes from the same events and writes the same
+    answers, and `_apply_outcomes` never moves a stamp that is already there.
+    """
+    changed = 0
+    with sessions() as session:
+        membership = RowMembership(session)
+        tmdb_of = tmdb_by_rating_key(session)
+        scan = _scan_plays(session, tmdb_of)
+        credits = event_credits(session, membership, scan)
+        shared = shared_credits(session, membership, scan)
+        if not credits and not shared:
+            return 0
+        progress = session_progress(session, _attribution_floor(session), tmdb_of)
+
+        # Only the people an event actually names. The full pass walks every profile it was handed;
+        # here that would be 47 users to apply at most one person's watch.
+        touched = {user_id for user_id, _t, _m in credits} | {user_id for user_id, _s, _t, _m in shared}
+        shared_rows: dict[int, dict[tuple[str, int, str], SharedRowWatch]] = defaultdict(dict)
+        for row in session.query(SharedRowWatch).filter(SharedRowWatch.user_id.in_(touched)).all():
+            shared_rows[row.user_id][(row.collection_slug, row.tmdb_id, row.media_type)] = row
+
+        for user in session.query(User).filter(User.id.in_(touched), User.removed_at.is_(None)).all():
+            desired = _decide_outcomes(
+                session,
+                user,
+                credits=credits,
+                progress=progress,
+                latest_watch={},
+                finished_keys=set(),
+                # Empty: the snapshot path is what this argument drives, and it is deliberately not
+                # run here. Passing the live set would credit a title Plex flagged watched, from a
+                # function that never asked Plex anything.
+                live_pick_ids_for_user=set(),
+            )
+            existing = shared_rows[user.id]
+            shared_desired = _decide_shared(
+                user, shared=shared, existing=existing, progress=progress, latest_watch={}, finished_keys=set()
+            )
+            if not desired and not shared_desired:
+                continue
+            _apply_outcomes(session, user, desired)
+            _apply_shared(session, user, shared_desired, existing, membership)
+            changed += 1
+        session.commit()
+    return changed
+
+
 def reconcile_watched(sessions: sessionmaker[Session], profiles, live_picks: dict[int, set[int]] | None = None) -> None:
     """Mark the picks a person actually watched — the hit rate, and the whole point of the app.
 

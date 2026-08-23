@@ -466,7 +466,9 @@ class TestHandlers:
         readers = {e.kind for e in jobs.CATALOG if not e.writes_plex}
         # Pinned by name, not counted: if a kind changes side, that is a decision someone has to
         # make here, in a diff, rather than a number quietly moving.
-        assert readers == {"sync.history", "backup.take", "maintenance.prune"}
+        # `watch.reconcile` is a reader of Plex and a writer of our OWN database only: it credits
+        # picks from playback already recorded locally and never opens a Plex client.
+        assert readers == {"sync.history", "backup.take", "maintenance.prune", "watch.reconcile"}
         writers = {e.kind for e in jobs.CATALOG if e.writes_plex}
         assert "privacy.sync" in writers and "sync.check" in writers
         assert {"user.cleanup", "user.hide", "user.restore", "row.reconcile"} <= writers
@@ -1396,3 +1398,34 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
         # Safe mode has to reach the shelf pass too — it is a Plex write like any other here.
         assert state.contexts[0].plex.order_owned_hubs.call_args.kwargs["dry_run"] is True
         assert "would reposition" in result["detail"]
+
+
+class TestWatchReconcileTellsTheDashboard:
+    """Crediting the watch is only half of it. Without the SSE the owner watches something, the credit
+    lands in the database seconds later, and the page in front of them still says nothing until they
+    reload — which reads as the feature not working."""
+
+    def _state(self, sessions):
+        published: list[tuple[str, dict]] = []
+        bus = SimpleNamespace(publish=lambda event, data: published.append((event, data)))
+        return SimpleNamespace(sessions=sessions, run_service=None, bus=bus), published
+
+    def test_it_publishes_the_event_the_report_query_listens_for(self, sessions, monkeypatch):
+        """`sync.finished` / `kind="watched"` is what `useSyncWatched` invalidates the report on. A
+        second channel for the same fact would be a second thing to keep in step."""
+        state, published = self._state(sessions)
+        monkeypatch.setattr("shortlist.server.services.run_persistence.reconcile_from_events", lambda _s: 2)
+
+        result = jobs._HANDLERS["watch.reconcile"](state, {})
+
+        assert result == {"users_credited": 2}
+        assert published == [("sync.finished", {"kind": "watched", "ok": True, "count": 2})]
+
+    def test_it_stays_quiet_when_nothing_was_credited(self, sessions, monkeypatch):
+        """A session ends every time anyone stops anything. Announcing a refresh that changes no
+        number would have every dashboard on the server refetch for nothing."""
+        state, published = self._state(sessions)
+        monkeypatch.setattr("shortlist.server.services.run_persistence.reconcile_from_events", lambda _s: 0)
+
+        assert jobs._HANDLERS["watch.reconcile"](state, {}) == {"users_credited": 0}
+        assert published == []

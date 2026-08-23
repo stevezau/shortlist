@@ -204,6 +204,29 @@ CATALOG: tuple[JobKind, ...] = (
         schedule_setting="backup.cron",
     ),
     JobKind(
+        kind="watch.reconcile",
+        label="Credit a finished playback",
+        description=(
+            "Works out what someone just watched from their row, the moment they stop playing. It "
+            "reads nothing from Plex and changes nothing there — everything it needs was already "
+            "recorded while the video was playing."
+            "\n\nThis is what puts a partial watch on your dashboard straight away. Plex only "
+            "records that a title was finished, so someone who starts a pick and gives up halfway "
+            "leaves no trace in its history at all; the only moment that fact exists is while it is "
+            "playing, and this is what saves it."
+            "\n\nQueued automatically when a playback session ends. There is nothing to schedule "
+            "and nothing to run by hand — the nightly watch-history sync covers the same ground and "
+            "more."
+        ),
+        manual=False,
+        writes_plex=False,  # local database only
+        trigger=(
+            "Runs when a playback session ends — nothing schedules it, and there is nothing to run by "
+            "hand. If it never runs (Shortlist restarted mid-playback, say), nothing is lost: the "
+            "nightly watch-history sync reaches the same conclusion from the same records."
+        ),
+    ),
+    JobKind(
         kind="maintenance.prune",
         label="Clear out old records",
         description=(
@@ -975,6 +998,32 @@ def _backup_take(state, payload: dict) -> dict:
     if path is None:
         return {"path": "", "detail": "No database to back up yet"}
     return {"path": str(path), "detail": f"Backed up to {path.name}"}
+
+
+@handler("watch.reconcile")
+def _watch_reconcile(state, payload: dict) -> dict:
+    """Credit what playback alone can justify, then tell the dashboard.
+
+    The SSE is not a nicety. Without it the owner watches something, the credit lands in the database
+    seconds later, and the page in front of them still says nothing until they reload — which reads as
+    the feature not working. It reuses `sync.finished`/`kind="watched"`, the event the report query
+    already invalidates on, rather than inventing a second channel for the same fact.
+
+    Deliberately does NOT wait for a run, unlike the full watch sync which takes `run_lock`. That lock
+    exists because the full pass re-reads Plex and rewrites every user; this writes only our own
+    `picks` stamps and touches no Plex state at all. Running mid-build is safe in the direction that
+    matters: `_apply_outcomes` will not stamp a delivery row whose `created_at` is later than the
+    watch, so a pick the run is creating right now can never be credited for a play that predates it.
+    The failure it can have is CONSERVATIVE — a row not yet in the delivery ledger yields no credit,
+    and the nightly sync reaches the same conclusion later from the same records. Waiting instead
+    would mean an 88-minute run silently swallowing every partial watch made during it.
+    """
+    from shortlist.server.services.run_persistence import reconcile_from_events
+
+    changed = reconcile_from_events(state.sessions)
+    if changed:
+        state.bus.publish("sync.finished", {"kind": "watched", "ok": True, "count": changed})
+    return {"users_credited": changed}
 
 
 @handler("maintenance.prune")

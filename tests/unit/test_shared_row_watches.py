@@ -1160,3 +1160,114 @@ class TestTheWriterAndTheReaderAgree:
             SimpleNamespace(picks=[Pick(tmdb_id=550, rating_key=1, title="T", rank=1, reason="r", media_type=MT.MOVIE)])
         )
         assert written[0]["media_type"] == "movie"
+
+
+class TestStoppingPlaybackCreditsImmediately:
+    """The whole chain the owner sees: play a pick, stop, and the number moves — without waiting for
+    the nightly sync. Before this, `watch_sessions` held the fact and nothing acted on it for hours."""
+
+    def test_the_event_only_pass_credits_a_partial_watch(self, world):
+        from shortlist.server.services.run_persistence import reconcile_from_events
+
+        with world() as s:
+            s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
+            s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=550,
+                    media_type="movie",
+                    rating_key=9001,
+                    rank=1,
+                    title="Fight Club",
+                    created_at=NOW - timedelta(days=1),
+                )
+            )
+            s.commit()
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+
+        assert reconcile_from_events(world) == 1
+
+        with world() as s:
+            pick = s.query(PickRow).filter_by(user_id=1, tmdb_id=550).one()
+            assert pick.watched_at is not None, "they started it from the row"
+            assert pick.max_percent == 30, "and this is how far they got"
+
+    def test_it_reads_nothing_from_plex_and_needs_no_profiles(self, world):
+        """That is the entire point: it answers from records we already hold, so it can run the moment
+        someone presses stop instead of waiting for a pass that re-reads every user's watched set."""
+        from shortlist.server.services.run_persistence import reconcile_from_events
+
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+
+        reconcile_from_events(world)  # no profiles argument exists to pass
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 1, "shared rows credit here too"
+
+    def test_it_does_not_invent_a_history_depth(self, world):
+        """`history_depth` means "how many titles this person has watched", answered by the Plex read
+        this function skips. Writing it from an empty history is how every user came to read
+        "0 titles watched"."""
+        from shortlist.server.services.run_persistence import reconcile_from_events
+
+        with world() as s:
+            s.query(User).filter_by(id=1).one().prefs = {"history_depth": 412}
+            s.commit()
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+
+        reconcile_from_events(world)
+
+        with world() as s:
+            assert s.query(User).filter_by(id=1).one().prefs["history_depth"] == 412
+
+    def test_it_never_uses_the_snapshot_path(self, world):
+        """The snapshot path credits a title Plex FLAGGED watched with no play behind it. This function
+        asked Plex nothing, so it has no business acting on that flag."""
+        from shortlist.server.services.run_persistence import reconcile_from_events
+
+        with world() as s:
+            s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
+            s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=777,
+                    media_type="movie",
+                    rating_key=0,
+                    rank=1,
+                    title="Unplayed",
+                    created_at=NOW - timedelta(days=1),
+                )
+            )
+            s.commit()
+        # No session, no event — only a title sitting in a live row.
+        reconcile_from_events(world)
+
+        with world() as s:
+            assert s.query(PickRow).filter_by(tmdb_id=777).one().watched_at is None
+
+    def test_running_it_twice_changes_nothing_the_second_time(self, world):
+        from shortlist.server.services.run_persistence import reconcile_from_events
+
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+        reconcile_from_events(world)
+        with world() as s:
+            before = s.query(SharedRowWatch).one().watched_at
+
+        reconcile_from_events(world)
+
+        with world() as s:
+            rows = s.query(SharedRowWatch).all()
+            assert len(rows) == 1 and rows[0].watched_at == before

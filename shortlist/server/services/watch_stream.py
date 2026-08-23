@@ -43,7 +43,8 @@ import websockets
 from loguru import logger
 from sqlalchemy.orm import Session, sessionmaker
 
-from shortlist.server.db.models import Setting, WatchSession
+from shortlist.server.db.models import Job, Setting, WatchSession
+from shortlist.server.services import jobs
 from shortlist.server.settings_store import SettingsStore
 
 #: How long a session may go unheard-from before we call it over. Comfortably above the ~10s cadence
@@ -591,6 +592,35 @@ class WatchStream:
                 row.ended_at = live.last_seen_at
                 row.end_reason = reason
                 session.commit()
+        self._queue_reconcile()
+
+    def _queue_reconcile(self) -> None:
+        """Ask for the credit to be worked out now, rather than at the next scheduled sync.
+
+        Someone watches twenty minutes of a pick and stops. The row earned that — but the fact lived
+        only in `watch_sessions` until the nightly sync hours later, so the dashboard showed nothing
+        and the feature read as broken to the person who had just tested it.
+
+        A QUEUED job rather than the work itself: this runs on the listener's single thread, and the
+        credit pass reads the whole event log. Doing it inline would park the socket behind it, which
+        is the one thing this thread must never do. Coalesced, because a household stopping four
+        streams at once wants one pass, not four identical ones.
+
+        Never raises. A credit that does not happen now happens at the nightly sync; a listener that
+        dies because a queue insert failed loses every partial watch until the process restarts.
+        """
+        try:
+            with self._sessions() as session:
+                pending = (
+                    session.query(Job.id)
+                    .filter(Job.kind == "watch.reconcile", Job.status.in_(("queued", "running")))
+                    .first()
+                )
+                if pending is not None:
+                    return
+            jobs.enqueue(self._sessions, "watch.reconcile")
+        except Exception as e:
+            logger.debug("watch-stream: could not queue the credit pass ({})", type(e).__name__)
 
     def _close_all(self, reason: str) -> None:
         """Close every tracked session, and let none of them stop the others.

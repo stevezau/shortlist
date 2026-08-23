@@ -342,6 +342,22 @@ class FakeSocket:
         await asyncio.sleep(3600)  # idle, like a real quiet server
 
 
+async def until(predicate, *, timeout: float = 5.0) -> None:
+    """Wait for a CONDITION, never a duration.
+
+    These scenarios used a flat `sleep(0.05)` to let `run()` get as far as connecting. That is a race
+    the moment anything in the startup path gets slower — and it did: `close_orphans`, the context
+    build and the health write all hop to the listener's single-thread pool, so under parallel test
+    load fifty milliseconds stopped being enough and `test_connecting_resets_the_backoff` failed about
+    two runs in three. Polling the condition is both faster in the common case and immune to it.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not predicate():
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError("condition not reached in time")
+        await asyncio.sleep(0.005)
+
+
 def connect_returning(*sockets):
     """Monkeypatch target for `websockets.connect`, handing out each socket in turn."""
     queue = list(sockets)
@@ -363,11 +379,12 @@ class TestConnectionLifecycle:
         stream = WatchStream(sessions, lambda **kw: MagicMock())
         monkeypatch.setattr(stream, "close_orphans", MagicMock(side_effect=OSError("database is locked")))
         socket = FakeSocket()
-        monkeypatch.setattr(watch_stream.websockets, "connect", connect_returning(socket))
+        connect = connect_returning(socket)
+        monkeypatch.setattr(watch_stream.websockets, "connect", connect)
 
         async def scenario():
             task = asyncio.ensure_future(stream.run())
-            await asyncio.sleep(0.05)
+            await until(lambda: connect.calls["n"] > 0)
             stream.stop()
             await asyncio.wait_for(task, timeout=2)
 
@@ -402,11 +419,12 @@ class TestConnectionLifecycle:
         `run()` took up to 30s to notice, while the lifespan allows 5, so the graceful close never
         happened and every restart left orphans behind."""
         stream = WatchStream(sessions, lambda **kw: MagicMock())
-        monkeypatch.setattr(watch_stream.websockets, "connect", connect_returning(FakeSocket()))
+        connect = connect_returning(FakeSocket())
+        monkeypatch.setattr(watch_stream.websockets, "connect", connect)
 
         async def scenario():
             task = asyncio.ensure_future(stream.run())
-            await asyncio.sleep(0.05)
+            await until(lambda: connect.calls["n"] > 0)
             stream.stop()
             await asyncio.wait_for(task, timeout=2)  # 30s recv would blow this
 
@@ -421,7 +439,7 @@ class TestConnectionLifecycle:
 
         async def scenario():
             task = asyncio.ensure_future(stream.run())
-            await asyncio.sleep(0.05)
+            await until(lambda: stream._delay == 5)
             stream.stop()
             await asyncio.wait_for(task, timeout=2)
 
@@ -905,3 +923,103 @@ class TestBlankPlexFieldsAreNotConfigured:
             s.add(Setting(key="plex.token", value={"v": None}))
             s.commit()
         assert WatchStream(sessions, lambda **_: None)._plex_is_configured() is False
+
+
+class TestStoppingPlaybackAsksForTheCreditNow:
+    """Without this the fact sat in `watch_sessions` until the nightly sync hours later — so someone
+    who watched a pick and looked at the dashboard saw nothing, and concluded tracking was broken."""
+
+    def _live(self, stream, *, row_id):
+        from shortlist.server.services.watch_stream import _Live
+
+        live = _Live(
+            session_key="1",
+            account_id=99,
+            rating_key=10,
+            show_rating_key=None,
+            media_type="movie",
+            duration_ms=6_000_000,
+            offset_ms=1_800_000,
+            now=datetime.now(UTC) - timedelta(minutes=20),
+        )
+        live.last_seen_at = datetime.now(UTC)
+        live.row_id = row_id
+        live.flushed_at = datetime.now(UTC)
+        return live
+
+    def _row(self, sessions):
+        from shortlist.server.db.models import WatchSession as WS
+
+        with sessions() as s:
+            row = WS(
+                plex_account_id=99,
+                session_key="1",
+                rating_key=10,
+                media_type="movie",
+                started_at=datetime.now(UTC) - timedelta(minutes=20),
+                last_seen_at=datetime.now(UTC),
+                max_offset_ms=1_800_000,
+                duration_ms=6_000_000,
+            )
+            s.add(row)
+            s.commit()
+            return row.id
+
+    def test_closing_a_session_queues_the_credit_pass(self, sessions):
+        from shortlist.server.db.models import Job
+        from shortlist.server.services.watch_stream import WatchStream
+
+        stream = WatchStream(sessions, lambda **_: None)
+        stream._close("1", self._live(stream, row_id=self._row(sessions)), "stopped")
+
+        with sessions() as s:
+            queued = s.query(Job).filter_by(kind="watch.reconcile").all()
+        assert len(queued) == 1
+
+    def test_four_streams_stopping_at_once_queue_one_pass(self, sessions):
+        """A household stopping four streams wants one credit pass, not four identical ones."""
+        from shortlist.server.db.models import Job
+        from shortlist.server.services.watch_stream import WatchStream
+
+        stream = WatchStream(sessions, lambda **_: None)
+        for _ in range(4):
+            stream._close("1", self._live(stream, row_id=self._row(sessions)), "stopped")
+
+        with sessions() as s:
+            assert s.query(Job).filter_by(kind="watch.reconcile").count() == 1
+
+    def test_a_queue_failure_never_reaches_the_listener(self, sessions):
+        """A credit that does not happen now happens at the nightly sync. A listener that dies because
+        a queue insert failed loses every partial watch until the process restarts."""
+        from shortlist.server.services.watch_stream import WatchStream
+
+        stream = WatchStream(sessions, lambda **_: None)
+
+        def boom():
+            raise RuntimeError("db gone")
+
+        stream._sessions = boom
+        stream._queue_reconcile()  # must not raise
+
+    def test_a_session_too_short_to_persist_queues_nothing(self, sessions):
+        """A mis-click is not a watch, and it does not deserve a pass over the whole event log."""
+        from shortlist.server.db.models import Job
+        from shortlist.server.services.watch_stream import MIN_START_SECONDS, WatchStream, _Live
+
+        stream = WatchStream(sessions, lambda **_: None)
+        now = datetime.now(UTC)
+        brief = _Live(
+            session_key="1",
+            account_id=99,
+            rating_key=10,
+            show_rating_key=None,
+            media_type="movie",
+            duration_ms=6_000_000,
+            offset_ms=1000,
+            now=now,
+        )
+        brief.last_seen_at = now + timedelta(seconds=MIN_START_SECONDS - 1)
+        stream._close("1", brief, "stopped")
+
+        with sessions() as s:
+            assert s.query(Job).filter_by(kind="watch.reconcile").count() == 0
