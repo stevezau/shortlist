@@ -20,7 +20,6 @@ from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedIte
 from shortlist.server.db.models import (
     Base,
     Collection,
-    CollectionAudience,
     Delivery,
     PickRow,
     Run,
@@ -36,6 +35,7 @@ from shortlist.server.services.watch_events import (
     event_credits,
     ingest_play_history,
     session_progress,
+    tmdb_by_rating_key,
 )
 
 NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
@@ -65,8 +65,14 @@ def world(sessions):
 
 
 def deliver(sessions, run_id: int, rating_keys, *, tmdb_base: int = 500, slug: str = "picked"):
-    """One delivery of a row: the picks that run put in it."""
+    """One delivery of a row: the picks that run put in it.
+
+    `created_at` is derived from the RUN, not hardcoded. It used to be the same instant for every run,
+    which made all deliveries look simultaneous and meant nothing in this file could exercise the
+    `created_at <= watched` bound the credit stamps are governed by — the exact place a defect lived.
+    """
     with sessions() as s:
+        delivered = s.get(Run, run_id).started_at
         for rk in rating_keys:
             s.add(
                 PickRow(
@@ -79,7 +85,7 @@ def deliver(sessions, run_id: int, rating_keys, *, tmdb_base: int = 500, slug: s
                     media_type="movie",
                     rating_key=rk,
                     rank=1,
-                    created_at=NOW - timedelta(days=2),
+                    created_at=delivered,
                 )
             )
         s.commit()
@@ -242,77 +248,70 @@ class TestMembershipIsAskedOfThePast:
             assert event_credits(s, RowMembership(s)) == {}
 
 
-class TestSharedRows:
-    """Shared rows write NO pick rows — `RunSharedRow` explains why — so their contents come out of
-    the run record's JSON, and visibility out of the audience snapshotted beside it."""
+class TestSharedRowsAreNotCreditedYet:
+    """Shared rows are deliberately NOT consulted for per-person credit — a known gap, pinned here.
 
-    def _shared(self, sessions, run_id: int, rating_keys, audience=None):
+    A shared row has no per-user pick row (`RunSharedRow`'s docstring records why). So the only place
+    a shared-row credit could land is somebody's PERSONAL pick for the same title, which credits the
+    wrong row: their personal row gets the hit for a title it had already dropped, because a different
+    row was still showing it. And a title living only in a shared row credits nothing at all, there
+    being no pick row to stamp.
+
+    Answering "yes" to shared membership therefore misattributes while reading as done. The machinery
+    — the timeline, the audience snapshot, the mute snapshot — is built and tested, ready for the
+    row-level credit the spec describes; nothing consumes it. See §3.2 of the build spec.
+    """
+
+    def _shared(self, sessions, run_id: int, tmdb_ids, audience=None):
         with sessions() as s:
             s.add(
                 RunSharedRow(
                     run_id=run_id,
                     collection_slug="popular",
-                    picks=[{"rating_key": rk, "tmdb_id": 900 + rk, "title": "T"} for rk in rating_keys],
+                    picks=[
+                        {"tmdb_id": tid, "media_type": "movie", "rating_key": tid, "title": "T"} for tid in tmdb_ids
+                    ],
                     audience=audience,
                 )
             )
             s.commit()
 
-    def test_a_public_shared_row_credits_anyone(self, world):
-        with world() as s:
-            s.add(Collection(id=2, slug="popular", name="Popular", enabled=True, build="shared"))
-            # The title must also be a pick of theirs for the report to have anything to key on.
-            s.commit()
-        deliver(world, 1, [10], slug="picked")
-        self._shared(world, 1, [10])
-        play(world, 10, NOW - timedelta(days=1, hours=12))
-
-        with world() as s:
-            assert event_credits(s, RowMembership(s)) != {}
-
-    def test_a_subset_row_credits_only_its_audience(self, world):
-        with world() as s:
-            s.add(Collection(id=2, slug="popular", name="Popular", enabled=True, build="shared", audience="subset"))
-            s.commit()
-        deliver(world, 1, [10], slug="picked")
-        with world() as s:
-            s.query(PickRow).delete()  # only the shared row can supply membership now
-            s.commit()
-        self._shared(world, 1, [10], audience=[12345])  # NOT account 99
-        play(world, 10, NOW - timedelta(hours=6))
-
-        with world() as s:
-            membership = RowMembership(s)
-            user = s.get(User, 1)
-            assert membership.visible_rows(user, {10}, NOW - timedelta(hours=6)) == []
-
-    def test_the_audience_is_read_from_the_snapshot_not_from_today(self, world):
-        """`collection_audience` is current state with no history. Without the per-run snapshot,
-        adding someone to a subset row today would retroactively credit watches from before they
-        could see it."""
-        with world() as s:
-            s.add(Collection(id=2, slug="popular", name="Popular", enabled=True, build="shared", audience="subset"))
-            s.add(CollectionAudience(collection_id=2, user_id=1))  # in the audience TODAY
-            s.commit()
-        self._shared(world, 1, [10], audience=[])  # but nobody could see it at delivery
-        play(world, 10, NOW - timedelta(hours=6))
-
-        with world() as s:
-            user = s.get(User, 1)
-            assert RowMembership(s).visible_rows(user, {10}, NOW - timedelta(hours=6)) == []
-
-    def test_a_pre_snapshot_row_falls_back_to_public(self, world):
-        """Every row written before 0076 carries `audience = NULL`. Treating that as "everyone" is
-        exactly the behaviour that preceded the snapshot, so upgrading changes nothing."""
+    def test_a_shared_row_alone_credits_nothing(self, world):
+        """The title lives only in the shared row — no personal pick exists to carry a credit."""
         with world() as s:
             s.add(Collection(id=2, slug="popular", name="Popular", enabled=True, build="shared"))
             s.commit()
-        self._shared(world, 1, [10], audience=None)
+        self._shared(world, 1, [510])
         play(world, 10, NOW - timedelta(hours=6))
 
         with world() as s:
-            user = s.get(User, 1)
-            assert RowMembership(s).visible_rows(user, {10}, NOW - timedelta(hours=6)) == ["popular"]
+            assert event_credits(s, RowMembership(s)) == {}
+
+    def test_a_shared_row_does_not_revive_a_title_the_personal_row_dropped(self, world):
+        """The misattribution this prevents: the personal row dropped it, the shared row still had it,
+        and the credit would have landed on the personal pick — the row that did NOT show it."""
+        deliver(world, 1, [10])
+        deliver(world, 2, [11])  # personal row dropped it
+        with world() as s:
+            s.add(Collection(id=2, slug="popular", name="Popular", enabled=True, build="shared"))
+            s.commit()
+        self._shared(world, 2, [510])
+        play(world, 10, NOW - timedelta(hours=2))
+
+        with world() as s:
+            assert event_credits(s, RowMembership(s)) == {}
+
+    def test_the_audience_snapshot_is_still_recorded_for_when_it_is_used(self, world):
+        """Kept working and kept tested: the gap is in what CONSUMES this, not in what records it."""
+        with world() as s:
+            s.add(Collection(id=2, slug="popular", name="Popular", enabled=True, build="shared"))
+            s.commit()
+        self._shared(world, 1, [510], audience=[12345])
+
+        with world() as s:
+            row = s.query(RunSharedRow).one()
+        assert row.audience == [12345]
+        assert row.picks[0]["tmdb_id"] == 510, "ids are in the JSON now, which they were not before"
 
 
 class TestStartsCountEvenWhenTheFinishComesLater:
@@ -382,7 +381,9 @@ class TestStartsCountEvenWhenTheFinishComesLater:
             self._session(world, 10, base + timedelta(hours=hours), offset=offset, duration=6_000_000)
 
         with world() as s:
-            started, percent = session_progress(s)[(99, 10)]
+            # Keyed by TMDB id — `deliver` files rating key 10 as tmdb 510, and that resolution is
+            # what lets a session find a pick whose own `rating_key` is the 0 placeholder.
+            started, percent = session_progress(s)[(99, 510, "movie")]
 
         assert percent == 100, "the furthest point reached, not the last sitting's 20%"
         assert started == base, "the credit hangs on the FIRST sitting, not the most recent"
@@ -674,3 +675,82 @@ class TestBothCreditPathsAreNeeded:
 
         with world() as s:
             assert s.query(PickRow).filter_by(rating_key=10).one().watched_at is not None
+
+
+class TestCarriedForwardPicksCarryNoRatingKey:
+    """The bug that made this feature barely work, and it was invisible to every test.
+
+    A pick carried forward from a previous run is rebuilt from the database by
+    `context_builder._previous_picks` with `rating_key = 0` — delivery remaps it to the library's real
+    key and never writes that back. On the maintainer's server that is **110,801 of 158,737 picks
+    (70%)**, and 3,122 of the 4,539 in the current delivery.
+
+    Matching a watch event to a row on `rating_key` is therefore blind to two thirds of what is on
+    people's shelves. Measured live before the fix: 6,303 real play events produced 6 credits.
+
+    Every fixture here used to write a real rating key on every delivery, which is not what the engine
+    does — so the tests agreed with each other and disagreed with the server.
+    """
+
+    def _carried(self, sessions, run_id: int, tmdb_id: int, *, rating_key: int):
+        with sessions() as s:
+            s.add(
+                PickRow(
+                    run_id=run_id,
+                    user_id=1,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=tmdb_id,
+                    media_type="movie",
+                    rating_key=rating_key,
+                    rank=1,
+                    created_at=NOW - timedelta(days=2),
+                )
+            )
+            s.commit()
+
+    def test_a_title_whose_newest_delivery_has_the_placeholder_key_is_still_in_the_row(self, world):
+        # Run 1 delivered it with the real key; run 2 carried it forward as 0, which is what the
+        # engine actually persists.
+        self._carried(world, 1, 510, rating_key=10)
+        self._carried(world, 2, 510, rating_key=0)
+        play(world, 10, NOW - timedelta(hours=6))
+
+        with world() as s:
+            credits = event_credits(s, RowMembership(s))
+
+        assert (1, 510, "movie") in credits, "the row still contains it — only the key is a placeholder"
+
+    def test_a_session_finds_a_carried_forward_pick(self, world):
+        """`session_progress` keys on tmdb too, or a partial watch of a carried-forward title records
+        a percentage against nothing."""
+        self._carried(world, 1, 510, rating_key=10)
+        self._carried(world, 2, 510, rating_key=0)
+        with world() as s:
+            s.add(
+                WatchSession(
+                    plex_account_id=99,
+                    session_key="1",
+                    rating_key=10,
+                    media_type="movie",
+                    started_at=NOW - timedelta(hours=6),
+                    last_seen_at=NOW - timedelta(hours=5),
+                    ended_at=NOW - timedelta(hours=5),
+                    max_offset_ms=1_800_000,
+                    duration_ms=6_000_000,
+                    end_reason="stopped",
+                )
+            )
+            s.commit()
+
+        with world() as s:
+            assert session_progress(s)[(99, 510, "movie")][1] == 30
+
+    def test_a_rating_key_we_have_never_delivered_resolves_to_nothing(self, world):
+        """The map is learned from our own picks, so a play of something we never recommended cannot
+        resolve — which is the common case: 1,977 of 2,049 events over 30 days on a real server."""
+        self._carried(world, 1, 510, rating_key=10)
+
+        with world() as s:
+            assert 99999 not in tmdb_by_rating_key(s)

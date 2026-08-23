@@ -228,6 +228,8 @@ class WatchStream:
 
         live = self._live.get(session_key)
         if live is not None and int(event.get("ratingKey") or 0) not in (live.rating_key, 0):
+            # A different TITLE under a key we are tracking. Plex reuses `sessionKey`, so this is a new
+            # session, not a channel change on the old one.
             # Plex reuses `sessionKey` — it is unique only while a session is live. A different title
             # under a key we are tracking means the old session ended without telling us and this is
             # a new one, so close it rather than merging two people's playback into one row.

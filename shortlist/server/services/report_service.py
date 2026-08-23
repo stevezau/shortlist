@@ -17,7 +17,7 @@ import re
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import String, case, cast, func, or_
+from sqlalchemy import String, case, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from shortlist.engine.models import DEFAULT_ROW_TEMPLATE
@@ -336,8 +336,15 @@ def _engagement_split(session: Session, since: datetime | None) -> tuple[int, in
     # session-only pick has no credit timestamp to window on and would otherwise fall out of every
     # window including `all`.
     when = func.coalesce(PickRow.watched_at, PickRow.created_at)
+    # `finished_at IS NULL` on the ROW is not enough: a title has one pick row per run that delivered
+    # it, and the stamps are bounded to rows delivered at or before the play — so a run that fired
+    # AFTER someone finished something leaves a row with no `finished_at` but a `max_percent`, and
+    # that row alone reads as "dropped at 96%". The outcome belongs to the (person, title), so exclude
+    # any person-title that has a finish ANYWHERE.
+    finished_titles = select(_PERSON_TITLE).where(PickRow.finished_at.isnot(None))
     started = [
         PickRow.finished_at.is_(None),
+        _PERSON_TITLE.not_in(finished_titles),
         PickRow.max_percent.isnot(None),
         *_in_period(when, since, None),
     ]
@@ -756,7 +763,10 @@ def engagement(session: Session, window: str) -> dict:
             or_(PickRow.watched_at.isnot(None), PickRow.max_percent.isnot(None)),
             *_in_period(when, since, None),
         )
-        .order_by(when.desc())
+        # A CREDITED row wins the dedupe. A title has one row per delivery, and only the rows
+        # delivered at or before the play carry the stamps — so ordering purely by time let the
+        # newest, uncredited row represent the title and report the wrong outcome for it.
+        .order_by(PickRow.finished_at.isnot(None).desc(), PickRow.watched_at.isnot(None).desc(), when.desc())
         .all()
     )
 
@@ -771,6 +781,7 @@ def engagement(session: Session, window: str) -> dict:
     # Deduped per (person, title): a title redelivered over several nights is one thing that happened
     # to one person, exactly as every other figure in this report counts it.
     seen: set[tuple[int, int, str]] = set()
+    abandoned: list[int] = []
     people: dict[int, list[dict]] = defaultdict(list)
     per_title: dict[tuple[int, str], dict] = {}
     for pick in rows:
@@ -802,6 +813,11 @@ def engagement(session: Session, window: str) -> dict:
             agg["finished"] += 1
         elif pick.max_percent is not None:
             agg["percents"].append(pick.max_percent)
+            # Collected HERE, inside the dedupe, not from the raw rows. A title redelivered five
+            # nights has five pick rows and is one abandonment; counting rows made the histogram read
+            # 3 where the tile beside it read 1, and the error scales with how long a title lingers —
+            # which for an abandoned title is exactly the ones that linger longest.
+            abandoned.append(pick.max_percent)
 
     def median(values: list[int]) -> int | None:
         if not values:
@@ -826,7 +842,6 @@ def engagement(session: Session, window: str) -> dict:
 
     # Where abandons happen, which is the shape that says whether picks are wrong or merely long.
     buckets = [("0-10%", 0, 10), ("10-25%", 10, 25), ("25-50%", 25, 50), ("50-75%", 50, 75), ("75%+", 75, 101)]
-    abandoned = [p.max_percent for p in rows if p.finished_at is None and p.max_percent is not None]
     return {
         "window": window,
         "people": [

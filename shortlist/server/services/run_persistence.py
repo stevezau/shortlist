@@ -254,17 +254,17 @@ def live_pick_ids(session: Session) -> dict[int, set[int]]:
 def _stamp_percent(pick: PickRow, progress: dict, user: User) -> None:
     """Record the furthest they got, where a live session saw it.
 
-    Only `rating_key` is looked up, never `tmdb_id`. `progress` is keyed by PLEX rating keys, and the
-    two id spaces overlap — rating keys on a real server reach 654,993, well inside TMDB's range — so
-    a tmdb lookup here silently reads another title's progress onto this pick. That is the same
-    key-space collision this codebase has been bitten by before; `session_progress` already fans each
-    session out under both the episode and the show key, so nothing is lost by dropping it.
+    Looked up by `tmdb_id`, and ONLY by tmdb_id. `session_progress` is keyed in that space precisely so
+    this lookup is possible: a pick carried forward from a previous run has `rating_key = 0` (70% of
+    rows on a real server), so keying on the rating key finds nothing for two thirds of what is
+    actually in people's rows. Mixing the two spaces is what the earlier version did, and rating keys
+    reach 654,993 — well inside TMDB's range — so it silently read another title's progress.
 
     Left NULL rather than zeroed when we never watched a session: "we did not see them watch it" and
     "they bailed in the first minute" are different facts, and a 0 here would turn the first into the
     second in every report that reads it.
     """
-    found = progress.get((user.plex_account_id, pick.rating_key))
+    found = progress.get((user.plex_account_id, pick.tmdb_id, pick.media_type))
     if found and found[1] is not None:
         pick.max_percent = found[1]
 
@@ -275,6 +275,7 @@ def _credit_from_events(
     credits: dict[tuple[int, int, str], datetime],
     progress: dict,
     finished_keys: set[tuple[int, str]],
+    latest_watch: dict[tuple[int, str], datetime],
 ) -> None:
     """Stamp every credit the play log and the live sessions justify, across all of a title's rows.
 
@@ -304,17 +305,21 @@ def _credit_from_events(
             )
             .all()
         )
-        for pick in rows:
-            found = progress.get((user.plex_account_id, pick.rating_key))
-            if found and found[1] is not None:
-                percent = found[1] if percent is None else max(percent, found[1])
+        found = progress.get((user.plex_account_id, tmdb_id, media_type))
+        if found and found[1] is not None:
+            percent = found[1]
         for pick in rows:
             if pick.watched_at is None:
                 pick.watched_at = watched
             if percent is not None and (pick.max_percent is None or pick.max_percent < percent):
                 pick.max_percent = percent
             if (tmdb_id, media_type) in finished_keys and pick.finished_at is None:
-                pick.finished_at = watched
+                # From Plex's own `lastViewedAt` where we have it — for a series that IS when they
+                # finished it. `watched` here is the EARLIEST play, which for a 60-episode show is the
+                # night they started episode 1, and stamping that would date a completion months early
+                # and could put `finished_at` before this row's own `watched_at`.
+                completed = latest_watch.get((tmdb_id, media_type), watched)
+                pick.finished_at = max(completed, pick.watched_at or completed)
 
 
 def _refresh_finished_progress(session: Session, user: User, progress: dict) -> None:
@@ -457,7 +462,7 @@ def reconcile_watched(sessions: sessionmaker[Session], profiles, live_picks: dic
             # the credit behind the flag meant the event path fired on exactly one of the seven
             # reconciles a day — the one handed a pre-run snapshot — and never for a film someone
             # abandoned at 40%.
-            _credit_from_events(session, user, credits, progress, finished_keys)
+            _credit_from_events(session, user, credits, progress, finished_keys, latest_watch)
 
             # AFTER the event credits above, deliberately. This guard means "Plex reported nothing
             # watched for this person", which is the normal state for someone who only ever

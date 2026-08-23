@@ -286,6 +286,10 @@ GET  /api/report?window=7|30|90|all -> {window, since, first_pick, overall, tren
      [Watched vs finished](#watched-vs-finished) for why the threshold is ours to choose. Sorting still uses `watched`, deliberately:
      ranking by `finished` would bury every TV row under every movie row.
 POST /api/report/sync -> 202 (kick off a watch-history sync — re-reads every user's watched set from Plex so hit rates and "N titles watched" stay fresh between runs; writes nothing to Plex)
+GET  /api/report/engagement?window=7|30|90|all -> {window, people[], losing[], stop_points[]} (what people DID with their picks: per person with how far
+     each got, the titles several people start and few finish, and where abandons cluster). Outcomes are per (person, title): finished | dropped |
+     bounced (under 5% in) | watching (credited, but no live session ever said how far). `percent` is null where no session observed the play —
+     which is not 0%, and is the normal state for anything watched before playback tracking was running.
 GET  /api/report/deleted-rows -> [{slug, picks, first_seen, last_seen}] (pick history left behind by rows that no longer exist, biggest first; NOT windowed — "what can I clear" is a question about all of it)
 DELETE /api/report/deleted-rows?slug= -> {cleared, picks, slugs[]} (permanently delete that history; omit `slug` to clear every deleted row)
      Eligibility is recomputed server-side from `collections` vs `picks.collection_slug`, so naming a live row's slug deletes
