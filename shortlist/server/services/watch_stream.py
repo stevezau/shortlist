@@ -246,7 +246,24 @@ class WatchStream:
                 return
 
         live.last_seen_at = now
-        live.max_offset_ms = max(live.max_offset_ms, offset)
+        # An offset past the end of the item is not progress, it is a reading that belongs to
+        # something else. Observed live: a Slow Horses session recorded 3,132,562 ms against a
+        # 2,630,435 ms episode — eight minutes past the end — on the same `sessionKey` as a sane 89%
+        # reading, while Plex and Tautulli agreed on the runtime. Auto-play to the next episode moves
+        # the offset before the `ratingKey` catches up, so the two briefly describe different items.
+        #
+        # DROPPED rather than clamped. Clamping to 100% would turn a bad reading into the strongest
+        # claim the report can make — "they finished it" — when the truth was 89%. A little tolerance
+        # for genuine end-of-file overshoot, and anything beyond that is simply not recorded.
+        if live.duration_ms and offset > live.duration_ms * 1.05:
+            logger.debug(
+                "watch-stream: ignoring offset {}ms past the {}ms runtime of {}",
+                offset,
+                live.duration_ms,
+                live.rating_key,
+            )
+        else:
+            live.max_offset_ms = max(live.max_offset_ms, offset)
 
         if state == "stopped":
             await self._persist(self._close, session_key, live, "stopped")

@@ -270,3 +270,41 @@ class TestOrphanedSessions:
 
         with sessions() as s:
             assert s.query(WatchSession).one().end_reason == "stopped"
+
+
+class TestImplausibleOffsets:
+    """An offset past the end of the item is a reading that belongs to something else.
+
+    Found by cross-checking a night of real captures against Tautulli, which watched the same socket:
+    47 of 50 (person, title) pairs agreed within 3 points, and all three that did not were ours
+    reading too high — one at 119%, an offset eight minutes past the end of the episode, on the same
+    `sessionKey` as a sane 89% reading. Plex and Tautulli agreed on the runtime, so it was the offset
+    that was wrong: auto-play moves it to the next item before `ratingKey` catches up.
+    """
+
+    def test_an_offset_past_the_runtime_is_not_recorded(self, sessions, ctx):
+        stream = WatchStream(sessions, MagicMock())
+        run(stream._on_playing(ctx, playing(offset=3_000_000)))  # half of a 6,000,000ms film
+
+        run(stream._on_playing(ctx, playing(offset=7_500_000)))  # 125% — impossible
+
+        assert stream._live["556"].max_offset_ms == 3_000_000
+
+    def test_a_small_overshoot_at_the_end_is_still_accepted(self, sessions, ctx):
+        """Genuine end-of-file overshoot happens; the guard must not reject a real completion."""
+        stream = WatchStream(sessions, MagicMock())
+        run(stream._on_playing(ctx, playing(offset=1000)))
+
+        run(stream._on_playing(ctx, playing(offset=6_100_000)))  # ~102%
+
+        assert stream._live["556"].max_offset_ms == 6_100_000
+
+    def test_a_bad_reading_is_dropped_rather_than_clamped_to_finished(self, sessions, ctx):
+        """Clamping would turn the bad reading into the strongest claim the report can make."""
+        stream = WatchStream(sessions, MagicMock())
+        run(stream._on_playing(ctx, playing(offset=5_340_000)))  # 89%, the truth
+
+        run(stream._on_playing(ctx, playing(offset=7_140_000)))  # 119%, the bad reading
+        live = stream._live["556"]
+
+        assert round(100 * live.max_offset_ms / live.duration_ms) == 89
