@@ -17,7 +17,7 @@ import re
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import String, case, cast, func, or_, select
+from sqlalchemy import String, case, cast, func, or_
 from sqlalchemy.orm import Session
 
 from shortlist.engine.models import DEFAULT_ROW_TEMPLATE
@@ -320,47 +320,89 @@ def _requests_summary(session: Session, since: datetime | None) -> dict:
 BOUNCE_PERCENT = 5
 
 
+def resolve_outcomes(session: Session, since: datetime | None) -> dict[tuple[int, int, str], dict]:
+    """One outcome per (person, title), resolved over ALL their rows — the single source for the split.
+
+    A title has one pick row per run that delivered it, and those rows disagree by design: the stamps
+    are bounded to rows delivered at or before the play, so a run firing afterwards leaves a row with a
+    percentage and no credit. Independent "any row" scans over those rows produced two lies at once —
+    one person-title counted as bounced AND dropped when two rows held different percentages, and a
+    finished title reported as dropped when the credited row fell outside the window.
+
+    So the outcome is decided once, in one place, from the whole set:
+
+    * `finished` if ANY row has `finished_at` — regardless of window; finishing is not undone by time
+    * otherwise `bounced`/`dropped` by the FURTHEST progress any row observed
+    * otherwise `watching` — credited, but no live session ever said how far
+
+    Windowed on the OBSERVATION: `watched_at` if there is one, else the EARLIEST delivery. Using the
+    latest delivery meant an abandonment never aged out while the row kept re-delivering the title —
+    a 60-day-old drop still counted in the 7-day window, beside a `watched` figure that had correctly
+    aged it out.
+    """
+    rows = session.query(
+        PickRow.user_id,
+        PickRow.tmdb_id,
+        PickRow.media_type,
+        PickRow.watched_at,
+        PickRow.finished_at,
+        PickRow.max_percent,
+        PickRow.created_at,
+        PickRow.title,
+        PickRow.collection_slug,
+        PickRow.library,
+    ).filter(or_(PickRow.watched_at.isnot(None), PickRow.max_percent.isnot(None)))
+
+    out: dict[tuple[int, int, str], dict] = {}
+    for user_id, tmdb_id, media_type, watched, finished, percent, created, title, slug, library in rows:
+        key = (user_id, tmdb_id, media_type)
+        entry = out.setdefault(
+            key,
+            {
+                "title": title,
+                "media_type": media_type,
+                "row": slug,
+                "library": library,
+                "watched_at": None,
+                "finished_at": None,
+                "percent": None,
+                "first_delivered": None,
+            },
+        )
+        if watched and (entry["watched_at"] is None or watched < entry["watched_at"]):
+            entry["watched_at"] = watched
+            entry["row"], entry["library"] = slug, library
+        if finished and (entry["finished_at"] is None or finished > entry["finished_at"]):
+            entry["finished_at"] = finished
+        if percent is not None and (entry["percent"] is None or percent > entry["percent"]):
+            entry["percent"] = percent
+        if entry["first_delivered"] is None or created < entry["first_delivered"]:
+            entry["first_delivered"] = created
+
+    resolved: dict[tuple[int, int, str], dict] = {}
+    for key, entry in out.items():
+        observed = entry["watched_at"] or entry["first_delivered"]
+        if since is not None and observed is not None and _as_utc(observed) < since:
+            continue
+        if entry["finished_at"] is not None:
+            entry["outcome"] = "finished"
+        elif entry["percent"] is None:
+            entry["outcome"] = "watching"
+        else:
+            entry["outcome"] = "bounced" if entry["percent"] < BOUNCE_PERCENT else "dropped"
+        entry["observed_at"] = observed
+        resolved[key] = entry
+    return resolved
+
+
 def _engagement_split(session: Session, since: datetime | None) -> tuple[int, int]:
     """(bounced, dropped) — started and abandoned, split by how far they got.
 
-    Counted per (person, title) like every other figure here, and only over picks we actually watched
-    someone play: `max_percent IS NULL` means no live session was seen, which is not the same as 0%
-    and must not be counted as a bounce.
+    Both come off :func:`resolve_outcomes`, so they are mutually exclusive by construction and cannot
+    disagree with the detail page that reads the same function.
     """
-    # NOT gated on `watched_at`. That column comes from Plex's binary flag, and a partial watch never
-    # sets it — which would have made the one thing this split exists to count structurally
-    # impossible: a film abandoned at 40% has no flag, so it could never appear. `max_percent IS NOT
-    # NULL` already means "a live session watched them play it", which is the real precondition.
-    #
-    # Windowed on `watched_at` where there is one and on the delivery otherwise, because a
-    # session-only pick has no credit timestamp to window on and would otherwise fall out of every
-    # window including `all`.
-    when = func.coalesce(PickRow.watched_at, PickRow.created_at)
-    # `finished_at IS NULL` on the ROW is not enough: a title has one pick row per run that delivered
-    # it, and the stamps are bounded to rows delivered at or before the play — so a run that fired
-    # AFTER someone finished something leaves a row with no `finished_at` but a `max_percent`, and
-    # that row alone reads as "dropped at 96%". The outcome belongs to the (person, title), so exclude
-    # any person-title that has a finish ANYWHERE.
-    finished_titles = select(_PERSON_TITLE).where(PickRow.finished_at.isnot(None))
-    started = [
-        PickRow.finished_at.is_(None),
-        _PERSON_TITLE.not_in(finished_titles),
-        PickRow.max_percent.isnot(None),
-        *_in_period(when, since, None),
-    ]
-    bounced = (
-        session.query(func.count(func.distinct(_PERSON_TITLE)))
-        .filter(*started, PickRow.max_percent < BOUNCE_PERCENT)
-        .scalar()
-        or 0
-    )
-    dropped = (
-        session.query(func.count(func.distinct(_PERSON_TITLE)))
-        .filter(*started, PickRow.max_percent >= BOUNCE_PERCENT)
-        .scalar()
-        or 0
-    )
-    return bounced, dropped
+    outcomes = [e["outcome"] for e in resolve_outcomes(session, since).values()]
+    return outcomes.count("bounced"), outcomes.count("dropped")
 
 
 def _recent_watches(session: Session, users: dict[int, User], namer: _RowNamer, since: datetime | None) -> list[dict]:
@@ -737,87 +779,50 @@ def row_effectiveness(session: Session, slug: str, now: datetime | None = None) 
 
 
 def engagement(session: Session, window: str) -> dict:
-    """What people did with their picks, per title — the detail behind the Dropped tile.
+    """What people did with their picks — the detail behind the Dropped tile.
 
-    Two views of the same rows, because they answer different questions. `people` is "what did THIS
-    person do with their row", which is the one an owner opens when someone says the picks are no
-    good. `titles` is "what does everyone do with THIS pick", which is the one that says a title is a
-    bad recommendation rather than a bad night.
-
-    Only picks a live session actually observed carry a percentage. A pick with `max_percent IS NULL`
-    was never watched happening, which is not 0% — it is unknown, and it is left out of both rather
-    than counted as an abandonment.
+    Every outcome comes from :func:`resolve_outcomes`, the same function the headline split reads, so
+    the two can never disagree. Two views of one set, because they answer different questions: `people`
+    is "what did THIS person do with their row", which an owner opens when someone says the picks are
+    no good; `losing` is "what does everyone do with THIS pick", which says a title is a bad
+    recommendation rather than a bad night.
     """
-    days = WINDOWS.get(window, WINDOWS[DEFAULT_WINDOW])
+    if window not in WINDOWS:
+        window = DEFAULT_WINDOW
+    days = WINDOWS[window]
     since = datetime.now(UTC) - timedelta(days=days) if days else None
     users = {u.id: u for u in session.query(User).all()}
     namer = _RowNamer(session, SettingsStore(session).get("row.name_template") or DEFAULT_ROW_TEMPLATE)
 
-    # `watched_at OR max_percent`: a partial watch sets no Plex flag, so requiring a credit here
-    # would hide exactly the picks this page is about. Ordered and windowed on whichever timestamp
-    # the row actually has.
-    when = func.coalesce(PickRow.watched_at, PickRow.created_at)
-    rows = (
-        session.query(PickRow)
-        .filter(
-            or_(PickRow.watched_at.isnot(None), PickRow.max_percent.isnot(None)),
-            *_in_period(when, since, None),
-        )
-        # A CREDITED row wins the dedupe. A title has one row per delivery, and only the rows
-        # delivered at or before the play carry the stamps — so ordering purely by time let the
-        # newest, uncredited row represent the title and report the wrong outcome for it.
-        .order_by(PickRow.finished_at.isnot(None).desc(), PickRow.watched_at.isnot(None).desc(), when.desc())
-        .all()
-    )
-
-    def outcome(pick: PickRow) -> str:
-        """One of four, and the split between the first two is the whole point of this page."""
-        if pick.finished_at is not None:
-            return "finished"
-        if pick.max_percent is None:
-            return "watching"  # credited, but no live session ever told us how far
-        return "bounced" if pick.max_percent < BOUNCE_PERCENT else "dropped"
-
-    # Deduped per (person, title): a title redelivered over several nights is one thing that happened
-    # to one person, exactly as every other figure in this report counts it.
-    seen: set[tuple[int, int, str]] = set()
-    abandoned: list[int] = []
     people: dict[int, list[dict]] = defaultdict(list)
     per_title: dict[tuple[int, str], dict] = {}
-    for pick in rows:
-        slot = (pick.user_id, pick.tmdb_id, pick.media_type)
-        if slot in seen:
+    abandoned: list[int] = []
+    for (user_id, tmdb_id, media_type), entry in resolve_outcomes(session, since).items():
+        if user_id not in users:
             continue
-        seen.add(slot)
-        state = outcome(pick)
-        entry = {
-            "title": pick.title,
-            "row": namer.label(pick.collection_slug, pick.library),
-            "media_type": pick.media_type,
-            "outcome": state,
-            "percent": pick.max_percent,
-            "watched_at": iso_utc(pick.watched_at),
-            "finished_at": iso_utc(pick.finished_at) if pick.finished_at else None,
-        }
-        user = users.get(pick.user_id)
-        if user is not None:
-            people[pick.user_id].append(entry)
-
-        key = (pick.tmdb_id, pick.media_type)
-        agg = per_title.setdefault(
-            key,
-            {"title": pick.title, "media_type": pick.media_type, "started": 0, "finished": 0, "percents": []},
+        people[user_id].append(
+            {
+                "title": entry["title"],
+                "row": namer.label(entry["row"], entry["library"]),
+                "media_type": media_type,
+                "outcome": entry["outcome"],
+                "percent": entry["percent"],
+                "watched_at": iso_utc(entry["watched_at"]) if entry["watched_at"] else None,
+                "finished_at": iso_utc(entry["finished_at"]) if entry["finished_at"] else None,
+                "observed_at": iso_utc(entry["observed_at"]) if entry["observed_at"] else None,
+            }
         )
-        agg["started"] += 1
-        if state == "finished":
+        agg = per_title.setdefault(
+            (tmdb_id, media_type),
+            {"title": entry["title"], "media_type": media_type, "started": 0, "finished": 0, "percents": []},
+        )
+        if entry["outcome"] == "finished":
+            agg["started"] += 1
             agg["finished"] += 1
-        elif pick.max_percent is not None:
-            agg["percents"].append(pick.max_percent)
-            # Collected HERE, inside the dedupe, not from the raw rows. A title redelivered five
-            # nights has five pick rows and is one abandonment; counting rows made the histogram read
-            # 3 where the tile beside it read 1, and the error scales with how long a title lingers —
-            # which for an abandoned title is exactly the ones that linger longest.
-            abandoned.append(pick.max_percent)
+        elif entry["percent"] is not None:
+            agg["started"] += 1
+            agg["percents"].append(entry["percent"])
+            abandoned.append(entry["percent"])
 
     def median(values: list[int]) -> int | None:
         if not values:
@@ -825,8 +830,10 @@ def engagement(session: Session, window: str) -> dict:
         ordered = sorted(values)
         return ordered[len(ordered) // 2]
 
-    # Titles that LOSE people: started by more than one person and finished by few. A single person
-    # abandoning something is a night, not a signal — the pattern is what makes it a bad pick.
+    # Titles that LOSE people. Gated on TWO OBSERVED abandonments, not on `started >= 2`: `started`
+    # used to include people whose progress is unknown, so one credited pre-tracking pick plus one
+    # real drop rendered as "2 started · 0 finished · stops at 2%" — a pattern claimed from a single
+    # data point, under a heading that says one person abandoning something is not a signal.
     losing = [
         {
             "title": agg["title"],
@@ -836,24 +843,35 @@ def engagement(session: Session, window: str) -> dict:
             "stops_at": median(agg["percents"]),
         }
         for agg in per_title.values()
-        if agg["started"] >= 2 and agg["finished"] * 2 <= agg["started"] and agg["percents"]
+        if len(agg["percents"]) >= 2 and agg["finished"] * 2 <= agg["started"]
     ]
     losing.sort(key=lambda t: (-t["started"], t["stops_at"] or 0))
 
-    # Where abandons happen, which is the shape that says whether picks are wrong or merely long.
     buckets = [("0-10%", 0, 10), ("10-25%", 10, 25), ("25-50%", 25, 50), ("50-75%", 50, 75), ("75%+", 75, 101)]
-    return {
-        "window": window,
-        "people": [
+    # Sorted so the OBSERVED outcomes lead, then truncated. Sorting finished-first and cutting at 40
+    # removed exactly the rows this page exists to show: a person with 45 finished picks and 5 fresh
+    # drops saw forty "finished" and no drops at all, under a header reading "40 picks".
+    order = {"bounced": 0, "dropped": 1, "finished": 2, "watching": 3}
+    out_people = []
+    for uid, entries in sorted(people.items(), key=lambda kv: -len(kv[1])):
+        entries.sort(key=lambda e: (order.get(e["outcome"], 9), e["observed_at"] or ""), reverse=False)
+        out_people.append(
             {
                 "username": users[uid].username,
                 "display_name": users[uid].display_name,
                 "picks": entries[:40],
+                "total": len(entries),
             }
-            for uid, entries in sorted(people.items(), key=lambda kv: -len(kv[1]))
-        ],
+        )
+    return {
+        "window": window,
+        "people": out_people,
         "losing": losing[:20],
         "stop_points": [
             {"label": label, "count": sum(1 for p in abandoned if lo <= p < hi)} for label, lo, hi in buckets
         ],
+        # Whether any live playback has been OBSERVED at all. The panel's empty state used to gate on
+        # `people` being empty, which never happens on a server with existing picks — so the owner got
+        # a wall of "WATCHING · —" rows and five empty bars instead of the explanation.
+        "observed": bool(abandoned) or any(p["percent"] is not None for e in out_people for p in e["picks"]),
     }

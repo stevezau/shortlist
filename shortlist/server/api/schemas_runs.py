@@ -394,12 +394,18 @@ class EngagementPickOut(PassthroughModel):
     percent: int | None
     watched_at: str | None
     finished_at: str | None
+    #: When this outcome was observed — the credit if there is one, else the first delivery. What the
+    #: window is applied to, so an abandonment ages out instead of being kept alive by redelivery.
+    observed_at: str | None
 
 
 class EngagementPersonOut(PassthroughModel):
     username: str
     display_name: str | None
+    #: Capped at 40, ordered so observed outcomes lead — `total` is what they actually have, so the UI
+    #: can say "40 of 63" rather than presenting the cap as the number.
     picks: list[EngagementPickOut]
+    total: int
 
 
 class LosingTitleOut(PassthroughModel):
@@ -425,3 +431,7 @@ class EngagementOut(PassthroughModel):
     people: list[EngagementPersonOut]
     losing: list[LosingTitleOut]
     stop_points: list[StopPointOut]
+    #: Whether any live playback has been observed at all. False on every server until the listener
+    #: has run — which is not the same as "nobody watches anything", and the page says so instead of
+    #: rendering zeroes.
+    observed: bool

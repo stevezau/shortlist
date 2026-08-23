@@ -3131,6 +3131,8 @@ export interface components {
         EngagementOut: {
             /** Losing */
             losing: components["schemas"]["LosingTitleOut"][];
+            /** Observed */
+            observed: boolean;
             /** People */
             people: components["schemas"]["EngagementPersonOut"][];
             /** Stop Points */
@@ -3146,6 +3148,8 @@ export interface components {
             display_name: string | null;
             /** Picks */
             picks: components["schemas"]["EngagementPickOut"][];
+            /** Total */
+            total: number;
             /** Username */
             username: string;
         } & {
@@ -3164,6 +3168,8 @@ export interface components {
             finished_at: string | null;
             /** Media Type */
             media_type: string;
+            /** Observed At */
+            observed_at: string | null;
             /** Outcome */
             outcome: string;
             /** Percent */

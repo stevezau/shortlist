@@ -57,7 +57,18 @@ function Section({
  * not "less finished", it is a different thing — the pick was wrong.
  */
 function ProgressBar({ pick }: { pick: EngagementPick }) {
-  const percent = pick.percent ?? (pick.outcome === "finished" ? 100 : 0);
+  // No bar at all when the progress is UNKNOWN — which is every pick from before tracking, and every
+  // show. A zero-width bar is a claim that they got nowhere, three lines from the comment insisting
+  // an em-dash is used for exactly that reason.
+  if (pick.percent === null && pick.outcome !== "finished") {
+    return (
+      <div
+        className="h-1.5 w-full rounded-full bg-muted/50"
+        aria-label="how far they got was not observed"
+      />
+    );
+  }
+  const percent = pick.percent ?? 100;
   const tone =
     pick.outcome === "finished"
       ? "bg-primary"
@@ -96,11 +107,12 @@ function PickLine({ pick }: { pick: EngagementPick }) {
             printing 0 would turn the first into the second. */}
         {pick.percent === null ? "—" : `${pick.percent}%`}
       </span>
-      {pick.watched_at && (
-        <span className="w-24 shrink-0 text-right text-xs text-muted-foreground">
-          {timeAgo(pick.watched_at)}
-        </span>
-      )}
+      {/* Always rendered, so the columns line up. Dropping the span for a session-only pick left
+          those rows 96px shorter than their neighbours — in a list where they are the interesting
+          ones. */}
+      <span className="w-24 shrink-0 text-right text-xs text-muted-foreground">
+        {pick.watched_at ? timeAgo(pick.watched_at) : "—"}
+      </span>
     </li>
   );
 }
@@ -119,8 +131,9 @@ function People({ people }: { people: EngagementReport["people"] }) {
                 {person.display_name || person.username}
               </span>
               <span className="text-xs text-muted-foreground">
-                {person.picks.length}{" "}
-                {person.picks.length === 1 ? "pick" : "picks"}
+                {person.total > person.picks.length
+                  ? `${person.picks.length} of ${person.total} picks`
+                  : `${person.total} ${person.total === 1 ? "pick" : "picks"}`}
               </span>
             </div>
             <ul className="space-y-0.5">
@@ -221,7 +234,7 @@ export function Engagement({ reportWindow }: { reportWindow: ReportWindow }) {
       skeleton={<Skeleton className="h-64 w-full" />}
     >
       {(data) =>
-        data.people.length === 0 ? (
+        !data.observed ? (
           <Section title="What people did with their picks">
             <div className="flex items-start gap-3 py-2 text-sm text-muted-foreground">
               <Eye
@@ -229,10 +242,12 @@ export function Engagement({ reportWindow }: { reportWindow: ReportWindow }) {
                 aria-hidden="true"
               />
               <p className="leading-relaxed">
-                Nothing observed yet in this window. Watch tracking records
+                No playback observed yet in this window. Watch tracking records
                 plays as they happen, so this fills in from the first time
                 someone opens a pick — there is no history to backfill it from,
-                because Plex does not record how far anyone got.
+                because Plex does not record how far anyone got. Films only:
+                how far through an episode someone got does not tell us how far
+                through a series they are.
               </p>
             </div>
           </Section>

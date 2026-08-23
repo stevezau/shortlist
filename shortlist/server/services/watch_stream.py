@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
 import websockets
@@ -113,6 +114,13 @@ class WatchStream:
         self._snapshot_at: datetime | None = None
         self._stop = asyncio.Event()
         self._delay = 5
+        # Its OWN single thread, not the loop's default executor. That pool is shared with
+        # `engine_run` (minutes to hours), `prefill_history`, the job worker and ~20 API handlers, and
+        # is `min(32, cpu_count + 4)` wide — six slots on a 2-CPU box, several held for the length of a
+        # run. Starved of a thread, this listener's writes do not run slowly, they do not START, and
+        # the message loop parks behind them. One worker also serialises our own writes, so two
+        # flushes for the same session can never race.
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="watch-stream")
 
     # -- lifecycle -----------------------------------------------------------------------
 
@@ -142,10 +150,19 @@ class WatchStream:
         log on the next sweep, which is server-side and reaches back years. So this logs at INFO and
         tries again rather than escalating.
         """
-        await asyncio.to_thread(self.close_orphans)
+        # GUARDED, and it is the only statement here that writes at boot. Unprotected it was the one
+        # way to kill the listener for the life of the process: a restart normally leaves orphan rows
+        # to close, so this commits, and a commit at boot races `recover_stale` and the `privacy.sync`
+        # enqueue for the single SQLite writer. One `OperationalError` and `run()` exited before the
+        # loop was ever entered — no reconnect, no retry, and no log line saying the feature was gone.
+        # A missed sweep costs stale `ended_at IS NULL` rows; an unguarded one costs everything.
+        try:
+            await self._in_pool(self.close_orphans)
+        except Exception as e:
+            logger.warning("watch-stream: could not close orphaned sessions ({}) — carrying on", type(e).__name__)
         while not self._stop.is_set():
             try:
-                ctx = await asyncio.to_thread(self._build_context, dry_run=True, plex_only=True)
+                ctx = await self._in_pool(lambda: self._build_context(dry_run=True, plex_only=True))
             except Exception as e:  # Plex not configured yet — nothing to listen to
                 logger.info("watch-stream: no Plex context ({}), retrying", type(e).__name__)
                 await self._sleep(60)
@@ -162,10 +179,14 @@ class WatchStream:
                 logger.info("watch-stream: socket closed ({}), reconnecting in {}s", type(e).__name__, self._delay)
                 await self._sleep(self._delay)
                 self._delay = min(self._delay * 2, 120)
-        await asyncio.to_thread(self._close_all, "stopped")
+        await self._persist(self._close_all, "stopped")
 
     def stop(self) -> None:
         self._stop.set()
+
+    async def _in_pool(self, fn, *args):
+        """Run a blocking call on OUR thread, never the shared default executor."""
+        return await asyncio.get_running_loop().run_in_executor(self._pool, lambda: fn(*args))
 
     async def _sleep(self, seconds: float) -> None:
         with contextlib.suppress(TimeoutError):
@@ -180,7 +201,7 @@ class WatchStream:
         stop listening, and the log should not blame the network for the database.
         """
         try:
-            await asyncio.to_thread(fn, *args)
+            await self._in_pool(fn, *args)
         except Exception as e:
             logger.warning("watch-stream: could not persist session state ({})", type(e).__name__)
 
@@ -197,12 +218,30 @@ class WatchStream:
             # socket AND what restarts `sessionKey` numbering at 1. Anything still tracked belongs to
             # the old numbering and would silently absorb a new play's offsets.
             await self._persist(self._close_all, "replaced")
+            # The snapshot has to go with it. `_close_all` clears `_live` precisely because the key
+            # numbering may have restarted — but a stale `/status/sessions` cache survives, and
+            # `_current_sessions` RETURNS the stale copy when the re-read fails, which is exactly what
+            # a still-booting PMS does. A new session reusing key 556 then resolved to the previous
+            # session's account: the wrong person credited.
+            self._snapshot, self._snapshot_at = {}, None
             while not self._stop.is_set():
-                try:
-                    raw = await asyncio.wait_for(socket.recv(), timeout=30)
-                except TimeoutError:
+                # Raced against the stop event rather than waited on with a timeout. Parked in a 30s
+                # `recv()` with no frames arriving — an idle server, which is when nobody is playing
+                # and shutdown is most likely — `run()` took up to 30s to notice `stop()`, while the
+                # lifespan allows 5. So `_close_all("stopped")` was never reached and every restart
+                # left orphans behind, which is what made the boot sweep above load-bearing.
+                recv = asyncio.ensure_future(socket.recv())
+                stopping = asyncio.ensure_future(self._stop.wait())
+                done, _ = await asyncio.wait({recv, stopping}, timeout=30, return_when=asyncio.FIRST_COMPLETED)
+                if stopping in done:
+                    recv.cancel()
+                    return
+                stopping.cancel()
+                if recv not in done:
+                    recv.cancel()
                     await self._housekeep(ctx)
                     continue
+                raw = recv.result()
                 await self._on_message(ctx, raw)
                 await self._housekeep(ctx)
 
@@ -216,7 +255,15 @@ class WatchStream:
         if container.get("type") != "playing":
             return
         for event in container.get("PlaySessionStateNotification", []) or []:
-            await self._on_playing(ctx, event)
+            # PER EVENT, so one odd frame cannot end tracking for everybody. `viewOffset` and
+            # `ratingKey` are parsed with `int()`, and a non-numeric value there used to raise all the
+            # way out to `run()` — which treated it as a dropped socket, reconnected, and closed every
+            # live session as `replaced`. One client sending one strange frame fragmented every watch
+            # in progress. These payload shapes are not fixture-backed, so they are assumptions.
+            try:
+                await self._on_playing(ctx, event)
+            except Exception as e:
+                logger.debug("watch-stream: unusable playing event ({})", type(e).__name__)
 
     async def _on_playing(self, ctx, event: dict) -> None:
         session_key = str(event.get("sessionKey") or "")
@@ -228,8 +275,6 @@ class WatchStream:
 
         live = self._live.get(session_key)
         if live is not None and int(event.get("ratingKey") or 0) not in (live.rating_key, 0):
-            # A different TITLE under a key we are tracking. Plex reuses `sessionKey`, so this is a new
-            # session, not a channel change on the old one.
             # Plex reuses `sessionKey` — it is unique only while a session is live. A different title
             # under a key we are tracking means the old session ended without telling us and this is
             # a new one, so close it rather than merging two people's playback into one row.
@@ -282,6 +327,14 @@ class WatchStream:
         rating_key = int(event.get("ratingKey") or found.get("rating_key") or 0)
         if not rating_key:
             return None
+        # The snapshot must be describing THIS play. After a PMS restart the cache can still hold the
+        # previous key numbering, and `_current_sessions` deliberately returns a stale copy when the
+        # re-read fails — which is what a still-booting PMS does. A snapshot naming a different title
+        # under this key is evidence about something else, and taking its `account_id` credits the
+        # wrong person.
+        if found.get("rating_key") and int(found["rating_key"]) != rating_key:
+            logger.debug("watch-stream: session {} describes a different title than the snapshot", session_key)
+            return None
         live = _Live(
             session_key=session_key,
             account_id=int(found["account_id"]),
@@ -301,7 +354,7 @@ class WatchStream:
         if self._snapshot_at is not None and now - self._snapshot_at < SESSION_CACHE_TTL:
             return self._snapshot
         try:
-            self._snapshot = await asyncio.to_thread(ctx.plex.active_sessions)
+            self._snapshot = await self._in_pool(ctx.plex.active_sessions)
             self._snapshot_at = now
         except Exception as e:
             logger.debug("watch-stream: could not read active sessions ({})", type(e).__name__)
@@ -317,12 +370,22 @@ class WatchStream:
         cutoff = datetime.now(UTC) - SESSION_TIMEOUT
         stale = [key for key, live in self._live.items() if live.last_seen_at < cutoff]
         for key in stale:
-            await self._persist(self._close, key, self._live[key], "timeout")
+            # Per session, so one failure does not stop the sweep for the rest of the round.
+            live = self._live.get(key)
+            if live is not None:
+                await self._persist(self._close, key, live, "timeout")
 
     # -- persistence ---------------------------------------------------------------------
 
     def _flush(self, live: _Live) -> None:
         """Write progress back, inserting the row on first flush."""
+        # Stamped on ATTEMPT, not on success. Set after the commit, a failed write left `flushed_at`
+        # stale, so `now - flushed_at >= FLUSH_EVERY` stayed true and every subsequent event retried —
+        # each one blocking the message loop for up to the 5s busy timeout. With several sessions past
+        # their window and a run holding the writer, frames back up behind `max_queue=16`, the
+        # transport pauses, pongs stop, `ping_timeout` tears the connection down, and the reconnect
+        # closes every session as `replaced`. A slow database became lost watch data.
+        live.flushed_at = datetime.now(UTC)
         with self._sessions() as session:
             if live.row_id is None:
                 row = WatchSession(
@@ -346,7 +409,6 @@ class WatchStream:
                 row.last_seen_at = live.last_seen_at
                 row.max_offset_ms = max(row.max_offset_ms, live.max_offset_ms)
             session.commit()
-        live.flushed_at = datetime.now(UTC)
 
     def _close(self, session_key: str, live: _Live, reason: str) -> None:
         """Finish a session, or discard it if it was too short to mean anything."""
@@ -365,5 +427,14 @@ class WatchStream:
                 session.commit()
 
     def _close_all(self, reason: str) -> None:
-        for key, live in list(self._live.items()):
-            self._close(key, live, reason)
+        """Close every tracked session, and let none of them stop the others.
+
+        The memory state is cleared UP FRONT: this is called when the key numbering may have restarted,
+        and a session left in `_live` because its write failed would go on absorbing a new play's
+        offsets under a reused key. A busy database is also the condition most likely to coincide with
+        a reconnect, so an early abort here defeated the guard exactly when it was needed.
+        """
+        pending, self._live = list(self._live.items()), {}
+        for key, live in pending:
+            with contextlib.suppress(Exception):
+                self._close(key, live, reason)

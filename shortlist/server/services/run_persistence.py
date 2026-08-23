@@ -48,7 +48,15 @@ from shortlist.server.services.watch_events import (
 # Bounds the effectiveness report's MATURED cohort (a pick delivered more recently than this has not
 # had a fair chance to be watched yet). It no longer gates whether a pick is credited: that is
 # `reconcile_watched`'s "was it in their row at the time" test, which needs no clock.
+#: Watch history never outlives this, whatever `runs.retention` says. It is the one table here that
+#: grows with the whole server's viewing rather than with Shortlist's own activity.
+WATCH_RETENTION_MONTHS = 6
+
 HIT_WINDOW_DAYS = 30
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 def _record_deliveries(session: Session, user_slug: str, breakdown: list[dict]) -> None:
@@ -265,14 +273,26 @@ def _stamp_percent(pick: PickRow, progress: dict, user: User) -> None:
     second in every report that reads it.
     """
     found = progress.get((user.plex_account_id, pick.tmdb_id, pick.media_type))
-    if found and found[1] is not None:
+    # The session must postdate this delivery. Without it, `max_percent` was written from ANY session
+    # for that title — a half-watch from sixty days ago landed on a pick first recommended this
+    # morning, and the Dropped tile reported it as an abandonment of a row that had never shown it.
+    # `watched_at` is protected by `event_credits` and `RowMembership`; this column was bypassing
+    # both, which is the same "they found it some other way" the whole rewrite exists to stop.
+    if found and _as_utc(found[0]) < _as_utc(pick.created_at):
+        return
+    if found and found[1] is not None and (pick.max_percent is None or found[1] > pick.max_percent):
+        # NEVER backwards, and the guard lives here rather than at the call sites — two of the three
+        # had it, one did not. Retention deletes `watch_sessions` on the same cutoff as runs, so the
+        # max a session can report SHRINKS over time: once the old 80% session ages out, a fresh
+        # 90-second one would have rewritten the pick to 5% and reclassified it from dropped to
+        # bounced.
         pick.max_percent = found[1]
 
 
 def _credit_from_events(
     session: Session,
     user: User,
-    credits: dict[tuple[int, int, str], datetime],
+    credits: dict[tuple[int, int, str], tuple[datetime, frozenset[str]]],
     progress: dict,
     finished_keys: set[tuple[int, str]],
     latest_watch: dict[tuple[int, str], datetime],
@@ -291,7 +311,7 @@ def _credit_from_events(
     onto one, for the reason `_spread_credit` documents: the report intersects `created_at` and
     `watched_at` at ROW level, so a credit and a percentage on different rows are invisible to it.
     """
-    for (user_id, tmdb_id, media_type), watched in credits.items():
+    for (user_id, tmdb_id, media_type), (watched, slugs) in credits.items():
         if user_id != user.id:
             continue
         percent = None
@@ -302,6 +322,10 @@ def _credit_from_events(
                 PickRow.tmdb_id == tmdb_id,
                 PickRow.media_type == media_type,
                 PickRow.created_at <= watched,
+                # Only the rows that were actually SHOWING it. Without this the stamp landed on every
+                # pick for the person+title, and a row that dropped the title days earlier collected a
+                # hit its shelf could not have caused.
+                PickRow.collection_slug.in_(slugs),
             )
             .all()
         )
@@ -527,9 +551,9 @@ def reconcile_watched(sessions: sessionmaker[Session], profiles, live_picks: dic
                     # An EVENT beats the snapshot. If the play log recorded them starting this title
                     # at a moment the row was showing it, that is the credit — and its timestamp is
                     # the real one, not the "latest view" high-water mark the library read carries.
-                    event_at = credits.get((user.id, *key))
-                    if event_at is not None:
-                        newly_credited[key] = event_at
+                    credited = credits.get((user.id, *key))
+                    if credited is not None:
+                        newly_credited[key] = credited[0]
                         continue
                     # Otherwise fall back to the snapshot: membership is enforced by the query above,
                     # which is the ONLY way an uncredited pick reaches this loop. Re-checking
@@ -682,6 +706,15 @@ def prune_runs(session: Session, retention_months: int) -> int:
       it would strand real collections on real users' servers with nothing left that knows to
       clean them up.
     """
+    # Watch history ages out FIRST, on its own ceiling, before any of the run bookkeeping below. It is
+    # not tied to a run and it grows with every play by every account on the server rather than with
+    # Shortlist's own activity — so behind the run guards it grew without bound in three reachable
+    # states: `runs.retention = 0` ("keep run history for ever", a supported setting), no run old
+    # enough to prune yet, and after `DELETE /api/runs`, which is offered as a way to RECLAIM space.
+    watch_cutoff = datetime.now(UTC) - timedelta(days=max(retention_months, WATCH_RETENTION_MONTHS) * 30)
+    session.query(WatchEvent).filter(WatchEvent.viewed_at < watch_cutoff).delete(synchronize_session=False)
+    session.query(WatchSession).filter(WatchSession.started_at < watch_cutoff).delete(synchronize_session=False)
+
     if retention_months <= 0:
         return 0
     cutoff = datetime.now(UTC) - timedelta(days=retention_months * 30)
@@ -695,12 +728,6 @@ def prune_runs(session: Session, retention_months: int) -> int:
     # `PRAGMA foreign_keys` is on, and a bulk ORM delete does not cascade in Python either.
     session.query(RunLogLine).filter(RunLogLine.run_id.in_(old_ids)).delete(synchronize_session=False)
     session.query(RunSharedRow).filter(RunSharedRow.run_id.in_(old_ids)).delete(synchronize_session=False)
-    # Watch history ages out on the same cutoff as the runs. It is not tied to a run, so it needs its
-    # own sweep — and without one it is the only table here that grows for ever (Plex's own log holds
-    # 101,604 rows over six years on the maintainer's server). An event older than the oldest run can
-    # never be attributed to anything, because the delivery it would be judged against is gone.
-    session.query(WatchEvent).filter(WatchEvent.viewed_at < cutoff).delete(synchronize_session=False)
-    session.query(WatchSession).filter(WatchSession.started_at < cutoff).delete(synchronize_session=False)
     return session.query(Run).filter(Run.id.in_(old_ids)).delete(synchronize_session=False)
 
 

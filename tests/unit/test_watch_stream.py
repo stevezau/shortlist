@@ -8,6 +8,7 @@ server before the code was written (see the module docstring for the capture).
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
@@ -16,6 +17,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import shortlist.server.services.watch_stream as watch_stream
 from shortlist.server.db.models import Base, WatchSession
 from shortlist.server.services.watch_stream import MIN_START_SECONDS, WatchStream
 
@@ -308,3 +310,177 @@ class TestImplausibleOffsets:
         live = stream._live["556"]
 
         assert round(100 * live.max_offset_ms / live.duration_ms) == 89
+
+
+class FakeSocket:
+    """A stand-in for the websocket — the BOUNDARY, not one of our own helpers.
+
+    Every defect in the connection lifecycle lived here and none of it was reachable: the whole suite
+    called the handlers directly, so the reconnect loop, the backoff reset, the boot sweep and the
+    shutdown path had no coverage at all. `test_malformed_frames_do_not_break_the_listener` was even
+    named for a property it never tested — it called `_on_message`, and a bad frame did break the
+    listener.
+    """
+
+    def __init__(self, frames=(), fail_after=None):
+        self._frames = list(frames)
+        self._fail_after = fail_after
+        self.sent = 0
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def recv(self):
+        if self._fail_after is not None and self.sent >= self._fail_after:
+            raise ConnectionError("socket dropped")
+        if self._frames:
+            self.sent += 1
+            return self._frames.pop(0)
+        await asyncio.sleep(3600)  # idle, like a real quiet server
+
+
+def connect_returning(*sockets):
+    """Monkeypatch target for `websockets.connect`, handing out each socket in turn."""
+    queue = list(sockets)
+    calls = {"n": 0}
+
+    def _connect(*_a, **_k):
+        calls["n"] += 1
+        return queue.pop(0) if queue else FakeSocket()
+
+    _connect.calls = calls
+    return _connect
+
+
+class TestConnectionLifecycle:
+    def test_a_failing_orphan_sweep_does_not_kill_the_listener(self, sessions, monkeypatch):
+        """The one unguarded write at boot. A restart normally leaves orphans to close, so it commits
+        — and a commit at boot races the other startup writers for SQLite's single writer slot. It
+        used to exit `run()` before the loop was ever entered: no reconnect, no retry, no log line."""
+        stream = WatchStream(sessions, lambda **kw: MagicMock())
+        monkeypatch.setattr(stream, "close_orphans", MagicMock(side_effect=OSError("database is locked")))
+        socket = FakeSocket()
+        monkeypatch.setattr(watch_stream.websockets, "connect", connect_returning(socket))
+
+        async def scenario():
+            task = asyncio.ensure_future(stream.run())
+            await asyncio.sleep(0.05)
+            stream.stop()
+            await asyncio.wait_for(task, timeout=2)
+
+        asyncio.run(scenario())  # must not raise
+
+    def test_a_dropped_socket_reconnects_rather_than_ending_the_listener(self, sessions, monkeypatch):
+        stream = WatchStream(sessions, lambda **kw: MagicMock())
+        connect = connect_returning(FakeSocket(fail_after=0), FakeSocket())
+        monkeypatch.setattr(watch_stream.websockets, "connect", connect)
+        monkeypatch.setattr(watch_stream, "logger", MagicMock())
+
+        # The real backoff waits 5s before retrying, which is correct in production and useless in a
+        # test — patched so the reconnect itself is what is being observed, not the delay.
+        async def instant(_seconds):
+            await asyncio.sleep(0)
+
+        monkeypatch.setattr(stream, "_sleep", instant)
+
+        async def scenario():
+            task = asyncio.ensure_future(stream.run())
+            await asyncio.sleep(0.2)
+            stream.stop()
+            await asyncio.wait_for(task, timeout=3)
+
+        asyncio.run(scenario())
+
+        assert connect.calls["n"] >= 2, "it reconnected instead of giving up"
+
+    def test_stop_returns_promptly_on_an_idle_socket(self, sessions, monkeypatch):
+        """`recv()` is raced against the stop event, not waited on with a timeout. Parked in a 30s
+        read on a quiet server — which is exactly when nobody is playing and a restart is likely —
+        `run()` took up to 30s to notice, while the lifespan allows 5, so the graceful close never
+        happened and every restart left orphans behind."""
+        stream = WatchStream(sessions, lambda **kw: MagicMock())
+        monkeypatch.setattr(watch_stream.websockets, "connect", connect_returning(FakeSocket()))
+
+        async def scenario():
+            task = asyncio.ensure_future(stream.run())
+            await asyncio.sleep(0.05)
+            stream.stop()
+            await asyncio.wait_for(task, timeout=2)  # 30s recv would blow this
+
+        asyncio.run(scenario())
+
+    def test_connecting_resets_the_backoff(self, sessions, monkeypatch):
+        """`delay` used to be reset where `_listen` RETURNS, which only happens at shutdown — so every
+        real drop doubled it, for the life of the process, up to two minutes per blip."""
+        stream = WatchStream(sessions, lambda **kw: MagicMock())
+        stream._delay = 60
+        monkeypatch.setattr(watch_stream.websockets, "connect", connect_returning(FakeSocket()))
+
+        async def scenario():
+            task = asyncio.ensure_future(stream.run())
+            await asyncio.sleep(0.05)
+            stream.stop()
+            await asyncio.wait_for(task, timeout=2)
+
+        asyncio.run(scenario())
+
+        assert stream._delay == 5
+
+    def test_a_malformed_frame_really_does_not_break_the_listener(self, sessions, monkeypatch, ctx):
+        """Through the socket this time. `int(event["ratingKey"])` on a path-shaped value raised out
+        to `run()`, which treated it as a dropped socket, reconnected, and closed every live session
+        as `replaced` — one client's odd frame fragmenting everybody's watch."""
+        bad = json.dumps(
+            {
+                "NotificationContainer": {
+                    "type": "playing",
+                    "PlaySessionStateNotification": [
+                        {"sessionKey": "1", "ratingKey": "/library/metadata/1", "viewOffset": 5, "state": "playing"}
+                    ],
+                }
+            }
+        )
+        stream = WatchStream(sessions, lambda **kw: ctx)
+        socket = FakeSocket([bad])
+        connect = connect_returning(socket)
+        monkeypatch.setattr(watch_stream.websockets, "connect", connect)
+
+        async def scenario():
+            task = asyncio.ensure_future(stream.run())
+            await asyncio.sleep(0.15)
+            stream.stop()
+            await asyncio.wait_for(task, timeout=2)
+
+        asyncio.run(scenario())
+
+        assert connect.calls["n"] == 1, "a bad frame must not cause a reconnect"
+
+
+class TestCloseAllIsAllOrNothingInMemory:
+    def test_one_failing_write_does_not_leave_other_sessions_tracked(self, sessions, ctx, monkeypatch):
+        """A busy database is the condition most likely to coincide with a reconnect, so an early
+        abort here defeated the guard exactly when it mattered — survivors then absorb a new play's
+        offsets under a reused key."""
+        stream = WatchStream(sessions, MagicMock())
+        ctx.plex.active_sessions.return_value |= {
+            "557": {
+                "account_id": 88,
+                "rating_key": 12,
+                "show_rating_key": None,
+                "media_type": "movie",
+                "duration_ms": 100,
+                "state": "playing",
+            }
+        }
+        run(stream._on_playing(ctx, playing("556", offset=1)))
+        run(stream._on_playing(ctx, playing("557", offset=1)))
+        for live in stream._live.values():
+            live.started_at -= timedelta(minutes=5)
+        monkeypatch.setattr(stream, "_flush", MagicMock(side_effect=OSError("database is locked")))
+
+        stream._close_all("replaced")
+
+        assert stream._live == {}, "memory state must be correct even when persistence is not"

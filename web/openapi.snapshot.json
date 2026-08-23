@@ -1697,6 +1697,10 @@
             "title": "Losing",
             "type": "array"
           },
+          "observed": {
+            "title": "Observed",
+            "type": "boolean"
+          },
           "people": {
             "items": {
               "$ref": "#/components/schemas/EngagementPersonOut"
@@ -1720,7 +1724,8 @@
           "window",
           "people",
           "losing",
-          "stop_points"
+          "stop_points",
+          "observed"
         ],
         "title": "EngagementOut",
         "type": "object"
@@ -1746,6 +1751,10 @@
             "title": "Picks",
             "type": "array"
           },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
           "username": {
             "title": "Username",
             "type": "string"
@@ -1754,7 +1763,8 @@
         "required": [
           "username",
           "display_name",
-          "picks"
+          "picks",
+          "total"
         ],
         "title": "EngagementPersonOut",
         "type": "object"
@@ -1777,6 +1787,17 @@
           "media_type": {
             "title": "Media Type",
             "type": "string"
+          },
+          "observed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed At"
           },
           "outcome": {
             "title": "Outcome",
@@ -1820,7 +1841,8 @@
           "outcome",
           "percent",
           "watched_at",
-          "finished_at"
+          "finished_at",
+          "observed_at"
         ],
         "title": "EngagementPickOut",
         "type": "object"

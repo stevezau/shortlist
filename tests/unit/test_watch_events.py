@@ -188,7 +188,9 @@ class TestMembershipIsAskedOfThePast:
 
         with world() as s:
             credits = event_credits(s, RowMembership(s))
-        assert credits == {(1, 510, "movie"): NOW - timedelta(days=1, hours=6)}
+        assert set(credits) == {(1, 510, "movie")}
+        assert credits[(1, 510, "movie")][0] == NOW - timedelta(days=1, hours=6)
+        assert credits[(1, 510, "movie")][1] == frozenset({"picked"}), "the row that showed it"
 
     def test_a_play_before_the_row_ever_had_it_does_not_count(self, world):
         deliver(world, 2, [10])
@@ -207,7 +209,7 @@ class TestMembershipIsAskedOfThePast:
         play(world, 10, NOW - timedelta(hours=1), key="b")
 
         with world() as s:
-            assert event_credits(s, RowMembership(s))[(1, 510, "movie")] == first
+            assert event_credits(s, RowMembership(s))[(1, 510, "movie")][0] == first
 
     def test_an_episode_is_matched_through_the_shows_key(self, world):
         """A pick for a series stores the SHOW's rating key; the log reports the EPISODE played. On 30
@@ -345,7 +347,9 @@ class TestStartsCountEvenWhenTheFinishComesLater:
 
         with world() as s:
             credits = event_credits(s, RowMembership(s))
-        assert credits == {(1, 510, "movie"): NOW - timedelta(days=1, hours=6)}
+        assert set(credits) == {(1, 510, "movie")}
+        assert credits[(1, 510, "movie")][0] == NOW - timedelta(days=1, hours=6)
+        assert credits[(1, 510, "movie")][1] == frozenset({"picked"}), "the row that showed it"
 
     def test_the_credit_hangs_on_the_start_not_the_later_completion(self, world):
         """They finish it days later, by which time the row has dropped it. The completion alone would
@@ -358,7 +362,7 @@ class TestStartsCountEvenWhenTheFinishComesLater:
 
         with world() as s:
             credits = event_credits(s, RowMembership(s))
-        assert credits[(1, 510, "movie")] == started
+        assert credits[(1, 510, "movie")][0] == started
 
     def test_a_start_after_the_row_dropped_it_still_does_not_count(self, world):
         """Sessions do not weaken the rule — they only make it observable earlier."""

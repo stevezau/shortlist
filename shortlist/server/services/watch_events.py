@@ -83,9 +83,21 @@ def ingest_play_history(session: Session, plex, store, *, limit: int = 20000) ->
         .filter(WatchEvent.history_key.in_([e.history_key for e in events if e.history_key]))
         .all()
     }
+    # A key-less event needs its own identity or the deliberate one-minute cursor rewind duplicates it
+    # on every sync — SQLite allows unlimited NULLs in a UNIQUE column, so the constraint does not
+    # catch it. `_play_event` does permit `history_key=None`, so this path is contemplated.
+    keyless = {
+        (account, rating_key, _as_utc(viewed))
+        for account, rating_key, viewed in session.query(
+            WatchEvent.plex_account_id, WatchEvent.rating_key, WatchEvent.viewed_at
+        ).filter(WatchEvent.history_key.is_(None))
+    }
     added = 0
     for event in events:
         if event.history_key and event.history_key in known:
+            continue
+        natural = (event.plex_account_id, event.rating_key, _as_utc(event.viewed_at))
+        if not event.history_key and natural in keyless:
             continue
         session.add(
             WatchEvent(
@@ -99,13 +111,26 @@ def ingest_play_history(session: Session, plex, store, *, limit: int = 20000) ->
             )
         )
         known.add(event.history_key)
+        keyless.add(natural)
         added += 1
 
-    # A FULL page means there is more behind it. The read is newest-first, so advancing the cursor to
-    # the newest event would step over everything older that we did not get — permanently, because
-    # the next pass starts from there. Park the cursor at the OLDEST row instead and walk backwards
-    # through the backlog a page at a time.
-    cursor = min(e.viewed_at for e in events) if len(events) >= limit else max(e.viewed_at for e in events)
+    # The cursor only ever moves FORWARD. An earlier version parked it at the oldest row of a full
+    # page, meaning to walk backwards through the backlog — but `since` is a lower bound and the read
+    # is newest-first, so the next call returned the same newest page again. The cursor regressed and
+    # never advanced: 20,000 rows re-read six times a day, inserting nothing, and the older backlog
+    # never fetched at all. A full page is instead reported so the operator knows a backlog exists;
+    # the next sweep picks up from the newest seen, which is the only direction that converges.
+    # CLAMPED to now. A PMS whose clock was ahead when it recorded a play — a NAS booting before NTP —
+    # leaves one history row stamped in the future, and parking the cursor there means every later
+    # read asks for `viewedAt >` a date that has not happened. The ingest then returns 0 for ever,
+    # logs "0 new play(s)" as though all were well, and `if not events: return 0` means the cursor is
+    # never re-examined. There is no UI to reset it.
+    cursor = min(max(e.viewed_at for e in events), datetime.now(UTC))
+    if len(events) >= limit:
+        logger.warning(
+            "watch-events: the play log returned a full page ({}) — older history beyond this window is not backfilled",
+            limit,
+        )
     store.set(CURSOR_KEY, cursor.isoformat())
     logger.info("watch-events: {} new play(s) from the history log, cursor at {}", added, cursor.isoformat())
     return added
@@ -195,17 +220,30 @@ class RowMembership:
                 PickRow.run_id,
                 PickRow.tmdb_id,
                 PickRow.media_type,
+                PickRow.created_at,
             )
             .filter(PickRow.run_id.isnot(None), PickRow.collection_slug.in_(self._live_slugs))
             .all()
         )
         by_delivery: dict[tuple[int, str, str, int], set[tuple[int, str]]] = defaultdict(set)
-        for user_id, slug, section, run_id, tmdb_id, media_type in rows:
-            by_delivery[(user_id, slug, section, run_id)].add((tmdb_id, media_type))
+        # WHEN this delivery actually landed, from the picks themselves — NOT `Run.started_at`.
+        # A run persists each person as they finish, so `created_at` trails the run's start by minutes
+        # to tens of minutes (a TV collection write alone costs ~16.5s, times 47 people). Two clocks
+        # meant two silent failures: `event_credits` would say a title was in the row while
+        # `_credit_from_events` found no pick old enough to stamp — a credit computed and thrown away,
+        # permanently, because a watched title is never re-delivered; and a play during a run was
+        # judged against the row the run was BUILDING rather than the one Plex was still serving.
+        delivered_at: dict[tuple[int, str, str, int], datetime] = {}
+        for user_id, slug, section, run_id, tmdb_id, media_type, created in rows:
+            group = (user_id, slug, section, run_id)
+            by_delivery[group].add((tmdb_id, media_type))
+            when = _as_utc(created)
+            if group not in delivered_at or when < delivered_at[group]:
+                delivered_at[group] = when
 
         out: dict[tuple[int, str, str], list[tuple[datetime, set[tuple[int, str]]]]] = defaultdict(list)
         for (user_id, slug, section, run_id), keys in by_delivery.items():
-            started = self._run_started.get(run_id)
+            started = delivered_at.get((user_id, slug, section, run_id))
             if started is None:
                 continue
             # Still on Plex for THIS person, per the ledger. Without it a row muted a month ago keeps
@@ -252,7 +290,7 @@ class RowMembership:
         from before they could see it. NULL (every pre-0076 row) falls back to "everyone", which is no
         worse than having no audience test at all — the state this replaces.
         """
-        out: dict[tuple[str, int], list[tuple[datetime, set[int] | None]]] = {}
+        out: dict[tuple[str, int], set[int] | None] = {}
         for slug, run_id, audience in self._session.query(
             RunSharedRow.collection_slug, RunSharedRow.run_id, RunSharedRow.audience
         ).all():
@@ -349,7 +387,13 @@ def session_progress(
         for tmdb_id, media_type in {tmdb_of[k] for k in raw if k in tmdb_of}:
             slot = (row.plex_account_id, tmdb_id, media_type)
             started = _as_utc(row.started_at)
-            percent = row.percent
+            # A SERIES gets no percentage from a session, only the start. `row.percent` is how far
+            # through that EPISODE they got, and the pick it resolves to is the whole show — so one
+            # full episode of a sixty-episode series arrived as `max_percent = 100`, which the report
+            # then rendered as "stops at 100%" and filed under 75%+. The dashboard would have stated,
+            # as fact, that people abandon the show near the end when they quit after episode one.
+            # NULL already means "we do not know how far", which is the truth here.
+            percent = None if media_type == "show" else row.percent
             if slot not in out:
                 out[slot] = (started, percent)
                 continue
@@ -361,7 +405,9 @@ def session_progress(
     return out
 
 
-def event_credits(session: Session, membership: RowMembership) -> dict[tuple[int, int, str], datetime]:
+def event_credits(
+    session: Session, membership: RowMembership
+) -> dict[tuple[int, int, str], tuple[datetime, frozenset[str]]]:
     """`(user_id, tmdb_id, media_type)` -> the EARLIEST play that a row can be credited for.
 
     Earliest, not latest, on purpose. The credit belongs to the moment the row got them to press play;
@@ -401,7 +447,7 @@ def event_credits(session: Session, membership: RowMembership) -> dict[tuple[int
         events = events.filter(WatchEvent.viewed_at >= floor)
     scan = sorted([*events.all(), *starts], key=lambda e: _as_utc(e.viewed_at))
 
-    out: dict[tuple[int, int, str], datetime] = {}
+    out: dict[tuple[int, int, str], tuple[datetime, frozenset[str]]] = {}
     for event in scan:
         user = users.get(event.plex_account_id)
         if user is None:
@@ -418,10 +464,16 @@ def event_credits(session: Session, membership: RowMembership) -> dict[tuple[int
         if not titles:
             continue
         when = _as_utc(event.viewed_at)
-        if not membership.visible_rows(user, titles, when):
+        rows = membership.visible_rows(user, titles, when)
+        if not rows:
             continue
         for tmdb_id, media_type in titles:
             slot = (user.id, tmdb_id, media_type)
-            if slot not in out or when < out[slot]:
-                out[slot] = when
+            # The ROWS come out with the credit. `visible_rows` works out exactly which shelves were
+            # showing the title, and throwing that away meant the stamp went onto every pick for the
+            # person+title — including rows that had dropped it days earlier. `row_effectiveness`
+            # filters on `collection_slug`, so those rows' hit rates were inflated by a play their
+            # shelf could not have caused.
+            if slot not in out or when < out[slot][0]:
+                out[slot] = (when, frozenset(rows))
     return out

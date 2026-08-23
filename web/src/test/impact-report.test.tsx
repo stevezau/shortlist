@@ -33,7 +33,7 @@ const {
   // its error boundary renders another `role="alert"` — which broke three unrelated assertions
   // here on multiple-alert ambiguity rather than on anything they were testing.
   getEngagement: vi.fn((_window: ReportWindow) =>
-    Promise.resolve({ window: "30", people: [], losing: [], stop_points: [] }),
+    Promise.resolve({ window: "30", people: [], losing: [], stop_points: [], observed: false }),
   ),
 }));
 

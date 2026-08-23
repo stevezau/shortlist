@@ -807,7 +807,7 @@ function ReportBody({
               ? `${overall.bounced} barely started`
               : "started, never finished"
           }
-          title="Picks someone started and gave up on. Counted from live playback, so it only covers what we watched happen — a title nobody has played since watch tracking started is not in here. 'Barely started' is under 5% in: opened and closed, rather than a fair go."
+          title="Films someone started and gave up on. FILMS ONLY: how far through an episode someone got does not tell us how far through a series they are, so shows are not counted here at all. Counted from live playback, so a title nobody has played since watch tracking started is not in here either. 'Barely started' is under 5% in: opened and closed, rather than a fair go."
         />
         <StatTile
           icon={UsersIcon}

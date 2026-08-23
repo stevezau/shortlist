@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
+import sqlalchemy as sa
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -204,7 +205,8 @@ class TestBoundaries:
             assert (1, 510, "movie") in event_credits(s, RowMembership(s))
 
     def test_a_play_one_second_before_the_delivery_does_not(self, world):
-        pick(world, 2, 510, rating_key=10)
+        # `created` is the delivery moment now, not the run's start — see `_load_per_person`.
+        pick(world, 2, 510, rating_key=10, created=NOW - timedelta(days=1))
         with world() as s:
             s.add(
                 WatchEvent(
@@ -311,13 +313,15 @@ class TestTimeHandling:
         with world() as s:
             assert (1, 510, "movie") in event_credits(s, RowMembership(s))
 
-    def test_the_cursor_walks_backwards_when_a_page_is_full(self, sessions):
-        """A full page means more is behind it. Advancing to the newest event would step over the
-        remainder for ever, because the next read starts from there."""
+    def test_the_cursor_only_ever_moves_forward(self, sessions):
+        """It used to park at the OLDEST row of a full page, meaning to walk backwards through the
+        backlog. It cannot: `since` is a lower bound and the read is newest-first, so the next call
+        returns the same newest page again — the cursor regresses and never advances, re-reading the
+        limit six times a day and inserting nothing."""
         store = MagicMock()
         store.get.return_value = None
         plex = MagicMock()
-        oldest = NOW - timedelta(days=5)
+        newest = NOW - timedelta(days=1)
         plex.play_history.return_value = [
             PlayEvent(99, i, None, "movie", NOW - timedelta(days=d), f"h{i}")
             for i, d in enumerate([1, 2, 3, 4, 5], start=1)
@@ -327,7 +331,7 @@ class TestTimeHandling:
             ingest_play_history(s, plex, store, limit=5)
             s.commit()
 
-        assert store.set.call_args.args[1] == oldest.isoformat(), "parked at the oldest, to continue downward"
+        assert store.set.call_args.args[1] == newest.isoformat()
 
 
 class TestTheEngineIsUnaffected:
@@ -650,3 +654,292 @@ class TestFinishedAtIsWhenTheyFinished:
         assert row.watched_at.replace(tzinfo=UTC) == started, "credited when the row got them to start"
         assert row.finished_at.replace(tzinfo=UTC) == completed, "finished when the last episode landed"
         assert row.finished_at >= row.watched_at
+
+
+class TestDeliveryTimeIsWhenTheRowActuallyChanged:
+    """A run persists each person as they finish, so a delivery lands minutes to tens of minutes after
+    the run starts — a TV collection write alone costs ~16.5s on the maintainer's server, times 47
+    people. Timing membership from `Run.started_at` while the stamps are bounded by `created_at` put
+    the two on different clocks, and BOTH directions lost.
+    """
+
+    def test_a_credit_is_not_computed_and_then_silently_discarded(self, world):
+        """`event_credits` said the title was in the row; `_credit_from_events` then found no pick old
+        enough to stamp, because every row for it was created after the play. Permanent: a watched
+        title is never re-delivered, so `created_at` never moves."""
+        run_started = NOW - timedelta(days=1)
+        played = run_started + timedelta(minutes=15)
+        persisted = run_started + timedelta(minutes=30)
+        pick(world, 2, 510, rating_key=10, created=persisted)
+        # The row was delivered by run 1 before all this, and run 2 re-delivered it late.
+        pick(world, 1, 510, rating_key=10, created=NOW - timedelta(days=2))
+        with world() as s:
+            s.add(
+                WatchEvent(
+                    plex_account_id=99,
+                    rating_key=10,
+                    media_type="movie",
+                    viewed_at=played,
+                    source="history",
+                    history_key="mid-run",
+                )
+            )
+            s.commit()
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            credited = s.query(PickRow).filter(PickRow.watched_at.isnot(None)).all()
+        assert credited, "the credit was computed and then had nowhere to land"
+
+    def test_a_play_during_a_run_is_judged_against_the_row_plex_was_still_serving(self, world):
+        """Run 2 starts at 11:00 and drops the title, but does not rewrite THIS person's collection
+        until 11:30. A play at 11:15 saw run 1's row, not run 2's."""
+        run_started = NOW - timedelta(days=1)
+        pick(world, 1, 510, rating_key=10, created=run_started - timedelta(days=1))
+        # Run 2 dropped 510 and delivered something else — persisted 30 minutes in.
+        pick(world, 2, 511, rating_key=11, created=run_started + timedelta(minutes=30))
+        with world() as s:
+            s.add(
+                WatchEvent(
+                    plex_account_id=99,
+                    rating_key=10,
+                    media_type="movie",
+                    viewed_at=run_started + timedelta(minutes=15),
+                    source="history",
+                    history_key="during",
+                )
+            )
+            s.commit()
+
+        with world() as s:
+            assert (1, 510, "movie") in event_credits(s, RowMembership(s))
+
+
+class TestACreditLandsOnlyOnTheRowThatShowedIt:
+    """`visible_rows` works out exactly which shelves were showing the title. Throwing that away and
+    stamping every pick for the person+title inflates the hit rate of rows that had already dropped it
+    — `row_effectiveness` filters on `collection_slug`, so it counts a play its shelf could not have
+    caused.
+    """
+
+    def test_a_row_that_dropped_the_title_does_not_collect_the_hit(self, world):
+        with world() as s:
+            s.add(Collection(id=2, slug="rewatch", name="Watch again", enabled=True))
+            s.add(Delivery(collection_slug="rewatch", user_slug="alex", library_key="1", rating_key=2))
+            s.commit()
+        # `picked` had it two days ago and dropped it; `rewatch` has it now.
+        with world() as s:
+            for slug, created, run_id in (
+                ("picked", NOW - timedelta(days=3), 1),
+                ("rewatch", NOW - timedelta(days=1), 2),
+            ):
+                s.add(
+                    PickRow(
+                        run_id=run_id,
+                        user_id=1,
+                        collection_slug=slug,
+                        section_key="1",
+                        library="Movies",
+                        tmdb_id=510,
+                        media_type="movie",
+                        rating_key=10,
+                        rank=1,
+                        created_at=created,
+                    )
+                )
+            # `picked` re-delivered something else yesterday, so its newest delivery lacks 510.
+            s.add(
+                PickRow(
+                    run_id=2,
+                    user_id=1,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=511,
+                    media_type="movie",
+                    rating_key=11,
+                    rank=1,
+                    created_at=NOW - timedelta(days=1),
+                )
+            )
+            s.add(
+                WatchEvent(
+                    plex_account_id=99,
+                    rating_key=10,
+                    media_type="movie",
+                    viewed_at=NOW - timedelta(hours=2),
+                    source="history",
+                    history_key="rw",
+                )
+            )
+            s.commit()
+
+        with world() as s:
+            credits = event_credits(s, RowMembership(s))
+        assert credits[(1, 510, "movie")][1] == frozenset({"rewatch"})
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            by_slug = {
+                (p.collection_slug, p.tmdb_id): p.watched_at
+                for p in s.query(PickRow).filter(PickRow.tmdb_id == 510).all()
+            }
+        assert by_slug[("rewatch", 510)] is not None, "the row that showed it gets the credit"
+        assert by_slug[("picked", 510)] is None, "the row that had dropped it must not"
+
+
+class TestASeriesGetsNoPercentageFromOneEpisode:
+    def test_one_full_episode_is_not_a_finished_series(self, world):
+        """`row.percent` is how far through that EPISODE they got, and the pick it resolves to is the
+        whole show. One episode of sixty arrived as `max_percent = 100`, which the report rendered as
+        "stops at 100%" and filed under 75%+ — stating as fact that people abandon the show near the
+        end when they quit after episode one."""
+        with world() as s:
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="TV",
+                    tmdb_id=700,
+                    media_type="show",
+                    rating_key=70,
+                    rank=1,
+                    created_at=NOW - timedelta(days=2),
+                )
+            )
+            s.add(
+                WatchSession(
+                    plex_account_id=99,
+                    session_key="1",
+                    rating_key=7001,
+                    show_rating_key=70,
+                    media_type="episode",
+                    started_at=NOW - timedelta(hours=6),
+                    last_seen_at=NOW - timedelta(hours=5),
+                    ended_at=NOW - timedelta(hours=5),
+                    max_offset_ms=2_700_000,
+                    duration_ms=2_700_000,
+                    end_reason="stopped",
+                )
+            )
+            s.commit()
+
+        with world() as s:
+            started, percent = session_progress(s)[(99, 700, "show")]
+
+        assert started is not None, "the START still counts — the row got them to press play"
+        assert percent is None, "how far through the SERIES they are is unknown, not 100%"
+
+
+class TestTheIngestCannotWedgeItself:
+    def test_a_future_dated_play_does_not_park_the_cursor_ahead_of_now(self, sessions):
+        """A PMS whose clock was ahead — a NAS booting before NTP — leaves one history row stamped in
+        the future. Parking the cursor there means every later read asks for `viewedAt >` a date that
+        has not happened: 0 rows for ever, logged as "0 new play(s)", with no UI to reset it."""
+        store = MagicMock()
+        store.get.return_value = None
+        plex = MagicMock()
+        plex.play_history.return_value = [
+            PlayEvent(99, 10, None, "movie", NOW - timedelta(hours=1), "sane"),
+            PlayEvent(99, 11, None, "movie", NOW + timedelta(days=400), "from-the-future"),
+        ]
+
+        with sessions() as s:
+            ingest_play_history(s, plex, store)
+            s.commit()
+
+        parked = datetime.fromisoformat(store.set.call_args.args[1])
+        assert parked <= datetime.now(UTC) + timedelta(minutes=1)
+
+    def test_an_event_with_no_history_key_is_not_re_inserted_every_sync(self, sessions):
+        """The cursor is deliberately rewound a minute, so overlap is normal — and SQLite allows
+        unlimited NULLs in a UNIQUE column, so the constraint does not dedupe these."""
+        store = MagicMock()
+        store.get.return_value = None
+        plex = MagicMock()
+        plex.play_history.return_value = [PlayEvent(99, 10, None, "movie", NOW - timedelta(hours=2), None)]
+
+        for _ in range(3):
+            with sessions() as s:
+                ingest_play_history(s, plex, store)
+                s.commit()
+
+        with sessions() as s:
+            assert s.query(WatchEvent).count() == 1
+
+
+class TestWatchHistoryAgesOutOnItsOwnSchedule:
+    def test_it_is_pruned_even_when_run_history_is_kept_forever(self, world):
+        """`runs.retention = 0` is a supported setting, and these tables grow with every play by every
+        account on the server — not with Shortlist's own activity. Behind the run guards they grew
+        without bound whenever no run was old enough, retention was off, or runs had been cleared."""
+        from shortlist.server.services.run_persistence import prune_runs
+
+        with world() as s:
+            s.add(
+                WatchEvent(
+                    plex_account_id=99,
+                    rating_key=1,
+                    media_type="movie",
+                    viewed_at=NOW - timedelta(days=800),
+                    source="history",
+                    history_key="ancient",
+                )
+            )
+            s.commit()
+
+        with world() as s:
+            prune_runs(s, 0)  # keep run history for ever
+            s.commit()
+
+        with world() as s:
+            assert s.query(WatchEvent).count() == 0, "watch history has its own ceiling"
+
+
+class TestSeriesPercentagesAreCleared:
+    def test_the_migration_clears_a_series_percentage_and_leaves_films_alone(self, world):
+        """`_stamp_percent` never walks a percentage backwards — a guard that is right for its own
+        reason (retention shrinks what sessions can report) and which would have preserved these wrong
+        values for ever. Both picks carrying a percentage on the maintainer's server were series."""
+        with world() as s:
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="TV",
+                    tmdb_id=700,
+                    media_type="show",
+                    rating_key=70,
+                    rank=1,
+                    max_percent=100,
+                    created_at=NOW - timedelta(days=2),
+                )
+            )
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=510,
+                    media_type="movie",
+                    rating_key=10,
+                    rank=1,
+                    max_percent=40,
+                    created_at=NOW - timedelta(days=2),
+                )
+            )
+            s.commit()
+            s.execute(sa.text("UPDATE picks SET max_percent = NULL WHERE media_type = 'show'"))
+            s.commit()
+
+        with world() as s:
+            assert s.query(PickRow).filter_by(media_type="show").one().max_percent is None
+            assert s.query(PickRow).filter_by(media_type="movie").one().max_percent == 40
