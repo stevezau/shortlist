@@ -25,6 +25,16 @@ pytestmark = pytest.mark.e2e
 PHONE = {"width": 390, "height": 844}
 
 
+def finished_tile(page: Page):
+    """The Finished STAT TILE, not the word wherever it appears.
+
+    The engagement panel added below the report labels every seen-out pick "Finished" too, so a bare
+    text match now resolves to four elements and fails on strict-mode ambiguity. Scoping to the tile
+    is what these assertions always meant — the ambiguity is new, the intent is not.
+    """
+    return page.locator("div.rounded-lg.border").filter(has_text="Finished").first
+
+
 def seed_outcomes(app: ShortlistApp) -> None:
     """Picks covering every cell of the matrix, across two rows and two libraries.
 
@@ -81,7 +91,7 @@ class TestTheDashboardShowsBothNumbers:
         page.goto("/")
 
         expect(page.get_by_text("Watched", exact=True)).to_be_visible(timeout=20_000)
-        expect(page.get_by_text("Finished", exact=True)).to_be_visible()
+        expect(finished_tile(page)).to_be_visible()
 
     def test_the_api_and_the_page_agree_on_the_split(self, page: Page, app: ShortlistApp):
         """5 watched (2 films + 3 series), 3 finished (2 films + 1 series seen out)."""
@@ -93,8 +103,8 @@ class TestTheDashboardShowsBothNumbers:
         assert overall["finished"] == 3, overall
 
         page.goto("/")
-        expect(page.get_by_text("Finished", exact=True)).to_be_visible(timeout=20_000)
-        tile = page.get_by_text("Finished", exact=True).locator("xpath=..")
+        expect(finished_tile(page)).to_be_visible(timeout=20_000)
+        tile = finished_tile(page).locator("xpath=..")
         expect(tile).to_contain_text("3")
 
     def test_each_row_line_carries_its_own_finished_count(self, page: Page, app: ShortlistApp):
@@ -114,7 +124,7 @@ class TestTheDashboardShowsBothNumbers:
         page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
 
         page.goto("/")
-        page.get_by_text("Finished", exact=True).wait_for(timeout=20_000)
+        finished_tile(page).wait_for(timeout=20_000)
         page.wait_for_timeout(1500)
 
         assert not errors, errors
@@ -454,7 +464,7 @@ class TestItStillFitsAPhone:
         seed_outcomes(app)
         page.set_viewport_size(PHONE)
         page.goto("/")
-        expect(page.get_by_text("Finished", exact=True)).to_be_visible(timeout=20_000)
+        expect(finished_tile(page)).to_be_visible(timeout=20_000)
 
         overflow = page.evaluate(
             """() => {

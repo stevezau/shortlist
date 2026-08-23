@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from loguru import logger
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from shortlist.server.db.models import (
@@ -248,7 +249,21 @@ class RowMembership:
         return best is None or user.plex_account_id in best
 
 
-def session_progress(session: Session) -> dict[tuple[int, int], tuple[datetime, int | None]]:
+def _attribution_floor(session: Session) -> datetime | None:
+    """The oldest moment any event could still be attributed to anything.
+
+    Nothing before the first pick we hold can be credited — there was no row to have been in — so
+    every scan below is bounded by it. Without this, `event_credits` re-reads the entire event log on
+    every reconcile, six times a day, against a table with no ceiling: 6,303 rows after one ingest on
+    a real server, and growing by ~100 a day for ever.
+    """
+    oldest = session.query(func.min(PickRow.created_at)).scalar()
+    return _as_utc(oldest) if oldest else None
+
+
+def session_progress(
+    session: Session, since: datetime | None = None
+) -> dict[tuple[int, int], tuple[datetime, int | None]]:
     """`(plex_account_id, rating_key)` -> the earliest start we saw, and the furthest they got.
 
     The furthest across ALL sittings, not the last one: your example was four sittings of one episode
@@ -256,7 +271,10 @@ def session_progress(session: Session) -> dict[tuple[int, int], tuple[datetime, 
     START is what the credit hangs on, because that is the moment the row was doing its job.
     """
     out: dict[tuple[int, int], tuple[datetime, int | None]] = {}
-    for row in session.query(WatchSession).all():
+    query = session.query(WatchSession)
+    if since is not None:
+        query = query.filter(WatchSession.started_at >= since)
+    for row in query.all():
         for key in {row.rating_key} | ({row.show_rating_key} if row.show_rating_key else set()):
             slot = (row.plex_account_id, key)
             started = _as_utc(row.started_at)
@@ -301,14 +319,15 @@ def event_credits(session: Session, membership: RowMembership) -> dict[tuple[int
     # up never appears in Plex's history log at all, and by the time they finish it four days later
     # the row has moved on. Sessions are folded in as first-class events so the credit lands on the
     # moment the row worked.
+    floor = _attribution_floor(session)
     starts = [
         _StartEvent(plex_account_id=account_id, rating_key=rating_key, viewed_at=started)
-        for (account_id, rating_key), (started, _percent) in session_progress(session).items()
+        for (account_id, rating_key), (started, _percent) in session_progress(session, floor).items()
     ]
-    scan = sorted(
-        [*session.query(WatchEvent).all(), *starts],
-        key=lambda e: _as_utc(e.viewed_at),
-    )
+    events = session.query(WatchEvent)
+    if floor is not None:
+        events = events.filter(WatchEvent.viewed_at >= floor)
+    scan = sorted([*events.all(), *starts], key=lambda e: _as_utc(e.viewed_at))
 
     out: dict[tuple[int, int, str], datetime] = {}
     for event in scan:

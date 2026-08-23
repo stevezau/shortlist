@@ -21,6 +21,7 @@ from shortlist.server.db.models import (
     Base,
     Collection,
     CollectionAudience,
+    Delivery,
     PickRow,
     Run,
     RunSharedRow,
@@ -55,6 +56,10 @@ def world(sessions):
         s.add(Collection(id=1, slug="picked", name="Picked for You", enabled=True))
         s.add(Run(id=1, trigger="schedule", status="ok", started_at=NOW - timedelta(days=2)))
         s.add(Run(id=2, trigger="schedule", status="ok", started_at=NOW - timedelta(days=1)))
+        # The delivery-ledger entry a real run leaves behind. `live_pick_ids` requires it — liveness
+        # means the collection is still ON PLEX — so without it the snapshot credit path sees nothing
+        # at all and a test of it passes for the wrong reason.
+        s.add(Delivery(collection_slug="picked", user_slug="alex", library_key="1", rating_key=1))
         s.commit()
     return sessions
 
@@ -638,3 +643,34 @@ class TestReconcileActuallyUsesTheCredits:
         with world() as s:
             pick = s.query(PickRow).filter_by(rating_key=12).one()
         assert pick.max_percent is None, "99% belonged to a different title that shares the number"
+
+
+class TestBothCreditPathsAreNeeded:
+    """The event path does not replace the snapshot path, and nearly was deleted as though it did.
+
+    A title Plex flags as watched with no play behind it — marked by hand, bulk-marked, or watched
+    before the log existed — generates no event ever. On the maintainer's server that is 893 of one
+    user's 1,840 watched titles. The snapshot is the only thing that can credit them.
+    """
+
+    def test_a_hand_marked_watch_with_no_play_event_is_still_credited(self, world):
+        deliver(world, 2, [10])  # in the CURRENT delivery, so the snapshot can see it
+        history = [
+            WatchedItem(
+                title="Marked watched",
+                media_type=MediaType.MOVIE,
+                watched_at=NOW - timedelta(hours=2),
+                tmdb_id=510,
+            )
+        ]
+        profile = UserProfile(
+            username="alex", plex_account_id=99, user_type=UserType.SHARED, slug="alex", history=history
+        )
+
+        with world() as s:
+            assert event_credits(s, RowMembership(s)) == {}, "no play event exists for this title"
+
+        reconcile_watched(world, [profile])
+
+        with world() as s:
+            assert s.query(PickRow).filter_by(rating_key=10).one().watched_at is not None

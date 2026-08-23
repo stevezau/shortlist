@@ -184,9 +184,20 @@ the existing sweep. Backfill bounded to the oldest pick we hold (~2,000 rows cov
 Implement the §3 attribution **alongside** the current rule and log where they disagree. Nothing
 user-visible changes.
 
-**Phase 2 — switch over.**
-Make §3 the reported number. Delete the pre-run snapshot and `live_pick_ids`. Stretch the library
-read to 12–24h — safe only now, because a late catch-up is attributed correctly.
+**Phase 2 — switch over.** Done, except for two things this spec got WRONG, both corrected by data
+rather than argument:
+
+* **The pre-run snapshot stays.** It was to be deleted as redundant. It is not: it credits a title
+  Plex flagged as watched with NO play event, and on the real server that is **893 of one user's
+  1,840 watched titles — 48%**. Marked watched by hand, bulk-marked a season, or watched before the
+  log existed. The event path cannot see any of them, because they never generated a play. The two
+  paths answer different questions and both are needed; the event path simply runs first and wins
+  where it has an answer.
+* **The library read stays at 4h.** Stretching it was justified on "a late catch-up is attributed
+  correctly", which is true for ATTRIBUTION and irrelevant to the other consumer: the engine's
+  already-watched exclusion reads the same data, and stretching the interval means re-recommending
+  something the person watched up to a day ago. Different consumer, different requirement — and the
+  one that would break is the one users notice.
 
 **Phase 3 — the websocket.**
 `watch_sessions`, the listener, start-based credit, partial metrics, and the UI in §7.

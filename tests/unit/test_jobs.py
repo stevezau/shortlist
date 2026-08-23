@@ -1158,6 +1158,52 @@ class TestRetentionPruning:
         with sessions() as session:
             assert session.get(Run, run_id) is None
 
+    def test_watch_history_ages_out_on_the_same_cutoff(self, sessions):
+        """The two new tables are not tied to a run, so the run prune cannot reach them — and without
+        their own sweep they are the only tables here that grow for ever (Plex's own log holds 101,604
+        rows over six years on a real server, and we ingest ~100 a day from it).
+
+        An event older than the oldest retained run can never be attributed to anything anyway: the
+        delivery it would have been judged against is gone."""
+        from shortlist.server.db.models import WatchEvent, WatchSession
+        from shortlist.server.settings_store import SettingsStore
+
+        old = datetime.now(UTC) - timedelta(days=400)
+        recent = datetime.now(UTC) - timedelta(days=1)
+        self._seed_old_run(sessions)
+        with sessions() as session:
+            for when, key in ((old, "old"), (recent, "new")):
+                session.add(
+                    WatchEvent(
+                        plex_account_id=99,
+                        rating_key=1,
+                        media_type="movie",
+                        viewed_at=when,
+                        source="history",
+                        history_key=key,
+                    )
+                )
+                session.add(
+                    WatchSession(
+                        plex_account_id=99,
+                        session_key="1",
+                        rating_key=1,
+                        media_type="movie",
+                        started_at=when,
+                        last_seen_at=when,
+                        max_offset_ms=1,
+                        duration_ms=2,
+                    )
+                )
+            SettingsStore(session).set("runs.retention", 1)
+            session.commit()
+
+        jobs._HANDLERS["maintenance.prune"](SimpleNamespace(sessions=sessions), {})
+
+        with sessions() as session:
+            assert [e.history_key for e in session.query(WatchEvent).all()] == ["new"]
+            assert session.query(WatchSession).count() == 1, "the 400-day-old session went with it"
+
     def test_a_null_retention_row_does_not_raise(self, sessions):
         """`int(store.get("runs.retention"))` had no `or 0` guard — and it raised inside the run's
         persist transaction, where the cost of a TypeError was the whole run's record."""

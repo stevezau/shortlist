@@ -21,6 +21,7 @@ import pytest
 from shortlist.engine.clients.plex_pms import PlexClient
 
 FIXTURE = (Path(__file__).resolve().parents[1] / "fixtures" / "pms_play_history.xml.txt").read_text()
+SESSIONS = (Path(__file__).resolve().parents[1] / "fixtures" / "pms_active_sessions.xml.txt").read_text()
 
 
 @pytest.fixture
@@ -136,3 +137,66 @@ class TestPaging:
 
         assert all(e.plex_account_id for e in events)
         assert 456294 not in {e.rating_key for e in events}
+
+
+class TestActiveSessions:
+    """`/status/sessions`, against a sanitised capture of a real response.
+
+    This read is what turns an anonymous position update off the websocket into "this person is 40%
+    through this title" — the socket carries no user and no runtime. It was written from the XML shape
+    and proved only against a hand-built mock until this fixture existed; recording the real response
+    is what plex-safety rule 11 asks for, and it is the difference between "my mock agrees with me"
+    and "the server does this".
+    """
+
+    def test_a_session_yields_the_account_the_runtime_and_the_position(self, client):
+        with patch("shortlist.engine.clients.plex_pms.http_retry.get", return_value=_response(SESSIONS)):
+            sessions = client.active_sessions()
+
+        movie = sessions["604"]
+        assert movie["account_id"] == 502, "`<User id>` is the plex.tv account id, which joins to users"
+        assert movie["duration_ms"] == 5_818_592, "the denominator for every percentage we report"
+        assert movie["media_type"] == "movie"
+        assert movie["show_rating_key"] is None
+        assert movie["state"] == "paused"
+
+    def test_an_episode_carries_its_shows_key_as_an_attribute_here(self, client):
+        """Note the difference from the history log, which has NO `grandparentRatingKey` and forces
+        the show key to be parsed out of a path. The two endpoints disagree, so the code has to."""
+        with patch("shortlist.engine.clients.plex_pms.http_retry.get", return_value=_response(SESSIONS)):
+            sessions = client.active_sessions()
+
+        assert sessions["605"]["show_rating_key"] == 590681
+        assert sessions["605"]["rating_key"] == 654995
+
+    def test_a_session_with_no_user_resolves_to_no_account_rather_than_raising(self, client):
+        """The listener drops these rather than guessing. A session it cannot attribute is worse than
+        no session — it would credit somebody's row for a play that was not theirs."""
+        with patch("shortlist.engine.clients.plex_pms.http_retry.get", return_value=_response(SESSIONS)):
+            sessions = client.active_sessions()
+
+        assert sessions["999"]["account_id"] is None
+
+    def test_the_token_goes_in_the_header_not_the_url(self, client):
+        with patch("shortlist.engine.clients.plex_pms.http_retry.get", return_value=_response(SESSIONS)) as get:
+            client.active_sessions()
+
+        assert "X-Plex-Token" not in get.call_args.args[0]
+        assert get.call_args.kwargs["headers"]["X-Plex-Token"] == "tok"
+
+
+class TestNotificationSocketUrl:
+    def test_the_socket_url_carries_no_token(self, client):
+        """It is handed to a websocket library that puts URLs in log lines and exception messages, so
+        a token in the query string reaches both — rule 9. The caller sends it as a header."""
+        client._server._baseurl = "http://pms:32400"
+
+        url = client.notification_socket_url()
+
+        assert url == "ws://pms:32400/:/websockets/notifications"
+        assert "Token" not in url
+
+    def test_https_becomes_wss(self, client):
+        client._server._baseurl = "https://pms.example.com:32400"
+
+        assert client.notification_socket_url().startswith("wss://")

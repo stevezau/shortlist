@@ -23,6 +23,7 @@ from shortlist.engine.requests import QUEUE_REASON_PREFIXES
 from shortlist.server.db.models import (
     Collection,
     CollectionAudience,
+    CollectionUserOverride,
     Delivery,
     Event,
     PickRow,
@@ -37,7 +38,12 @@ from shortlist.server.db.models import (
 )
 from shortlist.server.services import jobs
 from shortlist.server.services.audit import add_audit
-from shortlist.server.services.watch_events import RowMembership, event_credits, session_progress
+from shortlist.server.services.watch_events import (
+    RowMembership,
+    _attribution_floor,
+    event_credits,
+    session_progress,
+)
 
 # Bounds the effectiveness report's MATURED cohort (a pick delivered more recently than this has not
 # had a fair chance to be watched yet). It no longer gates whether a pick is credited: that is
@@ -411,7 +417,12 @@ def reconcile_watched(sessions: sessionmaker[Session], profiles, live_picks: dic
         # How far each title actually got, keyed the same way the events are. Stamped onto the pick so
         # the report can separate "opened and closed" from "gave it a real go" without joining
         # sessions on every read.
-        progress = session_progress(session)
+        progress = session_progress(session, _attribution_floor(session))
+        # The snapshot path is NOT redundant now that events exist, and was very nearly deleted as
+        # such. It credits a title Plex flagged as watched with no play event behind it — 893 of one
+        # real user's 1,840 watched titles, 48%: marked watched by hand, bulk-marked, or watched
+        # before the log existed. None of those ever generated an event, so the event path is blind
+        # to them. It runs first and wins where it has an answer; this catches the rest.
         live = live_picks if live_picks is not None else live_pick_ids(session)
         for profile in profiles:
             user = session.query(User).filter_by(slug=profile.slug).first()
@@ -769,15 +780,37 @@ def _shared_audience(session: Session, slug: str) -> list[int] | None:
     audience.
     """
     collection = session.query(Collection).filter_by(slug=slug).first()
-    if collection is None or collection.audience != "subset":
+    if collection is None:
         return None
-    return sorted(
+    # Muted is the OTHER way someone does not get a row, and it applies to a public row too — so a
+    # snapshot that only looked at `collection_audience` would credit a shared row for a play by
+    # someone who had switched it off. Both are current state with no history, which is exactly why
+    # they are snapshotted here rather than read back at report time.
+    muted = {
+        account_id
+        for (account_id,) in session.query(User.plex_account_id)
+        .join(CollectionUserOverride, CollectionUserOverride.user_id == User.id)
+        .filter(
+            CollectionUserOverride.collection_id == collection.id,
+            CollectionUserOverride.muted.is_(True),
+        )
+        .all()
+    }
+    if collection.audience != "subset":
+        # Public: everyone EXCEPT anyone who muted it. `None` still means "no restriction at all", so
+        # a row nobody has muted keeps the cheap representation.
+        if not muted:
+            return None
+        everyone = {a for (a,) in session.query(User.plex_account_id).filter(User.removed_at.is_(None)).all()}
+        return sorted(everyone - muted)
+    audience = {
         account_id
         for (account_id,) in session.query(User.plex_account_id)
         .join(CollectionAudience, CollectionAudience.user_id == User.id)
         .filter(CollectionAudience.collection_id == collection.id)
         .all()
-    )
+    }
+    return sorted(audience - muted)
 
 
 def _persist_shared_row_report(session: Session, run_id: int, user_report, dry_run: bool) -> None:
