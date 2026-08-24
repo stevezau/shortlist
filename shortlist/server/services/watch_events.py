@@ -212,13 +212,14 @@ class RowMembership:
             if user_slug == f"{SHARED_SLUG_PREFIX}_{slug}"
         }
         self._shared_titles: dict[tuple[int, str], str] = {}
+        #: (slug, run_id) -> who could SEE that delivery; None = everyone. Filled by `_load_shared`.
+        self._audience: dict[tuple[str, int], set[int] | None] = {}
         #: (slug, run_id) -> who had the row switched OFF at that delivery. A deny-list, so a public
         #: row stays public: folding mutes into the audience froze it to whoever existed that night.
         self._shared_muted: dict[tuple[str, int], set[int]] = {}
         #: (slug, run_id) -> when that delivery landed, for rows that recorded it.
         self._shared_delivered: dict[tuple[str, int], datetime] = {}
         self._shared = self._load_shared()
-        self._audience = self._load_audience()
 
     def _load_per_person(self) -> dict[tuple[int, str, str], list[tuple[datetime, set[tuple[int, str]]]]]:
         """(user, row, library) -> the delivery timeline, oldest first: (delivered_at, title keys).
@@ -287,11 +288,13 @@ class RowMembership:
         out: dict[str, list[tuple[datetime, set[tuple[int, str]]]]] = defaultdict(list)
         # Oldest run first, so the title map below ends up holding the NEWEST rendering of each title
         # rather than whichever row SQLite happened to return first.
-        for slug, run_id, picks, delivered_at in (
+        for slug, run_id, picks, audience, muted, delivered_at in (
             self._session.query(
                 RunSharedRow.collection_slug,
                 RunSharedRow.run_id,
                 RunSharedRow.picks,
+                RunSharedRow.audience,
+                RunSharedRow.muted,
                 RunSharedRow.delivered_at,
             )
             # NEVER a dry run. `_persist_shared_row_report` writes `picks`, `audience` and
@@ -310,13 +313,26 @@ class RowMembership:
             .order_by(RunSharedRow.run_id)
             .all()
         ):
+            # Recorded before the guard below, because `_delivered_at` is the ONE place the "when did
+            # this row land" rule lives and it reads this map. That rule was written twice — here and
+            # in the helper — and two copies of the clock that decides credit TIMING is precisely the
+            # drift this feature has been bitten by. Rows the guard skips never reach `_audience`, and
+            # nothing reads a delivery time for a slug that is not in `_audience`.
+            if delivered_at:
+                self._shared_delivered[(slug, run_id)] = _as_utc(delivered_at)
             # The row's OWN delivery time, falling back to the run's start only for rows written
             # before that column existed. See `RunSharedRow.delivered_at`: a run persists each row as
             # it finishes, so its start can be tens of minutes early, and a play in that gap is judged
             # against contents Plex was not serving yet.
-            started = _as_utc(delivered_at) if delivered_at else self._run_started.get(run_id)
+            started = self._delivered_at(slug, run_id)
             if started is None or slug not in self._live_slugs:
                 continue
+            # Audience and mutes are filled HERE rather than by a second pass. They came from a
+            # separate query over the identical rows — same join, same dry-run filter — which is two
+            # reads of one table and two places for the filter to drift apart.
+            self._audience[(slug, run_id)] = audience if audience is None else set(audience)
+            if muted:
+                self._shared_muted[(slug, run_id)] = set(muted)
             keys = {
                 key
                 for p in (picks or [])
@@ -374,37 +390,6 @@ class RowMembership:
     def _delivered_at(self, slug: str, run_id: int) -> datetime | None:
         """When that shared row's contents landed, by the same rule `_load_shared` uses."""
         return self._shared_delivered.get((slug, run_id)) or self._run_started.get(run_id)
-
-    def _load_audience(self) -> dict[tuple[str, int], set[int] | None]:
-        """Who could SEE each shared row, per delivery. None = everyone.
-
-        Snapshotted on the run rather than read from `collection_audience`, which is current state:
-        without the snapshot, adding someone to a subset row today would retroactively credit watches
-        from before they could see it. NULL (every pre-0076 row) falls back to "everyone", which is no
-        worse than having no audience test at all — the state this replaces.
-        """
-        out: dict[tuple[str, int], set[int] | None] = {}
-        for slug, run_id, audience, muted, delivered_at in (
-            self._session.query(
-                RunSharedRow.collection_slug,
-                RunSharedRow.run_id,
-                RunSharedRow.audience,
-                RunSharedRow.muted,
-                RunSharedRow.delivered_at,
-            )
-            # Dry runs excluded here too, and this is the half that gating the writes would NOT have
-            # fixed: a preview's row carries `audience = NULL`, which `_shared_visible_to` reads as
-            # "everyone", and being the newest delivery it would decide visibility for a subset row.
-            .join(Run, Run.id == RunSharedRow.run_id)
-            .filter(Run.dry_run.isnot(True))
-            .all()
-        ):
-            out[(slug, run_id)] = audience if audience is None else set(audience)
-            if muted:
-                self._shared_muted[(slug, run_id)] = set(muted)
-            if delivered_at:
-                self._shared_delivered[(slug, run_id)] = _as_utc(delivered_at)
-        return out
 
     @staticmethod
     def _contained_at(

@@ -592,10 +592,9 @@ class WatchStream:
             # Never persisted and barely played: a mis-click, not a start.
             return
         # TWO attempts, and each one suppressed — because the failure this exists for is `_flush`
-        # RAISING, not returning quietly. A SQLite writer lock held past `busy_timeout` throws
-        # `OperationalError` out of the commit; an earlier version of this called `_flush` bare, so
-        # the retry below was unreachable, the warning never printed, and `ended_at`, `end_reason`
-        # and the credit pass were all skipped as well.
+        # RAISING, not returning quietly: a SQLite writer lock held past `busy_timeout` throws
+        # `OperationalError` out of the commit. Call it bare and the retry below is unreachable, the
+        # warning never prints, and `ended_at`, `end_reason` and the credit pass are skipped too.
         #
         # Worth two attempts because this is the one signal in the feature with no other source: a
         # completed watch is recoverable from the play log tomorrow, a partial one is recorded

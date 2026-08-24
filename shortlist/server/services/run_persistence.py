@@ -643,6 +643,61 @@ def _withdraw_unwatched(
     return withdrawn
 
 
+@dataclass(frozen=True)
+class _CreditInputs:
+    """Everything both credit passes need, built once from one read of the play log.
+
+    :func:`reconcile_from_events` and :func:`reconcile_watched` must see the SAME world — the cheap
+    pass runs seconds after someone presses stop and the full one runs hours later over the same
+    events, and a disagreement between them shows up as a credit that appears and then vanishes.
+    They used to build these independently, in the same order, from the same tables, which is two
+    copies of "what happened" and two places for it to drift.
+
+    `tmdb_of` and the raw scan stay inside the builder deliberately: they are how these are derived,
+    not something a caller should re-derive its own answer from.
+    """
+
+    membership: RowMembership
+    credits: dict[tuple[int, int, str], tuple[datetime, frozenset[str]]]
+    shared: dict[tuple[int, str, int, str], datetime]
+    progress: dict[tuple[int, int, str], tuple[datetime, int | None]]
+    observed: dict[int, set[tuple[int, str]]]
+
+
+def _credit_inputs(session: Session) -> _CreditInputs:
+    """Read the play log once and derive everything the credit passes decide from.
+
+    Membership is a question about the PAST — "was this in their row when they pressed play" —
+    answered from the play log's exact timestamps against the delivery history in `picks` + `runs`.
+
+    Built ONCE and handed to everything downstream. `tmdb_by_rating_key` is a DISTINCT over the
+    largest table in the schema (158,737 pick rows on a real server) and `_scan_plays` walks the whole
+    event log; between them the credit path was rebuilding both up to five times per pass, seven
+    passes a day, for byte-identical results.
+    """
+    membership = RowMembership(session)
+    tmdb_of = tmdb_by_rating_key(session)
+    scan = _scan_plays(session, tmdb_of)
+    # Every title we have WATCHED HAPPEN for each account — a session or a play-log entry.
+    # Used only to decide what `_withdraw_unwatched` must keep its hands off.
+    observed: dict[int, set[tuple[int, str]]] = defaultdict(set)
+    for account_id, _when, keys in scan:
+        observed[account_id] |= keys
+    return _CreditInputs(
+        membership=membership,
+        credits=event_credits(session, membership, scan),
+        # Shared rows credit into their own table: they write no pick rows, so before this they were
+        # invisible to watch tracking entirely — a title that lived only on a shared row credited
+        # nothing at all.
+        shared=shared_credits(session, membership, scan),
+        # How far each title actually got, keyed the same way the events are. Stamped onto the pick so
+        # the report can separate "opened and closed" from "gave it a real go" without joining
+        # sessions on every read.
+        progress=session_progress(session, _attribution_floor(session), tmdb_of),
+        observed=observed,
+    )
+
+
 def reconcile_from_events(sessions: sessionmaker[Session]) -> int:
     """Apply the credits that PLAYBACK alone can justify, reading nothing from Plex. Returns the
     number of people whose picks changed.
@@ -668,14 +723,15 @@ def reconcile_from_events(sessions: sessionmaker[Session]) -> int:
     """
     changed = 0
     with sessions() as session:
-        membership = RowMembership(session)
-        tmdb_of = tmdb_by_rating_key(session)
-        scan = _scan_plays(session, tmdb_of)
-        credits = event_credits(session, membership, scan)
-        shared = shared_credits(session, membership, scan)
+        inputs = _credit_inputs(session)
+        membership, credits, shared, progress = (
+            inputs.membership,
+            inputs.credits,
+            inputs.shared,
+            inputs.progress,
+        )
         if not credits and not shared:
             return 0
-        progress = session_progress(session, _attribution_floor(session), tmdb_of)
 
         # Only the people an event actually names. The full pass walks every profile it was handed;
         # here that would be 47 users to apply at most one person's watch.
@@ -758,35 +814,21 @@ def reconcile_watched(
             sweep, which rebuilds no rows, and wrong for a run, which already has.
     """
     with sessions() as session:
-        # Membership is now a question about the PAST — "was this in their row when they pressed
-        # play" — answered from the play log's exact timestamps against the delivery history in
-        # `picks` + `runs`. `live_picks` is the old snapshot path, kept only for the callers that
-        # have no event for a watch (a title Plex marked watched with no play recorded, which is 48%
-        # of one real user's watched set) and therefore still have to ask about now.
-        membership = RowMembership(session)
-        # Built ONCE and handed to everything below. `tmdb_by_rating_key` is a DISTINCT over the
-        # largest table in the schema (158,737 pick rows on a real server) and `_scan_plays` walks the
-        # whole event log; between them the credit path was rebuilding both up to five times per pass,
-        # seven passes a day, for byte-identical results.
-        tmdb_of = tmdb_by_rating_key(session)
-        scan = _scan_plays(session, tmdb_of)
-        # Every title we have WATCHED HAPPEN for each account — a session or a play-log entry.
-        # Used only to decide what `_withdraw_unwatched` must keep its hands off.
-        observed: dict[int, set[tuple[int, str]]] = defaultdict(set)
-        for account_id, _when, keys in scan:
-            observed[account_id] |= keys
-        credits = event_credits(session, membership, scan)
-        # Shared rows credit into their own table: they write no pick rows, so before this they were
-        # invisible to watch tracking entirely — a title that lived only on a shared row credited
-        # nothing at all.
-        shared = shared_credits(session, membership, scan)
+        # The same world the cheap pass sees — see `_credit_inputs`. `live_picks` below is the old
+        # snapshot path, kept only for the watches that produced no event (a title Plex marked watched
+        # with no play recorded, 48% of one real user's watched set) and therefore still have to be
+        # asked about as of now.
+        inputs = _credit_inputs(session)
+        membership, credits, shared, progress, observed = (
+            inputs.membership,
+            inputs.credits,
+            inputs.shared,
+            inputs.progress,
+            inputs.observed,
+        )
         shared_rows: dict[int, dict[tuple[str, int, str], SharedRowWatch]] = defaultdict(dict)
         for row in session.query(SharedRowWatch).all():
             shared_rows[row.user_id][(row.collection_slug, row.tmdb_id, row.media_type)] = row
-        # How far each title actually got, keyed the same way the events are. Stamped onto the pick so
-        # the report can separate "opened and closed" from "gave it a real go" without joining
-        # sessions on every read.
-        progress = session_progress(session, _attribution_floor(session), tmdb_of)
         # The snapshot path is NOT redundant now that events exist, and was very nearly deleted as
         # such. It credits a title Plex flagged as watched with no play event behind it — 893 of one
         # real user's 1,840 watched titles, 48%: marked watched by hand, bulk-marked, or watched
@@ -1131,33 +1173,21 @@ def _shared_audience(session: Session, slug: str) -> list[int] | None:
     collection = session.query(Collection).filter_by(slug=slug).first()
     if collection is None:
         return None
-    # Muted is the OTHER way someone does not get a row, and it applies to a public row too — so a
-    # snapshot that only looked at `collection_audience` would credit a shared row for a play by
-    # someone who had switched it off. Both are current state with no history, which is exactly why
-    # they are snapshotted here rather than read back at report time.
-    muted = {
-        account_id
-        for (account_id,) in session.query(User.plex_account_id)
-        .join(CollectionUserOverride, CollectionUserOverride.user_id == User.id)
-        .filter(
-            CollectionUserOverride.collection_id == collection.id,
-            CollectionUserOverride.muted.is_(True),
-        )
-        .all()
-    }
     if collection.audience != "subset":
-        # Public stays PUBLIC. The mutes travel separately (`RunSharedRow.muted`) rather than being
-        # subtracted into a concrete list here — doing that froze the row's audience to whoever
-        # existed that night, and anyone invited afterwards could never be credited for it.
+        # Public is public. `None` means no allow-list at all.
         return None
-    audience = {
+    # The allow-list ONLY. Mutes are a separate deny-list (`_shared_muted` / `RunSharedRow.muted`),
+    # and subtracting them here was the bug migration 0080 exists to kill — applied, at first, to
+    # only half its cases. Baking a mute into the allow-list makes it permanent: un-mute the person
+    # tomorrow and the deny-list lets them back in, but the frozen allow-list never will. It also
+    # excluded them twice, from two places that then disagreed about whose job mutes were.
+    return sorted(
         account_id
         for (account_id,) in session.query(User.plex_account_id)
         .join(CollectionAudience, CollectionAudience.user_id == User.id)
         .filter(CollectionAudience.collection_id == collection.id)
         .all()
-    }
-    return sorted(audience - muted)
+    )
 
 
 def _persist_shared_row_report(session: Session, run_id: int, user_report, dry_run: bool) -> None:
