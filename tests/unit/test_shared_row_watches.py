@@ -1271,3 +1271,122 @@ class TestStoppingPlaybackCreditsImmediately:
         with world() as s:
             rows = s.query(SharedRowWatch).all()
             assert len(rows) == 1 and rows[0].watched_at == before
+
+
+class TestUnwatchingWithdrawsOnlyAFlagBackedCredit:
+    """Someone can un-watch a title, and Plex marks things watched wrongly often enough that
+    correcting it is normal housekeeping. Nothing withdrew a credit, so one bad flag counted toward
+    the hit rate for ever and the headline number could only ever drift upward.
+
+    But a credit we WATCHED HAPPEN is a fact about a moment, not a mirror of a checkbox — and a
+    partial watch never sets the flag at all, so withdrawing on absence alone would delete the exact
+    signal this whole feature exists to capture."""
+
+    def a_credited_pick(self, world, *, tmdb, rating_key=0, title="T"):
+        with world() as s:
+            s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
+            s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=tmdb,
+                    media_type="movie",
+                    rating_key=rating_key,
+                    rank=1,
+                    title=title,
+                    created_at=NOW - timedelta(days=2),
+                    watched_at=NOW - timedelta(days=1),
+                )
+            )
+            s.commit()
+
+    def sync(self, world, history, *, full):
+        reconcile_watched(world, [profile(history)], full_resync=full)
+
+    def test_a_flag_only_credit_is_withdrawn_when_the_flag_goes(self, world):
+        self.a_credited_pick(world, tmdb=510)
+        # Their history no longer contains it, but DOES contain something — a real read that came back.
+        other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
+
+        self.sync(world, other, full=True)
+
+        with world() as s:
+            assert s.query(PickRow).filter_by(tmdb_id=510).one().watched_at is None
+
+    def test_a_credit_we_watched_happen_survives(self, world):
+        """The partial watch. It never sets Plex's flag, so it is absent from every history read —
+        withdrawing on absence would delete it the moment after it was credited."""
+        self.a_credited_pick(world, tmdb=550, rating_key=9001, title="Fight Club")
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
+        other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
+
+        self.sync(world, other, full=True)
+
+        with world() as s:
+            assert s.query(PickRow).filter_by(tmdb_id=550).one().watched_at is not None
+
+    def test_an_incremental_read_withdraws_nothing(self, world):
+        """It sees an un-watch only inside the window it covered, so "absent from this read" would
+        withdraw half a roster's credits on any night the cursor was narrow."""
+        self.a_credited_pick(world, tmdb=510)
+        other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
+
+        self.sync(world, other, full=False)
+
+        with world() as s:
+            assert s.query(PickRow).filter_by(tmdb_id=510).one().watched_at is not None
+
+    def test_an_empty_history_withdraws_nothing(self, world):
+        """A read that failed and a person who has watched nothing are indistinguishable here, and
+        wrongly wiping real history is far worse than one stale credit."""
+        self.a_credited_pick(world, tmdb=510)
+
+        self.sync(world, [], full=True)
+
+        with world() as s:
+            assert s.query(PickRow).filter_by(tmdb_id=510).one().watched_at is not None
+
+    def test_a_title_still_watched_is_untouched(self, world):
+        self.a_credited_pick(world, tmdb=510)
+        still = [WatchedItem(title="T", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=510)]
+
+        self.sync(world, still, full=True)
+
+        with world() as s:
+            assert s.query(PickRow).filter_by(tmdb_id=510).one().watched_at is not None
+
+    def test_withdrawing_clears_the_completion_too(self, world):
+        """A finish is a stronger claim than a watch. Leaving it behind would give a pick that is
+        finished but not watched — which the report reads as a segment wider than its own bar."""
+        with world() as s:
+            s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
+            s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=510,
+                    media_type="movie",
+                    rating_key=0,
+                    rank=1,
+                    title="T",
+                    created_at=NOW - timedelta(days=2),
+                    watched_at=NOW - timedelta(days=1),
+                    finished_at=NOW - timedelta(hours=12),
+                )
+            )
+            s.commit()
+        other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
+
+        self.sync(world, other, full=True)
+
+        with world() as s:
+            row = s.query(PickRow).filter_by(tmdb_id=510).one()
+            assert row.watched_at is None and row.finished_at is None

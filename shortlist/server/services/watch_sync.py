@@ -274,7 +274,7 @@ class WatchSync:
         *,
         build_context: Callable[..., object],
         enabled_profiles: Callable[[Session], list],
-        reconcile_watched: Callable[[list], None],
+        reconcile_watched: Callable[..., None],
         run_lock: asyncio.Lock,
     ) -> None:
         """Refresh every enabled user's ``watched_at`` (and the owner's — see ``_with_owner``) from
@@ -333,7 +333,9 @@ class WatchSync:
                 logger.warning(
                     "watch-sync: play-history read failed ({}) — watched state is still fresh", type(e).__name__
                 )
-            reconcile_watched(profiles)
+            # `force_full` gates the un-watch withdrawal: only a COMPLETE re-read can tell a title
+            # someone un-watched from one this pass simply did not look at.
+            reconcile_watched(profiles, full_resync=force_full)
             with self._sessions() as session:
                 store = SettingsStore(session)
                 # Stamp the sync so the dashboard can show "watch status synced N ago".

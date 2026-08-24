@@ -288,6 +288,13 @@ GET  /api/report?window=7|30|90|all -> {window, since, first_pick, overall, tren
      per-(person, title) outcome — a title on both a personal and a shared row is one thing that person watched, counted once.
      A shared-row credit needs a play the delivery ledger and the run's own audience snapshot both agree that person could see at the time;
      Plex's watched flag alone never credits one, because everyone sees a shared row and a popular title would otherwise credit for everyone.
+     Un-watching in Plex WITHDRAWS a credit, but only one that Plex's flag was the sole evidence for, and only on the weekly
+     complete re-read. A credit backed by playback we observed — a live session or a play-log entry — is kept: it is a fact
+     about a moment, not a mirror of a checkbox, and a partial watch never sets the flag at all, so withdrawing on absence
+     would delete the exact signal this feature exists to capture. An incremental read withdraws nothing (it sees an un-watch
+     only inside the window it covered), and neither does a read that came back empty for someone.
+     Resuming later needs nothing special: progress is the furthest across ALL sittings and only ever moves up, so a second
+     sitting extends the percentage, while the credit stays pinned to the first time they pressed play.
      Every figure that counts a WATCH includes them: `overall.watched`/`finished`/`watchers`, `bounced`/`dropped`, `trend`, `per_user`, `per_row`,
      `top_titles` and `recent`. The one that does not is `delivered` (and `landing`, which is a ratio of delivered to watched): a shared row is ONE
      collection for the whole server, so there is no per-person delivery to count and inventing one would be a number with no referent. A shared
