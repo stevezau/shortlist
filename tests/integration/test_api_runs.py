@@ -1205,6 +1205,64 @@ class TestRunsApi:
         assert requests["sent"] == 1
         assert requests["watched_after_sent"] == 1, "a shared-row watch is still a watch"
 
+    def test_a_title_watched_before_AND_after_the_request_still_counts(self, client: TestClient):
+        """Merging the personal and shared watch times takes the LATEST of the two, not the earliest.
+
+        The question is "did asking for this lead to a watch", so any watch after the send answers
+        yes. Someone who saw it once before it was requested and again after — the ordinary case for
+        a title deleted and re-requested — is a request that paid off. Taking the earliest instead
+        reports the pre-request viewing and scores it zero. Both directions survived a mutation audit
+        of this merge, because no fixture had a title watched twice.
+        """
+        from shortlist.server.db.models import PickRow, RequestCandidate, Run, SharedRowWatch
+
+        with client.app.state.sessions() as session:
+            uid = session.query(User).order_by(User.id).first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            now = datetime.now(UTC)
+            # Watched on a personal row BEFORE the request...
+            session.add(
+                PickRow(
+                    run_id=run.id,
+                    user_id=uid,
+                    tmdb_id=6161,
+                    media_type="movie",
+                    rating_key=6161,
+                    rank=1,
+                    collection_slug="picked",
+                    title="Seen It Twice",
+                    created_at=now - timedelta(days=20),
+                    watched_at=now - timedelta(days=15),
+                )
+            )
+            # ...requested ten days ago...
+            session.add(
+                RequestCandidate(
+                    tmdb_id=6161,
+                    media_type="movie",
+                    title="Seen It Twice",
+                    status="sent",
+                    sent_at=now - timedelta(days=10),
+                )
+            )
+            # ...and watched again off the shared row AFTER it arrived.
+            session.add(
+                SharedRowWatch(
+                    user_id=uid,
+                    collection_slug="staff",
+                    tmdb_id=6161,
+                    media_type="movie",
+                    title="Seen It Twice",
+                    watched_at=now - timedelta(days=1),
+                )
+            )
+            session.commit()
+
+        requests = client.get("/api/report?window=30").json()["requests"]
+        assert requests["watched_after_sent"] == 1, "the later watch is the one that answers the question"
+
     def test_report_uses_the_real_send_time_not_a_timestamp_that_drifts(self, client: TestClient):
         """`updated_at` has `onupdate`, so clearing an old title from the Sent log bumped it and pulled
         a months-old request into a recent window. `sent_at` is stamped once and cannot drift."""

@@ -82,6 +82,29 @@ def _earliest(*values: datetime | None) -> datetime | None:
     return min(known) if known else None
 
 
+def _period_is_comparable(started_running: datetime | None, prev_since: datetime | None) -> bool:
+    """Is the previous period one Shortlist was installed for its WHOLE length?
+
+    A pure function so the boundary can actually be tested. `effectiveness` reads its own clock, so
+    from outside there is no way to land a timestamp exactly on `prev_since` — the `<=` here was
+    therefore untestable through the API and a mutation to `<` survived a full audit.
+
+    `<=`, not `<`: an app whose first evidence lands exactly at the previous window's start covered
+    that window completely. Refusing it throws away a fair comparison on the one day it first
+    becomes available.
+
+    Args:
+        started_running: Earliest evidence Shortlist was running — first pick or first run.
+        prev_since: Start of the previous period, or None for the `all` window.
+
+    Returns:
+        True when a previous-period figure is worth computing at all.
+    """
+    if prev_since is None or started_running is None:
+        return False
+    return started_running <= prev_since
+
+
 def _as_utc(value: datetime) -> datetime:
     """SQLite hands back naive datetimes for some columns and aware ones for others; comparing the
     two raises. Treat naive as UTC, which is what every writer in this app stores."""
@@ -755,7 +778,7 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
     started_running = _earliest(
         _as_utc_or_none(first_pick_at), _as_utc_or_none(session.query(func.min(Run.started_at)).scalar())
     )
-    comparable = prev_since is not None and started_running is not None and started_running <= prev_since
+    comparable = _period_is_comparable(started_running, prev_since)
     per_user_raw = _counts(session, PickRow.user_id, _TITLE, since, SharedRowWatch.user_id, _SHARED_TITLE)
     # A row that targets >1 library is one Plex collection PER library, so it's tracked per
     # (row, library) — each library gets its own delivered/watched line, keyed (slug, section, library).

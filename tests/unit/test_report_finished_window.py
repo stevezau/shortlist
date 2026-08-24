@@ -304,12 +304,18 @@ class TestADeltaNeedsAPreviousPeriodToCompareAgainst:
         seed(sessions, tmdb_id=1, delivered_ago=3, watched_ago=3, finished_ago=3)
 
         with sessions() as session:
-            overall = effectiveness(session, "30")["overall"]
+            report = effectiveness(session, "30")
+        overall = report["overall"]
 
         assert overall["watched"] == 1
+        # EVERY previous-period figure, not just the headline one. Asserting `watched_prev` alone is
+        # how `runs.in_window_delta` was missed the first time, and a mutation audit of this very fix
+        # then found `watchers_prev` and `avg_prev` unpinned as well. The guard is one decision; the
+        # test covers all of what it decides.
         assert overall["watched_prev"] is None, "there was no previous period to count"
         assert overall["watched_delta"] is None, "a comparison against an uninstalled app is not growth"
         assert overall["avg_days_to_watch_delta"] is None, "already None; the pair must agree"
+        assert report["coverage"]["users_watched_delta"] is None, "watchers_prev needs the same guard"
 
     def test_the_delta_still_works_once_there_is_real_history(self, sessions):
         # First pick 40 days ago, so a 7-day window's previous period (days 14-7) sits well inside
@@ -324,6 +330,55 @@ class TestADeltaNeedsAPreviousPeriodToCompareAgainst:
         assert overall["watched"] == 2
         assert overall["watched_prev"] == 1
         assert overall["watched_delta"] == 1, "two this week against one last week is a real +1"
+
+    def test_a_partly_covered_previous_period_is_still_no_comparison(self, sessions):
+        """The case that separates `if comparable` from `if since` on the AVERAGES.
+
+        A count over a period the app half-existed in is a truthful 0 only when nothing happened.
+        Put a real watch inside the previous window while the app is younger than that window, and
+        `avg_prev`/`watchers_prev` become genuine numbers over a period that is two-thirds
+        pre-installation — an undercount that biases every delta toward good news.
+        """
+        # First pick 10 days ago. A 7-day window's previous period runs from day 14 to day 7, so the
+        # app existed for only the last three days of it — and there is a real watch in that sliver.
+        seed(sessions, tmdb_id=1, delivered_ago=10, watched_ago=9, finished_ago=9)  # inside prev period
+        seed(sessions, tmdb_id=2, delivered_ago=10, watched_ago=2, finished_ago=2)  # current period
+
+        with sessions() as session:
+            report = effectiveness(session, "7")
+        overall = report["overall"]
+
+        assert overall["watched"] == 1, "one watch inside the current window"
+        assert overall["watched_prev"] is None, "counted a period the app existed for 3 of 7 days"
+        assert report["coverage"]["users_watched_delta"] is None
+        assert overall["avg_days_to_watch_delta"] is None, "averaged over a partly pre-install window"
+
+    def test_an_app_that_started_exactly_when_the_window_opens_is_comparable(self):
+        """`<=`, not `<`, tested at the exact instant.
+
+        Through `effectiveness` this boundary is unreachable: it reads its own clock, so a fixture
+        can never land a timestamp exactly on `prev_since` and the flip to `<` survived a full
+        mutation audit. `_period_is_comparable` exists as a named function so the rule can be asked
+        directly.
+        """
+        from shortlist.server.services.report_service import _period_is_comparable
+
+        opens = datetime(2026, 8, 10, 17, 30, tzinfo=UTC)
+
+        assert _period_is_comparable(opens, opens) is True, "started exactly at the window's open"
+        assert _period_is_comparable(opens - timedelta(microseconds=1), opens) is True
+        assert _period_is_comparable(opens + timedelta(microseconds=1), opens) is False, (
+            "one microsecond into the window is not the whole window"
+        )
+
+    def test_no_previous_period_and_no_evidence_are_both_not_comparable(self):
+        """The `all` window has no previous period; an empty database has no start."""
+        from shortlist.server.services.report_service import _period_is_comparable
+
+        when = datetime(2026, 8, 10, tzinfo=UTC)
+        assert _period_is_comparable(when, None) is False
+        assert _period_is_comparable(None, when) is False
+        assert _period_is_comparable(None, None) is False
 
     def test_the_runs_delta_is_guarded_too(self, sessions):
         """The site the first version of this guard missed. `runs.in_window_delta` is the same
@@ -461,6 +516,53 @@ class TestTwoSharedRowsCarryingOneTitle:
         assert entry["row"] == "a_row", (
             f"inserted {order} and got {entry['row']!r} — the label follows insertion order, not a rule"
         )
+
+
+class TestASharedRowIsNotLabelledWithAPersonalRowsLibrary:
+    def test_the_library_is_cleared_when_a_shared_row_wins_the_outcome(self, sessions):
+        """`engagement` renders `namer.label(row, library)`. A shared row is ONE collection and is not
+        inside the personal row's library, so carrying the old value over prints a shared TV row under
+        a Movies heading. The clearing was commented but never tested — a mutation that kept the
+        personal library left the suite green.
+        """
+        from shortlist.server.db.models import PickRow, SharedRowWatch
+        from shortlist.server.services.report_service import resolve_outcomes
+
+        with sessions() as session:
+            # A personal row in Movies, watched LATER...
+            session.add(
+                PickRow(
+                    user_id=1,
+                    tmdb_id=550,
+                    media_type="movie",
+                    rating_key=550,
+                    rank=1,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="Movies",
+                    title="Fight Club",
+                    created_at=NOW - timedelta(days=20),
+                    watched_at=NOW - timedelta(days=1),
+                )
+            )
+            # ...and a shared row watched EARLIER, so the shared row wins the outcome.
+            session.add(
+                SharedRowWatch(
+                    user_id=1,
+                    collection_slug="staff",
+                    tmdb_id=550,
+                    media_type="movie",
+                    title="Fight Club",
+                    watched_at=NOW - timedelta(days=5),
+                )
+            )
+            session.commit()
+
+        with sessions() as session:
+            entry = resolve_outcomes(session, None)[(1, 550, "movie")]
+
+        assert entry["row"] == "staff", "the earlier watch should own the outcome"
+        assert entry["library"] == "", "kept the personal row's library on a shared row's label"
 
 
 class TestTheEngagementDetailSurvivesARosterChange:
