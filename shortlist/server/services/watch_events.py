@@ -243,7 +243,7 @@ class RowMembership:
         # A run persists each person as they finish, so `created_at` trails the run's start by minutes
         # to tens of minutes (a TV collection write alone costs ~16.5s, times 47 people). Two clocks
         # meant two silent failures: `event_credits` would say a title was in the row while
-        # `_credit_from_events` found no pick old enough to stamp — a credit computed and thrown away,
+        # `_apply_outcomes` found no pick old enough to stamp — a credit computed and thrown away,
         # permanently, because a watched title is never re-delivered; and a play during a run was
         # judged against the row the run was BUILDING rather than the one Plex was still serving.
         delivered_at: dict[tuple[int, str, str, int], datetime] = {}

@@ -334,7 +334,7 @@ class WatchStream:
                 await self._sleep(60)
                 continue
             try:
-                # `_reset_delay` is handed in so the backoff clears the moment the socket CONNECTS,
+                # `_mark_connected` is handed in so the backoff clears the moment the socket CONNECTS,
                 # not when `_listen` returns — which only happens on shutdown. Every real drop goes
                 # through the `except` below, so the delay used to double monotonically for the life
                 # of the process and settle at two minutes of unobserved playback per blip.

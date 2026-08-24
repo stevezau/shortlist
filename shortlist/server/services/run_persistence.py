@@ -284,8 +284,8 @@ class _Outcome:
     """Everything concluded about one (person, title), before any of it is written.
 
     The whole point is that this is decided ONCE. Five separate call sites used to write these three
-    columns — `_credit_from_events`, the candidate loop, `_stamp_percent`, `_spread_credit` and
-    `_refresh_finished_progress` — and every ordering bug this feature has had came from that: a
+    columns — five writers across three columns, since collapsed into this one pair — and every
+    ordering bug this feature has had came from that: a
     percentage walking backwards because one writer had the guard and another did not, a credit and a
     percentage landing on different delivery rows, a completion dated before its own credit. With one
     decider and one writer those are not bugs to fix, they are states that cannot be represented.
