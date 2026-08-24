@@ -745,12 +745,20 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
     # Reach: who's actually covered. `users_enabled`/`rows_enabled` describe the server as it is
     # NOW, so they are deliberately not windowed — "3 of 11 people" only reads if 11 is current.
     users_enabled = sum(1 for u in users.values() if u.enabled)
-    users_with_picks = (
-        session.query(func.count(func.distinct(PickRow.user_id)))
-        .filter(*_in_period(PickRow.created_at, since))
-        .scalar()
-        or 0
-    )
+    got_picks = {
+        uid for (uid,) in session.query(PickRow.user_id).distinct().filter(*_in_period(PickRow.created_at, since))
+    }
+    users_with_picks = len(got_picks)
+    # Computed here, from the SAME window and the same people, rather than left to the caller as
+    # `users_with_picks - users_watched`. Those two are differently scoped: `users_watched` counts
+    # anyone who watched in the window, including someone whose pick was delivered LAST month and
+    # someone the owner has since disabled. Subtracting them could reach zero while people who got
+    # picks this week had watched nothing — the dashboard then printing "everyone who got a pick
+    # watched something", which was false and unfalsifiable from the numbers beside it.
+    watched_in_window = {uid for (uid,) in session.query(PickRow.user_id).distinct().filter(*_watched_in(since))} | {
+        uid for (uid,) in session.query(SharedRowWatch.user_id).distinct().filter(*_shared_watched_in(since))
+    }
+    users_idle = len(got_picks - watched_in_window)
     rows_enabled = session.query(func.count(Collection.id)).filter(Collection.enabled.is_(True)).scalar() or 0
 
     # Runs. `total` stays all-time (it is the odometer); `in_window` is what the delta is about.
@@ -880,6 +888,9 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
             "users_enabled": users_enabled,
             "users_total": len(users),
             "users_with_picks": users_with_picks,
+            #: Got a pick in this window and watched none of it. NOT `users_with_picks -
+            #: users_watched`; see above for why that subtraction lies.
+            "users_idle": users_idle,
             "users_watched": watchers_now,
             "users_watched_delta": _delta(watchers_now, watchers_prev),
             "rows_enabled": rows_enabled,

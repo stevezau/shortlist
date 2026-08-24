@@ -62,7 +62,8 @@ export const queryKeys = {
   // what each windowed query itself is keyed on.
   report: ["report"] as const,
   reportWindow: (window: ReportWindow) => ["report", window] as const,
-  engagement: (window: ReportWindow) => ["report", "engagement", window] as const,
+  engagement: (window: ReportWindow) =>
+    ["report", "engagement", window] as const,
   deletedRows: ["report", "deleted-rows"] as const,
   schedule: ["schedule"] as const,
   libraries: ["libraries"] as const,
@@ -705,7 +706,11 @@ export function useSyncWatched() {
   const queryClient = useQueryClient();
   useSSE({
     onSyncFinished: (event) => {
-      if (event.kind === "watched") {
+      // Both kinds move the report: `watched` is the nightly sync re-reading Plex, `credited` is the
+      // live pass that runs the moment someone stops playing a pick. They are separate kinds because
+      // the Jobs page announces `watched` as "watch history is up to date", which is a claim the
+      // live pass cannot make — it reads nothing from Plex.
+      if (event.kind === "watched" || event.kind === "credited") {
         void queryClient.invalidateQueries({ queryKey: queryKeys.report });
       }
     },

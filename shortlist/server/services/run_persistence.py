@@ -697,8 +697,10 @@ def reconcile_watched(
     row (that is what being watched does), so re-testing membership when they finish a series months
     later would refuse to upgrade a single "started" to "finished".
 
-    A new credit is then carried back onto the title's earlier delivery rows by :func:`_spread_credit`
-    — the membership test decides IF, those rows decide where the report can see it.
+    A new credit is carried onto every delivery row of that title by :func:`_apply_outcomes`, subject
+    to its two bounds — `created_at <= watched_at` (a delivery made after they watched cannot be why)
+    and `collection_slug in slugs` (only rows that were actually showing it). The membership test
+    decides IF; those bounds decide where the report can see it.
 
     Args:
         sessions: Session factory; one session covers the whole reconcile.
@@ -1120,6 +1122,9 @@ def _persist_shared_row_report(session: Session, run_id: int, user_report, dry_r
     row.trace = user_report.trace
     row.picks = _pick_dicts(user_report)
     row.audience = _shared_audience(session, slug)
+    # Stamped HERE, as the row is persisted, which is the moment its contents are on Plex. See the
+    # column's own comment for why `Run.started_at` is the wrong clock.
+    row.delivered_at = datetime.now(UTC)
     if not dry_run:
         _forget_removed_deliveries(session, user_report.slug, user_report.removed_deliveries)
         _record_deliveries(session, user_report.slug, breakdown)

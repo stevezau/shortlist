@@ -934,6 +934,9 @@ class TestRunsApi:
             "users_enabled",
             "users_total",
             "users_with_picks",
+            # Emitted, not derived: the UI cannot compute it from the two beside it, which count
+            # differently-scoped populations.
+            "users_idle",
             "users_watched",
             "users_watched_delta",
             "rows_enabled",

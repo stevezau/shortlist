@@ -34,7 +34,11 @@ type Problem = {
 
 /** People who were given picks and watched none of them — the biggest silent failure there is. */
 function idlePeople(coverage: EffectivenessReport["coverage"]): Problem | null {
-  const idle = coverage.users_with_picks - coverage.users_watched;
+  // Straight from the API. Deriving it as `users_with_picks - users_watched` subtracted two
+  // differently-scoped populations — the second counts anyone who watched in the window, including
+  // someone whose pick landed last month — so it could reach zero while people who got picks this
+  // week had watched nothing, and the card would then claim everyone had watched something.
+  const idle = coverage.users_idle;
   if (idle <= 0) return null;
   return {
     key: "idle",

@@ -1482,3 +1482,160 @@ class TestAWithdrawnCreditLeavesNothingBehind:
             assert row.watched_at is None
             assert row.max_percent is None, "it would still render as a drop"
             assert resolve_outcomes(s, None) == {}
+
+
+class TestUnwatchingAndSharedRows:
+    """Withdrawal never touches `shared_row_watches`, and that is correct rather than an oversight —
+    but it is only correct because of a property of `shared_credits` that nothing pinned."""
+
+    def test_a_shared_credit_always_has_playback_behind_it(self, world):
+        """`shared_credits` has no snapshot path: it reads `_scan_plays` and nothing else. So every
+        shared credit is one we WATCHED HAPPEN, which is exactly the class `_withdraw_unwatched`
+        refuses to take back. If a snapshot path were ever added here, shared credits would become
+        withdrawable and this would need revisiting."""
+        a_pick_so_the_rating_key_resolves(world)
+        # Plex says watched, but there is no session and no play-log entry.
+        history = [WatchedItem(title="Fight Club", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=550)]
+
+        reconcile_watched(world, [profile(history)], full_resync=True)
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 0, (
+                "a flag alone must never credit a shared row — everyone can see one, so a merely "
+                "popular title would credit for everybody"
+            )
+
+    def test_un_watching_leaves_a_shared_credit_that_was_really_played(self, world):
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
+        reconcile_watched(world, [profile()])
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 1
+
+        # They un-watch it: it is absent from a full history read.
+        other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
+        reconcile_watched(world, [profile(other)], full_resync=True)
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 1, "we saw them press play; that still happened"
+
+
+class TestTheIdleCountIsNotASubtraction:
+    """`users_with_picks - users_watched` subtracts two differently-scoped populations: the second
+    counts anyone who WATCHED in the window, including someone whose pick was delivered last month.
+    So it can reach zero while people who got picks this week watched nothing — and the dashboard
+    then prints "everyone who got a pick watched something", which is false."""
+
+    def test_someone_watching_an_older_pick_does_not_cancel_out_an_idle_person(self, world):
+        from shortlist.server.services.report_service import effectiveness
+
+        with world() as s:
+            s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
+            s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
+            s.add(Delivery(collection_slug="mine", user_slug="sam", library_key="1", rating_key=601))
+            # Alex got a pick THIS window and watched nothing.
+            s.add(
+                PickRow(
+                    run_id=2,
+                    user_id=1,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=700,
+                    media_type="movie",
+                    rating_key=0,
+                    rank=1,
+                    title="Ignored",
+                    created_at=NOW - timedelta(days=1),
+                )
+            )
+            # Sam got hers LAST month and watched it yesterday — a watcher, but not one of the
+            # people this window delivered to.
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=3,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=701,
+                    media_type="movie",
+                    rating_key=0,
+                    rank=1,
+                    title="Older",
+                    created_at=NOW - timedelta(days=40),
+                    watched_at=NOW - timedelta(days=1),
+                )
+            )
+            s.commit()
+
+        with world() as s:
+            cov = effectiveness(s, "30")["coverage"]
+
+        assert cov["users_with_picks"] == 1, "only alex was delivered to in this window"
+        assert cov["users_watched"] == 1, "sam watched in it"
+        assert cov["users_idle"] == 1, "alex got a pick and watched nothing — the subtraction would have said 0"
+
+    def test_a_shared_only_watcher_counts_as_having_watched(self, world):
+        from shortlist.server.services.report_service import effectiveness
+
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            cov = effectiveness(s, "30")["coverage"]
+        assert cov["users_watched"] >= 1
+
+
+class TestASharedRowIsTimedByItsOwnDelivery:
+    """`Run.started_at` is the wrong clock, and the per-person path already knew it: a run persists
+    each row as it finishes, so its start trails the delivery by minutes to tens of minutes.
+
+    Judging a play against the run's START judges it against the row the run was BUILDING rather than
+    the one Plex was still serving. The drop direction is permanent — a watched title is never
+    re-delivered, so no later play can rescue the credit."""
+
+    def test_a_play_during_a_long_run_is_judged_against_what_plex_was_serving(self, world):
+        run_started = NOW - timedelta(hours=2)
+        landed = NOW - timedelta(minutes=20)  # 100 minutes later — a real run's shape
+        played = NOW - timedelta(hours=1)  # mid-run, while the OLD contents were still up
+        with world() as s:
+            s.add(Run(id=3, trigger="schedule", status="ok", started_at=run_started))
+            # The run REMOVED Fight Club from the row. Its new contents landed at `landed`.
+            s.add(
+                RunSharedRow(
+                    run_id=3,
+                    collection_slug="staff",
+                    row_title="Staff Picks",
+                    status="ok",
+                    picks=[{"tmdb_id": 999, "media_type": "movie", "rating_key": 1, "title": "Something Else"}],
+                    audience=None,
+                    delivered_at=landed,
+                )
+            )
+            s.commit()
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=played, offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            credited = s.query(SharedRowWatch).filter_by(tmdb_id=550).count()
+        assert credited == 1, (
+            "Plex was still serving the old collection when they pressed play — dating the new "
+            "contents to the run's start would have silently refused this credit for ever"
+        )
+
+    def test_a_row_written_before_the_column_existed_still_works(self, world):
+        """NULL `delivered_at` falls back to `Run.started_at` — the behaviour those rows already had,
+        rather than a backfill inventing a precision the old data never carried."""
+        with world() as s:
+            assert s.query(RunSharedRow).filter_by(run_id=1).one().delivered_at is None
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).filter_by(tmdb_id=550).count() == 1

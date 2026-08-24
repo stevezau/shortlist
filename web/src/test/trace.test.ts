@@ -365,7 +365,12 @@ describe("shortlistBreakdown — the per-title answer to 'what survived and why'
   const lib = (sources: unknown[]) =>
     ({ sources, webSource: null }) as unknown as LibraryView;
 
-  const src = (name: string, returned: unknown[], media = "movie", total?: number) => ({
+  const src = (
+    name: string,
+    returned: unknown[],
+    media = "movie",
+    total?: number,
+  ) => ({
     source: name,
     status: "ok",
     contributed: 0,
@@ -377,15 +382,40 @@ describe("shortlistBreakdown — the per-title answer to 'what survived and why'
     const out = shortlistBreakdown(
       lib([
         src("tmdb_similar", [
-          { tmdb_id: 1, title: "Kept One", fate: "kept", year: 2024, rating: 8, age_weight: 1 },
-          { tmdb_id: 2, title: "Cut One", fate: "lost_ranking_cutoff", year: 1999, rating: 9, age_weight: 0.3 },
-          { tmdb_id: 3, title: "Seen It", fate: "already_watched", year: 2020, rating: 7 },
+          {
+            tmdb_id: 1,
+            title: "Kept One",
+            fate: "kept",
+            year: 2024,
+            rating: 8,
+            age_weight: 1,
+          },
+          {
+            tmdb_id: 2,
+            title: "Cut One",
+            fate: "lost_ranking_cutoff",
+            year: 1999,
+            rating: 9,
+            age_weight: 0.3,
+          },
+          {
+            tmdb_id: 3,
+            title: "Seen It",
+            fate: "already_watched",
+            year: 2020,
+            rating: 7,
+          },
         ]),
       ]),
     );
     expect(out.total).toBe(3);
-    expect(out.groups.find((g) => g.fate === "kept")?.titles.map((t) => t.title)).toEqual(["Kept One"]);
-    expect(out.groups.find((g) => g.fate === "lost_ranking_cutoff")?.titles[0]?.age_weight).toBe(0.3);
+    expect(
+      out.groups.find((g) => g.fate === "kept")?.titles.map((t) => t.title),
+    ).toEqual(["Kept One"]);
+    expect(
+      out.groups.find((g) => g.fate === "lost_ranking_cutoff")?.titles[0]
+        ?.age_weight,
+    ).toBe(0.3);
   });
 
   it("counts a title found by two sources once", () => {
@@ -393,8 +423,12 @@ describe("shortlistBreakdown — the per-title answer to 'what survived and why'
     // screen and make the funnel not add up.
     const out = shortlistBreakdown(
       lib([
-        src("tmdb_similar", [{ tmdb_id: 1, title: "Both", fate: "kept", year: 2024, rating: 8 }]),
-        src("trakt", [{ tmdb_id: 1, title: "Both", fate: "kept", year: 2024, rating: 8 }]),
+        src("tmdb_similar", [
+          { tmdb_id: 1, title: "Both", fate: "kept", year: 2024, rating: 8 },
+        ]),
+        src("trakt", [
+          { tmdb_id: 1, title: "Both", fate: "kept", year: 2024, rating: 8 },
+        ]),
       ]),
     );
     expect(out.total).toBe(1);
@@ -405,8 +439,22 @@ describe("shortlistBreakdown — the per-title answer to 'what survived and why'
     const out = shortlistBreakdown(
       lib([
         src("tmdb_similar", [
-          { tmdb_id: 1, title: "Old", fate: "lost_ranking_cutoff", year: 1990, rating: 9, age_weight: 0.1 },
-          { tmdb_id: 2, title: "Newer", fate: "lost_ranking_cutoff", year: 2022, rating: 7, age_weight: 0.9 },
+          {
+            tmdb_id: 1,
+            title: "Old",
+            fate: "lost_ranking_cutoff",
+            year: 1990,
+            rating: 9,
+            age_weight: 0.1,
+          },
+          {
+            tmdb_id: 2,
+            title: "Newer",
+            fate: "lost_ranking_cutoff",
+            year: 2022,
+            rating: 7,
+            age_weight: 0.9,
+          },
         ]),
       ]),
     );
@@ -437,8 +485,16 @@ describe("shortlistBreakdown — the per-title answer to 'what survived and why'
     // alone silently swallowed one of them and made the total disagree with the funnel.
     const out = shortlistBreakdown(
       lib([
-        src("tmdb_similar", [{ tmdb_id: 1396, title: "Movie 1396", fate: "kept" }], "movie"),
-        src("trakt", [{ tmdb_id: 1396, title: "Show 1396", fate: "kept" }], "show"),
+        src(
+          "tmdb_similar",
+          [{ tmdb_id: 1396, title: "Movie 1396", fate: "kept" }],
+          "movie",
+        ),
+        src(
+          "trakt",
+          [{ tmdb_id: 1396, title: "Show 1396", fate: "kept" }],
+          "show",
+        ),
       ]),
     );
     expect(out.total).toBe(2);
@@ -448,7 +504,14 @@ describe("shortlistBreakdown — the per-title answer to 'what survived and why'
     // `returned` is a capped display sample. Without the flag, "all N candidates" makes an
     // unrecorded title read as one that was never a candidate.
     const out = shortlistBreakdown(
-      lib([src("tmdb_similar", [{ tmdb_id: 1, title: "Sampled", fate: "kept" }], "movie", 40)]),
+      lib([
+        src(
+          "tmdb_similar",
+          [{ tmdb_id: 1, title: "Sampled", fate: "kept" }],
+          "movie",
+          40,
+        ),
+      ]),
     );
     expect(out.total).toBe(1);
     expect(out.sampled).toBe(true);
@@ -459,7 +522,12 @@ describe("shortlistBreakdown — the per-title answer to 'what survived and why'
     // and the disclaimer fired on runs where nothing had been withheld at all.
     const out = shortlistBreakdown(
       lib([
-        src("tmdb_similar", [{ tmdb_id: 1, title: "A", fate: "kept" }], "movie", 1),
+        src(
+          "tmdb_similar",
+          [{ tmdb_id: 1, title: "A", fate: "kept" }],
+          "movie",
+          1,
+        ),
         src("trakt", [{ tmdb_id: 1, title: "A", fate: "kept" }], "movie", 1),
       ]),
     );
@@ -468,7 +536,9 @@ describe("shortlistBreakdown — the per-title answer to 'what survived and why'
   });
 
   it("is empty for a legacy run that recorded no fates", () => {
-    const out = shortlistBreakdown(lib([src("tmdb_similar", [{ tmdb_id: 1, title: "No fate" }])]));
+    const out = shortlistBreakdown(
+      lib([src("tmdb_similar", [{ tmdb_id: 1, title: "No fate" }])]),
+    );
     expect(out.total).toBe(0);
     expect(out.groups).toEqual([]);
   });
@@ -513,7 +583,11 @@ describe("orderingRows — making the fairness passes visible", () => {
   });
 
   it("keeps rank order even if the input is not sorted", () => {
-    const rows = orderingRows([pick(3, "a", "X"), pick(1, "b", "Y"), pick(2, "c", "Z")]);
+    const rows = orderingRows([
+      pick(3, "a", "X"),
+      pick(1, "b", "Y"),
+      pick(2, "c", "Z"),
+    ]);
     expect(rows.map((r) => r.pick.rank)).toEqual([1, 2, 3]);
   });
 
@@ -524,8 +598,14 @@ describe("orderingRows — making the fairness passes visible", () => {
 
 describe("requestNote — what became of a wanted-but-missing title", () => {
   it("says it went to the Arr, naming which", () => {
-    expect(requestNote({ status: "sent", detail: "added to Sonarr and searching", excluded: false, arr_slug: null }))
-      .toBe("requested — added to Sonarr and searching");
+    expect(
+      requestNote({
+        status: "sent",
+        detail: "added to Sonarr and searching",
+        excluded: false,
+        arr_slug: null,
+      }),
+    ).toBe("requested — added to Sonarr and searching");
   });
 
   it("gives the REASON a queued title is still waiting", () => {
@@ -541,20 +621,35 @@ describe("requestNote — what became of a wanted-but-missing title", () => {
   });
 
   it("falls back gracefully when an older run recorded no reason", () => {
-    expect(requestNote({ status: "pending", detail: "", excluded: false, arr_slug: null })).toBe(
-      "waiting for approval",
-    );
+    expect(
+      requestNote({
+        status: "pending",
+        detail: "",
+        excluded: false,
+        arr_slug: null,
+      }),
+    ).toBe("waiting for approval");
   });
 
   it("calls out an exclusion on a title that is still waiting", () => {
     expect(
-      requestNote({ status: "pending", detail: "", excluded: true, arr_slug: null }),
+      requestNote({
+        status: "pending",
+        detail: "",
+        excluded: true,
+        arr_slug: null,
+      }),
     ).toBe("waiting — on an Arr exclusion list");
   });
 
   it("reports a title the owner rejected", () => {
     expect(
-      requestNote({ status: "rejected", detail: "", excluded: false, arr_slug: null }),
+      requestNote({
+        status: "rejected",
+        detail: "",
+        excluded: false,
+        arr_slug: null,
+      }),
     ).toBe("not requested");
   });
 
@@ -562,7 +657,12 @@ describe("requestNote — what became of a wanted-but-missing title", () => {
     // `excluded` is never cleared when a title is later sent by hand, so testing it first made one
     // title read "requested" in one place on the page and "not requested" a few lines away.
     expect(
-      requestNote({ status: "sent", detail: "added to Radarr and searching", excluded: true, arr_slug: null }),
+      requestNote({
+        status: "sent",
+        detail: "added to Radarr and searching",
+        excluded: true,
+        arr_slug: null,
+      }),
     ).toBe("requested — added to Radarr and searching");
   });
 

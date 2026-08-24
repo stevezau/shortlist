@@ -100,10 +100,16 @@ describe("UninstallPage", () => {
     uninstall.mockResolvedValue({
       filters_restored: 46,
       filters_skipped: [
-        { user: "mike", plex_account_id: 839623727, reason: "no longer on this Plex server" },
+        {
+          user: "mike",
+          plex_account_id: 839623727,
+          reason: "no longer on this Plex server",
+        },
       ],
       filters_unreachable: [],
-      filters_failed: [{ user: "sarah", error: "RuntimeError: plex.tv said no" }],
+      filters_failed: [
+        { user: "sarah", error: "RuntimeError: plex.tv said no" },
+      ],
       collections_deleted: ["a"],
       rows_disabled: 3,
       dry_run: false,
@@ -117,14 +123,12 @@ describe("UninstallPage", () => {
       screen.getByRole("button", { name: /uninstall and restore server/i }),
     );
 
-    expect(
-      await screen.findByText(/left to retry/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/left to retry/i)).toBeInTheDocument();
     expect(screen.queryByText(/Uninstall complete/i)).not.toBeInTheDocument();
     // getAllBy: the label is a <span> inside the <p> that also carries the names, so both match.
-    expect(screen.getAllByText(/Could not be restored/i).length).toBeGreaterThan(
-      0,
-    );
+    expect(
+      screen.getAllByText(/Could not be restored/i).length,
+    ).toBeGreaterThan(0);
     expect(
       screen.getByText(/sarah\. Their share filter still carries/i),
     ).toBeInTheDocument();
@@ -155,7 +159,9 @@ describe("UninstallPage", () => {
     );
 
     expect(await screen.findByText(/Uninstall complete/i)).toBeInTheDocument();
-    expect(screen.queryByText(/Could not be restored/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Could not be restored/i),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByText(/No longer on this server/i),
     ).not.toBeInTheDocument();
@@ -177,7 +183,8 @@ describe("UninstallPage", () => {
       collections_deleted: ["a"],
       rows_disabled: 2,
       dry_run: true,
-      message: "Preview only — nothing was changed. plex.tv listed none of the 1 account on file.",
+      message:
+        "Preview only — nothing was changed. plex.tv listed none of the 1 account on file.",
     });
     renderPage();
 
@@ -187,7 +194,9 @@ describe("UninstallPage", () => {
     expect(screen.getAllByText(/didn.t list/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/mike\. Your records say/i)).toBeInTheDocument();
     // Nothing has been attempted yet, so the preview must not tell them to retry.
-    expect(screen.queryByText(/Run the uninstall again/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Run the uninstall again/i),
+    ).not.toBeInTheDocument();
   });
   it("does not call a REAL uninstall complete when plex.tv could not see an account", async () => {
     // The mirror of the preview case, and the cell that split `unreachable` out of `filters_failed`
@@ -207,7 +216,8 @@ describe("UninstallPage", () => {
       collections_deleted: ["a"],
       rows_disabled: 2,
       dry_run: false,
-      message: "Finished, with some accounts left over: plex.tv did not list 1 account.",
+      message:
+        "Finished, with some accounts left over: plex.tv did not list 1 account.",
     });
     renderPage();
 

@@ -91,6 +91,9 @@ const EMPTY = {
     users_enabled: 2,
     users_total: 2,
     users_with_picks: 1,
+    // Emitted by the API, never derived here: `users_with_picks - users_watched` subtracts two
+    // differently-scoped populations and can read zero while somebody watched nothing.
+    users_idle: 0,
     users_watched: 1,
     users_watched_delta: 1,
     rows_enabled: 1,
@@ -848,5 +851,36 @@ describe("ImpactReport — the engagement split", () => {
 
     await screen.findByText(/watched · the last/i);
     expect(screen.queryByText(/gave up part-way/)).toBeNull();
+  });
+
+  it("never reports a real rate as zero", async () => {
+    // The backend rounds `landing.rate` to three decimals before it leaves the server — a tenth of a
+    // percentage point. On a large library a genuine 0.03% arrives as 0.0, and "0.0%" reads as
+    // "nobody watched anything" when thirty people did. The counts are exact; the ratio is not.
+    getReport.mockResolvedValue({
+      ...REPORT,
+      overall: {
+        ...REPORT.overall,
+        landing: { ...LANDING, delivered: 100000, watched: 30, rate: 0.0 },
+      },
+    });
+    renderReport();
+
+    expect(await screen.findByText("<0.1%")).toBeTruthy();
+    expect(screen.queryByText("0.0%")).toBeNull();
+  });
+
+  it("still says nothing at all when nothing was delivered", async () => {
+    getReport.mockResolvedValue({
+      ...REPORT,
+      overall: {
+        ...REPORT.overall,
+        landing: { ...LANDING, delivered: 0, watched: 0, rate: null },
+      },
+    });
+    renderReport();
+
+    await screen.findByText(/Not enough time yet/i);
+    expect(screen.queryByText("<0.1%")).toBeNull();
   });
 });

@@ -80,7 +80,9 @@ describe("OwnerNote", () => {
     // opposite for a while — this pins the true claim to a test.
     renderIn(<OwnerNote />);
 
-    expect(await screen.findByText(/Not your Home screen/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Not your Home screen/i),
+    ).toBeInTheDocument();
   });
 
   it("names the recommended fix, and does not promise Shortlist creates the Plex account", async () => {
@@ -90,7 +92,9 @@ describe("OwnerNote", () => {
     renderIn(<OwnerNote />);
 
     expect(await screen.findByText(/What we suggest:/i)).toBeInTheDocument();
-    expect(screen.getByText(/You add the account in Plex/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/You add the account in Plex/i),
+    ).toBeInTheDocument();
   });
 
   it("retires the bell alert as well, so the same message stops arriving twice", async () => {

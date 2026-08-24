@@ -3028,6 +3028,8 @@ export interface components {
             rows_enabled: number;
             /** Users Enabled */
             users_enabled: number;
+            /** Users Idle */
+            users_idle: number;
             /** Users Total */
             users_total: number;
             /** Users Watched */
@@ -4726,7 +4728,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "watched" | "users";
+            kind: "watched" | "users" | "credited";
             /** Ok */
             ok: boolean;
             /** Total */
@@ -4751,7 +4753,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "watched" | "users";
+            kind: "watched" | "users" | "credited";
             /** Phase */
             phase?: ("fetch" | "save") | null;
             /** Total */

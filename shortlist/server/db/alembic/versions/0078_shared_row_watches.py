@@ -38,8 +38,12 @@ def upgrade() -> None:
         # show 1399 are different titles and must not collide.
         sa.Column("media_type", sa.String(16), primary_key=True),
         sa.Column("title", sa.String(512), nullable=False, server_default=""),
-        sa.Column("watched_at", sa.DateTime, nullable=True),
-        sa.Column("finished_at", sa.DateTime, nullable=True),
+        # `timezone=True` to match the model, which explains why: `_recent_watches` sorts these keys
+        # against `picks.watched_at`, and the two columns must deserialise identically. SQLite ignores
+        # the flag, so this is only ever a declaration — but a migration and a model disagreeing about
+        # a column's type is how the next reader learns the wrong thing.
+        sa.Column("watched_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("max_percent", sa.Integer, nullable=True),
     )
     # No separate index on `user_id`: it LEADS the composite primary key, whose index already serves

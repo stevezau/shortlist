@@ -144,16 +144,22 @@ describe("LogsPage", () => {
     vi.stubGlobal("fetch", vi.fn().mockReturnValue(pending));
 
     renderPage();
-    const button = await screen.findByRole("button", { name: /Download \.zip/i });
+    const button = await screen.findByRole("button", {
+      name: /Download \.zip/i,
+    });
     await userEvent.click(button);
 
-    expect(await screen.findByRole("button", { name: /Preparing/i })).toBeTruthy();
+    expect(
+      await screen.findByRole("button", { name: /Preparing/i }),
+    ).toBeTruthy();
     expect(fetch).toHaveBeenCalledWith(
       "/api/system/logs/download",
       expect.objectContaining({ credentials: "same-origin" }),
     );
     // String body: a Blob body is rejected by CI's Node ("object.stream is not a function").
-    release(new Response("zip", { headers: { "content-type": "application/zip" } }));
+    release(
+      new Response("zip", { headers: { "content-type": "application/zip" } }),
+    );
     vi.unstubAllGlobals();
   });
 });

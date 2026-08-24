@@ -434,6 +434,17 @@ class RunSharedRow(Base):
     #: this snapshot, adding someone to a subset row today would retroactively credit their older
     #: watches to a row they could not see at the time.
     audience: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
+    #: When this row's contents actually landed on Plex — NOT `Run.started_at`.
+    #:
+    #: The per-person path learned this the hard way and wrote it down: a run persists each row as it
+    #: finishes, so the run's start trails the delivery by minutes to tens of minutes (a TV collection
+    #: write alone costs ~16.5s, times 47 people). Judging a play against the run's START means
+    #: judging it against the row the run was BUILDING rather than the one Plex was still serving —
+    #: which drops a credit for a title this run removed, and invents one for a title it added.
+    #: `_load_per_person` derives its equivalent from `min(picks.created_at)`; a shared row writes no
+    #: picks, so it has to be stamped here. NULL on rows written before this column existed, which
+    #: fall back to `Run.started_at`.
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     run: Mapped[Run] = relationship(back_populates="shared_rows")
 

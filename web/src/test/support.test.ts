@@ -33,7 +33,8 @@ describe("newBugReportUrl", () => {
   });
 
   it("says 'unknown' rather than leaving the build blank", () => {
-    const body = new URL(newBugReportUrl(undefined)).searchParams.get("body") ?? "";
+    const body =
+      new URL(newBugReportUrl(undefined)).searchParams.get("body") ?? "";
     expect(body).toContain("Shortlist build: `unknown`");
   });
 });

@@ -301,7 +301,7 @@ export function JobsPage() {
       if (event.kind === "watched") {
         setWatchedProgress(event);
         setWatchedResult(null); // a fresh run supersedes the last result line
-      } else {
+      } else if (event.kind === "users") {
         setUsersProgress(event);
       }
     },
@@ -312,9 +312,11 @@ export function JobsPage() {
         // The watched sync refreshes each user's picks-watched — repaint the users list once done.
         queryClient.invalidateQueries({ queryKey: queryKeys.users });
         queryClient.invalidateQueries({ queryKey: queryKeys.jobs });
-      } else {
+      } else if (event.kind === "users") {
         setUsersProgress(null);
       }
+      // `credited` is ignored on purpose: it is the live credit pass, not a sync, and this page's
+      // success line says "watch history is up to date", which that pass never did.
     },
   });
 

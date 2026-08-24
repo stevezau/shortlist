@@ -29,9 +29,13 @@ describe("arr status polling", () => {
     // `queued` reads like a transient and is not: `_status_for` returns it for "monitored, nothing
     // on disk, nothing in the queue" — the resting state of a title that is unreleased or simply
     // unfindable. Treating it as in-flight held a 10s whole-library poll open indefinitely.
-    expect(arrStatusInterval(state({ statuses: { "1": "queued" } }))).toBe(false);
+    expect(arrStatusInterval(state({ statuses: { "1": "queued" } }))).toBe(
+      false,
+    );
     expect(
-      arrStatusInterval(state({ statuses: { "1": "queued", "2": "downloaded" } })),
+      arrStatusInterval(
+        state({ statuses: { "1": "queued", "2": "downloaded" } }),
+      ),
     ).toBe(false);
   });
 
@@ -47,9 +51,9 @@ describe("arr status polling", () => {
     expect(arrStatusInterval(state({ statuses: { "1": "downloaded" } }))).toBe(
       false,
     );
-    expect(
-      arrStatusInterval(state({ statuses: { "1": "unmonitored" } })),
-    ).toBe(false);
+    expect(arrStatusInterval(state({ statuses: { "1": "unmonitored" } }))).toBe(
+      false,
+    );
     expect(arrStatusInterval(state({ radarr: "off", sonarr: "off" }))).toBe(
       false,
     );

@@ -1473,7 +1473,9 @@ class TestWatchReconcileTellsTheDashboard:
         result = jobs._HANDLERS["watch.reconcile"](state, {})
 
         assert result == {"users_credited": 1}
-        assert published == [("sync.finished", {"kind": "watched", "ok": True, "count": 1})]
+        assert published == [("sync.finished", {"kind": "credited", "ok": True, "count": 1})], (
+            "its own kind — sent as 'watched' it made the Jobs page announce a sync that never ran"
+        )
         with sessions() as s:
             pick = s.query(PickRow).filter_by(tmdb_id=550).one()
             assert pick.watched_at is not None and pick.max_percent == 30

@@ -102,20 +102,26 @@ describe("RowRequestSettings", () => {
 
   it("says a zero row cap means it never asks on its own", () => {
     renderSection({ req_max_per_row: 0 });
-    expect(screen.getByText(/never asks for anything on its own/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/never asks for anything on its own/),
+    ).toBeInTheDocument();
   });
 
   it("names the global tag-by-person setting while the row inherits it", () => {
     renderSection();
     expect(screen.getByText(/tag by person/)).toBeInTheDocument();
-    expect(screen.queryByLabelText("Tag this row's requests by person")).toBeNull();
+    expect(
+      screen.queryByLabelText("Tag this row's requests by person"),
+    ).toBeNull();
   });
 
   it("a row opting out of tag-by-person sends false, not null", async () => {
     // null would read as "inherit" on the next paint and the global would switch it straight back on.
     const set = renderSection();
     await userEvent.click(
-      screen.getByLabelText("Use the global tag-by-person setting for this row"),
+      screen.getByLabelText(
+        "Use the global tag-by-person setting for this row",
+      ),
     );
     expect(set).toHaveBeenCalledWith({ req_auto_user_tag: false });
   });

@@ -24,6 +24,7 @@ from loguru import logger
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from shortlist.engine.models import SHARED_SLUG_PREFIX
 from shortlist.server.db.models import (
     Collection,
     Delivery,
@@ -203,8 +204,16 @@ class RowMembership:
         self._per_person = self._load_per_person()
         # A shared row's delivery is filed under `shared_<slug>` (see `_persist_shared_row_report`),
         # so the same ledger answers "is this collection actually on the server" for shared rows.
-        self._shared_on_plex = {slug for (user_slug, slug, _lib) in self._on_plex if user_slug == f"shared_{slug}"}
+        self._shared_on_plex = {
+            slug
+            for (user_slug, slug, _lib) in self._on_plex
+            # Built from the constant, never spelled out. If the two ever drift this set silently
+            # empties and every shared-row credit stops, with no error anywhere.
+            if user_slug == f"{SHARED_SLUG_PREFIX}_{slug}"
+        }
         self._shared_titles: dict[tuple[int, str], str] = {}
+        #: (slug, run_id) -> when that delivery landed, for rows that recorded it.
+        self._shared_delivered: dict[tuple[str, int], datetime] = {}
         self._shared = self._load_shared()
         self._audience = self._load_audience()
 
@@ -275,12 +284,21 @@ class RowMembership:
         out: dict[str, list[tuple[datetime, set[tuple[int, str]]]]] = defaultdict(list)
         # Oldest run first, so the title map below ends up holding the NEWEST rendering of each title
         # rather than whichever row SQLite happened to return first.
-        for slug, run_id, picks in (
-            self._session.query(RunSharedRow.collection_slug, RunSharedRow.run_id, RunSharedRow.picks)
+        for slug, run_id, picks, delivered_at in (
+            self._session.query(
+                RunSharedRow.collection_slug,
+                RunSharedRow.run_id,
+                RunSharedRow.picks,
+                RunSharedRow.delivered_at,
+            )
             .order_by(RunSharedRow.run_id)
             .all()
         ):
-            started = self._run_started.get(run_id)
+            # The row's OWN delivery time, falling back to the run's start only for rows written
+            # before that column existed. See `RunSharedRow.delivered_at`: a run persists each row as
+            # it finishes, so its start can be tens of minutes early, and a play in that gap is judged
+            # against contents Plex was not serving yet.
+            started = _as_utc(delivered_at) if delivered_at else self._run_started.get(run_id)
             if started is None or slug not in self._live_slugs:
                 continue
             keys = {
@@ -337,6 +355,10 @@ class RowMembership:
         """The title text as a shared row rendered it, for the credit record's own display."""
         return self._shared_titles.get(key, "")
 
+    def _delivered_at(self, slug: str, run_id: int) -> datetime | None:
+        """When that shared row's contents landed, by the same rule `_load_shared` uses."""
+        return self._shared_delivered.get((slug, run_id)) or self._run_started.get(run_id)
+
     def _load_audience(self) -> dict[tuple[str, int], set[int] | None]:
         """Who could SEE each shared row, per delivery. None = everyone.
 
@@ -346,10 +368,12 @@ class RowMembership:
         worse than having no audience test at all — the state this replaces.
         """
         out: dict[tuple[str, int], set[int] | None] = {}
-        for slug, run_id, audience in self._session.query(
-            RunSharedRow.collection_slug, RunSharedRow.run_id, RunSharedRow.audience
+        for slug, run_id, audience, delivered_at in self._session.query(
+            RunSharedRow.collection_slug, RunSharedRow.run_id, RunSharedRow.audience, RunSharedRow.delivered_at
         ).all():
             out[(slug, run_id)] = audience if audience is None else set(audience)
+            if delivered_at:
+                self._shared_delivered[(slug, run_id)] = _as_utc(delivered_at)
         return out
 
     @staticmethod
@@ -407,7 +431,7 @@ class RowMembership:
         for (row_slug, run_id), audience in self._audience.items():
             if row_slug != slug:
                 continue
-            started = self._run_started.get(run_id)
+            started = self._delivered_at(row_slug, run_id)
             if started is None or started > when:
                 continue
             if best_at is None or started > best_at:

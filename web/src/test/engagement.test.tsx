@@ -65,7 +65,7 @@ const ENGAGEMENT: EngagementReport = {
 
 function report(over: Partial<EffectivenessReport> = {}): EffectivenessReport {
   return {
-    coverage: { users_with_picks: 10, users_watched: 4 },
+    coverage: { users_with_picks: 10, users_watched: 4, users_idle: 6 },
     per_row: [],
     requests: { sent: 0, pending: 0, watched_after_sent: 0 },
     ...over,
@@ -103,7 +103,9 @@ describe("NeedsALook", () => {
   it("says so plainly when more than half the server ignored their row", async () => {
     // "6 of 10" and "9 of 10" are different problems: the second is not a picking problem at all.
     renderPanel(
-      report({ coverage: { users_with_picks: 10, users_watched: 1 } } as never),
+      report({
+        coverage: { users_with_picks: 10, users_watched: 1, users_idle: 9 },
+      } as never),
     );
 
     expect(await screen.findByText(/More than half/)).toBeInTheDocument();
@@ -178,7 +180,9 @@ describe("NeedsALook", () => {
   it("says nothing is wrong rather than rendering an empty list", async () => {
     getEngagement.mockResolvedValue({ ...ENGAGEMENT, people: [] });
     renderPanel(
-      report({ coverage: { users_with_picks: 4, users_watched: 4 } } as never),
+      report({
+        coverage: { users_with_picks: 4, users_watched: 4, users_idle: 0 },
+      } as never),
     );
 
     expect(await screen.findByText(/no row came up empty/)).toBeInTheDocument();

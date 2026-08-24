@@ -22,7 +22,12 @@ from shortlist.server.api.schemas import PassthroughModel
 
 #: Which of the two Tools-page syncs an event belongs to. `watched` refreshes every user's watch
 #: status; `users` re-reads the plex.tv roster.
-SyncKind = Literal["watched", "users"]
+#: `credited` is NOT a sync. It is the live credit pass that runs when someone stops playback: it
+#: reads nothing from Plex and refreshes nobody's watched set. It shares this event because the
+#: dashboard's report query already invalidates on it — but it needs its own kind, because the Jobs
+#: page renders "Synced N users — watch history is up to date" for `watched`, and announcing that
+#: every time anyone stopped a video was a claim about work that never happened.
+SyncKind = Literal["watched", "users", "credited"]
 
 
 class RunFinishedEvent(PassthroughModel):

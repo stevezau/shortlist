@@ -17,7 +17,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
 function renderPicker(
   libraryKeys: string[],
   media: "movie" | "show" | "both" = "both",
-  onChange: (next: { library_keys: string[]; media: string }) => void = () => {},
+  onChange: (next: {
+    library_keys: string[];
+    media: string;
+  }) => void = () => {},
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -98,15 +101,21 @@ describe("LibraryPicker — an empty selection means every library OF THE ROW'S 
     getLibraries.mockResolvedValue(BOTH_TYPES);
     renderPicker([], "movie");
 
-    expect(await screen.findByRole("checkbox", { name: /Movies/ })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /TV Shows/ })).not.toBeChecked();
+    expect(
+      await screen.findByRole("checkbox", { name: /Movies/ }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: /TV Shows/ }),
+    ).not.toBeChecked();
   });
 
   it("still ticks everything for a row that covers both", async () => {
     getLibraries.mockResolvedValue(BOTH_TYPES);
     renderPicker([], "both");
 
-    expect(await screen.findByRole("checkbox", { name: /Movies/ })).toBeChecked();
+    expect(
+      await screen.findByRole("checkbox", { name: /Movies/ }),
+    ).toBeChecked();
     expect(screen.getByRole("checkbox", { name: /TV Shows/ })).toBeChecked();
   });
 

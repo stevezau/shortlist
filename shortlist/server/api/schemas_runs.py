@@ -262,6 +262,9 @@ class CoverageOut(PassthroughModel):
     users_enabled: int
     users_total: int
     users_with_picks: int
+    #: Got a pick in this window and watched none of it. Emitted rather than derived: the UI cannot
+    #: compute it from the other two, which count differently-scoped populations.
+    users_idle: int
     users_watched: int
     users_watched_delta: int | float | None
     rows_enabled: int

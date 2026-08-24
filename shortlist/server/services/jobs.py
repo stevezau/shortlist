@@ -1006,8 +1006,13 @@ def _watch_reconcile(state, payload: dict) -> dict:
 
     The SSE is not a nicety. Without it the owner watches something, the credit lands in the database
     seconds later, and the page in front of them still says nothing until they reload — which reads as
-    the feature not working. It reuses `sync.finished`/`kind="watched"`, the event the report query
-    already invalidates on, rather than inventing a second channel for the same fact.
+    the feature not working. It rides `sync.finished`, the event the report query already invalidates
+    on, rather than inventing a second channel for the same fact.
+
+    But under its OWN kind. Sent as `watched` it impersonated the watch-history sync, and the Jobs
+    page renders that as "Synced N users — watch history is up to date and the effectiveness report
+    reflects it now" — so anyone stopping a video while that page was open saw a green success for
+    work nobody did, with a count that means "users whose picks changed".
 
     Deliberately does NOT wait for a run, unlike the full watch sync which takes `run_lock`. That lock
     exists because the full pass re-reads Plex and rewrites every user; this writes only our own
@@ -1022,7 +1027,7 @@ def _watch_reconcile(state, payload: dict) -> dict:
 
     changed = reconcile_from_events(state.sessions)
     if changed:
-        state.bus.publish("sync.finished", {"kind": "watched", "ok": True, "count": changed})
+        state.bus.publish("sync.finished", {"kind": "credited", "ok": True, "count": changed})
     return {"users_credited": changed}
 
 

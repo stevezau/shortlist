@@ -77,9 +77,7 @@ describe("the REQUESTED tile", () => {
       requests_pool: 0,
       requests_warnings: ["Radarr not fully configured"],
     });
-    expect(
-      screen.getByText(/Radarr not fully configured/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Radarr not fully configured/)).toBeInTheDocument();
   });
 });
 
@@ -106,7 +104,11 @@ describe("the REQUESTED tile when titles are waiting", () => {
   }
 
   it("says how many are waiting rather than blaming the rating", () => {
-    renderTiles({ requests_queued: 5, requests_pool: 100, requests_examined: 88 });
+    renderTiles({
+      requests_queued: 5,
+      requests_pool: 100,
+      requests_examined: 88,
+    });
     expect(
       screen.getByText(/5 waiting for you to approve in Requests/),
     ).toBeInTheDocument();
@@ -114,7 +116,11 @@ describe("the REQUESTED tile when titles are waiting", () => {
   });
 
   it("still blames the gate when nothing qualified at all", () => {
-    renderTiles({ requests_queued: 0, requests_pool: 100, requests_examined: 88 });
+    renderTiles({
+      requests_queued: 0,
+      requests_pool: 100,
+      requests_examined: 88,
+    });
     expect(screen.getByText(/rated 88 of 100/)).toBeInTheDocument();
   });
 });
@@ -146,7 +152,9 @@ describe("a run recorded before the queued count existed", () => {
     } as unknown as RunDetail;
     render(<RunStatTiles run={run} />);
     expect(screen.queryByText(/none good enough/)).toBeNull();
-    expect(screen.getByText(/see Requests for anything waiting/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/see Requests for anything waiting/),
+    ).toBeInTheDocument();
   });
 });
 
@@ -167,7 +175,13 @@ describe("a run with nothing missing is not a floors problem", () => {
       shared_rows: [],
       error: null,
       promotion_blockers: [],
-      stats: { users_ok: 1, users_error: 0, titles_requested: 0, requests_queued: 0, ...stats },
+      stats: {
+        users_ok: 1,
+        users_error: 0,
+        titles_requested: 0,
+        requests_queued: 0,
+        ...stats,
+      },
     } as unknown as RunDetail;
     render(<RunStatTiles run={run} />);
   }

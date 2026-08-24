@@ -70,6 +70,21 @@ function WatchSyncButton() {
   );
 }
 
+/**
+ * The landing rate as text, computed from the counts rather than the pre-rounded ratio.
+ *
+ * Never "0.0%" while something was watched: a rate too small to show at one decimal is reported as
+ * "<0.1%", because a zero and a very small number say opposite things about whether the setup works.
+ */
+function landingPercent(
+  landing: EffectivenessReport["overall"]["landing"],
+): string {
+  if (landing.delivered === 0) return "\u2014";
+  const pct = (landing.watched / landing.delivered) * 100;
+  if (pct > 0 && pct < 0.05) return "<0.1%";
+  return `${pct.toFixed(1)}%`;
+}
+
 /** A labelled rate with a bar under it. Two of these carry the whole "is it working" question. */
 function Rate({
   label,
@@ -149,12 +164,18 @@ function Verdict({
       ? (coverage.users_watched / coverage.users_enabled) * 100
       : 0;
   return (
-    <Card className="min-w-0">
+    // Test ids, not class names. The e2e suite used to find these numbers by `div.rounded-lg.border`
+    // — `StatTile`'s classes — so replacing the tiles with this card broke six assertions silently,
+    // and they only surfaced once the SPA was rebuilt. A styling change must not be able to do that.
+    <Card className="min-w-0" data-testid="verdict">
       <CardContent className="pt-6">
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] lg:items-center">
           <div>
             <p className="flex items-baseline gap-2">
-              <span className="text-4xl font-semibold leading-none tabular-nums">
+              <span
+                className="text-4xl font-semibold leading-none tabular-nums"
+                data-testid="verdict-watched"
+              >
                 {overall.watched}
               </span>
               <span className="text-sm text-muted-foreground">
@@ -166,7 +187,10 @@ function Verdict({
               />
             </p>
             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-              <span className="font-medium text-primary tabular-nums">
+              <span
+                className="font-medium text-primary tabular-nums"
+                data-testid="verdict-finished"
+              >
                 {overall.finished}
               </span>{" "}
               finished them
@@ -192,12 +216,16 @@ function Verdict({
           <div className="grid gap-4">
             <Rate
               label="Picks watched while their row still showed them"
-              value={
-                landing.rate === null
-                  ? "—"
-                  : `${(landing.rate * 100).toFixed(1)}%`
+              // From the exact COUNTS, not from `landing.rate`. The backend rounds that to three
+              // decimals before it leaves the server — a tenth of a percentage point — so on a large
+              // library a real 0.03% arrives as 0.0 and renders "0.0%", which reads as "nobody
+              // watched anything" when thirty people did.
+              value={landingPercent(landing)}
+              fill={
+                landing.delivered > 0
+                  ? (landing.watched / landing.delivered) * 100
+                  : 0
               }
-              fill={(landing.rate ?? 0) * 100}
               detail={
                 landing.rate !== null
                   ? // The caveat is the point — without it the percentage is a number with no

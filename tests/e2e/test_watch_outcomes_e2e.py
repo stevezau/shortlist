@@ -25,14 +25,23 @@ pytestmark = pytest.mark.e2e
 PHONE = {"width": 390, "height": 844}
 
 
-def finished_tile(page: Page):
-    """The Finished STAT TILE, not the word wherever it appears.
+def verdict(page: Page):
+    """The verdict card — the headline counts, whatever they are wrapped in.
 
-    The engagement panel added below the report labels every seen-out pick "Finished" too, so a bare
-    text match now resolves to four elements and fails on strict-mode ambiguity. Scoping to the tile
-    is what these assertions always meant — the ambiguity is new, the intent is not.
+    Found by `data-testid`, never by class. This used to be `div.rounded-lg.border` filtered on the
+    word "Finished", which was `StatTile`'s class list: replacing the six tiles with one card broke
+    six assertions here and NOTHING reported it, because `web/dist` was a day stale and the whole
+    e2e run was exercising the previous dashboard. A styling change must not be able to do that.
     """
-    return page.locator("div.rounded-lg.border").filter(has_text="Finished").first
+    return page.get_by_test_id("verdict")
+
+
+def watched_count(page: Page):
+    return page.get_by_test_id("verdict-watched")
+
+
+def finished_count(page: Page):
+    return page.get_by_test_id("verdict-finished")
 
 
 def seed_outcomes(app: ShortlistApp) -> None:
@@ -86,12 +95,12 @@ def seed_outcomes(app: ShortlistApp) -> None:
 
 
 class TestTheDashboardShowsBothNumbers:
-    def test_the_finished_tile_renders_beside_watched(self, page: Page, app: ShortlistApp):
+    def test_the_finished_count_renders_beside_watched(self, page: Page, app: ShortlistApp):
         seed_outcomes(app)
         page.goto("/")
 
-        expect(page.get_by_text("Watched", exact=True)).to_be_visible(timeout=20_000)
-        expect(finished_tile(page)).to_be_visible()
+        expect(watched_count(page)).to_be_visible(timeout=20_000)
+        expect(finished_count(page)).to_be_visible()
 
     def test_the_api_and_the_page_agree_on_the_split(self, page: Page, app: ShortlistApp):
         """5 watched (2 films + 3 series), 3 finished (2 films + 1 series seen out)."""
@@ -103,16 +112,16 @@ class TestTheDashboardShowsBothNumbers:
         assert overall["finished"] == 3, overall
 
         page.goto("/")
-        expect(finished_tile(page)).to_be_visible(timeout=20_000)
-        tile = finished_tile(page).locator("xpath=..")
-        expect(tile).to_contain_text("3")
+        expect(verdict(page)).to_be_visible(timeout=20_000)
+        expect(watched_count(page)).to_have_text("5")
+        expect(finished_count(page)).to_have_text("3")
 
     def test_each_row_line_carries_its_own_finished_count(self, page: Page, app: ShortlistApp):
         """The whole point, on one screen: the movie row finished everything it landed, the TV row
         finished one of three. Before the split these two lines were indistinguishable."""
         seed_outcomes(app)
         page.goto("/")
-        expect(page.get_by_text("Watched", exact=True)).to_be_visible(timeout=20_000)
+        expect(watched_count(page)).to_be_visible(timeout=20_000)
 
         body = page.locator("body")
         expect(body).to_contain_text(re.compile(r"2 watched · 2 finished"))
@@ -124,7 +133,7 @@ class TestTheDashboardShowsBothNumbers:
         page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
 
         page.goto("/")
-        finished_tile(page).wait_for(timeout=20_000)
+        verdict(page).wait_for(timeout=20_000)
         page.wait_for_timeout(1500)
 
         assert not errors, errors
@@ -255,7 +264,7 @@ class TestTheSplitBarsAreHonest:
         read as nonsense ("0 watched · 1 finished") and the bar silently clips instead of erroring."""
         seed_outcomes(app)
         page.goto("/")
-        expect(page.get_by_text("Watched", exact=True)).to_be_visible(timeout=20_000)
+        expect(watched_count(page)).to_be_visible(timeout=20_000)
 
         # Every split track on the page: children must fit inside their parent. The count is
         # asserted first because these tracks are `hidden xl:flex` — at any viewport below 1280 they
@@ -366,7 +375,7 @@ class TestTheSplitBarsAreHonest:
             con.commit()
 
         page.goto("/")
-        expect(page.get_by_text("Watched", exact=True)).to_be_visible(timeout=20_000)
+        expect(watched_count(page)).to_be_visible(timeout=20_000)
         page.wait_for_timeout(400)
         assert page.locator('[data-testid="trend-week"]').count() >= 3, (
             "the chart collapsed to its under-three-weeks form, so the check below measures nothing"
@@ -394,7 +403,7 @@ class TestItStillFitsAPhone:
         seed_outcomes(app)
         page.set_viewport_size(PHONE)
         page.goto("/")
-        expect(page.get_by_text("Watched", exact=True)).to_be_visible(timeout=20_000)
+        expect(watched_count(page)).to_be_visible(timeout=20_000)
         page.wait_for_timeout(500)
 
         widths = page.evaluate(
@@ -458,21 +467,30 @@ class TestItStillFitsAPhone:
         )
         assert widths["scroll"] <= widths["client"] + 1, widths
 
-    def test_the_headline_tiles_do_not_overflow_on_a_phone(self, page: Page, app: ShortlistApp):
-        """Five tiles where there were four. On a phone they wrap to a 2-column grid — this proves
-        they wrap rather than squeezing into an unreadable row."""
+    def test_the_verdict_does_not_overflow_on_a_phone(self, page: Page, app: ShortlistApp):
+        """The counts and the two rates stack on a phone rather than squeezing into one row.
+
+        Was written against the five stat tiles and their `div.rounded-lg` wrapper; it now measures
+        the card that replaced them, by test id. Same property, and it is the property that matters:
+        a headline you cannot read is not a headline."""
         seed_outcomes(app)
         page.set_viewport_size(PHONE)
         page.goto("/")
-        expect(finished_tile(page)).to_be_visible(timeout=20_000)
+        expect(verdict(page)).to_be_visible(timeout=20_000)
 
         overflow = page.evaluate(
             """() => {
-                const el = document.evaluate("//*[text()='Finished']", document, null, 9, null).singleNodeValue;
-                const tile = el.closest('div.rounded-lg');
-                const r = tile.getBoundingClientRect();
-                return {right: r.right, width: r.width, viewport: document.documentElement.clientWidth};
+                const card = document.querySelector('[data-testid="verdict"]');
+                const r = card.getBoundingClientRect();
+                const n = document.querySelector('[data-testid="verdict-watched"]').getBoundingClientRect();
+                return {
+                    right: r.right,
+                    width: r.width,
+                    numberRight: n.right,
+                    viewport: document.documentElement.clientWidth,
+                };
             }"""
         )
         assert overflow["right"] <= overflow["viewport"] + 1, overflow
-        assert overflow["width"] > 80, f"the Finished tile squeezed to {overflow['width']}px"
+        assert overflow["numberRight"] <= overflow["viewport"] + 1, overflow
+        assert overflow["width"] > 200, f"the verdict squeezed to {overflow['width']}px"

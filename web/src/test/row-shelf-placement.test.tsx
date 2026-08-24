@@ -87,12 +87,32 @@ describe("RowShelfPlacement", () => {
     ]);
     // The row being edited ("because") plus two siblings — only the siblings may be offered.
     listCollections.mockResolvedValue([
-      { slug: "because", name: "Because you watched", media: "both", library_keys: [] },
-      { slug: "picked", name: "Picked for You", media: "both", library_keys: [] },
-      { slug: "popular", name: "Popular on SFLIX", media: "both", library_keys: [] },
+      {
+        slug: "because",
+        name: "Because you watched",
+        media: "both",
+        library_keys: [],
+      },
+      {
+        slug: "picked",
+        name: "Picked for You",
+        media: "both",
+        library_keys: [],
+      },
+      {
+        slug: "popular",
+        name: "Popular on SFLIX",
+        media: "both",
+        library_keys: [],
+      },
       // Movies-only: it builds nothing in the TV library this control renders, so it must not be
       // offered there — saving it would look fine and then be skipped every run, silently.
-      { slug: "movie-only", name: "Movie Nights", media: "movie", library_keys: [] },
+      {
+        slug: "movie-only",
+        name: "Movie Nights",
+        media: "movie",
+        library_keys: [],
+      },
     ]);
   });
 
@@ -172,14 +192,18 @@ describe("RowShelfPlacement", () => {
   });
 
   it("keeps showing a saved row anchor whose row is gone, rather than reading as unset", async () => {
-    const latest = renderControl({ "2": { row: "deleted-row", before: false } });
+    const latest = renderControl({
+      "2": { row: "deleted-row", before: false },
+    });
     await screen.findByText("TV Shows");
 
     const select = await screen.findByLabelText("After");
     expect(
       Array.from(select.querySelectorAll("option")).map((o) => o.textContent),
     ).toContain("deleted-row (row not found)");
-    expect(latest.value).toEqual({ "2": { row: "deleted-row", before: false } });
+    expect(latest.value).toEqual({
+      "2": { row: "deleted-row", before: false },
+    });
   });
 
   it("sets a per-row 'Top' with no collection needed", async () => {

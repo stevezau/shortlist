@@ -35,6 +35,41 @@ from shortlist.server.main import create_app
 from shortlist.server.settings_store import SettingsStore
 from tests.fakes.fake_plex import FakeHistoryEntry, FakePlexState, make_fake_plex, make_fake_plextv, seed_state
 
+#: The built SPA these tests drive, and the sources it is built from.
+_REPO = Path(__file__).resolve().parents[2]
+_DIST = _REPO / "web" / "dist"
+_SRC = _REPO / "web" / "src"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _refuse_a_stale_spa() -> None:
+    """Fail loudly if `web/dist` is older than `web/src`.
+
+    This suite drives the BUILT bundle and does not build it, so an unbuilt change is invisible: the
+    tests pass, against the previous UI. That is not hypothetical — a dashboard redesign that broke
+    six assertions in `test_watch_outcomes_e2e.py` reported a fully green e2e run, because `dist` was
+    a day old and none of the new markup was in it. CI builds fresh and would have caught it; the
+    local run said everything was fine.
+
+    Compared by mtime rather than content: a hash would have to be stored somewhere, and "the build
+    is older than the source" is the whole failure mode.
+
+    A session fixture, not a module-level call: this conftest is COLLECTED by a plain `pytest` run
+    even though the marker deselects everything in it, so checking at import time turned every
+    ordinary test run into ten collection errors about a build it was never going to use.
+    """
+    if not _DIST.exists():
+        pytest.fail("web/dist is missing — build the SPA first: pnpm -C web build", pytrace=False)
+    newest_src = max((f.stat().st_mtime for f in _SRC.rglob("*") if f.is_file()), default=0)
+    newest_dist = max((f.stat().st_mtime for f in _DIST.rglob("*") if f.is_file()), default=0)
+    if newest_src > newest_dist:
+        pytest.fail(
+            "web/dist is older than web/src — these tests would run against the PREVIOUS UI and "
+            "pass. Rebuild first: pnpm -C web build",
+            pytrace=False,
+        )
+
+
 OWNER_ACCOUNT_ID = 555000001
 PMS_VERSION = "1.43.3.10793"
 

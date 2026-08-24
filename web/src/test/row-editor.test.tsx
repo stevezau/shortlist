@@ -48,7 +48,7 @@ function row(patch: Partial<Collection> = {}): Collection {
     media: "both",
     sort_order: 0,
     name_template: "",
-  fallback_name: "",
+    fallback_name: "",
     min_watchers: 2,
     request_tag: "",
     candidate_sources: [],
@@ -1609,9 +1609,7 @@ describe("RowPreview — what a shared row says it will do", () => {
     expect(
       screen.getByText("What people here have watched most"),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(/pooled — no search, no AI/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/pooled — no search, no AI/i)).toBeInTheDocument();
     expect(screen.getByText("Most watched first")).toBeInTheDocument();
     expect(screen.queryByText("Found via")).not.toBeInTheDocument();
     expect(
