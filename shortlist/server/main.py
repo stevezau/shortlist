@@ -316,6 +316,14 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         app.mount("/assets", StaticFiles(directory=WEB_DIST / "assets"), name="assets")
         web_root = WEB_DIST.resolve()
         index = web_root / "index.html"
+        #: `index.html` is the only file that NAMES the hashed bundles, so it is the one file a
+        #: browser must never reuse without asking. It was served with no `cache-control` at all,
+        #: which leaves the browser to guess from `last-modified` — and a browser that guesses "still
+        #: fresh" keeps both the old shell AND the old bundle it names, so a deploy is invisible
+        #: until someone hard-refreshes. Reported 2026-08-25: an owner looking straight at wording
+        #: that had already shipped. `no-cache` means revalidate, not "do not store": the etag still
+        #: makes it a 304 on the overwhelmingly common unchanged case.
+        SHELL_HEADERS = {"cache-control": "no-cache, must-revalidate"}
 
         @app.get("/{path:path}", include_in_schema=False)
         async def spa(path: str):  # SPA fallback: every non-API path serves the app shell
@@ -326,8 +334,11 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
                 # web_root before serving it as a file (plex-safety: secrets never leave the box).
                 target = (web_root / path).resolve()
                 if target.is_relative_to(web_root) and target.is_file():
-                    return FileResponse(target)
-            return FileResponse(index)
+                    # The shell by any other route (`/index.html`) gets the same treatment; the
+                    # hashed assets under /assets are content-addressed and may be cached freely.
+                    headers = SHELL_HEADERS if target == index else None
+                    return FileResponse(target, headers=headers)
+            return FileResponse(index, headers=SHELL_HEADERS)
 
     return app
 

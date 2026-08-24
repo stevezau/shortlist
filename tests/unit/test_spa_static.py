@@ -19,6 +19,7 @@ async def _asgi_get(app, raw_path: str) -> tuple[int, bytes]:
     """Drive the ASGI app with an UN-normalized path — what a raw socket / `curl --path-as-is`
     sends. TestClient (httpx) would collapse `..` before it ever reached the app, hiding the bug."""
     status: dict[str, int] = {}
+    headers: dict[str, str] = {}
     chunks: list[bytes] = []
 
     async def receive():
@@ -27,6 +28,7 @@ async def _asgi_get(app, raw_path: str) -> tuple[int, bytes]:
     async def send(msg):
         if msg["type"] == "http.response.start":
             status["code"] = msg["status"]
+            headers.update({k.decode().lower(): v.decode() for k, v in msg.get("headers", [])})
         elif msg["type"] == "http.response.body":
             chunks.append(msg.get("body", b""))
 
@@ -45,7 +47,7 @@ async def _asgi_get(app, raw_path: str) -> tuple[int, bytes]:
         "root_path": "",
     }
     await app(scope, receive, send)
-    return status.get("code", 0), b"".join(chunks)
+    return status.get("code", 0), b"".join(chunks), headers
 
 
 @pytest.fixture
@@ -72,7 +74,7 @@ class TestSpaTraversal:
         ],
     )
     def test_spa_traversal_falls_through_to_the_shell(self, spa_app, raw_path):
-        status, body = asyncio.run(_asgi_get(spa_app, raw_path))
+        status, body, _headers = asyncio.run(_asgi_get(spa_app, raw_path))
         # An escaped path is served the app shell, never the file outside the bundle.
         assert SECRET.encode() not in body
         assert b"app shell" in body
@@ -84,7 +86,7 @@ class TestSpaTraversal:
         # swaps `.resolve()` for a purely lexical normalize (which would silently reopen this).
         link = tmp_path / "web" / "dist" / "leak.key"
         link.symlink_to(tmp_path / "config" / "secret.key")
-        status, body = asyncio.run(_asgi_get(spa_app, "/leak.key"))
+        status, body, _headers = asyncio.run(_asgi_get(spa_app, "/leak.key"))
         assert SECRET.encode() not in body
         assert b"app shell" in body
         assert status == 200
@@ -92,16 +94,50 @@ class TestSpaTraversal:
     def test_assets_mount_traversal_is_blocked(self, spa_app):
         # The /assets StaticFiles mount has its own containment check; a traversal there is
         # rejected outright (404) rather than falling through — either way, no leak.
-        status, body = asyncio.run(_asgi_get(spa_app, "/assets/../../config/secret.key"))
+        status, body, _headers = asyncio.run(_asgi_get(spa_app, "/assets/../../config/secret.key"))
         assert SECRET.encode() not in body
         assert status == 404
 
     def test_real_bundle_file_is_served(self, spa_app):
-        status, body = asyncio.run(_asgi_get(spa_app, "/robots.txt"))
+        status, body, _headers = asyncio.run(_asgi_get(spa_app, "/robots.txt"))
         assert status == 200
         assert b"User-agent" in body
 
     def test_unknown_route_serves_the_shell(self, spa_app):
-        status, body = asyncio.run(_asgi_get(spa_app, "/settings/curation"))
+        status, body, _headers = asyncio.run(_asgi_get(spa_app, "/settings/curation"))
         assert status == 200
         assert b"app shell" in body
+
+
+class TestTheShellIsNeverServedFromCacheWithoutAsking:
+    """`index.html` is the only file that NAMES the hashed bundles.
+
+    Served with no `cache-control`, the browser guesses freshness from `last-modified` — and a
+    browser that guesses "still fresh" keeps the old shell AND the old bundle it names, so a deploy
+    is invisible. Reported 2026-08-25 by an owner looking straight at wording that had already
+    shipped, on a server already running the new build.
+    """
+
+    def test_the_shell_must_be_revalidated(self, spa_app):
+        status, body, headers = asyncio.run(_asgi_get(spa_app, "/dashboard"))
+
+        assert status == 200
+        assert b"app shell" in body
+        assert "no-cache" in headers.get("cache-control", ""), (
+            f"the shell may be reused without asking: cache-control={headers.get('cache-control')!r}"
+        )
+
+    def test_the_shell_by_its_own_name_is_treated_the_same(self, spa_app):
+        """`/index.html` reaches the file branch rather than the fallback — same file, same rule."""
+        status, _body, headers = asyncio.run(_asgi_get(spa_app, "/index.html"))
+
+        assert status == 200
+        assert "no-cache" in headers.get("cache-control", "")
+
+    def test_a_sibling_file_is_not_forced_to_revalidate(self, spa_app):
+        """Only the shell. Everything else under the bundle is content-addressed or static, and
+        making it all no-cache would throw away the caching the hashed filenames exist to enable."""
+        status, _body, headers = asyncio.run(_asgi_get(spa_app, "/robots.txt"))
+
+        assert status == 200
+        assert "no-cache" not in headers.get("cache-control", "")

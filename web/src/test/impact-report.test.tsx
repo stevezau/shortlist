@@ -86,7 +86,12 @@ const EMPTY = {
   window_days: 30,
   since: "2026-06-29T00:00:00Z",
   first_pick: "2026-01-01T00:00:00Z",
-  watch_sync: { last: null, next: null },
+  watch_sync: {
+    last: null,
+    next: null,
+    live_since: new Date().toISOString(),
+    live_down_since: null,
+  },
   coverage: {
     users_enabled: 2,
     users_total: 2,
@@ -298,6 +303,40 @@ describe("ImpactReport", () => {
 
     expect(await screen.findByText(/no earlier period yet/i)).toBeTruthy();
     expect(screen.queryByText(/vs previous/i)).toBeNull();
+  });
+
+  it("says whether live tracking is actually running", async () => {
+    // A separate mechanism from the scheduled sync, and it fails on its own. It is the ONLY source
+    // of a partial watch, so while it is down the page stops learning how far anyone gets — and
+    // every other number on it carries on looking healthy.
+    renderReport();
+
+    expect(await screen.findByText("Live tracking on")).toBeTruthy();
+  });
+
+  it("says so, and for how long, when the listener has dropped", async () => {
+    getReport.mockResolvedValue({
+      ...REPORT,
+      watch_sync: {
+        ...REPORT.watch_sync,
+        live_down_since: new Date(Date.now() - 3 * 3600_000).toISOString(),
+      },
+    });
+    renderReport();
+
+    expect(await screen.findByText(/Live tracking down/)).toBeTruthy();
+    expect(screen.queryByText("Live tracking on")).toBeNull();
+  });
+
+  it("distinguishes never-started from dropped", async () => {
+    // A fresh install has no listener yet, which is not a fault and must not render as one.
+    getReport.mockResolvedValue({
+      ...REPORT,
+      watch_sync: { ...REPORT.watch_sync, live_since: null, live_down_since: null },
+    });
+    renderReport();
+
+    expect(await screen.findByText("Live tracking not started")).toBeTruthy();
   });
 
   it("links a person to their own page, from both places they are named", async () => {

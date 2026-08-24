@@ -929,7 +929,10 @@ class TestRunsApi:
             "cohort_to",
             "matured_days",
         }
-        assert set(body["watch_sync"]) == {"last", "next"}
+        # The LIVE listener is a separate mechanism from the scheduled sync and fails independently
+        # of it — and it is the only source of a partial watch, so a dead socket costs the one signal
+        # Plex's flag cannot give while every other number keeps looking healthy.
+        assert set(body["watch_sync"]) == {"last", "next", "live_since", "live_down_since"}
         assert set(body["coverage"]) == {
             "users_enabled",
             "users_total",

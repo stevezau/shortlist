@@ -291,6 +291,25 @@ function Verdict({
             Watch status{" "}
             {sync.last ? `synced ${timeAgo(sync.last)}` : "not synced yet"}
           </span>
+          {/* The LIVE listener, beside the scheduled sync because they are two different mechanisms
+              that fail independently. This one is the ONLY source of a partial watch — Plex's flag
+              cannot see one — so while it is down the page quietly stops learning how far anyone
+              gets, and every other number here carries on looking healthy. Nothing said whether it
+              was up until an owner asked where that was shown. */}
+          <span className="flex items-center gap-1.5">
+            <span
+              className={cn(
+                "h-1.5 w-1.5 rounded-full",
+                sync.live_down_since ? "bg-destructive" : "bg-success",
+              )}
+              aria-hidden="true"
+            />
+            {sync.live_down_since
+              ? `Live tracking down ${timeAgo(sync.live_down_since)}`
+              : sync.live_since
+                ? "Live tracking on"
+                : "Live tracking not started"}
+          </span>
           {overall.avg_days_to_watch !== null && (
             <span className="tabular-nums">
               Typically {overall.avg_days_to_watch} days from recommended to

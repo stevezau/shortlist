@@ -253,6 +253,12 @@ class OverallOut(PassthroughModel):
 class WatchSyncOut(PassthroughModel):
     last: str | None
     next: str | None
+    #: When the live playback listener last connected. It is a separate mechanism from the scheduled
+    #: sync above and fails independently — and it is the ONLY source of a partial watch, so a dead
+    #: socket costs the one signal Plex's watched flag cannot give.
+    live_since: str | None
+    #: Set while the listener is down, cleared when it reconnects. Null is the healthy case.
+    live_down_since: str | None
 
 
 class CoverageOut(PassthroughModel):

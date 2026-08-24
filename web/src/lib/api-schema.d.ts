@@ -5306,6 +5306,10 @@ export interface components {
         WatchSyncOut: {
             /** Last */
             last: string | null;
+            /** Live Down Since */
+            live_down_since: string | null;
+            /** Live Since */
+            live_since: string | null;
             /** Next */
             next: string | null;
         } & {

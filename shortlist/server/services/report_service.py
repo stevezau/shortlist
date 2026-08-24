@@ -34,6 +34,7 @@ from shortlist.server.db.models import (
     iso_utc,
 )
 from shortlist.server.services.run_service import HIT_WINDOW_DAYS
+from shortlist.server.services.watch_stream import STREAM_CONNECTED_KEY, STREAM_DOWN_SINCE_KEY
 from shortlist.server.settings_store import SettingsStore
 
 _PLACEHOLDER = re.compile(r"\{[^}]+\}")
@@ -1046,7 +1047,17 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
             "avg_days_to_watch_delta": _delta(avg_now, avg_prev),
             "landing": landing,
         },
-        "watch_sync": {"last": last_watch_sync, "next": next_watch_sync},
+        "watch_sync": {
+            "last": last_watch_sync,
+            "next": next_watch_sync,
+            # The LIVE listener, which is a different mechanism from the scheduled sync above and
+            # fails independently of it. It is the only source of a partial watch — Plex's flag
+            # cannot see one — so when the socket is down the dashboard quietly stops learning
+            # anything about how far people get, while every other number on the page carries on
+            # looking healthy. Surfaced here because nothing in the UI said whether it was up.
+            "live_since": store.get(STREAM_CONNECTED_KEY),
+            "live_down_since": store.get(STREAM_DOWN_SINCE_KEY),
+        },
         "coverage": {
             "users_enabled": users_enabled,
             "users_total": len(users),

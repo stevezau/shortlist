@@ -6701,6 +6701,28 @@
             ],
             "title": "Last"
           },
+          "live_down_since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Down Since"
+          },
+          "live_since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Since"
+          },
           "next": {
             "anyOf": [
               {
@@ -6715,7 +6737,9 @@
         },
         "required": [
           "last",
-          "next"
+          "next",
+          "live_since",
+          "live_down_since"
         ],
         "title": "WatchSyncOut",
         "type": "object"
