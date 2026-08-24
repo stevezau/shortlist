@@ -713,3 +713,31 @@ delivered to N people, so crediting them needs a decision about whether to fan t
 `PickRow` per audience member (which is what the report's `(person, title)` unit assumes, and what
 would make `per_row` work) or to track shared rows on their own axis. Worth deciding before the next
 report change.
+
+---
+
+## Known limitation: shared rows delivered before the `media_type` fix can never be credited
+
+**Status: accepted, not fixed. Verified on SFLIX 2026-08-24.**
+
+`RunSharedRow.picks` is a JSON blob, and `_shared_key` refuses to guess a title's type when the blob
+carries no `media_type` — correctly, because TMDB ids are namespaced per type and matching on the id
+alone would credit the wrong title. `_pick_dicts` now writes `media_type` on every pick, but the rows
+already in the database were written before it did.
+
+On SFLIX every `run_shared_rows` row up to and including run 25 (2026-08-23) carries
+`media_type: None` for every pick. The effect is measurable: `thats_no_moon` played The Bear at
+2026-08-23 19:41, the play is in the scan and resolves to `(136315, "show")`, run 25's shared row
+contains The Bear — and `shared_credits` returns **0**, because the row's key pool was built from
+picks with no type.
+
+Not backfilled, and mostly not backfillABLE. Measured on SFLIX across all twelve stored shared rows:
+runs 1-23 carry neither `tmdb_id` nor `rating_key` on any pick — their blobs hold only
+`title/year/rank/rating/reason/seed_title/sources/affinity`, so there is no id to join on by any
+route, and no migration can invent one. Only run 25 carries a `rating_key` (all 80 picks), and its
+type could in principle be recovered through `tmdb_by_rating_key`. That is one day of one row on one
+server, against a data migration on a live database. From the first run on the fixed build onward the
+rows key correctly, so this decays to nothing on its own.
+
+What it means for anyone reading the dashboard in the meantime: shared-row watch counts start from
+the first run after the upgrade, not from the row's whole history.
