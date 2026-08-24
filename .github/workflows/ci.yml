@@ -126,7 +126,7 @@ jobs:
       # Renamed off the dotfile so upload-artifact keeps it — v4 silently drops hidden files, and
       # a missing shard here would combine into a QUIETLY LOWER coverage number, not an error.
       - run: mv .coverage coverage-data-${{ matrix.shard }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: coverage-data-${{ matrix.shard }}
           path: coverage-data-${{ matrix.shard }}
