@@ -583,7 +583,20 @@ class WatchStream:
     # -- persistence ---------------------------------------------------------------------
 
     def _flush(self, live: _Live) -> None:
-        """Write progress back, inserting the row on first flush."""
+        """Write progress back, inserting the row on first flush.
+
+        The FIRST insert also asks for the credit pass. Until it did, `_queue_reconcile` was reachable
+        only from `_close`, so a credit was computed when a session ENDED and at no other time —
+        someone starting a pick and settling in for two hours saw nothing on the dashboard until they
+        stopped. Observed 2026-08-24: a play of Moxie appeared roughly seventy seconds in, but only
+        because an unrelated household member stopped something else and that pass swept this session
+        up on the way past. On a quiet server it would have shown nothing for two hours.
+
+        The session row is already written at this point and carries a real offset, so the credit is
+        earned and derivable now; `event_credits` reads `watch_sessions`, not `ended_at`. Coalesced
+        like every other request (`_queue_reconcile` skips when one is already queued), and the pass
+        itself measures 0.47s on a 167,800-pick server, so this is one cheap job per session start.
+        """
         # Stamped on ATTEMPT, not on success. Set after the commit, a failed write left `flushed_at`
         # stale, so `now - flushed_at >= FLUSH_EVERY` stayed true and every subsequent event retried —
         # each one blocking the message loop for up to the 5s busy timeout. With several sessions past
@@ -591,6 +604,7 @@ class WatchStream:
         # transport pauses, pongs stop, `ping_timeout` tears the connection down, and the reconnect
         # closes every session as `replaced`. A slow database became lost watch data.
         live.flushed_at = datetime.now(UTC)
+        first_insert = False
         with self._sessions() as session:
             if live.row_id is None:
                 row = WatchSession(
@@ -607,6 +621,7 @@ class WatchStream:
                 session.add(row)
                 session.flush()
                 live.row_id = row.id
+                first_insert = True
             else:
                 row = session.get(WatchSession, live.row_id)
                 if row is None:
@@ -614,6 +629,10 @@ class WatchStream:
                 row.last_seen_at = live.last_seen_at
                 row.max_offset_ms = max(row.max_offset_ms, live.max_offset_ms)
             session.commit()
+        # AFTER the commit, so the pass can see the row it is being asked about. `_close` queues again
+        # when the session ends, to pick up the final offset; the two are coalesced.
+        if first_insert:
+            self._queue_reconcile()
 
     def _close(self, session_key: str, live: _Live, reason: str) -> None:
         """Finish a session, or discard it if it was too short to mean anything."""

@@ -19,7 +19,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import shortlist.server.services.watch_stream as watch_stream
-from shortlist.server.db.models import Base, WatchSession
+from shortlist.server.db.models import Base, Job, WatchSession
 from shortlist.server.services.watch_stream import MIN_START_SECONDS, WatchStream
 
 
@@ -1294,3 +1294,70 @@ class TestAnOffsetPastTheEndIsNeverProgress:
         run(stream_on(stream := WatchStream(sessions, MagicMock()), ctx, rating_key=456294, offset=9_999_999))
 
         assert stream._live["556"].max_offset_ms == 9_999_999
+
+
+class TestACreditIsAskedForWhileStillWatching:
+    """`_queue_reconcile` was reachable only from `_close`, so a credit was computed when a session
+    ENDED and at no other time.
+
+    Reported live 2026-08-24: MooHouse started Moxie and the dashboard showed nothing. It appeared
+    about seventy seconds later — but only because an unrelated viewer stopped something else, and
+    that pass swept this still-playing session up on the way past. On a server with one person
+    watching, nothing would have appeared until they stopped, which for a two-hour film is two hours
+    of the feature looking broken.
+    """
+
+    def _queued(self, sessions) -> int:
+        with sessions() as s:
+            return s.query(Job).filter(Job.kind == "watch.reconcile").count()
+
+    def test_the_first_persist_asks_for_the_credit(self, sessions, ctx):
+        stream = WatchStream(sessions, MagicMock())
+        run(stream._on_playing(ctx, playing(offset=1_000)))
+        live = stream._live["556"]
+        assert self._queued(sessions) == 0, "nothing is written until the session is worth a row"
+
+        stream._flush(live)
+
+        assert self._queued(sessions) == 1, "a session on record earned a credit pass; none was asked for"
+
+    def test_later_progress_writes_do_not_ask_again(self, sessions, ctx, monkeypatch):
+        """Only the FIRST insert asks.
+
+        Asserted on the CALL, not on the resulting job count: `_queue_reconcile` coalesces, so asking
+        on every flush still leaves one queued job and a count-based test cannot tell the two apart
+        (it did not — this test passed against the every-flush version until it was rewritten). What
+        it costs is real though: a two-hour film flushes about 120 times, and each needless ask opens
+        a session and queries the job table to be told it already knew.
+        """
+        stream = WatchStream(sessions, MagicMock())
+        run(stream._on_playing(ctx, playing(offset=1_000)))
+        live = stream._live["556"]
+
+        calls = {"n": 0}
+        real = stream._queue_reconcile
+        monkeypatch.setattr(stream, "_queue_reconcile", lambda: (calls.__setitem__("n", calls["n"] + 1), real())[1])
+
+        stream._flush(live)
+        assert calls["n"] == 1, "the first insert must ask"
+        for _ in range(3):
+            live.max_offset_ms += 60_000
+            stream._flush(live)
+
+        assert calls["n"] == 1, f"asked {calls['n']} times — every progress write is asking again"
+
+    def test_ending_the_session_still_asks_again(self, sessions, ctx):
+        """The close pass is not replaced by the open one — it is what picks up the FINAL offset, and
+        the percentage only matters once it has stopped moving."""
+        stream = WatchStream(sessions, MagicMock())
+        run(stream._on_playing(ctx, playing(offset=1_000)))
+        live = stream._live["556"]
+        live.max_offset_ms = 3_000_000
+        stream._flush(live)
+        with sessions() as s:
+            s.query(Job).delete()  # ignore the open-time pass; this test is about the close
+            s.commit()
+
+        stream._close("556", live, "stopped")
+
+        assert self._queued(sessions) == 1, "no credit pass when the session ended"
