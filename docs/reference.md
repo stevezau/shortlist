@@ -281,6 +281,11 @@ GET  /api/report?window=7|30|90|all -> {window, since, first_pick, overall, tren
      counted a title watched BEFORE it was ever requested.
      `first_pick` is the oldest pick on record (null when there are none). On a young install every window already covers all the data, so 7/30/90/all
      return identical numbers and the selector looks broken; the UI compares `first_pick` against `since` to say why rather than leaving it a mystery.
+     `first_pick` also gates the comparison itself: `watched_prev`, `watchers_prev` and every `*_delta` are **null** unless the previous period is one
+     Shortlist was installed for its whole length. A previous window that reaches back before the first pick would be counting a month the app did not
+     run in, which reads as growth — a real server showed "53 watched, +53 vs previous" the day after its first-ever pick fell inside the comparison.
+     Partial coverage is excluded for the same reason: it undercounts the earlier period, so every delta would lean toward good news. The UI says
+     "no earlier period yet" rather than printing a comparison with no number in it.
      `overall.bounced` / `overall.dropped` split the picks that were STARTED and abandoned, by how far they got (under 5%, and past it).
      They come from live playback (`watch_sessions`), not from Plex's watched flag, which cannot see a partial play at all — so both are 0
      until the playback listener has observed some, and a title nobody has played since tracking began is in neither.
