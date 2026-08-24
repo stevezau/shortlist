@@ -858,6 +858,10 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
     titles: dict[tuple[int, str], str] = {}
     wanted = [key for key, _ in top_keys]
     if wanted:
+        # Type dropped ON PURPOSE, the one place in this feature that does it. This is a WIDENING
+        # filter, not a key: it narrows the scan to eight ids, and the exact `(tmdb_id, media_type)`
+        # tuple is what indexes `titles` and what `titles.get(key)` reads back. A movie and a show
+        # sharing an id costs one extra row that matches no key — never a wrong title.
         ids = {tmdb_id for tmdb_id, _mt in wanted}
         for tmdb_id, media_type, title in (
             session.query(SharedRowWatch.tmdb_id, SharedRowWatch.media_type, func.max(SharedRowWatch.title))
