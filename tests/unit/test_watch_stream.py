@@ -1235,3 +1235,62 @@ def stream_on(stream, ctx, *, rating_key: int, session_key: str = "556", offset:
     return stream._on_playing(
         ctx, {"sessionKey": session_key, "ratingKey": rating_key, "viewOffset": offset, "state": "playing"}
     )
+
+
+class TestAnOffsetPastTheEndIsNeverProgress:
+    """The overshoot guard covered the SECOND event of a session and not the first.
+
+    `_open` assigned the opening offset straight onto `_Live.max_offset_ms`, so a session first seen
+    mid-flight stored a bad reading as its high-water mark — and `_flush` only ever raises that mark.
+    Found on the maintainer's live server 2026-08-24: `watch_sessions` row 257 held 3,244,592 ms
+    against a 2,938,496 ms runtime (110%), written four hours after the guard was deployed. Capped at
+    100 by `WatchSession.percent`, it reads as "they finished it" — exactly the claim the guard exists
+    to stop.
+    """
+
+    def _snapshot(self, ctx, *, duration_ms: int):
+        ctx.plex.active_sessions.return_value = {
+            "556": {
+                "account_id": 99,
+                "rating_key": 456294,
+                "show_rating_key": None,
+                "media_type": "episode",
+                "duration_ms": duration_ms,
+                "state": "playing",
+            }
+        }
+
+    def test_the_opening_offset_is_checked_like_every_other(self, sessions, ctx):
+        """The real shape: the first event we ever see for this session is already past the end."""
+        self._snapshot(ctx, duration_ms=2_630_435)
+
+        run(stream_on(stream := WatchStream(sessions, MagicMock()), ctx, rating_key=456294, offset=3_132_562))
+
+        assert stream._live["556"].max_offset_ms == 0, (
+            "stored an offset eight minutes past the end as the session's high-water mark"
+        )
+
+    def test_a_credible_opening_offset_is_kept(self, sessions, ctx):
+        """The other side — someone genuinely resuming at 89% must not be zeroed."""
+        self._snapshot(ctx, duration_ms=2_630_435)
+
+        run(stream_on(stream := WatchStream(sessions, MagicMock()), ctx, rating_key=456294, offset=2_341_087))
+
+        assert stream._live["556"].max_offset_ms == 2_341_087
+
+    def test_a_little_end_of_file_overshoot_is_still_believed(self, sessions, ctx):
+        """Container padding and imprecise metadata put a genuine finish slightly past the runtime."""
+        self._snapshot(ctx, duration_ms=1_000_000)
+
+        run(stream_on(stream := WatchStream(sessions, MagicMock()), ctx, rating_key=456294, offset=1_040_000))
+
+        assert stream._live["556"].max_offset_ms == 1_040_000, "4% over is ordinary, not a bad reading"
+
+    def test_an_unknown_runtime_rejects_nothing(self, sessions, ctx):
+        """Unknowable overshoot: with no duration there is nothing to compare against, and throwing
+        the offset away would lose the only progress signal we have."""
+        self._snapshot(ctx, duration_ms=None)
+
+        run(stream_on(stream := WatchStream(sessions, MagicMock()), ctx, rating_key=456294, offset=9_999_999))
+
+        assert stream._live["556"].max_offset_ms == 9_999_999

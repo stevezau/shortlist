@@ -32,6 +32,7 @@ from shortlist.server.services.watch_events import BACKFILL_DAYS
 from shortlist.server.services.watch_stream import (
     FLUSH_EVERY,
     MIN_START_SECONDS,
+    OVERSHOOT_TOLERANCE,
     SESSION_CACHE_TTL,
     SESSION_TIMEOUT,
     STABLE_AFTER_S,
@@ -114,11 +115,13 @@ class TestTheLiveListener:
     def test_an_offset_past_the_runtime_is_tolerated_by_five_percent(self):
         """1.05. Plex reports offsets slightly past a file's stated duration (container padding,
         inaccurate metadata). Tighter and real completions get discarded as nonsense; looser and a
-        genuinely broken offset is recorded as progress."""
-        from shortlist.server.services import watch_stream
+        genuinely broken offset is recorded as progress.
 
-        source = inspect.getsource(watch_stream)
-        assert "live.duration_ms * 1.05" in source, "the overshoot tolerance moved"
+        A real constant now, asserted directly. It was a source grep, because the value was inline in
+        one branch of `_on_playing` — which is the same fact that let the OPENING offset skip the check
+        entirely (see `_is_overshoot`). Naming it made both the bug and this assertion straightforward.
+        """
+        assert OVERSHOOT_TOLERANCE == 1.05
 
     def test_a_connection_counts_as_stable_after_this_long(self):
         """60 seconds. Below it a flapping connection — connect, drop, reconnect — would clear the

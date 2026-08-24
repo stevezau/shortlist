@@ -58,6 +58,39 @@ SESSION_CACHE_TTL = timedelta(seconds=5)
 #: Below this, a session is a misfire rather than a start — a mis-click, an autoplay preview, a client
 #: probing the file. Tautulli calls the same idea its "ignore interval".
 MIN_START_SECONDS = 60
+#: How far past an item's stated runtime an offset may sit and still be believed. Genuine end-of-file
+#: overshoot is real (container padding, imprecise metadata); anything beyond this is a reading that
+#: belongs to a different item. See `_is_overshoot`.
+OVERSHOOT_TOLERANCE = 1.05
+
+
+def _is_overshoot(offset: int, duration_ms: int | None) -> bool:
+    """Is this offset too far past the runtime to be this item's progress?
+
+    An offset past the end of the item is not progress, it is a reading that belongs to something
+    else. Observed live: a Slow Horses session recorded 3,132,562 ms against a 2,630,435 ms episode —
+    eight minutes past the end — on the same `sessionKey` as a sane 89% reading, while Plex and
+    Tautulli agreed on the runtime. Auto-play to the next episode moves the offset before the
+    `ratingKey` catches up, so the two briefly describe different items.
+
+    A shared function, and it has to be. This test lived inline in `_on_playing` and so guarded only
+    the SECOND and later events of a session — `_open` assigned the opening offset straight onto
+    `_Live.max_offset_ms`, unchecked. A session first seen mid-flight (the listener reconnecting, or
+    adopting what `/status/sessions` already shows) therefore stored the bad reading as its high-water
+    mark, and `_flush` only ever raises that mark. Caught on the maintainer's server 2026-08-24:
+    session 257 held 3,244,592 ms against a 2,938,496 ms runtime — 110% — recorded four hours after
+    this guard was supposedly live.
+
+    Unknown runtime means unknowable overshoot, so nothing is rejected.
+
+    Args:
+        offset: The playback position reported for the item, in milliseconds.
+        duration_ms: The item's runtime, or None when Plex did not report one.
+
+    Returns:
+        True when the offset should be discarded rather than recorded.
+    """
+    return bool(duration_ms) and offset > duration_ms * OVERSHOOT_TOLERANCE
 
 
 class _Live:
@@ -95,7 +128,10 @@ class _Live:
         self.media_type = media_type
         self.started_at = now
         self.last_seen_at = now
-        self.max_offset_ms = offset_ms
+        # DROPPED, not clamped, and not trusted just because it is the first thing we saw — see
+        # `_is_overshoot`. Zero is the honest floor here: we know the session exists, and we do not
+        # know how far in they are.
+        self.max_offset_ms = 0 if _is_overshoot(offset_ms, duration_ms) else offset_ms
         self.duration_ms = duration_ms
         self.row_id: int | None = None
         self.flushed_at = now
@@ -466,16 +502,10 @@ class WatchStream:
                 return
 
         live.last_seen_at = now
-        # An offset past the end of the item is not progress, it is a reading that belongs to
-        # something else. Observed live: a Slow Horses session recorded 3,132,562 ms against a
-        # 2,630,435 ms episode — eight minutes past the end — on the same `sessionKey` as a sane 89%
-        # reading, while Plex and Tautulli agreed on the runtime. Auto-play to the next episode moves
-        # the offset before the `ratingKey` catches up, so the two briefly describe different items.
-        #
         # DROPPED rather than clamped. Clamping to 100% would turn a bad reading into the strongest
-        # claim the report can make — "they finished it" — when the truth was 89%. A little tolerance
-        # for genuine end-of-file overshoot, and anything beyond that is simply not recorded.
-        if live.duration_ms and offset > live.duration_ms * 1.05:
+        # claim the report can make — "they finished it" — when the truth was 89%. See `_is_overshoot`
+        # for why, and for why it is a function rather than a line of code here.
+        if _is_overshoot(offset, live.duration_ms):
             logger.debug(
                 "watch-stream: ignoring offset {}ms past the {}ms runtime of {}",
                 offset,
