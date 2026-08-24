@@ -145,7 +145,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install coverage
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           pattern: coverage-data-*
           merge-multiple: true
