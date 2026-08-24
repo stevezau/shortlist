@@ -259,6 +259,17 @@ def _avg_days_to_watch(session: Session, start, end=None) -> float | None:
 
     Per (user, title), not per delivery row — a title re-recommended nightly is one data point,
     measured from when it was first added (MIN created_at) to when it was first watched.
+
+    SHARED rows are deliberately EXCLUDED, unlike every other figure that counts a watch, and for the
+    same reason `landing` excludes them: this measures an interval whose start is a per-person
+    delivery, and a shared row has none. Its only delivery time is `RunSharedRow.delivered_at` — one
+    moment for the whole server, re-stamped nightly — so "when was this title first put in front of
+    THIS person" would have to be recovered by scanning each run's picks JSON backwards. That is a
+    fragile answer to a question the row cannot really be asked, and inventing one would put a number
+    with no referent into an average that reads as fact.
+
+    Checked deliberately, 2026-08-24, when a sweep for the half-applied-fix shape flagged this
+    function as the odd one out. It is the intended behaviour, not a missed site.
     """
     firsts = (
         session.query(
@@ -407,14 +418,26 @@ def _requests_summary(session: Session, since: datetime | None) -> dict:
         if (when := sent_time(row)) is not None and (since is None or when >= since)
     ]
     sent = {(row.tmdb_id, row.media_type): sent_time(row) for row in sent_rows}
+    # SHARED rows count, like everywhere else that counts a WATCH. The question here is "did asking
+    # for this title lead to someone watching it", and a shared row is how a title reaches most of
+    # the server — a request that landed on the shared row and was watched off it paid off exactly as
+    # much as one that landed in a personal row. Counting only `picks` undercounted it silently,
+    # which is the same half-applied shape as the runs delta above it.
     watched_at_by_title: dict[tuple[int, str], datetime] = {}
-    for tid, mt, watched in (
+    for query in (
         session.query(PickRow.tmdb_id, PickRow.media_type, func.max(PickRow.watched_at))
         .filter(PickRow.watched_at.isnot(None))
-        .group_by(PickRow.tmdb_id, PickRow.media_type)
-        .all()
+        .group_by(PickRow.tmdb_id, PickRow.media_type),
+        session.query(SharedRowWatch.tmdb_id, SharedRowWatch.media_type, func.max(SharedRowWatch.watched_at))
+        .filter(SharedRowWatch.watched_at.isnot(None))
+        .group_by(SharedRowWatch.tmdb_id, SharedRowWatch.media_type),
     ):
-        watched_at_by_title[(tid, mt)] = watched
+        for tid, mt, watched in query.all():
+            key = (tid, mt)
+            # The LATEST across both, matching the `func.max` each side already applies. A title on
+            # both a personal and a shared row is one thing that person watched.
+            if key not in watched_at_by_title or _as_utc(watched) > _as_utc(watched_at_by_title[key]):
+                watched_at_by_title[key] = watched
     paid_off = sum(
         1
         for key, sent_at in sent.items()

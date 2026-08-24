@@ -1170,6 +1170,41 @@ class TestRunsApi:
         assert requests["sent"] == 2
         assert requests["watched_after_sent"] == 1
 
+    def test_a_request_watched_from_a_shared_row_still_counts_as_paid_off(self, client: TestClient):
+        """A shared row writes NO pick rows, so a title requested for the server and then watched off
+        the shared row credited nothing here — the one figure that answers "was asking for this worth
+        it" could not see the row most of the server actually watches from."""
+        from shortlist.server.db.models import RequestCandidate, SharedRowWatch
+
+        with client.app.state.sessions() as session:
+            uid = session.query(User).order_by(User.id).first().id
+            now = datetime.now(UTC)
+            session.add(
+                RequestCandidate(
+                    tmdb_id=4242,
+                    media_type="movie",
+                    title="Only On The Shared Row",
+                    status="sent",
+                    sent_at=now - timedelta(days=5),
+                )
+            )
+            # Watched AFTER it was sent, and only ever from the shared row — no PickRow exists.
+            session.add(
+                SharedRowWatch(
+                    user_id=uid,
+                    collection_slug="staff",
+                    tmdb_id=4242,
+                    media_type="movie",
+                    title="Only On The Shared Row",
+                    watched_at=now - timedelta(days=1),
+                )
+            )
+            session.commit()
+
+        requests = client.get("/api/report?window=30").json()["requests"]
+        assert requests["sent"] == 1
+        assert requests["watched_after_sent"] == 1, "a shared-row watch is still a watch"
+
     def test_report_uses_the_real_send_time_not_a_timestamp_that_drifts(self, client: TestClient):
         """`updated_at` has `onupdate`, so clearing an old title from the Sent log bumped it and pulled
         a months-old request into a recent window. `sent_at` is stamped once and cannot drift."""

@@ -301,7 +301,8 @@ GET  /api/report?window=7|30|90|all -> {window, since, first_pick, overall, tren
      Resuming later needs nothing special: progress is the furthest across ALL sittings and only ever moves up, so a second
      sitting extends the percentage, while the credit stays pinned to the first time they pressed play.
      Every figure that counts a WATCH includes them: `overall.watched`/`finished`/`watchers`, `bounced`/`dropped`, `trend`, `per_user`, `per_row`,
-     `top_titles` and `recent`. The one that does not is `delivered` (and `landing`, which is a ratio of delivered to watched): a shared row is ONE
+     `top_titles`, `recent` and `requests.watched_after_sent`. The ones that do not are `delivered`, `landing` (a ratio of delivered to watched) and
+     `avg_days_to_watch` (an interval that starts at a per-person delivery): a shared row is ONE
      collection for the whole server, so there is no per-person delivery to count and inventing one would be a number with no referent. A shared
      row's `per_user`/`per_row` line therefore shows watched and finished with no "delivered" clause, which the UI already omits when it is zero.
      `overall.landing` is the one RATIO, and it is computed over a MATURED cohort: picks delivered in the window AND at least 30 days
