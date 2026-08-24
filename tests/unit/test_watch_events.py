@@ -810,3 +810,43 @@ class TestAnAccountWeDoNotKnowCreditsNobody:
         with world() as s:
             credits = event_credits(s, RowMembership(s))
         assert list(credits) == [(1, 510, "movie")], "the real account still credits"
+
+
+class TestTheCursorOverlapIsLoadBearing:
+    """The read cursor is rewound a minute before every read. Deleting that rewind left the whole
+    suite green (mutation audit 2026-08-24) — `test_re_reading_the_same_window_inserts_nothing` proves
+    the overlap is HARMLESS but nothing proved it was necessary, so the line that stops a play being
+    lost for ever could have been removed as dead weight.
+    """
+
+    def test_the_read_asks_for_a_minute_before_the_cursor(self, sessions):
+        """The PMS log is written as plays complete and our read is one moment in time. An event
+        stamped in the same second we were reading is never offered again — the server has no notion
+        of "since you last asked", only `viewedAt >`."""
+        cursor = NOW - timedelta(hours=1)
+        store = MagicMock()
+        store.get.return_value = cursor.isoformat()
+        plex = MagicMock()
+        plex.play_history.return_value = []
+
+        with sessions() as s:
+            ingest_play_history(s, plex, store)
+
+        asked_for = plex.play_history.call_args.kwargs["since"]
+        assert asked_for < cursor, "asked only for events after the cursor — a play in that second is lost"
+        assert cursor - asked_for == timedelta(minutes=1), "the overlap is one minute; see the cursor rewind"
+
+    def test_a_play_stamped_at_the_cursor_itself_is_still_ingested(self, sessions):
+        """The consequence, end to end: the event the PMS was still writing when we read last time."""
+        cursor = NOW - timedelta(hours=1)
+        store = MagicMock()
+        store.get.return_value = cursor.isoformat()
+        plex = MagicMock()
+        plex.play_history.return_value = [PlayEvent(99, 10, None, "movie", cursor, "written-mid-read")]
+
+        with sessions() as s:
+            assert ingest_play_history(s, plex, store) == 1
+            s.commit()
+
+        with sessions() as s:
+            assert s.query(WatchEvent).filter_by(history_key="written-mid-read").count() == 1

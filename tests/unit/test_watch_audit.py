@@ -196,9 +196,16 @@ class TestBoundaries:
 
     def test_a_play_at_the_exact_delivery_instant_counts(self, world):
         """`<=`, not `<`. A run that delivers at 17:30:00 and a play stamped 17:30:00 is the row
-        working, not a race to be discarded."""
-        delivered = NOW - timedelta(days=1)  # run 2's started_at exactly
-        pick(world, 2, 510, rating_key=10)
+        working, not a race to be discarded.
+
+        `created=delivered` is the whole test. Without it this called `pick()` with the default
+        `created_at` of `NOW - 2 days` against a play at `NOW - 1 day` — a full day apart, so it
+        passed just as happily with the rule flipped to `<`. It was written when membership keyed on
+        `Run.started_at`, and was never updated when `_load_per_person` moved to `PickRow.created_at`;
+        the mutation audit of 2026-08-24 caught it asserting nothing about its own name.
+        """
+        delivered = NOW - timedelta(days=1)
+        pick(world, 2, 510, rating_key=10, created=delivered)
         with world() as s:
             s.add(
                 WatchEvent(

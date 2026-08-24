@@ -35,8 +35,13 @@ from shortlist.server.services.report_service import (
     _SHARED_PERSON_TITLE,
     resolve_outcomes,
 )
-from shortlist.server.services.run_persistence import _shared_audience, _shared_muted, reconcile_watched
-from shortlist.server.services.watch_events import RowMembership, shared_credits
+from shortlist.server.services.run_persistence import (
+    FINISHED_PERCENT,
+    _shared_audience,
+    _shared_muted,
+    reconcile_watched,
+)
+from shortlist.server.services.watch_events import RowMembership, _as_utc, shared_credits
 
 NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
 
@@ -1275,6 +1280,51 @@ class TestStoppingPlaybackCreditsImmediately:
         with world() as s:
             assert s.query(User).filter_by(id=1).one().prefs["history_depth"] == 412
 
+    def test_the_full_pass_does_not_zero_a_depth_for_a_profile_it_did_not_read(self, world):
+        """The SAME rule on the other function, which is where it can actually be got wrong.
+
+        The test above covers `reconcile_from_events`, which never touches `history_depth` at all —
+        so the guard inside `reconcile_watched` (`if profile.history or "history_depth" not in
+        prefs`) could be replaced with `if True:` and nothing failed (audit 2026-08-24). That
+        replacement reintroduces verbatim the bug the function's own docstring says the line fixes:
+        a SCOPED run leaves every out-of-scope profile with an empty history, and writing that over a
+        real value makes the majority of the roster read "0 titles watched" on most nights.
+        """
+        with world() as s:
+            s.query(User).filter_by(id=1).one().prefs = {"history_depth": 412}
+            s.commit()
+
+        # A scoped run: this person was not in scope, so their history came back empty.
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(User).filter_by(id=1).one().prefs["history_depth"] == 412, (
+                "overwrote a real depth with the 0 of a read that never happened"
+            )
+
+    def test_a_profile_that_was_read_does_update_its_depth(self, world):
+        """The other direction — the guard must not freeze the number for everybody."""
+        with world() as s:
+            s.query(User).filter_by(id=1).one().prefs = {"history_depth": 412}
+            s.commit()
+        history = [
+            WatchedItem(tmdb_id=550, media_type=MediaType.MOVIE, title="Fight Club", watched_at=NOW),
+            WatchedItem(tmdb_id=13, media_type=MediaType.MOVIE, title="Forrest Gump", watched_at=NOW),
+        ]
+
+        reconcile_watched(world, [profile(history)])
+
+        with world() as s:
+            assert s.query(User).filter_by(id=1).one().prefs["history_depth"] == 2
+
+    def test_a_person_with_genuinely_no_history_and_no_prior_value_records_zero(self, world):
+        """0 is the truth for someone who has watched nothing, and the guard's second clause is what
+        lets that be written the first time."""
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(User).filter_by(id=1).one().prefs["history_depth"] == 0
+
     def test_it_never_uses_the_snapshot_path(self, world):
         """The snapshot path credits a title Plex FLAGGED watched with no play behind it. This function
         asked Plex nothing, so it has no business acting on that flag."""
@@ -1749,3 +1799,164 @@ class TestAMuteIsNeverBakedIntoASubsetAudience:
 
         with world() as s:
             assert s.query(SharedRowWatch).count() == 1
+
+
+class TestOneSharedRowsAudienceNeverAnswersForAnother:
+    """`_shared_visible_to` walks every `(slug, run_id)` it holds and keeps the NEWEST delivery — so
+    the `row_slug != slug` filter is the only thing stopping row B's snapshot from answering a
+    question about row A.
+
+    Deleting that filter left the suite green (audit 2026-08-24), because every audience test here
+    used a single shared row: a second one never existed in `_audience` for the newest-delivery rule
+    to pick up by mistake. With two rows the failure is concrete and it is a privacy-shaped one —
+    somebody deliberately excluded from a private row gets credited for watching off it, because an
+    unrelated public row was delivered more recently.
+    """
+
+    def _two_rows(self, world):
+        """A PRIVATE row alex cannot see, delivered first. A PUBLIC row, delivered after it."""
+        with world() as s:
+            s.add(Collection(id=2, slug="insiders", name="Insiders", enabled=True, build="shared"))
+            s.add(Run(id=2, trigger="schedule", status="ok", started_at=NOW - timedelta(hours=6)))
+            s.add(Delivery(collection_slug="insiders", user_slug="shared_insiders", library_key="1", rating_key=501))
+            # Private: only sam (account 77) is in the audience. Delivered EARLIER than the public row.
+            s.add(
+                RunSharedRow(
+                    run_id=2,
+                    collection_slug="insiders",
+                    row_title="Insiders",
+                    status="ok",
+                    picks=[{"tmdb_id": 680, "media_type": "movie", "title": "Pulp Fiction"}],
+                    audience=[77],
+                    delivered_at=NOW - timedelta(hours=6),
+                )
+            )
+            # The public row in the `world` fixture, re-stamped as the MOST RECENT delivery.
+            row = s.query(RunSharedRow).filter_by(run_id=1, collection_slug="staff").one()
+            row.audience = None
+            row.delivered_at = NOW - timedelta(hours=1)
+            s.commit()
+
+    def test_a_private_rows_audience_is_not_answered_by_a_newer_public_row(self, world):
+        self._two_rows(world)
+        with world() as s:
+            alex = s.query(User).filter_by(slug="alex").one()
+            membership = RowMembership(s)
+
+            assert membership._shared_visible_to("insiders", alex, NOW) is False, (
+                "alex is not in the private row's audience; a newer PUBLIC row answered for it"
+            )
+            # The control: the public row really is visible to them, so the assertion above is about
+            # the slug filter and not about alex being invisible to everything.
+            assert membership._shared_visible_to("staff", alex, NOW) is True
+
+    def test_the_person_who_is_in_the_private_audience_still_sees_it(self, world):
+        """The other direction, so the guard cannot be 'fixed' by refusing everyone."""
+        self._two_rows(world)
+        with world() as s:
+            sam = s.query(User).filter_by(slug="sam").one()
+            assert RowMembership(s)._shared_visible_to("insiders", sam, NOW) is True
+
+    def test_a_play_off_the_private_row_credits_nobody_outside_its_audience(self, world):
+        """End to end through the credit pass, not just the predicate."""
+        self._two_rows(world)
+        a_pick_so_the_rating_key_resolves(world, tmdb_id=680, rating_key=9002)
+        watch_session(world, 99, started=NOW - timedelta(minutes=30), offset=1_800_000, rating_key=9002)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).filter_by(collection_slug="insiders").count() == 0, (
+                "credited a private shared row to somebody its own audience snapshot excludes"
+            )
+
+
+class TestTheSharedPathHasTheSameGuardsAsThePersonalOne:
+    """Three rules that ARE pinned on the personal path and were not on the shared one — an
+    asymmetric pair is how a fix lands on half its cases, which is this codebase's most-repeated bug.
+
+    All three survived the mutation audit of 2026-08-24 with the whole suite green.
+    """
+
+    def _watched_to(self, world, percent: int, *, duration: int = 6_000_000):
+        """A shared-row play that reached exactly `percent` of the film."""
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(
+            world,
+            99,
+            started=NOW - timedelta(hours=2),
+            offset=duration * percent // 100,
+            duration=duration,
+        )
+
+    def test_exactly_the_finished_threshold_is_finished_not_abandoned(self, world):
+        """`>= FINISHED_PERCENT`, not `>`. At exactly 90% the dashboard would otherwise file the film
+        under "gave up part-way at 90%" — the precise misreading that constant exists to prevent."""
+        self._watched_to(world, FINISHED_PERCENT)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            row = s.query(SharedRowWatch).one()
+            assert row.max_percent == FINISHED_PERCENT
+            assert row.finished_at is not None, f"exactly {FINISHED_PERCENT}% read as an abandonment"
+
+    def test_one_percent_short_of_the_threshold_is_not_finished(self, world):
+        """The other side of the same boundary, so it cannot be satisfied by finishing everything."""
+        self._watched_to(world, FINISHED_PERCENT - 1)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            row = s.query(SharedRowWatch).one()
+            assert row.finished_at is None, "called an abandonment a completion"
+
+    def test_a_completion_is_never_dated_before_its_own_credit(self, world):
+        """`max(...)`, not `min(...)`. Plex's watched flag carries the moment it was SET, which for a
+        title watched over several nights can precede the play that earned the credit — and a
+        completion stamped before its own start is a fact about nothing."""
+        self._watched_to(world, 100)
+        # Plex says they finished it a week ago; the play we OBSERVED is two hours old.
+        history = [
+            WatchedItem(
+                tmdb_id=550,
+                media_type=MediaType.MOVIE,
+                title="Fight Club",
+                watched_at=NOW - timedelta(days=7),
+            )  # a MOVIE in this type is finished by definition — see `WatchedItem.is_finished`
+        ]
+
+        reconcile_watched(world, [profile(history)])
+
+        with world() as s:
+            row = s.query(SharedRowWatch).one()
+            assert row.watched_at is not None and row.finished_at is not None
+            assert _as_utc(row.finished_at) >= _as_utc(row.watched_at), (
+                "finished before it was started — a completion predating its own credit"
+            )
+
+    def test_an_existing_credit_is_never_re_dated_by_a_later_pass(self, world):
+        """`if row.watched_at is None and ...` — the credit is pinned to the FIRST play we saw.
+
+        The existing idempotency test re-runs over identical evidence, so it passes with the guard
+        deleted. This one changes the evidence the way retention does: the oldest sessions are pruned,
+        so the earliest play still on record moves FORWARD. Without the guard the credit follows it
+        into a later week and the trend chart quietly rewrites its own history.
+        """
+        self._watched_to(world, 100)
+        reconcile_watched(world, [profile()])
+        with world() as s:
+            first_credit = _as_utc(s.query(SharedRowWatch).one().watched_at)
+
+        # Retention prunes the old session; a NEWER play of the same title is all that is left.
+        with world() as s:
+            s.query(WatchSession).delete()
+            s.commit()
+        watch_session(world, 99, started=NOW - timedelta(minutes=5), offset=5_400_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert _as_utc(s.query(SharedRowWatch).one().watched_at) == first_credit, (
+                "the credit moved to a later play after retention pruned the earlier one"
+            )

@@ -1181,3 +1181,57 @@ class TestAPartialWatchIsNotLostToOneSlowWrite:
         assert calls["n"] == 1
         with sessions() as s:
             assert s.query(WS).count() == 1
+
+
+class TestPlexReusesSessionKeys:
+    """`sessionKey` is not unique over time — Plex recycles a number once that session ends. Two
+    guards keep a recycled key from feeding the previous title's tally, and the audit of 2026-08-24
+    found NEITHER of them pinned: both could be deleted with the whole suite green, because every
+    fixture here sends one rating key and one snapshot that always agrees with it.
+    """
+
+    def test_a_recycled_key_playing_a_different_title_is_not_fed_to_the_old_session(self, sessions, ctx):
+        """Without the ratingKey check, the new film's offsets land on the OLD film's session — and
+        on the old account, since `_Live` carries the account resolved when it opened."""
+        stream = WatchStream(sessions, MagicMock())
+        run(stream._on_playing(ctx, playing(offset=1_000)))
+        assert stream._live["556"].rating_key == 456294
+
+        # Same session key, a different title. Plex handed the number to somebody else's play.
+        run(
+            stream._on_playing(
+                ctx, {"sessionKey": "556", "ratingKey": 999999, "viewOffset": 5_000_000, "state": "playing"}
+            )
+        )
+
+        live = stream._live.get("556")
+        assert live is None or live.max_offset_ms < 5_000_000, (
+            "the second title's offset was recorded against the first title's session"
+        )
+
+    def test_a_snapshot_describing_another_title_never_names_the_account(self, sessions, ctx):
+        """`_current_sessions` deliberately serves its STALE cache when the re-read fails — which is
+        exactly what a booting PMS does, and a PMS that restarted has renumbered its keys. Taking
+        `account_id` from a snapshot about a different title credits the wrong person."""
+        # The snapshot still describes the pre-restart title under this key.
+        ctx.plex.active_sessions.return_value = {
+            "556": {
+                "account_id": 99,
+                "rating_key": 111111,  # not what the event says is playing
+                "show_rating_key": None,
+                "media_type": "movie",
+                "duration_ms": 6_000_000,
+                "state": "playing",
+            }
+        }
+
+        run(stream_on(stream := WatchStream(sessions, MagicMock()), ctx, rating_key=456294))
+
+        assert "556" not in stream._live, "credited a play to the account from a stale, unrelated snapshot"
+
+
+def stream_on(stream, ctx, *, rating_key: int, session_key: str = "556", offset: int = 1_000):
+    """One `playing` event for an explicit rating key."""
+    return stream._on_playing(
+        ctx, {"sessionKey": session_key, "ratingKey": rating_key, "viewOffset": offset, "state": "playing"}
+    )
