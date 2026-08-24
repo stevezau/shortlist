@@ -291,6 +291,19 @@ class RowMembership:
                 RunSharedRow.picks,
                 RunSharedRow.delivered_at,
             )
+            # NEVER a dry run. `_persist_shared_row_report` writes `picks`, `audience` and
+            # `delivered_at` unconditionally — only the delivery-ledger write is gated — so a preview
+            # would otherwise enter this timeline as the NEWEST delivery. Both directions are wrong
+            # and both last: a real watch of a title that was genuinely on the shelf becomes
+            # uncreditable, and a title that only ever existed in a preview is credited as though the
+            # row had shown it. The owner's own runbook says to dry-run first, always, so this is the
+            # normal path rather than an edge case.
+            #
+            # Filtered on READ rather than gated on write, so the run page keeps showing what a
+            # preview would have delivered — and so dry-run rows already in the database are fixed
+            # rather than only new ones.
+            .join(Run, Run.id == RunSharedRow.run_id)
+            .filter(Run.dry_run.isnot(True))
             .order_by(RunSharedRow.run_id)
             .all()
         ):
@@ -368,9 +381,20 @@ class RowMembership:
         worse than having no audience test at all — the state this replaces.
         """
         out: dict[tuple[str, int], set[int] | None] = {}
-        for slug, run_id, audience, delivered_at in self._session.query(
-            RunSharedRow.collection_slug, RunSharedRow.run_id, RunSharedRow.audience, RunSharedRow.delivered_at
-        ).all():
+        for slug, run_id, audience, delivered_at in (
+            self._session.query(
+                RunSharedRow.collection_slug,
+                RunSharedRow.run_id,
+                RunSharedRow.audience,
+                RunSharedRow.delivered_at,
+            )
+            # Dry runs excluded here too, and this is the half that gating the writes would NOT have
+            # fixed: a preview's row carries `audience = NULL`, which `_shared_visible_to` reads as
+            # "everyone", and being the newest delivery it would decide visibility for a subset row.
+            .join(Run, Run.id == RunSharedRow.run_id)
+            .filter(Run.dry_run.isnot(True))
+            .all()
+        ):
             out[(slug, run_id)] = audience if audience is None else set(audience)
             if delivered_at:
                 self._shared_delivered[(slug, run_id)] = _as_utc(delivered_at)

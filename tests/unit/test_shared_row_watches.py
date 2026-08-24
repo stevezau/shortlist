@@ -1448,10 +1448,15 @@ class TestSettledHistoryIsNeverErased:
 
 
 class TestAWithdrawnCreditLeavesNothingBehind:
-    def test_the_percentage_goes_with_the_credit(self, world):
-        """`resolve_outcomes` derives bounced/dropped from `max_percent` ALONE. A withdrawn pick that
-        kept one still renders as an abandonment with no credit behind it — the exact "percentage on
-        an uncredited title" state `_decide_outcomes` calls a bug."""
+    def test_a_pick_carrying_a_percentage_is_not_withdrawn_at_all(self, world):
+        """This once asserted that withdrawal CLEARED the percentage. The rule got stronger instead:
+        a percentage is playback we watched happen, recorded on the pick itself rather than derived
+        from a snapshot that can be stale — so such a pick is never withdrawn in the first place, and
+        there is nothing left to clear.
+
+        What still protects against a percentage outliving its credit (the credited row deleted and
+        its history cleared) is `resolve_outcomes` refusing to call one an outcome, covered by
+        `TestClearingHistoryLeavesNoOrphanedPercentage`."""
         with world() as s:
             s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
             s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
@@ -1479,9 +1484,8 @@ class TestAWithdrawnCreditLeavesNothingBehind:
 
         with world() as s:
             row = s.query(PickRow).filter_by(tmdb_id=510).one()
-            assert row.watched_at is None
-            assert row.max_percent is None, "it would still render as a drop"
-            assert resolve_outcomes(s, None) == {}
+            assert row.watched_at is not None, "a percentage is playback we watched happen"
+            assert row.max_percent == 42
 
 
 class TestUnwatchingAndSharedRows:
@@ -1830,3 +1834,164 @@ class TestTheMonotonicPercentageGuard:
 
         with world() as s:
             assert s.query(SharedRowWatch).one().max_percent == 62
+
+
+class TestALiveCreditIsNotWithdrawnByAResyncThatMissedIt:
+    """`observed` is built once at the top of `reconcile_watched`; `_withdraw_unwatched` runs per
+    user, much later. A partial watch sets no Plex flag and writes no history-log row, so a credit
+    that commits inside that window looks unjustified — and its percentage went with it.
+
+    It healed on the next session end, but a partial watch is the one signal with no other source,
+    so it should not need healing."""
+
+    def test_a_percentage_is_evidence_even_when_the_snapshot_missed_the_session(self, world):
+        with world() as s:
+            s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
+            s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
+            # Credited with a percentage, but no session or event row exists for it — exactly the
+            # state a live credit leaves when the resync read the tables a moment earlier.
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=510,
+                    media_type="movie",
+                    rating_key=0,
+                    rank=1,
+                    title="T",
+                    created_at=NOW - timedelta(days=2),
+                    watched_at=NOW - timedelta(hours=1),
+                    max_percent=42,
+                )
+            )
+            s.commit()
+        other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
+
+        reconcile_watched(world, [profile(other)], full_resync=True)
+
+        with world() as s:
+            row = s.query(PickRow).filter_by(tmdb_id=510).one()
+            assert row.watched_at is not None, "a percentage is playback we watched happen"
+            assert row.max_percent == 42
+
+    def test_a_flag_only_credit_with_no_percentage_is_still_withdrawn(self, world):
+        """The guard must not become a blanket amnesty — a credit Plex's flag alone justified still
+        goes when the flag does."""
+        with world() as s:
+            s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
+            s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=511,
+                    media_type="movie",
+                    rating_key=0,
+                    rank=1,
+                    title="T",
+                    created_at=NOW - timedelta(days=2),
+                    watched_at=NOW - timedelta(hours=1),
+                )
+            )
+            s.commit()
+        other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
+
+        reconcile_watched(world, [profile(other)], full_resync=True)
+
+        with world() as s:
+            assert s.query(PickRow).filter_by(tmdb_id=511).one().watched_at is None
+
+
+class TestADryRunNeverChangesWhoGetsCredited:
+    """`_persist_shared_row_report` writes `picks`, `audience` and `delivered_at` unconditionally —
+    only the delivery-ledger write is gated on `dry_run`. Its per-person twin writes no pick rows at
+    all on a preview, so the two paths disagreed, and a preview entered the membership timeline as
+    the NEWEST delivery.
+
+    Both directions last: a real watch of a title genuinely on the shelf becomes uncreditable, and a
+    title that only ever existed in a preview is credited as though the row had shown it. The owner's
+    runbook says to dry-run first, always — so this is the normal path."""
+
+    #: The preview must land BETWEEN the real delivery and the play, or membership skips it for the
+    #: ordinary reason (a delivery after the play cannot be why they pressed play) and the test proves
+    #: nothing — which is exactly how the first version of these passed with the fix removed.
+    PREVIEW_AT = NOW - timedelta(hours=4)
+
+    def _preview(self, world, run_id: int, tmdb: int):
+        with world() as s:
+            s.add(Run(id=run_id, trigger="manual", status="ok", started_at=self.PREVIEW_AT, dry_run=True))
+            s.add(
+                RunSharedRow(
+                    run_id=run_id,
+                    collection_slug="staff",
+                    row_title="Staff Picks",
+                    status="ok",
+                    picks=[{"tmdb_id": tmdb, "media_type": "movie", "rating_key": 7777, "title": "Preview"}],
+                    audience=None,
+                    delivered_at=self.PREVIEW_AT,
+                )
+            )
+            s.commit()
+
+    def test_a_preview_does_not_erase_a_real_delivery(self, world):
+        """The row really showed Fight Club yesterday. A preview today lists something else. They
+        then watch Fight Club — which was, and still is, on their shelf."""
+        self._preview(world, 9, tmdb=8888)
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            credited = [(r.tmdb_id, r.collection_slug) for r in s.query(SharedRowWatch)]
+        assert credited == [(550, "staff")], "the real delivery still decides membership"
+
+    def test_a_preview_does_not_invent_a_delivery(self, world):
+        """The mirror case: a title that has only ever appeared in a preview must credit nothing."""
+        with world() as s:
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=2,
+                    collection_slug="other",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=8888,
+                    media_type="movie",
+                    rating_key=7777,
+                    rank=1,
+                    created_at=NOW - timedelta(days=1),
+                )
+            )
+            s.commit()
+        self._preview(world, 9, tmdb=8888)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000, rating_key=7777)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).filter_by(tmdb_id=8888).count() == 0
+
+    def test_a_preview_cannot_decide_a_subset_rows_audience(self, world):
+        """The half that gating the WRITES would not have fixed: a preview's row carries
+        `audience = NULL`, which `_shared_visible_to` reads as "everyone" — and being the newest
+        delivery, it would decide visibility for a row that excludes this person."""
+        with world() as s:
+            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row.audience = [77]  # sam only — alex cannot see it
+            s.query(Collection).filter_by(slug="staff").one().audience = "subset"
+            s.commit()
+        self._preview(world, 9, tmdb=550)  # preview: audience NULL = "everyone"
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 0, "alex was never in this row's audience"

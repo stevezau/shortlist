@@ -623,15 +623,22 @@ def _withdraw_unwatched(
         key = (pick.tmdb_id, pick.media_type)
         if key in latest_watch or key in observed:
             continue
+        # A percentage is playback we watched happen — the same evidence `observed` carries, but
+        # recorded on the pick itself rather than derived from a snapshot taken at the top of this
+        # pass. That snapshot is the gap: a live credit committed after `scan` was read but before
+        # this runs looks unjustified, and its credit AND its percentage were cleared. It healed on
+        # the next session end, but a partial watch is the one signal with no other source, so the
+        # cheap check is worth more than the tidiness of one rule.
+        if pick.max_percent is not None:
+            continue
         if _as_utc(pick.watched_at) < cutoff:
             continue  # settled history — see UNWATCH_WITHDRAW_DAYS
         pick.watched_at = None
         pick.finished_at = None
-        # And the percentage with it. `resolve_outcomes` derives bounced/dropped from `max_percent`
-        # ALONE, so a withdrawn pick that kept one still renders as an abandonment with no credit
-        # behind it — the exact "a percentage on an uncredited title" state step 4 of
-        # `_decide_outcomes` calls a bug.
-        pick.max_percent = None
+        # The percentage is NOT cleared here, and cannot need to be: the guard above means a pick
+        # carrying one is never withdrawn at all. What protects against a percentage outliving its
+        # credit — which happens when the credited row is deleted and its history cleared — is
+        # `resolve_outcomes`, which refuses to call a percentage with no credit an outcome.
         withdrawn += 1
     return withdrawn
 
