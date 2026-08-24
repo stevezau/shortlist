@@ -26,6 +26,7 @@ from shortlist.server.db.models import (
     Delivery,
     PickRow,
     Run,
+    RunSharedRow,
     User,
     WatchEvent,
     WatchSession,
@@ -297,3 +298,223 @@ class TestReportInvariants:
         else:
             expected = "dropped"
         assert outcomes[0]["outcome"] == expected, f"{pct}% should read as {expected}"
+
+
+# --------------------------------------------------------------------------------------------
+# Whole-pipeline invariants.
+#
+# Every pass over this feature so far has either read the code or built ONE state by hand. This
+# generates states instead — many users, many rows, shared and personal, deliveries and plays and
+# sessions at arbitrary times — runs the real reconcile and the real report over each, and asserts
+# the properties the dashboard's numbers claim. A defect here is a number that means something other
+# than its label, which is the shape almost every real defect in this feature has had.
+# --------------------------------------------------------------------------------------------
+
+
+def _world(users: int, rows: int):
+    """A server with `users` people and `rows` rows, half of them shared."""
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(engine)
+    with factory() as s:
+        for u in range(1, users + 1):
+            s.add(User(id=u, plex_account_id=100 + u, username=f"u{u}", slug=f"u{u}", enabled=True))
+        for r in range(1, rows + 1):
+            shared = r % 2 == 0
+            s.add(
+                Collection(
+                    id=r,
+                    slug=f"row{r}",
+                    name=f"Row {r}",
+                    enabled=True,
+                    build="shared" if shared else "per_person",
+                )
+            )
+            if shared:
+                s.add(Delivery(collection_slug=f"row{r}", user_slug=f"shared_row{r}", library_key="1", rating_key=r))
+            else:
+                for u in range(1, users + 1):
+                    s.add(Delivery(collection_slug=f"row{r}", user_slug=f"u{u}", library_key="1", rating_key=r))
+        s.commit()
+    return factory
+
+
+@st.composite
+def worlds(draw):
+    users = draw(st.integers(min_value=1, max_value=3))
+    rows = draw(st.integers(min_value=1, max_value=4))
+    titles = draw(st.integers(min_value=1, max_value=4))
+    deliveries = draw(st.lists(st.integers(min_value=1, max_value=50), min_size=1, max_size=3, unique=True))
+    plays = draw(st.lists(st.tuples(st.integers(1, 3), st.integers(0, 49)), max_size=6))
+    sess = draw(st.lists(st.tuples(st.integers(1, 3), st.integers(0, 49), st.integers(0, 100)), max_size=6))
+    return users, rows, titles, deliveries, plays, sess
+
+
+def _populate(factory, users, rows, titles, deliveries, plays, sess):
+    with factory() as s:
+        for run_id, d in enumerate(sorted(set(deliveries), reverse=True), start=1):
+            s.add(Run(id=run_id, trigger="schedule", status="ok", started_at=NOW - timedelta(days=d)))
+            for r in range(1, rows + 1):
+                shared = r % 2 == 0
+                picks = [
+                    {"tmdb_id": 500 + t, "media_type": "movie", "rating_key": 900 + t, "title": f"T{t}"}
+                    for t in range(1, titles + 1)
+                ]
+                if shared:
+                    s.add(
+                        RunSharedRow(
+                            run_id=run_id,
+                            collection_slug=f"row{r}",
+                            status="ok",
+                            picks=picks,
+                            audience=None,
+                            delivered_at=NOW - timedelta(days=d),
+                        )
+                    )
+                else:
+                    for u in range(1, users + 1):
+                        for t in range(1, titles + 1):
+                            s.add(
+                                PickRow(
+                                    run_id=run_id,
+                                    user_id=u,
+                                    collection_slug=f"row{r}",
+                                    section_key="1",
+                                    library="L",
+                                    tmdb_id=500 + t,
+                                    media_type="movie",
+                                    rating_key=900 + t,
+                                    rank=t,
+                                    title=f"T{t}",
+                                    created_at=NOW - timedelta(days=d),
+                                )
+                            )
+        for i, (u, d) in enumerate(plays):
+            if u > users:
+                continue
+            s.add(
+                WatchEvent(
+                    plex_account_id=100 + u,
+                    rating_key=901,
+                    media_type="movie",
+                    viewed_at=NOW - timedelta(days=d),
+                    source="history",
+                    history_key=f"h{i}",
+                )
+            )
+        for i, (u, d, pct) in enumerate(sess):
+            if u > users:
+                continue
+            s.add(
+                WatchSession(
+                    plex_account_id=100 + u,
+                    session_key=f"s{i}",
+                    rating_key=901,
+                    media_type="movie",
+                    started_at=NOW - timedelta(days=d),
+                    last_seen_at=NOW - timedelta(days=d),
+                    ended_at=NOW - timedelta(days=d),
+                    max_offset_ms=pct * 1000,
+                    duration_ms=100 * 1000,
+                    end_reason="stopped",
+                )
+            )
+        s.commit()
+
+
+class TestTheReportMeansWhatItSays:
+    """Generated servers, the real reconcile, the real report. Each assertion is a claim the
+    dashboard makes in words."""
+
+    @settings(max_examples=60, deadline=None)
+    @given(worlds())
+    def test_every_headline_invariant_holds_on_any_server(self, world):
+        from shortlist.server.services.report_service import effectiveness
+        from shortlist.server.services.run_persistence import reconcile_from_events
+
+        users, rows, titles, deliveries, plays, sess = world
+        factory = _world(users, rows)
+        _populate(factory, users, rows, titles, deliveries, plays, sess)
+        reconcile_from_events(factory)
+
+        with factory() as s:
+            for window in ("7", "30", "all"):
+                r = effectiveness(s, window)
+                o = r["overall"]
+                w = f"[{window}]"
+                assert o["finished"] <= o["watched"], f"{w} finished exceeds watched"
+                assert o["bounced"] + o["dropped"] <= o["watched"], f"{w} gave-up exceeds watched"
+                assert o["watched"] >= 0, w
+                assert r["coverage"]["users_watched"] <= r["coverage"]["users_enabled"], w
+                assert r["coverage"]["users_idle"] >= 0, w
+                assert r["coverage"]["users_idle"] <= r["coverage"]["users_with_picks"], w
+                for line in r["per_row"]:
+                    assert line["finished"] <= line["watched"], f"{w} {line['slug']}"
+                    assert line["name"], f"{w} nameless row"
+                for line in r["per_user"]:
+                    assert line["finished"] <= line["watched"], f"{w} {line['username']}"
+                for week in r["trend"]:
+                    assert week["finished"] <= week["watched"], f"{w} {week['week']}"
+                land = o["landing"]
+                assert land["watched"] <= land["delivered"], w
+                assert len(r["recent"]) <= 20, w
+                assert all(not k.startswith("_") for line in r["recent"] for k in line), w
+
+    @settings(max_examples=40, deadline=None)
+    @given(worlds())
+    def test_running_the_credit_pass_twice_changes_nothing(self, world):
+        """It runs every time anyone stops a video. Anything it does twice, it must do once."""
+        from shortlist.server.services.report_service import effectiveness
+        from shortlist.server.services.run_persistence import reconcile_from_events
+
+        users, rows, titles, deliveries, plays, sess = world
+        factory = _world(users, rows)
+        _populate(factory, users, rows, titles, deliveries, plays, sess)
+
+        reconcile_from_events(factory)
+        with factory() as s:
+            first = effectiveness(s, "all")["overall"]
+        reconcile_from_events(factory)
+        with factory() as s:
+            second = effectiveness(s, "all")["overall"]
+
+        # The COUNTS, not the whole payload: `landing.cohort_from`/`cohort_to` are derived from the
+        # clock at call time, so they legitimately differ by microseconds between two calls and
+        # comparing them compares the stopwatch rather than the answer.
+        keys = ("watched", "finished", "bounced", "dropped", "delivered")
+        assert {k: first[k] for k in keys} == {k: second[k] for k in keys}
+        assert first["landing"]["watched"] == second["landing"]["watched"]
+
+    @settings(max_examples=40, deadline=None)
+    @given(worlds())
+    def test_a_credit_is_never_silently_lost(self, world):
+        """The full pass may WITHDRAW a credit — deliberately, and only under its own rules. What it
+        must never do is quietly drop one that the event pass justified: every credit the event pass
+        made is backed by playback, and playback-backed credits are exactly what withdrawal spares."""
+        from shortlist.server.db.models import PickRow as PR
+        from shortlist.server.services.run_persistence import reconcile_from_events, reconcile_watched
+
+        users, rows, titles, deliveries, plays, sess = world
+        factory = _world(users, rows)
+        _populate(factory, users, rows, titles, deliveries, plays, sess)
+
+        reconcile_from_events(factory)
+        with factory() as s:
+            before = {p.id for p in s.query(PR).filter(PR.watched_at.isnot(None))}
+
+        # A full resync where Plex reports nothing watched — the harshest input withdrawal can get.
+        profiles = [
+            UserProfile(
+                username=f"u{u}",
+                plex_account_id=100 + u,
+                user_type=UserType.SHARED,
+                slug=f"u{u}",
+                history=[WatchedItem(title="X", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=99999)],
+            )
+            for u in range(1, users + 1)
+        ]
+        reconcile_watched(factory, profiles, full_resync=True)
+
+        with factory() as s:
+            after = {p.id for p in s.query(PR).filter(PR.watched_at.isnot(None))}
+        assert before <= after, "a playback-backed credit was withdrawn"
