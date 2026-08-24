@@ -31,7 +31,7 @@ from shortlist.server.db.models import (
     WatchSession,
 )
 from shortlist.server.services.report_service import BOUNCE_PERCENT, engagement, resolve_outcomes
-from shortlist.server.services.run_persistence import reconcile_watched
+from shortlist.server.services.run_persistence import FINISHED_PERCENT, reconcile_watched
 
 NOW = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
 SETTINGS = settings(max_examples=50, deadline=None)
@@ -287,5 +287,13 @@ class TestReportInvariants:
             outcomes = list(resolve_outcomes(s, None).values())
 
         assert len(outcomes) == 1
-        expected = "bounced" if pct < BOUNCE_PERCENT else "dropped"
-        assert outcomes[0]["outcome"] == expected
+        # THREE bands, not two. A film played past `FINISHED_PERCENT` is finished, not abandoned:
+        # Plex flags it watched at its own ~90% bar, so the nightly sync would say so anyway, and
+        # calling it "gave up" in the meantime states the opposite of what happened.
+        if pct >= FINISHED_PERCENT:
+            expected = "finished"
+        elif pct < BOUNCE_PERCENT:
+            expected = "bounced"
+        else:
+            expected = "dropped"
+        assert outcomes[0]["outcome"] == expected, f"{pct}% should read as {expected}"

@@ -28,8 +28,8 @@ from shortlist.server.db.models import (
     WatchEvent,
     WatchSession,
 )
-from shortlist.server.services.report_service import BOUNCE_PERCENT, engagement
-from shortlist.server.services.run_persistence import reconcile_watched
+from shortlist.server.services.report_service import BOUNCE_PERCENT, engagement, resolve_outcomes
+from shortlist.server.services.run_persistence import FINISHED_PERCENT, reconcile_watched
 from shortlist.server.services.watch_events import (
     RowMembership,
     event_credits,
@@ -170,12 +170,23 @@ class TestBoundaries:
 
     @pytest.mark.parametrize(
         ("percent", "expected"),
-        [(0, "bounced"), (BOUNCE_PERCENT - 1, "bounced"), (BOUNCE_PERCENT, "dropped"), (100, "dropped")],
+        [
+            (0, "bounced"),
+            (BOUNCE_PERCENT - 1, "bounced"),
+            (BOUNCE_PERCENT, "dropped"),
+            (FINISHED_PERCENT - 1, "dropped"),
+        ],
     )
     def test_the_bounce_threshold_is_exclusive_at_the_bottom(self, world, percent, expected):
-        """`< BOUNCE_PERCENT` is a bounce; exactly at it is a drop. A pick at 100% with no
-        `finished_at` is still "dropped" — for a SERIES that is correct, since finishing means every
-        episode, not one episode played to the end."""
+        """`< BOUNCE_PERCENT` is a bounce; exactly at it is a drop; up to `FINISHED_PERCENT` it stays
+        a drop.
+
+        This writes the pick row DIRECTLY, so it tests how `resolve_outcomes` READS a stored row, not
+        how one comes to be stored. It used to carry a 100% row asserting "dropped", justified by
+        "for a SERIES that is correct, since finishing means every episode" — a state the code cannot
+        reach, because `session_progress` returns None for a show and a percentage is therefore always
+        a film. Where a finished film is decided is `_decide_outcomes`, and
+        `TestAFilmPlayedToTheEndIsFinished` covers it."""
         pick(world, 1, 510, rating_key=10, watched_at=NOW - timedelta(hours=2), max_percent=percent)
 
         with world() as s:
@@ -1035,3 +1046,132 @@ class TestEverySittingIsConsidered:
             credits = event_credits(s, RowMembership(s))
 
         assert (1, 510, "movie") in credits, "the second sitting happened while the row was showing it"
+
+
+class TestAFilmPlayedToTheEndIsFinished:
+    """A film someone watched to the very end was reported as "gave up on it after 100%", under a
+    heading reading "where the picks are not landing", from the moment the credits rolled until the
+    nightly sync at 04:17 the next morning.
+
+    `reconcile_from_events` — the pass whose whole point is to put the outcome up the moment playback
+    stops — passed no `finished_keys`, so only the nightly Plex read could ever stamp `finished_at`.
+    Decided in `_decide_outcomes` rather than inferred at read time, so `overall.finished` (which
+    counts the stamp) and the engagement detail (which reads the outcome) cannot disagree."""
+
+    def test_a_full_watch_is_finished_not_abandoned(self, world):
+        from shortlist.server.services.run_persistence import FINISHED_PERCENT, reconcile_from_events
+
+        pick(world, 2, 510, rating_key=10, created=NOW - timedelta(days=1))
+        session_row(world, 10, started=NOW - timedelta(hours=3), offset=6_000_000, duration=6_000_000)
+
+        reconcile_from_events(world)
+
+        with world() as s:
+            row = s.query(PickRow).filter_by(tmdb_id=510).one()
+            assert row.max_percent == 100
+            assert row.finished_at is not None, "they watched it to the end"
+            assert resolve_outcomes(s, None)[(1, 510, "movie")]["outcome"] == "finished"
+        assert FINISHED_PERCENT <= 100
+
+    def test_stopping_just_short_is_still_a_drop(self, world):
+        """Plex's own watched bar is around 90%, so below it we have no basis to claim a finish."""
+        from shortlist.server.services.run_persistence import FINISHED_PERCENT, reconcile_from_events
+
+        pick(world, 2, 511, rating_key=11, created=NOW - timedelta(days=1))
+        short = int(6_000_000 * (FINISHED_PERCENT - 5) / 100)
+        session_row(world, 11, started=NOW - timedelta(hours=3), offset=short, duration=6_000_000)
+
+        reconcile_from_events(world)
+
+        with world() as s:
+            row = s.query(PickRow).filter_by(tmdb_id=511).one()
+            assert row.finished_at is None
+            assert resolve_outcomes(s, None)[(1, 511, "movie")]["outcome"] == "dropped"
+
+    def test_the_headline_and_the_detail_agree(self, world):
+        """Decided once and stored, so the Finished tile (which counts the stamp) and the engagement
+        list (which reads the outcome) cannot say different things about the same watch."""
+        from shortlist.server.services.report_service import effectiveness
+        from shortlist.server.services.run_persistence import reconcile_from_events
+
+        pick(world, 2, 510, rating_key=10, created=NOW - timedelta(days=1))
+        session_row(world, 10, started=NOW - timedelta(hours=3), offset=6_000_000, duration=6_000_000)
+
+        reconcile_from_events(world)
+
+        with world() as s:
+            report = effectiveness(s, "all")
+            assert report["overall"]["finished"] == 1
+            assert report["overall"]["dropped"] + report["overall"]["bounced"] == 0
+
+
+class TestTheClocksAndTheMaxima:
+    """Four guards the mutation sweep found nothing was testing. Each picks one value out of several
+    candidates, and each flips silently: the number stays plausible, it is just the wrong one."""
+
+    def test_a_delivery_is_dated_by_its_EARLIEST_pick(self, world):
+        """A run persists a row's picks over seconds to minutes. The delivery landed when the FIRST
+        one did — dating it by the last means a play in between is judged against a row Plex was not
+        yet serving."""
+        with world() as s:
+            for rank, created in ((1, NOW - timedelta(hours=6)), (2, NOW - timedelta(hours=5))):
+                s.add(
+                    PickRow(
+                        run_id=2,
+                        user_id=1,
+                        collection_slug="picked",
+                        section_key="1",
+                        library="Movies",
+                        tmdb_id=600 + rank,
+                        media_type="movie",
+                        rating_key=0,
+                        rank=rank,
+                        created_at=created,
+                    )
+                )
+            s.commit()
+
+        with world() as s:
+            timeline = RowMembership(s)._per_person[(1, "picked", "1")]
+        landed = min(at for at, _keys in timeline)
+        assert landed == NOW - timedelta(hours=6), "the earliest pick, not the latest"
+
+    def test_a_shared_rows_audience_comes_from_its_NEWEST_delivery(self, world):
+        """Audiences change. The one that applies is the one in force when they pressed play — the
+        newest delivery at or before that moment, not the oldest on record."""
+        with world() as s:
+            s.add(Collection(id=2, slug="staff", name="Staff", enabled=True, build="shared"))
+            s.add(Delivery(collection_slug="staff", user_slug="shared_staff", library_key="1", rating_key=9))
+            s.add(Run(id=3, trigger="schedule", status="ok", started_at=NOW - timedelta(days=3)))
+            s.add(Run(id=4, trigger="schedule", status="ok", started_at=NOW - timedelta(days=1)))
+            # Old delivery: alex could see it. New delivery: only sam.
+            s.add(RunSharedRow(run_id=3, collection_slug="staff", status="ok", picks=[], audience=[99]))
+            s.add(RunSharedRow(run_id=4, collection_slug="staff", status="ok", picks=[], audience=[77]))
+            s.commit()
+
+        with world() as s:
+            alex = s.query(User).filter_by(id=1).one()
+            membership = RowMembership(s)
+            assert membership._shared_visible_to("staff", alex, NOW) is False, (
+                "the NEWEST delivery excluded them; taking the oldest would still say yes"
+            )
+            assert membership._shared_visible_to("staff", alex, NOW - timedelta(days=2)) is True, (
+                "back then the old delivery was in force"
+            )
+
+    def test_a_titles_watch_time_is_the_LATEST_of_several(self, world):
+        """Plex reports a title once per play. The snapshot path bounds a credit by "no earlier than
+        the row first showed it", so taking the earliest of several plays can refuse a credit the
+        latest one earns."""
+        pick(world, 2, 510, rating_key=10, created=NOW - timedelta(days=2))
+        history = [
+            WatchedItem(title="T", media_type=MediaType.MOVIE, watched_at=NOW - timedelta(days=5), tmdb_id=510),
+            WatchedItem(title="T", media_type=MediaType.MOVIE, watched_at=NOW - timedelta(hours=1), tmdb_id=510),
+        ]
+
+        reconcile_watched(world, [profile(history)])
+
+        with world() as s:
+            watched = s.query(PickRow).filter_by(tmdb_id=510).one().watched_at
+        assert watched is not None, "the later play is after the delivery and earns the credit"
+        assert watched.replace(tzinfo=UTC) == NOW - timedelta(hours=1)

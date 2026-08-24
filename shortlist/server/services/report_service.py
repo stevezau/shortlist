@@ -526,6 +526,13 @@ def resolve_outcomes(session: Session, since: datetime | None) -> dict[tuple[int
 
     resolved: dict[tuple[int, int, str], dict] = {}
     for key, entry in out.items():
+        # A percentage with no credit anywhere is not an outcome. `_apply_outcomes` stamps
+        # `max_percent` onto EVERY delivery row of a title, bounded by nothing, which is safe only
+        # while some other row carries the credit. Delete the credited row and clear its history
+        # (the one destructive action on the dashboard) and the percentage outlives it — leaving an
+        # abandonment with no start, and a Bounced tile reading higher than the Watched tile above it.
+        if entry["watched_at"] is None and entry["finished_at"] is None:
+            continue
         observed = entry["watched_at"] or entry["first_delivered"]
         if since is not None and observed is not None and _as_utc(observed) < since:
             continue

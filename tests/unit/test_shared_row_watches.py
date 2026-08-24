@@ -1639,3 +1639,194 @@ class TestASharedRowIsTimedByItsOwnDelivery:
 
         with world() as s:
             assert s.query(SharedRowWatch).filter_by(tmdb_id=550).count() == 1
+
+
+class TestTwoPassesCreditingAtOnce:
+    """`watch.reconcile` deliberately does not wait for a run, and both it and the run's own
+    end-of-run reconcile recompute every credit from the same event log. So whenever anyone stops a
+    video mid-run, both produce the same new shared row — and the second insert violates the
+    four-column primary key.
+
+    The race is a STALE `existing` map: it is read at the top of a pass, and the other pass commits
+    after that. These drive `_apply_shared` with exactly that state — an empty map against a database
+    that already has the row — because a test that seeds the row BEFORE the pass starts does not
+    reproduce it at all (the map simply includes it, and passes with the fix removed)."""
+
+    def _row_already_committed(self, world):
+        with world() as s:
+            s.add(
+                SharedRowWatch(
+                    user_id=1,
+                    collection_slug="staff",
+                    tmdb_id=550,
+                    media_type="movie",
+                    title="Fight Club",
+                    watched_at=NOW - timedelta(hours=2),
+                )
+            )
+            s.commit()
+
+    def test_losing_the_insert_race_does_not_raise(self, world):
+        from shortlist.server.services.run_persistence import _apply_shared, _Outcome
+
+        self._row_already_committed(world)
+        with world() as s:
+            membership = RowMembership(s)
+            desired = {("staff", 550, "movie"): _Outcome(watched_at=NOW - timedelta(hours=2))}
+            # Empty: this pass read the table before the other one committed.
+            _apply_shared(s, s.query(User).filter_by(id=1).one(), desired, {}, membership)
+            s.commit()
+            assert s.query(SharedRowWatch).count() == 1
+
+    def test_the_surviving_row_still_gets_this_passes_progress(self, world):
+        """Losing the race must not lose the write — the other pass's row is the same row, so this
+        pass carries on into the update path against it."""
+        from shortlist.server.services.run_persistence import _apply_shared, _Outcome
+
+        self._row_already_committed(world)
+        with world() as s:
+            membership = RowMembership(s)
+            desired = {("staff", 550, "movie"): _Outcome(watched_at=NOW - timedelta(hours=2), max_percent=30)}
+            _apply_shared(s, s.query(User).filter_by(id=1).one(), desired, {}, membership)
+            s.commit()
+            assert s.query(SharedRowWatch).one().max_percent == 30
+
+    def test_a_full_pass_over_a_racing_row_still_commits(self, world):
+        """End to end: the pass completes and the session is still usable afterwards. An
+        `IntegrityError` that escapes poisons the transaction, so everything after it is lost too."""
+        from shortlist.server.services.run_persistence import reconcile_from_events
+
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+        self._row_already_committed(world)
+
+        reconcile_from_events(world)
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 1
+
+
+class TestClearingHistoryLeavesNoOrphanedPercentage:
+    """`_apply_outcomes` stamps `max_percent` onto EVERY delivery row of a title with no bound at
+    all — safe only while some other row carries the credit. Delete the credited row and clear its
+    history, and the percentage outlives it: an abandonment with no start, and a Bounced tile
+    reading higher than the Watched tile above it."""
+
+    def test_a_percentage_with_no_credit_is_not_an_outcome(self, world):
+        with world() as s:
+            s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
+            s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
+            # The row that earned the credit has been deleted and its history cleared; this is the
+            # sibling delivery that kept the percentage.
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=550,
+                    media_type="movie",
+                    rating_key=0,
+                    rank=1,
+                    title="Fight Club",
+                    created_at=NOW - timedelta(days=1),
+                    watched_at=None,
+                    max_percent=3,
+                )
+            )
+            s.commit()
+
+        with world() as s:
+            assert resolve_outcomes(s, None) == {}, "no credit, no outcome"
+
+    def test_the_tiles_cannot_invert(self, world):
+        from shortlist.server.services.report_service import _watched_count
+
+        with world() as s:
+            s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
+            s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=550,
+                    media_type="movie",
+                    rating_key=0,
+                    rank=1,
+                    title="Fight Club",
+                    created_at=NOW - timedelta(days=1),
+                    watched_at=None,
+                    max_percent=3,
+                )
+            )
+            s.commit()
+
+        with world() as s:
+            abandoned = sum(1 for e in resolve_outcomes(s, None).values() if e["outcome"] in ("bounced", "dropped"))
+            assert abandoned <= _watched_count(s, None)
+
+
+class TestTheMonotonicPercentageGuard:
+    """Retention deletes sessions at six months, so the maximum a session can report SHRINKS over
+    time. A fresh short sitting must never overwrite a real earlier one — the mutation sweep found
+    nothing testing either half of that, personal or shared."""
+
+    def test_a_later_shorter_session_does_not_lower_a_personal_percentage(self, world):
+        from shortlist.server.services.run_persistence import reconcile_from_events
+
+        with world() as s:
+            s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
+            s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=550,
+                    media_type="movie",
+                    rating_key=9001,
+                    rank=1,
+                    title="Fight Club",
+                    created_at=NOW - timedelta(days=2),
+                    watched_at=NOW - timedelta(days=1),
+                    max_percent=62,
+                )
+            )
+            s.commit()
+        # A brief re-open today: 5%.
+        watch_session(world, 99, started=NOW - timedelta(hours=1), offset=300_000)
+
+        reconcile_from_events(world)
+
+        with world() as s:
+            assert s.query(PickRow).filter_by(tmdb_id=550).one().max_percent == 62
+
+    def test_a_later_shorter_session_does_not_lower_a_shared_percentage(self, world):
+        from shortlist.server.services.run_persistence import reconcile_from_events
+
+        a_pick_so_the_rating_key_resolves(world)
+        with world() as s:
+            s.add(
+                SharedRowWatch(
+                    user_id=1,
+                    collection_slug="staff",
+                    tmdb_id=550,
+                    media_type="movie",
+                    title="Fight Club",
+                    watched_at=NOW - timedelta(days=1),
+                    max_percent=62,
+                )
+            )
+            s.commit()
+        watch_session(world, 99, started=NOW - timedelta(hours=1), offset=300_000)
+
+        reconcile_from_events(world)
+
+        with world() as s:
+            assert s.query(SharedRowWatch).one().max_percent == 62

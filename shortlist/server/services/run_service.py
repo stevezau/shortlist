@@ -332,7 +332,20 @@ class RunService:
                 # both "what we recommended" and "what they have since watched". A dry run is a
                 # preview and mutates nothing, matching the rest of persistence.
                 if not dry_run:
-                    self._reconcile_watched(profiles, live_picks)
+                    # Guarded, and the guard is the point. Every row is already built and delivered
+                    # on Plex by the time this runs; crediting is bookkeeping over our own database.
+                    # An exception here used to land in the `except` below and mark a completely
+                    # successful run as ERROR — the same shape as the retention prune, which was
+                    # moved out of the persist transaction for exactly this reason. Whatever this
+                    # pass misses, the nightly sync reaches from the same records.
+                    try:
+                        self._reconcile_watched(profiles, live_picks)
+                    except Exception as e:
+                        logger.warning(
+                            "run {}: crediting watches failed ({}) — the run itself is unaffected",
+                            run_id,
+                            type(e).__name__,
+                        )
                 status = "aborted" if aborted else ("ok" if report.ok else "error")
             except Exception as e:
                 logger.exception("run {} failed", run_id)

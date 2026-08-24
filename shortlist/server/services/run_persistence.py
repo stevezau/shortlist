@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 from sqlalchemy import and_, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from shortlist.engine.models import SHARED_SLUG_PREFIX
@@ -59,6 +60,19 @@ from shortlist.server.services.watch_events import (
 WATCH_RETENTION_MONTHS = 6
 
 HIT_WINDOW_DAYS = 30
+
+#: How far through a FILM counts as having finished it, when all we have is live playback.
+#:
+#: Plex's own default watched threshold is ~90%, so a film we watched reach this WILL be flagged
+#: watched by Plex, and the nightly sync would stamp `finished_at` from that flag anyway. Inferring
+#: it here only makes the live pass agree with the conclusion already coming — the alternative is
+#: what shipped: a film someone watched to the very end was reported on the dashboard as
+#: "gave up on Fight Club after 100%", under a heading reading "where the picks are not landing",
+#: from the moment the credits rolled until 04:17 the next morning.
+#:
+#: Films only, and that needs no guard: `session_progress` returns None for a series, because one
+#: episode's progress is not the show's (migration 0077).
+FINISHED_PERCENT = 90
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -384,6 +398,12 @@ def _decide_outcomes(
         found = progress.get((user.plex_account_id, key[0], key[1]))
         if found and found[1] is not None:
             desired[key].max_percent = found[1]
+            # A film played to the end IS finished — see `FINISHED_PERCENT`. Without this the live
+            # credit pass, whose whole point is to put the outcome up the moment playback stops,
+            # could only ever report "watched, not finished", which `resolve_outcomes` renders as
+            # "gave up".
+            if found[1] >= FINISHED_PERCENT and desired[key].finished_at is None:
+                desired[key].finished_at = desired[key].watched_at or found[0]
 
     return {
         key: out
@@ -491,6 +511,9 @@ def _decide_shared(
         found = progress.get((user.plex_account_id, key[1], key[2]))
         if found and found[1] is not None:
             out.max_percent = found[1]
+            # Same rule as the personal path — see `FINISHED_PERCENT`.
+            if found[1] >= FINISHED_PERCENT and out.finished_at is None:
+                out.finished_at = out.watched_at or found[0]
 
     return {k: v for k, v in desired.items() if any((v.watched_at, v.finished_at, v.max_percent))}
 
@@ -509,6 +532,15 @@ def _apply_shared(
         row = existing.get(key)
         created = row is None
         if row is None:
+            # A SAVEPOINT around the insert, because two passes can be computing this same credit at
+            # once. `watch.reconcile` deliberately does not wait for a run (it writes no Plex state),
+            # and both it and the run's own end-of-run reconcile recompute every credit from the same
+            # event log — so whenever anyone stops a video mid-run, both produce the same new row and
+            # the second one violates the four-column primary key.
+            #
+            # Read-then-insert cannot fix that: `existing` was read at the top of the pass. The loser
+            # used to raise all the way out — and when the loser was the run, it landed in the run's
+            # own `except`, marking a run that had built and delivered every row on Plex as ERROR.
             row = SharedRowWatch(
                 user_id=user.id,
                 collection_slug=slug,
@@ -516,7 +548,16 @@ def _apply_shared(
                 media_type=media_type,
                 title=membership.shared_title((tmdb_id, media_type)),
             )
-            session.add(row)
+            try:
+                with session.begin_nested():
+                    session.add(row)
+            except IntegrityError:
+                # The other pass got there first. Its row is the same row — both computed it from the
+                # same events — so take theirs and carry on into the update path below.
+                row = session.get(SharedRowWatch, (user.id, slug, tmdb_id, media_type))
+                if row is None:  # pragma: no cover — a conflict means it exists
+                    continue
+                created = False
             existing[key] = row
         before = (row.watched_at, row.finished_at, row.max_percent)
         if row.watched_at is None and out.watched_at is not None:
