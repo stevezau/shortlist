@@ -405,6 +405,14 @@ class WatchStream:
                     return
                 stopping.cancel()
                 if recv not in done:
+                    # ORDER MATTERS: cancel, THEN housekeep, then loop round to a fresh `recv()`.
+                    # `_housekeep` returns without awaiting when nothing is stale, so there is no
+                    # guaranteed suspension point between cancelling this read and issuing the next
+                    # one — and two overlapping reads on one connection raise `ConcurrencyError`.
+                    # What makes it safe is that `Task.cancel` schedules via `call_soon`, which is
+                    # FIFO, so the cancelled task always clears the library's in-progress state
+                    # before the next `recv()` runs. Swap these two lines and every idle tick
+                    # (30s, on a quiet server) raises.
                     recv.cancel()
                     await self._housekeep(ctx)
                     continue
@@ -583,13 +591,20 @@ class WatchStream:
         if live.seconds < MIN_START_SECONDS and live.row_id is None:
             # Never persisted and barely played: a mis-click, not a start.
             return
-        self._flush(live)
-        if live.row_id is None:
-            # The insert failed — a >5s writer lock, which `_persist` swallows so a slow database can
-            # never take the listener down. Try ONCE more before giving up, because this is the one
-            # signal in the whole feature with no other source: a completed watch is recoverable from
-            # the play log tomorrow, a partial one is not recorded anywhere else and is simply gone.
-            self._flush(live)
+        # TWO attempts, and each one suppressed — because the failure this exists for is `_flush`
+        # RAISING, not returning quietly. A SQLite writer lock held past `busy_timeout` throws
+        # `OperationalError` out of the commit; an earlier version of this called `_flush` bare, so
+        # the retry below was unreachable, the warning never printed, and `ended_at`, `end_reason`
+        # and the credit pass were all skipped as well.
+        #
+        # Worth two attempts because this is the one signal in the feature with no other source: a
+        # completed watch is recoverable from the play log tomorrow, a partial one is recorded
+        # nowhere else and is simply gone.
+        for _ in range(2):
+            with contextlib.suppress(Exception):
+                self._flush(live)
+            if live.row_id is not None:
+                break
         if live.row_id is None:
             logger.warning(
                 "watch-stream: could not persist a {}s session for account {} — a partial watch is "

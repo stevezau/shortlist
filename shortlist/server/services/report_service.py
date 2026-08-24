@@ -970,6 +970,42 @@ def row_effectiveness(session: Session, slug: str, now: datetime | None = None) 
     first = session.query(func.min(PickRow.created_at)).filter(*mine).scalar()
     last = session.query(func.max(PickRow.created_at)).filter(*mine).scalar()
 
+    # SHARED rows, which write no `picks` at all. Without this the panel reported 0/0/0 and no first
+    # delivery for a row the dashboard was crediting on the same data — and `first_delivered_at is
+    # None` selects the copy "This row hasn't delivered anything yet", on the very page the owner
+    # opens to judge that row.
+    #
+    # `delivered` is deliberately left alone, and so is the matured cohort below: a shared row is one
+    # collection for the whole server, so there is no per-person delivery to count and therefore no
+    # denominator. Watched and finished are real; a rate would not be.
+    shared_watched = (
+        session.query(func.count())
+        .filter(SharedRowWatch.collection_slug == slug, SharedRowWatch.watched_at.isnot(None))
+        .scalar()
+        or 0
+    )
+    shared_finished = (
+        session.query(func.count())
+        .filter(
+            SharedRowWatch.collection_slug == slug,
+            SharedRowWatch.finished_at.isnot(None),
+            SharedRowWatch.watched_at.isnot(None),
+        )
+        .scalar()
+        or 0
+    )
+    watched_all += shared_watched
+    finished_all += shared_finished
+    shared_first = (
+        session.query(func.min(SharedRowWatch.watched_at)).filter(SharedRowWatch.collection_slug == slug).scalar()
+    )
+    # A shared row's earliest credit stands in for "has this row ever done anything", which is the
+    # only question `first` is asked here.
+    if first is None:
+        first = shared_first
+    if shared_first is not None and last is None:
+        last = shared_first
+
     # Counted the SAME way `/api/runs?collection=<slug>` selects them, because the panel's Runs tile
     # links straight to that list — a tile that says 40 above a list of 11 is worse than no tile.
     # Both therefore count runs STILL ON RECORD: `runs.retention` prunes old runs and nulls the

@@ -39,7 +39,7 @@ dependencies = [
     # disappears when uvicorn changes its extras would break the only source of partial-watch data.
     # >=14, not >=13: `websockets.connect` only became the asyncio client in 14.0. On 13.x it is the
     # legacy client, which takes `extra_headers` rather than `additional_headers` and whose `recv()`
-    # is not documented as cancellation-safe — and `_listen` wraps it in `asyncio.wait_for`.
+    # is not documented as cancellation-safe — and `_listen` races it against the stop event with `ensure_future` + `wait`.
     "websockets>=14",
 ]
 

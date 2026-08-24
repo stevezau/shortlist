@@ -194,5 +194,18 @@ than the pick history can be attributed anyway.
 - Whether a `playing` event ever arrives for a session that `/status/sessions` no longer lists
   (a `stopped` state racing the session teardown), which would cost us the identity lookup.
 - Does the history log get an entry when a title is marked watched **without** playback?
-- Do managed/Home users appear in the history log under their own `accountID`?
+- Do managed/Home users appear in the history log under their own `accountID`? **Partly answered
+  (SFLIX, 2026-08-24, 18,756 events across 51 distinct ids).** Managed users do — one appears under
+  its own id and credits normally. But two ids in the log match no user row: `1`, with 3 events from
+  December 2025 and March 2026, and `725647550` with 37, almost certainly a share that has since
+  been removed. `1` is conventionally the server owner in Plex's history endpoint, and the owner here
+  really does have a different id (`5245144`), so an owner watching on the ADMIN account would very
+  likely not be credited.
+
+  Deliberately NOT mapped `1` → owner. Three stale events are not enough evidence to attribute
+  watches by, and mis-attributing them credits the wrong person — a worse failure than the current
+  one, which is that an unknown id is skipped and credits nobody. It does not bite this server: the
+  owner is `enabled=False` and the maintainer watches on a non-admin account by policy. To settle it,
+  watch one title on the admin account and re-run
+  `scratchpad/id1.py` — if the new event appears under `1`, map it and record a fixture (rule 11).
 - Is history pruning configurable, or version-dependent? Six years unpruned here is one data point.

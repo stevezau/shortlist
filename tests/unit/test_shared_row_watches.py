@@ -35,7 +35,7 @@ from shortlist.server.services.report_service import (
     _SHARED_PERSON_TITLE,
     resolve_outcomes,
 )
-from shortlist.server.services.run_persistence import _shared_audience, reconcile_watched
+from shortlist.server.services.run_persistence import _shared_audience, _shared_muted, reconcile_watched
 from shortlist.server.services.watch_events import RowMembership, shared_credits
 
 NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
@@ -733,9 +733,12 @@ class TestTheAudienceGateBothWays:
         with world() as s:
             s.add(CollectionUserOverride(collection_id=1, user_id=1, muted=True))
             s.commit()
-        # Re-snapshot the way a run would, so the stored audience reflects the mute.
+        # Re-snapshot the way a run would. BOTH halves: `audience` is the allow-list (None = public)
+        # and `muted` is the deny-list beside it.
         with world() as s:
-            s.query(RunSharedRow).filter_by(run_id=1).one().audience = _shared_audience(s, "staff")
+            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row.audience = _shared_audience(s, "staff")
+            row.muted = _shared_muted(s, "staff")
             s.commit()
         a_pick_so_the_rating_key_resolves(world)
         watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
@@ -1995,3 +1998,92 @@ class TestADryRunNeverChangesWhoGetsCredited:
 
         with world() as s:
             assert s.query(SharedRowWatch).count() == 0, "alex was never in this row's audience"
+
+
+class TestTheRowPanelAgreesWithTheDashboard:
+    """`row_effectiveness` feeds the panel the owner opens to judge ONE row. It read `picks` only, so
+    for a shared row it reported 0/0/0 and no first delivery — and `first_delivered_at is None`
+    selects the copy "This row hasn't delivered anything yet", on the very page that exists to answer
+    that question, while the dashboard credited the same row from the same data."""
+
+    def test_a_shared_rows_panel_shows_its_watches(self, world):
+        from shortlist.server.services.report_service import effectiveness, row_effectiveness
+
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            panel = row_effectiveness(s, "staff")
+            dash = next(r for r in effectiveness(s, "all")["per_row"] if r["slug"] == "staff")
+
+        assert panel["watched"] == dash["watched"] == 1, "the two surfaces must agree"
+        assert panel["first_delivered_at"] is not None, "it has demonstrably delivered something"
+
+    def test_it_still_offers_no_rate_for_a_shared_row(self, world):
+        """A shared row is one collection for the whole server: there is no per-person delivery, so
+        there is no denominator and a rate would be invented."""
+        from shortlist.server.services.report_service import row_effectiveness
+
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            panel = row_effectiveness(s, "staff")
+        assert panel["delivered"] == 0
+        assert panel.get("rate") in (None, 0) or panel["matured"] is None
+
+
+class TestAMuteDoesNotFreezeAPublicRowsAudience:
+    """One mute used to turn a public row's snapshot from "everyone" into a concrete list of whoever
+    existed that night. Anyone invited afterwards was permanently outside it and could never be
+    credited for that row — silently, and unrecoverably, because credit is decided from the past and
+    a watched title is never re-delivered."""
+
+    def test_someone_invited_after_the_delivery_is_still_credited(self, world):
+        with world() as s:
+            # Sam mutes the row; the run snapshots that.
+            s.add(CollectionUserOverride(collection_id=1, user_id=2, muted=True))
+            s.commit()
+        with world() as s:
+            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row.audience = _shared_audience(s, "staff")
+            row.muted = _shared_muted(s, "staff")
+            s.commit()
+        # A new person joins AFTER that delivery, and watches off the row.
+        with world() as s:
+            s.add(User(id=7, plex_account_id=707, username="newbie", slug="newbie"))
+            s.commit()
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 707, started=NOW - timedelta(hours=2), offset=1_800_000)
+
+        reconcile_watched(world, [profile(slug="newbie", account=707)])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).filter_by(user_id=7).count() == 1, (
+                "a public row is public — one mute must not exclude everyone who joined later"
+            )
+
+    def test_the_muted_person_is_still_excluded(self, world):
+        with world() as s:
+            s.add(CollectionUserOverride(collection_id=1, user_id=1, muted=True))
+            s.commit()
+        with world() as s:
+            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row.audience = _shared_audience(s, "staff")
+            row.muted = _shared_muted(s, "staff")
+            s.commit()
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 0, "they switched this row off"
+
+    def test_a_public_row_with_no_mutes_still_says_everyone(self, world):
+        """The cheap representation survives — `None` means no restriction at all."""
+        with world() as s:
+            assert _shared_audience(s, "staff") is None
+            assert _shared_muted(s, "staff") is None

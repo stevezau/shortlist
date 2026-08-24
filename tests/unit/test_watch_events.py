@@ -761,3 +761,52 @@ class TestCarriedForwardPicksCarryNoRatingKey:
 
         with world() as s:
             assert 99999 not in tmdb_by_rating_key(s)
+
+
+class TestAnAccountWeDoNotKnowCreditsNobody:
+    """The whole feature keys on `accountID == users.plex_account_id`, and a real server's play log
+    carries ids that match no user row — on SFLIX, `1` (conventionally the owner in Plex's history
+    endpoint) and one id belonging to a share since removed.
+
+    Skipping them is the safe direction and the current behaviour; this pins it, because the unsafe
+    alternative — guessing which user an unknown id belongs to — credits the wrong person, and that
+    is worse than crediting nobody. See §8 of the watch-signals design for the evidence."""
+
+    def test_an_unknown_account_id_credits_nothing(self, world):
+        deliver(world, 1, [10])
+        with world() as s:
+            s.add(
+                WatchEvent(
+                    plex_account_id=1,  # the admin, per Plex's history endpoint
+                    rating_key=10,
+                    media_type="movie",
+                    viewed_at=NOW - timedelta(hours=2),
+                    source="history",
+                    history_key="admin-1",
+                )
+            )
+            s.commit()
+
+        with world() as s:
+            assert event_credits(s, RowMembership(s)) == {}
+
+    def test_a_known_account_beside_it_is_unaffected(self, world):
+        """The skip must be per-event, not a bail-out that costs the rest of the log."""
+        deliver(world, 1, [10])
+        with world() as s:
+            for i, account in enumerate((1, 99)):
+                s.add(
+                    WatchEvent(
+                        plex_account_id=account,
+                        rating_key=10,
+                        media_type="movie",
+                        viewed_at=NOW - timedelta(hours=2),
+                        source="history",
+                        history_key=f"k{i}",
+                    )
+                )
+            s.commit()
+
+        with world() as s:
+            credits = event_credits(s, RowMembership(s))
+        assert list(credits) == [(1, 510, "movie")], "the real account still credits"

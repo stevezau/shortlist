@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -1130,7 +1131,11 @@ class TestAPartialWatchIsNotLostToOneSlowWrite:
         def flaky(live):
             calls["n"] += 1
             if calls["n"] == 1:
-                return  # the write was swallowed; `row_id` stays None
+                # RAISES. That is what a SQLite writer lock held past `busy_timeout` does, and the
+                # only failure production can actually produce here. Mocking it as a quiet return —
+                # which the first version of this test did — passes against code where the retry is
+                # unreachable, because a bare `self._flush(live)` would simply propagate.
+                raise OperationalError("database is locked", None, Exception())
             real(live)
 
         stream._flush = flaky
@@ -1147,7 +1152,11 @@ class TestAPartialWatchIsNotLostToOneSlowWrite:
         from shortlist.server.services.watch_stream import WatchStream
 
         stream = WatchStream(sessions, lambda **_: None)
-        stream._flush = lambda live: None  # every write swallowed
+
+        def always_locked(_live):
+            raise OperationalError("database is locked", None, Exception())
+
+        stream._flush = always_locked
         stream._close("1", self._live(), "stopped")  # must not raise
 
         with sessions() as s:

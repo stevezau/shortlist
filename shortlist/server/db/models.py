@@ -434,6 +434,14 @@ class RunSharedRow(Base):
     #: this snapshot, adding someone to a subset row today would retroactively credit their older
     #: watches to a row they could not see at the time.
     audience: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
+    #: Who had this row switched OFF at delivery — a deny-list, kept separate from `audience`.
+    #:
+    #: Folding mutes into `audience` forced a PUBLIC row to stop saying "everyone" the moment one
+    #: person muted it: the snapshot became a concrete list of whoever existed that night, so anyone
+    #: invited afterwards was permanently outside it and could never be credited for that row. The
+    #: miss is silent and unrecoverable, because credit is decided from the past and a watched title
+    #: is never re-delivered.
+    muted: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
     #: When this row's contents actually landed on Plex — NOT `Run.started_at`.
     #:
     #: The per-person path learned this the hard way and wrote it down: a run persists each row as it

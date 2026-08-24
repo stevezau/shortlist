@@ -409,13 +409,24 @@ def _failed_jobs(session: Session) -> dict | None:
     if not failed:
         return None
     kinds = sorted({job.kind for job in failed})
+    # The body used to make two claims about every failure. Neither is true of all of them, and
+    # `watch.reconcile` — the live credit pass — is the first kind in the catalog for which BOTH are
+    # false: it never touches Plex, and it is not in the manual allow-list, so "run it again" points
+    # at a button that returns 422. The same wrongness was already latent for `backup.take` and
+    # `maintenance.prune`.
+    from shortlist.server.services import jobs as jobs_service
+
+    entries = {e.kind: e for e in jobs_service.CATALOG}
+    touched_plex = any(entries[k].writes_plex for k in kinds if k in entries)
+    rerunnable = any(entries[k].manual for k in kinds if k in entries)
+    consequence = " Plex may not reflect what you asked for —" if touched_plex else " Nothing on Plex changed —"
+    remedy = " and run it again." if rerunnable else "."
     return {
         "id": f"failed-jobs-{failed[0].id}",
         "severity": "error",
         "title": f"{len(failed)} background job{'s' if len(failed) != 1 else ''} failed",
         "body": (
-            f"Shortlist gave up on {', '.join(kinds)} after retrying. Plex may not reflect what you "
-            "asked for — open Jobs to see the error and run it again."
+            f"Shortlist gave up on {', '.join(kinds)} after retrying.{consequence} Open Jobs to see the error{remedy}"
         ),
         "action_url": "/jobs",
         "action_label": "See jobs",

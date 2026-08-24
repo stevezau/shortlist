@@ -1096,6 +1096,30 @@ def _pick_dicts(user_report) -> list[dict]:
     ]
 
 
+def _shared_muted(session: Session, slug: str) -> list[int] | None:
+    """Who had this row switched off at delivery, as a DENY-list.
+
+    Muting is the other way somebody does not get a row, and it applies to a public row too — so a
+    snapshot that only looked at `collection_audience` would credit a shared row for a play by
+    someone who had turned it off. Kept apart from `audience` because subtracting it there turns
+    "everyone" into a fixed list; see `RunSharedRow.muted`.
+    """
+    collection = session.query(Collection).filter_by(slug=slug).first()
+    if collection is None:
+        return None
+    muted = sorted(
+        account_id
+        for (account_id,) in session.query(User.plex_account_id)
+        .join(CollectionUserOverride, CollectionUserOverride.user_id == User.id)
+        .filter(
+            CollectionUserOverride.collection_id == collection.id,
+            CollectionUserOverride.muted.is_(True),
+        )
+        .all()
+    )
+    return muted or None
+
+
 def _shared_audience(session: Session, slug: str) -> list[int] | None:
     """The plex account ids that could SEE this shared row at delivery; None = everyone.
 
@@ -1122,12 +1146,10 @@ def _shared_audience(session: Session, slug: str) -> list[int] | None:
         .all()
     }
     if collection.audience != "subset":
-        # Public: everyone EXCEPT anyone who muted it. `None` still means "no restriction at all", so
-        # a row nobody has muted keeps the cheap representation.
-        if not muted:
-            return None
-        everyone = {a for (a,) in session.query(User.plex_account_id).filter(User.removed_at.is_(None)).all()}
-        return sorted(everyone - muted)
+        # Public stays PUBLIC. The mutes travel separately (`RunSharedRow.muted`) rather than being
+        # subtracted into a concrete list here — doing that froze the row's audience to whoever
+        # existed that night, and anyone invited afterwards could never be credited for it.
+        return None
     audience = {
         account_id
         for (account_id,) in session.query(User.plex_account_id)
@@ -1170,6 +1192,7 @@ def _persist_shared_row_report(session: Session, run_id: int, user_report, dry_r
     row.trace = user_report.trace
     row.picks = _pick_dicts(user_report)
     row.audience = _shared_audience(session, slug)
+    row.muted = _shared_muted(session, slug)
     # Stamped HERE, as the row is persisted, which is the moment its contents are on Plex. See the
     # column's own comment for why `Run.started_at` is the wrong clock.
     row.delivered_at = datetime.now(UTC)

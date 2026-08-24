@@ -905,3 +905,32 @@ class TestTheEnforcementAlertCanClearItself:
 
         assert "ONE account of each kind" in body
         assert "every shared or managed account" in body
+
+
+class TestAFailedJobSaysOnlyWhatIsTrueOfIt:
+    """The body used to make two claims about every failure: that Plex might not reflect what you
+    asked for, and that you can run it again. `watch.reconcile` is the first kind for which BOTH are
+    false — it never touches Plex, and it is not in the manual allow-list, so "run it again" points
+    at a button that returns 422."""
+
+    def _alert(self, session, kind: str):
+        from shortlist.server.db.models import Job
+        from shortlist.server.notifications import _failed_jobs
+
+        session.add(Job(kind=kind, payload={}, status="failed", attempts=3, max_attempts=3))
+        session.commit()
+        return _failed_jobs(session)["body"]
+
+    def test_a_local_only_job_does_not_blame_plex(self, session):
+        body = self._alert(session, "watch.reconcile")
+        assert "Nothing on Plex changed" in body
+        assert "Plex may not reflect" not in body
+
+    def test_a_job_nobody_can_start_is_not_told_to_run_again(self, session):
+        body = self._alert(session, "watch.reconcile")
+        assert "run it again" not in body, "POST /api/system/jobs rejects it with 422"
+
+    def test_a_plex_writer_still_warns_and_still_offers_a_retry(self, session):
+        body = self._alert(session, "privacy.sync")
+        assert "Plex may not reflect" in body
+        assert "run it again" in body

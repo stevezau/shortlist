@@ -212,6 +212,9 @@ class RowMembership:
             if user_slug == f"{SHARED_SLUG_PREFIX}_{slug}"
         }
         self._shared_titles: dict[tuple[int, str], str] = {}
+        #: (slug, run_id) -> who had the row switched OFF at that delivery. A deny-list, so a public
+        #: row stays public: folding mutes into the audience froze it to whoever existed that night.
+        self._shared_muted: dict[tuple[str, int], set[int]] = {}
         #: (slug, run_id) -> when that delivery landed, for rows that recorded it.
         self._shared_delivered: dict[tuple[str, int], datetime] = {}
         self._shared = self._load_shared()
@@ -381,11 +384,12 @@ class RowMembership:
         worse than having no audience test at all — the state this replaces.
         """
         out: dict[tuple[str, int], set[int] | None] = {}
-        for slug, run_id, audience, delivered_at in (
+        for slug, run_id, audience, muted, delivered_at in (
             self._session.query(
                 RunSharedRow.collection_slug,
                 RunSharedRow.run_id,
                 RunSharedRow.audience,
+                RunSharedRow.muted,
                 RunSharedRow.delivered_at,
             )
             # Dry runs excluded here too, and this is the half that gating the writes would NOT have
@@ -396,6 +400,8 @@ class RowMembership:
             .all()
         ):
             out[(slug, run_id)] = audience if audience is None else set(audience)
+            if muted:
+                self._shared_muted[(slug, run_id)] = set(muted)
             if delivered_at:
                 self._shared_delivered[(slug, run_id)] = _as_utc(delivered_at)
         return out
@@ -451,6 +457,7 @@ class RowMembership:
     def _shared_visible_to(self, slug: str, user: User, when: datetime) -> bool:
         """Was this shared row visible to this person at `when`, per the delivery's own snapshot."""
         best: set[int] | None = None
+        best_muted: set[int] = set()
         best_at: datetime | None = None
         for (row_slug, run_id), audience in self._audience.items():
             if row_slug != slug:
@@ -460,7 +467,13 @@ class RowMembership:
                 continue
             if best_at is None or started > best_at:
                 best_at, best = started, audience
-        # None means public — and it is also what every pre-snapshot row carries.
+                best_muted = self._shared_muted.get((row_slug, run_id), set())
+        # Two questions, and they are separate on purpose. `audience` is the ALLOW-list — None means
+        # public, and that is also what every pre-snapshot row carries. `muted` is the deny-list, and
+        # it has to stay outside the allow-list or a single mute turns "everyone" into a fixed roster
+        # that nobody joined later can be in.
+        if user.plex_account_id in best_muted:
+            return False
         return best is None or user.plex_account_id in best
 
 
