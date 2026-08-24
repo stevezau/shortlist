@@ -284,6 +284,20 @@ describe("ImpactReport", () => {
     expect(screen.getByText(/starts showing a score around/i)).toBeTruthy();
   });
 
+  it("says there is no earlier period rather than dangling a comparison", async () => {
+    // A server too new to have a full previous window. The API sends null rather than 0 (see
+    // `TestADeltaNeedsAPreviousPeriodToCompareAgainst`) precisely so this can be said out loud —
+    // "vs previous 30 days" with no number reads as a comparison that failed to render.
+    getReport.mockResolvedValue({
+      ...REPORT,
+      overall: { ...REPORT.overall, watched_prev: null, watched_delta: null },
+    });
+    renderReport();
+
+    expect(await screen.findByText(/no earlier period yet/i)).toBeTruthy();
+    expect(screen.queryByText(/vs previous/i)).toBeNull();
+  });
+
   it("hides deleted rows behind a disclosure, and keeps their numbers", async () => {
     getReport.mockResolvedValue({
       ...REPORT,

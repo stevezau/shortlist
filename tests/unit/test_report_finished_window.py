@@ -286,3 +286,50 @@ class TestTheRecentFeedSaysWhichKindOfWatchItWas:
 
         assert len(recent) == 1, "one line per person+title, not one per delivery"
         assert recent[0]["finished_at"] is not None, "the finish belongs to the title, not the row"
+
+
+class TestADeltaNeedsAPreviousPeriodToCompareAgainst:
+    """A "+53 vs previous" that compares against a month when Shortlist was not installed.
+
+    Found on a real server 2026-08-24: the 30-day window read `watched: 53, watched_prev: 0,
+    watched_delta: 53` because the previous 30 days ended the day after the first pick ever existed.
+    The dashboard rendered it as growth. The same response carried `avg_days_to_watch_delta: null`
+    for the identical reason — an average over nothing is already None — so one fact was being shown
+    two different ways depending on which aggregate happened to be null-safe.
+    """
+
+    def test_no_delta_when_the_previous_period_predates_the_first_pick(self, sessions):
+        # Everything delivered and watched 3 days ago. A 30-day window's previous period runs from
+        # day 60 to day 30, entirely before this app had ever delivered anything.
+        seed(sessions, tmdb_id=1, delivered_ago=3, watched_ago=3, finished_ago=3)
+
+        with sessions() as session:
+            overall = effectiveness(session, "30")["overall"]
+
+        assert overall["watched"] == 1
+        assert overall["watched_prev"] is None, "there was no previous period to count"
+        assert overall["watched_delta"] is None, "a comparison against an uninstalled app is not growth"
+        assert overall["avg_days_to_watch_delta"] is None, "already None; the pair must agree"
+
+    def test_the_delta_still_works_once_there_is_real_history(self, sessions):
+        # First pick 40 days ago, so a 7-day window's previous period (days 14-7) sits well inside
+        # the app's lifetime and IS a fair comparison.
+        seed(sessions, tmdb_id=1, delivered_ago=40, watched_ago=10, finished_ago=10)  # previous period
+        seed(sessions, tmdb_id=2, delivered_ago=40, watched_ago=3, finished_ago=3)  # current period
+        seed(sessions, tmdb_id=3, delivered_ago=40, watched_ago=2, finished_ago=2)  # current period
+
+        with sessions() as session:
+            overall = effectiveness(session, "7")["overall"]
+
+        assert overall["watched"] == 2
+        assert overall["watched_prev"] == 1
+        assert overall["watched_delta"] == 1, "two this week against one last week is a real +1"
+
+    def test_a_server_with_no_picks_at_all_reports_no_delta(self, sessions):
+        """`first_pick` is None on an empty database, and None is not comparable to a date."""
+        with sessions() as session:
+            overall = effectiveness(session, "30")["overall"]
+
+        assert overall["watched"] == 0
+        assert overall["watched_prev"] is None
+        assert overall["watched_delta"] is None

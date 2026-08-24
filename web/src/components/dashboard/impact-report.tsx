@@ -324,7 +324,12 @@ function Delta({
   lowerIsBetter?: boolean;
 }) {
   if (reportWindow === "all") return <>all time</>;
-  if (value === null || value === 0) {
+  // Null means the server found no previous period worth comparing against — it reached back past
+  // the first pick Shortlist ever delivered, so the comparison would be against an uninstalled app.
+  // Saying "vs previous 30 days" there is a dangling comparison; saying nothing hides why the arrow
+  // is missing on a server that is simply too new.
+  if (value === null) return <>no earlier period yet</>;
+  if (value === 0) {
     return (
       <>vs previous {WINDOW_PHRASE[reportWindow].replace("the last ", "")}</>
     );

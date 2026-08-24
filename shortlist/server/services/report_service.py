@@ -683,7 +683,16 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
     since = now - timedelta(days=days) if days is not None else None
     prev_since = now - timedelta(days=2 * days) if days is not None else None
 
-    first_pick = iso_utc(session.query(func.min(PickRow.created_at)).scalar())
+    first_pick_at = session.query(func.min(PickRow.created_at)).scalar()
+    first_pick = iso_utc(first_pick_at)
+    # A previous period that reaches back before Shortlist delivered ANYTHING is not a comparison —
+    # it is a comparison against an app that was not installed, and it reads as growth. Observed on a
+    # real server 2026-08-24: window=30 showed "53 watched, +53 vs previous" because the previous 30
+    # days ended one day after the first pick ever. The same run reported
+    # `avg_days_to_watch_delta: null` for the identical reason, because an average of nothing is
+    # already None — so the two halves of one fact rendered differently. Counts need the test spelled
+    # out, since a count of nothing is a truthful 0.
+    comparable = prev_since is not None and first_pick_at is not None and _as_utc(first_pick_at) <= prev_since
     per_user_raw = _counts(session, PickRow.user_id, _TITLE, since, SharedRowWatch.user_id, _SHARED_TITLE)
     # A row that targets >1 library is one Plex collection PER library, so it's tracked per
     # (row, library) — each library gets its own delivered/watched line, keyed (slug, section, library).
@@ -702,9 +711,9 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
     finished_now = _finished_count(session, since)
     watchers_now = _watchers_count(session, since)
     avg_now = _avg_days_to_watch(session, since)
-    watched_prev = _watched_count(session, prev_since, since) if since else None
-    watchers_prev = _watchers_count(session, prev_since, since) if since else None
-    avg_prev = _avg_days_to_watch(session, prev_since, since) if since else None
+    watched_prev = _watched_count(session, prev_since, since) if comparable else None
+    watchers_prev = _watchers_count(session, prev_since, since) if comparable else None
+    avg_prev = _avg_days_to_watch(session, prev_since, since) if comparable else None
 
     delivered_now = (
         session.query(func.count(func.distinct(_PERSON_TITLE))).filter(*_in_period(PickRow.created_at, since)).scalar()

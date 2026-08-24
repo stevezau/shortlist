@@ -1052,6 +1052,13 @@ class TestRunsApi:
                 (1, 3, 3),  # this window
                 (2, 4, 4),  # this window
                 (3, 40, 40),  # the previous 30 days
+                # Delivered before the previous window even opens (which is 60 days back for a
+                # 30-day report), so that window is one Shortlist was fully installed for. Without
+                # it the earliest pick lands 40 days ago, the previous period is only two thirds
+                # covered, and the report correctly refuses to call the shortfall a comparison —
+                # see `TestADeltaNeedsAPreviousPeriodToCompareAgainst`. That refusal is the feature;
+                # this test is about the arithmetic once there IS something to compare.
+                (4, 70, None),
             ],
         )
 
