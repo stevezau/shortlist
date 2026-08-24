@@ -518,3 +518,97 @@ class TestTheReportMeansWhatItSays:
         with factory() as s:
             after = {p.id for p in s.query(PR).filter(PR.watched_at.isnot(None))}
         assert before <= after, "a playback-backed credit was withdrawn"
+
+
+def _stamps(factory):
+    """EVERYTHING either pass writes: both tables, and all three columns of each.
+
+    An earlier version compared `picks.watched_at`/`max_percent` only, which made the comparison
+    blind to shared-row credits and to completion — so deleting the whole `_apply_shared` call from
+    one path still passed. If it is written by a credit pass, it belongs here.
+    """
+    from shortlist.server.db.models import PickRow as PR
+    from shortlist.server.db.models import SharedRowWatch as SRW
+
+    with factory() as s:
+        picks = {
+            ("pick", p.user_id, p.tmdb_id, p.media_type, p.collection_slug): (
+                p.watched_at,
+                p.finished_at,
+                p.max_percent,
+            )
+            for p in s.query(PR).filter(PR.watched_at.isnot(None) | PR.max_percent.isnot(None))
+        }
+        shared = {
+            ("shared", r.user_id, r.tmdb_id, r.media_type, r.collection_slug): (
+                r.watched_at,
+                r.finished_at,
+                r.max_percent,
+            )
+            for r in s.query(SRW)
+        }
+        return {**picks, **shared}
+
+
+class TestTheTwoCreditPathsAgree:
+    """`reconcile_from_events` and `reconcile_watched` are two implementations of the same rule.
+
+    One runs the moment playback stops and reads nothing from Plex; the other runs nightly with a
+    profile's watched set in hand. On the parts BOTH can see — credits justified by playback — they
+    must reach the same answer, or the dashboard changes its mind depending on which pass ran last.
+    Nothing compared them until now; each was only ever tested against its own expectations.
+
+    What this CANNOT catch, and so must not be trusted for: anything the two paths share. They both
+    go through `_decide_outcomes`, so a change to the credit rule itself moves both sides equally and
+    the comparison stays green — verified by breaking the finished-film rule and watching this pass.
+    Those live in their own tests; this one is only ever evidence about DIVERGENCE.
+    """
+
+    @settings(max_examples=80, deadline=None)
+    @given(worlds())
+    def test_the_live_pass_and_the_nightly_pass_credit_the_same_things(self, world):
+        from shortlist.server.services.run_persistence import reconcile_from_events, reconcile_watched
+
+        users, rows, titles, deliveries, plays, sess = world
+
+        live = _world(users, rows)
+        _populate(live, users, rows, titles, deliveries, plays, sess)
+        reconcile_from_events(live)
+
+        nightly = _world(users, rows)
+        _populate(nightly, users, rows, titles, deliveries, plays, sess)
+        # An EMPTY history: whatever this pass credits can only have come from playback, which is
+        # exactly the subset the live pass can see. Anything more would be the snapshot path, and
+        # that is the one thing the two are not supposed to agree on.
+        empty = [
+            UserProfile(username=f"u{u}", plex_account_id=100 + u, user_type=UserType.SHARED, slug=f"u{u}", history=[])
+            for u in range(1, users + 1)
+        ]
+        reconcile_watched(nightly, empty)
+
+        assert _stamps(live) == _stamps(nightly), "the two passes disagree about the same playback"
+
+    @settings(max_examples=80, deadline=None)
+    @given(worlds())
+    def test_running_one_after_the_other_changes_nothing_either_way(self, world):
+        """They run in both orders in production — the nightly sync can land before or after a
+        session ends. Neither order may produce an answer the other does not."""
+        from shortlist.server.services.run_persistence import reconcile_from_events, reconcile_watched
+
+        users, rows, titles, deliveries, plays, sess = world
+        empty = [
+            UserProfile(username=f"u{u}", plex_account_id=100 + u, user_type=UserType.SHARED, slug=f"u{u}", history=[])
+            for u in range(1, users + 1)
+        ]
+
+        a = _world(users, rows)
+        _populate(a, users, rows, titles, deliveries, plays, sess)
+        reconcile_from_events(a)
+        reconcile_watched(a, empty)
+
+        b = _world(users, rows)
+        _populate(b, users, rows, titles, deliveries, plays, sess)
+        reconcile_watched(b, empty)
+        reconcile_from_events(b)
+
+        assert _stamps(a) == _stamps(b), "the order of the two passes changed the outcome"
