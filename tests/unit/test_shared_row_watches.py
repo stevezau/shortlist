@@ -567,6 +567,51 @@ class TestTheExpensiveMapsAreBuiltOnce:
         assert calls["map"] == 1, f"rating-key map rebuilt {calls['map']}x"
         assert calls["scan"] == 1, f"play scan rebuilt {calls['scan']}x"
 
+    def test_a_stop_that_credits_nobody_never_costs_a_progress_scan(self, world, monkeypatch):
+        """`reconcile_from_events` fires on EVERY video stop, and most stops are of something nobody
+        was recommended. `session_progress` costs 128-230ms at real-server sizes, so computing it
+        before the "nothing to credit" return put that on the hot path to be thrown away. It is a
+        lazy field now; this asserts the laziness, not the intent."""
+        from shortlist.server.services import run_persistence
+
+        calls = {"progress": 0}
+        real = run_persistence.session_progress
+
+        def counted(*a, **k):
+            calls["progress"] += 1
+            return real(*a, **k)
+
+        monkeypatch.setattr(run_persistence, "session_progress", counted)
+
+        # A play by somebody with no picks and no shared row they can see: nothing to credit.
+        watch_session(world, 12345, started=NOW - timedelta(hours=2), offset=1_800_000)
+        assert run_persistence.reconcile_from_events(world) == 0
+
+        assert calls["progress"] == 0, "computed the progress map only to discard it"
+
+    def test_a_stop_that_does_credit_still_gets_its_progress(self, world, monkeypatch):
+        """The other half: laziness must not mean never. Same fixture, a play that DOES credit."""
+        from shortlist.server.services import run_persistence
+
+        calls = {"progress": 0}
+        real = run_persistence.session_progress
+
+        def counted(*a, **k):
+            calls["progress"] += 1
+            return real(*a, **k)
+
+        monkeypatch.setattr(run_persistence, "session_progress", counted)
+
+        with world() as s:
+            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row.picks = [{"tmdb_id": 550, "media_type": "movie", "title": "Fight Club", "rating_key": 9001}]
+            s.commit()
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+
+        assert run_persistence.reconcile_from_events(world) == 1
+        assert calls["progress"] == 1, "the credit path still needs how far they got"
+
 
 class TestTheTilesCannotContradictEachOther:
     """`overall.dropped` came off `resolve_outcomes` (which includes shared rows) while
@@ -1641,9 +1686,17 @@ class TestAMuteDoesNotFreezeAPublicRowsAudience:
 
 
 class TestAMuteIsNeverBakedIntoASubsetAudience:
-    """Migration 0080 exists so a mute cannot freeze a row's audience. That fix landed for PUBLIC
-    rows and not for subset ones, where the mute was still subtracted into the allow-list — so the
-    person was excluded twice, and un-muting them could never bring them back."""
+    """`RunSharedRow.audience` is the allow-list and `RunSharedRow.muted` is the deny-list, and
+    neither may encode the other's fact. Subtracting the mute into the allow-list — which is what
+    subset rows did until 2026-08-24 — makes `audience` mean "allowed AND not muted", indistinguishable
+    to any reader from "allowed".
+
+    Only the FIRST test here can fail if that regresses; it asserts the column's contents directly.
+    The other two assert the outcome, and the outcome is the same under both shapes — `_shared_visible_to`
+    applies the deny-list separately, so a doubly-excluded person is still just excluded. They are
+    kept as behaviour cover, not as proof of the split, because a reader who assumes they guard the
+    column will not add the test that does.
+    """
 
     def _subset_with_a_mute(self, world):
         with world() as s:
@@ -1659,6 +1712,8 @@ class TestAMuteIsNeverBakedIntoASubsetAudience:
             assert _shared_muted(s, "staff") == [99]
 
     def test_they_are_still_excluded_while_muted(self, world):
+        """Outcome cover: the deny-list alone is enough to exclude them, which is why the column
+        being wrong was invisible."""
         self._subset_with_a_mute(world)
         with world() as s:
             row = s.query(RunSharedRow).filter_by(run_id=1).one()
@@ -1674,8 +1729,10 @@ class TestAMuteIsNeverBakedIntoASubsetAudience:
             assert s.query(SharedRowWatch).count() == 0
 
     def test_un_muting_lets_them_back_in(self, world):
-        """The point of the split. With the mute baked into the allow-list this was impossible: the
-        deny-list would clear, and the frozen allow-list would still not have them."""
+        """Outcome cover for the un-mute round trip. Note what this does NOT prove: it recomputes
+        BOTH columns after the un-mute, which is exactly what a real run does — so the allow-list it
+        reads was never frozen, and the old subtract-the-mute code passes this too. There is no
+        production path where one column is rewritten and the other is not."""
         self._subset_with_a_mute(world)
         with world() as s:
             s.query(CollectionUserOverride).delete()  # they un-mute it

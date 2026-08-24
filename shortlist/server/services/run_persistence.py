@@ -15,6 +15,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import cached_property
 
 from loguru import logger
 from sqlalchemy import and_, func
@@ -643,9 +644,9 @@ def _withdraw_unwatched(
     return withdrawn
 
 
-@dataclass(frozen=True)
+@dataclass
 class _CreditInputs:
-    """Everything both credit passes need, built once from one read of the play log.
+    """Everything both credit passes need, built from ONE read of the play log.
 
     :func:`reconcile_from_events` and :func:`reconcile_watched` must see the SAME world — the cheap
     pass runs seconds after someone presses stop and the full one runs hours later over the same
@@ -653,15 +654,38 @@ class _CreditInputs:
     They used to build these independently, in the same order, from the same tables, which is two
     copies of "what happened" and two places for it to drift.
 
-    `tmdb_of` and the raw scan stay inside the builder deliberately: they are how these are derived,
-    not something a caller should re-derive its own answer from.
+    `progress` and `observed` are LAZY, and that is not a micro-optimisation. `reconcile_from_events`
+    fires on every single video stop and returns immediately when the play earned nobody a credit;
+    building them eagerly put `session_progress` (128-230ms at real-server sizes) on that path to be
+    thrown away. Reading either attribute computes it once and caches it, so both callers still write
+    `inputs.progress` and neither has to know.
+
+    Holding the session is safe by construction: the object is created and dropped inside one
+    `with sessions() as session:` block, and every field it derives is a pure read.
     """
 
     membership: RowMembership
     credits: dict[tuple[int, int, str], tuple[datetime, frozenset[str]]]
     shared: dict[tuple[int, str, int, str], datetime]
-    progress: dict[tuple[int, int, str], tuple[datetime, int | None]]
-    observed: dict[int, set[tuple[int, str]]]
+    _session: Session
+    _tmdb_of: dict[int, tuple[int, str]]
+    _scan: list[tuple[int, datetime, set[tuple[int, str]]]]
+
+    @cached_property
+    def progress(self) -> dict[tuple[int, int, str], tuple[datetime, int | None]]:
+        """How far each title actually got, keyed the same way the events are. Stamped onto the pick
+        so the report can separate "opened and closed" from "gave it a real go" without joining
+        sessions on every read."""
+        return session_progress(self._session, _attribution_floor(self._session), self._tmdb_of)
+
+    @cached_property
+    def observed(self) -> dict[int, set[tuple[int, str]]]:
+        """Every title we have WATCHED HAPPEN for each account — a session or a play-log entry. Used
+        only to decide what `_withdraw_unwatched` must keep its hands off."""
+        out: dict[int, set[tuple[int, str]]] = defaultdict(set)
+        for account_id, _when, keys in self._scan:
+            out[account_id] |= keys
+        return out
 
 
 def _credit_inputs(session: Session) -> _CreditInputs:
@@ -670,19 +694,15 @@ def _credit_inputs(session: Session) -> _CreditInputs:
     Membership is a question about the PAST — "was this in their row when they pressed play" —
     answered from the play log's exact timestamps against the delivery history in `picks` + `runs`.
 
-    Built ONCE and handed to everything downstream. `tmdb_by_rating_key` is a DISTINCT over the
-    largest table in the schema (158,737 pick rows on a real server) and `_scan_plays` walks the whole
-    event log; between them the credit path was rebuilding both up to five times per pass, seven
-    passes a day, for byte-identical results.
+    `tmdb_by_rating_key` is a DISTINCT over the largest table in the schema (158,737 pick rows on a
+    real server) and `_scan_plays` walks the whole event log; between them the credit path was
+    rebuilding both up to five times per pass, seven passes a day, for byte-identical results. They
+    stay private to this object: they are how the credits are derived, not something a caller should
+    re-derive its own answer from.
     """
     membership = RowMembership(session)
     tmdb_of = tmdb_by_rating_key(session)
     scan = _scan_plays(session, tmdb_of)
-    # Every title we have WATCHED HAPPEN for each account — a session or a play-log entry.
-    # Used only to decide what `_withdraw_unwatched` must keep its hands off.
-    observed: dict[int, set[tuple[int, str]]] = defaultdict(set)
-    for account_id, _when, keys in scan:
-        observed[account_id] |= keys
     return _CreditInputs(
         membership=membership,
         credits=event_credits(session, membership, scan),
@@ -690,11 +710,9 @@ def _credit_inputs(session: Session) -> _CreditInputs:
         # invisible to watch tracking entirely — a title that lived only on a shared row credited
         # nothing at all.
         shared=shared_credits(session, membership, scan),
-        # How far each title actually got, keyed the same way the events are. Stamped onto the pick so
-        # the report can separate "opened and closed" from "gave it a real go" without joining
-        # sessions on every read.
-        progress=session_progress(session, _attribution_floor(session), tmdb_of),
-        observed=observed,
+        _session=session,
+        _tmdb_of=tmdb_of,
+        _scan=scan,
     )
 
 
@@ -724,14 +742,16 @@ def reconcile_from_events(sessions: sessionmaker[Session]) -> int:
     changed = 0
     with sessions() as session:
         inputs = _credit_inputs(session)
+        # Before `inputs.progress` is read, so the lazy field is never computed on the path that
+        # returns here — which is most stops, since most plays are not of anything we recommended.
+        if not inputs.credits and not inputs.shared:
+            return 0
         membership, credits, shared, progress = (
             inputs.membership,
             inputs.credits,
             inputs.shared,
             inputs.progress,
         )
-        if not credits and not shared:
-            return 0
 
         # Only the people an event actually names. The full pass walks every profile it was handed;
         # here that would be 47 users to apply at most one person's watch.
@@ -1177,10 +1197,17 @@ def _shared_audience(session: Session, slug: str) -> list[int] | None:
         # Public is public. `None` means no allow-list at all.
         return None
     # The allow-list ONLY. Mutes are a separate deny-list (`_shared_muted` / `RunSharedRow.muted`),
-    # and subtracting them here was the bug migration 0080 exists to kill — applied, at first, to
-    # only half its cases. Baking a mute into the allow-list makes it permanent: un-mute the person
-    # tomorrow and the deny-list lets them back in, but the frozen allow-list never will. It also
-    # excluded them twice, from two places that then disagreed about whose job mutes were.
+    # and the two columns must not encode the same fact: subtract the mute here and `audience` stops
+    # meaning "who was allowed to see this" and starts meaning "who was allowed AND had not muted it",
+    # which no reader can tell apart from the first. `_shared_visible_to` then answers correctly only
+    # because it applies the deny-list a second time, so the column is wrong and the answer is right
+    # by luck. Any future reader of `audience` alone — a UI, an export, an audit of who a row went to
+    # — inherits the corruption.
+    #
+    # It is NOT a live credit-loss bug, and an earlier version of this comment claimed it was: both
+    # columns are frozen on the same `RunSharedRow` by the same run, so un-muting someone changes
+    # neither until the next run rewrites both, and both shapes exclude them meanwhile. Verified by
+    # review 2026-08-24 across the full matrix — the outcomes are identical, only the record differs.
     return sorted(
         account_id
         for (account_id,) in session.query(User.plex_account_id)
