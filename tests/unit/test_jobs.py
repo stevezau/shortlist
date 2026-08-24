@@ -1403,29 +1403,92 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
 class TestWatchReconcileTellsTheDashboard:
     """Crediting the watch is only half of it. Without the SSE the owner watches something, the credit
     lands in the database seconds later, and the page in front of them still says nothing until they
-    reload — which reads as the feature not working."""
+    reload — which reads as the feature not working.
+
+    Driven against REAL data, not a stubbed `reconcile_from_events`. Stubbing it made the second test
+    assert a return value the real function did not produce: it counted "users who have a credit",
+    recomputed from the whole event log, so one person pressing stop reported all 47 users and every
+    dashboard on the server refetched for nothing.
+    """
+
+    def _world(self, sessions):
+        """One user, one live row, one pick, one session that reached 30%."""
+        from datetime import UTC, datetime, timedelta
+
+        from shortlist.server.db.models import Collection, Delivery, PickRow, Run, User, WatchSession
+
+        now = datetime.now(UTC)
+        with sessions() as s:
+            # Ids assigned by the DATABASE, not pinned: this fixture's schema is migrated, so a
+            # seeded default row already owns `collections.id = 1`.
+            user = User(plex_account_id=99, username="alex", slug="alex")
+            row = Collection(slug="mine", name="Mine", enabled=True)
+            run = Run(trigger="schedule", status="ok", started_at=now - timedelta(days=2))
+            s.add_all([user, row, run])
+            s.flush()
+            s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=7))
+            s.add(
+                PickRow(
+                    run_id=run.id,
+                    user_id=user.id,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=550,
+                    media_type="movie",
+                    rating_key=9001,
+                    rank=1,
+                    title="Fight Club",
+                    created_at=now - timedelta(days=1),
+                )
+            )
+            s.add(
+                WatchSession(
+                    plex_account_id=99,
+                    session_key="1",
+                    rating_key=9001,
+                    media_type="movie",
+                    started_at=now - timedelta(hours=2),
+                    last_seen_at=now - timedelta(hours=1),
+                    ended_at=now - timedelta(hours=1),
+                    max_offset_ms=1_800_000,
+                    duration_ms=6_000_000,
+                    end_reason="stopped",
+                )
+            )
+            s.commit()
 
     def _state(self, sessions):
         published: list[tuple[str, dict]] = []
         bus = SimpleNamespace(publish=lambda event, data: published.append((event, data)))
         return SimpleNamespace(sessions=sessions, run_service=None, bus=bus), published
 
-    def test_it_publishes_the_event_the_report_query_listens_for(self, sessions, monkeypatch):
-        """`sync.finished` / `kind="watched"` is what `useSyncWatched` invalidates the report on. A
-        second channel for the same fact would be a second thing to keep in step."""
+    def test_it_credits_and_publishes_the_event_the_report_listens_for(self, sessions):
+        """`sync.finished` / `kind="watched"` is what `useSyncWatched` invalidates the report on."""
+        from shortlist.server.db.models import PickRow
+
+        self._world(sessions)
         state, published = self._state(sessions)
-        monkeypatch.setattr("shortlist.server.services.run_persistence.reconcile_from_events", lambda _s: 2)
 
         result = jobs._HANDLERS["watch.reconcile"](state, {})
 
-        assert result == {"users_credited": 2}
-        assert published == [("sync.finished", {"kind": "watched", "ok": True, "count": 2})]
+        assert result == {"users_credited": 1}
+        assert published == [("sync.finished", {"kind": "watched", "ok": True, "count": 1})]
+        with sessions() as s:
+            pick = s.query(PickRow).filter_by(tmdb_id=550).one()
+            assert pick.watched_at is not None and pick.max_percent == 30
 
-    def test_it_stays_quiet_when_nothing_was_credited(self, sessions, monkeypatch):
-        """A session ends every time anyone stops anything. Announcing a refresh that changes no
-        number would have every dashboard on the server refetch for nothing."""
+    def test_a_second_pass_over_the_same_data_says_nothing(self, sessions):
+        """A session ends every time anyone stops anything, and this recomputes from the whole event
+        log. Announcing a refresh that moved no number has every dashboard on the server refetch for
+        nothing — and it is what the previous version of this test could not see, because it stubbed
+        the function whose return value was wrong."""
+        self._world(sessions)
         state, published = self._state(sessions)
-        monkeypatch.setattr("shortlist.server.services.run_persistence.reconcile_from_events", lambda _s: 0)
 
-        assert jobs._HANDLERS["watch.reconcile"](state, {}) == {"users_credited": 0}
+        jobs._HANDLERS["watch.reconcile"](state, {})
+        published.clear()
+        second = jobs._HANDLERS["watch.reconcile"](state, {})
+
+        assert second == {"users_credited": 0}
         assert published == []

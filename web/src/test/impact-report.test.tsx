@@ -184,8 +184,8 @@ describe("ImpactReport", () => {
   it("shows the headline metrics, breakdowns, requests, and recent-watches feed", async () => {
     renderReport();
 
-    expect(await screen.findByText("Watched")).toBeTruthy();
-    expect(screen.getByText("People watching")).toBeTruthy();
+    expect(await screen.findByText(/watched · the last/i)).toBeTruthy();
+    expect(screen.getByText(/People who watched something/)).toBeTruthy();
     expect(screen.getByText("1 of 2")).toBeTruthy();
     expect(screen.getByText(/sent ·/i)).toBeTruthy(); // requests impact
     expect(
@@ -215,15 +215,13 @@ describe("ImpactReport", () => {
     // about whether anyone saw a thing out. Both numbers have to be on the page for that to read.
     renderReport();
 
-    expect(await screen.findByText("Watched")).toBeTruthy();
-    // The tile, not just the word: `parentElement` is the tile body, so this asserts the label is
-    // showing ITS number and not merely that a 3 exists somewhere on a page full of numbers.
-    expect(screen.getByText("Finished").parentElement?.textContent).toContain(
-      "3",
-    );
-    expect(screen.getByText("Watched").parentElement?.textContent).toContain(
-      "4",
-    );
+    const card = (await screen.findByText(/watched · the last/i)).closest(
+      "div[class*='pt-6']",
+    )!;
+    // Both numbers inside the SAME card, so this asserts the verdict reads as one sentence rather
+    // than that a 3 and a 4 exist somewhere on a page full of numbers.
+    expect(card.textContent).toContain("4");
+    expect(card.textContent).toMatch(/3\s*finished them/);
   });
 
   it("qualifies each person and row line with what was actually finished", async () => {
@@ -231,7 +229,7 @@ describe("ImpactReport", () => {
     // while the movie row finished all 4 it landed. Before the split these rendered identically.
     // Asserted against the rendered text because the count and its word are separate elements.
     renderReport();
-    await screen.findByText("Watched");
+    await screen.findByText(/watched · the last/i);
 
     const page = document.body.textContent ?? "";
     expect(page).toContain("4 watched · 4 finished");
@@ -240,7 +238,7 @@ describe("ImpactReport", () => {
 
   it("defaults to the 30-day window and refetches when it changes", async () => {
     renderReport();
-    await screen.findByText("Watched");
+    await screen.findByText(/watched · the last/i);
 
     expect(getReport).toHaveBeenCalledWith("30");
 
@@ -252,10 +250,12 @@ describe("ImpactReport", () => {
   it("states the landing rate over its matured cohort, not over every pick ever", async () => {
     renderReport();
 
-    expect(await screen.findByText("Picks that get watched")).toBeTruthy();
-    expect(screen.getByText("40%")).toBeTruthy();
-    expect(screen.getByText(/4 of 10 picks delivered/i)).toBeTruthy();
-    // The caveat is the point — without it "40%" is just another number with no meaning.
+    // It lives in the verdict now, not a card of its own — two cards printing the same ratio at two
+    // roundings (1% beside 0.5%) is how a dashboard comes to disagree with itself.
+    expect(await screen.findByText("40.0%")).toBeTruthy();
+    expect(screen.getByText(/4 of 10 ·/)).toBeTruthy();
+    // The caveat is the point — without it the percentage is a number with no meaning, because the
+    // denominator is not "every pick ever".
     expect(
       screen.getByText(/only picks that have had their full 30 days/i),
     ).toBeTruthy();
@@ -521,17 +521,20 @@ describe("ImpactReport", () => {
     ).toBeTruthy();
   });
 
-  it("says nothing was watched rather than dividing by it", async () => {
-    // The Finished tile's hint is "of N watched". At N = 0 that would read "of 0 watched", so it
-    // has its own branch — rendered by the empty-window test below and, until now, asserted by
-    // nothing.
+  it("states a zero week rather than dividing by it", async () => {
+    // The old Finished tile read "of N watched", which at N = 0 rendered "of 0 watched". The verdict
+    // has no such phrasing to break: it prints the count, and "0 watched" IS the statement.
     getReport.mockResolvedValue({
       ...REPORT,
       overall: { ...REPORT.overall, watched: 0, finished: 0 },
     });
     renderReport();
 
-    expect(await screen.findByText(/nothing watched yet/i)).toBeTruthy();
+    const card = (await screen.findByText(/watched · the last/i)).closest(
+      "div[class*='pt-6']",
+    )!;
+    expect(card.textContent).toContain("0");
+    expect(card.textContent).not.toMatch(/of 0 watched/);
   });
 
   it("draws a finished segment inside each trend column", async () => {
@@ -551,7 +554,7 @@ describe("ImpactReport", () => {
       ],
     });
     renderReport();
-    await screen.findByText("Watched");
+    await screen.findByText(/watched · the last/i);
 
     const columns = document.querySelectorAll('[data-testid="trend-week"]');
     expect(columns.length).toBeGreaterThan(0);
@@ -596,7 +599,7 @@ describe("ImpactReport", () => {
   });
 });
 
-describe("WatchSyncLine — 'Sync now'", () => {
+describe("Sync now", () => {
   beforeEach(() => {
     getReport.mockReset();
     getReport.mockResolvedValue(REPORT);
@@ -617,7 +620,7 @@ describe("WatchSyncLine — 'Sync now'", () => {
         }),
     );
     renderReport();
-    await screen.findByText("Watched");
+    await screen.findByText(/watched · the last/i);
 
     await userEvent.click(screen.getByRole("button", { name: /Sync now/i }));
     expect(
@@ -635,7 +638,7 @@ describe("WatchSyncLine — 'Sync now'", () => {
     // having happened.
     syncWatched.mockRejectedValueOnce(new Error("boom"));
     renderReport();
-    await screen.findByText("Watched");
+    await screen.findByText(/watched · the last/i);
 
     await userEvent.click(screen.getByRole("button", { name: /Sync now/i }));
 
@@ -677,7 +680,7 @@ describe("the window selector on a young install", () => {
     });
     renderReport();
 
-    await screen.findByText("Watched");
+    await screen.findByText(/watched · the last/i);
     expect(screen.queryByText(/only been recording since/i)).toBeNull();
   });
 
@@ -690,7 +693,7 @@ describe("the window selector on a young install", () => {
     });
     renderReport();
 
-    await screen.findByText("Watched");
+    await screen.findByText(/watched · the last/i);
     expect(screen.queryByText(/only been recording since/i)).toBeNull();
   });
 });
@@ -822,26 +825,28 @@ describe("ImpactReport — the recent feed says which kind of watch it was", () 
 });
 
 describe("ImpactReport — the engagement split", () => {
-  it("shows dropped and bounced together, with the bounces named in the hint", async () => {
+  it("counts everyone who was lost after pressing play, in the verdict itself", async () => {
+    // 2 dropped + 1 bounced. One number, because the question is "how many did we lose after they
+    // pressed play" — the split is not worth a second figure in a sentence.
     getReport.mockResolvedValue(REPORT);
     renderReport();
 
-    expect(await screen.findByText("Dropped")).toBeInTheDocument();
-    // 2 dropped + 1 bounced. One number, because the tile answers "how many did we lose after they
-    // pressed play" — the split lives in the hint, where it explains rather than competes.
-    const tile = screen.getByText("Dropped").closest("div")!.parentElement!;
-    expect(tile).toHaveTextContent("3");
-    expect(tile).toHaveTextContent(/1 barely started/i);
+    const card = (await screen.findByText(/watched · the last/i)).closest(
+      "div[class*='pt-6']",
+    )!;
+    expect(card.textContent).toMatch(/3\s*gave up part-way/);
   });
 
-  it("says what the number means rather than reading zero when nothing has been observed", async () => {
+  it("says nothing about giving up when nobody did", async () => {
+    // A dashboard printing "0 gave up" every day teaches you to stop reading the line that matters
+    // on the day it is not zero. It was a tile that could only ever read zero on most servers.
     getReport.mockResolvedValue({
       ...REPORT,
       overall: { ...REPORT.overall, bounced: 0, dropped: 0 },
     });
     renderReport();
 
-    expect(await screen.findByText("Dropped")).toBeInTheDocument();
-    expect(screen.getByText(/started, never finished/i)).toBeInTheDocument();
+    await screen.findByText(/watched · the last/i);
+    expect(screen.queryByText(/gave up part-way/)).toBeNull();
   });
 });

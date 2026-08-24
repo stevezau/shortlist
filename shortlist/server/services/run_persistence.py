@@ -392,7 +392,7 @@ def _decide_outcomes(
     }
 
 
-def _apply_outcomes(session: Session, user: User, desired: dict[tuple[int, str], _Outcome]) -> None:
+def _apply_outcomes(session: Session, user: User, desired: dict[tuple[int, str], _Outcome]) -> int:
     """Write the decided state onto every delivery row it belongs on. The ONLY writer.
 
     The report intersects at ROW level — `_landing` and `row_effectiveness` pick a cohort by
@@ -418,8 +418,10 @@ def _apply_outcomes(session: Session, user: User, desired: dict[tuple[int, str],
         ):
             by_title[(pick.tmdb_id, pick.media_type)].append(pick)
 
+    wrote = 0
     for (tmdb_id, media_type), out in desired.items():
         for pick in by_title.get((tmdb_id, media_type), []):
+            before = (pick.watched_at, pick.finished_at, pick.max_percent)
             eligible = (
                 out.watched_at is not None
                 and _as_utc(pick.created_at) <= out.watched_at
@@ -437,6 +439,13 @@ def _apply_outcomes(session: Session, user: User, desired: dict[tuple[int, str],
             # short session must never overwrite a real earlier one.
             if out.max_percent is not None and (pick.max_percent is None or pick.max_percent < out.max_percent):
                 pick.max_percent = out.max_percent
+            # Counted, not assumed. `desired` is recomputed from the whole event log every pass, so
+            # "this user has a credit" is true for everyone who has ever watched anything — using it
+            # as "something changed" made one person pressing stop report all 47 users as credited
+            # and told every open dashboard to refetch.
+            if (pick.watched_at, pick.finished_at, pick.max_percent) != before:
+                wrote += 1
+    return wrote
 
 
 def _decide_shared(
@@ -492,11 +501,13 @@ def _apply_shared(
     desired: dict[tuple[str, int, str], _Outcome],
     existing: dict[tuple[str, int, str], SharedRowWatch],
     membership: RowMembership,
-) -> None:
+) -> int:
     """Write the decided shared-row state. The ONLY writer for `shared_row_watches`."""
+    wrote = 0
     for key, out in desired.items():
         slug, tmdb_id, media_type = key
         row = existing.get(key)
+        created = row is None
         if row is None:
             row = SharedRowWatch(
                 user_id=user.id,
@@ -507,6 +518,7 @@ def _apply_shared(
             )
             session.add(row)
             existing[key] = row
+        before = (row.watched_at, row.finished_at, row.max_percent)
         if row.watched_at is None and out.watched_at is not None:
             row.watched_at = out.watched_at
         # Only onto a credited watch, and never before its own credit.
@@ -517,6 +529,23 @@ def _apply_shared(
         # earlier one.
         if out.max_percent is not None and (row.max_percent is None or row.max_percent < out.max_percent):
             row.max_percent = out.max_percent
+        if created or (row.watched_at, row.finished_at, row.max_percent) != before:
+            wrote += 1
+    return wrote
+
+
+#: How recent a credit must be for its ABSENCE to be read as an un-watch.
+#:
+#: A title goes missing from a watched-titles read for two very different reasons: the person
+#: un-watched it, or it is no longer in the library at all. Nothing distinguishes them — the read is
+#: "everything in this section with the watched flag set", and a deleted file is in no section. So an
+#: unbounded withdrawal would erase a year of hit-rate history the first time the owner tidied up
+#: their movies folder, silently, on the weekly pass.
+#:
+#: Bounding it keeps the case this exists for — Plex flags something watched wrongly and the person
+#: corrects it, which happens within days — and leaves settled history alone. The same 30 days the
+#: report already treats as a pick's fair chance.
+UNWATCH_WITHDRAW_DAYS = HIT_WINDOW_DAYS
 
 
 def _withdraw_unwatched(
@@ -524,6 +553,8 @@ def _withdraw_unwatched(
     user: User,
     latest_watch: dict[tuple[int, str], datetime],
     observed: set[tuple[int, str]],
+    *,
+    now: datetime,
 ) -> int:
     """Take back credits that Plex's flag was the ONLY evidence for, once that flag is gone.
 
@@ -540,16 +571,26 @@ def _withdraw_unwatched(
       which never sets the flag at all and would otherwise be withdrawn the instant it was credited.
     * **Anything outside this read.** See the caller: only a FULL re-read can tell "they un-watched
       it" from "this pass did not look".
+    * **Anything settled.** See `UNWATCH_WITHDRAW_DAYS`: past that, a title missing from the read is
+      far more likely to have left the library than to have been un-watched.
 
     Returns how many were withdrawn, for the log.
     """
+    cutoff = now - timedelta(days=UNWATCH_WITHDRAW_DAYS)
     withdrawn = 0
     for pick in session.query(PickRow).filter(PickRow.user_id == user.id, PickRow.watched_at.isnot(None)).all():
         key = (pick.tmdb_id, pick.media_type)
         if key in latest_watch or key in observed:
             continue
+        if _as_utc(pick.watched_at) < cutoff:
+            continue  # settled history — see UNWATCH_WITHDRAW_DAYS
         pick.watched_at = None
         pick.finished_at = None
+        # And the percentage with it. `resolve_outcomes` derives bounced/dropped from `max_percent`
+        # ALONE, so a withdrawn pick that kept one still renders as an abandonment with no credit
+        # behind it — the exact "a percentage on an uncredited title" state step 4 of
+        # `_decide_outcomes` calls a bug.
+        pick.max_percent = None
         withdrawn += 1
     return withdrawn
 
@@ -614,9 +655,10 @@ def reconcile_from_events(sessions: sessionmaker[Session]) -> int:
             )
             if not desired and not shared_desired:
                 continue
-            _apply_outcomes(session, user, desired)
-            _apply_shared(session, user, shared_desired, existing, membership)
-            changed += 1
+            wrote = _apply_outcomes(session, user, desired)
+            wrote += _apply_shared(session, user, shared_desired, existing, membership)
+            if wrote:
+                changed += 1
         session.commit()
     return changed
 
@@ -750,7 +792,13 @@ def reconcile_watched(
             # watched nothing are indistinguishable here, and wrongly wiping real history is far
             # worse than leaving one stale credit for someone who un-watched their only title.
             if full_resync and profile.history:
-                gone = _withdraw_unwatched(session, user, latest_watch, observed.get(user.plex_account_id, set()))
+                gone = _withdraw_unwatched(
+                    session,
+                    user,
+                    latest_watch,
+                    observed.get(user.plex_account_id, set()),
+                    now=datetime.now(UTC),
+                )
                 if gone:
                     logger.info("watch-sync: withdrew {} un-watched credit(s) for {}", gone, user.username)
 

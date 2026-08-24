@@ -1390,3 +1390,95 @@ class TestUnwatchingWithdrawsOnlyAFlagBackedCredit:
         with world() as s:
             row = s.query(PickRow).filter_by(tmdb_id=510).one()
             assert row.watched_at is None and row.finished_at is None
+
+
+class TestSettledHistoryIsNeverErased:
+    """A title is missing from a watched-titles read for two very different reasons: the person
+    un-watched it, or it is no longer in the library. Nothing distinguishes them — the read is
+    "everything in this section with the watched flag set", and a deleted file is in no section.
+
+    Unbounded, the withdrawal would erase a year of hit-rate history the first time the owner tidied
+    up their movies folder — silently, on the weekly pass."""
+
+    def a_credit_aged(self, world, *, tmdb, days):
+        with world() as s:
+            s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
+            s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=tmdb,
+                    media_type="movie",
+                    rating_key=0,
+                    rank=1,
+                    title="T",
+                    created_at=NOW - timedelta(days=days + 1),
+                    watched_at=NOW - timedelta(days=days),
+                )
+            )
+            s.commit()
+
+    def test_a_settled_credit_survives_a_title_leaving_the_library(self, world):
+        from shortlist.server.services.run_persistence import UNWATCH_WITHDRAW_DAYS
+
+        self.a_credit_aged(world, tmdb=510, days=UNWATCH_WITHDRAW_DAYS + 5)
+        other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
+
+        reconcile_watched(world, [profile(other)], full_resync=True)
+
+        with world() as s:
+            assert s.query(PickRow).filter_by(tmdb_id=510).one().watched_at is not None
+
+    def test_a_recent_credit_is_still_withdrawn(self, world):
+        """The case this exists for: Plex flags something watched wrongly and the person corrects it,
+        which happens within days."""
+        from shortlist.server.services.run_persistence import UNWATCH_WITHDRAW_DAYS
+
+        self.a_credit_aged(world, tmdb=511, days=UNWATCH_WITHDRAW_DAYS - 5)
+        other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
+
+        reconcile_watched(world, [profile(other)], full_resync=True)
+
+        with world() as s:
+            assert s.query(PickRow).filter_by(tmdb_id=511).one().watched_at is None
+
+
+class TestAWithdrawnCreditLeavesNothingBehind:
+    def test_the_percentage_goes_with_the_credit(self, world):
+        """`resolve_outcomes` derives bounced/dropped from `max_percent` ALONE. A withdrawn pick that
+        kept one still renders as an abandonment with no credit behind it — the exact "percentage on
+        an uncredited title" state `_decide_outcomes` calls a bug."""
+        with world() as s:
+            s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
+            s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=510,
+                    media_type="movie",
+                    rating_key=0,
+                    rank=1,
+                    title="T",
+                    created_at=NOW - timedelta(days=2),
+                    watched_at=NOW - timedelta(days=1),
+                    max_percent=42,
+                )
+            )
+            s.commit()
+        other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
+
+        reconcile_watched(world, [profile(other)], full_resync=True)
+
+        with world() as s:
+            row = s.query(PickRow).filter_by(tmdb_id=510).one()
+            assert row.watched_at is None
+            assert row.max_percent is None, "it would still render as a drop"
+            assert resolve_outcomes(s, None) == {}

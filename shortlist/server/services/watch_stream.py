@@ -613,7 +613,11 @@ class WatchStream:
             with self._sessions() as session:
                 pending = (
                     session.query(Job.id)
-                    .filter(Job.kind == "watch.reconcile", Job.status.in_(("queued", "running")))
+                    # QUEUED only, never running. A pass that started before the flush above has
+                    # already read `watch_sessions`, so skipping because of it drops this session's
+                    # final offset with nothing left to re-queue it — and the household case that
+                    # motivates coalescing is exactly two people stopping seconds apart.
+                    .filter(Job.kind == "watch.reconcile", Job.status == "queued")
                     .first()
                 )
                 if pending is not None:

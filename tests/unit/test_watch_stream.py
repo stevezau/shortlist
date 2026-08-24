@@ -1023,3 +1023,72 @@ class TestStoppingPlaybackAsksForTheCreditNow:
 
         with sessions() as s:
             assert s.query(Job).filter_by(kind="watch.reconcile").count() == 0
+
+
+class TestCoalescingDoesNotSwallowTheNewestSession:
+    """A pass that is already RUNNING has read `watch_sessions` — so skipping because of it drops
+    this session's final offset with nothing left to re-queue it. The household case that motivates
+    coalescing at all is two people stopping seconds apart, which is exactly when that bites."""
+
+    def _closed(self, sessions, stream):
+        from shortlist.server.db.models import WatchSession as WS
+        from shortlist.server.services.watch_stream import _Live
+
+        now = datetime.now(UTC)
+        with sessions() as s:
+            row = WS(
+                plex_account_id=99,
+                session_key="1",
+                rating_key=10,
+                media_type="movie",
+                started_at=now - timedelta(minutes=20),
+                last_seen_at=now,
+                max_offset_ms=1_800_000,
+                duration_ms=6_000_000,
+            )
+            s.add(row)
+            s.commit()
+            row_id = row.id
+        live = _Live(
+            session_key="1",
+            account_id=99,
+            rating_key=10,
+            show_rating_key=None,
+            media_type="movie",
+            duration_ms=6_000_000,
+            offset_ms=1_800_000,
+            now=now - timedelta(minutes=20),
+        )
+        live.last_seen_at = now
+        live.row_id = row_id
+        live.flushed_at = now
+        stream._close("1", live, "stopped")
+
+    def test_a_running_pass_does_not_block_the_next_one(self, sessions):
+        from shortlist.server.db.models import Job
+        from shortlist.server.services.watch_stream import WatchStream
+
+        stream = WatchStream(sessions, lambda **_: None)
+        self._closed(sessions, stream)
+        with sessions() as s:
+            s.query(Job).filter_by(kind="watch.reconcile").one().status = "running"
+            s.commit()
+
+        self._closed(sessions, stream)
+
+        with sessions() as s:
+            assert s.query(Job).filter_by(kind="watch.reconcile").count() == 2, (
+                "the running pass already read the table — this session needs its own"
+            )
+
+    def test_a_queued_pass_still_coalesces(self, sessions):
+        """A queued job has not read anything yet, so it will pick this session up."""
+        from shortlist.server.db.models import Job
+        from shortlist.server.services.watch_stream import WatchStream
+
+        stream = WatchStream(sessions, lambda **_: None)
+        self._closed(sessions, stream)
+        self._closed(sessions, stream)
+
+        with sessions() as s:
+            assert s.query(Job).filter_by(kind="watch.reconcile").count() == 1
