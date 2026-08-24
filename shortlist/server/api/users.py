@@ -16,6 +16,7 @@ from sqlalchemy import String, cast, func
 from sqlalchemy.orm import Session
 
 from shortlist.engine.clients.http_retry import redact
+from shortlist.engine.models import DEFAULT_ROW_TEMPLATE
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.api.serializers import UserOut, UserPickOut, pick_dict, user_dict
 from shortlist.server.auth import require_owner
@@ -29,11 +30,12 @@ from shortlist.server.db.models import (
     iso_utc,
 )
 from shortlist.server.prefs import blocked_entries
-from shortlist.server.services import jobs
+from shortlist.server.services import jobs, report_service
 from shortlist.server.services.user_sync import (
     remove_users_rows,
     rename_after_nickname,
 )
+from shortlist.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_owner)])
 
@@ -522,6 +524,66 @@ async def search_titles(request: Request, q: str, media_type: str = "movie") -> 
             "year": int(date[:4]) if date[:4].isdigit() else None,
         }
     ]
+
+
+class UserPickOutcomeOut(PassthroughModel):
+    """One title this person was recommended and then played."""
+
+    tmdb_id: int
+    media_type: str
+    title: str
+    #: The row that was showing it when they pressed play.
+    row: str
+    #: `finished` | `dropped` | `bounced` | `watching`. See `resolve_outcomes` — `watching` means
+    #: either no percentage was ever observed, or it is too recent to call (`SETTLING_HOURS`).
+    outcome: str
+    #: How far in they got, or null when no live session ever measured it. Always null for a series:
+    #: an episode's progress is not the show's.
+    percent: int | None
+    watched_at: str | None
+    finished_at: str | None
+
+
+@router.get("/{user_id}/outcomes", response_model=list[UserPickOutcomeOut])
+def user_outcomes(user_id: int, request: Request) -> list[dict]:
+    """What this person did with the picks they were given: finished, part-watched, or abandoned.
+
+    The user page could show what Shortlist DELIVERED and what they had watched on Plex, but not the
+    join of the two — whether the recommendations were actually seen out. That is the question the
+    dashboard answers for the whole server, and it is at least as interesting per person.
+
+    Reuses `resolve_outcomes`, the same function the dashboard reads, rather than re-deriving the
+    classification here. Two places deciding what "finished" means is how the user page and the
+    dashboard come to disagree about the same title.
+
+    A plain `def`: `resolve_outcomes` is synchronous and walks the picks table, so Starlette runs it
+    in a worker thread instead of stalling the event loop (see the effectiveness handler).
+    """
+    with request.app.state.sessions() as session:
+        if session.get(User, user_id) is None:
+            raise HTTPException(status_code=404, detail="user not found")
+        outcomes = report_service.resolve_outcomes(session, None)
+        mine = [
+            (key, entry) for key, entry in outcomes.items() if key[0] == user_id and entry["watched_at"] is not None
+        ]
+        namer = report_service._RowNamer(
+            session, SettingsStore(session).get("row.name_template") or DEFAULT_ROW_TEMPLATE
+        )
+        # Newest first: "what did they just watch" is the question, not "what did they watch in 2019".
+        mine.sort(key=lambda kv: str(kv[1]["watched_at"]), reverse=True)
+        return [
+            {
+                "tmdb_id": key[1],
+                "media_type": key[2],
+                "title": entry["title"],
+                "row": namer.label(entry["row"], entry["library"]),
+                "outcome": entry["outcome"],
+                "percent": entry["percent"],
+                "watched_at": iso_utc(entry["watched_at"]) if entry["watched_at"] else None,
+                "finished_at": iso_utc(entry["finished_at"]) if entry["finished_at"] else None,
+            }
+            for key, entry in mine
+        ]
 
 
 @router.get("/{user_id}/runs", response_model=list[UserRunOut])

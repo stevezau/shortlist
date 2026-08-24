@@ -295,6 +295,8 @@ class TrendPointOut(PassthroughModel):
 
 
 class PerUserOut(PassthroughModel):
+    #: Their user id, so the dashboard can link the name to their page.
+    id: int
     username: str
     display_name: str
     slug: str
@@ -324,6 +326,8 @@ class TopTitleOut(PassthroughModel):
 
 
 class RecentWatchOut(PassthroughModel):
+    #: Null once the person has left the server — the watch stays on record with nowhere to link to.
+    user_id: int | None
     username: str
     display_name: str
     title: str

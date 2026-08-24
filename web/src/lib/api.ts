@@ -1,5 +1,6 @@
 import type {
   Job,
+  UserPickOutcome,
   RowEffectiveness,
   JobCatalogEntry,
   JobResult,
@@ -335,6 +336,10 @@ export const api = {
 
   /** Search one person's cached watched set. Unlike `getUserHistory` this never touches Plex, so it
    *  can search the whole set rather than the page on screen. */
+  /** What this person did with the picks they were given: finished, part-watched, or abandoned. */
+  getUserOutcomes: (id: number): Promise<UserPickOutcome[]> =>
+    request(`/api/users/${id}/outcomes`),
+
   getUserWatched: (
     id: number,
     { q, mediaType, limit }: WatchedFilters,

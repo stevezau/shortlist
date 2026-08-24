@@ -40,7 +40,9 @@ def _sync_and_open_history(page: Page, app: ShortlistApp, user_slug: str = "sara
 
     page.goto("/users")
     page.get_by_role("link", name=re.compile(user_slug, re.IGNORECASE)).first.click()
-    page.get_by_role("button", name="Watch History").click(timeout=20_000)
+    # "Watched", not "Watch History": the tab now holds what they did with SHORTLIST'S picks as well
+    # as their whole Plex history, and the old label described only the second.
+    page.get_by_role("button", name="Watched", exact=True).click(timeout=20_000)
     page.wait_for_timeout(1500)
 
 

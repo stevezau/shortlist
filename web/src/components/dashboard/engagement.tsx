@@ -95,7 +95,14 @@ function unwatchedRequests(
   };
 }
 
-/** Somebody started a pick and gave up. The one signal Plex's own watched flag cannot give. */
+/**
+ * Somebody started a pick and gave up. The one signal Plex's own watched flag cannot give.
+ *
+ * "Gave up" is a real claim, and it only became a true one when `SETTLING_HOURS` landed: an outcome
+ * used to be decided on percentage alone, so a film still playing, or paused an hour ago, was
+ * reported here as abandoned. The server now answers `watching` for both, and this list shows only
+ * what it is willing to call settled.
+ */
 function gaveUp(people: EngagementReport["people"]): Problem[] {
   const out: { person: string; pick: EngagementPick }[] = [];
   for (const person of people) {
@@ -134,8 +141,13 @@ export function NeedsALook({
         <h2 className="text-sm font-medium text-muted-foreground">
           Worth a look
         </h2>
+        {/* Covers BOTH halves of the list, which "Where the picks are not landing" did not. Three of
+            the four item kinds here are picks nobody started — idle people, dead rows, unfetched
+            requests. The fourth is the opposite: somebody DID start it. A partial watch is the pick
+            landing and then losing them, which is a different fact and not a failure to land, and
+            calling it one told the owner something untrue about their own server. */}
         <p className="mt-0.5 text-xs text-muted-foreground/80">
-          Where the picks are not landing.
+          Picks nobody started, and ones they started but didn&rsquo;t finish.
         </p>
         <QueryBoundary
           query={engagement}

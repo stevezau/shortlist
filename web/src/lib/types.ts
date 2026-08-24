@@ -479,6 +479,8 @@ export type SyncProgressEvent = Schemas["SyncProgressEvent"];
 
 /** A Tools-page sync finished (SSE `sync.finished`). */
 export type SyncFinishedEvent = Schemas["SyncFinishedEvent"];
+/** One title this person was recommended and then played (`/api/users/{id}/outcomes`). */
+export type UserPickOutcome = Schemas["UserPickOutcomeOut"];
 
 // ---------------------------------------------------------------------------
 // Hand-written — the shapes the schema genuinely cannot describe.

@@ -30,6 +30,7 @@ from shortlist.server.db.models import (
     RunUser,
     SharedRowWatch,
     User,
+    WatchSession,
     iso_utc,
 )
 from shortlist.server.services.run_service import HIT_WINDOW_DAYS
@@ -476,6 +477,46 @@ def _requests_summary(session: Session, since: datetime | None) -> dict:
 #: Below this, a start is "opened and closed" rather than "gave it a go". Two minutes of a film is a
 #: different signal from forty, and collapsing them loses the one that says "wrong pick entirely".
 BOUNCE_PERCENT = 5
+#: How long a stopped watch is left alone before it may be called an abandonment.
+#:
+#: An outcome used to be decided on percentage ALONE, with no notion of time — so a film someone
+#: started this evening and paused at 40% was reported as "gave up on it after 40%" immediately, and
+#: a play still in progress was reported that way while it was playing. Observed on the maintainer's
+#: server 2026-08-24: a pick credited at 1% appeared under "gave up" while its session was still open.
+#:
+#: 24 hours because resuming the next evening is ordinary behaviour, and the report is read the
+#: morning after. Anything inside the window reads as `watching` — an honest "not yet known" rather
+#: than a verdict the data cannot support.
+SETTLING_HOURS = 24
+
+
+def _in_progress(session: Session) -> set[tuple[int, int, str]]:
+    """`(user_id, tmdb_id, media_type)` for every title with playback OPEN right now.
+
+    Someone still watching has not given up on anything, however far in they are. `watch_sessions`
+    rows carry a rating key, so the titles are resolved through the same map the credit path uses
+    rather than by guessing.
+    """
+    from shortlist.server.services.watch_events import tmdb_by_rating_key
+
+    tmdb_of = tmdb_by_rating_key(session)
+    by_account = {u.plex_account_id: u.id for u in session.query(User).all()}
+    live: set[tuple[int, int, str]] = set()
+    for account_id, rating_key, show_rating_key in (
+        session.query(WatchSession.plex_account_id, WatchSession.rating_key, WatchSession.show_rating_key)
+        .filter(WatchSession.ended_at.is_(None))
+        .all()
+    ):
+        user_id = by_account.get(account_id)
+        if user_id is None:
+            continue
+        # The SHOW key first: a pick for a series stores the show's rating key while playback reports
+        # the episode, which is the same resolution `session_progress` makes.
+        for key in (show_rating_key, rating_key):
+            resolved = tmdb_of.get(key) if key else None
+            if resolved:
+                live.add((user_id, resolved[0], resolved[1]))
+    return live
 
 
 def resolve_outcomes(session: Session, since: datetime | None) -> dict[tuple[int, int, str], dict]:
@@ -602,6 +643,8 @@ def resolve_outcomes(session: Session, since: datetime | None) -> dict[tuple[int
         if entry["first_delivered"] is None and watched:
             entry["first_delivered"] = watched
 
+    live = _in_progress(session)
+    settled_before = datetime.now(UTC) - timedelta(hours=SETTLING_HOURS)
     resolved: dict[tuple[int, int, str], dict] = {}
     for key, entry in out.items():
         # A percentage with no credit anywhere is not an outcome. `_apply_outcomes` stamps
@@ -617,6 +660,12 @@ def resolve_outcomes(session: Session, since: datetime | None) -> dict[tuple[int
         if entry["finished_at"] is not None:
             entry["outcome"] = "finished"
         elif entry["percent"] is None:
+            entry["outcome"] = "watching"
+        elif key in live or (observed is not None and _as_utc(observed) >= settled_before):
+            # Too early to call it. Playback is either still open, or stopped so recently that
+            # resuming tonight is the ordinary thing to expect — see `SETTLING_HOURS`. Reporting
+            # "gave up" here is a verdict the data does not support, and it is the loudest thing the
+            # dashboard says about a pick.
             entry["outcome"] = "watching"
         else:
             entry["outcome"] = "bounced" if entry["percent"] < BOUNCE_PERCENT else "dropped"
@@ -671,6 +720,9 @@ def _recent_watches(session: Session, users: dict[int, User], namer: _RowNamer, 
             "_key": (user_id, tmdb_id, media_type),
             #: Sort key. Stripped with every other `_`-prefixed field before the response is built.
             "_at": at,
+            # None when the person has left the server — their watches stay on record, so the feed
+            # still renders the line, it just has nowhere to send you.
+            "user_id": user.id if user else None,
             "username": user.username if user else "unknown",
             "display_name": user.display_name if user else "unknown",
             "media_type": media_type,
@@ -929,6 +981,9 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
         per_user_raw,
         lambda uid: (
             {
+                # The id, so the dashboard can link a name to that person's page. Every other field
+                # here is for display; this one is the address.
+                "id": uid,
                 "username": users[uid].username,
                 "display_name": users[uid].display_name,  # nickname → Tautulli → username
                 "slug": users[uid].slug,
@@ -1222,9 +1277,18 @@ def engagement(session: Session, window: str) -> dict:
             agg["started"] += 1
             agg["finished"] += 1
         elif entry["percent"] is not None:
+            # STARTED, always — a percentage means playback happened, whoever is still mid-film.
             agg["started"] += 1
-            agg["percents"].append(entry["percent"])
-            abandoned.append(entry["percent"])
+            # ABANDONED only when the outcome says so. Keyed on the outcome rather than on "has a
+            # percentage", because since `SETTLING_HOURS` those are no longer the same question: a
+            # watch still open, or stopped an hour ago, carries a percentage and is not an
+            # abandonment. Reading the raw percentage here put in-progress watches into the
+            # stop-point histogram while `resolve_outcomes` called them `watching`, so the chart and
+            # the tile beside it counted different sets — the exact disagreement
+            # `test_the_histogram_always_sums_to_the_abandonments` exists to catch, and did.
+            if entry["outcome"] in ("bounced", "dropped"):
+                agg["percents"].append(entry["percent"])
+                abandoned.append(entry["percent"])
 
     def median(values: list[int]) -> int | None:
         if not values:

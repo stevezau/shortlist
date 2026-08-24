@@ -952,6 +952,9 @@ class TestRunsApi:
         assert set(body["requests"]) == {"sent", "pending", "watched_after_sent"}
         assert set(body["trend"][0]) == {"week", "watched", "finished"}
         assert set(body["per_user"][0]) == {
+            # The address, not a display field: the dashboard links each name to that person's page,
+            # and `slug` is not what `/users/:id` takes.
+            "id",
             "username",
             "display_name",
             "slug",
@@ -971,6 +974,9 @@ class TestRunsApi:
         }
         assert set(body["top_titles"][0]) == {"tmdb_id", "media_type", "title", "watchers"}
         assert set(body["recent"][0]) == {
+            # Null once someone has left the server: the watch stays on record, so the line still
+            # renders — it just has nowhere to send you.
+            "user_id",
             "username",
             "display_name",
             "title",

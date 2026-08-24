@@ -130,6 +130,7 @@ const REPORT: EffectivenessReport = {
   trend: [{ week: "2026-28", watched: 4, finished: 3 }],
   per_user: [
     {
+      id: 42,
       username: "sarah",
       display_name: "sarah",
       slug: "sarah",
@@ -162,6 +163,7 @@ const REPORT: EffectivenessReport = {
   ],
   recent: [
     {
+      user_id: 42,
       username: "sarah",
       display_name: "sarah",
       title: "Dune: Part Two",
@@ -296,6 +298,32 @@ describe("ImpactReport", () => {
 
     expect(await screen.findByText(/no earlier period yet/i)).toBeTruthy();
     expect(screen.queryByText(/vs previous/i)).toBeNull();
+  });
+
+  it("links a person to their own page, from both places they are named", async () => {
+    // The next question a name on this page provokes is "what else did they get", and that is a page
+    // that already exists. `/users/:id` takes the id, which is why the report carries one — `slug`
+    // addresses nothing.
+    renderReport();
+
+    const links = await screen.findAllByRole("link", { name: "sarah" });
+    expect(links.length).toBeGreaterThanOrEqual(2); // By person, and the recent-watches feed
+    for (const link of links) {
+      expect(link.getAttribute("href")).toBe("/users/42");
+    }
+  });
+
+  it("names someone who has left the server without linking anywhere", async () => {
+    // Their watches stay on record, so the line still renders — it just has nowhere to send you, and
+    // a link to a page that 404s is worse than plain text.
+    getReport.mockResolvedValue({
+      ...REPORT,
+      recent: [{ ...REPORT.recent[0], user_id: null, display_name: "departed" }],
+    });
+    renderReport();
+
+    expect(await screen.findByText("departed")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "departed" })).toBeNull();
   });
 
   it("hides deleted rows behind a disclosure, and keeps their numbers", async () => {

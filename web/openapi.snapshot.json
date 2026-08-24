@@ -2898,6 +2898,10 @@
             "title": "Finished",
             "type": "integer"
           },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
           "slug": {
             "title": "Slug",
             "type": "string"
@@ -2912,6 +2916,7 @@
           }
         },
         "required": [
+          "id",
           "username",
           "display_name",
           "slug",
@@ -3400,6 +3405,17 @@
             "title": "Title",
             "type": "string"
           },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          },
           "username": {
             "title": "Username",
             "type": "string"
@@ -3417,6 +3433,7 @@
           }
         },
         "required": [
+          "user_id",
           "username",
           "display_name",
           "title",
@@ -6141,6 +6158,77 @@
           "rating"
         ],
         "title": "UserPickOut",
+        "type": "object"
+      },
+      "UserPickOutcomeOut": {
+        "additionalProperties": true,
+        "description": "One title this person was recommended and then played.",
+        "properties": {
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "percent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Percent"
+          },
+          "row": {
+            "title": "Row",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tmdb_id": {
+            "title": "Tmdb Id",
+            "type": "integer"
+          },
+          "watched_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watched At"
+          }
+        },
+        "required": [
+          "tmdb_id",
+          "media_type",
+          "title",
+          "row",
+          "outcome",
+          "percent",
+          "watched_at",
+          "finished_at"
+        ],
+        "title": "UserPickOutcomeOut",
         "type": "object"
       },
       "UserPrefs": {
@@ -10874,6 +10962,53 @@
           }
         },
         "summary": "User History",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/{user_id}/outcomes": {
+      "get": {
+        "description": "What this person did with the picks they were given: finished, part-watched, or abandoned.\n\nThe user page could show what Shortlist DELIVERED and what they had watched on Plex, but not the\njoin of the two \u2014 whether the recommendations were actually seen out. That is the question the\ndashboard answers for the whole server, and it is at least as interesting per person.\n\nReuses `resolve_outcomes`, the same function the dashboard reads, rather than re-deriving the\nclassification here. Two places deciding what \"finished\" means is how the user page and the\ndashboard come to disagree about the same title.\n\nA plain `def`: `resolve_outcomes` is synchronous and walks the picks table, so Starlette runs it\nin a worker thread instead of stalling the event loop (see the effectiveness handler).",
+        "operationId": "user_outcomes_api_users__user_id__outcomes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/UserPickOutcomeOut"
+                  },
+                  "title": "Response User Outcomes Api Users  User Id  Outcomes Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "User Outcomes",
         "tags": [
           "users"
         ]

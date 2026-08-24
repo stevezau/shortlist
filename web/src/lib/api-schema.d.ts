@@ -2326,6 +2326,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/{user_id}/outcomes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * User Outcomes
+         * @description What this person did with the picks they were given: finished, part-watched, or abandoned.
+         *
+         *     The user page could show what Shortlist DELIVERED and what they had watched on Plex, but not the
+         *     join of the two — whether the recommendations were actually seen out. That is the question the
+         *     dashboard answers for the whole server, and it is at least as interesting per person.
+         *
+         *     Reuses `resolve_outcomes`, the same function the dashboard reads, rather than re-deriving the
+         *     classification here. Two places deciding what "finished" means is how the user page and the
+         *     dashboard come to disagree about the same title.
+         *
+         *     A plain `def`: `resolve_outcomes` is synchronous and walks the picks table, so Starlette runs it
+         *     in a worker thread instead of stalling the event loop (see the effectiveness handler).
+         */
+        get: operations["user_outcomes_api_users__user_id__outcomes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/{user_id}/rows": {
         parameters: {
             query?: never;
@@ -3679,6 +3710,8 @@ export interface components {
             display_name: string;
             /** Finished */
             finished: number;
+            /** Id */
+            id: number;
             /** Slug */
             slug: string;
             /** Username */
@@ -3915,6 +3948,8 @@ export interface components {
             seed_title: string;
             /** Title */
             title: string;
+            /** User Id */
+            user_id: number | null;
             /** Username */
             username: string;
             /** Watched At */
@@ -5078,6 +5113,30 @@ export interface components {
             title: string;
             /** Year */
             year: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * UserPickOutcomeOut
+         * @description One title this person was recommended and then played.
+         */
+        UserPickOutcomeOut: {
+            /** Finished At */
+            finished_at: string | null;
+            /** Media Type */
+            media_type: string;
+            /** Outcome */
+            outcome: string;
+            /** Percent */
+            percent: number | null;
+            /** Row */
+            row: string;
+            /** Title */
+            title: string;
+            /** Tmdb Id */
+            tmdb_id: number;
+            /** Watched At */
+            watched_at: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -8286,6 +8345,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WatchItemOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    user_outcomes_api_users__user_id__outcomes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserPickOutcomeOut"][];
                 };
             };
             /** @description Validation Error */

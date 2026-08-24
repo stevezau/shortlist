@@ -47,6 +47,7 @@ export const queryKeys = {
   curatorModels: (provider: string, credential: string) =>
     ["curator-models", provider, credential] as const,
   userRows: (id: number) => ["users", id, "rows"] as const,
+  userOutcomes: (id: number) => ["users", id, "outcomes"] as const,
   userRuns: (id: number) => ["users", id, "runs"] as const,
   userRunsSummary: (id: number) => ["users", id, "runs", "summary"] as const,
   homeUsers: ["watching-account", "candidates"] as const,
@@ -502,6 +503,14 @@ export function useUserHistory(id: number) {
 /** A page of someone's cached watched set. `placeholderData` keeps the previous page on screen while
  *  a new search resolves — without it every keystroke blanks the list to a skeleton, which reads as
  *  "no results" for a moment and makes typing feel broken. */
+/** What they did with their picks — finished, part-watched, abandoned. */
+export function useUserOutcomes(id: number) {
+  return useQuery({
+    queryKey: queryKeys.userOutcomes(id),
+    queryFn: () => api.getUserOutcomes(id),
+  });
+}
+
 export function useUserWatched(id: number, filters: WatchedFilters) {
   return useQuery({
     queryKey: queryKeys.userWatched(id, filters),

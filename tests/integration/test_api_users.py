@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1337,3 +1338,94 @@ class TestAPerUserRowNameCannotFollowAWatch:
         assert bad.status_code == 422, bad.text
         ok = client.patch(f"/api/users/{uid}", json={"prefs": {"row_name_tpl": "✨ Just for {user}"}})
         assert ok.status_code < 300, ok.text
+
+
+class TestUserPickOutcomes:
+    """`/api/users/{id}/outcomes` — what this person did with the picks they were given.
+
+    The page could already show what Shortlist DELIVERED and what they had watched on Plex, but not
+    the join of the two: whether the recommendations were actually seen out. Finished, part-watched
+    and abandoned are the three answers the dashboard gives for the whole server, and they are at
+    least as interesting for one person.
+    """
+
+    def _pick(self, client, uid: int, **kw):
+        from shortlist.server.db.models import PickRow
+
+        with client.app.state.sessions() as session:
+            session.add(
+                PickRow(
+                    user_id=uid,
+                    run_id=None,
+                    rank=1,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="Movies",
+                    media_type="movie",
+                    created_at=datetime.now(UTC) - timedelta(days=30),
+                    **kw,
+                )
+            )
+            session.commit()
+
+    def _uid(self, client) -> int:
+        return next(u["id"] for u in client.get("/api/users").json())
+
+    def test_it_separates_finished_from_part_watched_from_abandoned(self, client: TestClient):
+        uid = self._uid(client)
+        settled = datetime.now(UTC) - timedelta(days=3)
+        self._pick(client, uid, tmdb_id=1, rating_key=1, title="Seen It Out", watched_at=settled, finished_at=settled)
+        self._pick(client, uid, tmdb_id=2, rating_key=2, title="Gave Up Late", watched_at=settled, max_percent=40)
+        self._pick(client, uid, tmdb_id=3, rating_key=3, title="Barely Started", watched_at=settled, max_percent=2)
+
+        body = client.get(f"/api/users/{uid}/outcomes").json()
+
+        by_title = {row["title"]: row for row in body}
+        assert by_title["Seen It Out"]["outcome"] == "finished"
+        assert by_title["Gave Up Late"]["outcome"] == "dropped"
+        assert by_title["Gave Up Late"]["percent"] == 40
+        assert by_title["Barely Started"]["outcome"] == "bounced"
+
+    def test_a_watch_too_recent_to_judge_reads_as_watching(self, client: TestClient):
+        """The same settling rule the dashboard uses — one classification, not two."""
+        uid = self._uid(client)
+        self._pick(
+            client,
+            uid,
+            tmdb_id=4,
+            rating_key=4,
+            title="Started Tonight",
+            watched_at=datetime.now(UTC) - timedelta(minutes=20),
+            max_percent=8,
+        )
+
+        body = client.get(f"/api/users/{uid}/outcomes").json()
+
+        assert [r["outcome"] for r in body] == ["watching"]
+
+    def test_it_names_the_row_that_was_showing_it(self, client: TestClient):
+        uid = self._uid(client)
+        self._pick(
+            client,
+            uid,
+            tmdb_id=5,
+            rating_key=5,
+            title="From A Row",
+            watched_at=datetime.now(UTC) - timedelta(days=3),
+            finished_at=datetime.now(UTC) - timedelta(days=3),
+        )
+
+        row = client.get(f"/api/users/{uid}/outcomes").json()[0]
+
+        assert row["row"], "the row label is what makes the line actionable"
+
+    def test_a_delivered_pick_nobody_played_is_not_an_outcome(self, client: TestClient):
+        """Delivered is not watched. This endpoint answers what they DID, and the rows page already
+        answers what they were given."""
+        uid = self._uid(client)
+        self._pick(client, uid, tmdb_id=6, rating_key=6, title="Never Touched")
+
+        assert client.get(f"/api/users/{uid}/outcomes").json() == []
+
+    def test_an_unknown_user_is_a_404(self, client: TestClient):
+        assert client.get("/api/users/999999/outcomes").status_code == 404

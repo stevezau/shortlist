@@ -20,7 +20,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from shortlist.server.db.models import Base, Collection, PickRow, User
-from shortlist.server.services.report_service import effectiveness, row_effectiveness
+from shortlist.server.services.report_service import SETTLING_HOURS, effectiveness, row_effectiveness
 
 NOW = datetime.now(UTC)
 
@@ -712,3 +712,111 @@ class TestTheTitlesThatLosePeople:
 
         with sessions() as session:
             assert engagement(session, "30")["losing"] == []
+
+
+class TestAWatchIsNotJudgedTheMomentItStarts:
+    """An outcome used to be decided on percentage alone, with no notion of time.
+
+    Reported live 2026-08-24: MooHouse pressed play on Moxie, and the dashboard said "gave up on
+    Moxie after 1%" while the session was still open — they were watching it as it said so. Anyone
+    who starts something and is a minute in was written off immediately, and "gave up" is the
+    loudest thing this report says about a pick.
+    """
+
+    def _started(self, sessions, *, watched_ago_hours: float, percent: int, tmdb_id: int = 550):
+        from shortlist.server.db.models import PickRow
+
+        with sessions() as session:
+            session.add(
+                PickRow(
+                    user_id=1,
+                    tmdb_id=tmdb_id,
+                    media_type="movie",
+                    rating_key=tmdb_id,
+                    rank=1,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="Movies",
+                    title="Moxie",
+                    created_at=NOW - timedelta(days=5),
+                    watched_at=NOW - timedelta(hours=watched_ago_hours),
+                    max_percent=percent,
+                )
+            )
+            session.commit()
+
+    def _outcome(self, sessions) -> str:
+        from shortlist.server.services.report_service import resolve_outcomes
+
+        with sessions() as session:
+            return resolve_outcomes(session, None)[(1, 550, "movie")]["outcome"]
+
+    def test_a_watch_still_in_progress_is_not_an_abandonment(self, sessions):
+        """The reported case: playback OPEN, and the report calling it a failure.
+
+        Deliberately dated OUTSIDE the settling window. With a fresh timestamp the time branch
+        answers this on its own, and the still-open check could be deleted with every test here
+        green — which is exactly what happened to the first version of this test. Someone who paused
+        a film yesterday and left the client open is past the window and still has not given up.
+        """
+        from shortlist.server.db.models import WatchSession
+
+        self._started(sessions, watched_ago_hours=SETTLING_HOURS + 6, percent=1)
+        with sessions() as session:
+            session.add(
+                WatchSession(
+                    plex_account_id=7,  # the `sessions` fixture's user 1
+                    session_key="live-1",
+                    rating_key=550,
+                    media_type="movie",
+                    started_at=NOW - timedelta(hours=SETTLING_HOURS + 6),
+                    last_seen_at=NOW,
+                    ended_at=None,  # still playing
+                    max_offset_ms=58_000,
+                    duration_ms=6_700_000,
+                )
+            )
+            session.commit()
+
+        assert self._outcome(sessions) == "watching", "called it an abandonment while it was playing"
+
+    def test_a_watch_stopped_an_hour_ago_is_still_too_early_to_judge(self, sessions):
+        """Pausing at 40% and resuming after dinner is ordinary. Overnight is the window."""
+        self._started(sessions, watched_ago_hours=1, percent=40)
+
+        assert self._outcome(sessions) == "watching"
+
+    def test_a_watch_left_for_a_day_is_an_abandonment(self, sessions):
+        """The other side — the rule must not make every abandonment invisible."""
+        self._started(sessions, watched_ago_hours=SETTLING_HOURS + 1, percent=40)
+
+        assert self._outcome(sessions) == "dropped"
+
+    def test_a_settled_bounce_is_still_a_bounce(self, sessions):
+        self._started(sessions, watched_ago_hours=SETTLING_HOURS + 1, percent=1)
+
+        assert self._outcome(sessions) == "bounced"
+
+    def test_finishing_beats_the_settling_rule(self, sessions):
+        """A completion is known the moment it happens; there is nothing to wait for."""
+        from shortlist.server.db.models import PickRow
+
+        self._started(sessions, watched_ago_hours=0.02, percent=100)
+        with sessions() as session:
+            session.query(PickRow).update({"finished_at": NOW - timedelta(minutes=1)})
+            session.commit()
+
+        assert self._outcome(sessions) == "finished"
+
+    def test_the_histogram_only_counts_what_it_calls_abandoned(self, sessions):
+        """The chart and the tile must count one set. Reading the raw percentage here put
+        in-progress watches into the histogram while the outcome called them `watching`."""
+        from shortlist.server.services.report_service import engagement
+
+        self._started(sessions, watched_ago_hours=1, percent=40, tmdb_id=550)  # too early to judge
+        self._started(sessions, watched_ago_hours=SETTLING_HOURS + 2, percent=30, tmdb_id=680)  # settled
+
+        with sessions() as session:
+            data = engagement(session, "all")
+
+        assert sum(b["count"] for b in data["stop_points"]) == 1, "an in-progress watch entered the histogram"

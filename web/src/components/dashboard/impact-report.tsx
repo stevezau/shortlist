@@ -701,9 +701,15 @@ function ByPerson({
           and rejected: that is exactly where these cards go two-across, so a card is ~360px and the
           counts alone want ~290 of it — the name came out at 55px, worse than before the fix. The
           two only fit side by side once a card is ~500px, which is `xl`. */}
-      <span className="min-w-0 truncate xl:flex-1">
+      {/* A link, because "who is this person and what else did they get" is the next question this
+          line provokes, and the answer is a page that already exists. `/users/:id` takes the id,
+          which is why the report carries one — `slug` addresses nothing. */}
+      <Link
+        to={`/users/${p.id}`}
+        className="min-w-0 truncate rounded-sm underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring xl:flex-1"
+      >
         {p.display_name || p.username}
-      </span>
+      </Link>
       <CountBar
         watched={p.watched}
         finished={p.finished}
@@ -1127,9 +1133,21 @@ function RecentlyWatched({
       key={`${w.username}-${w.title}-${w.watched_at ?? i}`}
       className="flex flex-wrap items-baseline gap-x-2 text-muted-foreground"
     >
-      <span className="font-medium text-foreground">
-        {w.display_name || w.username}
-      </span>
+      {/* Linked when there is somebody to link to. `user_id` is null once they have left the
+          server — the watch stays on record, so the line still renders, it just becomes plain text
+          rather than a link to a page that would 404. */}
+      {w.user_id !== null ? (
+        <Link
+          to={`/users/${w.user_id}`}
+          className="rounded-sm font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {w.display_name || w.username}
+        </Link>
+      ) : (
+        <span className="font-medium text-foreground">
+          {w.display_name || w.username}
+        </span>
+      )}
       {watchVerb(w)}
       <span className="text-foreground">{w.title}</span>
       <Badge variant="secondary" className="font-normal">
