@@ -362,3 +362,251 @@ class TestADeltaNeedsAPreviousPeriodToCompareAgainst:
         assert overall["watched"] == 0
         assert overall["watched_prev"] is None
         assert overall["watched_delta"] is None
+
+
+class TestTheRowLabelIsStable:
+    """A title delivered on TWO rows is credited on both with the identical `watched_at` — that is
+    what `_apply_outcomes` does — so a tie is the normal case, not an edge. Nothing decided which row
+    won it, and the query has no ORDER BY, so the label on "Worth a look" and the recent-watches feed
+    was whichever row the database happened to return first.
+
+    Both `<` → `<=` flips survived the mutation audit of 2026-08-24 for exactly that reason: the
+    answer was arbitrary in both directions, so neither direction could be wrong.
+    """
+
+    def _two_rows_showing_one_title(self, sessions, order=("because", "picked")):
+        """Both rows delivered it; `picked` FIRST, ten days before `because`. One watch, stamped on
+        both to the microsecond, which is what `_apply_outcomes` really does.
+
+        `order` is the row INSERTION order, and it is the whole point. With no tie-break the winner
+        is whichever row the database returns first, which for SQLite is insertion order — so a test
+        that inserts the expected winner first passes with the tie-break deleted. Both orders are
+        exercised below.
+        """
+        from shortlist.server.db.models import Collection, PickRow
+
+        watched = NOW - timedelta(days=1)
+        delivered = {"picked": 20, "because": 10}
+        with sessions() as session:
+            session.add(Collection(slug="because", name="Because you watched", enabled=True))
+            for slug in order:
+                delivered_ago = delivered[slug]
+                session.add(
+                    PickRow(
+                        user_id=1,
+                        tmdb_id=550,
+                        media_type="movie",
+                        rating_key=550,
+                        rank=1,
+                        collection_slug=slug,
+                        section_key="1",
+                        library="Movies",
+                        title="Fight Club",
+                        created_at=NOW - timedelta(days=delivered_ago),
+                        watched_at=watched,
+                    )
+                )
+            session.commit()
+
+    @pytest.mark.parametrize("order", [("picked", "because"), ("because", "picked")])
+    def test_the_row_that_delivered_it_first_gets_the_credit(self, sessions, order):
+        """Whichever way round the rows go in, the row that delivered it EARLIEST owns the watch.
+
+        The `("because", "picked")` case is the one with teeth: `because` is returned first and would
+        win by default, so it fails the moment the tie-break stops deciding.
+        """
+        from shortlist.server.services.report_service import resolve_outcomes
+
+        self._two_rows_showing_one_title(sessions, order)
+        with sessions() as session:
+            entry = resolve_outcomes(session, None)[(1, 550, "movie")]
+
+        assert entry["row"] == "picked", (
+            f"inserted {order} and got {entry['row']!r} — the label follows row order, not the rule"
+        )
+
+
+class TestTwoSharedRowsCarryingOneTitle:
+    """The same tie, on the shared side. Two shared rows can both carry a title and both credit the
+    same person at the same instant, and a shared row has no per-person delivery time to order by —
+    so slug alone decides. Arbitrary, but STABLE, which is the property that was missing.
+    """
+
+    def _both_rows_credit(self, sessions, order):
+        from shortlist.server.db.models import SharedRowWatch
+
+        watched = NOW - timedelta(days=1)
+        with sessions() as session:
+            for slug in order:
+                session.add(
+                    SharedRowWatch(
+                        user_id=1,
+                        collection_slug=slug,
+                        tmdb_id=550,
+                        media_type="movie",
+                        title="Fight Club",
+                        watched_at=watched,
+                    )
+                )
+            session.commit()
+
+    @pytest.mark.parametrize("order", [("a_row", "z_row"), ("z_row", "a_row")])
+    def test_the_same_pair_always_resolves_to_the_same_row(self, sessions, order):
+        from shortlist.server.services.report_service import resolve_outcomes
+
+        self._both_rows_credit(sessions, order)
+        with sessions() as session:
+            entry = resolve_outcomes(session, None)[(1, 550, "movie")]
+
+        assert entry["row"] == "a_row", (
+            f"inserted {order} and got {entry['row']!r} — the label follows insertion order, not a rule"
+        )
+
+
+class TestTheEngagementDetailSurvivesARosterChange:
+    def test_a_pick_belonging_to_a_deleted_user_does_not_break_the_page(self, sessions):
+        """`users[user_id]` with no guard raises KeyError and 500s the endpoint. Picks outlive the
+        person: `remove_departed_user` clears the account while their rows are still on record."""
+        from shortlist.server.db.models import PickRow
+        from shortlist.server.services.report_service import engagement
+
+        with sessions() as session:
+            session.add(
+                PickRow(
+                    user_id=999,  # nobody
+                    tmdb_id=550,
+                    media_type="movie",
+                    rating_key=550,
+                    rank=1,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="Movies",
+                    title="Fight Club",
+                    created_at=NOW - timedelta(days=5),
+                    watched_at=NOW - timedelta(days=1),
+                )
+            )
+            session.commit()
+
+        with sessions() as session:
+            report = engagement(session, "30")
+
+        assert report["people"] == [], "a departed user's pick should be skipped, not rendered or raised on"
+
+
+class TestTheRowPanelReportsFirstDeliveryNotLatest:
+    def test_first_delivered_at_is_the_earliest_delivery(self, sessions):
+        """It is what tells "never run" apart from "ran last night" on the row editor. `func.max`
+        instead of `func.min` reports the most recent delivery and the panel says a long-running row
+        started yesterday."""
+        from shortlist.server.services.report_service import row_effectiveness
+
+        seed(sessions, tmdb_id=1, delivered_ago=60, watched_ago=None, finished_ago=None)
+        seed(sessions, tmdb_id=2, delivered_ago=1, watched_ago=None, finished_ago=None)
+
+        with sessions() as session:
+            panel = row_effectiveness(session, "picked")
+
+        assert panel["first_delivered_at"].startswith((NOW - timedelta(days=60)).strftime("%Y-%m-%d")), (
+            f"reported {panel['first_delivered_at']} — the latest delivery, not the first"
+        )
+
+    def test_finished_can_never_exceed_watched_on_the_panel(self, sessions):
+        """`finished` is drawn INSIDE `watched`, so its query carries both conditions. Dropping the
+        watched one lets a pick finished-but-not-credited inflate the segment past its own bar."""
+        from shortlist.server.db.models import PickRow
+        from shortlist.server.services.report_service import row_effectiveness
+
+        with sessions() as session:
+            session.add(
+                PickRow(
+                    user_id=1,
+                    tmdb_id=7,
+                    media_type="movie",
+                    rating_key=7,
+                    rank=1,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="Movies",
+                    title="Orphan",
+                    created_at=NOW - timedelta(days=40),
+                    watched_at=None,  # never credited...
+                    finished_at=NOW - timedelta(days=2),  # ...but carries a completion
+                )
+            )
+            session.commit()
+
+        with sessions() as session:
+            panel = row_effectiveness(session, "picked")
+
+        assert panel["finished"] <= panel["watched"], (
+            f"finished ({panel['finished']}) outran watched ({panel['watched']})"
+        )
+
+
+class TestTheTitlesThatLosePeople:
+    """`engagement()["losing"]` — "what does everyone do with THIS pick", as opposed to "what did
+    this person do with their row". No longer rendered (the card was removed), but still returned and
+    still documented, and the boundary that decides membership was pinned by nothing.
+    """
+
+    def _title_watched_by(self, sessions, *, finishers: int, abandoners: int, tmdb_id: int = 550):
+        """One title, watched by N people who finished it and M who gave up half way."""
+        from shortlist.server.db.models import PickRow, User
+
+        uid = 100
+        with sessions() as session:
+            for finished in [True] * finishers + [False] * abandoners:
+                uid += 1
+                session.add(User(id=uid, plex_account_id=uid, username=f"u{uid}", slug=f"u{uid}", enabled=True))
+                session.add(
+                    PickRow(
+                        user_id=uid,
+                        tmdb_id=tmdb_id,
+                        media_type="movie",
+                        rating_key=tmdb_id,
+                        rank=1,
+                        collection_slug="picked",
+                        section_key="1",
+                        library="Movies",
+                        title="Divisive Film",
+                        created_at=NOW - timedelta(days=10),
+                        watched_at=NOW - timedelta(days=2),
+                        finished_at=NOW - timedelta(days=1) if finished else None,
+                        max_percent=None if finished else 50,
+                    )
+                )
+            session.commit()
+
+    def test_a_title_exactly_half_of_whom_finished_it_still_counts_as_losing(self, sessions):
+        """`finished * 2 <= started`, not `<`. Two finished out of four is a title that loses half
+        the people who try it — the flat boundary, and integers, so it is an ordinary case rather
+        than an edge."""
+        from shortlist.server.services.report_service import engagement
+
+        self._title_watched_by(sessions, finishers=2, abandoners=2)
+
+        with sessions() as session:
+            losing = engagement(session, "30")["losing"]
+
+        assert [t["title"] for t in losing] == ["Divisive Film"], "half the audience giving up is not 'landing'"
+        assert (losing[0]["started"], losing[0]["finished"]) == (4, 2)
+
+    def test_a_title_most_people_finish_is_not_losing_anyone(self, sessions):
+        """The other side: three of four finishing is a title that works."""
+        from shortlist.server.services.report_service import engagement
+
+        self._title_watched_by(sessions, finishers=3, abandoners=2)
+
+        with sessions() as session:
+            assert engagement(session, "30")["losing"] == []
+
+    def test_one_abandonment_alone_is_never_a_pattern(self, sessions):
+        """`len(percents) >= 2`. A single person giving up on something is a bad night, not a bad
+        recommendation, and the heading says so."""
+        from shortlist.server.services.report_service import engagement
+
+        self._title_watched_by(sessions, finishers=0, abandoners=1)
+
+        with sessions() as session:
+            assert engagement(session, "30")["losing"] == []

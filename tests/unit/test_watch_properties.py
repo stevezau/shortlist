@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -263,6 +263,11 @@ class TestReportInvariants:
         deliveries=st.lists(days_ago, min_size=1, max_size=3),
         sess=st.lists(st.tuples(days_ago, percents), max_size=4),
     )
+    # Every histogram bucket edge, always drawn — same reason as the boundary test below. The bucket
+    # table (`0-10 / 10-25 / 25-50 / 50-75 / 75+`) is half-open, so the edge value belongs to the
+    # bucket ABOVE it, and that was landing in a run only when hypothesis happened to pick it.
+    @example(deliveries=[2], sess=[(1, 0), (1, 10), (1, 25), (1, 50), (1, 75)])
+    @example(deliveries=[2], sess=[(1, 9), (1, 24), (1, 49), (1, 74)])
     @SETTINGS
     def test_the_histogram_always_sums_to_the_abandonments(self, deliveries, sess):
         """The tile and the chart beside it are the same quantity; they disagreed once already."""
@@ -278,6 +283,16 @@ class TestReportInvariants:
         assert sum(b["count"] for b in data["stop_points"]) == abandoned
 
     @given(pct=percents)
+    # The boundaries, ALWAYS drawn. `st.integers(0, 100)` with 50 examples reaches an exact edge only
+    # by luck: a mutation audit (2026-08-24) found this test killed `FINISHED_PERCENT >= ` -> ` > `
+    # on only one of three cold runs, and `.hypothesis` is gitignored so CI starts cold every time.
+    # A property test says "for all"; these say "and definitely for the values the rule turns on".
+    @example(pct=0)
+    @example(pct=BOUNCE_PERCENT - 1)
+    @example(pct=BOUNCE_PERCENT)
+    @example(pct=FINISHED_PERCENT - 1)
+    @example(pct=FINISHED_PERCENT)
+    @example(pct=100)
     @SETTINGS
     def test_the_bounce_boundary_is_exact_and_total(self, pct):
         sessions = fresh()

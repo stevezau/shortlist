@@ -489,6 +489,9 @@ def resolve_outcomes(session: Session, since: datetime | None) -> dict[tuple[int
     ).filter(or_(PickRow.watched_at.isnot(None), PickRow.max_percent.isnot(None)))
 
     out: dict[tuple[int, int, str], dict] = {}
+    # Which delivery row `entry["row"]` currently comes from, as `(delivered_at, slug)`. Kept beside
+    # the entry rather than inside it so the returned shape is unchanged — see the tie-break below.
+    row_from: dict[tuple[int, int, str], tuple[datetime, str]] = {}
     for user_id, tmdb_id, media_type, watched, finished, percent, created, title, slug, library in rows:
         key = (user_id, tmdb_id, media_type)
         entry = out.setdefault(
@@ -507,6 +510,19 @@ def resolve_outcomes(session: Session, since: datetime | None) -> dict[tuple[int
         if watched and (entry["watched_at"] is None or watched < entry["watched_at"]):
             entry["watched_at"] = watched
             entry["row"], entry["library"] = slug, library
+            row_from[key] = (_as_utc(created), slug)
+        elif watched and watched == entry["watched_at"]:
+            # A TIE is the normal case here, not an edge: `_apply_outcomes` stamps the identical
+            # `watched_at` onto every delivery row that was showing the title. With a strict `<` the
+            # winner is whichever row the database happened to return first, and this query has no
+            # ORDER BY — so the row label on "Worth a look" and the recent-watches feed could differ
+            # between two renders of the same data, which reads as the dashboard contradicting itself.
+            #
+            # Earliest delivery wins: the row that first put the title in front of them is the one
+            # that earned the watch. Slug breaks a same-instant tie so the answer is total.
+            if (_as_utc(created), slug) < row_from.get(key, (_as_utc(created), slug)):
+                entry["row"], entry["library"] = slug, library
+                row_from[key] = (_as_utc(created), slug)
         if finished and (entry["finished_at"] is None or finished > entry["finished_at"]):
             entry["finished_at"] = finished
         if percent is not None and (entry["percent"] is None or percent > entry["percent"]):
@@ -550,6 +566,11 @@ def resolve_outcomes(session: Session, since: datetime | None) -> dict[tuple[int
             # The library is cleared with the row, not kept. A shared row is not in the personal row's
             # library, and `engagement` renders `namer.label(row, library)` — so keeping the old value
             # printed a shared TV row under a Movies label.
+            entry["row"], entry["library"] = slug, ""
+        elif watched and watched == entry["watched_at"] and slug < entry["row"]:
+            # Same tie-break reasoning as the personal branch. A shared row has no per-person delivery
+            # time to order by, so slug alone is the rule — arbitrary, but STABLE, which is the
+            # property that was missing.
             entry["row"], entry["library"] = slug, ""
         if finished and (entry["finished_at"] is None or finished > entry["finished_at"]):
             entry["finished_at"] = finished

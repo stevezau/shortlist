@@ -486,7 +486,11 @@ class TestEngagementReport:
         assert len(losing) == 1
         assert losing[0]["started"] == 2
         assert losing[0]["finished"] == 0
-        assert losing[0]["stops_at"] in (10, 30), "the median of where the two of them stopped"
+        # EXACT, not `in (10, 30)`. With an even number of abandonments there is no middle value, and
+        # `median()` takes the upper one — so two people stopping at 10% and 30% reports 30%. That is a
+        # displayed number and therefore a decision: the pessimistic read, "half of them got at least
+        # this far". Accepting either answer meant the index could flip with the suite green.
+        assert losing[0]["stops_at"] == 30, "an even split reports the upper middle — see `median()`"
 
     def test_stop_points_bucket_the_abandons(self, world):
         from shortlist.server.services.report_service import engagement
