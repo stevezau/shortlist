@@ -1092,3 +1092,83 @@ class TestCoalescingDoesNotSwallowTheNewestSession:
 
         with sessions() as s:
             assert s.query(Job).filter_by(kind="watch.reconcile").count() == 1
+
+
+class TestAPartialWatchIsNotLostToOneSlowWrite:
+    """`_persist` swallows the `OperationalError` a >5s writer lock produces, so a slow database can
+    never take the listener down. But if the FIRST flush is the one that fails, no `watch_sessions`
+    row exists at all and `_close` returned — losing the session outright.
+
+    Every other gap in this feature self-heals off the play log. This one cannot: the log records
+    completions only, so a partial watch exists nowhere else."""
+
+    def _live(self):
+        from shortlist.server.services.watch_stream import _Live
+
+        now = datetime.now(UTC)
+        live = _Live(
+            session_key="1",
+            account_id=99,
+            rating_key=10,
+            show_rating_key=None,
+            media_type="movie",
+            duration_ms=6_000_000,
+            offset_ms=1_800_000,
+            now=now - timedelta(minutes=20),
+        )
+        live.last_seen_at = now
+        return live
+
+    def test_a_first_flush_that_fails_once_is_retried(self, sessions):
+        from shortlist.server.db.models import WatchSession as WS
+        from shortlist.server.services.watch_stream import WatchStream
+
+        stream = WatchStream(sessions, lambda **_: None)
+        calls = {"n": 0}
+        real = stream._flush
+
+        def flaky(live):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return  # the write was swallowed; `row_id` stays None
+            real(live)
+
+        stream._flush = flaky
+        stream._close("1", self._live(), "stopped")
+
+        assert calls["n"] == 2, "it must try again before giving up"
+        with sessions() as s:
+            row = s.query(WS).one()
+            assert row.max_offset_ms == 1_800_000
+            assert row.end_reason == "stopped"
+
+    def test_two_failures_give_up_loudly_rather_than_silently(self, sessions):
+        from shortlist.server.db.models import WatchSession as WS
+        from shortlist.server.services.watch_stream import WatchStream
+
+        stream = WatchStream(sessions, lambda **_: None)
+        stream._flush = lambda live: None  # every write swallowed
+        stream._close("1", self._live(), "stopped")  # must not raise
+
+        with sessions() as s:
+            assert s.query(WS).count() == 0
+
+    def test_a_normal_close_still_writes_once(self, sessions):
+        """The retry must not double-write the happy path."""
+        from shortlist.server.db.models import WatchSession as WS
+        from shortlist.server.services.watch_stream import WatchStream
+
+        stream = WatchStream(sessions, lambda **_: None)
+        calls = {"n": 0}
+        real = stream._flush
+
+        def counted(live):
+            calls["n"] += 1
+            real(live)
+
+        stream._flush = counted
+        stream._close("1", self._live(), "stopped")
+
+        assert calls["n"] == 1
+        with sessions() as s:
+            assert s.query(WS).count() == 1

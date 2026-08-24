@@ -1037,6 +1037,15 @@ def row_effectiveness(session: Session, slug: str, now: datetime | None = None) 
 def engagement(session: Session, window: str) -> dict:
     """What people did with their picks — the detail behind the Dropped tile.
 
+    A note on its consumers, because they changed and the description below did not. The dashboard's
+    "Worth a look" card reads ONLY the abandonments out of `people[].picks`; the per-person breakdown,
+    the "titles that lose people" table and the stop-point histogram it used to feed were removed
+    (three cards that filled a screen to deliver, on a real 47-user server, one fact).
+
+    `losing`, `stop_points` and `observed` are still computed and still returned. Measured on that
+    server the whole call is 18ms and 15.8KB, so this is not a cost worth a breaking change to a
+    documented response — and they are the natural answers to questions an owner will ask again.
+
     Every outcome comes from :func:`resolve_outcomes`, the same function the headline split reads, so
     the two can never disagree. Two views of one set, because they answer different questions: `people`
     is "what did THIS person do with their row", which an owner opens when someone says the picks are

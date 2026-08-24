@@ -585,6 +585,18 @@ class WatchStream:
             return
         self._flush(live)
         if live.row_id is None:
+            # The insert failed — a >5s writer lock, which `_persist` swallows so a slow database can
+            # never take the listener down. Try ONCE more before giving up, because this is the one
+            # signal in the whole feature with no other source: a completed watch is recoverable from
+            # the play log tomorrow, a partial one is not recorded anywhere else and is simply gone.
+            self._flush(live)
+        if live.row_id is None:
+            logger.warning(
+                "watch-stream: could not persist a {}s session for account {} — a partial watch is "
+                "lost, the play log cannot recover one",
+                int(live.seconds),
+                live.account_id,
+            )
             return
         with self._sessions() as session:
             row = session.get(WatchSession, live.row_id)
