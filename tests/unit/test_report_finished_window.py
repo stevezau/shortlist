@@ -325,6 +325,35 @@ class TestADeltaNeedsAPreviousPeriodToCompareAgainst:
         assert overall["watched_prev"] == 1
         assert overall["watched_delta"] == 1, "two this week against one last week is a real +1"
 
+    def test_the_runs_delta_is_guarded_too(self, sessions):
+        """The site the first version of this guard missed. `runs.in_window_delta` is the same
+        misleading arrow — "15 runs, +15 vs previous" against a fortnight with no app in it — and it
+        was still reading `if since`."""
+        seed(sessions, tmdb_id=1, delivered_ago=3, watched_ago=3, finished_ago=3)
+
+        with sessions() as session:
+            runs = effectiveness(session, "30")["runs"]
+
+        assert runs["in_window_delta"] is None, "compared runs against a month with no app in it"
+
+    def test_a_run_that_picked_nothing_still_anchors_the_comparison(self, sessions):
+        """The anchor is when Shortlist was RUNNING, not when it first delivered. A server whose
+        early runs produced no picks is still a server that was installed, and suppressing its runs
+        comparison would be the opposite error."""
+        from shortlist.server.db.models import Run
+
+        with sessions() as session:
+            session.add(Run(trigger="schedule", status="ok", started_at=NOW - timedelta(days=70)))
+            session.commit()
+        # First pick only 3 days ago, so picks alone would say "not comparable".
+        seed(sessions, tmdb_id=1, delivered_ago=3, watched_ago=3, finished_ago=3)
+
+        with sessions() as session:
+            overall = effectiveness(session, "30")["overall"]
+
+        assert overall["watched_prev"] == 0, "the app was running; zero watches is a real zero"
+        assert overall["watched_delta"] == 1
+
     def test_a_server_with_no_picks_at_all_reports_no_delta(self, sessions):
         """`first_pick` is None on an empty database, and None is not comparable to a date."""
         with sessions() as session:

@@ -71,6 +71,17 @@ def _delta(current: int | float | None, previous: int | float | None) -> float |
     return round(current - previous, 1)
 
 
+def _as_utc_or_none(value: datetime | None) -> datetime | None:
+    """`_as_utc` that tolerates the empty table — `func.min` over no rows returns None."""
+    return None if value is None else _as_utc(value)
+
+
+def _earliest(*values: datetime | None) -> datetime | None:
+    """The earliest of the given moments, ignoring the missing ones; None when all are missing."""
+    known = [v for v in values if v is not None]
+    return min(known) if known else None
+
+
 def _as_utc(value: datetime) -> datetime:
     """SQLite hands back naive datetimes for some columns and aware ones for others; comparing the
     two raises. Treat naive as UTC, which is what every writer in this app stores."""
@@ -685,14 +696,22 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
 
     first_pick_at = session.query(func.min(PickRow.created_at)).scalar()
     first_pick = iso_utc(first_pick_at)
-    # A previous period that reaches back before Shortlist delivered ANYTHING is not a comparison —
-    # it is a comparison against an app that was not installed, and it reads as growth. Observed on a
-    # real server 2026-08-24: window=30 showed "53 watched, +53 vs previous" because the previous 30
-    # days ended one day after the first pick ever. The same run reported
-    # `avg_days_to_watch_delta: null` for the identical reason, because an average of nothing is
-    # already None — so the two halves of one fact rendered differently. Counts need the test spelled
-    # out, since a count of nothing is a truthful 0.
-    comparable = prev_since is not None and first_pick_at is not None and _as_utc(first_pick_at) <= prev_since
+    # A previous period that reaches back before Shortlist was RUNNING is not a comparison — it is a
+    # comparison against an app that was not installed, and it reads as growth. Observed on a real
+    # server 2026-08-24: window=30 showed "53 watched, +53 vs previous" because the previous 30 days
+    # ended one day after the first pick ever. The same response reported `avg_days_to_watch_delta:
+    # null` for the identical reason — an average over nothing is already None — so one fact rendered
+    # two ways depending on whether the aggregate happened to be null-safe. Counts need the test
+    # spelled out, because a count of nothing is a truthful 0.
+    #
+    # Anchored on the earliest RUN as well as the earliest pick, and it must stay that way: the runs
+    # delta is computed from this same flag, and a run that picked nothing for nobody still means the
+    # app was installed. Anchoring on picks alone would suppress a runs comparison that is perfectly
+    # fair on a server whose first night produced no picks.
+    started_running = _earliest(
+        _as_utc_or_none(first_pick_at), _as_utc_or_none(session.query(func.min(Run.started_at)).scalar())
+    )
+    comparable = prev_since is not None and started_running is not None and started_running <= prev_since
     per_user_raw = _counts(session, PickRow.user_id, _TITLE, since, SharedRowWatch.user_id, _SHARED_TITLE)
     # A row that targets >1 library is one Plex collection PER library, so it's tracked per
     # (row, library) — each library gets its own delivered/watched line, keyed (slug, section, library).
@@ -780,9 +799,11 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
     # Runs. `total` stays all-time (it is the odometer); `in_window` is what the delta is about.
     runs_total = session.query(func.count(Run.id)).scalar() or 0
     runs_in_window = session.query(func.count(Run.id)).filter(*_in_period(Run.started_at, since)).scalar() or 0
+    # `comparable`, not `since` — this was the one delta the first version of that guard missed, and
+    # it is the same misleading arrow: "15 runs, +15 vs previous" against a fortnight with no app in it.
     runs_prev = (
         session.query(func.count(Run.id)).filter(*_in_period(Run.started_at, prev_since, since)).scalar() or 0
-        if since
+        if comparable
         else None
     )
     last_run = session.query(Run).filter(Run.status.in_(("ok", "error"))).order_by(Run.id.desc()).first()
