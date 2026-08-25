@@ -1119,3 +1119,87 @@ class TestRowAutoUserTag0075:
         run_migrations(tmp_path)
         command.downgrade(_alembic(tmp_path), "0074")
         assert "req_auto_user_tag" not in self._columns(tmp_path)
+
+
+class TestSharedPickMediaTypeBackfill0081:
+    """0081 puts `media_type` back on shared-row picks written before `_pick_dicts` carried it.
+
+    Without it `_shared_key` refuses the entry — correctly, since TMDB ids are namespaced per type —
+    so every watch off a shared row before that fix credits nothing. Measured on a real server: 28
+    plays by five people, resolving to 9 credits the dashboard could not see.
+    """
+
+    @staticmethod
+    def _seed(config_dir: Path, picks: list[dict], pick_rows: list[tuple]) -> None:
+        con = sqlite3.connect(config_dir / "shortlist.db")
+        try:
+            con.execute(
+                "INSERT INTO runs (id, trigger, started_at, finished_at, status, dry_run, stats)"
+                " VALUES (900, 'schedule', '2026-08-23 17:30:00', '2026-08-23 18:58:00', 'ok', 0, '{}')"
+            )
+            con.execute(
+                "INSERT INTO run_shared_rows (run_id, collection_slug, row_title, status, picks) "
+                "VALUES (900, 'staff', 'Staff', 'ok', ?)",
+                (json.dumps(picks),),
+            )
+            for rating_key, tmdb_id, media_type in pick_rows:
+                con.execute(
+                    "INSERT INTO picks (run_id, user_id, collection_slug, section_key, library, "
+                    "tmdb_id, media_type, rating_key, rank, title, reason, created_at) "
+                    "VALUES (900, 1, 'other', '1', 'Movies', ?, ?, ?, 1, 'T', '', '2026-08-23 17:30:00')",
+                    (tmdb_id, media_type, rating_key),
+                )
+            con.commit()
+        finally:
+            con.close()
+
+    @staticmethod
+    def _picks_back(config_dir: Path) -> list[dict]:
+        con = sqlite3.connect(config_dir / "shortlist.db")
+        try:
+            (blob,) = con.execute(
+                "SELECT picks FROM run_shared_rows WHERE run_id=900 AND collection_slug='staff'"
+            ).fetchone()
+        finally:
+            con.close()
+        return json.loads(blob)
+
+    def _run_0081(self, tmp_path: Path, picks: list[dict], pick_rows: list[tuple]) -> list[dict]:
+        command.upgrade(_alembic(tmp_path), "0080")
+        self._seed(tmp_path, picks, pick_rows)
+        command.upgrade(_alembic(tmp_path), "0081")
+        return self._picks_back(tmp_path)
+
+    def test_a_typed_pick_is_recovered_from_its_rating_key(self, tmp_path: Path):
+        out = self._run_0081(
+            tmp_path,
+            [{"tmdb_id": 136315, "rating_key": 500, "title": "The Bear"}],
+            [(500, 136315, "show")],
+        )
+        assert out[0]["media_type"] == "show", "the credit path still cannot key this pick"
+
+    def test_a_rating_key_that_disagrees_on_the_title_is_left_alone(self, tmp_path: Path):
+        """Joined on rating_key AND tmdb_id. Plex reuses `metadata_items.id`, so a rating key alone
+        can point at a title that is no longer the one in the blob — and retyping from that would
+        credit the wrong thing, which is the exact failure `_shared_key` refuses to risk."""
+        out = self._run_0081(
+            tmp_path,
+            [{"tmdb_id": 136315, "rating_key": 500, "title": "The Bear"}],
+            [(500, 999999, "movie")],  # same key, a DIFFERENT title
+        )
+        assert "media_type" not in out[0], "retyped a pick from a reused rating key"
+
+    def test_a_pick_with_no_ids_at_all_is_left_alone(self, tmp_path: Path):
+        """The oldest rows carry only title/year/rank. Nothing can recover those, and this must not
+        invent an answer for them."""
+        out = self._run_0081(tmp_path, [{"title": "Ancient", "year": 2019}], [(500, 136315, "show")])
+        assert "media_type" not in out[0]
+
+    def test_an_already_typed_pick_is_untouched(self, tmp_path: Path):
+        """Idempotent — re-running must change nothing, and must never overwrite a real value."""
+        out = self._run_0081(
+            tmp_path,
+            [{"tmdb_id": 136315, "rating_key": 500, "media_type": "movie"}],
+            [(500, 136315, "show")],  # the table says show; the blob already says movie
+        )
+        assert out[0]["media_type"] == "movie", "overwrote a type the row already carried"
