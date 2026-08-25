@@ -35,6 +35,7 @@ from shortlist.server.services.user_sync import (
     remove_users_rows,
     rename_after_nickname,
 )
+from shortlist.server.services.watch_events import _as_utc
 from shortlist.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_owner)])
@@ -573,7 +574,14 @@ def user_outcomes(user_id: int, request: Request) -> list[dict]:
             session, SettingsStore(session).get("row.name_template") or DEFAULT_ROW_TEMPLATE
         )
         # Newest first: "what did they just watch" is the question, not "what did they watch in 2019".
-        mine.sort(key=lambda kv: str(kv[1]["watched_at"]), reverse=True)
+        #
+        # Sorted on the DATETIME, with a floor — not on `str(...)`. Dropping the `watched_at` filter
+        # above admitted one new class, finished-but-never-separately-credited, and those carry
+        # `watched_at = None`. `str(None)` is `"None"`, which compares ABOVE every `"2026-…"`, so
+        # reversed it sorted to the very top: an untimestamped row from any era announced as the most
+        # recent thing they watched.
+        floor = datetime.min.replace(tzinfo=UTC)
+        mine.sort(key=lambda kv: _as_utc(kv[1]["watched_at"] or kv[1]["finished_at"] or floor), reverse=True)
         return [
             {
                 "tmdb_id": key[1],

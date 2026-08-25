@@ -1442,15 +1442,34 @@ class TestUserPickOutcomes:
         assert titles == ["Mine"], f"leaked another person's watches onto this page: {titles}"
 
     def test_newest_first(self, client: TestClient):
-        """ "What did they just watch" is the question; "what did they watch in 2019" is not."""
+        """ "What did they just watch" is the question; "what did they watch in 2019" is not.
+
+        Includes an entry with NO `watched_at` — finished but never separately credited, the one
+        class this endpoint admits since it stopped filtering on `watched_at`. Sorting on
+        `str(watched_at)` put it FIRST, because "None" compares above every "2026-…": an
+        untimestamped row from any era announced as the most recent thing they watched.
+        """
         uid = self._uid(client)
         for n, days in ((1, 30), (2, 2), (3, 10)):
             when = datetime.now(UTC) - timedelta(days=days)
             self._pick(client, uid, tmdb_id=n, rating_key=n, title=f"T{days}", watched_at=when, finished_at=when)
+        self._pick(
+            client,
+            uid,
+            tmdb_id=4,
+            rating_key=4,
+            title="NoWatchStamp",
+            watched_at=None,
+            finished_at=datetime.now(UTC) - timedelta(days=20),
+            # `max_percent` is what gets a row with no `watched_at` into `resolve_outcomes` at all —
+            # its query selects on `watched_at IS NOT NULL OR max_percent IS NOT NULL`. A bare
+            # finish with neither never reaches the sort, so this is the shape that actually does.
+            max_percent=100,
+        )
 
         titles = [r["title"] for r in client.get(f"/api/users/{uid}/outcomes").json()]
 
-        assert titles == ["T2", "T10", "T30"], f"not newest-first: {titles}"
+        assert titles == ["T2", "T10", "NoWatchStamp", "T30"], f"not newest-first: {titles}"
 
     def test_the_watch_time_and_the_finish_time_are_not_the_same_field(self, client: TestClient):
         """A series watched over a month has a credit and a completion weeks apart, and the page

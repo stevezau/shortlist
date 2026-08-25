@@ -39,17 +39,44 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
+    # Collections we must NOT retro-credit. `muted` — the per-delivery deny-list — began being
+    # snapshotted AFTER the ids this migration joins on, so every row repairable here has
+    # `muted = NULL`, which `_load_shared` reads as "nobody had this muted". Repairing such a row for
+    # a collection somebody HAS muted would mint a credit against a row that person had switched off:
+    # not a leak, but a statement on their own page about something they opted out of.
+    #
+    # Skipped per collection rather than globally, so a server with one muted row still gets every
+    # other row repaired. The maintainer's server has no mutes at all (checked before shipping), so
+    # this costs nothing there and makes the migration safe on a server that does.
+    muted_collections = {
+        slug
+        for (slug,) in bind.execute(
+            sa.text(
+                "SELECT DISTINCT c.slug FROM collection_user_overrides o "
+                "JOIN collections c ON c.id = o.collection_id WHERE o.muted = 1"
+            )
+        )
+    }
     # (rating_key, tmdb_id) -> media_type. Keyed on BOTH so a reused rating key cannot silently
     # retype a title; a rating key that maps to two different tmdb ids simply matches neither blob
     # entry unless the ids line up.
-    known: dict[tuple[int, int], str] = {}
+    seen: dict[tuple[int, int], set[str]] = {}
     for rating_key, tmdb_id, media_type in bind.execute(
         sa.text(
             "SELECT DISTINCT rating_key, tmdb_id, media_type FROM picks "
             "WHERE rating_key IS NOT NULL AND rating_key > 0 AND tmdb_id IS NOT NULL AND media_type IS NOT NULL"
         )
     ):
-        known[(int(rating_key), int(tmdb_id))] = str(media_type)
+        try:
+            pair = (int(rating_key), int(tmdb_id))
+        except (TypeError, ValueError):
+            continue
+        seen.setdefault(pair, set()).add(str(media_type))
+    # A pair `picks` DISAGREES about is dropped, not resolved by whichever row came back last. Two
+    # rows sharing a rating key and a tmdb id but differing on type needs Plex key reuse AND a TMDB
+    # id collision across namespaces, so it is near-unreachable — but "last row wins" would pick one
+    # silently, and this migration exists precisely because guessing a type is not allowed.
+    known = {pair: types.pop() for pair, types in seen.items() if len(types) == 1}
     if not known:
         return
 
@@ -57,6 +84,8 @@ def upgrade() -> None:
     for run_id, slug, blob in bind.execute(
         sa.text("SELECT run_id, collection_slug, picks FROM run_shared_rows WHERE picks IS NOT NULL")
     ).fetchall():
+        if slug in muted_collections:
+            continue
         try:
             picks = json.loads(blob) if isinstance(blob, str) else blob
         except (TypeError, ValueError):
@@ -70,7 +99,14 @@ def upgrade() -> None:
             rating_key, tmdb_id = pick.get("rating_key"), pick.get("tmdb_id")
             if not rating_key or not tmdb_id:
                 continue
-            resolved = known.get((int(rating_key), int(tmdb_id)))
+            try:
+                pair = (int(rating_key), int(tmdb_id))
+            except (TypeError, ValueError):
+                # A non-numeric id in historical JSON would otherwise raise, roll the whole alembic
+                # transaction back, and — since `run_migrations` has no except — crash-loop the
+                # container on boot. One unreadable entry is not worth that.
+                continue
+            resolved = known.get(pair)
             if resolved:
                 pick["media_type"] = resolved
                 changed = True

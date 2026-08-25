@@ -690,11 +690,17 @@ def resolve_outcomes(session: Session, since: datetime | None) -> dict[tuple[int
         observed = entry["watched_at"] or entry["first_delivered"]
         if since is not None and observed is not None and _as_utc(observed) < since:
             continue
+        # Named, not inlined as `(… or settled_before) >= settled_before`. That spelling made a
+        # MISSING timestamp mean "too early to judge, for ever" — unreachable today, since the
+        # `continue` above guarantees `watched_at` is set here, but it encodes a rule nobody chose
+        # and the next person to make that stamp optional would get "no title is ever abandoned"
+        # with no test failing.
+        touched = _touched_at(key, entry, last_seen)
         if entry["finished_at"] is not None:
             entry["outcome"] = "finished"
         elif entry["percent"] is None:
             entry["outcome"] = "watching"
-        elif key in live or (_touched_at(key, entry, last_seen) or settled_before) >= settled_before:
+        elif key in live or (touched is not None and touched >= settled_before):
             # Too early to call it. Playback is either still open, or stopped so recently that
             # resuming tonight is the ordinary thing to expect — see `SETTLING_HOURS`. Reporting
             # "gave up" here is a verdict the data does not support, and it is the loudest thing the
