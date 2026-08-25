@@ -466,9 +466,24 @@ def _attribution_floor(session: Session) -> datetime | None:
     """The oldest moment any event could still be attributed to anything.
 
     Nothing before the first pick we hold can be credited — there was no row to have been in — so
-    every scan below is bounded by it. Without this, `event_credits` re-reads the entire event log on
-    every reconcile, six times a day, against a table with no ceiling: 6,303 rows after one ingest on
-    a real server, and growing by ~100 a day for ever.
+    every scan below is bounded by it. It also keeps `event_credits` from re-reading the entire event
+    log on every reconcile, six times a day, against a table with no ceiling: 6,303 rows after one
+    ingest on a real server, and growing by ~100 a day for ever.
+
+    That second sentence used to come first, and reading it as the WHOLE story is a mistake an audit
+    actually made: it dismissed all four filters that apply this bound as "pure guard-clause
+    optimisations", safe to delete. They are not. Each one changes what gets credited, because the
+    floor is `min(PickRow.created_at)` while a SHARED row's delivery time is
+    `RunSharedRow.delivered_at` — not a pick row at all. Membership therefore does NOT independently
+    reject every pre-floor play, and removing a filter has been shown to:
+
+    * mint a shared-row credit from a play that predates every pick (`_scan_plays`, `_session_starts`);
+    * flip an abandonment into "finished", because `session_progress` returns the MAX percentage
+      across all sittings and an ancient 95% sitting then outranks a recent 10% one;
+    * suppress a withdrawal, since `_scan_plays` also builds the `observed` set that
+      `_withdraw_unwatched` refuses to touch.
+
+    Pinned by `TestTheAttributionFloorIsCorrectnessNotJustSpeed`.
     """
     oldest = session.query(func.min(PickRow.created_at)).scalar()
     return _as_utc(oldest) if oldest else None

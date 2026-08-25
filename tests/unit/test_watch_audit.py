@@ -32,6 +32,9 @@ from shortlist.server.services.report_service import BOUNCE_PERCENT, engagement,
 from shortlist.server.services.run_persistence import FINISHED_PERCENT, reconcile_watched
 from shortlist.server.services.watch_events import (
     RowMembership,
+    _attribution_floor,
+    _scan_plays,
+    _session_starts,
     event_credits,
     ingest_play_history,
     session_progress,
@@ -1182,3 +1185,69 @@ class TestTheClocksAndTheMaxima:
             watched = s.query(PickRow).filter_by(tmdb_id=510).one().watched_at
         assert watched is not None, "the later play is after the delivery and earns the credit"
         assert watched.replace(tzinfo=UTC) == NOW - timedelta(hours=1)
+
+
+class TestTheAttributionFloorIsCorrectnessNotJustSpeed:
+    """`_attribution_floor` bounds every scan in the credit path, and its docstring leads with the
+    performance case — a table with no ceiling, re-read six times a day.
+
+    A verification pass on 2026-08-25 found that framing dangerously incomplete: an earlier audit
+    dismissed all four floor filters as "pure guard-clause optimisations", and every one of them
+    changes what gets CREDITED. Nothing tested that, so the filters could have been removed as dead
+    weight by anyone who believed the comment.
+
+    The reason they bite is a mismatch nobody had written down: the floor is
+    `min(PickRow.created_at)`, but a SHARED row's delivery time is `RunSharedRow.delivered_at` — not
+    a pick row at all. So membership does not independently reject every pre-floor play, and the
+    floor is the only thing standing between the credit path and the whole event log.
+    """
+
+    def test_a_sitting_before_the_floor_cannot_set_a_percentage(self, world):
+        """The sharpest one. `session_progress` returns the MAX percentage across all sittings, so
+        widening its scan lets an ancient sitting decide a recent pick's fate — and at 95% that is
+        past `FINISHED_PERCENT`, flipping an abandonment into "they finished it"."""
+        pick(world, 2, 510, rating_key=10, created=NOW - timedelta(days=2))
+        # Long before the floor: 95% of the runtime.
+        session_row(world, 10, started=NOW - timedelta(days=40), offset=5_700_000)
+        # After it: they gave up at 10%.
+        session_row(world, 10, started=NOW - timedelta(hours=6), offset=600_000)
+
+        with world() as s:
+            progress = session_progress(s, _attribution_floor(s), tmdb_by_rating_key(s))
+
+        assert progress, "the recent sitting should be measured"
+        _started, percent = next(iter(progress.values()))
+        assert percent == 10, f"a pre-floor sitting decided this pick's percentage ({percent}%)"
+
+    def test_a_play_before_the_floor_is_not_scanned(self, world):
+        """`_scan_plays` feeds both the credit pass and `observed`, the set `_withdraw_unwatched`
+        refuses to touch. Widening it therefore also suppresses withdrawals."""
+        pick(world, 2, 510, rating_key=10, created=NOW - timedelta(days=2))
+        with world() as s:
+            s.add(
+                WatchEvent(
+                    plex_account_id=99,
+                    rating_key=10,
+                    media_type="movie",
+                    viewed_at=NOW - timedelta(days=40),  # before the floor
+                    source="history",
+                    history_key="ancient",
+                )
+            )
+            s.commit()
+
+        with world() as s:
+            scanned = _scan_plays(s, tmdb_by_rating_key(s))
+
+        assert scanned == [], "a play from before the first pick was scanned as creditable"
+
+    def test_a_session_before_the_floor_is_not_a_start(self, world):
+        """The same boundary on the session path, which is the other half of what `_scan_plays`
+        unions together."""
+        pick(world, 2, 510, rating_key=10, created=NOW - timedelta(days=2))
+        session_row(world, 10, started=NOW - timedelta(days=40), offset=1_800_000)
+
+        with world() as s:
+            starts = _session_starts(s, _attribution_floor(s), tmdb_by_rating_key(s))
+
+        assert starts == [], "a sitting from before the first pick counted as a start"
