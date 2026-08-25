@@ -100,6 +100,9 @@ const EMPTY = {
     // differently-scoped populations and can read zero while somebody watched nothing.
     users_idle: 0,
     users_watched: 1,
+    // NB: `users_with_picks - users_watched` == 0 == users_idle here, which is fine for the EMPTY
+    // fixture (it renders no idle line) but is exactly the coincidence that hid the derived-value
+    // regression in engagement.test.tsx — see the note on its own coverage fixture.
     users_watched_delta: 1,
     rows_enabled: 1,
   },
@@ -111,17 +114,23 @@ const EMPTY = {
     last_status: "ok",
     errors_last: 0,
   },
-  requests: { sent: 2, pending: 1, watched_after_sent: 1 },
+  // Every one of these DISTINCT. They were `sent: 2, pending: 1, watched_after_sent: 1`, and with two
+  // of the three equal the requests line could put any figure in any slot with nothing to notice
+  // (mutation audit 2026-08-25). Distinct values are what make a swap show up as different text.
+  requests: { sent: 21, pending: 22, watched_after_sent: 23 },
   top_titles: [] as EffectivenessReport["top_titles"],
 };
 
 const REPORT: EffectivenessReport = {
   overall: {
-    delivered: 10,
-    watched: 4,
+    // DISTINCT on purpose. `watched: 4` used to collide with the "4 of 10" in the landing detail
+    // inside the same card, so the verdict's 4xl headline could render ANY other figure and the
+    // assertion still found a "4" somewhere (mutation audit 2026-08-25).
+    delivered: 100,
+    watched: 41,
     watched_prev: 2,
     watched_delta: 2,
-    finished: 3,
+    finished: 32,
     bounced: 1,
     dropped: 2,
     avg_days_to_watch: 3.5,
@@ -137,11 +146,14 @@ const REPORT: EffectivenessReport = {
     {
       id: 42,
       username: "sarah",
-      display_name: "sarah",
+      display_name: "Sarah H",
       slug: "sarah",
-      delivered: 6,
-      watched: 3,
-      finished: 1,
+      // All three DISTINCT, and distinct from every per_row figure, so a wrong-field swap on the
+      // person line changes the rendered text. The per_row assertions used to cover the row half
+      // while the person half was asserted by nothing.
+      delivered: 61,
+      watched: 34,
+      finished: 12,
     },
   ],
   per_row: [
@@ -170,14 +182,18 @@ const REPORT: EffectivenessReport = {
     {
       user_id: 42,
       username: "sarah",
-      display_name: "sarah",
+      // DIFFERENT from `username`, so swapping the two is visible. They were both "sarah", which is
+      // why the linked name could render the raw Plex username with nothing to catch it.
+      display_name: "Sarah H",
       title: "Dune: Part Two",
       media_type: "movie",
       row: "✨ Movies Picked for You",
       library: "Movies",
       seed_title: "Arrival",
-      watched_at: new Date().toISOString(),
-      finished_at: new Date().toISOString(),
+      // DISTINCT times. Both were `new Date()`, so the feed could print the finish time where the
+      // watch time belongs and read identically.
+      watched_at: new Date(Date.now() - 5 * 3600_000).toISOString(),
+      finished_at: new Date(Date.now() - 1 * 3600_000).toISOString(),
     },
   ],
 };
@@ -197,18 +213,33 @@ describe("ImpactReport", () => {
     expect(await screen.findByText(/watched · the last/i)).toBeTruthy();
     expect(screen.getByText(/People who watched something/)).toBeTruthy();
     expect(screen.getByText("1 of 2")).toBeTruthy();
-    expect(screen.getByText(/sent ·/i)).toBeTruthy(); // requests impact
+    // Each requests figure in its OWN slot. `/sent ·/` matched the label regardless of which number
+    // sat beside it, and the fixture had two of the three equal — so any figure could appear in any
+    // slot (mutation audit 2026-08-25). The three are now distinct and each is named.
+    const requestsLine = screen.getByText(/awaiting approval/).textContent ?? "";
+    expect(requestsLine).toMatch(/21\s*sent/);
+    expect(requestsLine).toMatch(/23\s*watched since/);
+    expect(requestsLine).toMatch(/22\s*awaiting approval/);
     expect(
       screen.getByRole("link", { name: /full send log/i }),
     ).toHaveAttribute("href", "/requests?tab=sent"); // deep-links to the send-log tab
-    expect(screen.getAllByText("sarah").length).toBeGreaterThan(0);
+    // The DISPLAY name, which is what the UI is supposed to render — `username` is "sarah".
+    expect(screen.getAllByText("Sarah H").length).toBeGreaterThan(0);
+    expect(screen.queryByText("sarah")).toBeNull();
+    // The feed times the WATCH, not the finish — a series finished weeks after it was started would
+    // otherwise be filed under the wrong day.
+    expect(screen.getByText(/· 5h ago/)).toBeTruthy();
+    expect(screen.queryByText(/· 1h ago/)).toBeNull();
     // Counts, labelled — never "3 of 6". They are two different sets (watched-in-window vs
     // delivered-in-window), so a fraction makes "4 of 0" reachable when delivery paused.
     // Counts, labelled — never "3 of 6". Two different sets (watched-in-window vs
     // delivered-in-window), so a fraction makes "4 of 0" reachable when delivery paused.
     // "delivered", not "sent": the Requests card uses "sent" for Sonarr asks on this same page.
     // More than one line matches (a person and a row), so assert on count rather than uniqueness.
-    expect(screen.getAllByText(/· 6 delivered/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/· 61 delivered/).length).toBeGreaterThan(0);
+    // The PERSON line's own figures. Only the per_row lines were ever asserted, so ByPerson could
+    // render `delivered` in the watched slot with nothing to notice.
+    expect(document.body.textContent).toMatch(/34\s*watched · 12\s*finished/);
     expect(screen.queryByText(/3 of 6/)).toBeNull();
     expect(screen.getAllByText("Dune: Part Two").length).toBeGreaterThan(0); // top titles + recent
     // By row is split per library: a {library_name} row reads its library in the name; a plain-named
@@ -228,10 +259,17 @@ describe("ImpactReport", () => {
     const card = (await screen.findByText(/watched · the last/i)).closest(
       "div[class*='pt-6']",
     )!;
-    // Both numbers inside the SAME card, so this asserts the verdict reads as one sentence rather
-    // than that a 3 and a 4 exist somewhere on a page full of numbers.
-    expect(card.textContent).toContain("4");
-    expect(card.textContent).toMatch(/3\s*finished them/);
+    // Read through the TEST IDS, not by hunting the card's text. `toContain("4")` was satisfied by
+    // the "4 of 10" in the landing detail inside this same card, so the 4xl headline — the biggest
+    // number on the dashboard — could render ANY other figure in the payload and this still passed
+    // (mutation audit 2026-08-25). The ids exist precisely so the two figures can be named.
+    expect(screen.getByTestId("verdict-watched").textContent).toBe("41");
+    expect(screen.getByTestId("verdict-finished").textContent).toBe("32");
+    // And both inside the SAME card, so the verdict still has to read as one sentence.
+    expect(card).toContainElement(screen.getByTestId("verdict-watched"));
+    expect(card).toContainElement(screen.getByTestId("verdict-finished"));
+    expect(card.textContent).toMatch(/32\s*finished them/);
+    expect(card.textContent).toMatch(/100\s*picks delivered/);
   });
 
   it("qualifies each person and row line with what was actually finished", async () => {
@@ -324,8 +362,76 @@ describe("ImpactReport", () => {
     });
     renderReport();
 
-    expect(await screen.findByText(/Live tracking down/)).toBeTruthy();
+    // "and for how long" is in this test's NAME, and it did not check it: `/Live tracking down/` is a
+    // prefix that matches whatever duration follows, so reading `live_since` instead of
+    // `live_down_since` — reporting "down just now" during a three-hour outage — passed.
+    expect(await screen.findByText(/Live tracking down 3h ago/)).toBeTruthy();
     expect(screen.queryByText("Live tracking on")).toBeNull();
+  });
+
+  it("reports a clean run and a synced watch status, with a healthy dot", async () => {
+    // The default fixture has `last_finished: null` and `sync.last: null`, so the REAL branches of
+    // this line never rendered and "with errors" / ", no errors" could be swapped freely.
+    getReport.mockResolvedValue({
+      ...REPORT,
+      runs: { ...REPORT.runs, last_finished: new Date(Date.now() - 3600_000).toISOString(), errors_last: 0 },
+      watch_sync: { ...REPORT.watch_sync, last: new Date(Date.now() - 7200_000).toISOString() },
+    });
+    renderReport();
+
+    expect(await screen.findByText(/Last run 1h ago, no errors/)).toBeTruthy();
+    expect(screen.getByText(/Watch status synced 2h ago/)).toBeTruthy();
+  });
+
+  it("says a run had errors when it did, and colours the dot for it", async () => {
+    getReport.mockResolvedValue({
+      ...REPORT,
+      runs: { ...REPORT.runs, last_finished: new Date(Date.now() - 3600_000).toISOString(), errors_last: 2 },
+    });
+    renderReport();
+
+    const line = await screen.findByText(/Last run 1h ago, with errors/);
+    // The dot beside it is the at-a-glance half of the same claim; green next to "with errors" is
+    // worse than no dot at all.
+    const dot = line.querySelector("span[class*='rounded-full']");
+    expect(dot?.className).toMatch(/destructive/);
+    expect(dot?.className).not.toMatch(/success/);
+  });
+
+  it("draws a gain as a gain and a loss as a loss", async () => {
+    // The only Delta test used `value: null`, so nothing asserted how a real delta renders — the
+    // arrow, the sign and the colour could all invert and every test passed. +2 must read as up.
+    renderReport();
+
+    const delta = await screen.findByText(/vs previous/);
+    expect(delta.textContent).toMatch(/▲/);
+    expect(delta.textContent).toMatch(/\+2/);
+    expect(delta.className).toMatch(/success/);
+  });
+
+  it("draws a drop as a drop", async () => {
+    getReport.mockResolvedValue({
+      ...REPORT,
+      overall: { ...REPORT.overall, watched_prev: 50, watched_delta: -9 },
+    });
+    renderReport();
+
+    const delta = await screen.findByText(/vs previous/);
+    expect(delta.textContent).toMatch(/▼/);
+    expect(delta.textContent).toMatch(/−9/);
+    expect(delta.className).not.toMatch(/success/);
+  });
+
+  it("says 'vs previous' with no arrow when nothing changed", async () => {
+    // A delta of exactly zero is not a decline. It used to be able to render "▼ −0".
+    getReport.mockResolvedValue({
+      ...REPORT,
+      overall: { ...REPORT.overall, watched_prev: 41, watched_delta: 0 },
+    });
+    renderReport();
+
+    const delta = await screen.findByText(/vs previous/);
+    expect(delta.textContent).not.toMatch(/[▲▼]/);
   });
 
   it("distinguishes never-started from dropped", async () => {
@@ -345,7 +451,7 @@ describe("ImpactReport", () => {
     // addresses nothing.
     renderReport();
 
-    const links = await screen.findAllByRole("link", { name: "sarah" });
+    const links = await screen.findAllByRole("link", { name: "Sarah H" });
     expect(links.length).toBeGreaterThanOrEqual(2); // By person, and the recent-watches feed
     for (const link of links) {
       expect(link.getAttribute("href")).toBe("/users/42");

@@ -11,6 +11,7 @@ import {
   settingBool,
   settingNumber,
   settingString,
+  formatDate,
   timeAgo,
   timeFromCron,
   weekStarting,
@@ -251,5 +252,59 @@ describe("buildLabel", () => {
       buildLabel({ current_version: "1.4.0", git_branch: "", git_sha: "" }),
     ).toBe("Shortlist · 1.4.0");
     expect(buildLabel(undefined)).toBe("Shortlist");
+  });
+});
+
+
+describe("formatDate", () => {
+  // Nothing imported this function. Every mutation to it survived — both sentinels, the year and
+  // month formats, and inverting `dateOnly`, which is the whole reason the option exists.
+  const ISO = "2026-08-23T16:30:00Z";
+
+  it("says nothing rather than something wrong when there is no date", () => {
+    expect(formatDate(null)).toBe("—");
+    expect(formatDate("")).toBe("—");
+  });
+
+  it("says nothing rather than 'Invalid Date' on a string it cannot parse", () => {
+    expect(formatDate("not-a-date")).toBe("—");
+  });
+
+  it("gives a full year and a short month, not 26 and not August", () => {
+    const out = formatDate(ISO);
+    expect(out).toMatch(/2026/);
+    expect(out).not.toMatch(/\b26\b/);
+    expect(out).toMatch(/Aug/);
+    expect(out).not.toMatch(/August/);
+  });
+
+  it("drops the time on dateOnly, and keeps it otherwise", () => {
+    // The distinction the option exists for: "around 23 Aug 2026" reads as an estimate, while
+    // "23 Aug 2026, 16:30" reads as a deadline. Inverting the flag swapped the two silently.
+    expect(formatDate(ISO, { dateOnly: true })).not.toMatch(/\d{1,2}:\d{2}/);
+    expect(formatDate(ISO)).toMatch(/\d{1,2}:\d{2}/);
+  });
+});
+
+describe("timeAgo — the bucket boundaries", () => {
+  // Every boundary survived being moved by one: the fixtures used 30s / 30m / 6h / 2d, none of which
+  // sits on an edge, so "exactly 60 seconds" could read "just now" and "exactly 24h" could read
+  // "24h ago".
+  const at = (secondsAgo: number) =>
+    timeAgo(new Date(Date.UTC(2026, 0, 2, 0, 0, 0) - secondsAgo * 1000).toISOString(), Date.UTC(2026, 0, 2));
+
+  it("flips from 'just now' to minutes at exactly one minute", () => {
+    expect(at(59)).toBe("just now");
+    expect(at(60)).toBe("1m ago");
+  });
+
+  it("flips from minutes to hours at exactly one hour", () => {
+    expect(at(59 * 60)).toBe("59m ago");
+    expect(at(60 * 60)).toBe("1h ago");
+  });
+
+  it("flips from hours to days at exactly one day", () => {
+    expect(at(23 * 3600)).toBe("23h ago");
+    expect(at(24 * 3600)).toBe("1d ago");
   });
 });

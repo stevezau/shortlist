@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NeedsALook } from "@/components/dashboard/engagement";
@@ -65,7 +65,12 @@ const ENGAGEMENT: EngagementReport = {
 
 function report(over: Partial<EffectivenessReport> = {}): EffectivenessReport {
   return {
-    coverage: { users_with_picks: 10, users_watched: 4, users_idle: 6 },
+    // `users_idle` deliberately NOT equal to `users_with_picks - users_watched`. It was 10/4/6,
+    // where the subtraction gives the same 6 — so the card could derive the number instead of
+    // reading it and nothing failed, which is the exact regression the comment in `engagement.tsx`
+    // says that field exists to prevent (the two populations are differently scoped). 10 - 4 = 6,
+    // but the API says 7, and the API is right.
+    coverage: { users_with_picks: 10, users_watched: 4, users_idle: 7 },
     per_row: [],
     requests: { sent: 0, pending: 0, watched_after_sent: 0 },
     ...over,
@@ -97,7 +102,9 @@ describe("NeedsALook", () => {
     expect(
       await screen.findByText(/got picks and watched none/),
     ).toBeInTheDocument();
-    expect(screen.getByText("6")).toBeInTheDocument();
+    // 7, the API's own figure — NOT `users_with_picks - users_watched`, which is 6 here. The two used
+    // to be equal in this fixture, which is what let the card derive it instead of reading it.
+    expect(screen.getByText("7")).toBeInTheDocument();
   });
 
   it("says so plainly when more than half the server ignored their row", async () => {
@@ -221,6 +228,102 @@ describe("NeedsALook", () => {
     );
 
     await screen.findByText(/got picks and watched none/);
+    expect(screen.queryByText(/titles were fetched/)).toBeNull();
+  });
+});
+
+describe("NeedsALook — the thresholds it acts on", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getEngagement.mockResolvedValue({ ...ENGAGEMENT, people: [] });
+  });
+
+  /** Coverage with the fields this card reads overridden; the rest kept whole. */
+  const coverage = (over: Record<string, number>) =>
+    ({
+      users_enabled: 10,
+      users_total: 10,
+      users_with_picks: 10,
+      users_watched: 4,
+      users_idle: 7,
+      users_watched_delta: 0,
+      rows_enabled: 1,
+      ...over,
+    }) as unknown as EffectivenessReport["coverage"];
+
+  const row = (over: Record<string, unknown> = {}) => ({
+    slug: "r",
+    section_key: "1",
+    library: "Movies",
+    name: "Dud Row",
+    deleted: false,
+    delivered: 100,
+    watched: 0,
+    finished: 0,
+    ...over,
+  });
+
+  it("flags a row at exactly the delivery floor, and not one below it", async () => {
+    // The gate is `delivered >= 20`. It survived being moved anywhere between 4 and 400 because the
+    // fixtures only ever used 3 and 400 — so nothing pinned where the line actually is.
+    renderPanel(report({ per_row: [row({ delivered: 20 })] }));
+    expect(await screen.findByText(/delivered 20 picks/)).toBeTruthy();
+
+    cleanup();
+    renderPanel(report({ coverage: coverage({ users_idle: 0 }), per_row: [row({ delivered: 19 })] }));
+    expect(await screen.findByText(/no row came up empty/i)).toBeTruthy();
+    expect(screen.queryByText(/delivered 19 picks/)).toBeNull();
+  });
+
+  it("only says 'none were watched' when none were", async () => {
+    // `watched === 0` survived being loosened to `<= 8`, which puts a FALSE STATEMENT on screen: a
+    // row that landed 8 picks announced as having landed none.
+    renderPanel(report({ coverage: coverage({ users_idle: 0 }), per_row: [row({ watched: 1 })] }));
+
+    expect(await screen.findByText(/no row came up empty/i)).toBeTruthy();
+    expect(screen.queryByText(/none were watched/)).toBeNull();
+  });
+
+  it("does not nag about a row the owner already deleted", async () => {
+    renderPanel(report({ coverage: coverage({ users_idle: 0 }), per_row: [row({ deleted: true })] }));
+
+    expect(await screen.findByText(/no row came up empty/i)).toBeTruthy();
+    expect(screen.queryByText(/Dud Row/)).toBeNull();
+  });
+
+  it("lists up to three dead rows, not one", async () => {
+    const rows = [1, 2, 3, 4].map((n) => row({ slug: `r${n}`, name: `Dud ${n}` }));
+    renderPanel(report({ per_row: rows }));
+
+    expect(await screen.findByText(/Dud 1/)).toBeTruthy();
+    expect(screen.getByText(/Dud 2/)).toBeTruthy();
+    expect(screen.getByText(/Dud 3/)).toBeTruthy();
+    expect(screen.queryByText(/Dud 4/)).toBeNull(); // bounded at three
+  });
+
+  it("keeps the 'more than half' hint for more than half, and withholds it otherwise", async () => {
+    // Forcing the hint on survived: every fixture reaching this line already had idle >= half, so
+    // nothing ever asserted its ABSENCE.
+    renderPanel(report({ coverage: coverage({ users_watched: 8, users_idle: 2 }) }));
+
+    expect(await screen.findByText(/got picks and watched none/)).toBeTruthy();
+    expect(screen.queryByText(/More than half/)).toBeNull();
+  });
+
+  it("reports a single idle person rather than rounding them away", async () => {
+    renderPanel(report({ coverage: coverage({ users_watched: 9, users_idle: 1 }) }));
+
+    expect(await screen.findByText(/got picks and watched none/)).toBeTruthy();
+  });
+
+  it("needs five sent requests before calling them unwatched", async () => {
+    const requests = { sent: 5, pending: 0, watched_after_sent: 0 };
+    renderPanel(report({ requests }));
+    expect(await screen.findByText(/titles were fetched/)).toBeTruthy();
+
+    cleanup();
+    renderPanel(report({ coverage: coverage({ users_idle: 0 }), requests: { ...requests, sent: 4 } }));
+    expect(await screen.findByText(/no row came up empty/i)).toBeTruthy();
     expect(screen.queryByText(/titles were fetched/)).toBeNull();
   });
 });
