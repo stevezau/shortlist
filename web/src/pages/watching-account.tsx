@@ -316,6 +316,10 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
   // Which account the preview describes. Without it, previewing account A and then selecting B left
   // A's numbers and A's acknowledgement on screen, authorising a real run against B.
   const [previewOf, setPreviewOf] = useState<number | null>(null);
+  // ...and which account it read FROM. A preview describes a PAIR, so keying staleness on the
+  // target alone let a preview taken from another account authorise a real run that reads the
+  // owner instead — that account's numbers and acknowledgement in front of a different write.
+  const [previewSource, setPreviewSource] = useState<number | null>(null);
   // Copying is additive; removing is not. A preview that says "this un-marks 412 things" has to be
   // acknowledged before the real run, so the destructive half is never a surprise.
   const [acceptedRemovals, setAcceptedRemovals] = useState(false);
@@ -348,6 +352,16 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
   // so comparing against `target` made the panel re-claim "now matches yours" about an account that
   // had just been restored. Same reason `previewOf` exists for the preview.
   const [transferredTo, setTransferredTo] = useState<number | null>(null);
+  // ...and which account it READ, for the same reason and one axis over. `sourceName` is derived
+  // fresh every render, but everything below the button is a report about a response that already
+  // came back — and changing the picker does not unmount it. Live-derived, the verified sentence
+  // followed the selection: copy from the owner, then pick another account, and the page claimed
+  // "now matches <that account>" about an account the verify pass never read.
+  //
+  // The LABEL, not the id: an account that leaves `sourceOptions` after the write would otherwise
+  // resolve back to "yours" and re-tell the original lie. `null` means the owner, unambiguously,
+  // because these panels only render once a response has set it.
+  const [reportedFrom, setReportedFrom] = useState<string | null>(null);
   // Which snapshot a failed undo was for AND why — scoped to the row so it does not render under
   // every snapshot, and carrying the server's own sentence because a refusal comes back as a 200
   // with the reason in `errors`, where React Query has no error object and the generic fallback
@@ -391,6 +405,30 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
       })),
   ];
 
+  // A selection can outlive the list it came from: `users` refetches, so an account that is disabled
+  // or leaves the share mid-session vanishes from `sourceOptions` while `source` still holds its id.
+  // The <select> then renders blank (no option matches) and the request still carries it — and if it
+  // was the only other candidate the picker unmounts entirely, which reads as "copying from your own
+  // account" while doing the opposite.
+  //
+  // DERIVED rather than reconciled in an effect: the effect version renders once with the stale id
+  // before correcting itself, which is one render in which the button, the copy and a submit all
+  // still name the account that is gone.
+  const chosen = sourceOptions.find((o) => o.id === source);
+  const fromOther = chosen && !chosen.isOwner ? chosen : null;
+  const effectiveSource = fromOther?.id ?? null;
+
+  /** What to CALL the source in the page's copy.
+   *
+   *  Every sentence here used to be second person — "it ends up matching yours", "your own account is
+   *  never written to", "that account now matches yours" — which was true while the owner was the
+   *  only possible source. The picker falsifies all of them: with another account chosen, the target
+   *  matches THAT account and it is THAT account we never write to. The last of those three is
+   *  printed after a real Plex write, as a verified claim, and the verify read compares the target
+   *  against the source rather than against the owner.
+   */
+  const sourceName = fromOther?.label ?? null;
+
   // The transfer keys on Shortlist's own user id, which only exists once a user sync has picked the
   // new Home account up. Anyone not yet synced is shown with that as the next step, rather than
   // being silently missing from a list they can see in Plex.
@@ -403,7 +441,7 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
     transfer.mutate(
       {
         to_user_id: target,
-        ...(source !== null ? { from_user_id: source } : {}),
+        ...(effectiveSource !== null ? { from_user_id: effectiveSource } : {}),
         dry_run: dryRun,
       },
       {
@@ -414,11 +452,13 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
           // no mention anywhere that safe mode was the reason. The undo half got that sentence in an
           // earlier round; this half never did.
           const reallyWrote = !dryRun && !result.dry_run;
+          setReportedFrom(sourceName);
           // Asked for a real run and got a dry one back: safe mode. Without this the page simply
           // reset itself and said nothing at all had happened.
           setSafeModeBlocked(!dryRun && result.dry_run);
           setPreview(reallyWrote ? null : result);
           setPreviewOf(reallyWrote ? null : target);
+          setPreviewSource(reallyWrote ? null : effectiveSource);
           if (!reallyWrote) setAcceptedRemovals(dryRun ? false : acceptedRemovals);
           if (reallyWrote) {
             // A new copy must never inherit an earlier restore's verdict.
@@ -442,7 +482,9 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
   // real button first un-ticked a Home user's watch history with no listing, no count and no
   // tick-box. And `previewOf` is compared to the current target because an acknowledgement given for
   // one account must not authorise a real run against another.
-  const staleTarget = preview !== null && previewOf !== target;
+  const staleTarget =
+    preview !== null &&
+    (previewOf !== target || previewSource !== effectiveSource);
   /** A 200 is only a restore when it carried no errors AND actually wrote.
    *
    *  Safe mode forces `dry_run` on server-side even when the real button was pressed, so a report
@@ -495,13 +537,14 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
               <span className="text-muted-foreground">Copy the history from</span>
               <select
                 className="rounded-md border bg-background px-2 py-1 text-sm"
-                value={source ?? ""}
+                value={effectiveSource ?? ""}
                 onChange={(e) => {
                   setSource(e.target.value ? Number(e.target.value) : null);
                   // The preview describes ONE pair of accounts. Changing either end invalidates it,
                   // and an acknowledgement given for one pair must not authorise another.
                   setPreview(null);
                   setPreviewOf(null);
+                  setPreviewSource(null);
                   setAcceptedRemovals(false);
                 }}
               >
@@ -561,6 +604,7 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
                         // that were never shown for it.
                         setPreview(null);
                         setPreviewOf(null);
+                        setPreviewSource(null);
                         setAcceptedRemovals(false);
                       }}
                     />
@@ -600,11 +644,28 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
         <div className="rounded-md border border-dashed p-3 text-sm">
           <p className="font-medium">What this does to the new account</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            It ends up matching yours: the same films ticked off, the same
-            episodes of each show, and anything you&rsquo;re part-way through
-            sitting at the same point in Continue Watching. Anything watched on
-            that account that you haven&rsquo;t watched is un-ticked, so the two
-            really do match. Your own account is never written to.{" "}
+            {/* Second person ONLY while the owner is the source. With another account chosen every
+                one of these clauses is about that account instead, and saying "yours" would be
+                plainly false on the screen that asks you to authorise the write. */}
+            {sourceName === null ? (
+              <>
+                It ends up matching yours: the same films ticked off, the same
+                episodes of each show, and anything you&rsquo;re part-way
+                through sitting at the same point in Continue Watching. Anything
+                watched on that account that you haven&rsquo;t watched is
+                un-ticked, so the two really do match. Your own account is never
+                written to.
+              </>
+            ) : (
+              <>
+                It ends up matching {sourceName}&rsquo;s: the same films ticked
+                off, the same episodes of each show, and anything{" "}
+                {sourceName} is part-way through sitting at the same point in
+                Continue Watching. Anything watched on that account that{" "}
+                {sourceName} hasn&rsquo;t watched is un-ticked, so the two really
+                do match. {sourceName}&rsquo;s own account is never written to.
+              </>
+            )}{" "}
             <strong className="text-foreground">
               Plex records it all as watched today
             </strong>{" "}
@@ -741,7 +802,10 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
             disabled={target === null || transfer.isPending || blocked}
             onClick={() => run(false)}
           >
-            Copy my history across
+            {/* "my" is only right when the source IS you. */}
+            {sourceName === null
+              ? "Copy my history across"
+              : `Copy ${sourceName}'s history across`}
           </Button>
           {blocked && (
             <span className="text-xs text-muted-foreground">
@@ -755,13 +819,19 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
         {nothingToCopy && (
           <div className="space-y-2 rounded-md border border-dashed p-3 text-sm">
             <p>
-              Shortlist hasn&rsquo;t read your watch history yet, so there is
-              nothing to copy across. It reads everyone&rsquo;s overnight
-              &mdash; or you can do it now and come straight back.
+              {/* `source_empty` is measured on the SOURCE, so with another account chosen it is
+                  THAT account's history that is missing — telling the owner to check their own
+                  sends them to look at the wrong one. Reported, not live: this panel stays mounted
+                  when the picker moves. */}
+              Shortlist hasn&rsquo;t read{" "}
+              {reportedFrom === null ? "your" : `${reportedFrom}'s`} watch
+              history yet, so there is nothing to copy across. It reads
+              everyone&rsquo;s overnight &mdash; or you can do it now and come
+              straight back.
             </p>
             {readHistory.isSuccess ? (
               <p className="text-muted-foreground">
-                Reading your watch history. On a large library this takes a few
+                Reading watch history. On a large library this takes a few
                 minutes &mdash; try the copy again once it has finished. If it
                 still comes up empty, the read didn&rsquo;t get through: check{" "}
                 <strong className="text-foreground">Sync watch history</strong>{" "}
@@ -780,7 +850,7 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
                     aria-hidden="true"
                   />
                 )}
-                Read my watch history now
+                Read watch history now
               </Button>
             )}
             {readHistory.isError && (
@@ -805,7 +875,9 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
               Would tick <strong>{preview.marks}</strong>{" "}
               {preview.marks === 1 ? "title" : "titles"} on that account
               {preview.offsets_set > 0 &&
-                `, and set ${preview.offsets_set} back to where you'd got to`}
+                `, and set ${preview.offsets_set} back to where ${
+                  sourceName === null ? "you'd" : `${sourceName} had`
+                } got to`}
               . Nothing has been changed yet.
             </p>
             {preview.target_unreadable.length > 0 && (
@@ -930,7 +1002,9 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
               </p>
             ) : (
               <p className="text-xs text-muted-foreground">
-                Checked afterwards: that account now matches yours.
+                {reportedFrom === null
+                  ? "Checked afterwards: that account now matches yours."
+                  : `Checked afterwards: that account now matches ${reportedFrom}.`}
               </p>
             )}
             {transfer.data.unreachable > 0 && (

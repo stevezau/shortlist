@@ -401,6 +401,33 @@ who the owner is; the UI should not be a second place that knows). The TARGET st
 Home users at both layers. This exists because the owner of the reference server watches on a SHARED
 account, so copying from the admin account would have replicated an empty history over a real one.
 
+The picker had to drag the page's copy along with it. That copy was written when the owner was the
+only possible source, so it was second person throughout — "it ends up matching yours", "your own
+account is never written to", "Shortlist hasn't read your watch history yet", and, printed after a
+real Plex write as a checked fact, "that account now matches yours". All of them are false with
+another source chosen; the last attributes the verify pass to an account it never read (`_verify`
+compares the target against the SOURCE), and the watch-history one sends the owner to go and check
+their own history when it is someone else's that is missing. The four tests added with the picker all
+asserted on the REQUEST and passed throughout.
+
+Each sentence is now named after the account the run actually read from, second person only when that
+is the owner — and WHICH name depends on when the sentence is written. Before the write, the live
+selection: the preview panel is cleared whenever either end of the pair changes, so it always
+describes the current one. After it, a captured `reportedFrom`, because everything below the button
+reports a response that already came back and changing the picker does not unmount it. Derived live,
+the verified sentence followed the selection — copy from the owner, pick another account, and the
+page claimed "now matches <that account>" about an account the verify pass never read. The captured
+value is the LABEL rather than the id, so an account that leaves the list after the write cannot
+resolve back to "yours" and re-tell the original lie. The button that offers to read the history now
+names nobody at all, which is simply true: `sync.history` reads every enabled user and the owner.
+
+The selection is DERIVED from the options each render, never reconciled in an effect: `users`
+refetches, so an account that is disabled or leaves the share mid-session drops out of the list while
+the stored id survives — leaving a blank `<select>` and a request that still carries
+`from_user_id`, which reads as "copying from your own account" while doing the opposite. Preview
+staleness keys on the PAIR for the same reason; on the target alone, a preview measured against one
+source could authorise a real run that reads another.
+
 **Not built — keeping the two accounts in step afterwards.** Out of scope, see §4.
 
 ## 10. The live run — what it proved, and the two bugs it caught

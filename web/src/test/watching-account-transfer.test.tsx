@@ -8,7 +8,7 @@
  *  until setup finishes every route redirects back to /setup — so the fix has to be offered here.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -78,13 +78,18 @@ function renderSteps() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <TransferSteps />
-      </MemoryRouter>
-    </QueryClientProvider>,
-  );
+  // The client comes back so a test can force the user list to refetch — `refetchOnWindowFocus`
+  // is driven by a document `visibilitychange` listener that jsdom does not exercise on its own.
+  return {
+    ...render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <TransferSteps />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ),
+    client,
+  };
 }
 
 /** Pick the one candidate account and press the real (non-preview) button. */
@@ -151,7 +156,7 @@ describe("TransferSteps with nothing to copy", () => {
     renderSteps();
     await transferOnto(/steve tv/i);
     await userEvent.click(
-      await screen.findByRole("button", { name: /read my watch history/i }),
+      await screen.findByRole("button", { name: /read watch history/i }),
     );
 
     // Background: a full history read takes minutes on a large library, and holding the request
@@ -171,7 +176,7 @@ describe("TransferSteps with nothing to copy", () => {
     renderSteps();
     await transferOnto(/steve tv/i);
     await userEvent.click(
-      await screen.findByRole("button", { name: /read my watch history/i }),
+      await screen.findByRole("button", { name: /read watch history/i }),
     );
 
     expect(
@@ -1052,7 +1057,187 @@ describe("TransferSteps can copy from an account other than the owner", () => {
       screen.queryByText(/nothing has been changed yet/i),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /copy my history across/i }),
+      screen.getByRole("button", { name: /copy moohouse.s history across/i }),
+    ).toBeDisabled();
+  });
+
+  /** The four tests above all assert on the REQUEST. Every one of them passed while the page told
+   *  you, in three places, that it was copying your own account — including once as a checked fact
+   *  printed after a real write. The request was right and the screen was wrong, which is the half
+   *  a person can actually see. */
+  it("names the chosen account instead of saying it is yours", async () => {
+    renderSteps();
+    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
+
+    expect(screen.getByText(/it ends up matching yours/i)).toBeInTheDocument();
+
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: /copy the history from/i }),
+      "29",
+    );
+
+    expect(screen.getByText(/it ends up matching moohouse/i)).toBeInTheDocument();
+    expect(screen.queryByText(/it ends up matching yours/i)).toBeNull();
+    // "Your own account is never written to" is the one that would be a lie about safety.
+    expect(
+      screen.getByText(/moohouse.{0,3}s own account is never written to/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /copy moohouse.s history across/i }),
+    ).toBeInTheDocument();
+  });
+
+  /** The success panel is a report about a response that already came back, and the picker does not
+   *  unmount it. Derived live, the sentence followed the selection — the TARGET axis already had
+   *  `transferredTo` and a test for exactly this; the source axis had neither. */
+  it("does not re-aim its verified claim when the picker moves afterwards", async () => {
+    transferWatchHistory.mockResolvedValue(
+      result({ marks: 5, applied: 5, verify_checked: 5 }),
+    );
+
+    renderSteps();
+    // Copy FROM THE OWNER...
+    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: /copy my history across/i }),
+    );
+    expect(await screen.findByText(/now matches yours/i)).toBeInTheDocument();
+
+    // ...then pick another account. The write that happened did not change.
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: /copy the history from/i }),
+      "29",
+    );
+
+    expect(screen.getByText(/now matches yours/i)).toBeInTheDocument();
+    expect(screen.queryByText(/now matches moohouse/i)).toBeNull();
+  });
+
+  it("says whose history is missing, not always yours", async () => {
+    // `source_empty` is measured on the SOURCE. Sending the owner to check their own watch history
+    // when it is another account's that is missing is a dead end that looks like a broken feature —
+    // the #88 loop this panel exists to end.
+    transferWatchHistory.mockResolvedValue(
+      result({ dry_run: true, planned: 0, source_empty: true }),
+    );
+
+    renderSteps();
+    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: /copy the history from/i }),
+      "29",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+
+    expect(
+      await screen.findByText(/hasn.t read moohouse.s watch history yet/i),
+    ).toBeInTheDocument();
+  });
+
+  it("says which account it checked against after a real copy", async () => {
+    // Printed after the write, as a verified claim — and `_verify` compares the target against the
+    // SOURCE, so naming the owner here would attribute the check to an account it never read.
+    transferWatchHistory.mockResolvedValue(
+      result({ marks: 5, applied: 5, verify_checked: 5 }),
+    );
+
+    renderSteps();
+    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: /copy the history from/i }),
+      "29",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /copy moohouse.s history across/i,
+      }),
+    );
+
+    expect(await screen.findByText(/now matches moohouse/i)).toBeInTheDocument();
+  });
+
+  it("falls back to the owner when the chosen account disappears", async () => {
+    // `users` refetches. An account that is disabled or leaves the share mid-session drops out of
+    // the options while `source` still holds its id: the <select> renders blank and the request
+    // still carries it, and if it was the only other candidate the picker unmounts while still
+    // sending it — which reads as "copying from your own account" while doing the opposite.
+    transferWatchHistory.mockResolvedValue(result({ dry_run: true, marks: 5 }));
+
+    const { client } = renderSteps();
+    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: /copy the history from/i }),
+      "29",
+    );
+    expect(
+      screen.getByRole("button", { name: /copy moohouse.s history across/i }),
+    ).toBeInTheDocument();
+
+    getUsers.mockResolvedValue([
+      {
+        id: 7,
+        plex_account_id: 300,
+        username: "steve-tv",
+        user_type: "managed",
+        enabled: false,
+      } as unknown as User,
+    ]);
+    await act(async () => {
+      await client.refetchQueries();
+    });
+
+    // Back to the owner: the label says so, and the request carries no `from_user_id`.
+    await screen.findByRole("button", { name: /copy my history across/i });
+    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+
+    expect(transferWatchHistory).toHaveBeenCalledWith({
+      to_user_id: 7,
+      dry_run: true,
+    });
+  });
+
+  it("will not let a preview of one account authorise a run against another", async () => {
+    // The pair, not the target. A preview taken FROM MooHouse that survives MooHouse leaving the
+    // list would put MooHouse's numbers and MooHouse's acknowledgement in front of a real run that
+    // silently reads the owner instead — a different account's history, under a checked-looking
+    // count that was never measured for it.
+    transferWatchHistory.mockResolvedValue(
+      result({ dry_run: true, marks: 5, unmarks: 2, removals_preview: ["Jaws"] }),
+    );
+
+    const { client } = renderSteps();
+    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: /copy the history from/i }),
+      "29",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+    await screen.findByText(/nothing has been changed yet/i);
+    await userEvent.click(
+      await screen.findByRole("checkbox", { name: /will be un-ticked/i }),
+    );
+    expect(
+      screen.getByRole("button", { name: /copy moohouse.s history across/i }),
+    ).toBeEnabled();
+
+    getUsers.mockResolvedValue([
+      {
+        id: 7,
+        plex_account_id: 300,
+        username: "steve-tv",
+        user_type: "managed",
+        enabled: false,
+      } as unknown as User,
+    ]);
+    await act(async () => {
+      await client.refetchQueries();
+    });
+
+    // Falls back to the owner AND the preview no longer counts for it.
+    expect(
+      await screen.findByRole("button", { name: /copy my history across/i }),
     ).toBeDisabled();
   });
 
