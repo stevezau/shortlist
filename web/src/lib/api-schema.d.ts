@@ -2520,10 +2520,14 @@ export interface paths {
         put?: never;
         /**
          * Transfer
-         * @description Replicate the owner's watch state onto their watching account.
+         * @description Replicate one account's watch state onto a watching account.
          *
-         *     Mirrors: the target ends up matching the owner, which means un-marking anything the owner has not
-         *     watched. That is what makes it a replica rather than a merge, and it is what repairs an account
+         *     The source defaults to the owner — the case the guide walks through — but `from_user_id` names
+         *     any account, because someone who already moved once has their history there rather than on the
+         *     admin account they left. It is read with THAT account's own server token.
+         *
+         *     Mirrors: the target ends up matching the source, which means un-marking anything the source has
+         *     not watched. That is what makes it a replica rather than a merge, and it is what repairs an account
          *     the pre-1.x transfer spoiled by scrobbling show keys. It is also the only path here that can
          *     delete watch history, so a snapshot is taken before the first write and `/undo` restores it.
          *
@@ -4954,6 +4958,8 @@ export interface components {
              * @default false
              */
             dry_run: boolean;
+            /** From User Id */
+            from_user_id?: number | null;
             /** To User Id */
             to_user_id: number;
         };

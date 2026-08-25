@@ -456,3 +456,167 @@ class TestTheSnapshotListing:
     def test_needs_the_owner_session(self, client):
         client.cookies.clear()
         assert client.get("/api/watching-account/snapshots").status_code in (401, 403)
+
+
+class TestTheSourceCanBeAnAccountOtherThanTheOwner:
+    """Someone who already moved to a watching account once, and is moving again.
+
+    Their history is on THAT account, not on the admin one they abandoned — which is the maintainer's
+    own situation. The service always took any `from_user_id`; only the endpoint hardcoded the owner.
+
+    The token is the load-bearing part: reading a shared account with the ADMIN token would replicate
+    the owner's watching onto the target while claiming to copy that person's — one account's history
+    silently wearing another's name.
+    """
+
+    def _shared(self, client, username="moohouse"):
+        with client.app.state.sessions() as session:
+            user = User(plex_account_id=555000900, username=username, slug=username, user_type="shared")
+            session.add(user)
+            session.commit()
+            return user.id
+
+    def test_it_defaults_to_the_owner_when_no_source_is_given(self, client):
+        owner_id, target_id = _seed_owner_and_target(client)
+
+        with (
+            patch.object(client.app.state.run_service, "build_context", return_value=_plex_ctx()),
+            patch(TRANSFER, return_value=_report()) as service,
+        ):
+            client.post("/api/watching-account/transfer", json={"to_user_id": target_id})
+
+        assert service.call_args.kwargs["from_user_id"] == owner_id
+
+    def test_a_named_source_reaches_the_service(self, client):
+        _, target_id = _seed_owner_and_target(client)
+        source_id = self._shared(client)
+
+        with (
+            patch.object(client.app.state.run_service, "build_context", return_value=_plex_ctx()),
+            patch(TRANSFER, return_value=_report()) as service,
+        ):
+            client.post(
+                "/api/watching-account/transfer",
+                json={"to_user_id": target_id, "from_user_id": source_id},
+            )
+
+        assert service.call_args.kwargs["from_user_id"] == source_id
+
+    def test_a_shared_source_is_read_with_its_OWN_token(self, client):
+        """Not the admin's. This is the assertion that stops one person's history being copied under
+        another's name.
+
+        The REAL owner/shared/managed split runs here — only the plex.tv boundary is stubbed. The
+        first version patched `server_token_for` itself, which meant the decision under test was the
+        mock: hardcoding `UserType.OWNER` in the handler (so a shared source reads with the ADMIN
+        token) passed all 118 tests in this suite and its unit sibling.
+        """
+        _, target_id = _seed_owner_and_target(client)
+        source_id = self._shared(client)
+        ctx = _plex_ctx()
+        ctx.plextv.shared_server_tokens.return_value = {555000900: "MOOHOUSE-TOKEN"}
+
+        with (
+            patch.object(client.app.state.run_service, "build_context", return_value=ctx),
+            patch(TRANSFER, return_value=_report()) as service,
+        ):
+            client.post(
+                "/api/watching-account/transfer",
+                json={"to_user_id": target_id, "from_user_id": source_id},
+            )
+
+        assert service.call_args.kwargs["source_token"] == "MOOHOUSE-TOKEN"
+        # And emphatically NOT the admin token, which is what a wrong `user_type` would select.
+        assert service.call_args.kwargs["source_token"] != "ADMIN-TOKEN"
+
+    def test_a_managed_source_falls_back_to_a_canary_exchanged_token(self, client):
+        """The third cell of the `user_type` matrix, and the one the feature was built for.
+
+        `docs/reference.md` says to name a source when the history lives on "an account you already
+        moved to" — and a watching account is enforced to be MANAGED, so the realistic non-owner
+        source is precisely this one. It is also the only cell that takes the switch-and-exchange
+        path rather than the shared roster.
+        """
+        _, target_id = _seed_owner_and_target(client)
+        with client.app.state.sessions() as session:
+            managed = User(plex_account_id=555000901, username="old-tv", slug="old-tv", user_type="managed")
+            session.add(managed)
+            session.commit()
+            source_id = managed.id
+        ctx = _plex_ctx()
+        ctx.plextv.shared_server_tokens.return_value = {}  # roster MISS, so the canary path runs
+        ctx.plextv.canary_server_token.side_effect = lambda account: f"canary-{account}"
+
+        with (
+            patch.object(client.app.state.run_service, "build_context", return_value=ctx),
+            patch(TRANSFER, return_value=_report()) as service,
+        ):
+            client.post(
+                "/api/watching-account/transfer",
+                json={"to_user_id": target_id, "from_user_id": source_id},
+            )
+
+        kwargs = service.call_args.kwargs
+        # Minted for the SOURCE and for the TARGET separately — the handler asks for both, and
+        # nothing pinned that they were different accounts.
+        assert kwargs["source_token"] == "canary-555000901"
+        assert kwargs["target_token"] == "canary-555000300"
+
+    def test_an_owner_source_uses_the_admin_token_and_asks_plex_tv_for_nothing(self, client):
+        """The default path must not gain a plex.tv round trip: `_token_for` short-circuits on OWNER
+        before the roster fetch."""
+        owner_id, target_id = _seed_owner_and_target(client)
+        ctx = _plex_ctx()
+
+        with (
+            patch.object(client.app.state.run_service, "build_context", return_value=ctx),
+            patch(TRANSFER, return_value=_report()) as service,
+        ):
+            client.post(
+                "/api/watching-account/transfer",
+                json={"to_user_id": target_id, "from_user_id": owner_id},
+            )
+
+        assert service.call_args.kwargs["source_token"] == "ADMIN-TOKEN"
+        ctx.plextv.shared_server_tokens.assert_not_called()
+
+    def test_a_source_with_no_obtainable_token_fails_loudly(self, client):
+        """Rather than silently falling back to the admin token and copying the wrong account."""
+        _, target_id = _seed_owner_and_target(client)
+        source_id = self._shared(client)
+
+        with (
+            patch.object(client.app.state.run_service, "build_context", return_value=_plex_ctx()),
+            patch("shortlist.engine.history.ShareTokenWatchSource.server_token_for", return_value=None),
+        ):
+            r = client.post(
+                "/api/watching-account/transfer",
+                json={"to_user_id": target_id, "from_user_id": source_id},
+            )
+
+        assert r.status_code == 502
+        assert "no server token" in r.json()["detail"]
+
+    def test_an_unknown_source_is_a_404_before_anything_is_queued(self, client):
+        from shortlist.server.db.models import Job
+
+        _, target_id = _seed_owner_and_target(client)
+
+        r = client.post(
+            "/api/watching-account/transfer",
+            json={"to_user_id": target_id, "from_user_id": 99999},
+        )
+
+        assert r.status_code == 404
+        with client.app.state.sessions() as session:
+            assert session.query(Job).count() == 0
+
+    def test_copying_an_account_onto_itself_is_still_refused(self, client):
+        _, target_id = _seed_owner_and_target(client)
+
+        r = client.post(
+            "/api/watching-account/transfer",
+            json={"to_user_id": target_id, "from_user_id": target_id},
+        )
+
+        assert r.status_code == 400

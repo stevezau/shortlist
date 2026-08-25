@@ -1508,3 +1508,86 @@ class TestTheSnapshotLandsBeforeTheFirstWrite:
 
         assert plex.snapshots_at_write
         assert set(plex.snapshots_at_write) == {0}
+
+
+class TestUndoLeavesNoPhantomWatchesBehind:
+    """The undo restored Plex and left Shortlist's own record of the copied watches stamped.
+
+    `watch_cache` exempts rows carrying a `source_viewed_at` from both the full-read replace and the
+    incremental drop — right while the transfer stands, permanent once it is undone. So the phantom
+    watches could never self-heal: Plex says the account has not watched the title, the cache keeps it
+    anyway, and the engine's already-watched filter suppresses it for ever, on the one account this
+    feature exists to set up.
+    """
+
+    def _transferred(self, session):
+        plex = FakePlex(
+            {"ADMIN": {100: leaf(100, count=1, at=int(OLD.timestamp()))}},
+            history=[],
+        )
+        report = replicate(session, plex)
+        session.commit()
+        watched(session, 2, "Arrival", key=100, viewed_at=utcnow())
+        stamp_true_dates(session, 2)
+        session.commit()
+        return plex, report
+
+    def test_the_stamp_is_cleared_so_the_next_sync_can_sweep_it(self, session):
+        plex, report = self._transferred(session)
+        assert session.query(WatchedTitle).filter(WatchedTitle.user_id == 2).one().source_viewed_at is not None
+
+        undo_transfer(
+            session,
+            sessions=_factory_for(session),
+            snapshot_id=report.snapshot_id,
+            plex=plex,
+            target_token="TARGET",
+        )
+        session.commit()
+
+        assert session.query(WatchedTitle).filter(WatchedTitle.user_id == 2).one().source_viewed_at is None
+
+    def test_a_full_sync_then_removes_the_row_entirely(self, session):
+        """The point of clearing the stamp: the row becomes an ordinary cached watch again, and Plex
+        no longer reports it, so the periodic full read sweeps it."""
+        from shortlist.engine.models import MediaType, UserProfile
+        from shortlist.server.services.watch_cache import WatchCache
+
+        plex, report = self._transferred(session)
+        undo_transfer(
+            session,
+            sessions=_factory_for(session),
+            snapshot_id=report.snapshot_id,
+            plex=plex,
+            target_token="TARGET",
+        )
+        session.commit()
+
+        profile = UserProfile(username="steve", plex_account_id=20, user_type=UserType.MANAGED, slug="steve")
+        WatchCache(lambda: session).sync_section(
+            session, profile, 2, "1", MediaType.MOVIE, lambda since: [], force_full=True
+        )
+        session.commit()
+
+        assert session.query(WatchedTitle).filter(WatchedTitle.user_id == 2).count() == 0
+
+    def test_a_failed_undo_leaves_the_stamps_alone(self, session):
+        """It only clears when the restore actually landed — the same gate as the snapshot."""
+
+        class Broken(FakePlex):
+            def apply_watch_op(self, op, token, *, dry_run=False):
+                raise TimeoutError("boom")
+
+        plex, report = self._transferred(session)
+        broken = Broken(plex.state)
+
+        undo_transfer(
+            session,
+            sessions=_factory_for(session),
+            snapshot_id=report.snapshot_id,
+            plex=broken,
+            target_token="TARGET",
+        )
+        session.commit()
+
+        assert session.query(WatchedTitle).filter(WatchedTitle.user_id == 2).one().source_viewed_at is not None

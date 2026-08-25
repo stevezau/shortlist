@@ -363,6 +363,8 @@ export const api = {
    *  what would be removed, and that is the only destructive part of the feature. */
   transferWatchHistory: (body: {
     to_user_id: number;
+    /** Whose watching to copy. Omit for the owner, which is the case the guide walks through. */
+    from_user_id?: number;
     dry_run: boolean;
   }): Promise<TransferResult> =>
     request("/api/watching-account/transfer", {

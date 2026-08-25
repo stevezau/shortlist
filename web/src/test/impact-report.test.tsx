@@ -269,7 +269,10 @@ describe("ImpactReport", () => {
     expect(card).toContainElement(screen.getByTestId("verdict-watched"));
     expect(card).toContainElement(screen.getByTestId("verdict-finished"));
     expect(card.textContent).toMatch(/32\s*finished them/);
-    expect(card.textContent).toMatch(/100\s*picks delivered/);
+    // NO "N picks delivered". `watched` is windowed on when the watch happened and `delivered` on
+    // when the pick was created, so the ratio that sentence invited was never a rate of anything —
+    // and the correctly matched cohort is already rendered below it.
+    expect(card.textContent).not.toMatch(/picks delivered/);
   });
 
   it("qualifies each person and row line with what was actually finished", async () => {

@@ -330,10 +330,18 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
     id: number;
     report: TransferResult;
   } | null>(null);
-  // WHICH snapshot the last real undo restored. `undo.isSuccess` is mutation-wide, so restoring an
-  // older snapshot from the list marked a later copy's Undo as already done — disabled, and claiming
-  // "Put back exactly as it was" about a Plex write that never happened.
-  const [undoneId, setUndoneId] = useState<number | null>(null);
+  // WHICH snapshot the last real undo restored, and for WHICH account. `undo.isSuccess` is
+  // mutation-wide, so restoring an older snapshot marked a later copy's Undo as already done —
+  // disabled, and claiming "Put back exactly as it was" about a write that never happened. The
+  // account is needed too: the list offers every account's snapshots.
+  const [undone, setUndone] = useState<{ id: number; userId: number } | null>(
+    null,
+  );
+  // WHICH account the last real copy actually ran against — not the live radio selection. `target`
+  // moves the moment someone clicks another Home user, and the success panel does not reset with it,
+  // so comparing against `target` made the panel re-claim "now matches yours" about an account that
+  // had just been restored. Same reason `previewOf` exists for the preview.
+  const [transferredTo, setTransferredTo] = useState<number | null>(null);
   // Which snapshot a failed undo was for AND why — scoped to the row so it does not render under
   // every snapshot, and carrying the server's own sentence because a refusal comes back as a 200
   // with the reason in `errors`, where React Query has no error object and the generic fallback
@@ -382,6 +390,9 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
           setPreviewOf(reallyWrote ? null : target);
           if (!reallyWrote) setAcceptedRemovals(dryRun ? false : acceptedRemovals);
           if (reallyWrote) {
+            // A new copy must never inherit an earlier restore's verdict.
+            setUndone(null);
+            setTransferredTo(target);
             // A real copy changes the very account any pending undo preview described, so that
             // preview's numbers and its enabled "Restore it" button are no longer about anything
             // that exists. The transfer's own preview has `previewOf` for this; the undo had nothing.
@@ -417,8 +428,20 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
 
   // Did the last real undo restore THIS transfer's snapshot? Mutation-wide `isSuccess` could not
   // answer that, and got it wrong whenever an older snapshot had been restored in the same session.
+  // "Has a restore reversed what THIS panel is describing?"
+  //
+  // Two ways to get this wrong, both of which put a false claim about a Plex write on screen:
+  //   * matching only on snapshot id says NO for a converged re-run, which takes no snapshot — so
+  //     restoring from the list left the panel still claiming "that account now matches yours";
+  //   * accepting any restore when the id is null says YES for a restore of a DIFFERENT account —
+  //     the list offers every account's snapshots, so restoring kids-tv flipped steve-tv's panel.
+  //
+  // So it matches on the snapshot when there is one, and on the ACCOUNT when there is not.
   const undoneThisOne =
-    transfer.data?.snapshot_id != null && undoneId === transfer.data.snapshot_id;
+    undone !== null &&
+    (transfer.data?.snapshot_id == null
+      ? undone.userId === transferredTo
+      : undone.id === transfer.data.snapshot_id);
   const blocked =
     preview === null || staleTarget || (removals > 0 && !acceptedRemovals);
 
@@ -535,10 +558,6 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
           </p>
         </div>
 
-        {/* Hidden only once a REAL copy has succeeded and its own panel has taken over. Gating on
-            `isSuccess` alone hid the list the moment Preview was pressed — a dry run sets it too —
-            removing the only route back to a completed destructive run, which is exactly the case
-            this list exists for. */}
         {/* Hidden only when the success panel's OWN inline undo has taken over — which needs a
             snapshot to exist. A converged re-run, the very thing this page tells you to do ("Run it
             again — it only writes what's still missing"), writes nothing, takes no snapshot and
@@ -630,7 +649,7 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
                               }
                               setUndoPreview(null);
                               setUndoFailure(null);
-                              setUndoneId(snapshot.id);
+                              setUndone({ id: snapshot.id, userId: snapshot.user_id });
                             },
                             onError: (e) =>
                               setUndoFailure({
@@ -852,9 +871,9 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
                 this was the un-fixed half. */}
             {transfer.data.target_unreadable.length > 0 && (
               <p className="text-xs text-muted-foreground">
-                This can&rsquo;t be undone: {transfer.data.target_unreadable.length}{" "}
-                library wasn&rsquo;t readable for that account, so the saved state
-                is incomplete.
+                {transfer.data.target_unreadable.length === 1
+                  ? "This can't be undone: one library wasn't readable for that account, so the saved state is incomplete."
+                  : `This can't be undone: ${transfer.data.target_unreadable.length} libraries weren't readable for that account, so the saved state is incomplete.`}
               </p>
             )}
             {transfer.data.errors.length > 0 && (
@@ -883,7 +902,12 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
                         onSuccess: (r) =>
                           undoLanded(r)
                             ? (setUndoFailure(null),
-                              setUndoneId(transfer.data.snapshot_id as number))
+                              setUndone({
+                                id: transfer.data.snapshot_id as number,
+                                // The account the COPY ran against, not whatever the radio shows
+                                // now — the two diverge as soon as someone selects another user.
+                                userId: transferredTo as number,
+                              }))
                             : setUndoFailure({
                                 id: transfer.data.snapshot_id as number,
                                 reason: undoFailureReason(r),

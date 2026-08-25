@@ -209,11 +209,13 @@ function Verdict({
                   <Why text={WHY_GAVE_UP} />
                 </>
               )}
-              {" · "}
-              <span className="tabular-nums">
-                {overall.delivered.toLocaleString()}
-              </span>{" "}
-              picks delivered
+              {/* NO "N picks delivered" here.
+                  It was a denominator nobody could divide by: `watched` is windowed on when the
+                  watch happened, `delivered` on when the pick was CREATED, so the ratio the sentence
+                  invited ("15,069 delivered, 38 finished") was never a rate of anything. The
+                  correctly matched cohort already sits immediately below as "Picks watched while
+                  their row still showed them", and reach is on the same card as "N of M people". A
+                  five-figure count with no action attached to it only crowded both out. */}
             </p>
           </div>
 

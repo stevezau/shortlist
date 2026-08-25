@@ -184,14 +184,18 @@ GET  /api/users/{id}/watched?q=&media_type=movie|show&limit=&offset= -> {items, 
 ```
 GET  /api/watching-account/candidates -> [{plex_account_id, title, protected, already_a_shortlist_user}]
      Plex Home users the owner could move their watching to. The admin account is never a candidate.
-POST /api/watching-account/transfer {to_user_id, dry_run?} -> {planned, applied, unreachable, failed, marks,
+POST /api/watching-account/transfer {to_user_id, from_user_id?, dry_run?} -> {planned, applied, unreachable, failed, marks,
      unmarks, offsets_set, offsets_cleared, removals_preview, verify_mismatched, verify_checked,
      shows_cleared, target_unreadable, events_copied, titles_cached, snapshot_id, dry_run,
      source_empty, errors}
-     Replicates the owner's watch state onto the watching account: the exact episodes, the exact
+     Replicates one account's watch state onto the watching account: the exact episodes, the exact
      rewatch counts, and the exact position in anything part-watched.
-     MIRRORS — `unmarks`/`offsets_cleared` count what it REMOVES from the target because the owner
-     has not watched it. That is what makes the result a replica, and what repairs an account an
+     `from_user_id` defaults to the OWNER, which is the case the guide walks through. Name a
+     different one when the history to copy lives on an account you already moved to — it is read
+     with THAT account's own server token, never the admin's, so one person's history can never be
+     copied under another's name.
+     MIRRORS — `unmarks`/`offsets_cleared` count what it REMOVES from the target because the SOURCE
+     account has not watched it. That is what makes the result a replica, and what repairs an account an
      older Shortlist over-marked. Always dry-run first: `removals_preview` names up to 50 of them.
      A snapshot of the target is taken before the first write; `snapshot_id` is what `/undo` needs.
      `unreachable` counts titles in libraries that account cannot see (the PMS 404s) — normal, not a
@@ -199,7 +203,7 @@ POST /api/watching-account/transfer {to_user_id, dry_run?} -> {planned, applied,
      "that title isn't there for them" but "we don't know what happened". Those stay in
      `verify_mismatched` rather than being excused out of it. `verify_mismatched` comes from re-reading the target afterwards, so it reports what
      actually landed rather than what was sent.
-     `source_empty` means the OWNER'S ACCOUNT has nothing watched — told apart from `planned: 0`,
+     `source_empty` means the SOURCE ACCOUNT has nothing watched — told apart from `planned: 0`,
      which means the two already match.
      `shows_cleared` counts show rows un-scrobbled because every episode of them was removed — an
      episode un-scrobble does not clear its show, and a show left flagged at 0/N goes invisible to

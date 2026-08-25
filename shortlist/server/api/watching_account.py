@@ -42,6 +42,11 @@ class HomeUserOut(PassthroughModel):
 
 class TransferIn(BaseModel):
     to_user_id: int
+    #: Whose watching to copy. Defaults to the owner, which is the case the guide walks through — but
+    #: someone who already moved to a watching account once and is moving again needs to copy from
+    #: THAT account, not from the admin one they abandoned. The service always took any source; only
+    #: the endpoint hardcoded the owner.
+    from_user_id: int | None = None
     dry_run: bool = False
 
 
@@ -81,7 +86,7 @@ class TransferOut(PassthroughModel):
     # Where undo restores from. Null on a dry run, which takes no snapshot because it changes nothing.
     snapshot_id: int | None
     dry_run: bool
-    # The owner's account has nothing to replicate — told apart from a plain `planned == 0`, because
+    # The SOURCE account has nothing to replicate — told apart from a plain `planned == 0`, because
     # "they already match" is success and the UI has to say something completely different (#88).
     source_empty: bool
     errors: list[str]
@@ -189,10 +194,14 @@ async def list_snapshots(request: Request) -> list[dict]:
 
 @router.post("/transfer", response_model=TransferOut)
 async def transfer(body: TransferIn, request: Request) -> dict:
-    """Replicate the owner's watch state onto their watching account.
+    """Replicate one account's watch state onto a watching account.
 
-    Mirrors: the target ends up matching the owner, which means un-marking anything the owner has not
-    watched. That is what makes it a replica rather than a merge, and it is what repairs an account
+    The source defaults to the owner — the case the guide walks through — but `from_user_id` names
+    any account, because someone who already moved once has their history there rather than on the
+    admin account they left. It is read with THAT account's own server token.
+
+    Mirrors: the target ends up matching the source, which means un-marking anything the source has
+    not watched. That is what makes it a replica rather than a merge, and it is what repairs an account
     the pre-1.x transfer spoiled by scrobbling show keys. It is also the only path here that can
     delete watch history, so a snapshot is taken before the first write and `/undo` restores it.
 
@@ -205,10 +214,13 @@ async def transfer(body: TransferIn, request: Request) -> dict:
     # really "you picked the wrong account".
     with state.sessions() as session:
         owner_id = _owner_id(session)
+        source_id = body.from_user_id if body.from_user_id is not None else owner_id
+        if session.get(User, source_id) is None:
+            raise HTTPException(status_code=404, detail="that source account is not a known user")
         target = session.get(User, body.to_user_id)
         if target is None:
             raise HTTPException(status_code=404, detail="that watching account is not a known user")
-        if target.id == owner_id:
+        if target.id == source_id:
             raise HTTPException(status_code=400, detail="cannot transfer a watch history onto the same account")
         if UserType(target.user_type) is not UserType.MANAGED:
             raise HTTPException(
@@ -222,7 +234,11 @@ async def transfer(body: TransferIn, request: Request) -> dict:
     return await _via_job(
         state,
         "watching_account.transfer",
-        {"to_user_id": body.to_user_id, "dry_run": force_dry_run() or body.dry_run},
+        {
+            "to_user_id": body.to_user_id,
+            "from_user_id": source_id,
+            "dry_run": force_dry_run() or body.dry_run,
+        },
         "watch-state replication",
     )
 

@@ -5643,6 +5643,17 @@
             "title": "Dry Run",
             "type": "boolean"
           },
+          "from_user_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From User Id"
+          },
           "to_user_id": {
             "title": "To User Id",
             "type": "integer"
@@ -11527,7 +11538,7 @@
     },
     "/api/watching-account/transfer": {
       "post": {
-        "description": "Replicate the owner's watch state onto their watching account.\n\nMirrors: the target ends up matching the owner, which means un-marking anything the owner has not\nwatched. That is what makes it a replica rather than a merge, and it is what repairs an account\nthe pre-1.x transfer spoiled by scrobbling show keys. It is also the only path here that can\ndelete watch history, so a snapshot is taken before the first write and `/undo` restores it.\n\nPlex stamps every write `now` and accepts no date, so the writes go oldest-first \u2014 the dates\ncannot be replicated, but the ORDER can, which is what Continue Watching sorts on.",
+        "description": "Replicate one account's watch state onto a watching account.\n\nThe source defaults to the owner \u2014 the case the guide walks through \u2014 but `from_user_id` names\nany account, because someone who already moved once has their history there rather than on the\nadmin account they left. It is read with THAT account's own server token.\n\nMirrors: the target ends up matching the source, which means un-marking anything the source has\nnot watched. That is what makes it a replica rather than a merge, and it is what repairs an account\nthe pre-1.x transfer spoiled by scrobbling show keys. It is also the only path here that can\ndelete watch history, so a snapshot is taken before the first write and `/undo` restores it.\n\nPlex stamps every write `now` and accepts no date, so the writes go oldest-first \u2014 the dates\ncannot be replicated, but the ORDER can, which is what Continue Watching sorts on.",
         "operationId": "transfer_api_watching_account_transfer_post",
         "requestBody": {
           "content": {

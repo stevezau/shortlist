@@ -1345,7 +1345,11 @@ def _row_reconcile(state, payload: dict) -> dict:
 
 @handler("watching_account.transfer")
 def _watching_account_transfer(state, payload: dict, job_id: int | None = None) -> dict:
-    """Replicate the owner's watch state onto their watching account.
+    """Replicate one account's watch state onto a watching account.
+
+    The source is the owner unless `from_user_id` names another — and it is read with THAT account's
+    own server token, never the admin's, or the owner's history lands on the target while the audit
+    row records somebody else as the source.
 
     On the queue rather than inline in the request for two reasons. It is ~11,000 PMS writes on a
     heavy account, which is minutes of work behind a reverse proxy that will happily time the request
@@ -1358,6 +1362,8 @@ def _watching_account_transfer(state, payload: dict, job_id: int | None = None) 
     re-applying what already landed. The rewatch counts are the case that would break under a naive
     replay, and `WriteOp.scrobbles` carries the shortfall precisely so they do not.
     """
+    from shortlist.engine.history import ShareTokenWatchSource
+    from shortlist.engine.models import UserProfile, UserType
     from shortlist.server.db.models import User
     from shortlist.server.services.watching_account import transfer_watch_history
 
@@ -1372,10 +1378,31 @@ def _watching_account_transfer(state, payload: dict, job_id: int | None = None) 
         owner = session.query(User).filter(User.user_type == "owner").first()
         if owner is None:
             raise LookupError("no owner account is registered yet — run a user sync first")
+        source_id = int(payload.get("from_user_id") or owner.id)
+        source = session.get(User, source_id)
         target = session.get(User, to_user_id)
-        if target is None:
-            raise LookupError("that watching account is not a known user")
-        owner_id, account_id = owner.id, target.plex_account_id
+        if source is None or target is None:
+            raise LookupError("both the source and the target must be known users")
+        source_profile = UserProfile(
+            username=source.username,
+            plex_account_id=source.plex_account_id,
+            user_type=UserType(source.user_type),
+            slug=source.slug,
+        )
+        account_id = target.plex_account_id
+
+    # The SOURCE's own token, not the admin's. Reading a shared account with the admin token would
+    # replicate the OWNER's watching onto the target while claiming to copy that person's — one
+    # account's history silently wearing another's name, which is the failure `_check_pair` guards
+    # for the target and nothing guarded for the source while it was hardcoded to the owner.
+    #
+    # `server_token_for` is the single implementation of the owner/shared/managed split; a second
+    # copy here would be a second place to get it wrong.
+    source_token = ShareTokenWatchSource(ctx.plex, ctx.plextv, owner_token=ctx.plex.token).server_token_for(
+        source_profile
+    )
+    if not source_token:
+        raise LookupError(f"no server token could be obtained for {source.username!r} — cannot read its watching")
 
     token = ctx.plextv.canary_server_token(account_id)
     with state.sessions() as session:
@@ -1383,10 +1410,10 @@ def _watching_account_transfer(state, payload: dict, job_id: int | None = None) 
             session,
             sessions=state.sessions,
             job_id=job_id,
-            from_user_id=owner_id,
+            from_user_id=source_id,
             to_user_id=to_user_id,
             plex=ctx.plex,
-            source_token=ctx.plex.token,
+            source_token=source_token,
             target_token=token,
             dry_run=dry_run,
         )
@@ -1394,7 +1421,7 @@ def _watching_account_transfer(state, payload: dict, job_id: int | None = None) 
             session,
             "watching_account.transfer",
             "info",
-            from_user_id=owner_id,
+            from_user_id=source_id,
             to_user_id=to_user_id,
             **report.as_dict(),
         )

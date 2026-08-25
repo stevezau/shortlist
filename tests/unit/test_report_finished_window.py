@@ -856,3 +856,55 @@ class TestAWatchIsNotJudgedTheMomentItStarts:
             data = engagement(session, "all")
 
         assert sum(b["count"] for b in data["stop_points"]) == 1, "an in-progress watch entered the histogram"
+
+
+class TestRowNamerLabel:
+    """`_RowNamer.label` is read daily in four places and had no test at all.
+
+    It renders `{library_name}` into the library and every other placeholder into an ellipsis — the
+    per-person ones (`{top_seed}`) have no single value at an aggregate level, and dropping them
+    outright rendered `🎯 Because you watched {top_seed}` as "🎯 Because you watched", a sentence
+    stopping mid-clause that read as a truncation bug.
+    """
+
+    def _namer(self, tmp_path, template: str):
+        from shortlist.server.db.models import Collection
+        from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
+        from shortlist.server.services.report_service import _RowNamer
+
+        run_migrations(tmp_path)
+        engine = make_engine(tmp_path)
+        sessions = make_session_factory(engine)
+        with sessions() as session:
+            session.add(Collection(slug="row", name="row", name_template=template, enabled=True))
+            session.commit()
+            yield _RowNamer(session, "✨ Picked for You")
+        engine.dispose()
+
+    def label(self, tmp_path, template: str, library: str = "Movies") -> str:
+        for namer in self._namer(tmp_path, template):
+            return namer.label("row", library)
+        raise AssertionError("namer not produced")
+
+    def test_the_library_placeholder_becomes_the_library(self, tmp_path):
+        assert self.label(tmp_path, "👥 Popular {library_name} on SFLIX") == "👥 Popular Movies on SFLIX"
+
+    def test_a_blank_library_leaves_no_double_space(self, tmp_path):
+        """The shared-row call site passes an empty library."""
+        assert self.label(tmp_path, "👥 Popular {library_name} on SFLIX", library="") == "👥 Popular on SFLIX"
+
+    def test_a_trailing_per_person_placeholder_becomes_an_ellipsis(self, tmp_path):
+        """The case this exists for — and no space before it."""
+        assert self.label(tmp_path, "🎯 Because you watched {top_seed}") == "🎯 Because you watched…"
+
+    def test_a_mid_template_placeholder_keeps_what_follows_it(self, tmp_path):
+        assert self.label(tmp_path, "Because you watched {top_seed} lately") == "Because you watched… lately"
+
+    def test_a_template_that_is_only_a_placeholder_falls_back(self, tmp_path):
+        """A row named "…" names nothing. The ellipsis shows a name was shortened; it is not a name."""
+        assert self.label(tmp_path, "{top_seed}") == "Picked for You"
+
+    def test_several_placeholders_all_render(self, tmp_path):
+        assert self.label(tmp_path, "{library_name}: because you watched {top_seed}") == (
+            "Movies: because you watched…"
+        )

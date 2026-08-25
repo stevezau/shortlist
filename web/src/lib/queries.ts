@@ -532,8 +532,11 @@ export function useHomeUserCandidates() {
 export function useTransferWatchHistory() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: { to_user_id: number; dry_run: boolean }) =>
-      api.transferWatchHistory(body),
+    mutationFn: (body: {
+      to_user_id: number;
+      from_user_id?: number;
+      dry_run: boolean;
+    }) => api.transferWatchHistory(body),
     onSuccess: (result) => {
       // A dry run changed nothing, so refetching would only churn. A real one rewrote someone's
       // watched set, which the users list and every watch-history panel read from.

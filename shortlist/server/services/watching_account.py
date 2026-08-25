@@ -251,11 +251,13 @@ def transfer_watch_history(
             be committed in its own transaction before the first Plex write — the caller's
             transaction is not committed until every write has landed, so a flush would be rolled
             back by anything that raised in between, leaving writes on Plex and no undo.
-        from_user_id: Whose watching to replicate (the owner).
+        from_user_id: Whose watching to replicate. Usually the owner, but any account: someone who
+            already moved once has their history on THAT account, not on the admin one.
         to_user_id: The watching account receiving it. Must be a Plex Home (managed) user.
         plex: A `PlexClient`.
-        source_token: Server token to read the SOURCE as — the admin token when the source is the
-            owner, which it always is today.
+        source_token: Server token to read the SOURCE as. The admin token for an OWNER source, and
+            that account's OWN server token for any other — never the admin token for a non-owner, or
+            the owner's history is copied while the audit row names somebody else.
         target_token: The target's own server token, from `canary_server_token`. Every write uses it.
         dry_run: Read and plan, write nothing — including no snapshot, since there is nothing to
             protect (rule 8).
@@ -737,6 +739,20 @@ def undo_transfer(
                 WatchEvent.source == "transfer",
             )
             .delete(synchronize_session=False)
+        )
+        # And the stamps beside them. `watch_cache` deliberately EXEMPTS rows carrying a
+        # `source_viewed_at` from both the full-read replace and the incremental drop — which is right
+        # while the transfer stands, and permanent once it is undone. Left stamped, those rows can
+        # never self-heal: Plex reports the account as no longer having watched the title, the cache
+        # keeps it anyway, and the engine's already-watched filter suppresses it for ever. On the one
+        # account this feature exists to set up, while the UI says "Put back exactly as it was."
+        #
+        # Clearing the stamp does not delete the row — it just makes it an ordinary cached watch
+        # again, which the next full sync sweeps normally because Plex no longer reports it.
+        report.titles_cached = -(
+            session.query(WatchedTitle)
+            .filter(WatchedTitle.user_id == snapshot.user_id, WatchedTitle.source_viewed_at.isnot(None))
+            .update({"source_viewed_at": None}, synchronize_session=False)
         )
 
     logger.info(

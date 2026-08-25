@@ -389,14 +389,25 @@ class _RowNamer:
 
     def label(self, slug: str, library: str) -> str:
         """The row's display name for THIS library: `{library_name}` becomes the library ("Movies"),
-        and any other placeholder (e.g. `{top_seed}`, which is per-person) is dropped for the
-        aggregate. A deleted row has no template left, so its slug is the only identity it still has.
+        and any other placeholder (e.g. `{top_seed}`, which is per-person) becomes an ellipsis. A
+        deleted row has no template left, so its slug is the only identity it still has.
+
+        The ellipsis matters. Dropping the placeholder outright rendered `🎯 Because you watched
+        {top_seed}` as "🎯 Because you watched" — a sentence that stops mid-clause and reads as a
+        truncation bug rather than as a name. It is genuinely per-person and there is no single value
+        to print at this level, so the omission is shown rather than hidden.
         """
         template = self.template(slug)
         if template is None:
             return slug
-        name = _PLACEHOLDER.sub(lambda m: library if m.group(0) == "{library_name}" else "", template)
-        return " ".join(name.split()) or "Picked for You"
+        name = _PLACEHOLDER.sub(lambda m: library if m.group(0) == "{library_name}" else "\u2026", template)
+        # Collapse the space the placeholder left behind, so it reads "watched…" not "watched …".
+        name = " ".join(name.split()).replace(" \u2026", "\u2026")
+        # A template that is NOTHING but a per-person placeholder — `{top_seed}` alone, which
+        # `_non_blank_row_template` permits — would otherwise render as a bare "…", which names
+        # nothing. It fell back to the default before the ellipsis existed and still should: the
+        # ellipsis is there to show that a name has been shortened, not to BE the name.
+        return name if name.strip("\u2026 ") else "Picked for You"
 
 
 def _breakdown(raw: dict, label) -> list[dict]:

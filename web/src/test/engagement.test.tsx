@@ -74,6 +74,10 @@ function report(over: Partial<EffectivenessReport> = {}): EffectivenessReport {
     coverage: { users_with_picks: 10, users_watched: 4, users_idle: 7 },
     per_row: [],
     requests: { sent: 0, pending: 0, watched_after_sent: 0 },
+    // `overall` was absent entirely, though the fixture is cast to `EffectivenessReport`, which has
+    // it. The card reads `overall.dropped`/`overall.bounced` to tell "nobody gave up" from "the only
+    // give-ups were too short to list" — a distinction it cannot make against an undefined.
+    overall: { dropped: 0, bounced: 0 },
     ...over,
   } as unknown as EffectivenessReport;
 }
@@ -175,18 +179,43 @@ describe("NeedsALook", () => {
     expect(screen.queryByText("Tiny Row")).not.toBeInTheDocument();
   });
 
-  it("puts the worst abandonment first", async () => {
-    // Bailing at 3% is a worse pick than getting to 70% — the order is the whole point of the list.
+  it("leaves a sub-5% bounce out of the findings entirely", async () => {
+    // One to three minutes of a film cannot tell a wrong pick from a mis-click, a scrub, or a client
+    // that autoplayed. On a real 47-user server 48 of 124 unfinished picks were under 5% — and with
+    // the old ascending sort they were the ONLY ones ever shown, under a warning triangle with the
+    // strongest negative claim on the page attached to the weakest data it has.
+    //
+    // They stay counted in the "gave up part-way" tile. They are not findings.
     renderPanel();
 
-    await screen.findByText("Bailed Early");
+    await screen.findByText("Most Of It");
+    expect(screen.queryByText("Bailed Early")).not.toBeInTheDocument();
+  });
+
+  it("puts the biggest loss first among real abandonments", async () => {
+    const dropped = ENGAGEMENT.people[1]!.picks[0]!;
+    getEngagement.mockResolvedValue({
+      ...ENGAGEMENT,
+      people: [
+        {
+          ...ENGAGEMENT.people[1]!,
+          picks: [
+            { ...dropped, title: "Half Way", percent: 45 },
+            { ...dropped, title: "Nearly Done", percent: 80 },
+          ],
+        },
+      ],
+    });
+    renderPanel();
+
+    await screen.findByText("Nearly Done");
     const items = Array.from(document.querySelectorAll("li")).map(
       (li) => li.textContent ?? "",
     );
-    const early = items.findIndex((t) => t.includes("Bailed Early"));
-    const late = items.findIndex((t) => t.includes("Most Of It"));
-    expect(early).toBeGreaterThan(-1);
-    expect(early).toBeLessThan(late);
+    const most = items.findIndex((t) => t.includes("Nearly Done"));
+    const half = items.findIndex((t) => t.includes("Half Way"));
+    expect(most).toBeGreaterThan(-1);
+    expect(most).toBeLessThan(half);
   });
 
   it("says nothing is wrong rather than rendering an empty list", async () => {
@@ -360,5 +389,40 @@ describe("NeedsALook — the thresholds it acts on", () => {
     renderPanel(report({ coverage: coverage({ users_idle: 0 }), requests: { ...requests, sent: 4 } }));
     expect(await screen.findByText(/no row came up empty/i)).toBeTruthy();
     expect(screen.queryByText(/titles were fetched/)).toBeNull();
+  });
+});
+
+/** The two cards count different sets now, so they must not claim the same thing. */
+describe("NeedsALook agrees with the Verdict card", () => {
+  it("explains the give-ups rather than claiming everyone watched something", async () => {
+    // The verdict tile totals EVERY abandonment; this list leaves out the ones under 5%. On a day
+    // whose only give-ups were bounces, a bare "everyone watched something" sat directly under
+    // "N gave up part-way" and read as one of the two being wrong.
+    getEngagement.mockResolvedValue({ ...ENGAGEMENT, people: [] });
+    renderPanel(
+      report({
+        coverage: { users_with_picks: 4, users_watched: 4, users_idle: 0 },
+        overall: { dropped: 0, bounced: 3 },
+      } as never),
+    );
+
+    expect(await screen.findByText(/all under 5% in/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/everyone who got a pick watched something/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("still says everyone watched something when there were no give-ups at all", async () => {
+    getEngagement.mockResolvedValue({ ...ENGAGEMENT, people: [] });
+    renderPanel(
+      report({
+        coverage: { users_with_picks: 4, users_watched: 4, users_idle: 0 },
+        overall: { dropped: 0, bounced: 0 },
+      } as never),
+    );
+
+    expect(
+      await screen.findByText(/everyone who got a pick watched something/i),
+    ).toBeInTheDocument();
   });
 });

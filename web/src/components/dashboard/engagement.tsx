@@ -30,9 +30,19 @@ import type {
  *  only — the server owns the rule; this is the sentence that explains it. */
 const SETTLED_AFTER_HOURS = 24;
 
-/** The one sentence explaining when the app is willing to call something a give-up. Exported so the
- *  verdict card and this one cannot drift into saying different things about the same rule. */
+/** When the app is willing to call something a give-up AT ALL. Exported so the verdict card and this
+ *  one cannot drift into saying different things about the same rule.
+ *
+ *  The two cards no longer COUNT the same set — the verdict tile totals every abandonment, the
+ *  findings list below leaves out the ones under 5% — so they no longer share one sentence either.
+ *  `WHY_GAVE_UP_FINDING` is this rule plus that floor, and it is the only one the findings card
+ *  shows. Handing both cards the identical sentence while one of them silently applied an extra
+ *  filter is precisely the drift this constant exists to prevent, and it read as a contradiction:
+ *  "48 gave up part-way" above a list containing none of them. */
 export const WHY_GAVE_UP = `Only films, and only after ${SETTLED_AFTER_HOURS}h with no further play — the clock restarts if they come back, and a series is never counted here.`;
+
+/** The findings list's version: the same rule, plus why the shortest ones are missing from it. */
+export const WHY_GAVE_UP_FINDING = `${WHY_GAVE_UP} Ones under 5% in are counted above but not listed here — that is too little to tell a wrong pick from a mis-click.`;
 
 type Problem = {
   key: string;
@@ -116,19 +126,29 @@ function gaveUp(people: EngagementReport["people"]): Problem[] {
   const out: { person: string; pick: EngagementPick }[] = [];
   for (const person of people) {
     for (const pick of person.picks) {
-      if (pick.outcome === "bounced" || pick.outcome === "dropped") {
+      // `dropped` only. A `bounced` pick is under 5% — one to three minutes of a film — and at that
+      // depth there is no way to tell a wrong pick from a mis-click, a scrub, or a client that
+      // autoplayed. On a real 47-user server 48 of 124 unfinished picks sat under 5%, and because
+      // the list was sorted ascending they were ALL you ever saw: four lines reading 1%, 3%, 3%, 5%
+      // under a warning triangle, with "gave up on" — the strongest negative claim on the page —
+      // attached to the least reliable data it has.
+      //
+      // They are still counted, in the "gave up part-way" tile. What they are not is a finding.
+      if (pick.outcome === "dropped") {
         out.push({ person: person.display_name || person.username, pick });
       }
     }
   }
-  // Furthest-from-finishing first: someone who bailed at 3% is a worse pick than one who got to 70%.
-  out.sort((a, b) => (a.pick.percent ?? 100) - (b.pick.percent ?? 100));
+  // MOST progress lost first. The previous order was ascending, on the reasoning that bailing at 3%
+  // is worse than at 70% — true of the pick, but it selected for the noisiest rows, and the same
+  // feature elsewhere refuses to call one person abandoning something a signal at all.
+  out.sort((a, b) => (b.pick.percent ?? 0) - (a.pick.percent ?? 0));
   return out.slice(0, 5).map(({ person, pick }, i) => ({
     key: `gave-up-${pick.title}-${i}`,
     // Says WHEN the app is willing to make this claim, because "gave up" is the strongest negative
     // thing on the page and the rule behind it is invisible. Without it the honest reaction to
     // seeing a film you are two nights into is "the tracking is wrong", not "it will correct".
-    hint: WHY_GAVE_UP,
+    hint: WHY_GAVE_UP_FINDING,
     text: (
       <>
         <strong className="font-medium text-foreground">{person}</strong> gave
@@ -208,14 +228,21 @@ export function NeedsALook({
               ...gaveUp(data.people),
             ].filter((p): p is Problem => p !== null);
             if (problems.length === 0) {
+              // The verdict card above totals EVERY abandonment, this list leaves out the ones under
+              // 5% — so on a day whose only give-ups were bounces, a bare "everyone watched
+              // something" sits directly under "N gave up part-way" and reads as one of the two
+              // being wrong. Say which, rather than letting the reader work it out.
+              const onlyBounces =
+                report.overall.dropped === 0 && report.overall.bounced > 0;
               return (
                 <p className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
                   <CheckCircle2
                     className="h-4 w-4 shrink-0 text-success"
                     aria-hidden="true"
                   />
-                  Everyone who got a pick watched something, and no row came up
-                  empty.
+                  {onlyBounces
+                    ? `Nothing worth flagging — the ${report.overall.bounced} give-up${report.overall.bounced === 1 ? "" : "s"} above ${report.overall.bounced === 1 ? "was" : "were"} all under 5% in, which is too little to read anything into. No row came up empty.`
+                    : "Everyone who got a pick watched something, and no row came up empty."}
                 </p>
               );
             }

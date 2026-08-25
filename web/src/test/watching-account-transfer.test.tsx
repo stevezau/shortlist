@@ -787,4 +787,189 @@ describe("TransferSteps keeps the undo reachable after a converged re-run", () =
       }),
     ).toBeInTheDocument();
   });
+
+  it("stops claiming a match once that earlier copy is restored", async () => {
+    // `undoneThisOne` was keyed on THIS transfer's snapshot id — null for a converged re-run, which
+    // is precisely the case the fix above makes the list reachable in. So restoring from the list
+    // left the panel still asserting "that account now matches yours".
+    listWatchSnapshots.mockResolvedValue([
+      {
+        id: 9,
+        user_id: 7,
+        username: "steve-tv",
+        taken_at: null,
+        entries: 412,
+        complete: true,
+      },
+    ]);
+    transferWatchHistory.mockResolvedValue(result({ dry_run: true, marks: 0 }));
+
+    renderSteps();
+    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+    await screen.findByText(/nothing has been changed yet/i);
+    transferWatchHistory.mockResolvedValue(
+      result({ planned: 0, applied: 0, snapshot_id: null, verify_mismatched: 0 }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /copy my history across/i }),
+    );
+
+    undoWatchTransfer.mockResolvedValue(result({ dry_run: true, unmarks: 1 }));
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /preview undoing the copy onto steve-tv/i,
+      }),
+    );
+    undoWatchTransfer.mockResolvedValue(result({ applied: 5 }));
+    await userEvent.click(await screen.findByRole("button", { name: /^restore it$/i }));
+
+    expect(await screen.findByText(/back to how it was/i)).toBeInTheDocument();
+    expect(screen.queryByText(/now matches yours/i)).not.toBeInTheDocument();
+  });
+});
+
+/** The snapshot list offers EVERY account's snapshots, so "was this panel's copy reversed?" cannot
+ *  be answered by "did any restore happen?" */
+describe("TransferSteps attributes a restore to the right account", () => {
+  const MINE = {
+    id: 9,
+    user_id: 7,
+    username: "steve-tv",
+    taken_at: null,
+    entries: 412,
+    complete: true,
+  };
+  const SOMEONE_ELSES = {
+    id: 10,
+    user_id: 99,
+    username: "kids-tv",
+    taken_at: null,
+    entries: 8,
+    complete: true,
+  };
+
+  it("does not claim this account was restored when a different one's snapshot was", async () => {
+    // A converged re-run takes no snapshot, so there is no id to match on — and accepting any
+    // restore in that case meant restoring kids-tv flipped steve-tv's panel to "back to how it was".
+    listWatchSnapshots.mockResolvedValue([MINE, SOMEONE_ELSES]);
+    transferWatchHistory.mockResolvedValue(result({ dry_run: true, marks: 0 }));
+
+    renderSteps();
+    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+    await screen.findByText(/nothing has been changed yet/i);
+    transferWatchHistory.mockResolvedValue(
+      result({ planned: 0, applied: 0, snapshot_id: null, verify_mismatched: 0 }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /copy my history across/i }),
+    );
+    expect(await screen.findByText(/now matches yours/i)).toBeInTheDocument();
+
+    undoWatchTransfer.mockResolvedValue(result({ dry_run: true, unmarks: 1 }));
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: /preview undoing the copy onto kids-tv/i,
+      }),
+    );
+    undoWatchTransfer.mockResolvedValue(result({ applied: 8 }));
+    await userEvent.click(await screen.findByRole("button", { name: /^restore it$/i }));
+
+    // kids-tv was restored; this panel is about steve-tv and must not claim otherwise.
+    expect(await screen.findByText(/now matches yours/i)).toBeInTheDocument();
+    expect(screen.queryByText(/back to how it was/i)).not.toBeInTheDocument();
+  });
+
+  it("does still claim it when THIS account's snapshot is the one restored", async () => {
+    listWatchSnapshots.mockResolvedValue([MINE, SOMEONE_ELSES]);
+    transferWatchHistory.mockResolvedValue(result({ dry_run: true, marks: 0 }));
+
+    renderSteps();
+    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+    await screen.findByText(/nothing has been changed yet/i);
+    transferWatchHistory.mockResolvedValue(
+      result({ planned: 0, applied: 0, snapshot_id: null, verify_mismatched: 0 }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /copy my history across/i }),
+    );
+
+    undoWatchTransfer.mockResolvedValue(result({ dry_run: true, unmarks: 1 }));
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: /preview undoing the copy onto steve-tv/i,
+      }),
+    );
+    undoWatchTransfer.mockResolvedValue(result({ applied: 412 }));
+    await userEvent.click(await screen.findByRole("button", { name: /^restore it$/i }));
+
+    expect(await screen.findByText(/back to how it was/i)).toBeInTheDocument();
+  });
+});
+
+/** The radio moves; the success panel does not. Anyone setting up a kids account next hits this. */
+describe("TransferSteps does not re-claim a restored copy when the selection changes", () => {
+  it("keeps saying restored after another Home account is selected", async () => {
+    // `target` is the LIVE radio selection, not the account the copy ran against — so switching
+    // users flipped the panel back to "that account now matches yours" about an account that had
+    // just been reversed.
+    listHomeUsers.mockResolvedValue([
+      {
+        plex_account_id: 300,
+        title: "Steve TV",
+        protected: false,
+        already_a_shortlist_user: false,
+      },
+      {
+        plex_account_id: 301,
+        title: "Kids TV",
+        protected: false,
+        already_a_shortlist_user: false,
+      },
+    ]);
+    getUsers.mockResolvedValue([
+      { id: 7, plex_account_id: 300, username: "steve-tv" } as unknown as User,
+      { id: 8, plex_account_id: 301, username: "kids-tv" } as unknown as User,
+    ]);
+    listWatchSnapshots.mockResolvedValue([
+      {
+        id: 9,
+        user_id: 7,
+        username: "steve-tv",
+        taken_at: null,
+        entries: 412,
+        complete: true,
+      },
+    ]);
+    transferWatchHistory.mockResolvedValue(result({ dry_run: true, marks: 0 }));
+
+    renderSteps();
+    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+    await screen.findByText(/nothing has been changed yet/i);
+    transferWatchHistory.mockResolvedValue(
+      result({ planned: 0, applied: 0, snapshot_id: null, verify_mismatched: 0 }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /copy my history across/i }),
+    );
+
+    undoWatchTransfer.mockResolvedValue(result({ dry_run: true, unmarks: 1 }));
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /preview undoing the copy onto steve-tv/i,
+      }),
+    );
+    undoWatchTransfer.mockResolvedValue(result({ applied: 412 }));
+    await userEvent.click(await screen.findByRole("button", { name: /^restore it$/i }));
+    expect(await screen.findByText(/back to how it was/i)).toBeInTheDocument();
+
+    // Selecting a DIFFERENT Home user must not change what is true about the copy already made.
+    await userEvent.click(screen.getByRole("radio", { name: /kids tv/i }));
+
+    expect(screen.getByText(/back to how it was/i)).toBeInTheDocument();
+    expect(screen.queryByText(/now matches yours/i)).not.toBeInTheDocument();
+  });
 });

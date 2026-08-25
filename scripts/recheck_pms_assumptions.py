@@ -119,18 +119,75 @@ def check(name: str, ok: bool, detail: str) -> None:
     print(f"  [{'OK ' if ok else 'CHANGED'}] {name}: {detail}")
 
 
-movie = page("/library/sections/1/all", TOK, size=2, type="1", unwatched="1")
+def leaf_sections() -> list[tuple[str, str]]:
+    """`(section_key, leaf_type)` for every library, DISCOVERED — never hardcoded.
+
+    The first version hardcoded 1/2/12, which are one server's section keys, in a file whose own
+    comment cites the rule against exactly that. On any other server every residue query 404s — and
+    since those were wrapped in `except: pass`, the script reported a spotless cleanup derived
+    entirely from errors.
+    """
+    # Enumerated with the TESTER's own token, not the admin's. A throwaway Home account is usually
+    # not shared every library — the normal way you would create one — and listing as admin then
+    # reading as the tester made the precondition raise on the first unshared section, aborting with
+    # a traceback before a single assumption ran, and again in `finally` where it masked whatever the
+    # try block had really raised. Listing as the tester returns exactly what it is entitled to.
+    out = []
+    for el in page("/library/sections", TOK):
+        if el.get("type") == "movie":
+            out.append((el.get("key"), "1"))
+        elif el.get("type") == "show":
+            out.append((el.get("key"), "4"))
+    return out
+
+
+SECTIONS = leaf_sections()
+
+
+def watch_state_count(token=TOK) -> int:
+    """How many leaves this account has watched or started — a FLOOR, not a total.
+
+    One page per query, so a heavy account reports the cap rather than its real size. That is fine for
+    both callers: the precondition refuses on any non-zero, and residue is expected to be zero.
+
+    Deliberately NOT exception-guarded: a read that fails must never be reported as "nothing there".
+    """
+    total = 0
+    for key, leaf_type in SECTIONS:
+        total += len(page(f"/library/sections/{key}/all", token, type=leaf_type, unwatched="0"))
+        total += len(page(f"/library/sections/{key}/all", token, type=leaf_type, **{"viewOffset>": "0"}))
+    return total
+
+
+# REFUSE a populated account. The only thing between TEST_ACCOUNT_ID and a real Home user was a
+# sentence in the docstring — and the titles this scrobbles are picked from `unwatched=1`, which on a
+# real account includes items somebody is part-way through.
+existing = watch_state_count()
+if existing:
+    raise SystemExit(
+        f"account {TESTER} already has at least {existing} watched/in-progress item(s) — this script writes "
+        "and then clears watch state, so it must point at a THROWAWAY Home account with none"
+    )
+
+movie_section = next((k for k, t in SECTIONS if t == "1"), None)
+show_section = next((k for k, t in SECTIONS if t == "4"), None)
+if not (movie_section and show_section):
+    raise SystemExit("need one movie library and one show library to check these assumptions")
+
+movie = page(f"/library/sections/{movie_section}/all", TOK, size=2, type="1", unwatched="1")
 m1, m2 = movie[0].get("ratingKey"), movie[1].get("ratingKey")
 shows = [
     d
-    for d in page("/library/sections/2/all", TOK, size=60, type="2", unwatched="1")
+    for d in page(f"/library/sections/{show_section}/all", TOK, size=60, type="2", unwatched="1")
     if int(d.get("leafCount") or 0) > 5
 ]
 show = shows[0]
 srk = show.get("ratingKey")
 ep = page(f"/library/metadata/{srk}/allLeaves", TOK, size=1)[0].get("ratingKey")
 
-touched = [m1, m2, ep, srk]
+# NOT `srk`. Un-scrobbling a show key clears every episode under it, and this script scrobbles only
+# ONE episode — so including it made the cleanup a wider delete than the writes it was undoing.
+touched = [m1, m2, ep]
 try:
     before_history = len(page("/status/sessions/history/all", ADMIN, accountID=str(TESTER), sort="viewedAt:desc"))
 
@@ -177,15 +234,22 @@ finally:
         except Exception as e:
             print(f"  {rk}: {type(e).__name__}")
     time.sleep(3)
-    left = 0
-    for section, kind in (("1", "1"), ("2", "2"), ("2", "4"), ("12", "4")):
-        try:
-            left += len(page(f"/library/sections/{section}/all", TOK, type=kind, unwatched="0"))
-            left += len(page(f"/library/sections/{section}/all", TOK, type=kind, **{"viewOffset>": "0"}))
-        except Exception:
-            pass
-    print(f"  Tester residue: {left} item(s)" + ("" if left == 0 else "  <-- NOT CLEAN"))
+    # Two properties, and the first attempt at this kept only one of them.
+    #
+    #   * a FAILED read must never print as "residue: 0" — a clean bill of health made entirely of
+    #     errors, which is what `except: pass` produced;
+    #   * and it must not replace the real assumption failure with its own traceback, which is the
+    #     `finally`-masking defect `leaf_sections` cites as the reason it exists.
+    #
+    # So: caught, reported as unknown, and still failing the exit status.
+    try:
+        left = watch_state_count()
+        print(f"  residue: {left} item(s)" + ("" if left == 0 else "  <-- NOT CLEAN"))
+    except Exception as exc:
+        left = -1
+        print(f"  residue: UNKNOWN ({type(exc).__name__})  <-- NOT CLEAN")
 
 changed = [name for name, ok, _ in results if not ok]
 print("\n" + ("ALL ASSUMPTIONS STILL HOLD" if not changed else f"{len(changed)} CHANGED: {', '.join(changed)}"))
-sys.exit(1 if changed else 0)
+# Residue counts too: a gate that exits 0 having left watch state on someone's account is not a gate.
+sys.exit(1 if (changed or left) else 0)
