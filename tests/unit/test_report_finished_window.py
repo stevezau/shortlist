@@ -780,6 +780,42 @@ class TestAWatchIsNotJudgedTheMomentItStarts:
 
         assert self._outcome(sessions) == "watching", "called it an abandonment while it was playing"
 
+    def test_resuming_restarts_the_clock(self, sessions):
+        """The case the owner asked about: "someone could watch it a week later".
+
+        The credit is pinned to the FIRST play and deliberately never moves, so settling from it
+        judged a resumed title against a week-old timestamp — someone who paused a film last week,
+        resumed tonight and paused again was reported as having given up. The window has to measure
+        from the LAST time they were seen watching, so the clock restarts every time they touch it.
+        Measured on the maintainer's server: 92% of resumes land within an hour, 96% within six.
+        """
+        from shortlist.server.db.models import WatchSession
+
+        self._started(sessions, watched_ago_hours=24 * 7, percent=55)  # first play a week ago
+        with sessions() as session:
+            session.add(
+                WatchSession(
+                    plex_account_id=7,
+                    session_key="resume",
+                    rating_key=550,
+                    media_type="movie",
+                    started_at=NOW - timedelta(minutes=40),
+                    last_seen_at=NOW - timedelta(minutes=10),  # they were watching 10 minutes ago
+                    ended_at=NOW - timedelta(minutes=10),
+                    max_offset_ms=3_300_000,
+                    duration_ms=6_000_000,
+                )
+            )
+            session.commit()
+
+        assert self._outcome(sessions) == "watching", "judged a resume against the week-old first play"
+
+    def test_a_week_old_watch_nobody_came_back_to_is_still_an_abandonment(self, sessions):
+        """The control. Restarting the clock on activity must not mean the clock never runs out."""
+        self._started(sessions, watched_ago_hours=24 * 7, percent=55)
+
+        assert self._outcome(sessions) == "dropped"
+
     def test_a_watch_stopped_an_hour_ago_is_still_too_early_to_judge(self, sessions):
         """Pausing at 40% and resuming after dinner is ordinary. Overnight is the window."""
         self._started(sessions, watched_ago_hours=1, percent=40)

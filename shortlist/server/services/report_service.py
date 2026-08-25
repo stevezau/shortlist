@@ -491,33 +491,65 @@ BOUNCE_PERCENT = 5
 SETTLING_HOURS = 24
 
 
-def _in_progress(session: Session) -> set[tuple[int, int, str]]:
-    """`(user_id, tmdb_id, media_type)` for every title with playback OPEN right now.
+def _playback_state(session: Session) -> tuple[set[tuple[int, int, str]], dict[tuple[int, int, str], datetime]]:
+    """Which titles are playing right now, and when each was LAST touched.
 
-    Someone still watching has not given up on anything, however far in they are. `watch_sessions`
-    rows carry a rating key, so the titles are resolved through the same map the credit path uses
-    rather than by guessing.
+    Both keyed `(user_id, tmdb_id, media_type)`. `watch_sessions` rows carry a rating key, so titles
+    are resolved through the same map the credit path uses rather than by guessing — the SHOW key
+    first, because a pick for a series stores the show's key while playback reports the episode.
+
+    The "last touched" half is what makes the settling window mean anything. It used to settle from
+    `picks.watched_at`, which is pinned to the FIRST play and deliberately never moves — so someone
+    who started a film last week, resumed tonight and paused again was judged against a week-old
+    timestamp and reported as "gave up". Measured on the maintainer's server: 92% of resumes happen
+    within an hour and 96% within six, so the clock that matters is the one since they last touched
+    it, and it has to restart every time they do.
     """
     from shortlist.server.services.watch_events import tmdb_by_rating_key
 
     tmdb_of = tmdb_by_rating_key(session)
     by_account = {u.plex_account_id: u.id for u in session.query(User).all()}
     live: set[tuple[int, int, str]] = set()
-    for account_id, rating_key, show_rating_key in (
-        session.query(WatchSession.plex_account_id, WatchSession.rating_key, WatchSession.show_rating_key)
-        .filter(WatchSession.ended_at.is_(None))
+    last_seen: dict[tuple[int, int, str], datetime] = {}
+    for account_id, rating_key, show_rating_key, ended_at, seen_at in (
+        session.query(
+            WatchSession.plex_account_id,
+            WatchSession.rating_key,
+            WatchSession.show_rating_key,
+            WatchSession.ended_at,
+            WatchSession.last_seen_at,
+        )
+        .order_by(WatchSession.last_seen_at)
         .all()
     ):
         user_id = by_account.get(account_id)
         if user_id is None:
             continue
-        # The SHOW key first: a pick for a series stores the show's rating key while playback reports
-        # the episode, which is the same resolution `session_progress` makes.
         for key in (show_rating_key, rating_key):
             resolved = tmdb_of.get(key) if key else None
-            if resolved:
-                live.add((user_id, resolved[0], resolved[1]))
-    return live
+            if not resolved:
+                continue
+            slot = (user_id, resolved[0], resolved[1])
+            if ended_at is None:
+                live.add(slot)
+            if seen_at is not None:
+                when = _as_utc(seen_at)
+                if slot not in last_seen or when > last_seen[slot]:
+                    last_seen[slot] = when
+    return live, last_seen
+
+
+def _touched_at(
+    key: tuple[int, int, str], entry: dict, last_seen: dict[tuple[int, int, str], datetime]
+) -> datetime | None:
+    """The most recent moment this person was known to be watching this title.
+
+    The later of the credit and the last observed session, because each can be the only one there
+    is: a title credited from Plex's watched flag has no session at all, and a resumed title has a
+    session far newer than its (deliberately pinned) credit.
+    """
+    moments = [m for m in (entry.get("watched_at"), last_seen.get(key)) if m is not None]
+    return max(_as_utc(m) for m in moments) if moments else None
 
 
 def resolve_outcomes(session: Session, since: datetime | None) -> dict[tuple[int, int, str], dict]:
@@ -644,7 +676,7 @@ def resolve_outcomes(session: Session, since: datetime | None) -> dict[tuple[int
         if entry["first_delivered"] is None and watched:
             entry["first_delivered"] = watched
 
-    live = _in_progress(session)
+    live, last_seen = _playback_state(session)
     settled_before = datetime.now(UTC) - timedelta(hours=SETTLING_HOURS)
     resolved: dict[tuple[int, int, str], dict] = {}
     for key, entry in out.items():
@@ -662,7 +694,7 @@ def resolve_outcomes(session: Session, since: datetime | None) -> dict[tuple[int
             entry["outcome"] = "finished"
         elif entry["percent"] is None:
             entry["outcome"] = "watching"
-        elif key in live or (observed is not None and _as_utc(observed) >= settled_before):
+        elif key in live or (_touched_at(key, entry, last_seen) or settled_before) >= settled_before:
             # Too early to call it. Playback is either still open, or stopped so recently that
             # resuming tonight is the ordinary thing to expect — see `SETTLING_HOURS`. Reporting
             # "gave up" here is a verdict the data does not support, and it is the loudest thing the
