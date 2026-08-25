@@ -1378,7 +1378,13 @@ def engagement(session: Session, window: str) -> dict:
     # Sorted so the OBSERVED outcomes lead, then truncated. Sorting finished-first and cutting at 40
     # removed exactly the rows this page exists to show: a person with 45 finished picks and 5 fresh
     # drops saw forty "finished" and no drops at all, under a header reading "40 picks".
-    order = {"bounced": 0, "dropped": 1, "finished": 2, "watching": 3}
+    #
+    # `dropped` now leads `bounced`, and the order matters more than it used to. The findings card
+    # keeps only `dropped` — a bounce is under 5%, too little to tell a wrong pick from a mis-click —
+    # so with bounces sorting first, one person with 40 or more of them in the window had every real
+    # abandonment truncated away before the frontend ever saw it. The card would then print
+    # "Everyone who got a pick watched something" beneath a tile counting those very drops.
+    order = {"dropped": 0, "bounced": 1, "finished": 2, "watching": 3}
     out_people = []
     for uid, entries in sorted(people.items(), key=lambda kv: -len(kv[1])):
         entries.sort(key=lambda e: (order.get(e["outcome"], 9), e["observed_at"] or ""), reverse=False)

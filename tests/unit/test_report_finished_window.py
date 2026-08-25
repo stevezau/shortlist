@@ -908,3 +908,78 @@ class TestRowNamerLabel:
         assert self.label(tmp_path, "{library_name}: because you watched {top_seed}") == (
             "Movies: because you watched…"
         )
+
+
+class TestEngagementPerPersonTruncation:
+    """A person's picks are sorted by outcome and cut at 40, so the ORDER decides what survives.
+
+    `dropped` has to lead `bounced`. The findings card keeps only `dropped` — a bounce is under 5%,
+    too little to tell a wrong pick from a mis-click — so with bounces first, one person with 40 or
+    more of them in the window had every real abandonment truncated away before the frontend saw it.
+    The card would then print "Everyone who got a pick watched something" directly beneath a tile
+    counting those very drops.
+    """
+
+    def test_a_drop_survives_a_person_with_forty_bounces(self, tmp_path):
+        from datetime import UTC, datetime, timedelta
+
+        from shortlist.server.db.models import Collection, PickRow, User
+        from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
+        from shortlist.server.services.report_service import engagement
+
+        run_migrations(tmp_path)
+        engine = make_engine(tmp_path)
+        sessions = make_session_factory(engine)
+        now = datetime.now(UTC)
+        # Three days back: an outcome is only settled after 24h with no further play, so a watch
+        # stamped `now` is "watching", not "bounced"/"dropped", and would not exercise the order.
+        settled = now - timedelta(days=3)
+        try:
+            with sessions() as session:
+                # Migration 0003 seeds the default row, so it already exists.
+                if session.query(Collection).filter_by(slug="picked").first() is None:
+                    session.add(Collection(slug="picked", name="Picked", enabled=True))
+                session.add(User(id=1, plex_account_id=10, username="steve", slug="steve", enabled=True))
+                session.flush()
+                # 40 bounces, then the one drop that actually matters.
+                for i in range(40):
+                    session.add(
+                        PickRow(
+                            user_id=1,
+                            collection_slug="picked",
+                            section_key="1",
+                            tmdb_id=1000 + i,
+                            media_type="movie",
+                            rating_key=0,
+                            rank=i,
+                            title=f"Bounce {i}",
+                            created_at=settled,
+                            watched_at=settled,
+                            max_percent=2,
+                        )
+                    )
+                session.add(
+                    PickRow(
+                        user_id=1,
+                        collection_slug="picked",
+                        section_key="1",
+                        tmdb_id=9999,
+                        media_type="movie",
+                        rating_key=0,
+                        rank=99,
+                        title="Real Drop",
+                        created_at=settled,
+                        watched_at=settled,
+                        max_percent=60,
+                    )
+                )
+                session.commit()
+
+            with sessions() as session:
+                people = engagement(session, "all")["people"]
+        finally:
+            engine.dispose()
+
+        assert people, "no people in the engagement payload"
+        titles = [p["title"] for p in people[0]["picks"]]
+        assert "Real Drop" in titles, "the one real abandonment was truncated away by 40 bounces"

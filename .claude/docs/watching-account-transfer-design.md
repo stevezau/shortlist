@@ -362,10 +362,13 @@ answerable afterwards, which it currently is not.
   `scrobble_as` already treats as "skip, don't raise".
 - Whether the 90-day `watch_events` retention should be relaxed for `source='transfer'` rows, which
   describe watches far older than the window.
-- Accounts already scrobbled by the CURRENT transfer carry shows Plex reports complete and
+- Accounts already scrobbled by the PRE-1.x transfer carry shows Plex reports complete and
   `watched_titles` cannot see (§3.2). Mirroring (§3.2a) repairs them on the next run, so no separate
-  migration is needed — but nothing PROMPTS those users to re-run, and they have no way to know they
-  are affected. Whether to detect and offer it is undecided.
+  migration is needed. Nothing PROMPTS those users, but the preview now names the situation when it
+  sees it: a removal count over 20 is almost never someone's own viewing, so the confirmation says
+  the count is old damage rather than leaving a wall of removals to read as destruction. Actively
+  detecting affected accounts and offering the repair unprompted is still undecided — it would mean
+  reading every watching account's show rows looking for the 0/N shape, on a schedule.
 
 ## 8. What was verified, and what was not
 
@@ -392,8 +395,11 @@ reads and the three write verbs, mirroring with removals, the snapshot and undo,
 copied play events and their date fallback, `source_viewed_at` stamping, the two durable job kinds,
 the pending-undo listing, `fake_plex`'s per-episode state, and the UI's preview gate.
 
-**Not built — a source picker in the UI.** The transfer is always owner → Home user there. The
-service takes any `from_user_id`, so a different source is reachable through the API only.
+**Source picker — built.** The page offers "Copy the history from" whenever there is more than one
+candidate, defaulting to the owner and sending no `from_user_id` at all in that case (the server owns
+who the owner is; the UI should not be a second place that knows). The TARGET stays restricted to
+Home users at both layers. This exists because the owner of the reference server watches on a SHARED
+account, so copying from the admin account would have replicated an empty history over a real one.
 
 **Not built — keeping the two accounts in step afterwards.** Out of scope, see §4.
 

@@ -193,7 +193,10 @@ POST /api/watching-account/transfer {to_user_id, from_user_id?, dry_run?} -> {pl
      `from_user_id` defaults to the OWNER, which is the case the guide walks through. Name a
      different one when the history to copy lives on an account you already moved to — it is read
      with THAT account's own server token, never the admin's, so one person's history can never be
-     copied under another's name.
+     copied under another's name. The web page offers this as "Copy the history from" once more than
+     one candidate exists.
+     Repairing an account an older Shortlist over-marked needs no special action: mirroring un-marks
+     the spurious watches on the next run, and the preview says so when the removal count is large.
      MIRRORS — `unmarks`/`offsets_cleared` count what it REMOVES from the target because the SOURCE
      account has not watched it. That is what makes the result a replica, and what repairs an account an
      older Shortlist over-marked. Always dry-run first: `removals_preview` names up to 50 of them.

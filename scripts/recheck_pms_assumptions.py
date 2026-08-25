@@ -27,10 +27,17 @@ The account id and the server address are read from the environment:
     TEST_ACCOUNT_ID=123456 \
     python scripts/recheck_pms_assumptions.py
 
+This directory is NOT copied into the Docker image — it is maintenance tooling, not runtime. To run
+it against a containerised install, copy it in first:
+
+    docker cp scripts/recheck_pms_assumptions.py shortlist:/tmp/recheck.py
+    docker exec -e PLEX_PREFS=... -e PMS_URL=... -e TEST_ACCOUNT_ID=... shortlist python /tmp/recheck.py
+
 Everything is undone in the finally block, and the residue is reported. Prints facts, never a token
 (plex-safety rule 9).
 
-Exit code is 0 when every assumption still holds, 1 otherwise — so it can gate a deploy.
+Exit code is 0 only when every assumption still holds AND the account was left clean — a residue,
+or a residue read that failed, fails it too. So it can gate a deploy.
 """
 
 import json

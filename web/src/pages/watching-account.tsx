@@ -306,6 +306,12 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
   const candidates = useHomeUserCandidates();
   const users = useUsers();
   const [target, setTarget] = useState<number | null>(null);
+  // WHERE the history is copied FROM. Null means the owner, which is the case the guide walks
+  // through and stays the default. It is selectable because the owner is not always where the
+  // watching actually happened: anyone who has already moved to a watching account once has their
+  // history on THAT account, and copying from the admin account they abandoned would replicate an
+  // empty history over a real one.
+  const [source, setSource] = useState<number | null>(null);
   const [preview, setPreview] = useState<TransferResult | null>(null);
   // Which account the preview describes. Without it, previewing account A and then selecting B left
   // A's numbers and A's acknowledgement on screen, authorising a real run against B.
@@ -364,6 +370,27 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
   // nothing, which is exactly how it went unnoticed (#88).
   const nothingToCopy = transfer.isSuccess && transfer.data.source_empty;
 
+  /** Accounts the history could be copied FROM, owner first.
+   *
+   *  The owner is the default and always present. The rest are the enabled accounts, because the
+   *  honest answer to "where is my watching" is sometimes another account entirely — the owner of
+   *  this server watches on a shared account, not the admin one, and copying from the admin account
+   *  would replicate an empty history over a real one.
+   *
+   *  The TARGET is still restricted to Home users, server-side and in the list below; only the
+   *  source is open.
+   */
+  const sourceOptions = [
+    { id: 0, isOwner: true, label: "your own account" },
+    ...(users.data ?? [])
+      .filter((u) => u.user_type !== "owner" && u.enabled)
+      .map((u) => ({
+        id: u.id,
+        isOwner: false,
+        label: u.display_name || u.username,
+      })),
+  ];
+
   // The transfer keys on Shortlist's own user id, which only exists once a user sync has picked the
   // new Home account up. Anyone not yet synced is shown with that as the next step, rather than
   // being silently missing from a list they can see in Plex.
@@ -374,7 +401,11 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
   const run = (dryRun: boolean) => {
     if (target === null) return;
     transfer.mutate(
-      { to_user_id: target, dry_run: dryRun },
+      {
+        to_user_id: target,
+        ...(source !== null ? { from_user_id: source } : {}),
+        dry_run: dryRun,
+      },
       {
         onSuccess: (result) => {
           // Safe mode forces `dry_run` on server-side even when the real button was pressed, so a
@@ -456,6 +487,32 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
             </strong>{" "}
             &mdash; and share the same libraries you can see. Then pick it here.
           </p>
+
+          {/* Only worth showing once there is more than one account it could come from. On a fresh
+              server the owner is the only answer and a one-option control is noise. */}
+          {sourceOptions.length > 1 && (
+            <label className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-muted-foreground">Copy the history from</span>
+              <select
+                className="rounded-md border bg-background px-2 py-1 text-sm"
+                value={source ?? ""}
+                onChange={(e) => {
+                  setSource(e.target.value ? Number(e.target.value) : null);
+                  // The preview describes ONE pair of accounts. Changing either end invalidates it,
+                  // and an acknowledgement given for one pair must not authorise another.
+                  setPreview(null);
+                  setPreviewOf(null);
+                  setAcceptedRemovals(false);
+                }}
+              >
+                {sourceOptions.map((option) => (
+                  <option key={option.id} value={option.isOwner ? "" : option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -770,9 +827,27 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
                     This also un-ticks {removals}{" "}
                     {removals === 1 ? "thing" : "things"}
                   </strong>{" "}
-                  that account has watched and you haven&rsquo;t. That is what
-                  makes the two match &mdash; and it&rsquo;s what repairs an
-                  account an older version of Shortlist over-marked.
+                  that account has watched and the source account hasn&rsquo;t.
+                  That is what makes the two match.
+                  {/* At this size it is almost never the person's own viewing — it is an account the
+                      pre-1.x transfer over-marked, which used to mark a whole series watched when
+                      they were part-way through. Those owners have no way to know they are affected,
+                      and a wall of removals with no explanation reads as damage rather than as the
+                      repair it is. */}
+                  {removals > 20 ? (
+                    <>
+                      {" "}
+                      A count this large almost always means an older version of
+                      Shortlist over-marked this account &mdash; what comes off
+                      is that damage, not anything anyone watched.
+                    </>
+                  ) : (
+                    <>
+                      {" "}
+                      It is also what repairs an account an older version of
+                      Shortlist over-marked.
+                    </>
+                  )}
                 </p>
                 {preview.removals_preview.length > 0 && (
                   <ul className="max-h-40 list-disc overflow-y-auto pl-5 text-xs text-muted-foreground">

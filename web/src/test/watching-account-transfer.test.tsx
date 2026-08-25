@@ -973,3 +973,146 @@ describe("TransferSteps does not re-claim a restored copy when the selection cha
     expect(screen.queryByText(/now matches yours/i)).not.toBeInTheDocument();
   });
 });
+
+/** The source picker. The capability existed over the API from the start; the page did not offer it,
+ *  which made the maintainer's own case — his watching lives on a shared account, not the admin one
+ *  — unreachable from the UI. */
+describe("TransferSteps can copy from an account other than the owner", () => {
+  beforeEach(() => {
+    getUsers.mockResolvedValue([
+      {
+        id: 7,
+        plex_account_id: 300,
+        username: "steve-tv",
+        user_type: "managed",
+        enabled: false,
+      } as unknown as User,
+      {
+        id: 29,
+        plex_account_id: 218833834,
+        username: "moohouse",
+        display_name: "MooHouse",
+        user_type: "shared",
+        enabled: true,
+      } as unknown as User,
+    ]);
+  });
+
+  it("defaults to the owner and sends no source", async () => {
+    transferWatchHistory.mockResolvedValue(result({ dry_run: true, marks: 5 }));
+
+    renderSteps();
+    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+
+    // No `from_user_id` at all — the server defaults to the owner, and sending an explicit id would
+    // make the UI a second place that has to know who the owner is.
+    expect(transferWatchHistory).toHaveBeenCalledWith({
+      to_user_id: 7,
+      dry_run: true,
+    });
+  });
+
+  it("sends the chosen account when one is picked", async () => {
+    transferWatchHistory.mockResolvedValue(result({ dry_run: true, marks: 5 }));
+
+    renderSteps();
+    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: /copy the history from/i }),
+      "29",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+
+    expect(transferWatchHistory).toHaveBeenCalledWith({
+      to_user_id: 7,
+      from_user_id: 29,
+      dry_run: true,
+    });
+  });
+
+  it("invalidates the preview when the source changes", async () => {
+    // A preview describes ONE pair of accounts. Carrying it across a change of source would let an
+    // acknowledgement given for one pair authorise a real run against another.
+    transferWatchHistory.mockResolvedValue(
+      result({ dry_run: true, marks: 5, unmarks: 2, removals_preview: ["Jaws"] }),
+    );
+
+    renderSteps();
+    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+    await screen.findByText(/nothing has been changed yet/i);
+
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: /copy the history from/i }),
+      "29",
+    );
+
+    expect(
+      screen.queryByText(/nothing has been changed yet/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /copy my history across/i }),
+    ).toBeDisabled();
+  });
+
+  it("hides the picker when the owner is the only possible source", async () => {
+    // A one-option control is noise on a fresh server.
+    getUsers.mockResolvedValue([
+      {
+        id: 7,
+        plex_account_id: 300,
+        username: "steve-tv",
+        user_type: "managed",
+        enabled: false,
+      } as unknown as User,
+    ]);
+
+    renderSteps();
+    await screen.findByRole("radio", { name: /steve tv/i });
+
+    expect(
+      screen.queryByRole("combobox", { name: /copy the history from/i }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+/** The repair case. An account the pre-1.x transfer over-marked has no way to know it is affected. */
+describe("TransferSteps explains a large removal count", () => {
+  it("says a big un-tick count is likely repairing old damage", async () => {
+    // Mirroring fixes those accounts, but only if the owner runs it — and a wall of removals with no
+    // explanation reads as damage rather than as the repair it is.
+    transferWatchHistory.mockResolvedValue(
+      result({
+        dry_run: true,
+        marks: 400,
+        unmarks: 900,
+        removals_preview: ["One Piece Ep 401"],
+      }),
+    );
+
+    renderSteps();
+    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+
+    // `findAllBy`: the phrase spans a text node that its container also matches.
+    expect(
+      (await screen.findAllByText(/count this large almost always means/i)).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("does not say it for an ordinary handful of removals", async () => {
+    transferWatchHistory.mockResolvedValue(
+      result({ dry_run: true, marks: 400, unmarks: 3, removals_preview: ["Jaws"] }),
+    );
+
+    renderSteps();
+    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+
+    await screen.findByText(/nothing has been changed yet/i);
+    expect(
+      screen.queryAllByText(/count this large almost always means/i),
+    ).toHaveLength(0);
+  });
+});

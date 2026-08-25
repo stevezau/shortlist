@@ -30,6 +30,12 @@ import type {
  *  only — the server owns the rule; this is the sentence that explains it. */
 const SETTLED_AFTER_HOURS = 24;
 
+/** Mirrors `BOUNCE_PERCENT` server-side, which decides which picks are `bounced` and therefore which
+ *  ones this card leaves out. Same arrangement as `SETTLED_AFTER_HOURS`: the server owns the rule,
+ *  this is the number the sentences quote. Written out twice as a bare "5%" first, which is the
+ *  drift this file already had a named constant to prevent. */
+const BOUNCE_FLOOR_PERCENT = 5;
+
 /** When the app is willing to call something a give-up AT ALL. Exported so the verdict card and this
  *  one cannot drift into saying different things about the same rule.
  *
@@ -42,7 +48,7 @@ const SETTLED_AFTER_HOURS = 24;
 export const WHY_GAVE_UP = `Only films, and only after ${SETTLED_AFTER_HOURS}h with no further play — the clock restarts if they come back, and a series is never counted here.`;
 
 /** The findings list's version: the same rule, plus why the shortest ones are missing from it. */
-export const WHY_GAVE_UP_FINDING = `${WHY_GAVE_UP} Ones under 5% in are counted above but not listed here — that is too little to tell a wrong pick from a mis-click.`;
+export const WHY_GAVE_UP_FINDING = `${WHY_GAVE_UP} Ones under ${BOUNCE_FLOOR_PERCENT}% in are counted above but not listed here — that is too little to tell a wrong pick from a mis-click.`;
 
 type Problem = {
   key: string;
@@ -241,7 +247,9 @@ export function NeedsALook({
                     aria-hidden="true"
                   />
                   {onlyBounces
-                    ? `Nothing worth flagging — the ${report.overall.bounced} give-up${report.overall.bounced === 1 ? "" : "s"} above ${report.overall.bounced === 1 ? "was" : "were"} all under 5% in, which is too little to read anything into. No row came up empty.`
+                    ? report.overall.bounced === 1
+                      ? `Nothing worth flagging — the one give-up above was under ${BOUNCE_FLOOR_PERCENT}% in, which is too little to read anything into. No row came up empty.`
+                      : `Nothing worth flagging — the ${report.overall.bounced} give-ups above were all under ${BOUNCE_FLOOR_PERCENT}% in, which is too little to read anything into. No row came up empty.`
                     : "Everyone who got a pick watched something, and no row came up empty."}
                 </p>
               );

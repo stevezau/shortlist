@@ -425,4 +425,21 @@ describe("NeedsALook agrees with the Verdict card", () => {
       await screen.findByText(/everyone who got a pick watched something/i),
     ).toBeInTheDocument();
   });
+
+  it("reads correctly when there was exactly one give-up", async () => {
+    // The plural ternaries covered give-up/give-ups and was/were but left "all" fixed, so the
+    // singular cell rendered "the 1 give-up above was all under 5% in".
+    getEngagement.mockResolvedValue({ ...ENGAGEMENT, people: [] });
+    renderPanel(
+      report({
+        coverage: { users_with_picks: 4, users_watched: 4, users_idle: 0 },
+        overall: { dropped: 0, bounced: 1 },
+      } as never),
+    );
+
+    expect(
+      await screen.findByText(/the one give-up above was under 5% in/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/was all under/i)).not.toBeInTheDocument();
+  });
 });
