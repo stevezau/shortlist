@@ -18,11 +18,18 @@ import { cn } from "@/lib/utils";
  * hedge: the server refuses to call a watch abandoned while it is open or less than a day old, so a
  * verdict this page cannot support is not printed (see `SETTLING_HOURS`).
  */
-const LABEL: Record<string, { text: string; className: string }> = {
+const WHY = {
+  gaveUp:
+    "A film they started and have not played again for 24 hours. The clock restarts if they come back to it, so this can change back.",
+  watching:
+    "Either still playing, or stopped too recently to call — and a series is always here, because one episode says nothing about a whole show.",
+} as const;
+
+const LABEL: Record<string, { text: string; className: string; why?: string }> = {
   finished: { text: "Finished", className: "text-success" },
-  dropped: { text: "Gave up part-way", className: "text-destructive-text" },
-  bounced: { text: "Barely started", className: "text-destructive-text" },
-  watching: { text: "Still watching", className: "text-muted-foreground" },
+  dropped: { text: "Gave up part-way", className: "text-destructive-text", why: WHY.gaveUp },
+  bounced: { text: "Barely started", className: "text-destructive-text", why: WHY.gaveUp },
+  watching: { text: "Still watching", className: "text-muted-foreground", why: WHY.watching },
 };
 
 function Line({ pick }: { pick: UserPickOutcome }) {
@@ -32,7 +39,7 @@ function Line({ pick }: { pick: UserPickOutcome }) {
       <span className="min-w-0 flex-1 truncate text-foreground">
         {pick.title}
       </span>
-      <span className={cn("font-medium tabular-nums", label?.className)}>
+      <span className={cn("font-medium tabular-nums", label?.className)} title={label?.why}>
         {label?.text}
         {/* The percentage only where it adds something. On a finished title it is noise, and it is
             always null for a series — an episode's progress is not the show's. */}

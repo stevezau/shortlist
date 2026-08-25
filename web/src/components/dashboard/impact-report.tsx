@@ -199,10 +199,17 @@ function Verdict({
               {gaveUp > 0 && (
                 <>
                   {" · "}
-                  <span className="font-medium text-destructive-text tabular-nums">
+                  {/* The rule behind this number is invisible, and it is the harshest claim the
+                      verdict makes. `title` is the explainer convention here (see `StatTile`). */}
+                  <span
+                    className="font-medium text-destructive-text tabular-nums"
+                    title="Films someone started and has not played again for 24 hours. The clock restarts if they come back to it, and a series is never counted — one episode says nothing about a whole show."
+                  >
                     {gaveUp}
                   </span>{" "}
-                  gave up part-way
+                  <span title="Films someone started and has not played again for 24 hours. The clock restarts if they come back to it, and a series is never counted — one episode says nothing about a whole show.">
+                    gave up part-way
+                  </span>
                 </>
               )}
               {" · "}

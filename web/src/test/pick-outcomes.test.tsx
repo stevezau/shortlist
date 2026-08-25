@@ -153,6 +153,28 @@ describe("PickOutcomes", () => {
     expect(screen.queryByText("Finished")).toBeNull();
   });
 
+  it("explains the rule behind 'gave up', which is otherwise invisible", async () => {
+    // The harshest claim the page makes, decided by a rule nothing on screen states. Without it the
+    // honest reaction to seeing a film you are two nights into is "the tracking is broken".
+    getUserOutcomes.mockResolvedValue([
+      pick({ outcome: "dropped", percent: 40, finished_at: null }),
+    ]);
+    renderIt();
+
+    const label = await screen.findByText("Gave up part-way");
+    expect(label.getAttribute("title")).toMatch(/24 hours/);
+    expect(label.getAttribute("title")).toMatch(/clock restarts/);
+  });
+
+  it("explains that a series is always 'still watching'", async () => {
+    getUserOutcomes.mockResolvedValue([
+      pick({ media_type: "show", outcome: "watching", percent: null, finished_at: null }),
+    ]);
+    renderIt();
+
+    expect((await screen.findByText("Still watching")).getAttribute("title")).toMatch(/series/);
+  });
+
   it("explains the empty case instead of showing an empty list", async () => {
     renderIt();
 

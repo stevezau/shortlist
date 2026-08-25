@@ -232,6 +232,25 @@ describe("NeedsALook", () => {
   });
 });
 
+describe("NeedsALook — saying why", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getEngagement.mockResolvedValue(ENGAGEMENT);
+  });
+
+  it("says when the app is willing to call something a give-up", async () => {
+    // The rule is invisible otherwise, and "gave up" is the strongest negative claim on the page.
+    renderPanel();
+
+    // Every give-up line carries it — findAll, because the fixture has more than one.
+    const hints = await screen.findAllByText(/Only films, and only after/);
+    const hint = hints[0]!;
+    expect(hint.textContent).toMatch(/24h with no further play/);
+    expect(hint.textContent).toMatch(/clock restarts/);
+    expect(hint.textContent).toMatch(/series is never counted/);
+  });
+});
+
 describe("NeedsALook — the thresholds it acts on", () => {
   beforeEach(() => {
     vi.clearAllMocks();

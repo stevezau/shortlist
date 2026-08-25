@@ -25,6 +25,10 @@ import type {
  * the owner could act on. When there are none, it says so in a line and takes no space.
  */
 
+/** Mirrors `SETTLING_HOURS` server-side (`report_service`), which decides the same thing. Displayed
+ *  only — the server owns the rule; this is the sentence that explains it. */
+const SETTLED_AFTER_HOURS = 24;
+
 type Problem = {
   key: string;
   text: React.ReactNode;
@@ -116,6 +120,10 @@ function gaveUp(people: EngagementReport["people"]): Problem[] {
   out.sort((a, b) => (a.pick.percent ?? 100) - (b.pick.percent ?? 100));
   return out.slice(0, 5).map(({ person, pick }, i) => ({
     key: `gave-up-${pick.title}-${i}`,
+    // Says WHEN the app is willing to make this claim, because "gave up" is the strongest negative
+    // thing on the page and the rule behind it is invisible. Without it the honest reaction to
+    // seeing a film you are two nights into is "the tracking is wrong", not "it will correct".
+    hint: `Only films, and only after ${SETTLED_AFTER_HOURS}h with no further play — the clock restarts if they come back, and a series is never counted here.`,
     text: (
       <>
         <strong className="font-medium text-foreground">{person}</strong> gave
