@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="3" totalSize="9582" offset="0" allowSync="1" art="/:/resources/show-fanart.jpg" identifier="com.plexapp.plugins.library" librarySectionID="2" librarySectionTitle="TV Shows" librarySectionUUID="0ecbeed4-1ecc-4a88-80c1-dfa00fd54944" mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="1786540085" nocache="1" thumb="/:/resources/show.png" title1="TV Shows" title2="All Shows" viewGroup="show" viewMode="65592">
+<Video ratingKey="641877" key="/library/metadata/641877" parentRatingKey="613966" grandparentRatingKey="613965" guid="plex://episode/62973c5c40ed2eb7ff4b800f" parentGuid="plex://season/62973c5c40ed2eb7ff4b800d" grandparentGuid="plex://show/62973c5c40ed2eb7ff4b7ffa" grandparentSlug="textmewhenyougethome" type="episode" title="Kenia Monge" grandparentKey="/library/metadata/613965" parentKey="/library/metadata/613966" grandparentTitle="#TextMeWhenYouGetHome" parentTitle="Season 1" contentRating="TV-14" summary="The family of Kenia Monge share the agonizing details of what happened around the beautiful, 19-year-old&#39;s disappearance. Father Tony Lee, her sister, Kim, and authorities explain how the texts in Kenia&#39;s cell phone were the impetus to finding her abductor, who ultimately led them to Kenia." index="1" parentIndex="1" audienceRating="7.0" viewCount="1" lastViewedAt="1658467759" year="2022" thumb="/library/metadata/641877/thumb/1787041781" art="/library/metadata/613965/art/1787432064" parentThumb="/library/metadata/613966/thumb/1787026295" grandparentThumb="/library/metadata/613965/thumb/1787432064" grandparentArt="/library/metadata/613965/art/1787432064" duration="2496384" originallyAvailableAt="2022-06-06" addedAt="1787041779" updatedAt="1787041781" audienceRatingImage="themoviedb://image.rating" chapterSource="media">
+<Media id="949851" duration="2496384" bitrate="8024" width="1920" height="1080" aspectRatio="1.78" audioChannels="2" audioCodec="eac3" videoCodec="h264" videoResolution="1080" container="mkv" videoFrameRate="24p" videoProfile="/media/REDACTED" hasVoiceActivity="0">
+<Part id="1133058" key="/library/parts/1133058/1737322258/file.mkv" duration="2496384" file="/media/REDACTED" size="2504386421" container="mkv" indexes="sd" videoProfile="/media/REDACTED" />
+</Media>
+<Image alt="Kenia Monge" type="coverPoster" url="/library/metadata/613965/thumb/1787432064" />
+<Image alt="Kenia Monge" type="snapshot" url="/library/metadata/641877/thumb/1787041781" />
+<Image alt="Kenia Monge" type="background" url="/library/metadata/613965/art/1787432064" />
+<Image alt="Kenia Monge" type="clearLogo" url="/library/metadata/613965/clearLogo/1787432064" />
+<UltraBlurColors topLeft="031116" topRight="1d475f" bottomRight="0e315a" bottomLeft="183c52" />
+<Role tag="Ashley Judd" />
+</Video>
+<Video ratingKey="641878" key="/library/metadata/641878" parentRatingKey="613966" grandparentRatingKey="613965" guid="plex://episode/62973c5c40ed2eb7ff4b8010" parentGuid="plex://season/62973c5c40ed2eb7ff4b800d" grandparentGuid="plex://show/62973c5c40ed2eb7ff4b7ffa" grandparentSlug="textmewhenyougethome" type="episode" title="Hannah Anderson" grandparentKey="/library/metadata/613965" parentKey="/library/metadata/613966" grandparentTitle="#TextMeWhenYouGetHome" parentTitle="Season 1" contentRating="TV-14" summary="Hannah Anderson&#39;s best friend knew something was wrong when Hannah stopped responding to her texts. No one knew that Hannah had been abducted by someone close to her. Hear the harrowing saga around Hannah&#39;s kidnapping and how the amber alert system was used for the first time." index="2" parentIndex="1" audienceRating="9.0" viewCount="1" lastViewedAt="1658471255" year="2022" thumb="/library/metadata/641878/thumb/1787041781" art="/library/metadata/613965/art/1787432064" parentThumb="/library/metadata/613966/thumb/1787026295" grandparentThumb="/library/metadata/613965/thumb/1787432064" grandparentArt="/library/metadata/613965/art/1787432064" duration="2503264" originallyAvailableAt="2022-06-13" addedAt="1787041779" updatedAt="1787041781" audienceRatingImage="themoviedb://image.rating" chapterSource="media">
+<Media id="949852" duration="2503264" bitrate="8194" width="1920" height="1080" aspectRatio="1.78" audioChannels="2" audioCodec="eac3" videoCodec="h264" videoResolution="1080" container="mkv" videoFrameRate="24p" videoProfile="/media/REDACTED" hasVoiceActivity="0">
+<Part id="1133059" key="/library/parts/1133059/1737322135/file.mkv" duration="2503264" file="/media/REDACTED" size="2564594503" container="mkv" indexes="sd" videoProfile="/media/REDACTED" />
+</Media>
+<Image alt="Hannah Anderson" type="coverPoster" url="/library/metadata/613965/thumb/1787432064" />
+<Image alt="Hannah Anderson" type="snapshot" url="/library/metadata/641878/thumb/1787041781" />
+<Image alt="Hannah Anderson" type="background" url="/library/metadata/613965/art/1787432064" />
+<Image alt="Hannah Anderson" type="clearLogo" url="/library/metadata/613965/clearLogo/1787432064" />
+<UltraBlurColors topLeft="561204" topRight="390f03" bottomRight="2f0c04" bottomLeft="4e1507" />
+<Role tag="Ashley Judd" />
+</Video>
+<Video ratingKey="658211" key="/library/metadata/658211" parentRatingKey="612789" grandparentRatingKey="612788" guid="plex://episode/659971bb4ea61897884dd6f9" parentGuid="plex://season/620e55d52748ec74389370ca" grandparentGuid="plex://show/5f57bdaf782ab300435487d0" grandparentSlug="3-body-problem" type="episode" title="Countdown" grandparentKey="/library/metadata/612788" parentKey="/library/metadata/612789" grandparentTitle="3 Body Problem" parentTitle="Season 1" contentRating="TV-MA" summary="Unsettling events put a group of brilliant friends on edge as a mystery unravels with origins tracing back to China during the Cultural Revolution." index="1" parentIndex="1" audienceRating="7.4" viewCount="2" lastViewedAt="1711795462" year="2024" thumb="/library/metadata/658211/thumb/1787047321" art="/library/metadata/612788/art/1787432070" parentThumb="/library/metadata/612789/thumb/1787026109" grandparentThumb="/library/metadata/612788/thumb/1787432070" grandparentArt="/library/metadata/612788/art/1787432070" grandparentTheme="/library/metadata/612788/theme/1787432070" duration="3635360" originallyAvailableAt="2024-03-21" addedAt="1787047320" updatedAt="1787047321" audienceRatingImage="themoviedb://image.rating" chapterSource="media">
+<Media id="967580" duration="3635360" bitrate="12273" width="3840" height="2160" aspectRatio="1.78" audioChannels="6" audioCodec="eac3" videoCodec="hevc" videoResolution="4k" container="mkv" videoFrameRate="24p" audioProfile="/media/REDACTED" videoProfile="/media/REDACTED" hasVoiceActivity="0">
+<Part id="1150787" key="/library/parts/1150787/1711016979/file.mkv" duration="3635360" file="/media/REDACTED" size="5577323144" audioProfile="/media/REDACTED" container="mkv" indexes="sd" videoProfile="/media/REDACTED" />
+</Media>
+<Image alt="Countdown" type="coverPoster" url="/library/metadata/612788/thumb/1787432070" />
+<Image alt="Countdown" type="snapshot" url="/library/metadata/658211/thumb/1787047321" />
+<Image alt="Countdown" type="background" url="/library/metadata/612788/art/1787432070" />
+<Image alt="Countdown" type="clearLogo" url="/library/metadata/612788/clearLogo/1787432070" />
+<Image alt="Countdown" type="backgroundSquare" url="/library/metadata/612788/squareArt/1787432070" />
+<UltraBlurColors topLeft="49210a" topRight="983d2c" bottomRight="8b301f" bottomLeft="19250d" />
+<Director tag="Derek Tsang Kwok-Cheung" />
+<Writer tag="David Benioff" />
+<Writer tag="D. B. Weiss" />
+<Role tag="Jovan Adepo" />
+<Role tag="Rosalind Chao" />
+<Role tag="Liam Cunningham" />
+</Video>
+</MediaContainer>

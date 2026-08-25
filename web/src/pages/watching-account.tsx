@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Check, Eye, Loader2, UserPlus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
 
 import { BackLink } from "@/components/back-link";
 import {
@@ -20,7 +21,9 @@ import {
   useDismissNotification,
   useHomeUserCandidates,
   useTransferWatchHistory,
+  useUndoWatchTransfer,
   useUsers,
+  useWatchSnapshots,
 } from "@/lib/queries";
 import type { Collection, TransferResult } from "@/lib/types";
 
@@ -112,7 +115,13 @@ export function WatchingAccountPage() {
   const collectionsQuery = useCollections();
   const dismiss = useDismissNotification();
   const queryClient = useQueryClient();
-  const [chose, setChose] = useState<"shelf-off" | "transfer" | null>(null);
+  const [params] = useSearchParams();
+  // `?setup=1` opens straight on the transfer step. The Users page links here that way, so pressing
+  // "Watching account" lands on the tool rather than on the explainer above it — the guide is what
+  // you need once, and the tool is what you come back for.
+  const [chose, setChose] = useState<"shelf-off" | "transfer" | null>(
+    params.get("setup") ? "transfer" : null,
+  );
 
   const users = usersQuery.data ?? [];
   const collections = collectionsQuery.data ?? [];
@@ -297,9 +306,45 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
   const candidates = useHomeUserCandidates();
   const users = useUsers();
   const [target, setTarget] = useState<number | null>(null);
-  const [scrobble, setScrobble] = useState(false);
   const [preview, setPreview] = useState<TransferResult | null>(null);
+  // Which account the preview describes. Without it, previewing account A and then selecting B left
+  // A's numbers and A's acknowledgement on screen, authorising a real run against B.
+  const [previewOf, setPreviewOf] = useState<number | null>(null);
+  // Copying is additive; removing is not. A preview that says "this un-marks 412 things" has to be
+  // acknowledged before the real run, so the destructive half is never a surprise.
+  const [acceptedRemovals, setAcceptedRemovals] = useState(false);
   const transfer = useTransferWatchHistory();
+  // TWO instances, deliberately. One served both the dry run and the real one, so previewing an
+  // undo set `isSuccess` — which disabled the real Undo button and rendered "Put back exactly as it
+  // was", a factual claim about a Plex write that never happened.
+  const undoPreviewCall = useUndoWatchTransfer();
+  const undo = useUndoWatchTransfer();
+  // Undos that are still available, from the server rather than from the last response. The queue
+  // exists precisely so the work survives a request timing out — and in exactly that case the
+  // response carrying the snapshot id never arrives, so the completed destructive run had no way
+  // back. A page reload had the same effect.
+  const snapshots = useWatchSnapshots();
+  // The undo's own preview. It is a mirror too — it removes whatever the snapshot lacks, which is
+  // everything watched on that account since — and it had none of the protection the transfer got.
+  const [undoPreview, setUndoPreview] = useState<{
+    id: number;
+    report: TransferResult;
+  } | null>(null);
+  // WHICH snapshot the last real undo restored. `undo.isSuccess` is mutation-wide, so restoring an
+  // older snapshot from the list marked a later copy's Undo as already done — disabled, and claiming
+  // "Put back exactly as it was" about a Plex write that never happened.
+  const [undoneId, setUndoneId] = useState<number | null>(null);
+  // Which snapshot a failed undo was for AND why — scoped to the row so it does not render under
+  // every snapshot, and carrying the server's own sentence because a refusal comes back as a 200
+  // with the reason in `errors`, where React Query has no error object and the generic fallback
+  // ("please try again") invited a retry of something that can never succeed.
+  const [undoFailure, setUndoFailure] = useState<{
+    id: number;
+    reason: string;
+  } | null>(null);
+  // A real run that came back `dry_run` — safe mode forced it. Tracked because the page would
+  // otherwise reset itself silently, with nothing to say why nothing happened.
+  const [safeModeBlocked, setSafeModeBlocked] = useState(false);
   // Offered right here rather than as "go and run the watch sync": until setup finishes every route
   // redirects back to /setup, so a wizard reading "go to Jobs" is being sent somewhere it cannot go.
   const readHistory = useMutation({
@@ -321,10 +366,61 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
   const run = (dryRun: boolean) => {
     if (target === null) return;
     transfer.mutate(
-      { to_user_id: target, scrobble, dry_run: dryRun },
-      { onSuccess: (result) => setPreview(dryRun ? result : null) },
+      { to_user_id: target, dry_run: dryRun },
+      {
+        onSuccess: (result) => {
+          // Safe mode forces `dry_run` on server-side even when the real button was pressed, so a
+          // "real" run can come back having written nothing. Keying the reset on the LOCAL `dryRun`
+          // then wiped the preview, re-disabled the button and restored "Press Preview first" — with
+          // no mention anywhere that safe mode was the reason. The undo half got that sentence in an
+          // earlier round; this half never did.
+          const reallyWrote = !dryRun && !result.dry_run;
+          // Asked for a real run and got a dry one back: safe mode. Without this the page simply
+          // reset itself and said nothing at all had happened.
+          setSafeModeBlocked(!dryRun && result.dry_run);
+          setPreview(reallyWrote ? null : result);
+          setPreviewOf(reallyWrote ? null : target);
+          if (!reallyWrote) setAcceptedRemovals(dryRun ? false : acceptedRemovals);
+          if (reallyWrote) {
+            // A real copy changes the very account any pending undo preview described, so that
+            // preview's numbers and its enabled "Restore it" button are no longer about anything
+            // that exists. The transfer's own preview has `previewOf` for this; the undo had nothing.
+            setUndoPreview(null);
+            setUndoFailure(null);
+          }
+        },
+      },
     );
   };
+
+  const removals = preview ? preview.unmarks + preview.offsets_cleared : 0;
+  // Blocked until a preview FOR THIS ACCOUNT has been seen, and its removals accepted.
+  //
+  // Keying only on `removals > 0` meant no preview at all read as "nothing to remove": pressing the
+  // real button first un-ticked a Home user's watch history with no listing, no count and no
+  // tick-box. And `previewOf` is compared to the current target because an acknowledgement given for
+  // one account must not authorise a real run against another.
+  const staleTarget = preview !== null && previewOf !== target;
+  /** A 200 is only a restore when it carried no errors AND actually wrote.
+   *
+   *  Safe mode forces `dry_run` on server-side even when the real button was pressed, so a report
+   *  can come back `{dry_run: true, applied: 1, errors: []}` — which the previous check read as a
+   *  completed restore and captioned "Put back exactly as it was." The transfer half of this page
+   *  already guarded on `dry_run`; the undo half did not. */
+  const undoLanded = (r: TransferResult) => r.errors.length === 0 && !r.dry_run;
+
+  const undoFailureReason = (r: TransferResult) =>
+    r.errors[0] ??
+    (r.dry_run
+      ? "Safe mode is on, so nothing was written."
+      : "please try again.");
+
+  // Did the last real undo restore THIS transfer's snapshot? Mutation-wide `isSuccess` could not
+  // answer that, and got it wrong whenever an older snapshot had been restored in the same session.
+  const undoneThisOne =
+    transfer.data?.snapshot_id != null && undoneId === transfer.data.snapshot_id;
+  const blocked =
+    preview === null || staleTarget || (removals > 0 && !acceptedRemovals);
 
   return (
     <div ref={ref} className="scroll-mt-6">
@@ -377,7 +473,16 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
                       className="mt-1"
                       disabled={blocked}
                       checked={known ? target === known.id : false}
-                      onChange={() => known && setTarget(known.id)}
+                      onChange={() => {
+                        if (!known) return;
+                        setTarget(known.id);
+                        // A preview describes ONE account. Carrying it (and its acknowledgement)
+                        // across a change of account would authorise a real run against numbers
+                        // that were never shown for it.
+                        setPreview(null);
+                        setPreviewOf(null);
+                        setAcceptedRemovals(false);
+                      }}
                     />
                     <span className="min-w-0">
                       <span className="font-medium">{candidate.title}</span>
@@ -400,8 +505,8 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
                       {candidate.protected && (
                         <span className="block text-xs text-muted-foreground">
                           PIN-protected, so Shortlist can&rsquo;t sign in as it
-                          &mdash; the Plex checkmarks option below won&rsquo;t
-                          work for this account.
+                          &mdash; it can&rsquo;t copy your history onto this
+                          account.
                         </span>
                       )}
                     </span>
@@ -412,32 +517,138 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
           )}
         </QueryBoundary>
 
-        <label className="flex items-start gap-3 rounded-md border border-dashed p-3 text-sm">
-          <input
-            type="checkbox"
-            className="mt-1"
-            checked={scrobble}
-            onChange={(e) => setScrobble(e.target.checked)}
-          />
-          <span>
-            <span className="font-medium">
-              Also carry your watched status across in Plex
-            </span>
-            <span className="block text-xs text-muted-foreground">
-              Leave this off and Shortlist knows what you&rsquo;ve seen but Plex
-              doesn&rsquo;t &mdash; the new account starts with everything
-              unwatched, no ticks, and half-finished shows missing from Continue
-              Watching. Turn it on and each title is marked watched on the new
-              account, one write apiece.{" "}
-              <strong className="text-foreground">
-                Plex records them all as watched today
-              </strong>{" "}
-              &mdash; it has no way to store the original dates. Shortlist keeps
-              the real ones itself either way, so your recommendations are
-              unaffected.
-            </span>
-          </span>
-        </label>
+        <div className="rounded-md border border-dashed p-3 text-sm">
+          <p className="font-medium">What this does to the new account</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            It ends up matching yours: the same films ticked off, the same
+            episodes of each show, and anything you&rsquo;re part-way through
+            sitting at the same point in Continue Watching. Anything watched on
+            that account that you haven&rsquo;t watched is un-ticked, so the two
+            really do match. Your own account is never written to.{" "}
+            <strong className="text-foreground">
+              Plex records it all as watched today
+            </strong>{" "}
+            &mdash; nothing can store the original dates. They&rsquo;re written
+            oldest first so Continue Watching still comes out in the right
+            order, and Shortlist keeps the real dates itself, so your
+            recommendations are unaffected.
+          </p>
+        </div>
+
+        {/* Hidden only once a REAL copy has succeeded and its own panel has taken over. Gating on
+            `isSuccess` alone hid the list the moment Preview was pressed — a dry run sets it too —
+            removing the only route back to a completed destructive run, which is exactly the case
+            this list exists for. */}
+        {/* Hidden only when the success panel's OWN inline undo has taken over — which needs a
+            snapshot to exist. A converged re-run, the very thing this page tells you to do ("Run it
+            again — it only writes what's still missing"), writes nothing, takes no snapshot and
+            returns `snapshot_id: null`, so the panel renders no Undo. Hiding the list on top of that
+            left no route back to the earlier copy at all, which is the exact failure the list was
+            added to fix. */}
+        {(snapshots.data ?? []).length > 0 &&
+          !(
+            transfer.isSuccess &&
+            !transfer.data.dry_run &&
+            !nothingToCopy &&
+            transfer.data.snapshot_id !== null
+          ) && (
+          <div className="space-y-2 rounded-md border border-dashed p-3 text-sm">
+            <p className="font-medium">An earlier copy can still be undone</p>
+            {(snapshots.data ?? []).map((snapshot) => (
+              <div key={snapshot.id} className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={undoPreviewCall.isPending || !snapshot.complete}
+                    onClick={() =>
+                      (setUndoFailure(null),
+                      undoPreviewCall.mutate(
+                        { snapshot_id: snapshot.id, dry_run: true },
+                        {
+                          onSuccess: (r) =>
+                            setUndoPreview({ id: snapshot.id, report: r }),
+                          onError: (e) =>
+                            setUndoFailure({
+                              id: snapshot.id,
+                              reason: apiErrorMessage(e, "please try again."),
+                            }),
+                        },
+                      ))
+                    }
+                  >
+                    Preview undoing the copy onto {snapshot.username}
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    {snapshot.complete
+                      ? `Would put back ${snapshot.entries} title${snapshot.entries === 1 ? "" : "s"} as they were.`
+                      : "Can't be undone — a library wasn't readable when that copy ran, so the saved state is incomplete."}
+                  </span>
+                </div>
+                {undoFailure?.id === snapshot.id && (
+                  <p className="text-xs text-destructive">
+                    Couldn&rsquo;t undo it: {undoFailure.reason}
+                  </p>
+                )}
+                {undoPreview?.id === snapshot.id && (
+                  <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
+                    {/* Undo is a mirror in the other direction, so it REMOVES anything watched on
+                        that account since the copy. It used to be one unguarded click. */}
+                    <p>
+                      Restoring makes {snapshot.username} match the saved state
+                      again. That un-ticks{" "}
+                      <strong>
+                        {undoPreview.report.unmarks +
+                          undoPreview.report.offsets_cleared}
+                      </strong>{" "}
+                      thing(s) watched on it since &mdash; including anything
+                      watched there after the copy.
+                    </p>
+                    {undoPreview.report.removals_preview.length > 0 && (
+                      <ul className="max-h-40 list-disc overflow-y-auto pl-5 text-xs text-muted-foreground">
+                        {undoPreview.report.removals_preview.map((title) => (
+                          <li key={title}>{title}</li>
+                        ))}
+                      </ul>
+                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={undo.isPending}
+                      onClick={() =>
+                        (setUndoFailure(null),
+                        undo.mutate(
+                          { snapshot_id: snapshot.id, dry_run: false },
+                          {
+                            onSuccess: (r) => {
+                              if (!undoLanded(r)) {
+                                setUndoFailure({
+                                  id: snapshot.id,
+                                  reason: undoFailureReason(r),
+                                });
+                                return;
+                              }
+                              setUndoPreview(null);
+                              setUndoFailure(null);
+                              setUndoneId(snapshot.id);
+                            },
+                            onError: (e) =>
+                              setUndoFailure({
+                                id: snapshot.id,
+                                reason: apiErrorMessage(e, "please try again."),
+                              }),
+                          },
+                        ))
+                      }
+                    >
+                      Restore it
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -451,11 +662,18 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
             Preview
           </Button>
           <Button
-            disabled={target === null || transfer.isPending}
+            disabled={target === null || transfer.isPending || blocked}
             onClick={() => run(false)}
           >
-            Move my history across
+            Copy my history across
           </Button>
+          {blocked && (
+            <span className="text-xs text-muted-foreground">
+              {preview === null || staleTarget
+                ? "Press Preview first \u2014 it shows what would change, including anything it would un-tick."
+                : "Tick the box above to continue."}
+            </span>
+          )}
         </div>
 
         {nothingToCopy && (
@@ -498,31 +716,215 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
           </div>
         )}
 
-        {preview && !nothingToCopy && (
-          <p className="rounded-md border border-dashed bg-muted/30 p-3 text-sm">
-            Would copy <strong>{preview.copied}</strong> titles
-            {preview.already_present > 0 &&
-              `, leaving ${preview.already_present} they've already watched alone`}
-            {scrobble &&
-              `, and mark ${preview.scrobbled} of them watched in Plex`}
-            . Nothing has been changed yet.
+        {safeModeBlocked && (
+          <p className="rounded-md border border-dashed p-3 text-sm">
+            <strong>Safe mode is on, so nothing was written.</strong> Turn it off
+            in Settings to let this run for real.
           </p>
         )}
 
+        {preview && !nothingToCopy && (
+          <div className="space-y-2 rounded-md border border-dashed bg-muted/30 p-3 text-sm">
+            <p>
+              Would tick <strong>{preview.marks}</strong>{" "}
+              {preview.marks === 1 ? "title" : "titles"} on that account
+              {preview.offsets_set > 0 &&
+                `, and set ${preview.offsets_set} back to where you'd got to`}
+              . Nothing has been changed yet.
+            </p>
+            {preview.target_unreadable.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                {/* `unreachable` was the obvious field and it is structurally 0 on a preview — every
+                    write returns True under dry run — so that paragraph could never render.
+                    `target_unreadable` is the preview's only working channel for "what can't be
+                    written there". Built as ONE string rather than interleaved JSX so the sentence
+                    stays a single text node: that is what a person reads and what a test can find. */}
+                {preview.target_unreadable.length === 1
+                  ? "That account can't see one of your libraries, so anything in it will be skipped. Share it with that account if you want those carried across too."
+                  : `That account can't see ${preview.target_unreadable.length} of your libraries, so anything in them will be skipped. Share them with that account if you want those carried across too.`}
+              </p>
+            )}
+            {removals > 0 && (
+              <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3">
+                <p>
+                  <strong>
+                    This also un-ticks {removals}{" "}
+                    {removals === 1 ? "thing" : "things"}
+                  </strong>{" "}
+                  that account has watched and you haven&rsquo;t. That is what
+                  makes the two match &mdash; and it&rsquo;s what repairs an
+                  account an older version of Shortlist over-marked.
+                </p>
+                {preview.removals_preview.length > 0 && (
+                  <ul className="max-h-40 list-disc overflow-y-auto pl-5 text-xs text-muted-foreground">
+                    {preview.removals_preview.map((title) => (
+                      <li key={title}>{title}</li>
+                    ))}
+                  </ul>
+                )}
+                {removals > preview.removals_preview.length && (
+                  <p className="text-xs text-muted-foreground">
+                    &hellip;and {removals - preview.removals_preview.length}{" "}
+                    more.
+                  </p>
+                )}
+                <label className="flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={acceptedRemovals}
+                    onChange={(e) => setAcceptedRemovals(e.target.checked)}
+                  />
+                  <span className="text-xs">
+                    {/* The "can be undone" half is CONDITIONAL. A target that cannot see one of the
+                        libraries gets an incomplete snapshot, and `undo_transfer` refuses to restore
+                        from one — so promising an undo here, on the screen that authorises deleting
+                        someone's watch history, was a promise the transfer itself would break. */}
+                    I understand these will be un-ticked.{" "}
+                    {preview.target_unreadable.length > 0 ? (
+                      <strong className="text-foreground">
+                        This copy will NOT be undoable, because that account
+                        can&rsquo;t see all of your libraries &mdash; Shortlist
+                        can&rsquo;t save a complete picture of its current state.
+                      </strong>
+                    ) : (
+                      <>
+                        Shortlist saves that account&rsquo;s current state first,
+                        so this can be undone.
+                      </>
+                    )}
+                  </span>
+                </label>
+              </div>
+            )}
+          </div>
+        )}
+
         {transfer.isSuccess && !transfer.data.dry_run && !nothingToCopy && (
-          <p className="flex items-start gap-2 rounded-md border bg-muted/40 p-3 text-sm">
-            <Check
-              className="mt-0.5 h-4 w-4 shrink-0 text-success"
-              aria-hidden="true"
-            />
-            <span>
-              Copied <strong>{transfer.data.copied}</strong> titles
-              {transfer.data.scrobbled > 0 &&
-                ` and marked ${transfer.data.scrobbled} watched in Plex`}
-              . Switch to that account in your Plex app and watch there from now
-              on &mdash; its row fills in on the next run.
-            </span>
-          </p>
+          <div className="space-y-2 rounded-md border bg-muted/40 p-3 text-sm">
+            <p className="flex items-start gap-2">
+              <Check
+                className="mt-0.5 h-4 w-4 shrink-0 text-success"
+                aria-hidden="true"
+              />
+              <span>
+                Copied <strong>{transfer.data.applied}</strong>{" "}
+                {transfer.data.applied === 1 ? "change" : "changes"} across
+                {transfer.data.unmarks > 0 &&
+                  `, including ${transfer.data.unmarks} un-ticked`}
+                . Switch to that account in your Plex app and watch there from
+                now on &mdash; its row fills in on the next run.
+              </span>
+            </p>
+            {/* Re-read afterwards rather than trusting the writes: Plex accepting a write is not
+                the same as the write taking effect, and the old version reported counts it had
+                never checked. */}
+            {undoneThisOne ? (
+              /* The verify lines below are present-tense claims about the account's CURRENT state,
+                 and a landed undo reverses exactly that state — so they went on asserting "that
+                 account now matches yours" beside "Put back exactly as it was.", two contradictory
+                 claims about one account. The mismatch branch was worse: "Run it again" told the
+                 owner to redo the copy they had just reversed. */
+              <p className="text-xs text-muted-foreground">
+                That account is back to how it was before the copy.
+              </p>
+            ) : transfer.data.verify_mismatched > 0 ? (
+              <p className="text-xs text-destructive">
+                {transfer.data.verify_mismatched} didn&rsquo;t take effect when
+                Shortlist checked afterwards. Run it again &mdash; it only
+                writes what&rsquo;s still missing.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Checked afterwards: that account now matches yours.
+              </p>
+            )}
+            {transfer.data.unreachable > 0 && (
+              <p className="text-xs text-muted-foreground">
+                {transfer.data.unreachable} were in libraries that account
+                can&rsquo;t see and were skipped.
+              </p>
+            )}
+            {/* A partial target read makes the snapshot incomplete, and `undo_transfer` refuses it —
+                returning 200 with the reason in `errors`. Offering the button anyway meant the
+                refusal fired `onSuccess` and the panel flipped to "Put back exactly as it was."
+                about a Plex write that never happened. The snapshot LIST already got this right;
+                this was the un-fixed half. */}
+            {transfer.data.target_unreadable.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                This can&rsquo;t be undone: {transfer.data.target_unreadable.length}{" "}
+                library wasn&rsquo;t readable for that account, so the saved state
+                is incomplete.
+              </p>
+            )}
+            {transfer.data.errors.length > 0 && (
+              <p className="text-xs text-destructive">
+                {transfer.data.errors[0]}
+              </p>
+            )}
+            {transfer.data.snapshot_id !== null &&
+              transfer.data.target_unreadable.length === 0 && (
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={undo.isPending || undoneThisOne}
+                  onClick={() =>
+                    (setUndoFailure(null),
+                    undo.mutate(
+                      {
+                        snapshot_id: transfer.data.snapshot_id as number,
+                        dry_run: false,
+                      },
+                      {
+                        // A 200 carrying `errors` is a REFUSAL — an incomplete snapshot, an account
+                        // that is no longer a Home user, a restore that did not land. Treating any
+                        // 200 as a completed restore is what let the panel claim success for one.
+                        onSuccess: (r) =>
+                          undoLanded(r)
+                            ? (setUndoFailure(null),
+                              setUndoneId(transfer.data.snapshot_id as number))
+                            : setUndoFailure({
+                                id: transfer.data.snapshot_id as number,
+                                reason: undoFailureReason(r),
+                              }),
+                        onError: (e) =>
+                          setUndoFailure({
+                            id: transfer.data.snapshot_id as number,
+                            reason: apiErrorMessage(e, "please try again."),
+                          }),
+                      },
+                    ))
+                  }
+                >
+                  {undo.isPending && (
+                    <Loader2
+                      className="h-4 w-4 animate-spin"
+                      aria-hidden="true"
+                    />
+                  )}
+                  Undo this
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  {/* Says what it removes. This button is offered straight after a copy, when the
+                      account has had no chance to accumulate anything of its own — but the panel
+                      stays mounted, so the copy states the consequence rather than assuming. */}
+                  {undoneThisOne
+                    ? "Put back exactly as it was."
+                    : "Puts that account back as it was before \u2014 un-ticking anything watched on it since."}
+                </span>
+              </div>
+            )}
+            {undoFailure?.id === transfer.data.snapshot_id && (
+              <p className="text-xs text-destructive">
+                {/* Rendered here BECAUSE the snapshot list is hidden while this panel is up. A
+                    refusal comes back as a 200, so `undo.isError` is false for it — a partial or
+                    refused restore used to show nothing while the line above still claimed the
+                    account matched. */}
+                Couldn&rsquo;t undo it: {undoFailure.reason}
+              </p>
+            )}
+          </div>
         )}
 
         {transfer.isError && (

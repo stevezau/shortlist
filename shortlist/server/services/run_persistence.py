@@ -1062,7 +1062,21 @@ def prune_runs(session: Session, retention_months: int) -> int:
     # states: `runs.retention = 0` ("keep run history for ever", a supported setting), no run old
     # enough to prune yet, and after `DELETE /api/runs`, which is offered as a way to RECLAIM space.
     watch_cutoff = datetime.now(UTC) - timedelta(days=max(retention_months, WATCH_RETENTION_MONTHS) * 30)
-    session.query(WatchEvent).filter(WatchEvent.viewed_at < watch_cutoff).delete(synchronize_session=False)
+    # `source='transfer'` rows are EXEMPT. They are not plays that happened here — they are a
+    # watching-account transfer's copy of the source's true watch dates, and they are the only carrier
+    # of those dates: `stamp_true_dates` reads them back from this table so `WatchSync` can re-run it
+    # once the target's `watched_titles` rows exist. Most are years old by construction, so the
+    # six-month ceiling deletes them almost in full — and a prune landing between the transfer and the
+    # target's first watch sync leaves `source_viewed_at` NULL for ever, silently, which is exactly the
+    # failure that column exists to prevent.
+    #
+    # They are also not what the ceiling is for: it bounds rows that grow with every play by every
+    # account, while these are bounded by titles-on-one-account and are written once.
+    (
+        session.query(WatchEvent)
+        .filter(WatchEvent.viewed_at < watch_cutoff, WatchEvent.source != "transfer")
+        .delete(synchronize_session=False)
+    )
     session.query(WatchSession).filter(WatchSession.started_at < watch_cutoff).delete(synchronize_session=False)
 
     if retention_months <= 0:

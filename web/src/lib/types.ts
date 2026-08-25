@@ -189,6 +189,9 @@ export type WatchedPage = Schemas["WatchedPageOut"];
 export type HomeUserCandidate = Schemas["HomeUserOut"];
 export type TransferResult = Schemas["TransferOut"];
 
+/** A transfer that can still be undone (GET /api/watching-account/snapshots). */
+export type WatchSnapshot = Schemas["SnapshotOut"];
+
 /** What the watch-history panel is filtering by. "" = every type. */
 export type WatchedFilters = {
   q: string;

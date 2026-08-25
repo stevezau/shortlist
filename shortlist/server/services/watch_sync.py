@@ -25,6 +25,7 @@ from shortlist.server.db.models import User
 from shortlist.server.services.sse import EventBus
 from shortlist.server.services.watch_cache import DEFAULT_FULL_EVERY, WatchCache
 from shortlist.server.services.watch_events import ingest_play_history
+from shortlist.server.services.watching_account import stamp_true_dates
 from shortlist.server.settings_store import SettingsStore
 
 
@@ -178,6 +179,13 @@ class WatchSync:
             # exposure to a bad response by ~168.
             if force_full:
                 cache.forget_dead_sections(session, user_id, {str(section.key) for section in sections})
+            # A transferred account's rows are CREATED here, by reading back what the transfer wrote
+            # to Plex — so the transfer itself had nothing to stamp, and every one of them arrives
+            # dated today. Stamping after the read is what puts the real dates on them. Idempotent and
+            # a no-op for the 99% of accounts that carry no transferred events.
+            stamped = stamp_true_dates(session, user_id)
+            if stamped:
+                logger.info("watch cache: {} — restored the true watch dates on {} title(s)", profile.username, stamped)
             session.commit()
             history = cache.watched_set(session, user_id)
 

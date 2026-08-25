@@ -532,17 +532,39 @@ export function useHomeUserCandidates() {
 export function useTransferWatchHistory() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: {
-      to_user_id: number;
-      scrobble: boolean;
-      dry_run: boolean;
-    }) => api.transferWatchHistory(body),
+    mutationFn: (body: { to_user_id: number; dry_run: boolean }) =>
+      api.transferWatchHistory(body),
     onSuccess: (result) => {
       // A dry run changed nothing, so refetching would only churn. A real one rewrote someone's
       // watched set, which the users list and every watch-history panel read from.
       if (result.dry_run) return;
       queryClient.invalidateQueries({ queryKey: queryKeys.users });
       queryClient.invalidateQueries({ queryKey: ["users"] });
+      queryClient.invalidateQueries({ queryKey: ["watch-snapshots"] });
+    },
+  });
+}
+
+export function useWatchSnapshots() {
+  return useQuery({
+    queryKey: ["watch-snapshots"],
+    queryFn: () => api.listWatchSnapshots(),
+    retry: false,
+  });
+}
+
+export function useUndoWatchTransfer() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { snapshot_id: number; dry_run: boolean }) =>
+      api.undoWatchTransfer(body),
+    onSuccess: (result) => {
+      // Same reasoning as the transfer: an undo rewrites the same watched set back again, so the
+      // views reading it are just as stale afterwards.
+      if (result.dry_run) return;
+      queryClient.invalidateQueries({ queryKey: queryKeys.users });
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+      queryClient.invalidateQueries({ queryKey: ["watch-snapshots"] });
     },
   });
 }

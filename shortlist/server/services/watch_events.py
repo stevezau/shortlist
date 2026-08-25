@@ -587,7 +587,17 @@ def _scan_plays(
         )
         for row, keys in _session_starts(session, floor, tmdb_of)
     ]
-    events = session.query(WatchEvent)
+    # `source='transfer'` rows are somebody ELSE's watches, copied onto this account by the
+    # watching-account transfer to carry the true dates across. They are real watches for
+    # recommendation purposes — recency, seeds, the already-watched filter — but they are NOT this
+    # person pressing play on a Shortlist row, and every one of them predates the row that would be
+    # credited. Counting them would mint credits for rows that did nothing, inflate
+    # `row_effectiveness`, and (through `_CreditInputs.observed`) make those credits impossible to
+    # withdraw afterwards.
+    #
+    # The design said this filter existed before it did; the test that was supposed to cover it
+    # asserted only that the rows carried the marker, never that attribution ignored them.
+    events = session.query(WatchEvent).filter(WatchEvent.source != "transfer")
     if floor is not None:
         events = events.filter(WatchEvent.viewed_at >= floor)
 

@@ -53,7 +53,7 @@ heading: Reference
 | `run.concurrency`                                     | `4`                                | how many users a run processes at once (1–16). Only history/candidate/AI reads overlap; every Plex + plex.tv write stays serial. 1 = fully sequential                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `runs.retention`                                      | `3`                                | how many months of run history to keep; after each run, anything older is auto-pruned (runs + per-user traces + activity logs deleted; **picks and deliveries are always kept**. The first is the dashboard's history, the second is what tells a cleanup which Plex collection is which). `0` = keep everything forever                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `events.retention`                                    | `0` (forever)                      | how many months of the audit trail (`events`) to keep (0–24). Kept forever by default: "what changed on whose share at 03:31" is the record you want long after the run detail around it is gone. `0` = never prune. Set from Settings → Advanced → "Change log kept"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `jobs.max_parallel_readonly`                          | `3`                                | how many READ-ONLY background jobs may run at once (1–8). Jobs that write to Plex/plex.tv are always exclusive and never overlap a run. Share-filter writes are read-modify-write merges, so two at once would lose one of them. Read-only: `sync.history`, `backup.take`, `maintenance.prune` and `watch.reconcile`. `sync.users` counts as a writer because it renames collections. Dial to 1 if your PMS objects to the concurrency                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `jobs.max_parallel_readonly`                          | `3`                                | how many READ-ONLY background jobs may run at once (1–8). Jobs that write to Plex/plex.tv are always exclusive and never overlap a run. Share-filter writes are read-modify-write merges, so two at once would lose one of them. Read-only: `sync.history`, `backup.take`, `maintenance.prune` and `watch.reconcile`. `sync.users` counts as a writer because it renames collections. Dial to 1 if your PMS objects to the concurrency                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `sync.watch_cron`                                     | `""` (daily 04:17)                 | cron expression for the watch-history sync schedule. Blank = built-in default. Set from the job's frequency picker on the Jobs page                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `sync.watch_incremental`                              | `true`                             | read only what changed since the last sync instead of every watched title, per user, per library, every night. Done by ORDERING (`sort=lastViewedAt:desc`, then stop at the first title older than the cursor), because a `lastViewedAt>=` query filter is silently ignored by PMS 1.43.3. It returns the full set with a 200 (measured; see `tests/fixtures/pms_watched_incremental.xml.txt`). When the read can prove it reached everything back to the cursor — it either saw an older title or walked the library's reported total — a title missing from it that was watched inside that window has been un-watched, and is dropped. When it cannot prove that (a PMS that reports no total and caps the page, or one that ignores the sort), it tops up and deletes nothing, because a truncated read and an un-watch look identical from the outside. Further back than the cursor it cannot tell either way, so a complete read still happens every `sync.watch_full_days` regardless. `false` = always read everything                                                                                                |
 | `sync.watch_full_days`                                | `7`                                | how often the COMPLETE watch-history re-read happens, in days (1–90). It is the only thing that can notice a title un-watched or removed longer ago than the nightly read reaches back, so it is not optional. Only its frequency is. It also bounds how quickly a **Plex rating** on an OLDER title takes effect. Rating something does not move its `lastViewedAt`, and the incremental read walks by that stamp — but it still returns every title watched since the cursor, ratings included, so rating what you just watched is picked up on the very next sync. It is only a rating on something watched further back than the cursor reaches that waits for the full read, up to 7 days at the default (measured on a live server: two accounts' ratings arrived incrementally while a third's older one needed the full pass). Lower this if you want those to land sooner, at the cost of a full re-read that much more often. If a library cannot be read incrementally at all, that library falls back to a complete read on its own rather than serving a stale set                                                |
@@ -184,14 +184,39 @@ GET  /api/users/{id}/watched?q=&media_type=movie|show&limit=&offset= -> {items, 
 ```
 GET  /api/watching-account/candidates -> [{plex_account_id, title, protected, already_a_shortlist_user}]
      Plex Home users the owner could move their watching to. The admin account is never a candidate.
-POST /api/watching-account/transfer {to_user_id, scrobble?, dry_run?} -> {copied, already_present, scrobbled, scrobble_skipped, dry_run, source_empty, errors}
-     Copies the owner's watched set onto the watching account, preserving the TRUE watch dates in
-     `watched_titles.source_viewed_at`. `scrobble` additionally marks each title played on the PMS as
-     that account — Plex stamps every one of those `now` and cannot be told otherwise, which is
-     exactly why the real dates are stored separately.
-     `source_empty` means nothing had ever been read for the owner, so there was nothing to copy —
-     told apart from `copied: 0`, which means the target already had everything. Run
-     `sync.history` (Jobs → Sync watch history) and try again.
+POST /api/watching-account/transfer {to_user_id, dry_run?} -> {planned, applied, unreachable, failed, marks,
+     unmarks, offsets_set, offsets_cleared, removals_preview, verify_mismatched, verify_checked,
+     shows_cleared, target_unreadable, events_copied, titles_cached, snapshot_id, dry_run,
+     source_empty, errors}
+     Replicates the owner's watch state onto the watching account: the exact episodes, the exact
+     rewatch counts, and the exact position in anything part-watched.
+     MIRRORS — `unmarks`/`offsets_cleared` count what it REMOVES from the target because the owner
+     has not watched it. That is what makes the result a replica, and what repairs an account an
+     older Shortlist over-marked. Always dry-run first: `removals_preview` names up to 50 of them.
+     A snapshot of the target is taken before the first write; `snapshot_id` is what `/undo` needs.
+     `unreachable` counts titles in libraries that account cannot see (the PMS 404s) — normal, not a
+     failure. `failed` counts writes that RAISED (a timeout, a 500) and is the opposite claim: not
+     "that title isn't there for them" but "we don't know what happened". Those stay in
+     `verify_mismatched` rather than being excused out of it. `verify_mismatched` comes from re-reading the target afterwards, so it reports what
+     actually landed rather than what was sent.
+     `source_empty` means the OWNER'S ACCOUNT has nothing watched — told apart from `planned: 0`,
+     which means the two already match.
+     `shows_cleared` counts show rows un-scrobbled because every episode of them was removed — an
+     episode un-scrobble does not clear its show, and a show left flagged at 0/N goes invisible to
+     the watch cache. `target_unreadable` lists libraries the TARGET cannot see: not a failure, but
+     it makes the snapshot partial, so undo is refused for it.
+GET  /api/watching-account/snapshots -> [{id, user_id, username, taken_at, entries, complete}]
+     Transfers that can still be undone, newest first. Needed because the undo is otherwise reachable
+     only from the response of the transfer that created it — and the queue exists precisely so the
+     work survives a request timing out, which is the case where that response never arrives.
+     Snapshots an UNDO took are excluded: restoring one re-applies the transfer it reversed, and
+     without the copied play events it would arrive undated. `complete: false` means a library was
+     unreadable when it was taken, so restoring from it could remove watches it never recorded.
+POST /api/watching-account/undo {snapshot_id, dry_run?} -> (same shape as /transfer)
+     Restores the watching account exactly as the transfer found it, from that snapshot — counts and
+     positions included, not just watched/unwatched. Refuses a second time rather than replaying.
+     It is a mirror too, so it REMOVES anything watched on that account since the copy; dry-run it
+     first and read `removals_preview`. It takes its own snapshot, so an undo is itself undoable.
 ```
 
 ### Rows
@@ -668,29 +693,61 @@ tracks "on the owner's Home" separately from "on a friend's Home", so nobody els
    libraries with it, and Shortlist copies your watch history across so its picks are right from the
    first run.
 
-The copy is pure database work — it moves the watched set Shortlist has already read off your
-server, and needs no Plex connection. During the setup wizard nothing has read it yet, so the
-transfer says so and offers to read it there and then rather than reporting a copy of nothing. The
-nightly `sync.history` keeps it current afterwards, and it covers the owner whether or not they
-have given themselves a row.
+The copy reads your account straight from Plex — per episode, including anything you are part-way
+through — and writes the same state onto the new account. It does not read Shortlist's cache, so it
+works during the setup wizard before anything has been synced.
+
+### What "copies your watch history" means exactly
+
+The new account ends up **matching** yours:
+
+- **Per episode, not per show.** A series you are 400 episodes into arrives 400 episodes in. Earlier
+  versions marked the whole show watched, because they wrote the show's rating key and Plex treats
+  that as "mark every episode" — on a real account 342 of 535 watched shows were partial, so this was
+  the common case rather than an edge.
+- **Rewatch counts.** A film you have seen three times arrives at three.
+- **Part-watched films and episodes.** They land at the same position and show up in Continue
+  Watching. Nothing before this could carry them at all: the read behind it (`?unwatched=0`) only
+  ever returned completions.
+- **It removes as well as adds.** Anything watched on the target that you have not watched is
+  un-marked. That is what makes it a replica rather than a merge — and it is what repairs an account
+  an older version over-marked. The web UI previews the removals **by title** and requires them to be
+  acknowledged before the real run.
+- **It is reversible** — unless that account cannot see all of your libraries. The target's complete
+  state is snapshotted before the first write, and **Undo** restores it exactly, counts and positions
+  included. If a library is unreadable for that account the snapshot cannot be complete, so the undo
+  is refused rather than restoring from a partial picture; the preview says so before you agree.
+- **Your own account is never written to.** The copy reads yours and writes only with the target
+  account's own token.
+
+Afterwards Shortlist re-reads the target and reports what did not land, rather than reporting the
+writes it sent.
 
 ### The date problem, and `source_viewed_at`
 
-Plex cannot backdate a watch. Marking a title played is a scrobble, and the server stamps a scrobble
-**now** — there is no documented way to set another account's `lastViewedAt`. Copying two thousand
-titles onto a new account would therefore tell Plex they were all watched today, and the next watch
-sync would write exactly that into `watched_titles.viewed_at`.
+Plex cannot backdate a watch. Every write — `/:/scrobble`, `/:/progress`, `/:/timeline` — is stamped
+**now**, and no endpoint accepts a date. Copying two thousand titles onto a new account therefore
+tells Plex they were all watched today, and the next watch sync would write exactly that into
+`watched_titles.viewed_at`.
 
 That matters more than it sounds: Shortlist picks seeds from the **most recent** watches, so a set
 where every row shares one timestamp orders arbitrarily and the new account's recommendations become
 noise. The migration that gave someone their history back would be the one that broke their picks.
 
-So the transfer records the true date in `watched_titles.source_viewed_at`. The watch sync neither
-overwrites that column nor deletes a row carrying one — which matters because a transfer that did
-not scrobble leaves rows Plex has never heard of, and the periodic full re-read would otherwise wipe
-the entire transfer on its first pass. Every "how recently?" read prefers it. Plex gets its checkmarks; Shortlist
-keeps the recency signal it actually ranks on. `NULL` — the value on every row Plex reported
-directly — means `viewed_at` is the truth, so nothing changes for anyone who never runs a transfer.
+Three things keep the dates:
+
+- **`watched_titles.source_viewed_at`** records the true date per cached title. The watch sync never
+  overwrites it and never deletes a row carrying one, and every "how recently?" read prefers it.
+  `NULL` — the value on every row Plex reported directly — means `viewed_at` is the truth, so nothing
+  changes for anyone who never runs a transfer.
+- **Your play log is copied** onto the new account's `watch_events` with its original timestamps, per
+  episode. Those rows carry `source='transfer'` and are deliberately excluded from pick attribution:
+  they are real watches for recommendation purposes, but they are not that person pressing play on a
+  Shortlist row. This is the only dated history the account gets — a scrobble writes no entry to
+  Plex's own history log.
+- **Writes go oldest first.** The dates cannot be replicated, but the ORDER can, and `lastViewedAt`
+  order is what Continue Watching and "recently watched" sort on. So the shelves come out right even
+  though every date reads as today.
 
 ## How a pick is chosen (and why a row can be short)
 

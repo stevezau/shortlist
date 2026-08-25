@@ -293,6 +293,38 @@ CATALOG: tuple[JobKind, ...] = (
         trigger="Queued when you un-pause somebody.",
     ),
     JobKind(
+        kind="watching_account.transfer",
+        label="Copy your watch history to your watching account",
+        description=(
+            "Makes your watching account's watch history match yours: the same films ticked off, the "
+            "same episodes of each show, and anything you are part-way through sitting at the same "
+            "point in Continue Watching. Anything watched on that account that you have not watched "
+            "is un-ticked, which is what makes the two match. Your own account is never written to."
+            "\n\nOn a heavy library this is several thousand writes to Plex, which is why it runs "
+            "here rather than while you wait. The account's state is saved before the first write, so "
+            "it can be put back exactly."
+        ),
+        manual=False,
+        # A writer, and the only one here that can REMOVE watch history. It takes the exclusive Plex
+        # lock like every other writer: a run converging collections while this rewrites thousands of
+        # watch flags is exactly the overlap that lock exists for.
+        writes_plex=True,
+        trigger="Queued from the watching-account page when you copy your history across.",
+    ),
+    JobKind(
+        kind="watching_account.undo",
+        label="Undo a watch-history copy",
+        description=(
+            "Puts a watching account back exactly as it was before the copy — rewatch counts and "
+            "part-watched positions included, not just watched or unwatched. Restores from the "
+            "snapshot the copy took rather than replaying its writes backwards, because re-ticking "
+            "what was un-ticked would leave a state that existed on neither account."
+        ),
+        manual=False,
+        writes_plex=True,
+        trigger="Queued when you press Undo after copying a watch history across.",
+    ),
+    JobKind(
         kind="row.reconcile",
         label="Remove a row's collections from Plex",
         description=(
@@ -670,6 +702,12 @@ async def _execute(state, sessions, job_id: int, kind: str) -> None:
         # The kind was removed in an upgrade while a job was queued. Nothing can run it.
         _finish(sessions, job_id, error=f"no handler registered for {kind!r}")
         return
+    # A handler that declares `job_id` gets its own row id. Only the watching-account transfer wants
+    # it — a retry must reuse the snapshot the FIRST attempt took, or it records the half-mirrored
+    # state the failed attempt left behind and the real "before" is lost. Passed by signature rather
+    # than to every handler, so the other fifteen are untouched.
+    if "job_id" in inspect.signature(fn).parameters:
+        fn = functools.partial(fn, job_id=job_id)
     try:
         if inspect.iscoroutinefunction(fn):
             # An async handler is awaited on THIS loop rather than pushed to a worker thread.
@@ -1303,3 +1341,125 @@ def _row_reconcile(state, payload: dict) -> dict:
         "dry_run": dry_run,
         "detail": f"{verb} {len(removed)} collection(s) for row {slug}",
     }
+
+
+@handler("watching_account.transfer")
+def _watching_account_transfer(state, payload: dict, job_id: int | None = None) -> dict:
+    """Replicate the owner's watch state onto their watching account.
+
+    On the queue rather than inline in the request for two reasons. It is ~11,000 PMS writes on a
+    heavy account, which is minutes of work behind a reverse proxy that will happily time the request
+    out at 60s — and the job row means the work still finishes, and is still recoverable from the
+    Jobs page, when it does. And it is the only path in Shortlist that can DELETE watch history, so it
+    needs the same durable record as every other writer.
+
+    Idempotent, which the queue requires of every handler: the write plan is rebuilt from a fresh read
+    of BOTH accounts each attempt, so a replay writes only what is still missing rather than
+    re-applying what already landed. The rewatch counts are the case that would break under a naive
+    replay, and `WriteOp.scrobbles` carries the shortfall precisely so they do not.
+    """
+    from shortlist.server.db.models import User
+    from shortlist.server.services.watching_account import transfer_watch_history
+
+    to_user_id = int(payload["to_user_id"])
+    requested = bool(payload.get("dry_run", False))
+    ctx = state.run_service.build_context(dry_run=requested, plex_only=True)
+    # `or requested` is the floor, matching every other writer here: the chokepoint may force a dry
+    # run ON, never off, so a context that dropped the flag cannot turn a preview into a real run.
+    dry_run = bool(ctx.config.dry_run) or requested
+
+    with state.sessions() as session:
+        owner = session.query(User).filter(User.user_type == "owner").first()
+        if owner is None:
+            raise LookupError("no owner account is registered yet — run a user sync first")
+        target = session.get(User, to_user_id)
+        if target is None:
+            raise LookupError("that watching account is not a known user")
+        owner_id, account_id = owner.id, target.plex_account_id
+
+    token = ctx.plextv.canary_server_token(account_id)
+    with state.sessions() as session:
+        report = transfer_watch_history(
+            session,
+            sessions=state.sessions,
+            job_id=job_id,
+            from_user_id=owner_id,
+            to_user_id=to_user_id,
+            plex=ctx.plex,
+            source_token=ctx.plex.token,
+            target_token=token,
+            dry_run=dry_run,
+        )
+        add_audit(
+            session,
+            "watching_account.transfer",
+            "info",
+            from_user_id=owner_id,
+            to_user_id=to_user_id,
+            **report.as_dict(),
+        )
+        session.commit()
+        out = report.as_dict()
+
+    verb = "Would copy" if dry_run else "Copied"
+    removed = report.unmarks + report.offsets_cleared
+    out["detail"] = (
+        f"{verb} {report.marks} title(s) onto that account"
+        + (f", removing {removed}" if removed else "")
+        + (" (preview)" if dry_run else "")
+    )
+    return out
+
+
+@handler("watching_account.undo")
+def _watching_account_undo(state, payload: dict, job_id: int | None = None) -> dict:
+    """Put a watching account back exactly as its transfer found it.
+
+    Restores from the snapshot rather than replaying the writes backwards — see `undo_transfer`. Safe
+    to replay: the snapshot is stamped `restored_at` on success and a second pass refuses rather than
+    planning against a state it no longer describes.
+    """
+    from shortlist.server.db.models import WatchStateSnapshot
+    from shortlist.server.services.watching_account import undo_transfer
+
+    snapshot_id = int(payload["snapshot_id"])
+    requested = bool(payload.get("dry_run", False))
+    with state.sessions() as session:
+        snapshot = session.get(WatchStateSnapshot, snapshot_id)
+        if snapshot is None:
+            raise LookupError("no snapshot with that id — nothing to restore")
+        user_id = snapshot.user_id
+        from shortlist.server.db.models import User
+
+        user = session.get(User, user_id)
+        account_id = user.plex_account_id if user else 0
+
+    ctx = state.run_service.build_context(dry_run=requested, plex_only=True)
+    dry_run = bool(ctx.config.dry_run) or requested
+    token = ctx.plextv.canary_server_token(account_id)
+
+    with state.sessions() as session:
+        report = undo_transfer(
+            session,
+            sessions=state.sessions,
+            job_id=job_id,
+            snapshot_id=snapshot_id,
+            plex=ctx.plex,
+            target_token=token,
+            dry_run=dry_run,
+        )
+        add_audit(
+            session,
+            "watching_account.undo",
+            "info",
+            restored_snapshot_id=snapshot_id,
+            to_user_id=user_id,
+            **report.as_dict(),
+        )
+        session.commit()
+        out = report.as_dict()
+
+    out["detail"] = f"{'Would restore' if dry_run else 'Restored'} {report.planned} change(s) on that account"
+    if report.errors:
+        out["detail"] = report.errors[0]
+    return out

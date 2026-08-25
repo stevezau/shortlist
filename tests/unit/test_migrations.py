@@ -1203,3 +1203,47 @@ class TestSharedPickMediaTypeBackfill0081:
             [(500, 136315, "show")],  # the table says show; the blob already says movie
         )
         assert out[0]["media_type"] == "movie", "overwrote a type the row already carried"
+
+
+def test_0083_adds_the_complete_column_to_a_database_already_stamped_0082(tmp_path):
+    """A database stamped 0082 never replays it, so editing 0082 fixes fresh installs and nothing else.
+
+    Not hypothetical: an earlier 0082 shipped without `complete` and ran against the development
+    server. Without 0083 every snapshot insert and every `/watching-account/snapshots` read there
+    raises `no such column` — loud rather than lossy, but the feature is dead on exactly the machine
+    it was built against. Same shape as 0032, a migration that was a no-op on every real database.
+
+    This test recreates the old table shape and stamps the DB back to 0082, which is the only way to
+    reproduce what the live server actually looks like.
+    """
+    import sqlalchemy as sa
+
+    from shortlist.server.db.session import make_engine, run_migrations
+
+    run_migrations(tmp_path)
+    engine = make_engine(tmp_path)
+    try:
+        with engine.begin() as conn:
+            conn.execute(sa.text("DROP TABLE watch_state_snapshots"))
+            # Recreate it exactly as the pre-`complete` version of 0082 did.
+            conn.execute(
+                sa.text(
+                    "CREATE TABLE watch_state_snapshots ("
+                    "id INTEGER NOT NULL PRIMARY KEY, user_id INTEGER NOT NULL, "
+                    "taken_at DATETIME NOT NULL, job_id INTEGER, restored_at DATETIME, "
+                    "state JSON NOT NULL, FOREIGN KEY(user_id) REFERENCES users (id))"
+                )
+            )
+            # Stamped back to 0082 — the state the development server is actually in.
+            conn.execute(sa.text("UPDATE alembic_version SET version_num = '0082'"))
+    finally:
+        engine.dispose()
+
+    run_migrations(tmp_path)
+
+    engine = make_engine(tmp_path)
+    try:
+        columns = {c["name"] for c in sa.inspect(engine).get_columns("watch_state_snapshots")}
+    finally:
+        engine.dispose()
+    assert "complete" in columns

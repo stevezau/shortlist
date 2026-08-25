@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, Users as UsersIcon } from "lucide-react";
+import { Eye, RefreshCw, Users as UsersIcon } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 
@@ -170,6 +170,18 @@ export function UsersPage() {
             >
               Disable all
             </Button>
+            {/* Always here, and deliberately not behind the owner note — that note is dismissible,
+                and dismissing "you see everyone's rows" is how people say "yes, I know" rather than
+                "I never want the tool again". Before this, hiding the note hid the only way back to
+                it short of remembering the URL. */}
+            {(usersQuery.data ?? []).some((user) => user.user_type === "owner") && (
+              <Button variant="outline" asChild>
+                <Link to="/watching-account?setup=1">
+                  <Eye aria-hidden="true" />
+                  Watching account
+                </Link>
+              </Button>
+            )}
           </div>
         }
       />

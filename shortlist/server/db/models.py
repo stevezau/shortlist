@@ -17,6 +17,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -530,6 +531,46 @@ class RestrictionSnapshotRow(Base):
     reason: Mapped[str] = mapped_column(String(32), default="initial")  # initial | sync | uninstall_restore
     filters_before: Mapped[dict] = mapped_column(JSON, default=dict)
     filters_after: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class WatchStateSnapshot(Base):
+    """One account's complete watch state, taken before a transfer changed it.
+
+    The watching-account transfer MIRRORS: it un-marks whatever the source has not watched, so it is
+    the only path in Shortlist that can remove someone's watch history. Rule 2 governs exactly this
+    shape — snapshot before the first mutation, restore from the snapshot on undo — and it is here for
+    the same reason it exists for share filters: there is no second copy anywhere, and Plex keeps no
+    history of what a `viewCount` used to be.
+
+    Restoring must put back the COUNTS and OFFSETS, not merely watched/unwatched. Re-marking a
+    rewatched film once, or re-marking a part-watched episode as finished, produces a third state that
+    never existed on either account — which is worse than not restoring at all, because it looks like
+    it worked.
+
+    `state` is a compact list of `[rating_key, view_count, view_offset_ms, media_type,
+    show_rating_key]`, not a dict of objects: a heavy account runs to ~11,000 leaves and this row is
+    read whole or not at all. The fifth element is what lets a restore tell a show it has emptied from
+    one it still holds episodes of — rows written before it exists carry four, and `undo_transfer`
+    withholds show clearing entirely for any snapshot that is not uniformly five.
+    """
+
+    __tablename__ = "watch_state_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # RESTRICT, for the same reason as `restriction_snapshots`: this is the only record of what the
+    # account looked like before we touched it. See User's cascade policy.
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    taken_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    #: Which job wrote it, so an undo restores the snapshot for THAT transfer rather than the newest.
+    job_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    #: Set when this snapshot has been restored, so an undo cannot silently run twice and a second
+    #: press reports "already restored" rather than replaying against a state it no longer describes.
+    restored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: Whether the read behind this snapshot saw every library. False means a library 403'd, so the
+    #: snapshot describes LESS than the account held — and since the restore is a mirror of it, acting
+    #: on one would un-mark every watch it never recorded. `undo_transfer` refuses instead.
+    complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("1"))
+    state: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class Delivery(Base):

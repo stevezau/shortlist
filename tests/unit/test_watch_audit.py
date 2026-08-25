@@ -920,6 +920,53 @@ class TestWatchHistoryAgesOutOnItsOwnSchedule:
         with world() as s:
             assert s.query(WatchEvent).count() == 0, "watch history has its own ceiling"
 
+    def test_a_transferred_watch_date_survives_the_ceiling(self, world):
+        """`source='transfer'` rows are exempt, and nothing covered that until this test.
+
+        They are not plays that happened here — they are a watching-account transfer's copy of the
+        source's TRUE watch dates, and they are the only carrier of them: `stamp_true_dates` reads
+        them back from this table so the watch sync can re-run it once the target's `watched_titles`
+        rows exist. Most are years old by construction, so the six-month ceiling deletes them almost
+        in full, and a prune landing between the transfer and the target's first sync leaves
+        `source_viewed_at` NULL for ever — silently, which is the failure that column exists to
+        prevent.
+
+        The existing test above seeds `source='history'` and so passes with the exemption deleted.
+        """
+        from shortlist.server.services.run_persistence import prune_runs
+
+        with world() as s:
+            s.add_all(
+                [
+                    WatchEvent(
+                        plex_account_id=99,
+                        rating_key=1,
+                        media_type="movie",
+                        viewed_at=NOW - timedelta(days=800),
+                        source="transfer",
+                        history_key="transfer:99:state:1",
+                    ),
+                    WatchEvent(
+                        plex_account_id=99,
+                        rating_key=2,
+                        media_type="movie",
+                        viewed_at=NOW - timedelta(days=800),
+                        source="history",
+                        history_key="ancient-real-play",
+                    ),
+                ]
+            )
+            s.commit()
+
+        with world() as s:
+            prune_runs(s, 0)
+            s.commit()
+
+        with world() as s:
+            kept = s.query(WatchEvent).all()
+            # The real play ages out; the transferred DATE does not.
+            assert [e.source for e in kept] == ["transfer"]
+
 
 class TestSeriesPercentagesAreCleared:
     def test_the_migration_clears_a_series_percentage_and_leaves_films_alone(self, world):

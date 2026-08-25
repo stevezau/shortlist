@@ -2484,6 +2484,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/watching-account/snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Snapshots
+         * @description Transfers that can still be undone, newest first.
+         *
+         *     Without this the undo was reachable only from the in-flight response of the transfer that created
+         *     it — so the one case the durable queue exists for (a reverse proxy timing the request out at 60s,
+         *     a 503 while a run holds the Plex lock, or simply a page reload) was also the case where the
+         *     destructive run completed and its undo could not be found.
+         */
+        get: operations["list_snapshots_api_watching_account_snapshots_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/watching-account/transfer": {
         parameters: {
             query?: never;
@@ -2495,14 +2520,41 @@ export interface paths {
         put?: never;
         /**
          * Transfer
-         * @description Copy the owner's watched set onto their watching account.
+         * @description Replicate the owner's watch state onto their watching account.
          *
-         *     The copy into Shortlist is what makes the new account's picks correct and writes nothing to
-         *     Plex. `scrobble` additionally marks each title played on the PMS so Plex shows checkmarks —
-         *     thousands of writes, and Plex dates every one of them today (it cannot be told otherwise), which
-         *     is why the true dates are stored separately.
+         *     Mirrors: the target ends up matching the owner, which means un-marking anything the owner has not
+         *     watched. That is what makes it a replica rather than a merge, and it is what repairs an account
+         *     the pre-1.x transfer spoiled by scrobbling show keys. It is also the only path here that can
+         *     delete watch history, so a snapshot is taken before the first write and `/undo` restores it.
+         *
+         *     Plex stamps every write `now` and accepts no date, so the writes go oldest-first — the dates
+         *     cannot be replicated, but the ORDER can, which is what Continue Watching sorts on.
          */
         post: operations["transfer_api_watching_account_transfer_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/watching-account/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo
+         * @description Put the watching account back exactly as the transfer found it.
+         *
+         *     Restores from the snapshot rather than replaying the writes backwards — with counts and offsets,
+         *     not just watched/unwatched, because re-marking a rewatched film once would leave a third state
+         *     that existed on neither account.
+         */
+        post: operations["undo_api_watching_account_undo_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4725,6 +4777,26 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * SnapshotOut
+         * @description One un-restored snapshot — an undo that is still available.
+         */
+        SnapshotOut: {
+            /** Complete */
+            complete: boolean;
+            /** Entries */
+            entries: number;
+            /** Id */
+            id: number;
+            /** Taken At */
+            taken_at: string | null;
+            /** User Id */
+            user_id: number;
+            /** Username */
+            username: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** StatusOut */
         StatusOut: {
             /** Enabled */
@@ -4882,30 +4954,56 @@ export interface components {
              * @default false
              */
             dry_run: boolean;
-            /**
-             * Scrobble
-             * @default false
-             */
-            scrobble: boolean;
             /** To User Id */
             to_user_id: number;
         };
-        /** TransferOut */
+        /**
+         * TransferOut
+         * @description The result of one replication.
+         *
+         *     `unmarks` and `offsets_cleared` are the destructive half and are reported separately from
+         *     `applied` on purpose: "wrote 11,000 things" and "removed 412 watches from that account" are not
+         *     the same sentence, and only the second needs anybody's consent.
+         */
         TransferOut: {
-            /** Already Present */
-            already_present: number;
-            /** Copied */
-            copied: number;
+            /** Applied */
+            applied: number;
             /** Dry Run */
             dry_run: boolean;
             /** Errors */
             errors: string[];
-            /** Scrobble Skipped */
-            scrobble_skipped: number;
-            /** Scrobbled */
-            scrobbled: number;
+            /** Events Copied */
+            events_copied: number;
+            /** Failed */
+            failed: number;
+            /** Marks */
+            marks: number;
+            /** Offsets Cleared */
+            offsets_cleared: number;
+            /** Offsets Set */
+            offsets_set: number;
+            /** Planned */
+            planned: number;
+            /** Removals Preview */
+            removals_preview: string[];
+            /** Shows Cleared */
+            shows_cleared: number;
+            /** Snapshot Id */
+            snapshot_id: number | null;
             /** Source Empty */
             source_empty: boolean;
+            /** Target Unreadable */
+            target_unreadable: string[];
+            /** Titles Cached */
+            titles_cached: number;
+            /** Unmarks */
+            unmarks: number;
+            /** Unreachable */
+            unreachable: number;
+            /** Verify Checked */
+            verify_checked: number;
+            /** Verify Mismatched */
+            verify_mismatched: number;
         } & {
             [key: string]: unknown;
         };
@@ -4919,6 +5017,16 @@ export interface components {
             week: string;
         } & {
             [key: string]: unknown;
+        };
+        /** UndoIn */
+        UndoIn: {
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
+            /** Snapshot Id */
+            snapshot_id: number;
         };
         /**
          * UninstallFailedOut
@@ -8581,6 +8689,26 @@ export interface operations {
             };
         };
     };
+    list_snapshots_api_watching_account_snapshots_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SnapshotOut"][];
+                };
+            };
+        };
+    };
     transfer_api_watching_account_transfer_post: {
         parameters: {
             query?: never;
@@ -8591,6 +8719,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["TransferIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransferOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    undo_api_watching_account_undo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UndoIn"];
             };
         };
         responses: {

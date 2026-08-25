@@ -58,7 +58,8 @@ nothing for Plex to hide them behind. There is no Plex setting for this.
 
 Shortlist walks you through the three options under **Users → You see everyone's rows**: take the
 rows off the library shelf, leave it alone, or move your own watching to a separate Plex Home
-account (it can copy your watch history across). See
+account. That last one copies your watch history across exactly — the same episodes of each show,
+your rewatch counts, and anything you are part-way through, back where you left it. See
 [the reference](reference.md#why-you-see-everyones-rows-and-the-watching-account).
 
 ## Does the AI invent recommendations I don't have?

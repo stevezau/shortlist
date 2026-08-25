@@ -66,6 +66,7 @@ import type {
   HomeUserCandidate,
   TransferResult,
   WatchItem,
+  WatchSnapshot,
   WatchedFilters,
   WatchedPage,
 } from "./types";
@@ -355,14 +356,32 @@ export const api = {
   listHomeUsers: (): Promise<HomeUserCandidate[]> =>
     request("/api/watching-account/candidates"),
 
-  /** Copy the owner's watched set onto their watching account. `scrobble` also marks the titles
-   *  played in Plex — thousands of writes, all dated today because Plex cannot backdate them. */
+  /** Make the watching account's watch state match the owner's, exactly.
+   *
+   *  Mirrors — anything the owner has not watched is un-marked on the target, which is what makes
+   *  the result a replica rather than a merge. Always dry-run it first: `removals_preview` names
+   *  what would be removed, and that is the only destructive part of the feature. */
   transferWatchHistory: (body: {
     to_user_id: number;
-    scrobble: boolean;
     dry_run: boolean;
   }): Promise<TransferResult> =>
     request("/api/watching-account/transfer", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  /** Transfers that can still be undone. The undo used to be reachable only from the response of
+   *  the transfer that created it — so a timed-out request, a 503, or a page reload left a
+   *  completed destructive run with no way back. */
+  listWatchSnapshots: (): Promise<WatchSnapshot[]> =>
+    request("/api/watching-account/snapshots"),
+
+  /** Put the watching account back exactly as the transfer found it, from its snapshot. */
+  undoWatchTransfer: (body: {
+    snapshot_id: number;
+    dry_run: boolean;
+  }): Promise<TransferResult> =>
+    request("/api/watching-account/undo", {
       method: "POST",
       body: JSON.stringify(body),
     }),

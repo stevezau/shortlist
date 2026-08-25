@@ -4,6 +4,39 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Moving your watching to a second account now copies your history exactly.** It was marking whole
+  shows watched when you were part-way through one. If you were 400 episodes into One Piece, the new
+  account said you had finished all 1,100 — and the same happened to any series you had not
+  completed. On a real 50-account server, 342 of 535 watched shows were part-watched, so this was the
+  normal outcome rather than an edge case.
+
+  The cause was that Shortlist only ever knew _how many_ episodes you had watched, never _which_. It
+  now reads your account episode by episode and copies that, so the new account matches yours:
+
+  - the exact episodes of each show, not the whole show
+  - how many times you have rewatched something, not just that you watched it
+  - anything you are part-way through, at the same position, back in Continue Watching — these could
+    not be carried across at all before
+
+  It also **removes** anything watched on the new account that you have not watched, which is what
+  makes the two match, and what repairs an account an earlier version over-marked. The preview lists
+  what would be removed **by name** and asks you to confirm before anything is written. Your own
+  account is never written to.
+
+  It is now reversible: the new account's state is saved before the first write, and **Undo** puts it
+  back exactly — rewatch counts and positions included. The one exception is an account that can't see
+  all of your libraries, where a complete picture can't be saved; the preview tells you that before
+  you agree to anything. Afterwards Shortlist re-reads the account and
+  tells you what did not land, instead of reporting the writes it sent.
+
+  Plex still records everything as watched _today_ — no Plex API accepts a date, and that has not
+  changed. The writes now go oldest-first so Continue Watching still comes out in the right order,
+  and Shortlist keeps your real dates itself, so your recommendations are unaffected.
+
 ## [1.7.0] - 2026-08-18
 
 ### Added
@@ -19,7 +52,7 @@ All notable changes to this project are documented here. This project follows
   row you never touch behaves exactly as it does today.
 
   Two limits stay global on purpose. **Max per run** is the ceiling for the whole run and a row can
-  only ask for *less* than it, never more — otherwise the one setting protecting your download queue
+  only ask for _less_ than it, never more — otherwise the one setting protecting your download queue
   would be a suggestion. And the rating source (plus its API key) stays global, because it is one
   account shared by everything.
 
@@ -32,7 +65,7 @@ All notable changes to this project are documented here. This project follows
   ([#88](https://github.com/stevezau/shortlist/discussions/88)). Shortlist keeps each row private by
   adding label exclusions to everyone else's Plex share, and every check it had said the same thing:
   the exclusions were written, plex.tv stored them, and reading them back confirmed it. None of that
-  proves Plex is *applying* them. Six Home accounts saw all six rows anyway, and the first person to
+  proves Plex is _applying_ them. Six Home accounts saw all six rows anyway, and the first person to
   notice was a user rather than the owner.
 
   Each run now looks at one account's home screen through that account's own eyes and reports it if
@@ -77,7 +110,7 @@ All notable changes to this project are documented here. This project follows
   account can then see other people's rows, unless — as with an allow-only list — its own Plex
   restrictions already keep it away from them.
 
-  Two things stay true regardless. Everyone else still hides *that* person's row, so leaving one
+  Two things stay true regardless. Everyone else still hides _that_ person's row, so leaving one
   account alone never makes their row public. And a **shared row you have limited to certain people**
   stays hidden from them: that exclusion is the only thing keeping the row away from people you did
   not pick, so removing it would undo a choice you made on the row itself. The trade-off to know is
@@ -170,8 +203,8 @@ All notable changes to this project are documented here. This project follows
   so in the wizard — and then ended with "look for **You see everyone's rows** on the Users page",
   which is homework, handed out during setup, for a problem that only becomes visible in Plex days
   later. Someone was told exactly that, never went to the Users page, and reported 22 rows on their
-  shelf as a bug. The wizard now asks the question where the decision is being made — *do you watch on
-  this admin account?* — and opens the real "move my watching to a separate account" flow in place,
+  shelf as a bug. The wizard now asks the question where the decision is being made — _do you watch on
+  this admin account?_ — and opens the real "move my watching to a separate account" flow in place,
   watch-history transfer and all. Skip it and nothing changes: the note on the Users page and the
   alert are both still there, both dismissable.
 
@@ -208,7 +241,7 @@ All notable changes to this project are documented here. This project follows
   for "The Haunting of Bly Manor" is "The Haunting", a different and much larger series.) The reason
   on the **Requests** page used to read "no TheTVDB id for this show" — true, and no help at all
   unless you already knew what a TVDB id was. It now says TMDB has none and that adding the show in
-  Sonarr yourself is the way through. A lookup that *failed* — TMDB down or slow — says something
+  Sonarr yourself is the way through. A lookup that _failed_ — TMDB down or slow — says something
   different again, because that one is worth waiting a night for.
 
 - **The errors notification can be dismissed.** "N errors in the last day" counts what has already
@@ -289,7 +322,6 @@ All notable changes to this project are documented here. This project follows
 
 Tagged and published for about half an hour, then pulled before anyone was told about it. Everything
 in it ships in 1.5.1; the notes are kept here because the images were briefly public.
-
 
 ### Added
 

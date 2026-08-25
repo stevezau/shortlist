@@ -30,6 +30,7 @@ from urllib3.util.retry import Retry
 
 from shortlist.engine.clients import http_retry
 from shortlist.engine.models import MediaType, OwnedRow, WatchedItem
+from shortlist.engine.watch_replica import ItemState, OpKind, WatchState, WriteOp
 
 # Label restrictions only apply on Home/Recommended/Related from this PMS build (PM-5174).
 MIN_PMS_VERSION = (1, 43, 2, 10687)
@@ -274,6 +275,24 @@ def _is_newest_first(entries: list) -> bool:
     that the sort broke, and treating it as such would throw away the incremental read for everyone.
     """
     return all(a >= b for a, b in pairwise(_stamps(entries)))
+
+
+def _merge_leaf(prior: ItemState, later: ItemState) -> ItemState:
+    """Combine the two reads that can both return one item.
+
+    A title that is watched AND part-way through appears in `unwatched=0` and in `viewOffset>0`, and
+    each read carries only its own field reliably. Taking the max of both means the order the reads
+    ran in cannot change the answer.
+    """
+    return ItemState(
+        rating_key=prior.rating_key,
+        media_type=prior.media_type,
+        view_count=max(prior.view_count, later.view_count),
+        view_offset_ms=max(prior.view_offset_ms, later.view_offset_ms),
+        last_viewed_at=max(prior.last_viewed_at, later.last_viewed_at),
+        show_rating_key=prior.show_rating_key or later.show_rating_key,
+        title=prior.title or later.title,
+    )
 
 
 def _float_or_none(raw: str | None) -> float | None:
@@ -1257,6 +1276,187 @@ class PlexClient:
             return False
         r.raise_for_status()
         return True
+
+    def unscrobble_as(self, rating_key: int, token: str, *, dry_run: bool = False) -> bool:
+        """Mark one item UNWATCHED as another account — the only call here that removes state.
+
+        Zeroes `viewCount`. Returns False rather than raising when the item is not visible to that
+        account (401/403/404), exactly like `scrobble_as`: one unreachable title must not abandon a
+        run of thousands.
+
+        It ALSO clears any view offset the item carries, and it is the ONLY call that does —
+        `/:/progress?time=0` leaves one exactly where it was (live-probed: 1,139,347 stayed
+        1,139,347). An earlier version of this docstring claimed the opposite, and acting on that
+        left 293 items part-watched after an undo that reported success.
+        """
+        if dry_run:
+            logger.info("DRY RUN: would mark ratingKey={} UNWATCHED for the target account", rating_key)
+            return True
+        return self._user_write("/:/unscrobble", {"key": str(rating_key)}, rating_key, token)
+
+    def set_progress_as(self, rating_key: int, offset_ms: int, token: str, *, dry_run: bool = False) -> bool:
+        """Set one item's playback position as another account.
+
+        This is the only way a PARTIAL watch can be replicated: `unwatched=0` never returns one, and
+        `/:/scrobble` can only say "finished". Live-probed against a real server — the offset comes
+        back exactly as sent, with `viewCount` untouched, so a film that is both watched and 8 minutes
+        in survives scrobble-then-progress with both facts intact.
+
+        `offset_ms=0` does NOT clear the position — the PMS ignores it. Use `unscrobble_as`, which is
+        the only call that clears an offset (and zeroes the view count with it). Measured, twice.
+        """
+        if dry_run:
+            logger.info("DRY RUN: would set ratingKey={} to offset {}ms for the target account", rating_key, offset_ms)
+            return True
+        return self._user_write(
+            "/:/progress",
+            {"key": str(rating_key), "time": str(int(offset_ms)), "state": "stopped"},
+            rating_key,
+            token,
+        )
+
+    def _user_write(self, path: str, params: dict[str, str], rating_key: int, token: str) -> bool:
+        """One state write as another account. False (not an exception) when they cannot see the item.
+
+        `includeToken=False` keeps the OWNER's token out of the URL — the per-user token goes in the
+        header instead (rule 9).
+        """
+        r = http_retry.get(
+            self._server.url(path, includeToken=False),
+            params={**params, "identifier": "com.plexapp.plugins.library"},
+            headers={"X-Plex-Token": token, "Accept": "application/json"},
+            timeout=self._timeout,
+        )
+        if r.status_code in (401, 403, 404):
+            logger.debug("{} skipped for ratingKey={} (HTTP {})", path, rating_key, r.status_code)
+            return False
+        r.raise_for_status()
+        return True
+
+    def apply_watch_op(self, op: WriteOp, token: str, *, dry_run: bool = False) -> bool:
+        """Apply one planned write. Returns whether the PMS took it.
+
+        A scrobble only ever ADDS one, so `op.scrobbles` — the shortfall the planner worked out
+        against a fresh read of the target — is the call count, not `op.view_count`, which is the
+        total it should end up at. Using the total would take a film already watched once to four
+        rather than three. Probed live: three scrobbles 28 ms apart left `viewCount=3`, so the repeat
+        needs no pacing.
+        """
+        if op.kind is OpKind.MARK:
+            ok = True
+            for _ in range(max(1, op.scrobbles)):
+                ok = self.scrobble_as(op.rating_key, token, dry_run=dry_run) and ok
+            return ok
+        if op.kind is OpKind.UNMARK:
+            return self.unscrobble_as(op.rating_key, token, dry_run=dry_run)
+        if op.kind is OpKind.SET_OFFSET:
+            return self.set_progress_as(op.rating_key, op.offset_ms, token, dry_run=dry_run)
+        # CLEAR_OFFSET is an un-scrobble, NOT `/:/progress?time=0`. Live-probed: `time=0` leaves the
+        # offset exactly where it was, so an undo using it left 293 items still part-watched while
+        # reporting success. `unscrobble` is the only call that clears one, and the planner accounts
+        # for its zeroing the view count too.
+        return self.unscrobble_as(op.rating_key, token, dry_run=dry_run)
+
+    def read_watch_state(self, sections: list[tuple[str | int, MediaType]], token: str) -> WatchState:
+        """Everything one account has watched or started, across these libraries, read AS that account.
+
+        Four reads per library pair rather than one, because Plex has no single query for "watched or
+        in progress": `unwatched=0` filters on `viewCount>0` and so cannot see a partial, while
+        `viewOffset>0` cannot see a finished title. Both filters ARE honoured server-side (unlike
+        `lastViewedAt>=`, which this PMS silently ignores).
+
+        **Leaves only** — movies and EPISODES, never shows. A show row is state Plex derives, and it
+        can disagree with its own episodes: a show-key scrobble leaves it reading 47/47 while the
+        show-level query cannot see it at all. Show totals are aggregated from episodes by whoever
+        needs them.
+
+        Rating keys are server-scoped, and a transfer moves between two accounts on the SAME server,
+        so keys compare directly and no TMDB mapping is involved.
+
+        Args:
+            sections: `(section_key, media_type)` pairs to read.
+            token: The server-scoped token to read as — never the owner's when reading someone else.
+
+        Returns:
+            A `WatchState` keyed by rating key. A library this token cannot see is skipped, not an
+            error (`SectionNotShared`).
+        """
+        items: dict[int, ItemState] = {}
+        unreadable: list[str] = []
+        for section_key, media_type in sections:
+            plex_type = 1 if media_type is MediaType.MOVIE else 4
+            kind = "movie" if media_type is MediaType.MOVIE else "episode"
+            try:
+                for params in ({"unwatched": 0}, {"viewOffset>": 0}):
+                    for el in self._leaf_rows(section_key, plex_type, token, params):
+                        parsed = self._leaf_state(el, kind)
+                        if parsed is None:
+                            continue
+                        # The two reads overlap on a title that is both watched and in progress. Merge
+                        # rather than overwrite: whichever read came second would otherwise erase the
+                        # other's field and the item would replicate as half of what it is.
+                        prior = items.get(parsed.rating_key)
+                        items[parsed.rating_key] = _merge_leaf(prior, parsed) if prior else parsed
+            except SectionNotShared:
+                # Recorded, never silently swallowed. A caller that mirrors from this state must know
+                # it is partial: treating a truncated read as authoritative deletes everything the
+                # missing library holds on the other account. See `WatchState.unreadable`.
+                logger.warning("watch state: section {} is not shared with this token — read is PARTIAL", section_key)
+                unreadable.append(str(section_key))
+        return WatchState(items=items, unreadable=tuple(unreadable))
+
+    def _leaf_rows(self, section_key: str | int, plex_type: int, token: str, extra: dict) -> list[ET.Element]:
+        """Every row of one filtered leaf read, paged.
+
+        BOTH container headers or nothing — `X-Plex-Container-Size` alone is ignored by this PMS and
+        it returns the whole library, the same trap `_history_page` documents.
+        """
+        out: list[ET.Element] = []
+        start = 0
+        while True:
+            r = http_retry.get(
+                self._server.url(f"/library/sections/{section_key}/all", includeToken=False),
+                params={"type": plex_type, **extra},
+                headers={
+                    "X-Plex-Token": token,
+                    "X-Plex-Container-Start": str(start),
+                    "X-Plex-Container-Size": str(self._WATCHED_PAGE),
+                },
+                timeout=self._timeout,
+            )
+            if r.status_code == 403:
+                raise SectionNotShared(f"section {section_key} is not shared with this user")
+            r.raise_for_status()
+            rows = list(ET.fromstring(r.text))
+            out.extend(rows)
+            if len(rows) < self._WATCHED_PAGE:
+                return out
+            start += self._WATCHED_PAGE
+
+    @staticmethod
+    def _leaf_state(el: ET.Element, kind: str) -> ItemState | None:
+        """One `<Video>` row as an `ItemState`, or None if it carries no usable rating key."""
+        try:
+            rating_key = int(el.get("ratingKey") or 0)
+        except ValueError:
+            return None
+        if not rating_key:
+            return None
+        show_key: int | None = None
+        # Present on every episode of both show libraries on a real server (9,850 of 9,850), so unlike
+        # the history log — which carries only a `grandparentKey` path — this needs no parsing.
+        raw_show = el.get("grandparentRatingKey")
+        if raw_show and raw_show.isdigit():
+            show_key = int(raw_show)
+        return ItemState(
+            rating_key=rating_key,
+            media_type=kind,
+            view_count=int(el.get("viewCount") or 0),
+            view_offset_ms=int(el.get("viewOffset") or 0),
+            last_viewed_at=int(el.get("lastViewedAt") or 0),
+            show_rating_key=show_key,
+            title=el.get("title") or "",
+        )
 
     # A watched-titles read for one section, paged. Plex defaults to 50 unless X-Plex-Container-Size
     # says otherwise; a heavy watcher has thousands of watched titles, so we page rather than trust a
