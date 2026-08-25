@@ -151,12 +151,18 @@ describe("UserRowCard", () => {
     await userEvent.tab(); // blur commits the typed size
 
     // Collapsing the drawer used to throw this away; it now persists on its own.
-    await waitFor(() => expect(setUserRowOverride).toHaveBeenCalled(), {
-      timeout: 3000,
+    //
+    // The wait has to be for the TYPED value, not for "saved at all". The drawer auto-saves on a
+    // debounce, so turning the switch on already queues a save carrying the row's existing size —
+    // and waiting on `toHaveBeenCalled()` resolved against THAT one, then read `.at(-1)` and found
+    // 15 where the test wanted 20. It passed whenever the debounce had caught up and failed when
+    // the machine was busy. Waiting on the value cannot resolve early.
+    await waitFor(() => {
+      const latest = setUserRowOverride.mock.calls.at(-1);
+      expect(latest?.[2]).toMatchObject({ row_size: 20 });
     });
     const call = setUserRowOverride.mock.calls.at(-1);
     expect(call?.[1]).toBe(3);
-    expect(call?.[2]).toMatchObject({ row_size: 20 });
     // The drawer must never carry the mute flag — that would let a stale switch value ride along.
     expect(call?.[2]).not.toHaveProperty("muted");
   });
