@@ -1427,5 +1427,44 @@ class TestUserPickOutcomes:
 
         assert client.get(f"/api/users/{uid}/outcomes").json() == []
 
+    def test_it_returns_only_THIS_person(self, client: TestClient):
+        """The gate that matters. Deleting the user filter left every test here green (mutation
+        audit 2026-08-25) because they all used a single person — so the endpoint could have served
+        the whole server's watch history on one person's page with nothing to catch it."""
+        users = client.get("/api/users").json()
+        mine, theirs = users[0]["id"], users[1]["id"]
+        settled = datetime.now(UTC) - timedelta(days=3)
+        self._pick(client, mine, tmdb_id=11, rating_key=11, title="Mine", watched_at=settled, finished_at=settled)
+        self._pick(client, theirs, tmdb_id=22, rating_key=22, title="Theirs", watched_at=settled, finished_at=settled)
+
+        titles = [r["title"] for r in client.get(f"/api/users/{mine}/outcomes").json()]
+
+        assert titles == ["Mine"], f"leaked another person's watches onto this page: {titles}"
+
+    def test_newest_first(self, client: TestClient):
+        """ "What did they just watch" is the question; "what did they watch in 2019" is not."""
+        uid = self._uid(client)
+        for n, days in ((1, 30), (2, 2), (3, 10)):
+            when = datetime.now(UTC) - timedelta(days=days)
+            self._pick(client, uid, tmdb_id=n, rating_key=n, title=f"T{days}", watched_at=when, finished_at=when)
+
+        titles = [r["title"] for r in client.get(f"/api/users/{uid}/outcomes").json()]
+
+        assert titles == ["T2", "T10", "T30"], f"not newest-first: {titles}"
+
+    def test_the_watch_time_and_the_finish_time_are_not_the_same_field(self, client: TestClient):
+        """A series watched over a month has a credit and a completion weeks apart, and the page
+        prints the credit. Reporting one as the other was invisible to every test here."""
+        uid = self._uid(client)
+        watched = datetime.now(UTC) - timedelta(days=30)
+        finished = datetime.now(UTC) - timedelta(days=2)
+        self._pick(client, uid, tmdb_id=9, rating_key=9, title="Long Series", watched_at=watched, finished_at=finished)
+
+        row = client.get(f"/api/users/{uid}/outcomes").json()[0]
+
+        assert row["watched_at"].startswith(watched.strftime("%Y-%m-%d"))
+        assert row["finished_at"].startswith(finished.strftime("%Y-%m-%d"))
+        assert row["watched_at"] != row["finished_at"]
+
     def test_an_unknown_user_is_a_404(self, client: TestClient):
         assert client.get("/api/users/999999/outcomes").status_code == 404

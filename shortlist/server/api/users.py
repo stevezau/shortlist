@@ -563,9 +563,12 @@ def user_outcomes(user_id: int, request: Request) -> list[dict]:
         if session.get(User, user_id) is None:
             raise HTTPException(status_code=404, detail="user not found")
         outcomes = report_service.resolve_outcomes(session, None)
-        mine = [
-            (key, entry) for key, entry in outcomes.items() if key[0] == user_id and entry["watched_at"] is not None
-        ]
+        # Filtered on the USER only. An extra `watched_at is not None` test used to sit here, which
+        # was redundant with `resolve_outcomes`' own gate for the ordinary case and actively wrong for
+        # the rest: an entry it lets through — finished, never separately credited — is one the
+        # dashboard counts and this page hid, so the two disagreed about the same title. One place
+        # decides what an outcome is, and it is not this one.
+        mine = [(key, entry) for key, entry in outcomes.items() if key[0] == user_id]
         namer = report_service._RowNamer(
             session, SettingsStore(session).get("row.name_template") or DEFAULT_ROW_TEMPLATE
         )
