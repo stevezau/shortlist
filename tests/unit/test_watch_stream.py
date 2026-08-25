@@ -1361,3 +1361,43 @@ class TestACreditIsAskedForWhileStillWatching:
         stream._close("556", live, "stopped")
 
         assert self._queued(sessions) == 1, "no credit pass when the session ended"
+
+
+class TestTheWorkerIsWokenNotWaitedFor:
+    """A queued credit pass used to sit out the job worker's 60s tick.
+
+    Measured on the maintainer's server: 87 seconds from pressing play to the dashboard, of which
+    58.6s was queue wait and 0.5s was the actual work. The queue itself is right — it survives a
+    crash, coalesces a household stopping four streams into one pass, and keeps the credit scan off
+    the socket's thread. The TRIGGER was what was lazy.
+    """
+
+    def test_queueing_a_pass_wakes_the_worker(self, sessions, ctx):
+        woken: list[int] = []
+
+        async def drain():
+            woken.append(1)
+
+        stream = WatchStream(sessions, MagicMock(), drain=drain)
+        stream._loop = asyncio.get_event_loop_policy().new_event_loop()
+        try:
+            run(stream._on_playing(ctx, playing(offset=1_000)))
+            stream._flush(stream._live["556"])
+            # `run_coroutine_threadsafe` only SCHEDULES; the loop has to turn for the coroutine to
+            # execute. `call_soon(stop)` would run the stop first, so give it a beat.
+            stream._loop.call_later(0.05, stream._loop.stop)
+            stream._loop.run_forever()
+        finally:
+            stream._loop.close()
+
+        assert woken, "the pass was queued and the worker left to find it on its next tick"
+
+    def test_a_listener_with_no_drain_still_queues(self, sessions, ctx):
+        """The nudge is optional — without it the job still runs, just on the next tick. A test or a
+        context that cannot supply one must not lose the credit."""
+        stream = WatchStream(sessions, MagicMock())  # no drain
+        run(stream._on_playing(ctx, playing(offset=1_000)))
+        stream._flush(stream._live["556"])
+
+        with sessions() as s:
+            assert s.query(Job).filter(Job.kind == "watch.reconcile").count() == 1

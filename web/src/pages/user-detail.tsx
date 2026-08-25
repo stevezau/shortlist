@@ -1,7 +1,6 @@
 import { Clock } from "lucide-react";
 import type { ReactNode } from "react";
-import { useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 
 import { BackLink } from "@/components/back-link";
 import { OwnerNote } from "@/components/owner-note";
@@ -29,8 +28,20 @@ function SectionHeading({ children }: { children: ReactNode }) {
 
 type UserTab = "rows" | "runs" | "settings" | "history";
 
+const TABS: UserTab[] = ["rows", "runs", "settings", "history"];
+
 function UserDetailBody({ user }: { user: User }) {
-  const [tab, setTab] = useState<UserTab>("rows");
+  // In the URL, not component state. Someone arriving from the dashboard's "who watched what" wants
+  // the watched view, and a link is the only way to say so — `?tab=` also survives a refresh and the
+  // back button, which local state does not.
+  const [params, setParams] = useSearchParams();
+  const asked = params.get("tab") as UserTab | null;
+  const tab: UserTab = asked && TABS.includes(asked) ? asked : "rows";
+  const setTab = (next: UserTab) => {
+    // `replace`, so flicking between tabs does not fill the back button with them — Back should
+    // return to where you came from, which is the dashboard.
+    setParams(next === "rows" ? {} : { tab: next }, { replace: true });
+  };
 
   return (
     <div className="space-y-8">

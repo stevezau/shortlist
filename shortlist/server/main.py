@@ -254,7 +254,16 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         # own history log records completions only, so a poll of any frequency would miss it. It
         # reconnects on its own and every gap it leaves is repaired by the play log on the next sweep,
         # so a failure here degrades the data rather than breaking the app.
-        watch_stream = WatchStream(app.state.sessions, app.state.run_service.build_context)
+        # `drain=`: the listener wakes the job worker the moment it queues a credit pass, instead of
+        # the job sitting out the worker's 60s tick. Measured before this: 87s from pressing play to
+        # the dashboard, 58.6s of it queue wait for 0.5s of work.
+        from shortlist.server.services import jobs
+
+        watch_stream = WatchStream(
+            app.state.sessions,
+            app.state.run_service.build_context,
+            drain=lambda: jobs.drain_now(app.state, "watch-stream"),
+        )
         app.state.watch_stream = watch_stream
         stream_task = asyncio.create_task(watch_stream.run())
 

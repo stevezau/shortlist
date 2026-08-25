@@ -454,7 +454,9 @@ describe("ImpactReport", () => {
     const links = await screen.findAllByRole("link", { name: "Sarah H" });
     expect(links.length).toBeGreaterThanOrEqual(2); // By person, and the recent-watches feed
     for (const link of links) {
-      expect(link.getAttribute("href")).toBe("/users/42");
+      // `?tab=history` — arriving from a watch figure onto their ROW list is a second click for
+      // something the first click already asked.
+      expect(link.getAttribute("href")).toBe("/users/42?tab=history");
     }
   });
 

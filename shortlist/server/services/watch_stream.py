@@ -162,9 +162,16 @@ STABLE_AFTER_S = 60
 class WatchStream:
     """Holds the socket open, keeps live sessions in memory, and persists them as they settle."""
 
-    def __init__(self, session_factory: sessionmaker[Session], build_context) -> None:
+    def __init__(self, session_factory: sessionmaker[Session], build_context, *, drain=None) -> None:
         self._sessions = session_factory
         self._build_context = build_context
+        #: Wakes the job worker the moment a credit pass is queued, instead of leaving it to sit out
+        #: the worker's 60s tick. Optional so a test can build a listener without the whole app
+        #: state; when absent the job still runs, just on the next tick.
+        self._drain = drain
+        #: The listener's own loop, captured in `run()`. `_queue_reconcile` is called from a worker
+        #: THREAD, so waking the loop needs a handle to it rather than `get_running_loop()`.
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._live: dict[str, _Live] = {}
         self._snapshot: dict[str, dict] = {}
         self._snapshot_at: datetime | None = None
@@ -341,6 +348,9 @@ class WatchStream:
         # enqueue for the single SQLite writer. One `OperationalError` and `run()` exited before the
         # loop was ever entered — no reconnect, no retry, and no log line saying the feature was gone.
         # A missed sweep costs stale `ended_at IS NULL` rows; an unguarded one costs everything.
+        # Captured here, not in `__init__`: the loop only exists once `run()` is awaited, and
+        # `_queue_reconcile` needs a handle to it from a worker thread.
+        self._loop = asyncio.get_running_loop()
         try:
             await self._in_pool(self.close_orphans)
         except Exception as e:
@@ -669,6 +679,28 @@ class WatchStream:
                 session.commit()
         self._queue_reconcile()
 
+    def _wake_the_worker(self) -> None:
+        """Run the queued pass NOW rather than at the worker's next tick.
+
+        The queue is right and stays: it survives a crash, it coalesces a household stopping four
+        streams into one pass, and it keeps the credit scan off this socket's thread. What was wrong
+        was the TRIGGER — a job queued one second after a 60s tick waited the other 59 doing nothing.
+        Measured on the maintainer's server: 87s from pressing play to the dashboard, of which 58.6s
+        was queue wait and 0.5s was work.
+
+        `drain_now` is the same call the API handlers make for exactly this reason ("an operator who
+        just changed something should see it take effect"). The listener simply never made it.
+
+        Thread-safe by construction: this runs in the listener's worker pool, so the coroutine is
+        handed to the loop rather than awaited here. The drain itself does not block that loop —
+        `_execute` pushes a sync handler to an executor — and the future is deliberately not waited
+        on, because the socket must not park behind a credit pass.
+        """
+        if self._drain is None or self._loop is None:
+            return
+        with contextlib.suppress(RuntimeError):  # loop already closing on shutdown
+            asyncio.run_coroutine_threadsafe(self._drain(), self._loop)
+
     def _queue_reconcile(self) -> None:
         """Ask for the credit to be worked out now, rather than at the next scheduled sync.
 
@@ -698,6 +730,7 @@ class WatchStream:
                 if pending is not None:
                     return
             jobs.enqueue(self._sessions, "watch.reconcile")
+            self._wake_the_worker()
         except Exception as e:
             logger.debug("watch-stream: could not queue the credit pass ({})", type(e).__name__)
 

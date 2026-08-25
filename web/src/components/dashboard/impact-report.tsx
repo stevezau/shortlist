@@ -729,9 +729,11 @@ function ByPerson({
           two only fit side by side once a card is ~500px, which is `xl`. */}
       {/* A link, because "who is this person and what else did they get" is the next question this
           line provokes, and the answer is a page that already exists. `/users/:id` takes the id,
-          which is why the report carries one — `slug` addresses nothing. */}
+          which is why the report carries one — `slug` addresses nothing. `?tab=history` lands on
+          what they WATCHED: arriving from a watch figure onto their row list is a second click for
+          something the click already asked for. */}
       <Link
-        to={`/users/${p.id}`}
+        to={`/users/${p.id}?tab=history`}
         className="min-w-0 truncate rounded-sm underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring xl:flex-1"
       >
         {p.display_name || p.username}
@@ -1164,7 +1166,7 @@ function RecentlyWatched({
           rather than a link to a page that would 404. */}
       {w.user_id !== null ? (
         <Link
-          to={`/users/${w.user_id}`}
+          to={`/users/${w.user_id}?tab=history`}
           className="rounded-sm font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {w.display_name || w.username}

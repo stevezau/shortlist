@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NeedsALook } from "@/components/dashboard/engagement";
@@ -115,6 +116,10 @@ describe("NeedsALook", () => {
       } as never),
     );
 
+    // Behind the (i) now — present and reachable, not printed under the finding. The idle item is
+    // the first problem in the list, so its control is the first one.
+    const why = await screen.findAllByRole("button", { name: /why/i });
+    await userEvent.click(why[0]!);
     expect(await screen.findByText(/More than half/)).toBeInTheDocument();
   });
 
@@ -242,12 +247,22 @@ describe("NeedsALook — saying why", () => {
     // The rule is invisible otherwise, and "gave up" is the strongest negative claim on the page.
     renderPanel();
 
-    // Every give-up line carries it — findAll, because the fixture has more than one.
-    const hints = await screen.findAllByText(/Only films, and only after/);
-    const hint = hints[0]!;
+    // Behind an (i) now, not printed under every line — the findings are scanned, the reasoning is
+    // consulted. It must still be REACHABLE, and by click rather than hover, because a hover-only
+    // explanation does not exist on a phone.
+    expect(screen.queryByText(/Only films, and only after/)).toBeNull(); // collapsed by default
+
+    // Scoped to the GIVE-UP line — several findings each carry their own control, and the first
+    // belongs to the idle-people item.
+    const line = (await screen.findAllByText(/gave up on/))[0]!.closest("li")!;
+    const why = within(line).getByRole("button", { name: /why/i });
+    await userEvent.click(why);
+
+    const hint = within(line).getByText(/Only films, and only after/);
     expect(hint.textContent).toMatch(/24h with no further play/);
     expect(hint.textContent).toMatch(/clock restarts/);
     expect(hint.textContent).toMatch(/series is never counted/);
+    expect(why.getAttribute("aria-expanded")).toBe("true");
   });
 });
 
@@ -326,7 +341,8 @@ describe("NeedsALook — the thresholds it acts on", () => {
     renderPanel(report({ coverage: coverage({ users_watched: 8, users_idle: 2 }) }));
 
     expect(await screen.findByText(/got picks and watched none/)).toBeTruthy();
-    expect(screen.queryByText(/More than half/)).toBeNull();
+    // No (i) at all when there is no hint to give — the control must not appear for its own sake.
+    expect(screen.queryByRole("button", { name: /why/i })).toBeNull();
   });
 
   it("reports a single idle person rather than rounding them away", async () => {
