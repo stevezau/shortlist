@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PickOutcomes } from "@/components/user-detail/pick-outcomes";
@@ -161,9 +162,11 @@ describe("PickOutcomes", () => {
     ]);
     renderIt();
 
-    const label = await screen.findByText("Gave up part-way");
-    expect(label.getAttribute("title")).toMatch(/24 hours/);
-    expect(label.getAttribute("title")).toMatch(/clock restarts/);
+    // Behind the same (i) the dashboard uses — a real button, not a `title`, because a hover-only
+    // explanation does not exist on a phone.
+    await screen.findByText("Gave up part-way");
+    await userEvent.click(screen.getByRole("button", { name: /why/i }));
+    expect(screen.getByText(/24 hours/).textContent).toMatch(/clock restarts/);
   });
 
   it("explains that a series is always 'still watching'", async () => {
@@ -172,7 +175,9 @@ describe("PickOutcomes", () => {
     ]);
     renderIt();
 
-    expect((await screen.findByText("Still watching")).getAttribute("title")).toMatch(/series/);
+    await screen.findByText("Still watching");
+    await userEvent.click(screen.getByRole("button", { name: /why/i }));
+    expect(screen.getByText(/series/)).toBeTruthy();
   });
 
   it("explains the empty case instead of showing an empty list", async () => {

@@ -58,6 +58,11 @@ SESSION_CACHE_TTL = timedelta(seconds=5)
 #: Below this, a session is a misfire rather than a start — a mis-click, an autoplay preview, a client
 #: probing the file. Tautulli calls the same idea its "ignore interval".
 MIN_START_SECONDS = 60
+#: Live references to in-flight wake futures. `run_coroutine_threadsafe` hands back a future nothing
+#: else holds, and a bare one can be garbage-collected mid-flight — the same reason
+#: `jobs._BACKGROUND_DRAINS` exists.
+_WAKES: set = set()
+
 #: How far past an item's stated runtime an offset may sit and still be believed. Genuine end-of-file
 #: overshoot is real (container padding, imprecise metadata); anything beyond this is a reading that
 #: belongs to a different item. See `_is_overshoot`.
@@ -172,6 +177,10 @@ class WatchStream:
         #: The listener's own loop, captured in `run()`. `_queue_reconcile` is called from a worker
         #: THREAD, so waking the loop needs a handle to it rather than `get_running_loop()`.
         self._loop: asyncio.AbstractEventLoop | None = None
+        #: Set by `stop()`. The shutdown path still flushes every live session, and each `_close`
+        #: queues a credit pass — but waking the worker then races a lifespan that has already shut
+        #: the scheduler down on purpose. The credit is queued either way and runs at the next boot.
+        self._stopping = False
         self._live: dict[str, _Live] = {}
         self._snapshot: dict[str, dict] = {}
         self._snapshot_at: datetime | None = None
@@ -395,6 +404,10 @@ class WatchStream:
         await self._persist(self._close_all, "stopped")
 
     def stop(self) -> None:
+        # `_stopping` FIRST. `run()`'s last act is `_close_all`, which closes every live session and
+        # queues a credit pass for each — and waking the worker at that point races a lifespan that
+        # has already stopped the scheduler on purpose. The jobs stay queued and run at the next boot.
+        self._stopping = True
         self._stop.set()
 
     async def _in_pool(self, fn, *args):
@@ -692,14 +705,35 @@ class WatchStream:
         just changed something should see it take effect"). The listener simply never made it.
 
         Thread-safe by construction: this runs in the listener's worker pool, so the coroutine is
-        handed to the loop rather than awaited here. The drain itself does not block that loop —
-        `_execute` pushes a sync handler to an executor — and the future is deliberately not waited
-        on, because the socket must not park behind a credit pass.
+        handed to the loop rather than awaited here, and the future is not waited on — the socket
+        must not park behind a credit pass.
+
+        Three things this deliberately does NOT do, each of which it did in its first version:
+
+        * It does not run while a nightly run holds the SQLite writer. Only the job HANDLER goes to
+          an executor; the claim around it (`BEGIN IMMEDIATE`) is synchronous on the loop, and
+          against a held writer it stalls the loop for the full `busy_timeout` — measured at 5.24s,
+          blocking the websocket, every SSE stream and every request — and then raises anyway. In
+          the one case where the wake costs the most it buys nothing, so it is skipped and the tick
+          picks the job up when the run ends.
+        * It does not drain the whole queue. Seven kinds write to Plex or plex.tv, and this fires on
+          every session start and stop — including from `_close_all` on the way out, AFTER the
+          lifespan has deliberately stopped the scheduler. That let pressing play begin a
+          share-filter merge during shutdown, with the drain never resuming to close the job out.
+          `drain_kind` runs the read-only pass this asked for and nothing else.
+        * It does not drop the future. A bare task can be garbage-collected mid-flight, which is why
+          `jobs._BACKGROUND_DRAINS` exists; this keeps its own reference on the same pattern.
         """
-        if self._drain is None or self._loop is None:
+        if self._drain is None or self._loop is None or self._stopping:
             return
-        with contextlib.suppress(RuntimeError):  # loop already closing on shutdown
-            asyncio.run_coroutine_threadsafe(self._drain(), self._loop)
+        if self._loop.is_closed():
+            return
+        try:
+            future = asyncio.run_coroutine_threadsafe(self._drain(), self._loop)
+        except RuntimeError:  # loop closed between the check and the call
+            return
+        _WAKES.add(future)
+        future.add_done_callback(_WAKES.discard)
 
     def _queue_reconcile(self) -> None:
         """Ask for the credit to be worked out now, rather than at the next scheduled sync.
@@ -728,6 +762,12 @@ class WatchStream:
                     .first()
                 )
                 if pending is not None:
+                    # Already queued — but still WAKE. `run_pending` returns immediately when a
+                    # drain is already in flight, so an earlier wake can no-op and leave its job
+                    # sitting; without a nudge here the next session start returns at this line and
+                    # nothing ever retries, which is the whole 58.6s tick wait coming back silently.
+                    # A wake against a held lock costs one `locked()` check.
+                    self._wake_the_worker()
                     return
             jobs.enqueue(self._sessions, "watch.reconcile")
             self._wake_the_worker()

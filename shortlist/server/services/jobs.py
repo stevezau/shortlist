@@ -454,7 +454,9 @@ def _claimable(kind: str, *, allow_writers: bool, allow_history: bool) -> bool:
     return allow_history or kind != "sync.history"
 
 
-def _claim(sessions, *, allow_writers: bool = True, allow_history: bool = True) -> tuple[int, str] | None:
+def _claim(
+    sessions, *, allow_writers: bool = True, allow_history: bool = True, only_kind: str | None = None
+) -> tuple[int, str] | None:
     """Take the oldest runnable queued job whose backoff has elapsed, atomically. Returns (id, kind).
 
     SQLite has no ``SELECT ... FOR UPDATE SKIP LOCKED``, so the select-then-update is wrapped in
@@ -465,7 +467,10 @@ def _claim(sessions, *, allow_writers: bool = True, allow_history: bool = True) 
     with sessions() as session:
         session.execute(text("BEGIN IMMEDIATE"))
         try:
-            for job in session.query(Job).filter(Job.status == "queued").order_by(Job.created_at, Job.id).all():
+            query = session.query(Job).filter(Job.status == "queued")
+            if only_kind is not None:
+                query = query.filter(Job.kind == only_kind)
+            for job in query.order_by(Job.created_at, Job.id).all():
                 if not _claimable(job.kind, allow_writers=allow_writers, allow_history=allow_history):
                     continue
                 if job.attempts:
@@ -601,6 +606,34 @@ def _max_parallel_readonly(state) -> int:
     return DEFAULT_MAX_PARALLEL_READONLY
 
 
+async def drain_kind(state, kind: str) -> int:
+    """Run the queued jobs of ONE kind, and nothing else.
+
+    `drain_now` drains the WHOLE queue, which is right for an operator action — they changed
+    something and everything pending should settle. It is wrong as a reflex to someone pressing play.
+    Seven kinds write to Plex or plex.tv, and the listener's wake fires on every session start and
+    stop, including from `_close_all` during shutdown — after the lifespan has deliberately stopped
+    the scheduler first. That let a playback event begin a share-filter merge on the way out of the
+    process, with the drain never resuming to mark the job finished.
+
+    So a playback event may only ever run the read-only pass it actually asked for. Same lock and
+    same claim path; only the kind is narrowed.
+    """
+    # NOT while a run holds the writer. Only the job HANDLER goes to an executor; `_claim`'s
+    # `BEGIN IMMEDIATE` is synchronous SQLite on the event loop, so against a held writer it stalls
+    # the loop for the full `busy_timeout` — measured at 5.24s, blocking the websocket, every SSE
+    # stream and every request — and then raises `OperationalError` anyway. The job is not lost: the
+    # scheduler tick drains it the moment the run finishes. Skipping costs a delay that was going to
+    # happen regardless; not skipping costs five seconds of the whole app.
+    if _plex_busy(state):
+        return 0
+    sessions = state.sessions
+    if _DRAIN_LOCK.locked():
+        return 0
+    async with _DRAIN_LOCK:
+        return await _drain(state, sessions, only_kind=kind)
+
+
 async def run_pending(state) -> int:
     """Drain the queue. Returns how many jobs were dispatched.
 
@@ -693,7 +726,7 @@ async def _run_reader(sem: asyncio.Semaphore, state, sessions, job_id: int, kind
         await _execute(state, sessions, job_id, kind)
 
 
-async def _drain(state, sessions) -> int:
+async def _drain(state, sessions, only_kind: str | None = None) -> int:
     ran = 0
     dispatched: set[asyncio.Task] = set()
     # A separate list, because the done-callback below removes finished tasks from `dispatched` —
@@ -705,7 +738,7 @@ async def _drain(state, sessions) -> int:
     try:
         while True:
             busy = _plex_busy(state)
-            claimed = _claim(sessions, allow_writers=not busy, allow_history=not busy)
+            claimed = _claim(sessions, allow_writers=not busy, allow_history=not busy, only_kind=only_kind)
             if claimed is None:
                 break
             job_id, kind = claimed

@@ -1373,13 +1373,17 @@ class TestTheWorkerIsWokenNotWaitedFor:
     """
 
     def test_queueing_a_pass_wakes_the_worker(self, sessions, ctx):
-        woken: list[int] = []
+        # Records what the drain would SEE, not merely that it ran. Asserting `woken` alone passed
+        # even with the wake moved above the enqueue — the drain would then find an empty queue and
+        # the credit would wait out the tick, which is the exact regression this exists to stop.
+        seen: list[int] = []
 
         async def drain():
-            woken.append(1)
+            with sessions() as s:
+                seen.append(s.query(Job).filter(Job.kind == "watch.reconcile", Job.status == "queued").count())
 
         stream = WatchStream(sessions, MagicMock(), drain=drain)
-        stream._loop = asyncio.get_event_loop_policy().new_event_loop()
+        stream._loop = asyncio.new_event_loop()
         try:
             run(stream._on_playing(ctx, playing(offset=1_000)))
             stream._flush(stream._live["556"])
@@ -1390,7 +1394,8 @@ class TestTheWorkerIsWokenNotWaitedFor:
         finally:
             stream._loop.close()
 
-        assert woken, "the pass was queued and the worker left to find it on its next tick"
+        assert seen, "the pass was queued and the worker left to find it on its next tick"
+        assert seen[0] == 1, "the worker was woken before the job existed — it would find nothing"
 
     def test_a_listener_with_no_drain_still_queues(self, sessions, ctx):
         """The nudge is optional — without it the job still runs, just on the next tick. A test or a
@@ -1401,3 +1406,73 @@ class TestTheWorkerIsWokenNotWaitedFor:
 
         with sessions() as s:
             assert s.query(Job).filter(Job.kind == "watch.reconcile").count() == 1
+
+
+class TestTheWakeKnowsWhenNotToFire:
+    """`_wake_the_worker` grew three refusals, each from a measured or traced failure."""
+
+    def _stream(self, sessions, drain=None):
+        stream = WatchStream(sessions, MagicMock(), drain=drain)
+        stream._loop = asyncio.new_event_loop()
+        return stream
+
+    def _turn(self, stream):
+        stream._loop.call_later(0.05, stream._loop.stop)
+        stream._loop.run_forever()
+
+    def test_it_does_not_wake_while_shutting_down(self, sessions, ctx):
+        """`run()`'s last act closes every live session, and each close queues a credit pass. Waking
+        then races a lifespan that has already stopped the scheduler on purpose — which let pressing
+        play begin a plex.tv write on the way out of the process."""
+        woken: list[int] = []
+
+        async def drain():
+            woken.append(1)
+
+        stream = self._stream(sessions, drain)
+        try:
+            run(stream._on_playing(ctx, playing(offset=1_000)))
+            stream.stop()  # sets _stopping before _stop
+            stream._flush(stream._live["556"])
+            self._turn(stream)
+        finally:
+            stream._loop.close()
+
+        assert woken == [], "woke the worker while the process was shutting down"
+        with sessions() as s:
+            assert s.query(Job).filter(Job.kind == "watch.reconcile").count() == 1, (
+                "the credit must still be QUEUED — it runs at the next boot"
+            )
+
+    def test_a_second_session_re_wakes_even_when_a_pass_is_already_queued(self, sessions, ctx):
+        """`run_pending` returns immediately if a drain is in flight, so a wake can no-op and leave
+        its job sitting. Returning early on the coalesce meant nothing ever retried the nudge."""
+        woken: list[int] = []
+
+        async def drain():
+            woken.append(1)
+
+        stream = self._stream(sessions, drain)
+        try:
+            run(stream._on_playing(ctx, playing(offset=1_000)))
+            stream._flush(stream._live["556"])  # queues, and wakes
+            stream._queue_reconcile()  # already queued — must STILL wake
+            self._turn(stream)
+        finally:
+            stream._loop.close()
+
+        assert len(woken) >= 2, "the coalesced path returned without nudging the worker"
+
+    def test_a_closed_loop_is_not_a_crash(self, sessions, ctx):
+        woken: list[int] = []
+
+        async def drain():
+            woken.append(1)
+
+        stream = self._stream(sessions, drain)
+        run(stream._on_playing(ctx, playing(offset=1_000)))
+        stream._loop.close()
+
+        stream._flush(stream._live["556"])  # must not raise
+
+        assert woken == []

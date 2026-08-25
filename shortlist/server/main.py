@@ -262,7 +262,9 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         watch_stream = WatchStream(
             app.state.sessions,
             app.state.run_service.build_context,
-            drain=lambda: jobs.drain_now(app.state, "watch-stream"),
+            # `drain_kind`, not `drain_now`: a playback event may only run the read-only credit
+            # pass it asked for. Draining the whole queue let pressing play start a plex.tv write.
+            drain=lambda: jobs.drain_kind(app.state, "watch.reconcile"),
         )
         app.state.watch_stream = watch_stream
         stream_task = asyncio.create_task(watch_stream.run())

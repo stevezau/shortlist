@@ -1,3 +1,4 @@
+import { Why } from "@/components/dashboard/engagement";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -39,7 +40,7 @@ function Line({ pick }: { pick: UserPickOutcome }) {
       <span className="min-w-0 flex-1 truncate text-foreground">
         {pick.title}
       </span>
-      <span className={cn("font-medium tabular-nums", label?.className)} title={label?.why}>
+      <span className={cn("font-medium tabular-nums", label?.className)}>
         {label?.text}
         {/* The percentage only where it adds something. On a finished title it is noise, and it is
             always null for a series — an episode's progress is not the show's. */}
@@ -50,6 +51,7 @@ function Line({ pick }: { pick: UserPickOutcome }) {
           </span>
         )}
       </span>
+      {label?.why && <Why text={label.why} />}
       <Badge variant="secondary" className="font-normal">
         {pick.row}
       </Badge>

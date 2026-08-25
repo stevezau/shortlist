@@ -30,7 +30,7 @@ type UserTab = "rows" | "runs" | "settings" | "history";
 
 const TABS: UserTab[] = ["rows", "runs", "settings", "history"];
 
-function UserDetailBody({ user }: { user: User }) {
+export function UserDetailBody({ user }: { user: User }) {
   // In the URL, not component state. Someone arriving from the dashboard's "who watched what" wants
   // the watched view, and a link is the only way to say so — `?tab=` also survives a refresh and the
   // back button, which local state does not.

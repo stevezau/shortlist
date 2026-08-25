@@ -30,6 +30,10 @@ import type {
  *  only — the server owns the rule; this is the sentence that explains it. */
 const SETTLED_AFTER_HOURS = 24;
 
+/** The one sentence explaining when the app is willing to call something a give-up. Exported so the
+ *  verdict card and this one cannot drift into saying different things about the same rule. */
+export const WHY_GAVE_UP = `Only films, and only after ${SETTLED_AFTER_HOURS}h with no further play — the clock restarts if they come back, and a series is never counted here.`;
+
 type Problem = {
   key: string;
   text: React.ReactNode;
@@ -124,7 +128,7 @@ function gaveUp(people: EngagementReport["people"]): Problem[] {
     // Says WHEN the app is willing to make this claim, because "gave up" is the strongest negative
     // thing on the page and the rule behind it is invisible. Without it the honest reaction to
     // seeing a film you are two nights into is "the tracking is wrong", not "it will correct".
-    hint: `Only films, and only after ${SETTLED_AFTER_HOURS}h with no further play — the clock restarts if they come back, and a series is never counted here.`,
+    hint: WHY_GAVE_UP,
     text: (
       <>
         <strong className="font-medium text-foreground">{person}</strong> gave
@@ -147,7 +151,7 @@ function gaveUp(people: EngagementReport["people"]): Problem[] {
  * this app is read on one. Click or focus toggles it, `aria-expanded` says which, and the text lands
  * in the DOM where a screen reader can reach it rather than in an attribute it may skip.
  */
-function Why({ text }: { text: string }) {
+export function Why({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   return (
     <>
