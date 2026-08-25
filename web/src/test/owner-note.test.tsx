@@ -44,6 +44,12 @@ function renderIn(node: React.ReactNode) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `clearAllMocks` clears CALL HISTORY, not implementations — so the failure case below
+  // (`dismissNotification.mockRejectedValue`) leaked into every test that ran after it, and the
+  // suite's usual file order simply happened to put it last. Under `--sequence.shuffle` it ran
+  // first and took the happy-path tests down with it. Restored explicitly rather than switching to
+  // `resetAllMocks`, which would strip the default implementations these mocks are declared with.
+  dismissNotification.mockResolvedValue({ ok: true });
   getNotifications.mockResolvedValue({
     notifications: [],
     dismissed: [],
@@ -108,7 +114,12 @@ describe("OwnerNote", () => {
       await screen.findByRole("button", { name: /don.t show this again/i }),
     );
 
-    expect(dismissNotification).toHaveBeenCalledWith(OWNER_SHELF_NOTE_ID);
+    // BOTH waited for. Only the alert was, and the bare assertion on the note raced the click's own
+    // dispatch — invisible in the suite's usual order, reproducible under `--sequence.shuffle`.
+    // Two dismissals fired by one gesture arrive independently; neither is guaranteed first.
+    await waitFor(() =>
+      expect(dismissNotification).toHaveBeenCalledWith(OWNER_SHELF_NOTE_ID),
+    );
     await waitFor(() =>
       expect(dismissNotification).toHaveBeenCalledWith(OWNER_SHELF_ALERT_ID),
     );
