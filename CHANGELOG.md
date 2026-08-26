@@ -6,7 +6,34 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-08-26
+
 ### Added
+
+- **Shortlist can now tell you whether its picks actually get watched.** It only ever read one
+  signal — Plex's binary watched flag — which cannot answer either question that matters. *When* did
+  they watch it, since a rewatch overwrites the original date? And what about the film someone is
+  two nights into, which the flag calls unwatched right up until the credits?
+
+  Shortlist now watches playback itself. A pick is credited at the moment someone presses play, a
+  part-watch is captured when playback stops rather than waiting for the next sync, and picks
+  delivered through shared rows count too — previously they credited nothing at all, because a
+  shared row writes no per-person pick record to match a play against. If tracking stops working,
+  the dashboard says so rather than quietly reporting zero.
+
+  A watch still in progress is no longer called an abandonment. "Gave up part-way" is the harshest
+  thing this app says about a pick, and the rule behind it was invisible — so it now explains itself
+  where the claim is made, instead of leaving you to conclude the tracking is broken.
+
+- **The dashboard leads with whether your setup is working.** It had grown to six stat tiles and
+  eleven sections, with the one number that actually judges a setup — the share of delivered picks
+  that got watched — nowhere near the top. It now opens with whether it is working and what isn't,
+  and every person and row links through to its own page.
+
+- **Requests can be tagged with the person they were picked for.** Radarr and Sonarr have no field
+  for "who wanted this", only tags, so the Requests inbox's why-line never reached them. Turn it on
+  and each request carries the wanting person's name as a second tag, so you can tell in Radarr and
+  Sonarr who a title was added for. Off by default, and any row can opt in or out on its own.
 
 - **Settings changes now record who made them.** The audit log said what changed and when, but
   never who — so a value that moved with nobody owning up to it was simply unanswerable. That
