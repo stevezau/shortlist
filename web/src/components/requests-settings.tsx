@@ -134,9 +134,14 @@ function readForm(settings: Settings): RequestsForm {
   };
 }
 
-const selectClass =
-  "h-9 w-full rounded-md border bg-elevated px-3 text-sm focus-visible:outline-none " +
+// Split so a caller can opt OUT of full width. Appending `w-auto` to a class string that already
+// contains `w-full` does not work: both utilities land in the same Tailwind layer, so the winner is
+// whichever comes later in the GENERATED stylesheet, not in the attribute. The language picker asked
+// for `w-auto` and rendered full-panel-width for a two-letter choice.
+const selectBase =
+  "h-9 rounded-md border bg-elevated px-3 text-sm focus-visible:outline-none " +
   "focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60";
+const selectClass = `${selectBase} w-full`;
 
 /** One app's where-to-file choices for requests (Radarr for movies, Sonarr for shows). The
  *  connection itself — address + API key — lives in Settings → Connections; this only picks the
@@ -700,7 +705,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                       <select
                         id={addLanguageId}
                         aria-label="Add a language"
-                        className={selectClass + " h-8 w-auto"}
+                        className={`${selectBase} h-8 w-auto`}
                         value=""
                         onChange={(e) => {
                           const code = e.target.value;

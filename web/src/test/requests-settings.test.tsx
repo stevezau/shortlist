@@ -372,6 +372,16 @@ describe("RequestsSettings", () => {
       expect(screen.queryByText(/never ask for anything/i)).toBeNull();
     });
 
+    it("keeps the language picker to its own width, not the whole panel", async () => {
+      // The bug this pins: `selectClass` hardcodes `w-full`, and appending `w-auto` does not undo it
+      // — both utilities sit in the same Tailwind layer, so the winner is whichever comes later in
+      // the generated stylesheet, not in the attribute. A two-letter choice spanned the whole panel.
+      renderPanel({ ...ON, "requests.language_mode": "prefer" });
+      const picker = await screen.findByLabelText("Add a language");
+      expect(picker.className).not.toMatch(/\bw-full\b/);
+      expect(picker.className).toMatch(/\bw-auto\b/);
+    });
+
     it("adds a language and saves it", async () => {
       renderPanel({ ...ON, "requests.language_mode": "prefer" });
       await userEvent.selectOptions(
