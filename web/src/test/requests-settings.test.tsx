@@ -109,6 +109,21 @@ describe("RequestsSettings", () => {
     expect(payload).not.toHaveProperty("requests.sonarr.url");
   });
 
+  it("saves the tag-by-person switch, off unless the owner turns it on", async () => {
+    renderPanel({ "requests.enabled": true });
+    const toggle = await screen.findByLabelText(
+      /Also tag requests with the name of the person/i,
+    );
+    expect(toggle).not.toBeChecked();
+
+    await userEvent.click(toggle);
+    await waitFor(() =>
+      expect(putSettings.mock.calls.at(-1)?.[0]).toMatchObject({
+        "requests.auto_user_tag": true,
+      }),
+    );
+  });
+
   it("saves an upper year bound and warns when the range can match nothing", async () => {
     renderPanel({ "requests.enabled": true });
 
@@ -180,6 +195,37 @@ describe("RequestsSettings", () => {
     expect(screen.getByText("Save to")).toBeTruthy();
   });
 
+  it("offers the amount-of-a-show choice for Sonarr and saves it", async () => {
+    // Issue #100: every show used to arrive with all seasons monitored, so a twelve-season show
+    // started twelve seasons of downloads the night it was picked.
+    renderPanel({
+      "requests.enabled": true,
+      "requests.sonarr.url": "http://sonarr",
+      "requests.sonarr.apikey": "•••••",
+    });
+
+    const monitor = await screen.findByLabelText(/How much of a show to grab/i);
+    expect(monitor).toHaveValue("all");
+    await userEvent.selectOptions(monitor, "firstSeason");
+
+    expect(screen.getByText(/Season 1 only/)).toBeTruthy();
+    await waitFor(() =>
+      expect(putSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ "requests.sonarr.monitor": "firstSeason" }),
+      ),
+    );
+  });
+
+  it("does not offer it for Radarr, which has no seasons to limit", async () => {
+    renderPanel({
+      "requests.enabled": true,
+      "requests.radarr.url": "http://radarr",
+      "requests.radarr.apikey": "•••••",
+    });
+    await screen.findByText("Quality");
+    expect(screen.queryByLabelText(/How much of a show to grab/i)).toBeNull();
+  });
+
   it("teaches the auto-send choice before the guardrails it sits on top of", async () => {
     renderPanel({ "requests.enabled": true });
     const autoSend = await screen.findByText(
@@ -209,5 +255,155 @@ describe("RequestsSettings", () => {
     expect(
       screen.getByText(/Most to send automatically in one run/i),
     ).toBeTruthy();
+  });
+
+  describe("language", () => {
+    const ON = { "requests.enabled": true };
+
+    it("ships on 'Any language', so an upgrade changes nobody's requests", async () => {
+      renderPanel(ON);
+      await screen.findByText("Guardrails");
+      expect(
+        screen.getByRole("button", { name: "Any language", pressed: true }),
+      ).toBeTruthy();
+    });
+
+    it("hides the language list and the second bar while the mode is 'Any'", async () => {
+      // On "any" neither is read at all, and a number on screen that nothing applies is worse than
+      // no number: it reads as a bar that is in force.
+      renderPanel(ON);
+      await screen.findByText("Guardrails");
+      expect(screen.queryByLabelText("Add a language")).toBeNull();
+      expect(
+        screen.queryByLabelText(/Minimum TMDB rating, other languages/i),
+      ).toBeNull();
+    });
+
+    it("shows the derived bar rather than an empty box when nothing is set", async () => {
+      // min_rating 7 + 1.5 = 8.5. The field must show the number the run will use — the setting's
+      // whole point is that it follows the owner's own floor rather than a constant of ours.
+      renderPanel({ ...ON, "requests.language_mode": "prefer" });
+      const bar = await screen.findByLabelText(
+        /Minimum TMDB rating, other languages/i,
+      );
+      expect((bar as HTMLInputElement).value).toBe("8.5");
+      expect(
+        screen.getByText(/Following your minimum rating, plus 1.5/i),
+      ).toBeTruthy();
+    });
+
+    it("moves the derived bar when the owner's own floor moves", async () => {
+      renderPanel({
+        ...ON,
+        "requests.language_mode": "prefer",
+        "requests.min_rating": 6,
+      });
+      const bar = await screen.findByLabelText(
+        /Minimum TMDB rating, other languages/i,
+      );
+      expect((bar as HTMLInputElement).value).toBe("7.5");
+    });
+
+    it("saves null for the bar until the owner types one", async () => {
+      // Turning the mode on must NOT write a number. Saving the derived 8.5 here would freeze the
+      // bar at today's minimum rating, so later raising the minimum would silently stop moving it —
+      // the setting would read as "following" while doing nothing of the sort.
+      renderPanel(ON);
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Prefer these" }),
+      );
+      await waitFor(() => {
+        const saved = putSettings.mock.calls.at(-1)![0];
+        expect(saved["requests.language_mode"]).toBe("prefer");
+        expect(saved["requests.min_rating_other"]).toBeNull();
+      });
+    });
+
+    it("clearing the bar un-pins it rather than storing a zero", async () => {
+      // `Number("") === 0`, and 0 is a REAL bar here — nothing can fail it. So a naive read of the
+      // cleared field would silently turn "Prefer these" into "Any language" for auto-send, which
+      // is the one thing this whole feature is built to distinguish.
+      renderPanel({
+        ...ON,
+        "requests.language_mode": "prefer",
+        "requests.min_rating_other": 9.1,
+      });
+      const bar = await screen.findByLabelText(
+        /Minimum TMDB rating, other languages/i,
+      );
+      await userEvent.clear(bar);
+      await waitFor(() => {
+        const saved = putSettings.mock.calls.at(-1)![0];
+        expect(saved["requests.min_rating_other"]).toBeNull();
+      });
+    });
+
+    it("hides the second bar in 'Only these', where no rating can rescue a title", async () => {
+      renderPanel({ ...ON, "requests.language_mode": "only" });
+      await screen.findByText("Guardrails");
+      expect(
+        screen.queryByLabelText(/Minimum TMDB rating, other languages/i),
+      ).toBeNull();
+      expect(screen.getByLabelText("Add a language")).toBeTruthy();
+    });
+
+    it("warns that an empty list in 'Only these' requests nothing at all", async () => {
+      // The inverse of the control, on a path that adds titles to Radarr — so it says so on screen
+      // rather than leaving the owner to discover a silent night.
+      renderPanel({
+        ...ON,
+        "requests.language_mode": "only",
+        "requests.preferred_languages": [],
+      });
+      expect(
+        await screen.findByText(/will never ask for anything/i),
+      ).toBeTruthy();
+    });
+
+    it("warns differently in 'Prefer these', where an empty list raises the bar on everything", async () => {
+      renderPanel({
+        ...ON,
+        "requests.language_mode": "prefer",
+        "requests.preferred_languages": [],
+      });
+      expect(
+        await screen.findByText(/can identify a language for counts as another language/i),
+      ).toBeTruthy();
+      expect(screen.queryByText(/never ask for anything/i)).toBeNull();
+    });
+
+    it("keeps the language picker to its own width, not the whole panel", async () => {
+      // The bug this pins: `selectClass` hardcodes `w-full`, and appending `w-auto` does not undo it
+      // — both utilities sit in the same Tailwind layer, so the winner is whichever comes later in
+      // the generated stylesheet, not in the attribute. A two-letter choice spanned the whole panel.
+      renderPanel({ ...ON, "requests.language_mode": "prefer" });
+      const picker = await screen.findByLabelText("Add a language");
+      expect(picker.className).not.toMatch(/\bw-full\b/);
+      expect(picker.className).toMatch(/\bw-auto\b/);
+    });
+
+    it("adds a language and saves it", async () => {
+      renderPanel({ ...ON, "requests.language_mode": "prefer" });
+      await userEvent.selectOptions(
+        await screen.findByLabelText("Add a language"),
+        "ja",
+      );
+      await waitFor(() => {
+        const saved = putSettings.mock.calls.at(-1)![0];
+        expect(saved["requests.preferred_languages"]).toEqual(["en", "ja"]);
+      });
+    });
+
+    it("says a bar below the minimum rating can never apply", async () => {
+      renderPanel({
+        ...ON,
+        "requests.language_mode": "prefer",
+        "requests.min_rating": 8,
+        "requests.min_rating_other": 7,
+      });
+      expect(
+        await screen.findByText(/it never applies/i),
+      ).toBeTruthy();
+    });
   });
 });

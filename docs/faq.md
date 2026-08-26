@@ -58,7 +58,8 @@ nothing for Plex to hide them behind. There is no Plex setting for this.
 
 Shortlist walks you through the three options under **Users → You see everyone's rows**: take the
 rows off the library shelf, leave it alone, or move your own watching to a separate Plex Home
-account (it can copy your watch history across). See
+account. That last one copies your watch history across exactly — the same episodes of each show,
+your rewatch counts, and anything you are part-way through, back where you left it. See
 [the reference](reference.md#why-you-see-everyones-rows-and-the-watching-account).
 
 ## Does the AI invent recommendations I don't have?
@@ -127,6 +128,10 @@ what to watch next. No usernames, no account IDs, no genres, no viewing times.
 One flow, with a preview first. Every account's sharing settings are restored from the copy taken
 before Shortlist's first change, every Shortlist collection is deleted, and you get a report of
 exactly what changed. Your server ends up as we found it.
+
+The one exception is an account that has since left your server. Shortlist can no longer reach a
+departed account's settings on plex.tv, so there is nothing there to put back — the report names
+those accounts rather than quietly counting them as restored, and the uninstall finishes regardless.
 
 You can also rehearse the whole thing before trusting it: start the container with
 `SHORTLIST_DRY_RUN=1` and every run logs exactly what it _would_ change while writing nothing to

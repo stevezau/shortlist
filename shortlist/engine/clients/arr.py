@@ -18,7 +18,7 @@ import httpx
 from loguru import logger
 
 from shortlist.engine.clients import http_retry
-from shortlist.engine.models import ArrTarget
+from shortlist.engine.models import SONARR_MONITOR_MODES, ArrTarget
 
 
 def _sanitize_tag(label: str | None) -> str:
@@ -362,13 +362,17 @@ class SonarrClient(_ArrClient):
         return by_tvdb, by_tmdb
 
     def add_series(
-        self, tvdb_id: int, *, dry_run: bool, extra_tags: set[str] | None = None
+        self, tvdb_id: int, *, dry_run: bool, extra_tags: set[str] | None = None, monitor: str = "all"
     ) -> tuple[str, str, str | None]:
         """Request one series by TVDB id. Returns (status, detail, slug); never raises for a normal skip.
 
         ``extra_tags`` are per-user/per-row labels layered onto the target's global tag. ``slug`` is
         Sonarr's titleSlug — the ONLY way to deep-link its series page (Sonarr has no id-based URL).
         status is one of: would_request (dry-run), requested, skipped_present, error.
+
+        ``monitor`` is one of ``SONARR_MONITOR_MODES`` and decides how much of the show Sonarr
+        monitors, and therefore downloads: "all" takes the whole back catalogue, "firstSeason" a
+        taster, "none" files it unmonitored for later.
         """
         results = self._get(f"/api/v3/series/lookup?term=tvdb:{tvdb_id}")
         resource = _match_tvdb(results, tvdb_id)
@@ -377,20 +381,63 @@ class SonarrClient(_ArrClient):
         slug = resource.get("titleSlug") or None
         if resource.get("id"):  # a non-zero id means Sonarr already tracks it
             return "skipped_present", "already in Sonarr", slug
+        mode = _monitor_mode(monitor)
         if dry_run:
-            logger.info("[dry-run] Sonarr: would add tvdb {}", tvdb_id)
-            return "would_request", "would add to Sonarr", slug
+            logger.info("[dry-run] Sonarr: would add tvdb {} monitoring {}", tvdb_id, mode)
+            return "would_request", f"would add to Sonarr ({_MONITOR_DETAIL[mode]})", slug
+        wanted = mode != "none"
         body = {
             **resource,
             "qualityProfileId": self._target.quality_profile_id,
             "rootFolderPath": self._target.root_folder,
-            "monitored": True,
+            # Sonarr's own AddSeriesService forces this false for `monitor: none`; setting it here
+            # says so at the one place a reader can see it, instead of relying on that.
+            "monitored": wanted,
             "seasonFolder": True,
+            # Sonarr's SEPARATE "Monitor New Seasons" control, and it has to be set here because the
+            # lookup resource carries `monitorNewItems: "all"` and this body forwards that resource
+            # wholesale. Left alone, a restricted mode holds only until the next season airs: measured
+            # on Sonarr 4.0.19 against a continuing series, a `firstSeason` add stored
+            # `monitorNewItems: all`, so season 39 of a 38-season show would monitor itself on air —
+            # issue #100 again in slow motion, and it would make "season 1 only" a lie in the UI.
+            # Only "all" keeps taking new seasons, because that is the one choice that asked for them.
+            "monitorNewItems": "all" if mode == "all" else "none",
             "tags": self._tag_ids(extra_tags),
-            "addOptions": {"searchForMissingEpisodes": True, "monitor": "all"},
+            # Searching is what the mode is FOR: a search with nothing monitored finds nothing, so
+            # asking for one on `none` only queues a command that reports zero results.
+            "addOptions": {"searchForMissingEpisodes": wanted, "monitor": mode},
         }
         self._post("/api/v3/series", body)
-        return "requested", "added to Sonarr and searching", slug
+        if not wanted:
+            return "requested", "added to Sonarr, unmonitored — nothing downloads until you monitor it", slug
+        return "requested", f"added to Sonarr and searching ({_MONITOR_DETAIL[mode]})", slug
+
+
+# What each monitor mode does, in the words the owner reads in the Requests inbox. Sonarr's own
+# labels ("First Season") name the setting; these name the outcome, which is the part someone reading
+# a request wants.
+_MONITOR_DETAIL = {
+    "all": "every season",
+    "firstSeason": "season 1 only",
+    "lastSeason": "the latest season only",
+    "pilot": "the pilot episode only",
+    "none": "unmonitored",
+}
+
+
+def _monitor_mode(monitor: str) -> str:
+    """``monitor`` if it is one of the offered modes, else "all" with a warning.
+
+    Two different failures land here. A value outside Sonarr's OWN enum 400s the whole add, so
+    passing it through would turn a setting into a failed request; a value inside Sonarr's enum but
+    outside ``SONARR_MONITOR_MODES`` would work on the wire while no screen could show or undo it.
+    The API validates what is SAVED — this covers the stored value, which can come from a newer
+    build, a mode later withdrawn, or a hand-edited database.
+    """
+    if monitor in SONARR_MONITOR_MODES:
+        return monitor
+    logger.warning("Sonarr monitor mode {!r} is not one Shortlist offers — adding with 'all' instead", monitor)
+    return "all"
 
 
 def make_arr_client(service: str, target: ArrTarget) -> _ArrClient:

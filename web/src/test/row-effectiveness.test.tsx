@@ -69,7 +69,9 @@ describe("RowEffectivenessPanel", () => {
       expect(screen.getByText(label)).toBeTruthy();
     }
     expect(screen.getByText(/44%/)).toBeTruthy();
-    expect(screen.getByText(/Judged on the 9 picks delivered before/i)).toBeTruthy();
+    expect(
+      screen.getByText(/Judged on the 9 picks delivered before/i),
+    ).toBeTruthy();
   });
 
   it("shows the finished count in the MATURED panel, not only before a cohort exists", () => {

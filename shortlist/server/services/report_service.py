@@ -14,9 +14,10 @@ rather than how good the picks were.
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import String, case, cast, func
+from sqlalchemy import String, case, cast, func, literal, or_
 from sqlalchemy.orm import Session
 
 from shortlist.engine.models import DEFAULT_ROW_TEMPLATE
@@ -27,10 +28,13 @@ from shortlist.server.db.models import (
     RequestCandidate,
     Run,
     RunUser,
+    SharedRowWatch,
     User,
+    WatchSession,
     iso_utc,
 )
 from shortlist.server.services.run_service import HIT_WINDOW_DAYS
+from shortlist.server.services.watch_stream import STREAM_CONNECTED_KEY, STREAM_DOWN_SINCE_KEY
 from shortlist.server.settings_store import SettingsStore
 
 _PLACEHOLDER = re.compile(r"\{[^}]+\}")
@@ -49,6 +53,13 @@ _TITLE = cast(PickRow.tmdb_id, String).concat("-").concat(PickRow.media_type)
 # A title across everyone: prefix the person, so one film recommended to two people counts twice.
 _PERSON_TITLE = cast(PickRow.user_id, String).concat("-").concat(_TITLE)
 
+# The same identity for a SHARED-row watch. Shared rows write no `picks`, so their credits live in
+# `shared_row_watches` — and the headline counts must include them, because `overall.bounced` and
+# `overall.dropped` already do (they come off `resolve_outcomes`). Leaving them out of `watched` let
+# the Dropped tile exceed the Watched tile beside it: an abandonment with no start.
+_SHARED_TITLE = cast(SharedRowWatch.tmdb_id, String).concat("-").concat(SharedRowWatch.media_type)
+_SHARED_PERSON_TITLE = cast(SharedRowWatch.user_id, String).concat("-").concat(_SHARED_TITLE)
+
 
 def _rate(watched: int, delivered: int) -> float | None:
     return round(watched / delivered, 3) if delivered else None
@@ -60,6 +71,40 @@ def _delta(current: int | float | None, previous: int | float | None) -> float |
     if current is None or previous is None:
         return None
     return round(current - previous, 1)
+
+
+def _as_utc_or_none(value: datetime | None) -> datetime | None:
+    """`_as_utc` that tolerates the empty table — `func.min` over no rows returns None."""
+    return None if value is None else _as_utc(value)
+
+
+def _earliest(*values: datetime | None) -> datetime | None:
+    """The earliest of the given moments, ignoring the missing ones; None when all are missing."""
+    known = [v for v in values if v is not None]
+    return min(known) if known else None
+
+
+def _period_is_comparable(started_running: datetime | None, prev_since: datetime | None) -> bool:
+    """Is the previous period one Shortlist was installed for its WHOLE length?
+
+    A pure function so the boundary can actually be tested. `effectiveness` reads its own clock, so
+    from outside there is no way to land a timestamp exactly on `prev_since` — the `<=` here was
+    therefore untestable through the API and a mutation to `<` survived a full audit.
+
+    `<=`, not `<`: an app whose first evidence lands exactly at the previous window's start covered
+    that window completely. Refusing it throws away a fair comparison on the one day it first
+    becomes available.
+
+    Args:
+        started_running: Earliest evidence Shortlist was running — first pick or first run.
+        prev_since: Start of the previous period, or None for the `all` window.
+
+    Returns:
+        True when a previous-period figure is worth computing at all.
+    """
+    if prev_since is None or started_running is None:
+        return False
+    return started_running <= prev_since
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -102,8 +147,41 @@ def _finished_in(start, end=None) -> list:
     return [PickRow.finished_at.isnot(None), *_watched_in(start, end)]
 
 
-def _counts(session: Session, group_cols, key_expr, start) -> dict:
-    """{group key -> (delivered, watched, finished)} distinct-title counts for one period, in three scans.
+def _rank_titles(counts: dict[tuple[int, str], int], limit: int) -> list[tuple[tuple[int, str], int]]:
+    """Most watchers first, ties broken by tmdb id then media type — a TOTAL order.
+
+    Its own function so the ordering can be tested directly. Driven from the database it cannot be:
+    SQLite emits `GROUP BY` output in ascending key order and Python's sort is stable, so a
+    DB-populated test is already in tie-break order before the tie-break runs, and passes with it
+    deleted. The only test with teeth hands this a dict whose insertion order is wrong.
+
+    Without the tie-break, equal-scoring titles reshuffle between two renders of identical data —
+    the list visibly jumping around on refresh.
+    """
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0][0], kv[0][1]))[:limit]
+
+
+def _grouped_union(session: Session, cols, key_expr, filters, s_cols, s_key, s_filters) -> dict:
+    """{group key -> count of DISTINCT identities} across `picks` and `shared_row_watches` together.
+
+    The grouped twin of :func:`_distinct_across_both`. The union is over `(group, identity)` PAIRS, so
+    an identity appearing on both sides under the same group is counted ONCE — which is what makes it
+    safe for `per_user`, where one person can watch a title carried by a personal row and a shared one
+    at the same time. Summing two grouped counts reports that person as having watched two titles.
+    """
+    both = (
+        session.query(*cols, key_expr.label("k"))
+        .filter(*filters)
+        .union(session.query(*s_cols, s_key.label("k")).filter(*s_filters))
+        .subquery()
+    )
+    group = [both.c[name] for name in list(both.c.keys())[:-1]]
+    rows = session.query(*group, func.count()).group_by(*group).all()
+    return {(r[:-1] if len(group) > 1 else r[0]): r[-1] for r in rows}
+
+
+def _counts(session: Session, group_cols, key_expr, start, shared_cols=None, shared_key=None) -> dict:
+    """{group key -> (delivered, watched, finished)} distinct-title counts for one period.
 
     `delivered` counts picks CREATED in the period; `watched` counts picks WATCHED in it —
     deliberately not the same set. A pick delivered last month and watched this week is a watch this
@@ -113,32 +191,92 @@ def _counts(session: Session, group_cols, key_expr, start) -> dict:
     `finished` is a subset of `watched`: the picks they saw out rather than sampled. The gap between
     the two is the whole point of the split — a TV row scores a `watched` on a single episode, so
     ranking rows on that number alone flatters television for a structural reason.
+
+    `shared_cols`/`shared_key` fold SHARED-row credits into `watched`/`finished` — needed because the
+    headline tiles count them, and a "People watching: 4" above a By-person section where every bar
+    reads 0 is the two being read as one population when they are not.
+
+    Deliberately NOT into `delivered`: a shared row is one collection for the whole server, so there
+    is no per-person delivery to count, and inventing one would be a number with no referent. The UI
+    renders `delivered` only when it is above zero and never as a fraction of `watched` (two counts
+    over different sets, by design), so a shared-only line reads "1 watched" with no delivery clause —
+    which is the truth.
     """
     cols = list(group_cols) if isinstance(group_cols, (list, tuple)) else [group_cols]
+    s_cols = (
+        (list(shared_cols) if isinstance(shared_cols, (list, tuple)) else [shared_cols])
+        if shared_cols is not None
+        else None
+    )
 
     def scan(*extra):
         rows = session.query(*cols, func.count(func.distinct(key_expr))).filter(*extra).group_by(*cols).all()
         return {(r[:-1] if len(cols) > 1 else r[0]): r[-1] for r in rows}
 
     delivered = scan(*_in_period(PickRow.created_at, start))
-    watched = scan(*_watched_in(start))
-    finished = scan(*_finished_in(start))
+    if s_cols is None:
+        watched = scan(*_watched_in(start))
+        finished = scan(*_finished_in(start))
+    else:
+        # A UNION per group, never a sum. Summing double-counts `per_user`: one person who watched a
+        # title carried by BOTH a personal and a shared row is one title watched, and each scan
+        # returns it. Pinned by
+        # `test_shared_row_watches.py::test_one_title_on_both_kinds_of_row_is_not_double_counted_for_a_person`,
+        # which caught exactly that when this was a sum.
+        watched = _grouped_union(
+            session, cols, key_expr, _watched_in(start), s_cols, shared_key, _shared_watched_in(start)
+        )
+        finished = _grouped_union(
+            session, cols, key_expr, _finished_in(start), s_cols, shared_key, _shared_finished_in(start)
+        )
     return {
         k: (delivered.get(k, 0), watched.get(k, 0), finished.get(k, 0))
         for k in set(delivered) | set(watched) | set(finished)
     }
 
 
+def _shared_watched_in(start, end=None) -> list:
+    """`_watched_in` for a shared-row credit — same column meaning, same window."""
+    return [SharedRowWatch.watched_at.isnot(None), *_in_period(SharedRowWatch.watched_at, start, end)]
+
+
+def _shared_finished_in(start, end=None) -> list:
+    """Windowed on `watched_at`, exactly like `_finished_in` and for the same reason: finished must
+    be a genuine subset of watched for the same window, or the UI draws a segment wider than its bar."""
+    return [SharedRowWatch.finished_at.isnot(None), *_shared_watched_in(start, end)]
+
+
+def _distinct_across_both(session: Session, picks_expr, picks_filters, shared_expr, shared_filters) -> int:
+    """Count distinct values of one identity across `picks` and `shared_row_watches` together.
+
+    A UNION, not a sum: someone who watched a title that was on BOTH a personal and a shared row is
+    one person-title, and adding two counts would report them twice. SQL `UNION` dedupes, which is the
+    same "one outcome per person-title" rule `resolve_outcomes` applies on the other side.
+    """
+    combined = (
+        session.query(picks_expr.label("k"))
+        .filter(*picks_filters)
+        .union(session.query(shared_expr.label("k")).filter(*shared_filters))
+    ).subquery()
+    return session.query(func.count()).select_from(combined).scalar() or 0
+
+
 def _watched_count(session: Session, start, end=None) -> int:
-    return session.query(func.count(func.distinct(_PERSON_TITLE))).filter(*_watched_in(start, end)).scalar() or 0
+    return _distinct_across_both(
+        session, _PERSON_TITLE, _watched_in(start, end), _SHARED_PERSON_TITLE, _shared_watched_in(start, end)
+    )
 
 
 def _finished_count(session: Session, start, end=None) -> int:
-    return session.query(func.count(func.distinct(_PERSON_TITLE))).filter(*_finished_in(start, end)).scalar() or 0
+    return _distinct_across_both(
+        session, _PERSON_TITLE, _finished_in(start, end), _SHARED_PERSON_TITLE, _shared_finished_in(start, end)
+    )
 
 
 def _watchers_count(session: Session, start, end=None) -> int:
-    return session.query(func.count(func.distinct(PickRow.user_id))).filter(*_watched_in(start, end)).scalar() or 0
+    return _distinct_across_both(
+        session, PickRow.user_id, _watched_in(start, end), SharedRowWatch.user_id, _shared_watched_in(start, end)
+    )
 
 
 def _avg_days_to_watch(session: Session, start, end=None) -> float | None:
@@ -146,6 +284,17 @@ def _avg_days_to_watch(session: Session, start, end=None) -> float | None:
 
     Per (user, title), not per delivery row — a title re-recommended nightly is one data point,
     measured from when it was first added (MIN created_at) to when it was first watched.
+
+    SHARED rows are deliberately EXCLUDED, unlike every other figure that counts a watch, and for the
+    same reason `landing` excludes them: this measures an interval whose start is a per-person
+    delivery, and a shared row has none. Its only delivery time is `RunSharedRow.delivered_at` — one
+    moment for the whole server, re-stamped nightly — so "when was this title first put in front of
+    THIS person" would have to be recovered by scanning each run's picks JSON backwards. That is a
+    fragile answer to a question the row cannot really be asked, and inventing one would put a number
+    with no referent into an average that reads as fact.
+
+    Checked deliberately, 2026-08-24, when a sweep for the half-applied-fix shape flagged this
+    function as the odd one out. It is the intended behaviour, not a missed site.
     """
     firsts = (
         session.query(
@@ -168,7 +317,8 @@ def _landing(session: Session, now: datetime, days: int | None) -> dict:
     """The landing rate, over a MATURED cohort.
 
     The equally-long window ending ``HIT_WINDOW_DAYS`` ago — i.e. the most recent stretch of picks
-    that have all had their full 30 days. Anything younger cannot have been credited yet, so
+    that have all had their chance. A pick's chance actually ends when its row drops it, which is
+    usually sooner; this stays the conservative outer bound, and a younger pick is excluded because
     including it would recreate the very bug this rewrite exists to fix, inside a smaller box. Note
     this is a SHIFTED window, not an intersection with the selected one: for `window=30` the cohort
     is [now-60d, now-30d). The UI prints `cohort_from`/`cohort_to` so the dates are never left to be
@@ -194,8 +344,8 @@ def _landing(session: Session, now: datetime, days: int | None) -> dict:
     return {
         "delivered": delivered,
         "watched": watched,
-        # Same matured cohort, stricter numerator. Both rates are over the picks that have had their
-        # full 30 days, so they are directly comparable with each other.
+        # Same matured cohort, stricter numerator. Both rates are over the same picks, so they are
+        # directly comparable with each other.
         "finished": finished,
         "finished_rate": _rate(finished, delivered),
         "rate": _rate(watched, delivered),
@@ -239,14 +389,25 @@ class _RowNamer:
 
     def label(self, slug: str, library: str) -> str:
         """The row's display name for THIS library: `{library_name}` becomes the library ("Movies"),
-        and any other placeholder (e.g. `{top_seed}`, which is per-person) is dropped for the
-        aggregate. A deleted row has no template left, so its slug is the only identity it still has.
+        and any other placeholder (e.g. `{top_seed}`, which is per-person) becomes an ellipsis. A
+        deleted row has no template left, so its slug is the only identity it still has.
+
+        The ellipsis matters. Dropping the placeholder outright rendered `🎯 Because you watched
+        {top_seed}` as "🎯 Because you watched" — a sentence that stops mid-clause and reads as a
+        truncation bug rather than as a name. It is genuinely per-person and there is no single value
+        to print at this level, so the omission is shown rather than hidden.
         """
         template = self.template(slug)
         if template is None:
             return slug
-        name = _PLACEHOLDER.sub(lambda m: library if m.group(0) == "{library_name}" else "", template)
-        return " ".join(name.split()) or "Picked for You"
+        name = _PLACEHOLDER.sub(lambda m: library if m.group(0) == "{library_name}" else "\u2026", template)
+        # Collapse the space the placeholder left behind, so it reads "watched…" not "watched …".
+        name = " ".join(name.split()).replace(" \u2026", "\u2026")
+        # A template that is NOTHING but a per-person placeholder — `{top_seed}` alone, which
+        # `_non_blank_row_template` permits — would otherwise render as a bare "…", which names
+        # nothing. It fell back to the default before the ellipsis existed and still should: the
+        # ellipsis is there to show that a name has been shortened, not to BE the name.
+        return name if name.strip("\u2026 ") else "Picked for You"
 
 
 def _breakdown(raw: dict, label) -> list[dict]:
@@ -293,14 +454,26 @@ def _requests_summary(session: Session, since: datetime | None) -> dict:
         if (when := sent_time(row)) is not None and (since is None or when >= since)
     ]
     sent = {(row.tmdb_id, row.media_type): sent_time(row) for row in sent_rows}
+    # SHARED rows count, like everywhere else that counts a WATCH. The question here is "did asking
+    # for this title lead to someone watching it", and a shared row is how a title reaches most of
+    # the server — a request that landed on the shared row and was watched off it paid off exactly as
+    # much as one that landed in a personal row. Counting only `picks` undercounted it silently,
+    # which is the same half-applied shape as the runs delta above it.
     watched_at_by_title: dict[tuple[int, str], datetime] = {}
-    for tid, mt, watched in (
+    for query in (
         session.query(PickRow.tmdb_id, PickRow.media_type, func.max(PickRow.watched_at))
         .filter(PickRow.watched_at.isnot(None))
-        .group_by(PickRow.tmdb_id, PickRow.media_type)
-        .all()
+        .group_by(PickRow.tmdb_id, PickRow.media_type),
+        session.query(SharedRowWatch.tmdb_id, SharedRowWatch.media_type, func.max(SharedRowWatch.watched_at))
+        .filter(SharedRowWatch.watched_at.isnot(None))
+        .group_by(SharedRowWatch.tmdb_id, SharedRowWatch.media_type),
     ):
-        watched_at_by_title[(tid, mt)] = watched
+        for tid, mt, watched in query.all():
+            key = (tid, mt)
+            # The LATEST across both, matching the `func.max` each side already applies. A title on
+            # both a personal and a shared row is one thing that person watched.
+            if key not in watched_at_by_title or _as_utc(watched) > _as_utc(watched_at_by_title[key]):
+                watched_at_by_title[key] = watched
     paid_off = sum(
         1
         for key, sent_at in sent.items()
@@ -311,6 +484,255 @@ def _requests_summary(session: Session, since: datetime | None) -> dict:
         "pending": session.query(func.count(RequestCandidate.id)).filter_by(status="pending").scalar() or 0,
         "watched_after_sent": paid_off,
     }
+
+
+#: Below this, a start is "opened and closed" rather than "gave it a go". Two minutes of a film is a
+#: different signal from forty, and collapsing them loses the one that says "wrong pick entirely".
+BOUNCE_PERCENT = 5
+#: How long a stopped watch is left alone before it may be called an abandonment.
+#:
+#: An outcome used to be decided on percentage ALONE, with no notion of time — so a film someone
+#: started this evening and paused at 40% was reported as "gave up on it after 40%" immediately, and
+#: a play still in progress was reported that way while it was playing. Observed on the maintainer's
+#: server 2026-08-24: a pick credited at 1% appeared under "gave up" while its session was still open.
+#:
+#: 24 hours because resuming the next evening is ordinary behaviour, and the report is read the
+#: morning after. Anything inside the window reads as `watching` — an honest "not yet known" rather
+#: than a verdict the data cannot support.
+SETTLING_HOURS = 24
+
+
+def _playback_state(session: Session) -> tuple[set[tuple[int, int, str]], dict[tuple[int, int, str], datetime]]:
+    """Which titles are playing right now, and when each was LAST touched.
+
+    Both keyed `(user_id, tmdb_id, media_type)`. `watch_sessions` rows carry a rating key, so titles
+    are resolved through the same map the credit path uses rather than by guessing — the SHOW key
+    first, because a pick for a series stores the show's key while playback reports the episode.
+
+    The "last touched" half is what makes the settling window mean anything. It used to settle from
+    `picks.watched_at`, which is pinned to the FIRST play and deliberately never moves — so someone
+    who started a film last week, resumed tonight and paused again was judged against a week-old
+    timestamp and reported as "gave up". Measured on the maintainer's server: 92% of resumes happen
+    within an hour and 96% within six, so the clock that matters is the one since they last touched
+    it, and it has to restart every time they do.
+    """
+    from shortlist.server.services.watch_events import tmdb_by_rating_key
+
+    tmdb_of = tmdb_by_rating_key(session)
+    by_account = {u.plex_account_id: u.id for u in session.query(User).all()}
+    live: set[tuple[int, int, str]] = set()
+    last_seen: dict[tuple[int, int, str], datetime] = {}
+    for account_id, rating_key, show_rating_key, ended_at, seen_at in (
+        session.query(
+            WatchSession.plex_account_id,
+            WatchSession.rating_key,
+            WatchSession.show_rating_key,
+            WatchSession.ended_at,
+            WatchSession.last_seen_at,
+        )
+        .order_by(WatchSession.last_seen_at)
+        .all()
+    ):
+        user_id = by_account.get(account_id)
+        if user_id is None:
+            continue
+        for key in (show_rating_key, rating_key):
+            resolved = tmdb_of.get(key) if key else None
+            if not resolved:
+                continue
+            slot = (user_id, resolved[0], resolved[1])
+            if ended_at is None:
+                live.add(slot)
+            if seen_at is not None:
+                when = _as_utc(seen_at)
+                if slot not in last_seen or when > last_seen[slot]:
+                    last_seen[slot] = when
+    return live, last_seen
+
+
+def _touched_at(
+    key: tuple[int, int, str], entry: dict, last_seen: dict[tuple[int, int, str], datetime]
+) -> datetime | None:
+    """The most recent moment this person was known to be watching this title.
+
+    The later of the credit and the last observed session, because each can be the only one there
+    is: a title credited from Plex's watched flag has no session at all, and a resumed title has a
+    session far newer than its (deliberately pinned) credit.
+    """
+    moments = [m for m in (entry.get("watched_at"), last_seen.get(key)) if m is not None]
+    return max(_as_utc(m) for m in moments) if moments else None
+
+
+def resolve_outcomes(session: Session, since: datetime | None) -> dict[tuple[int, int, str], dict]:
+    """One outcome per (person, title), resolved over ALL their rows — the single source for the split.
+
+    A title has one pick row per run that delivered it, and those rows disagree by design: the stamps
+    are bounded to rows delivered at or before the play, so a run firing afterwards leaves a row with a
+    percentage and no credit. Independent "any row" scans over those rows produced two lies at once —
+    one person-title counted as bounced AND dropped when two rows held different percentages, and a
+    finished title reported as dropped when the credited row fell outside the window.
+
+    So the outcome is decided once, in one place, from the whole set:
+
+    * `finished` if ANY row has `finished_at` — regardless of window; finishing is not undone by time
+    * otherwise `bounced`/`dropped` by the FURTHEST progress any row observed
+    * otherwise `watching` — credited, but no live session ever said how far
+
+    Windowed on the OBSERVATION: `watched_at` if there is one, else the EARLIEST delivery. Using the
+    latest delivery meant an abandonment never aged out while the row kept re-delivering the title —
+    a 60-day-old drop still counted in the 7-day window, beside a `watched` figure that had correctly
+    aged it out.
+    """
+    rows = session.query(
+        PickRow.user_id,
+        PickRow.tmdb_id,
+        PickRow.media_type,
+        PickRow.watched_at,
+        PickRow.finished_at,
+        PickRow.max_percent,
+        PickRow.created_at,
+        PickRow.title,
+        PickRow.collection_slug,
+        PickRow.library,
+    ).filter(or_(PickRow.watched_at.isnot(None), PickRow.max_percent.isnot(None)))
+
+    out: dict[tuple[int, int, str], dict] = {}
+    # Which delivery row `entry["row"]` currently comes from, as `(delivered_at, slug)`. Kept beside
+    # the entry rather than inside it so the returned shape is unchanged — see the tie-break below.
+    row_from: dict[tuple[int, int, str], tuple[datetime, str]] = {}
+    for user_id, tmdb_id, media_type, watched, finished, percent, created, title, slug, library in rows:
+        key = (user_id, tmdb_id, media_type)
+        entry = out.setdefault(
+            key,
+            {
+                "title": title,
+                "media_type": media_type,
+                "row": slug,
+                "library": library,
+                "watched_at": None,
+                "finished_at": None,
+                "percent": None,
+                "first_delivered": None,
+            },
+        )
+        if watched and (entry["watched_at"] is None or watched < entry["watched_at"]):
+            entry["watched_at"] = watched
+            entry["row"], entry["library"] = slug, library
+            row_from[key] = (_as_utc(created), slug)
+        elif watched and watched == entry["watched_at"]:
+            # A TIE is the normal case here, not an edge: `_apply_outcomes` stamps the identical
+            # `watched_at` onto every delivery row that was showing the title. With a strict `<` the
+            # winner is whichever row the database happened to return first, and this query has no
+            # ORDER BY — so the row label on "Worth a look" and the recent-watches feed could differ
+            # between two renders of the same data, which reads as the dashboard contradicting itself.
+            #
+            # Earliest delivery wins: the row that first put the title in front of them is the one
+            # that earned the watch. Slug breaks a same-instant tie so the answer is total.
+            if (_as_utc(created), slug) < row_from.get(key, (_as_utc(created), slug)):
+                entry["row"], entry["library"] = slug, library
+                row_from[key] = (_as_utc(created), slug)
+        if finished and (entry["finished_at"] is None or finished > entry["finished_at"]):
+            entry["finished_at"] = finished
+        if percent is not None and (entry["percent"] is None or percent > entry["percent"]):
+            entry["percent"] = percent
+        if entry["first_delivered"] is None or created < entry["first_delivered"]:
+            entry["first_delivered"] = created
+
+    # SHARED rows, folded into the same person-title outcome. They write no pick rows, so their
+    # watches live in `shared_row_watches` (migration 0078) and were invisible to every figure here.
+    # Folded in rather than counted separately BECAUSE this function's whole job is one outcome per
+    # person-title: a title on both a personal row and a shared one is one thing they watched, and
+    # two independent tallies would report it twice and could disagree about how it ended.
+    for user_id, slug, tmdb_id, media_type, title, watched, finished, percent in session.query(
+        SharedRowWatch.user_id,
+        SharedRowWatch.collection_slug,
+        SharedRowWatch.tmdb_id,
+        SharedRowWatch.media_type,
+        SharedRowWatch.title,
+        SharedRowWatch.watched_at,
+        SharedRowWatch.finished_at,
+        SharedRowWatch.max_percent,
+    ):
+        key = (user_id, tmdb_id, media_type)
+        entry = out.setdefault(
+            key,
+            {
+                "title": title,
+                "media_type": media_type,
+                "row": slug,
+                "library": "",
+                "watched_at": None,
+                "finished_at": None,
+                "percent": None,
+                # A shared row has no per-person delivery, so the credit itself is the only moment
+                # this person can be said to have met the title. Left as the watch below.
+                "first_delivered": None,
+            },
+        )
+        if watched and (entry["watched_at"] is None or watched < entry["watched_at"]):
+            entry["watched_at"] = watched
+            # The library is cleared with the row, not kept. A shared row is not in the personal row's
+            # library, and `engagement` renders `namer.label(row, library)` — so keeping the old value
+            # printed a shared TV row under a Movies label.
+            entry["row"], entry["library"] = slug, ""
+        elif watched and watched == entry["watched_at"] and slug < entry["row"]:
+            # Same tie-break reasoning as the personal branch. A shared row has no per-person delivery
+            # time to order by, so slug alone is the rule — arbitrary, but STABLE, which is the
+            # property that was missing.
+            entry["row"], entry["library"] = slug, ""
+        if finished and (entry["finished_at"] is None or finished > entry["finished_at"]):
+            entry["finished_at"] = finished
+        if percent is not None and (entry["percent"] is None or percent > entry["percent"]):
+            entry["percent"] = percent
+        if entry["first_delivered"] is None and watched:
+            entry["first_delivered"] = watched
+
+    live, last_seen = _playback_state(session)
+    settled_before = datetime.now(UTC) - timedelta(hours=SETTLING_HOURS)
+    resolved: dict[tuple[int, int, str], dict] = {}
+    for key, entry in out.items():
+        # A percentage with no credit anywhere is not an outcome. `_apply_outcomes` stamps
+        # `max_percent` onto EVERY delivery row of a title, bounded by nothing, which is safe only
+        # while some other row carries the credit. Delete the credited row and clear its history
+        # (the one destructive action on the dashboard) and the percentage outlives it — leaving an
+        # abandonment with no start, and a Bounced tile reading higher than the Watched tile above it.
+        if entry["watched_at"] is None and entry["finished_at"] is None:
+            continue
+        observed = entry["watched_at"] or entry["first_delivered"]
+        if since is not None and observed is not None and _as_utc(observed) < since:
+            continue
+        # Named, not inlined. Both spellings this replaced encoded a rule nobody chose: the first
+        # made a MISSING timestamp mean "too early to judge, for ever", and the fix for THAT made it
+        # mean "abandoned" — the harshest verdict the page has, handed out on the absence of
+        # evidence. Unreachable today either way (the `continue` above guarantees `watched_at` is
+        # set here), but the conservative default is the one that matches the rule three lines down:
+        # a verdict the data does not support is not printed.
+        touched = _touched_at(key, entry, last_seen)
+        if entry["finished_at"] is not None:
+            entry["outcome"] = "finished"
+        elif entry["percent"] is None:
+            entry["outcome"] = "watching"
+        elif key in live or touched is None or touched >= settled_before:
+            # Too early to call it. Playback is either still open, or stopped so recently that
+            # resuming tonight is the ordinary thing to expect — see `SETTLING_HOURS`. Reporting
+            # "gave up" here is a verdict the data does not support, and it is the loudest thing the
+            # dashboard says about a pick.
+            entry["outcome"] = "watching"
+        else:
+            entry["outcome"] = "bounced" if entry["percent"] < BOUNCE_PERCENT else "dropped"
+        entry["observed_at"] = observed
+        resolved[key] = entry
+    return resolved
+
+
+def _engagement_split(session: Session, since: datetime | None) -> tuple[int, int]:
+    """(bounced, dropped) — started and abandoned, split by how far they got.
+
+    Both come off :func:`resolve_outcomes`, so they are mutually exclusive by construction and cannot
+    disagree with the detail page that reads the same function.
+    """
+    outcomes = [e["outcome"] for e in resolve_outcomes(session, since).values()]
+    return outcomes.count("bounced"), outcomes.count("dropped")
 
 
 def _recent_watches(session: Session, users: dict[int, User], namer: _RowNamer, since: datetime | None) -> list[dict]:
@@ -338,23 +760,82 @@ def _recent_watches(session: Session, users: dict[int, User], namer: _RowNamer, 
         .limit(20)
         .subquery()
     )
-    return [
-        {
-            "username": users[p.user_id].username if p.user_id in users else "unknown",
-            "display_name": users[p.user_id].display_name if p.user_id in users else "unknown",
-            "title": p.title,
-            "media_type": p.media_type,
-            "row": namer.label(p.collection_slug, p.library),
-            "library": p.library,
-            "seed_title": p.seed_title or "",
-            "watched_at": iso_utc(watched),
-            "finished_at": iso_utc(finished) if finished else None,
+
+    def line(user_id: int, tmdb_id: int, media_type: str, at, **fields) -> dict:
+        user = users.get(user_id)
+        return {
+            # The identity travels WITH the line and is stripped at the end. Deduping on the rendered
+            # username collapsed two different removed accounts (both "unknown") into one line, and
+            # deduping on the title text split one person-title in two whenever the shared row's copy
+            # of the title differed from the pick row's.
+            "_key": (user_id, tmdb_id, media_type),
+            #: Sort key. Stripped with every other `_`-prefixed field before the response is built.
+            "_at": at,
+            # None when the person has left the server — their watches stay on record, so the feed
+            # still renders the line, it just has nowhere to send you.
+            "user_id": user.id if user else None,
+            "username": user.username if user else "unknown",
+            "display_name": user.display_name if user else "unknown",
+            "media_type": media_type,
+            **fields,
         }
+
+    feed = [
+        line(
+            p.user_id,
+            p.tmdb_id,
+            p.media_type,
+            watched,
+            title=p.title,
+            row=namer.label(p.collection_slug, p.library),
+            library=p.library,
+            seed_title=p.seed_title or "",
+            watched_at=iso_utc(watched),
+            finished_at=iso_utc(finished) if finished else None,
+        )
         for p, watched, finished in session.query(PickRow, latest.c.watched, latest.c.finished)
         .join(latest, PickRow.id == latest.c.pick_id)
         .order_by(latest.c.watched.desc())
         .all()
     ]
+
+    # SHARED rows belong in this feed too — "did someone watch something we recommended" is the
+    # question it answers, and a shared row recommends. They write no pick rows, so they cannot come
+    # out of the query above; they are merged in and the whole feed re-sorted and re-trimmed, so the
+    # 20 shown are the 20 most recent overall rather than the 20 most recent PERSONAL ones plus extras.
+    seen = {row["_key"] for row in feed}
+    for w in (
+        session.query(SharedRowWatch)
+        .filter(*_shared_watched_in(since))
+        .order_by(SharedRowWatch.watched_at.desc())
+        .limit(20)
+    ):
+        key = (w.user_id, w.tmdb_id, w.media_type)
+        # A title on both a personal and a shared row is ONE thing that person watched. The personal
+        # line wins because it carries the library and the seed that produced it.
+        if key in seen:
+            continue
+        seen.add(key)
+        feed.append(
+            line(
+                w.user_id,
+                w.tmdb_id,
+                w.media_type,
+                w.watched_at,
+                title=w.title,
+                row=namer.label(w.collection_slug, ""),
+                library="",
+                seed_title="",
+                watched_at=iso_utc(w.watched_at),
+                finished_at=iso_utc(w.finished_at) if w.finished_at else None,
+            )
+        )
+    # Sorted on the DATETIME, not the rendered string. `datetime.isoformat()` omits `.ffffff` when
+    # microseconds are zero, so the strings are variable width; string sort happens to be correct here
+    # (the first differing character is `+` against `.`, and `'+' < '.'`) but only by accident, and
+    # nothing would tell the next editor which property they had to preserve.
+    feed.sort(key=lambda row: row["_at"], reverse=True)
+    return [{k: v for k, v in row.items() if not k.startswith("_")} for row in feed[:20]]
 
 
 def effectiveness(session: Session, window: str, *, next_watch_sync: str | None = None) -> dict:
@@ -383,21 +864,45 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
     since = now - timedelta(days=days) if days is not None else None
     prev_since = now - timedelta(days=2 * days) if days is not None else None
 
-    first_pick = iso_utc(session.query(func.min(PickRow.created_at)).scalar())
-    per_user_raw = _counts(session, PickRow.user_id, _TITLE, since)
+    first_pick_at = session.query(func.min(PickRow.created_at)).scalar()
+    first_pick = iso_utc(first_pick_at)
+    # A previous period that reaches back before Shortlist was RUNNING is not a comparison — it is a
+    # comparison against an app that was not installed, and it reads as growth. Observed on a real
+    # server 2026-08-24: window=30 showed "53 watched, +53 vs previous" because the previous 30 days
+    # ended one day after the first pick ever. The same response reported `avg_days_to_watch_delta:
+    # null` for the identical reason — an average over nothing is already None — so one fact rendered
+    # two ways depending on whether the aggregate happened to be null-safe. Counts need the test
+    # spelled out, because a count of nothing is a truthful 0.
+    #
+    # Anchored on the earliest RUN as well as the earliest pick, and it must stay that way: the runs
+    # delta is computed from this same flag, and a run that picked nothing for nobody still means the
+    # app was installed. Anchoring on picks alone would suppress a runs comparison that is perfectly
+    # fair on a server whose first night produced no picks.
+    started_running = _earliest(
+        _as_utc_or_none(first_pick_at), _as_utc_or_none(session.query(func.min(Run.started_at)).scalar())
+    )
+    comparable = _period_is_comparable(started_running, prev_since)
+    per_user_raw = _counts(session, PickRow.user_id, _TITLE, since, SharedRowWatch.user_id, _SHARED_TITLE)
     # A row that targets >1 library is one Plex collection PER library, so it's tracked per
     # (row, library) — each library gets its own delivered/watched line, keyed (slug, section, library).
     per_row_raw = _counts(
-        session, [PickRow.collection_slug, PickRow.section_key, PickRow.library], _PERSON_TITLE, since
+        session,
+        [PickRow.collection_slug, PickRow.section_key, PickRow.library],
+        _PERSON_TITLE,
+        since,
+        # A shared row has no per-library split: it is ONE collection, so its line is keyed with empty
+        # section and library, which `_RowNamer.label` renders from the row's own name.
+        [SharedRowWatch.collection_slug, literal("").label("section_key"), literal("").label("library")],
+        _SHARED_PERSON_TITLE,
     )
 
     watched_now = _watched_count(session, since)
     finished_now = _finished_count(session, since)
     watchers_now = _watchers_count(session, since)
     avg_now = _avg_days_to_watch(session, since)
-    watched_prev = _watched_count(session, prev_since, since) if since else None
-    watchers_prev = _watchers_count(session, prev_since, since) if since else None
-    avg_prev = _avg_days_to_watch(session, prev_since, since) if since else None
+    watched_prev = _watched_count(session, prev_since, since) if comparable else None
+    watchers_prev = _watchers_count(session, prev_since, since) if comparable else None
+    avg_prev = _avg_days_to_watch(session, prev_since, since) if comparable else None
 
     delivered_now = (
         session.query(func.count(func.distinct(_PERSON_TITLE))).filter(*_in_period(PickRow.created_at, since)).scalar()
@@ -405,16 +910,21 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
     )
     landing = _landing(session, now, days)
 
-    # The trend ignores the window on purpose — see TREND_WEEKS.
-    trend_rows = (
-        session.query(func.strftime("%Y-%W", PickRow.watched_at), func.count(func.distinct(_PERSON_TITLE)))
-        .filter(PickRow.watched_at.isnot(None))
-        .group_by(func.strftime("%Y-%W", PickRow.watched_at))
-        .order_by(func.strftime("%Y-%W", PickRow.watched_at).desc())
-        .limit(TREND_WEEKS)
-        .all()
+    # The trend ignores the window on purpose — see TREND_WEEKS. SHARED rows are folded in like
+    # everywhere else that counts a WATCH: the chart sits directly under the Watched tile, and a bar
+    # that omitted what the tile counted would read as the same number failing to add up.
+    _week = func.strftime("%Y-%W", PickRow.watched_at)
+    _shared_week = func.strftime("%Y-%W", SharedRowWatch.watched_at)
+    trend_by_week = _grouped_union(
+        session,
+        [_week.label("week")],
+        _PERSON_TITLE,
+        [PickRow.watched_at.isnot(None)],
+        [_shared_week.label("week")],
+        _SHARED_PERSON_TITLE,
+        [SharedRowWatch.watched_at.isnot(None)],
     )
-    trend_rows = list(reversed(trend_rows))
+    trend_rows = sorted(trend_by_week.items())[-TREND_WEEKS:]
     # Of the picks CREDITED in each week, how many have since been finished — bucketed by
     # `watched_at`, the same key as the bar above, for the reason `_finished_in` explains: it is what
     # makes the segment a true subset of the column it is drawn inside.
@@ -422,11 +932,14 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
     # Consequence worth knowing: a past week's dark segment GROWS when someone finishes an old
     # series. That is the truth about a cohort, not a bug — the bar is "what became of what landed
     # that week", and that answer genuinely changes.
-    finished_by_week = dict(
-        session.query(func.strftime("%Y-%W", PickRow.watched_at), func.count(func.distinct(_PERSON_TITLE)))
-        .filter(PickRow.watched_at.isnot(None), PickRow.finished_at.isnot(None))
-        .group_by(func.strftime("%Y-%W", PickRow.watched_at))
-        .all()
+    finished_by_week = _grouped_union(
+        session,
+        [_week.label("week")],
+        _PERSON_TITLE,
+        [PickRow.watched_at.isnot(None), PickRow.finished_at.isnot(None)],
+        [_shared_week.label("week")],
+        _SHARED_PERSON_TITLE,
+        [SharedRowWatch.watched_at.isnot(None), SharedRowWatch.finished_at.isnot(None)],
     )
 
     store = SettingsStore(session)
@@ -437,20 +950,30 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
     # Reach: who's actually covered. `users_enabled`/`rows_enabled` describe the server as it is
     # NOW, so they are deliberately not windowed — "3 of 11 people" only reads if 11 is current.
     users_enabled = sum(1 for u in users.values() if u.enabled)
-    users_with_picks = (
-        session.query(func.count(func.distinct(PickRow.user_id)))
-        .filter(*_in_period(PickRow.created_at, since))
-        .scalar()
-        or 0
-    )
+    got_picks = {
+        uid for (uid,) in session.query(PickRow.user_id).distinct().filter(*_in_period(PickRow.created_at, since))
+    }
+    users_with_picks = len(got_picks)
+    # Computed here, from the SAME window and the same people, rather than left to the caller as
+    # `users_with_picks - users_watched`. Those two are differently scoped: `users_watched` counts
+    # anyone who watched in the window, including someone whose pick was delivered LAST month and
+    # someone the owner has since disabled. Subtracting them could reach zero while people who got
+    # picks this week had watched nothing — the dashboard then printing "everyone who got a pick
+    # watched something", which was false and unfalsifiable from the numbers beside it.
+    watched_in_window = {uid for (uid,) in session.query(PickRow.user_id).distinct().filter(*_watched_in(since))} | {
+        uid for (uid,) in session.query(SharedRowWatch.user_id).distinct().filter(*_shared_watched_in(since))
+    }
+    users_idle = len(got_picks - watched_in_window)
     rows_enabled = session.query(func.count(Collection.id)).filter(Collection.enabled.is_(True)).scalar() or 0
 
     # Runs. `total` stays all-time (it is the odometer); `in_window` is what the delta is about.
     runs_total = session.query(func.count(Run.id)).scalar() or 0
     runs_in_window = session.query(func.count(Run.id)).filter(*_in_period(Run.started_at, since)).scalar() or 0
+    # `comparable`, not `since` — this was the one delta the first version of that guard missed, and
+    # it is the same misleading arrow: "15 runs, +15 vs previous" against a fortnight with no app in it.
     runs_prev = (
         session.query(func.count(Run.id)).filter(*_in_period(Run.started_at, prev_since, since)).scalar() or 0
-        if since
+        if comparable
         else None
     )
     last_run = session.query(Run).filter(Run.status.in_(("ok", "error"))).order_by(Run.id.desc()).first()
@@ -464,25 +987,54 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
 
     requests = _requests_summary(session, since)
 
-    # The titles landing best: most distinct watchers among picks watched in the window.
-    top_rows = (
-        session.query(
-            PickRow.tmdb_id,
-            PickRow.media_type,
-            func.max(PickRow.title),
-            func.count(func.distinct(PickRow.user_id)),
-        )
-        .filter(*_watched_in(since))
-        .group_by(PickRow.tmdb_id, PickRow.media_type)
-        .order_by(func.count(func.distinct(PickRow.user_id)).desc())
-        .limit(8)
-        .all()
+    # The titles landing best: most distinct watchers among titles watched in the window. Shared rows
+    # count — a title everyone found through the shared row is exactly what "landing best" means.
+    top_watchers = _grouped_union(
+        session,
+        [PickRow.tmdb_id, PickRow.media_type],
+        PickRow.user_id,
+        _watched_in(since),
+        [SharedRowWatch.tmdb_id, SharedRowWatch.media_type],
+        SharedRowWatch.user_id,
+        _shared_watched_in(since),
     )
+    top_keys = _rank_titles(top_watchers, 8)
+
+    # Display titles for THOSE EIGHT only. Grouping the whole of `picks` to build a full title map ran
+    # a GROUP BY over 158,737 rows on every report render, for eight strings.
+    titles: dict[tuple[int, str], str] = {}
+    wanted = [key for key, _ in top_keys]
+    if wanted:
+        # Type dropped ON PURPOSE, the one place in this feature that does it. This is a WIDENING
+        # filter, not a key: it narrows the scan to eight ids, and the exact `(tmdb_id, media_type)`
+        # tuple is what indexes `titles` and what `titles.get(key)` reads back. A movie and a show
+        # sharing an id costs one extra row that matches no key — never a wrong title.
+        ids = {tmdb_id for tmdb_id, _mt in wanted}
+        for tmdb_id, media_type, title in (
+            session.query(SharedRowWatch.tmdb_id, SharedRowWatch.media_type, func.max(SharedRowWatch.title))
+            .filter(SharedRowWatch.tmdb_id.in_(ids))
+            .group_by(SharedRowWatch.tmdb_id, SharedRowWatch.media_type)
+        ):
+            titles[(tmdb_id, media_type)] = title
+        for tmdb_id, media_type, title in (
+            session.query(PickRow.tmdb_id, PickRow.media_type, func.max(PickRow.title))
+            .filter(PickRow.tmdb_id.in_(ids))
+            .group_by(PickRow.tmdb_id, PickRow.media_type)
+        ):
+            # A pick row's title wins — it is the delivered one — but only when it HAS one. Overwriting
+            # unconditionally blanked the name of any title whose pick rows carry an empty string,
+            # leaving a nameless line in "Titles landing best".
+            if title:
+                titles[(tmdb_id, media_type)] = title
+    top_rows = [(key[0], key[1], titles.get(key, ""), watchers) for key, watchers in top_keys]
 
     per_user = _breakdown(
         per_user_raw,
         lambda uid: (
             {
+                # The id, so the dashboard can link a name to that person's page. Every other field
+                # here is for display; this one is the address.
+                "id": uid,
                 "username": users[uid].username,
                 "display_name": users[uid].display_name,  # nickname → Tautulli → username
                 "slug": users[uid].slug,
@@ -503,6 +1055,7 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
             "deleted": namer.template(key[0]) is None,
         },
     )
+    bounced_now, dropped_now = _engagement_split(session, since)
     recent = _recent_watches(session, users, namer, since)
 
     return {
@@ -533,15 +1086,35 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
             # on this page someone would act on. Measuring the change honestly needs a matured-cohort
             # comparison (what `landing` does), not a shifted window.
             "finished": finished_now,
+            # The engagement split, which `watched` alone cannot draw. A pick nobody opened and a pick
+            # someone played for three minutes and abandoned are both "not watched" to Plex's flag,
+            # and they say opposite things about the recommendation: one never got their attention,
+            # the other got it and lost it. `max_percent` comes from live sessions, so it is NULL for
+            # anything we did not watch happen — those count as neither, rather than as 0%.
+            "bounced": bounced_now,
+            "dropped": dropped_now,
             "avg_days_to_watch": avg_now,
             "avg_days_to_watch_delta": _delta(avg_now, avg_prev),
             "landing": landing,
         },
-        "watch_sync": {"last": last_watch_sync, "next": next_watch_sync},
+        "watch_sync": {
+            "last": last_watch_sync,
+            "next": next_watch_sync,
+            # The LIVE listener, which is a different mechanism from the scheduled sync above and
+            # fails independently of it. It is the only source of a partial watch — Plex's flag
+            # cannot see one — so when the socket is down the dashboard quietly stops learning
+            # anything about how far people get, while every other number on the page carries on
+            # looking healthy. Surfaced here because nothing in the UI said whether it was up.
+            "live_since": store.get(STREAM_CONNECTED_KEY),
+            "live_down_since": store.get(STREAM_DOWN_SINCE_KEY),
+        },
         "coverage": {
             "users_enabled": users_enabled,
             "users_total": len(users),
             "users_with_picks": users_with_picks,
+            #: Got a pick in this window and watched none of it. NOT `users_with_picks -
+            #: users_watched`; see above for why that subtraction lies.
+            "users_idle": users_idle,
             "users_watched": watchers_now,
             "users_watched_delta": _delta(watchers_now, watchers_prev),
             "rows_enabled": rows_enabled,
@@ -571,8 +1144,10 @@ def row_effectiveness(session: Session, slug: str, now: datetime | None = None) 
     print three numbers on a settings page is the wrong trade. This is four queries against the same
     columns and the same definitions, so the two can never disagree about what a "hit" is.
 
-    The rate comes from a MATURED cohort — picks old enough to have had their full
-    ``HIT_WINDOW_DAYS`` to be watched. Everything younger is counted in the all-time totals but kept
+    The rate comes from a MATURED cohort — picks delivered at least ``HIT_WINDOW_DAYS`` ago, so all
+    of them have had their chance. A pick's chance actually ends when its row drops it, which is
+    usually sooner; this stays the conservative outer bound. Everything younger is counted in the
+    all-time totals but kept
     out of the rate, because a row delivered last night has a 0% rate for no reason other than time,
     and a settings page that told someone their new row was failing would send them to change
     settings that were never the problem. `matured` is None until such a cohort exists, and the UI is
@@ -611,6 +1186,42 @@ def row_effectiveness(session: Session, slug: str, now: datetime | None = None) 
     delivered_all, watched_all, finished_all = counts([])
     first = session.query(func.min(PickRow.created_at)).filter(*mine).scalar()
     last = session.query(func.max(PickRow.created_at)).filter(*mine).scalar()
+
+    # SHARED rows, which write no `picks` at all. Without this the panel reported 0/0/0 and no first
+    # delivery for a row the dashboard was crediting on the same data — and `first_delivered_at is
+    # None` selects the copy "This row hasn't delivered anything yet", on the very page the owner
+    # opens to judge that row.
+    #
+    # `delivered` is deliberately left alone, and so is the matured cohort below: a shared row is one
+    # collection for the whole server, so there is no per-person delivery to count and therefore no
+    # denominator. Watched and finished are real; a rate would not be.
+    shared_watched = (
+        session.query(func.count())
+        .filter(SharedRowWatch.collection_slug == slug, SharedRowWatch.watched_at.isnot(None))
+        .scalar()
+        or 0
+    )
+    shared_finished = (
+        session.query(func.count())
+        .filter(
+            SharedRowWatch.collection_slug == slug,
+            SharedRowWatch.finished_at.isnot(None),
+            SharedRowWatch.watched_at.isnot(None),
+        )
+        .scalar()
+        or 0
+    )
+    watched_all += shared_watched
+    finished_all += shared_finished
+    shared_first = (
+        session.query(func.min(SharedRowWatch.watched_at)).filter(SharedRowWatch.collection_slug == slug).scalar()
+    )
+    # A shared row's earliest credit stands in for "has this row ever done anything", which is the
+    # only question `first` is asked here.
+    if first is None:
+        first = shared_first
+    if shared_first is not None and last is None:
+        last = shared_first
 
     # Counted the SAME way `/api/runs?collection=<slug>` selects them, because the panel's Runs tile
     # links straight to that list — a tile that says 40 above a list of 11 is worse than no tile.
@@ -673,4 +1284,127 @@ def row_effectiveness(session: Session, slug: str, now: datetime | None = None) 
             else None
         ),
         "per_library": per_library,
+    }
+
+
+def engagement(session: Session, window: str) -> dict:
+    """What people did with their picks — the detail behind the Dropped tile.
+
+    A note on its consumers, because they changed and the description below did not. The dashboard's
+    "Worth a look" card reads ONLY the abandonments out of `people[].picks`; the per-person breakdown,
+    the "titles that lose people" table and the stop-point histogram it used to feed were removed
+    (three cards that filled a screen to deliver, on a real 47-user server, one fact).
+
+    `losing`, `stop_points` and `observed` are still computed and still returned. Measured on that
+    server the whole call is 18ms and 15.8KB, so this is not a cost worth a breaking change to a
+    documented response — and they are the natural answers to questions an owner will ask again.
+
+    Every outcome comes from :func:`resolve_outcomes`, the same function the headline split reads, so
+    the two can never disagree. Two views of one set, because they answer different questions: `people`
+    is "what did THIS person do with their row", which an owner opens when someone says the picks are
+    no good; `losing` is "what does everyone do with THIS pick", which says a title is a bad
+    recommendation rather than a bad night.
+    """
+    if window not in WINDOWS:
+        window = DEFAULT_WINDOW
+    days = WINDOWS[window]
+    since = datetime.now(UTC) - timedelta(days=days) if days else None
+    users = {u.id: u for u in session.query(User).all()}
+    namer = _RowNamer(session, SettingsStore(session).get("row.name_template") or DEFAULT_ROW_TEMPLATE)
+
+    people: dict[int, list[dict]] = defaultdict(list)
+    per_title: dict[tuple[int, str], dict] = {}
+    abandoned: list[int] = []
+    for (user_id, tmdb_id, media_type), entry in resolve_outcomes(session, since).items():
+        if user_id not in users:
+            continue
+        people[user_id].append(
+            {
+                "title": entry["title"],
+                "row": namer.label(entry["row"], entry["library"]),
+                "media_type": media_type,
+                "outcome": entry["outcome"],
+                "percent": entry["percent"],
+                "watched_at": iso_utc(entry["watched_at"]) if entry["watched_at"] else None,
+                "finished_at": iso_utc(entry["finished_at"]) if entry["finished_at"] else None,
+                "observed_at": iso_utc(entry["observed_at"]) if entry["observed_at"] else None,
+            }
+        )
+        agg = per_title.setdefault(
+            (tmdb_id, media_type),
+            {"title": entry["title"], "media_type": media_type, "started": 0, "finished": 0, "percents": []},
+        )
+        if entry["outcome"] == "finished":
+            agg["started"] += 1
+            agg["finished"] += 1
+        elif entry["percent"] is not None:
+            # STARTED, always — a percentage means playback happened, whoever is still mid-film.
+            agg["started"] += 1
+            # ABANDONED only when the outcome says so. Keyed on the outcome rather than on "has a
+            # percentage", because since `SETTLING_HOURS` those are no longer the same question: a
+            # watch still open, or stopped an hour ago, carries a percentage and is not an
+            # abandonment. Reading the raw percentage here put in-progress watches into the
+            # stop-point histogram while `resolve_outcomes` called them `watching`, so the chart and
+            # the tile beside it counted different sets — the exact disagreement
+            # `test_the_histogram_always_sums_to_the_abandonments` exists to catch, and did.
+            if entry["outcome"] in ("bounced", "dropped"):
+                agg["percents"].append(entry["percent"])
+                abandoned.append(entry["percent"])
+
+    def median(values: list[int]) -> int | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        return ordered[len(ordered) // 2]
+
+    # Titles that LOSE people. Gated on TWO OBSERVED abandonments, not on `started >= 2`: `started`
+    # used to include people whose progress is unknown, so one credited pre-tracking pick plus one
+    # real drop rendered as "2 started · 0 finished · stops at 2%" — a pattern claimed from a single
+    # data point, under a heading that says one person abandoning something is not a signal.
+    losing = [
+        {
+            "title": agg["title"],
+            "media_type": agg["media_type"],
+            "started": agg["started"],
+            "finished": agg["finished"],
+            "stops_at": median(agg["percents"]),
+        }
+        for agg in per_title.values()
+        if len(agg["percents"]) >= 2 and agg["finished"] * 2 <= agg["started"]
+    ]
+    losing.sort(key=lambda t: (-t["started"], t["stops_at"] or 0))
+
+    buckets = [("0-10%", 0, 10), ("10-25%", 10, 25), ("25-50%", 25, 50), ("50-75%", 50, 75), ("75%+", 75, 101)]
+    # Sorted so the OBSERVED outcomes lead, then truncated. Sorting finished-first and cutting at 40
+    # removed exactly the rows this page exists to show: a person with 45 finished picks and 5 fresh
+    # drops saw forty "finished" and no drops at all, under a header reading "40 picks".
+    #
+    # `dropped` now leads `bounced`, and the order matters more than it used to. The findings card
+    # keeps only `dropped` — a bounce is under 5%, too little to tell a wrong pick from a mis-click —
+    # so with bounces sorting first, one person with 40 or more of them in the window had every real
+    # abandonment truncated away before the frontend ever saw it. The card would then print
+    # "Everyone who got a pick watched something" beneath a tile counting those very drops.
+    order = {"dropped": 0, "bounced": 1, "finished": 2, "watching": 3}
+    out_people = []
+    for uid, entries in sorted(people.items(), key=lambda kv: -len(kv[1])):
+        entries.sort(key=lambda e: (order.get(e["outcome"], 9), e["observed_at"] or ""), reverse=False)
+        out_people.append(
+            {
+                "username": users[uid].username,
+                "display_name": users[uid].display_name,
+                "picks": entries[:40],
+                "total": len(entries),
+            }
+        )
+    return {
+        "window": window,
+        "people": out_people,
+        "losing": losing[:20],
+        "stop_points": [
+            {"label": label, "count": sum(1 for p in abandoned if lo <= p < hi)} for label, lo, hi in buckets
+        ],
+        # Whether any live playback has been OBSERVED at all. The panel's empty state used to gate on
+        # `people` being empty, which never happens on a server with existing picks — so the owner got
+        # a wall of "WATCHING · —" rows and five empty bars instead of the explanation.
+        "observed": bool(abandoned) or any(p["percent"] is not None for e in out_people for p in e["picks"]),
     }

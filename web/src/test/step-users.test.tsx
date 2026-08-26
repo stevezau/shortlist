@@ -161,7 +161,9 @@ describe("StepUsers — the owner's own line", () => {
     ).toBeInTheDocument();
     // The sentence is split by <em>/<strong>, so match a fragment that lives in one text node.
     expect(
-      screen.getByText(/you own the server, so you have no share with yourself/i),
+      screen.getByText(
+        /you own the server, so you have no share with yourself/i,
+      ),
     ).toBeInTheDocument();
   });
 
@@ -182,7 +184,9 @@ describe("StepUsers — the owner's own line", () => {
 
     // And it is the real transfer flow, opened in place — not a link that would bounce off the setup
     // gate, and not a second copy of it.
-    await userEvent.click(screen.getByRole("button", { name: /set that up now/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /set that up now/i }),
+    );
     expect(
       await screen.findByText(/plex home/i, {}, { timeout: 3000 }),
     ).toBeInTheDocument();

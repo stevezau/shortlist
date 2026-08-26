@@ -1,0 +1,1962 @@
+"""Shared rows count too — the owner's requirement, verbatim: "if they start something and its on a
+current row of theirs (or shared)".
+
+A shared row is built once for the whole server and writes NO `picks` rows, so before
+`shared_row_watches` (migration 0078) every watch off a shared row was invisible: the credit path
+intersected plays against the titles a person had a pick row for, and a shared row contributes none.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+
+import pytest
+from sqlalchemy import create_engine, literal
+from sqlalchemy.orm import sessionmaker
+
+from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
+from shortlist.server.db.models import (
+    Base,
+    Collection,
+    CollectionAudience,
+    CollectionUserOverride,
+    Delivery,
+    PickRow,
+    Run,
+    RunSharedRow,
+    SharedRowWatch,
+    User,
+    WatchSession,
+)
+from shortlist.server.services.report_service import (
+    _PERSON_TITLE,
+    _SHARED_PERSON_TITLE,
+    resolve_outcomes,
+)
+from shortlist.server.services.run_persistence import (
+    FINISHED_PERCENT,
+    _shared_audience,
+    _shared_muted,
+    reconcile_watched,
+)
+from shortlist.server.services.watch_events import RowMembership, _as_utc, shared_credits
+
+NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
+
+
+@pytest.fixture
+def sessions():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    return sessionmaker(engine)
+
+
+@pytest.fixture
+def world(sessions):
+    """One shared row, delivered yesterday, carrying one film. Two people can see it."""
+    with sessions() as s:
+        s.add(User(id=1, plex_account_id=99, username="alex", slug="alex"))
+        s.add(User(id=2, plex_account_id=77, username="sam", slug="sam"))
+        s.add(Collection(id=1, slug="staff", name="Staff Picks", enabled=True, build="shared"))
+        s.add(Run(id=1, trigger="schedule", status="ok", started_at=NOW - timedelta(days=1)))
+        # A shared row files its delivery under `shared_<slug>` — that is the on-Plex gate.
+        s.add(Delivery(collection_slug="staff", user_slug="shared_staff", library_key="1", rating_key=500))
+        s.add(
+            RunSharedRow(
+                run_id=1,
+                collection_slug="staff",
+                row_title="Staff Picks",
+                status="ok",
+                picks=[{"tmdb_id": 550, "media_type": "movie", "title": "Fight Club"}],
+                audience=None,
+            )
+        )
+        s.commit()
+    return sessions
+
+
+def watch_session(sessions, account, *, started, offset, rating_key=9001, duration=6_000_000):
+    with sessions() as s:
+        s.add(
+            WatchSession(
+                plex_account_id=account,
+                session_key=f"{account}-{started.timestamp()}",
+                rating_key=rating_key,
+                media_type="movie",
+                started_at=started,
+                last_seen_at=started + timedelta(minutes=10),
+                ended_at=started + timedelta(minutes=10),
+                max_offset_ms=offset,
+                duration_ms=duration,
+                end_reason="stopped",
+            )
+        )
+        s.commit()
+
+
+def a_pick_so_the_rating_key_resolves(sessions, *, tmdb_id=550, rating_key=9001):
+    """`tmdb_by_rating_key` is built from `picks`, so a session's rating key needs SOME pick row to
+    become a tmdb id. Belongs to the OTHER person, on no row this test is about."""
+    with sessions() as s:
+        s.add(
+            PickRow(
+                run_id=1,
+                user_id=2,
+                collection_slug="other",
+                section_key="1",
+                library="Movies",
+                tmdb_id=tmdb_id,
+                media_type="movie",
+                rating_key=rating_key,
+                rank=1,
+                created_at=NOW - timedelta(days=1),
+            )
+        )
+        s.commit()
+
+
+def an_old_pick_so_the_attribution_floor_reaches_back(sessions):
+    """`_attribution_floor` is the oldest pick we hold, and NOTHING before it is ever scanned. Without
+    a pick this old, a play from five days ago is dropped by the floor rather than by the rule under
+    test — which is exactly how an earlier version of the "play predates the row" test below passed
+    with the membership gate deleted."""
+    with sessions() as s:
+        s.add(
+            PickRow(
+                run_id=1,
+                user_id=2,
+                collection_slug="ancient",
+                section_key="1",
+                library="Movies",
+                tmdb_id=111,
+                media_type="movie",
+                rating_key=111,
+                rank=1,
+                created_at=NOW - timedelta(days=60),
+            )
+        )
+        s.commit()
+
+
+def _request(sessions):
+    """The least a FastAPI handler here needs: `request.app.state.sessions`."""
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(sessions=sessions)))
+
+
+def profile(history=(), *, slug="alex", account=99):
+    return UserProfile(
+        username=slug, plex_account_id=account, user_type=UserType.SHARED, slug=slug, history=list(history)
+    )
+
+
+class TestASharedRowCanBeCredited:
+    def test_a_start_on_a_shared_row_is_credited_with_no_pick_row_of_their_own(self, world):
+        """The headline case, and the one that was silently impossible before."""
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            row = s.query(SharedRowWatch).filter_by(user_id=1, collection_slug="staff", tmdb_id=550).one()
+            assert row.watched_at is not None
+            assert row.max_percent == 30
+            assert row.title == "Fight Club"
+            # And it did NOT invent a pick row for them.
+            assert s.query(PickRow).filter_by(user_id=1).count() == 0
+
+    def test_a_partial_watch_that_finishes_later_keeps_its_original_credit(self, world):
+        """The owner's rule: "if they are partial and they finish it later keep counting that as they
+        initial started form the row"."""
+        a_pick_so_the_rating_key_resolves(world)
+        started = NOW - timedelta(hours=6)
+        watch_session(world, 99, started=started, offset=1_200_000)
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            first_credit = s.query(SharedRowWatch).filter_by(user_id=1, tmdb_id=550).one().watched_at
+
+        # Four days later they finish it — by which time the row has moved on.
+        finish = [WatchedItem(title="Fight Club", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=550)]
+        reconcile_watched(world, [profile(finish)])
+
+        with world() as s:
+            row = s.query(SharedRowWatch).filter_by(user_id=1, tmdb_id=550).one()
+            assert row.watched_at == first_credit, "the credit belongs to when the row got them to press play"
+            assert row.finished_at is not None
+
+    def test_it_reaches_the_report(self, world):
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=180_000)  # 3% — a bounce
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            outcomes = resolve_outcomes(s, None)
+            assert outcomes[(1, 550, "movie")]["outcome"] == "bounced"
+            assert outcomes[(1, 550, "movie")]["row"] == "staff"
+
+
+class TestASharedRowIsStillBounded:
+    """Everyone sees a shared row, so a credit here is easier to earn than a personal one. These are
+    the bounds that stop it becoming "count every watch on the server"."""
+
+    def test_a_play_before_the_row_carried_the_title_is_not_credited(self, world):
+        a_pick_so_the_rating_key_resolves(world)
+        an_old_pick_so_the_attribution_floor_reaches_back(world)
+        watch_session(world, 99, started=NOW - timedelta(days=5), offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 0, "the row did not exist yet — it cannot be why"
+
+    def test_someone_outside_the_audience_is_not_credited(self, world):
+        """A subset shared row is only visible to its audience, and the AUDIENCE SNAPSHOT on the run is
+        what decides — not `collection_audience`, which is current state and would retroactively
+        credit watches from before someone was added."""
+        with world() as s:
+            s.query(RunSharedRow).filter_by(run_id=1).one().audience = [99]
+            s.add(CollectionAudience(collection_id=1, user_id=2))
+            s.commit()
+        a_pick_so_the_rating_key_resolves(world, rating_key=9001)
+        watch_session(world, 77, started=NOW - timedelta(hours=3), offset=1_800_000)
+
+        reconcile_watched(world, [profile(slug="sam", account=77)])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 0, "sam could not see the row when it was delivered"
+
+    def test_a_row_no_longer_on_plex_stops_crediting(self, world):
+        """The delivery ledger is the on-Plex gate. Without it a shared row deleted a month ago keeps
+        crediting for ever, because its last delivery stays the newest one in the timeline."""
+        with world() as s:
+            s.query(Delivery).filter_by(collection_slug="staff").delete()
+            s.commit()
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 0
+
+    def test_a_disabled_row_stops_crediting(self, world):
+        with world() as s:
+            s.query(Collection).filter_by(slug="staff").one().enabled = False
+            s.commit()
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 0
+
+    def test_running_twice_writes_one_row_and_does_not_move_the_credit(self, world):
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
+        reconcile_watched(world, [profile()])
+        with world() as s:
+            before = s.query(SharedRowWatch).one().watched_at
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            rows = s.query(SharedRowWatch).all()
+            assert len(rows) == 1
+            assert rows[0].watched_at == before
+
+
+class TestSeriesProgressIsNotWritten:
+    def test_an_episode_percentage_is_never_recorded_as_the_series(self, world):
+        """Same rule as `picks.max_percent` (migration 0077): one full episode of a sixty-episode
+        series is not 100% of the series, and recording it as such told the dashboard people abandon
+        shows just before the end."""
+        with world() as s:
+            s.query(RunSharedRow).filter_by(run_id=1).one().picks = [
+                {"tmdb_id": 1399, "media_type": "show", "title": "Game of Thrones"}
+            ]
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=2,
+                    collection_slug="other",
+                    section_key="1",
+                    library="TV",
+                    tmdb_id=1399,
+                    media_type="show",
+                    rating_key=7001,
+                    rank=1,
+                    created_at=NOW - timedelta(days=1),
+                )
+            )
+            s.commit()
+        with world() as s:
+            s.add(
+                WatchSession(
+                    plex_account_id=99,
+                    session_key="ep",
+                    rating_key=7002,
+                    show_rating_key=7001,
+                    media_type="episode",
+                    started_at=NOW - timedelta(hours=3),
+                    last_seen_at=NOW - timedelta(hours=2),
+                    ended_at=NOW - timedelta(hours=2),
+                    max_offset_ms=3_000_000,
+                    duration_ms=3_000_000,
+                    end_reason="stopped",
+                )
+            )
+            s.commit()
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            row = s.query(SharedRowWatch).filter_by(tmdb_id=1399).one()
+            assert row.watched_at is not None, "the start still credits — they pressed play from the row"
+            assert row.max_percent is None, "one episode is not a percentage of the series"
+
+
+class TestTheTwoPathsDoNotCrossCredit:
+    def test_a_shared_row_does_not_stamp_a_personal_pick(self, world):
+        """The reason the two are separate tables. If a shared row could satisfy PERSONAL membership,
+        someone's own row would be credited for a title it had already dropped, because a different
+        row was still showing it."""
+        with world() as s:
+            s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
+            s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=550,
+                    media_type="movie",
+                    rating_key=9001,
+                    rank=1,
+                    # Dropped from their personal row before the play below.
+                    created_at=NOW - timedelta(days=30),
+                )
+            )
+            s.add(Run(id=2, trigger="schedule", status="ok", started_at=NOW - timedelta(hours=12)))
+            s.add(
+                PickRow(
+                    run_id=2,
+                    user_id=1,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=999,
+                    media_type="movie",
+                    rating_key=9999,
+                    rank=1,
+                    created_at=NOW - timedelta(hours=12),
+                )
+            )
+            s.commit()
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            personal = s.query(PickRow).filter_by(user_id=1, tmdb_id=550).one()
+            assert personal.watched_at is None, "their own row had already dropped it"
+            assert s.query(SharedRowWatch).filter_by(tmdb_id=550).count() == 1
+
+    def test_one_title_on_both_kinds_of_row_is_one_outcome_in_the_report(self, world):
+        """`resolve_outcomes` promises one outcome per person-title. Two tallies would double-count."""
+        with world() as s:
+            s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
+            s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=550,
+                    media_type="movie",
+                    rating_key=9001,
+                    rank=1,
+                    created_at=NOW - timedelta(days=1),
+                )
+            )
+            s.commit()
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            keys = [k for k in resolve_outcomes(s, None) if k[1] == 550]
+            assert keys == [(1, 550, "movie")], "one person-title, one outcome"
+
+
+class TestSharedCreditsDirectly:
+    def test_no_shared_rows_means_no_work(self, sessions):
+        with sessions() as s:
+            s.add(User(id=1, plex_account_id=99, username="alex", slug="alex"))
+            s.commit()
+        with sessions() as s:
+            assert shared_credits(s, RowMembership(s)) == {}
+
+
+class TestTheCreditIsTheEarliestPlay:
+    def test_a_rewatch_does_not_move_the_credit_forward(self, world):
+        """The credit belongs to the moment the row got them to press play. Taking the newest event
+        would file the hit in the wrong week of the trend chart for ever."""
+        a_pick_so_the_rating_key_resolves(world)
+        first = NOW - timedelta(hours=20)
+        watch_session(world, 99, started=first, offset=600_000)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=3_000_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            row = s.query(SharedRowWatch).filter_by(tmdb_id=550).one()
+            assert row.watched_at.replace(tzinfo=UTC) == first
+            assert row.max_percent == 50, "progress is the FURTHEST any sitting got, not the earliest"
+
+
+class TestPicksWrittenBeforeMediaTypeWasCarried:
+    """The shape EVERY shared row on the maintainer's server carried when this shipped.
+
+    `_pick_dicts` did not write `media_type`, so the pool keyed `(tmdb_id, "")` while the play log
+    resolves to `(tmdb_id, "movie")` — the two never intersected and shared crediting was a silent
+    no-op on real data. Every test above passed because they all set the field by hand. Found by
+    probing the live server, which is the only place the real shape existed.
+    """
+
+    def a_row_with_no_media_type(self, sessions, *, rating_key):
+        with sessions() as s:
+            s.query(RunSharedRow).filter_by(run_id=1).one().picks = [
+                {"tmdb_id": 550, "rating_key": rating_key, "rank": 1, "title": "Fight Club"}
+            ]
+            s.commit()
+
+    def test_a_pick_with_no_media_type_credits_nothing(self, world):
+        """A guess would be worse than silence: a tmdb id with the wrong type is a DIFFERENT title, so
+        guessing credits the row for something nobody watched.
+
+        Deriving the type from the pick's own rating key was tried and reverted — see `_shared_key`.
+        The rows it rescued were precisely the rows with no audience snapshot, which is the hole the
+        next test describes."""
+        a_pick_so_the_rating_key_resolves(world)  # rating key 9001 IS resolvable — irrelevant here
+        self.a_row_with_no_media_type(world, rating_key=9001)
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 0
+
+    def test_a_subset_row_with_no_audience_snapshot_credits_nobody(self, world):
+        """The reason the rating-key fallback had to go, pinned on its own.
+
+        A row written before migration 0076 has `audience = NULL`, and `_shared_visible_to` reads NULL
+        as "everyone" — it cannot tell "public" from "not recorded". So any path that makes a
+        pre-0076 row creditable hands a SUBSET row's credits to people who were never in its audience.
+        Here the row is alex-only and sam is the one who watches."""
+        with world() as s:
+            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row.audience = None  # pre-0076: not recorded
+            row.picks = [{"tmdb_id": 550, "rating_key": 9001, "rank": 1, "title": "Fight Club"}]
+            s.query(Collection).filter_by(slug="staff").one().audience = "subset"
+            s.add(CollectionAudience(collection_id=1, user_id=1))  # alex only
+            s.commit()
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 77, started=NOW - timedelta(hours=3), offset=1_800_000)  # sam
+
+        reconcile_watched(world, [profile(slug="sam", account=77)])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 0, "sam was never in this row's audience"
+
+    def test_a_movie_and_a_show_sharing_a_tmdb_id_do_not_collide(self, world):
+        """TMDB ids are namespaced per type. If the type were dropped, one watch would credit both."""
+        with world() as s:
+            s.query(RunSharedRow).filter_by(run_id=1).one().picks = [
+                {"tmdb_id": 1399, "media_type": "movie", "rating_key": 8001, "title": "A Film"},
+                {"tmdb_id": 1399, "media_type": "show", "rating_key": 8002, "title": "A Series"},
+            ]
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=2,
+                    collection_slug="other",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=1399,
+                    media_type="movie",
+                    rating_key=8001,
+                    rank=1,
+                    created_at=NOW - timedelta(days=1),
+                )
+            )
+            s.commit()
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000, rating_key=8001)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            credited = s.query(SharedRowWatch).all()
+            assert [(r.tmdb_id, r.media_type) for r in credited] == [(1399, "movie")]
+
+
+class TestEachRowKeepsItsOwnEarliestPlay:
+    def test_a_row_is_not_credited_for_a_play_made_before_it_carried_the_title(self, world):
+        """Two shared rows, the same title, different windows, one person playing in both.
+
+        An earlier structure kept ONE timestamp per title and unioned the row slugs, so the later row
+        inherited the earlier play's date — credited for a play made before it carried the title."""
+        with world() as s:
+            s.add(Collection(id=2, slug="trending", name="Trending", enabled=True, build="shared"))
+            s.add(Delivery(collection_slug="trending", user_slug="shared_trending", library_key="1", rating_key=501))
+            s.add(Run(id=2, trigger="schedule", status="ok", started_at=NOW - timedelta(hours=6)))
+            # `staff` has carried it since yesterday; `trending` only picked it up six hours ago.
+            s.add(
+                RunSharedRow(
+                    run_id=2,
+                    collection_slug="trending",
+                    row_title="Trending",
+                    status="ok",
+                    picks=[{"tmdb_id": 550, "media_type": "movie", "rating_key": 9001, "title": "Fight Club"}],
+                    audience=None,
+                )
+            )
+            s.commit()
+        a_pick_so_the_rating_key_resolves(world)
+        early = NOW - timedelta(hours=20)  # only `staff` was showing it
+        late = NOW - timedelta(hours=2)  # both were
+        watch_session(world, 99, started=early, offset=600_000)
+        watch_session(world, 99, started=late, offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            by_slug = {r.collection_slug: r.watched_at.replace(tzinfo=UTC) for r in s.query(SharedRowWatch).all()}
+            assert by_slug["staff"] == early
+            assert by_slug["trending"] == late, "trending did not carry it at the early play"
+
+
+class TestTheExpensiveMapsAreBuiltOnce:
+    def test_one_reconcile_builds_the_rating_key_map_once(self, world, monkeypatch):
+        """`tmdb_by_rating_key` is a DISTINCT over the largest table in the schema — 158,737 pick rows
+        on a real server — and `_scan_plays` walks the whole event log. Both were being rebuilt up to
+        five times per pass, seven passes a day, for byte-identical results."""
+        from shortlist.server.services import run_persistence, watch_events
+
+        calls = {"map": 0, "scan": 0}
+        real_map, real_scan = watch_events.tmdb_by_rating_key, watch_events._scan_plays
+
+        def counted_map(*a, **k):
+            calls["map"] += 1
+            return real_map(*a, **k)
+
+        def counted_scan(*a, **k):
+            calls["scan"] += 1
+            return real_scan(*a, **k)
+
+        for mod in (watch_events, run_persistence):
+            monkeypatch.setattr(mod, "tmdb_by_rating_key", counted_map, raising=False)
+            monkeypatch.setattr(mod, "_scan_plays", counted_scan, raising=False)
+
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
+        reconcile_watched(world, [profile()])
+
+        assert calls["map"] == 1, f"rating-key map rebuilt {calls['map']}x"
+        assert calls["scan"] == 1, f"play scan rebuilt {calls['scan']}x"
+
+    def test_a_stop_that_credits_nobody_never_costs_a_progress_scan(self, world, monkeypatch):
+        """`reconcile_from_events` fires on EVERY video stop, and most stops are of something nobody
+        was recommended. `session_progress` costs 128-230ms at real-server sizes, so computing it
+        before the "nothing to credit" return put that on the hot path to be thrown away. It is a
+        lazy field now; this asserts the laziness, not the intent."""
+        from shortlist.server.services import run_persistence
+
+        calls = {"progress": 0}
+        real = run_persistence.session_progress
+
+        def counted(*a, **k):
+            calls["progress"] += 1
+            return real(*a, **k)
+
+        monkeypatch.setattr(run_persistence, "session_progress", counted)
+
+        # A play by somebody with no picks and no shared row they can see: nothing to credit.
+        watch_session(world, 12345, started=NOW - timedelta(hours=2), offset=1_800_000)
+        assert run_persistence.reconcile_from_events(world) == 0
+
+        assert calls["progress"] == 0, "computed the progress map only to discard it"
+
+    def test_a_stop_that_does_credit_still_gets_its_progress(self, world, monkeypatch):
+        """The other half: laziness must not mean never. Same fixture, a play that DOES credit."""
+        from shortlist.server.services import run_persistence
+
+        calls = {"progress": 0}
+        real = run_persistence.session_progress
+
+        def counted(*a, **k):
+            calls["progress"] += 1
+            return real(*a, **k)
+
+        monkeypatch.setattr(run_persistence, "session_progress", counted)
+
+        with world() as s:
+            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row.picks = [{"tmdb_id": 550, "media_type": "movie", "title": "Fight Club", "rating_key": 9001}]
+            s.commit()
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+
+        assert run_persistence.reconcile_from_events(world) == 1
+        assert calls["progress"] == 1, "the credit path still needs how far they got"
+
+
+class TestTheTilesCannotContradictEachOther:
+    """`overall.dropped` came off `resolve_outcomes` (which includes shared rows) while
+    `overall.watched` read `picks` alone — so a shared-only bounce landed in Dropped and in nothing
+    else, and the Dropped tile could exceed the Watched tile beside it: an abandonment with no start.
+    """
+
+    def a_shared_only_bounce(self, world):
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=180_000)  # 3%
+        reconcile_watched(world, [profile()])
+
+    def test_a_shared_only_bounce_is_counted_as_watched_too(self, world):
+        from shortlist.server.services.report_service import _watched_count, _watchers_count
+
+        self.a_shared_only_bounce(world)
+
+        with world() as s:
+            watched = _watched_count(s, None)
+            dropped_and_bounced = sum(
+                1 for e in resolve_outcomes(s, None).values() if e["outcome"] in ("bounced", "dropped")
+            )
+            assert watched >= dropped_and_bounced, "the Dropped tile must never exceed the Watched tile"
+            assert watched == 1
+            assert _watchers_count(s, None) == 1
+
+    def test_a_title_on_both_kinds_of_row_is_counted_once(self, world):
+        """A UNION, not a sum — adding two counts would report one person-title twice."""
+        from shortlist.server.services.report_service import _watched_count
+
+        with world() as s:
+            s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
+            s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=550,
+                    media_type="movie",
+                    rating_key=9001,
+                    rank=1,
+                    created_at=NOW - timedelta(days=1),
+                )
+            )
+            s.commit()
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert _watched_count(s, None) == 1
+
+    def test_it_appears_in_the_recently_watched_feed(self, world):
+        """The feature this whole thread started from: "does Recently watched actually check the
+        title was in their row"."""
+        from shortlist.engine.models import DEFAULT_ROW_TEMPLATE
+        from shortlist.server.services.report_service import _recent_watches, _RowNamer
+
+        self.a_shared_only_bounce(world)
+
+        with world() as s:
+            users = {u.id: u for u in s.query(User).all()}
+            feed = _recent_watches(s, users, _RowNamer(s, DEFAULT_ROW_TEMPLATE), None)
+            assert [(f["username"], f["title"]) for f in feed] == [("alex", "Fight Club")]
+
+
+class TestTheBreakdownsAgreeWithTheTiles:
+    """`_watched_count` was widened to include shared rows while `per_user`/`per_row` were not — so
+    "People watching: 4" could sit above a By-person section where every bar read 0."""
+
+    def test_a_shared_only_watch_appears_under_that_person(self, world):
+        """Through `effectiveness`, not a hand-written `_counts` call. Calling `_counts` directly with
+        the shared arguments spelled out in the test re-implements the wiring instead of exercising
+        it: drop those arguments at the call site and such a test still passes."""
+        from shortlist.server.services.report_service import effectiveness
+
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            line = next(p for p in effectiveness(s, "all")["per_user"] if p["username"] == "alex")
+            assert line["watched"] == 1
+            assert line["delivered"] == 0, "a shared row has no per-person delivery — the UI hides a zero"
+
+    def test_a_shared_only_watch_appears_under_that_row(self, world):
+        from shortlist.server.services.report_service import _counts
+
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            per_row = _counts(
+                s,
+                [PickRow.collection_slug, PickRow.section_key, PickRow.library],
+                _PERSON_TITLE,
+                None,
+                [SharedRowWatch.collection_slug, literal("").label("section_key"), literal("").label("library")],
+                _SHARED_PERSON_TITLE,
+            )
+            assert per_row[("staff", "", "")][1] == 1
+
+    def test_one_title_on_both_kinds_of_row_is_not_double_counted_for_a_person(self, world):
+        """A SUM would report this person as watching two titles. The union counts the pair once."""
+        from shortlist.server.services.report_service import effectiveness
+
+        with world() as s:
+            s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
+            s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=550,
+                    media_type="movie",
+                    rating_key=9001,
+                    rank=1,
+                    created_at=NOW - timedelta(days=1),
+                )
+            )
+            s.commit()
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            line = next(p for p in effectiveness(s, "all")["per_user"] if p["username"] == "alex")
+            assert line["watched"] == 1, "one person, one title, one watch"
+
+
+class TestTheAudienceGateBothWays:
+    """The gate only became load-bearing in this change — before it, the audience map was built and
+    read by nothing. Both tested cells produced `count() == 0`, which a correct gate and a completely
+    broken one produce alike. These pin the POSITIVE cells, so an id-space swap fails loudly."""
+
+    def a_subset_row_containing(self, world, *account_ids):
+        with world() as s:
+            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row.audience = list(account_ids)
+            s.query(Collection).filter_by(slug="staff").one().audience = "subset"
+            s.commit()
+
+    def test_someone_inside_the_audience_is_credited(self, world):
+        """The cell that catches an id-space swap: `_shared_visible_to` compares
+        `user.plex_account_id` against what `_shared_audience` snapshots. Store `users.id` on either
+        side and the exclude test still passes while everyone silently stops being credited."""
+        self.a_subset_row_containing(world, 99)  # alex's PLEX ACCOUNT id, not his user id
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).filter_by(user_id=1, tmdb_id=550).count() == 1
+
+    def test_a_public_row_muted_for_one_person_does_not_credit_them(self, world):
+        """Muting is the OTHER way someone does not get a row, and it applies to a public row too —
+        so `_shared_audience` snapshots the audience MINUS the mutes, not the audience alone."""
+        with world() as s:
+            s.add(CollectionUserOverride(collection_id=1, user_id=1, muted=True))
+            s.commit()
+        # Re-snapshot the way a run would. BOTH halves: `audience` is the allow-list (None = public)
+        # and `muted` is the deny-list beside it.
+        with world() as s:
+            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row.audience = _shared_audience(s, "staff")
+            row.muted = _shared_muted(s, "staff")
+            s.commit()
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 0, "they switched this row off"
+
+
+class TestTheDatabaseBranchesForSharedRows:
+    def a_credit_on(self, world, slug):
+        with world() as s:
+            s.add(
+                SharedRowWatch(
+                    user_id=1,
+                    collection_slug=slug,
+                    tmdb_id=550,
+                    media_type="movie",
+                    title="Fight Club",
+                    watched_at=NOW - timedelta(hours=1),
+                )
+            )
+            s.commit()
+
+    def test_a_deleted_shared_row_is_offered_for_clearing(self, world):
+        from shortlist.server.api.report import _orphaned_slugs
+
+        self.a_credit_on(world, "gone")  # no Collection with this slug
+
+        with world() as s:
+            assert "gone" in _orphaned_slugs(s)
+            assert "staff" not in _orphaned_slugs(s), "a LIVE shared row is not an orphan"
+
+    def test_the_endpoint_lists_a_shared_only_orphan_with_its_number(self, world):
+        """Through the real handler. Counting the records is the endpoint's job — a line offering
+        "0" to clear is the same as not offering it."""
+        from shortlist.server.api.report import deleted_rows
+
+        self.a_credit_on(world, "gone")
+
+        listed = asyncio.run(deleted_rows(_request(world)))
+        assert [(r["slug"], r["picks"]) for r in listed] == [("gone", 1)]
+
+    def test_the_endpoint_clears_the_dead_rows_watches_and_spares_the_live_ones(self, world):
+        """Through the real handler, not a hand-rolled copy of its query — an earlier version of this
+        test re-implemented the DELETE in the test body, so removing the handler's shared-delete
+        entirely left the whole suite green."""
+        from shortlist.server.api.report import clear_deleted_rows
+
+        self.a_credit_on(world, "gone")
+        self.a_credit_on(world, "staff")
+
+        result = asyncio.run(clear_deleted_rows(_request(world)))
+
+        assert result["picks"] == 1, "the reported number must be what actually went"
+        with world() as s:
+            assert [r.collection_slug for r in s.query(SharedRowWatch).all()] == ["staff"]
+
+    def test_removing_a_departed_user_drops_their_shared_watches(self, world):
+        """Through the real handler. The previous version ran the DELETE itself and asserted the row
+        was gone — it tested SQLAlchemy, and passed with the purge line deleted from the endpoint."""
+        from shortlist.server.api.users import remove_departed_user
+
+        self.a_credit_on(world, "staff")
+        with world() as s:
+            s.query(User).filter_by(id=1).one().departed_at = NOW
+            s.commit()
+
+        asyncio.run(remove_departed_user(1, _request(world)))
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 0
+
+    def test_a_removed_user_accrues_no_new_credits(self, world):
+        """`shared_credits` filters `removed_at IS NULL`, so the purge is not racing the reconcile."""
+        with world() as s:
+            s.query(User).filter_by(id=1).one().removed_at = NOW
+            s.commit()
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 0
+
+
+class TestADeletedSharedRowIsReachableInTheUi:
+    """The API listed a deleted shared row as clearable, but the control that clears it renders only
+    when `per_row` has a `deleted` entry — and `per_row` was picks-only, so a shared-only orphan was
+    offered by the API and unreachable in the UI."""
+
+    def test_it_reaches_per_row_flagged_deleted(self, world):
+        from shortlist.server.services.report_service import effectiveness
+
+        with world() as s:
+            s.add(
+                SharedRowWatch(
+                    user_id=1,
+                    collection_slug="gone",
+                    tmdb_id=550,
+                    media_type="movie",
+                    title="Fight Club",
+                    watched_at=NOW - timedelta(hours=1),
+                )
+            )
+            s.commit()
+
+        with world() as s:
+            report = effectiveness(s, "all")
+            gone = [r for r in report["per_row"] if r["deleted"]]
+            assert [r["slug"] for r in gone] == ["gone"]
+            assert gone[0]["watched"] == 1, "the disclosure needs a number to show"
+
+
+class TestASlugCarryingBothKindsOfHistory:
+    """A row switched per_person -> shared (`build` is patchable) accrues BOTH `picks` and
+    `shared_row_watches` under one slug. The listing suppressed the shared side for such a slug to
+    avoid a duplicate line, while the DELETE removed both — so the confirm dialog, whose stated job is
+    to say what clearing costs, under-warned by exactly the shared count."""
+
+    def test_what_the_listing_offers_is_what_the_clear_removes(self, world):
+        from shortlist.server.api.report import clear_deleted_rows, deleted_rows
+
+        with world() as s:
+            for rank in (1, 2, 3):
+                s.add(
+                    PickRow(
+                        run_id=1,
+                        user_id=1,
+                        collection_slug="switched",
+                        section_key="1",
+                        library="Movies",
+                        tmdb_id=600 + rank,
+                        media_type="movie",
+                        rating_key=0,
+                        rank=rank,
+                        created_at=NOW - timedelta(days=2),
+                    )
+                )
+            for tmdb in (700, 701):
+                s.add(
+                    SharedRowWatch(
+                        user_id=1,
+                        collection_slug="switched",
+                        tmdb_id=tmdb,
+                        media_type="movie",
+                        title="T",
+                        watched_at=NOW - timedelta(hours=1),
+                    )
+                )
+            s.commit()
+
+        listed = asyncio.run(deleted_rows(_request(world)))
+        offered = next(r for r in listed if r["slug"] == "switched")["picks"]
+        removed = asyncio.run(clear_deleted_rows(_request(world), slug="switched"))["picks"]
+
+        assert offered == 5, "3 picks + 2 shared credits"
+        assert removed == offered, "the dialog must not under-warn"
+        with world() as s:
+            assert s.query(SharedRowWatch).filter_by(collection_slug="switched").count() == 0
+            assert s.query(PickRow).filter_by(collection_slug="switched").count() == 0
+
+    def test_one_line_per_slug_not_two(self, world):
+        from shortlist.server.api.report import deleted_rows
+
+        with world() as s:
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="switched",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=601,
+                    media_type="movie",
+                    rating_key=0,
+                    rank=1,
+                    created_at=NOW - timedelta(days=2),
+                )
+            )
+            s.add(
+                SharedRowWatch(
+                    user_id=1,
+                    collection_slug="switched",
+                    tmdb_id=700,
+                    media_type="movie",
+                    title="T",
+                    watched_at=NOW - timedelta(hours=1),
+                )
+            )
+            s.commit()
+
+        listed = asyncio.run(deleted_rows(_request(world)))
+        assert [r["slug"] for r in listed].count("switched") == 1
+
+
+class TestTheChartAndTopTitlesCountSharedRowsToo:
+    """Both are keyed on `watched_at`, so nothing about a shared row makes them inapplicable — they
+    sit directly under the Watched tile, and a chart omitting what the tile counted reads as the same
+    number failing to add up."""
+
+    def a_shared_watch(self, world):
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
+        reconcile_watched(world, [profile()])
+
+    def test_the_weekly_trend_includes_it(self, world):
+        from shortlist.server.services.report_service import effectiveness
+
+        self.a_shared_watch(world)
+
+        with world() as s:
+            report = effectiveness(s, "all")
+            assert sum(week["watched"] for week in report["trend"]) == report["overall"]["watched"]
+            assert sum(week["watched"] for week in report["trend"]) == 1
+
+    def test_top_titles_includes_it_with_its_name(self, world):
+        from shortlist.server.services.report_service import effectiveness
+
+        self.a_shared_watch(world)
+
+        with world() as s:
+            top = effectiveness(s, "all")["top_titles"]
+            assert [(t["title"], t["watchers"]) for t in top] == [("Fight Club", 1)]
+
+
+class TestTopTitlesTiesAreStable:
+    def test_the_order_is_total_even_when_the_input_order_is_wrong(self):
+        """The only version of this test with teeth. Driven from the database it has none: SQLite
+        emits GROUP BY output in ascending key order and Python's sort is stable, so the input is
+        already in tie-break order and the assertion holds with the tie-break deleted."""
+        from shortlist.server.services.report_service import _rank_titles
+
+        counts = {(300, "movie"): 1, (200, "movie"): 1, (100, "movie"): 1, (400, "movie"): 2}
+        assert [k for k, _ in _rank_titles(counts, 8)] == [
+            (400, "movie"),
+            (100, "movie"),
+            (200, "movie"),
+            (300, "movie"),
+        ]
+
+    def test_a_movie_and_a_show_sharing_a_tmdb_id_have_a_defined_order(self):
+        from shortlist.server.services.report_service import _rank_titles
+
+        counts = {(1399, "show"): 1, (1399, "movie"): 1}
+        assert [k for k, _ in _rank_titles(counts, 8)] == [(1399, "movie"), (1399, "show")]
+
+    def test_equal_scores_keep_a_fixed_order(self, world):
+        """Tie order was the SQL planner's, then the dict's insertion order — either can reshuffle
+        equal-scoring titles between two renders of identical data, which reads as the list jumping
+        around on refresh."""
+        from shortlist.server.services.report_service import effectiveness
+
+        with world() as s:
+            # 300 gets TWO watchers so it must lead on score; 100 and 200 tie on one and must then be
+            # ordered by tmdb id. Both keys have to act. A version where every title tied passed with
+            # the tie-break DELETED: SQLite emits GROUP BY output in ascending key order and Python's
+            # sort is stable, so the input was already in the asserted order.
+            for tmdb in (300, 100, 200):
+                s.add(
+                    SharedRowWatch(
+                        user_id=1,
+                        collection_slug="staff",
+                        tmdb_id=tmdb,
+                        media_type="movie",
+                        title=f"T{tmdb}",
+                        watched_at=NOW - timedelta(hours=1),
+                    )
+                )
+            s.add(
+                SharedRowWatch(
+                    user_id=2,
+                    collection_slug="staff",
+                    tmdb_id=300,
+                    media_type="movie",
+                    title="T300",
+                    watched_at=NOW - timedelta(hours=1),
+                )
+            )
+            s.commit()
+
+        with world() as s:
+            once = [t["tmdb_id"] for t in effectiveness(s, "all")["top_titles"]]
+            twice = [t["tmdb_id"] for t in effectiveness(s, "all")["top_titles"]]
+        assert once == twice == [300, 100, 200], "score first, then tmdb id for the tie"
+
+
+class TestASharedFinishReachesTheReport:
+    """Every `finished` figure has a shared arm, and none of them was covered: stubbing
+    `_shared_finished_in` to false left 407 report tests green. The failure mode is invisible rather
+    than loud — finished stays a valid subset of watched, it just reads as "nobody ever finishes
+    anything off the shared row"."""
+
+    def test_a_completed_shared_watch_counts_everywhere_finished_is_reported(self, world):
+        from shortlist.server.services.report_service import effectiveness
+
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=6), offset=1_200_000)
+        reconcile_watched(world, [profile()])
+        # They finish it later, by which time the row has moved on.
+        finish = [WatchedItem(title="Fight Club", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=550)]
+        reconcile_watched(world, [profile(finish)])
+
+        with world() as s:
+            report = effectiveness(s, "all")
+            assert report["overall"]["finished"] == 1, "the headline tile"
+            line = next(p for p in report["per_user"] if p["username"] == "alex")
+            assert line["finished"] == 1, "their By-person line"
+            row = next(r for r in report["per_row"] if r["slug"] == "staff")
+            assert row["finished"] == 1, "the By-row line"
+            assert sum(w["finished"] for w in report["trend"]) == 1, "the chart's dark segment"
+            assert resolve_outcomes(s, None)[(1, 550, "movie")]["outcome"] == "finished"
+
+
+class TestAServerWithNoSharedRowsIsUnaffected:
+    """Most installs have no shared row at all. Every figure widened here must return exactly what it
+    returned before, or this change is a silent regression for the majority of users."""
+
+    def test_every_figure_matches_the_picks_only_computation(self, world):
+        from sqlalchemy import func
+
+        from shortlist.server.services.report_service import (
+            _PERSON_TITLE,
+            _finished_count,
+            _finished_in,
+            _watched_count,
+            _watched_in,
+            _watchers_count,
+        )
+
+        with world() as s:
+            s.query(RunSharedRow).delete()
+            s.query(Collection).filter_by(slug="staff").delete()
+            s.commit()
+        with world() as s:
+            for rank, tmdb in enumerate((11, 22, 33), start=1):
+                s.add(
+                    PickRow(
+                        run_id=1,
+                        user_id=1,
+                        collection_slug="mine",
+                        section_key="1",
+                        library="Movies",
+                        tmdb_id=tmdb,
+                        media_type="movie",
+                        rating_key=0,
+                        rank=rank,
+                        created_at=NOW - timedelta(days=3),
+                        watched_at=NOW - timedelta(days=1) if tmdb != 33 else None,
+                        finished_at=NOW - timedelta(hours=2) if tmdb == 11 else None,
+                    )
+                )
+            s.commit()
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 0
+            old_watched = s.query(func.count(func.distinct(_PERSON_TITLE))).filter(*_watched_in(None)).scalar()
+            old_finished = s.query(func.count(func.distinct(_PERSON_TITLE))).filter(*_finished_in(None)).scalar()
+            old_watchers = s.query(func.count(func.distinct(PickRow.user_id))).filter(*_watched_in(None)).scalar()
+
+            assert _watched_count(s, None) == old_watched == 2
+            assert _finished_count(s, None) == old_finished == 1
+            assert _watchers_count(s, None) == old_watchers == 1
+
+    def test_the_report_still_renders_with_no_shared_row(self, world):
+        from shortlist.server.services.report_service import effectiveness
+
+        with world() as s:
+            s.query(RunSharedRow).delete()
+            s.query(Collection).filter_by(slug="staff").delete()
+            s.commit()
+        with world() as s:
+            report = effectiveness(s, "all")
+            assert report["overall"]["watched"] == 0
+            assert report["per_row"] == []
+            assert report["top_titles"] == []
+            assert report["recent"] == []
+
+
+class TestTheWriterAndTheReaderAgree:
+    """`_pick_dicts` writes the shared row's picks; `RowMembership._load_shared` reads them back.
+
+    Nothing pinned that they agreed on a field set, and they did not: `_pick_dicts` omitted
+    `media_type`, so the reader keyed every title `(tmdb_id, "")` and never matched the
+    `(tmdb_id, "movie")` a play resolves to. The feature was a complete no-op on the real server while
+    every test passed, because every test hand-wrote the JSON with the field present.
+    """
+
+    def test_a_written_pick_is_readable_as_a_credit_key(self, world):
+        from shortlist.engine.models import MediaType as MT
+        from shortlist.engine.models import Pick
+        from shortlist.server.services.run_persistence import _pick_dicts
+
+        written = _pick_dicts(
+            SimpleNamespace(
+                picks=[
+                    Pick(tmdb_id=550, rating_key=9001, title="Fight Club", rank=1, reason="r", media_type=MT.MOVIE),
+                    Pick(tmdb_id=1399, rating_key=9002, title="A Series", rank=2, reason="r", media_type=MT.SHOW),
+                ]
+            )
+        )
+        with world() as s:
+            s.query(RunSharedRow).filter_by(run_id=1).one().picks = written
+            s.commit()
+
+        with world() as s:
+            pool = RowMembership(s).shared_pool()
+
+        assert (550, "movie") in pool, "the writer's output must be readable by the reader"
+        assert (1399, "show") in pool
+        # And the type is genuinely carried, not defaulted: a show and a film must not collide.
+        assert (1399, "movie") not in pool
+
+    def test_the_serializer_carries_the_media_type(self, world):
+        from shortlist.engine.models import MediaType as MT
+        from shortlist.engine.models import Pick
+        from shortlist.server.services.run_persistence import _pick_dicts
+
+        written = _pick_dicts(
+            SimpleNamespace(picks=[Pick(tmdb_id=550, rating_key=1, title="T", rank=1, reason="r", media_type=MT.MOVIE)])
+        )
+        assert written[0]["media_type"] == "movie"
+
+
+class TestStoppingPlaybackCreditsImmediately:
+    """The whole chain the owner sees: play a pick, stop, and the number moves — without waiting for
+    the nightly sync. Before this, `watch_sessions` held the fact and nothing acted on it for hours."""
+
+    def test_the_event_only_pass_credits_a_partial_watch(self, world):
+        from shortlist.server.services.run_persistence import reconcile_from_events
+
+        with world() as s:
+            s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
+            s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=550,
+                    media_type="movie",
+                    rating_key=9001,
+                    rank=1,
+                    title="Fight Club",
+                    created_at=NOW - timedelta(days=1),
+                )
+            )
+            s.commit()
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+
+        assert reconcile_from_events(world) == 1
+
+        with world() as s:
+            pick = s.query(PickRow).filter_by(user_id=1, tmdb_id=550).one()
+            assert pick.watched_at is not None, "they started it from the row"
+            assert pick.max_percent == 30, "and this is how far they got"
+
+    def test_it_reads_nothing_from_plex_and_needs_no_profiles(self, world):
+        """That is the entire point: it answers from records we already hold, so it can run the moment
+        someone presses stop instead of waiting for a pass that re-reads every user's watched set."""
+        from shortlist.server.services.run_persistence import reconcile_from_events
+
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+
+        reconcile_from_events(world)  # no profiles argument exists to pass
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 1, "shared rows credit here too"
+
+    def test_it_does_not_invent_a_history_depth(self, world):
+        """`history_depth` means "how many titles this person has watched", answered by the Plex read
+        this function skips. Writing it from an empty history is how every user came to read
+        "0 titles watched"."""
+        from shortlist.server.services.run_persistence import reconcile_from_events
+
+        with world() as s:
+            s.query(User).filter_by(id=1).one().prefs = {"history_depth": 412}
+            s.commit()
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+
+        reconcile_from_events(world)
+
+        with world() as s:
+            assert s.query(User).filter_by(id=1).one().prefs["history_depth"] == 412
+
+    def test_the_full_pass_does_not_zero_a_depth_for_a_profile_it_did_not_read(self, world):
+        """The SAME rule on the other function, which is where it can actually be got wrong.
+
+        The test above covers `reconcile_from_events`, which never touches `history_depth` at all —
+        so the guard inside `reconcile_watched` (`if profile.history or "history_depth" not in
+        prefs`) could be replaced with `if True:` and nothing failed (audit 2026-08-24). That
+        replacement reintroduces verbatim the bug the function's own docstring says the line fixes:
+        a SCOPED run leaves every out-of-scope profile with an empty history, and writing that over a
+        real value makes the majority of the roster read "0 titles watched" on most nights.
+        """
+        with world() as s:
+            s.query(User).filter_by(id=1).one().prefs = {"history_depth": 412}
+            s.commit()
+
+        # A scoped run: this person was not in scope, so their history came back empty.
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(User).filter_by(id=1).one().prefs["history_depth"] == 412, (
+                "overwrote a real depth with the 0 of a read that never happened"
+            )
+
+    def test_a_profile_that_was_read_does_update_its_depth(self, world):
+        """The other direction — the guard must not freeze the number for everybody."""
+        with world() as s:
+            s.query(User).filter_by(id=1).one().prefs = {"history_depth": 412}
+            s.commit()
+        history = [
+            WatchedItem(tmdb_id=550, media_type=MediaType.MOVIE, title="Fight Club", watched_at=NOW),
+            WatchedItem(tmdb_id=13, media_type=MediaType.MOVIE, title="Forrest Gump", watched_at=NOW),
+        ]
+
+        reconcile_watched(world, [profile(history)])
+
+        with world() as s:
+            assert s.query(User).filter_by(id=1).one().prefs["history_depth"] == 2
+
+    def test_a_person_with_genuinely_no_history_and_no_prior_value_records_zero(self, world):
+        """0 is the truth for someone who has watched nothing, and the guard's second clause is what
+        lets that be written the first time."""
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(User).filter_by(id=1).one().prefs["history_depth"] == 0
+
+    def test_it_never_uses_the_snapshot_path(self, world):
+        """The snapshot path credits a title Plex FLAGGED watched with no play behind it. This function
+        asked Plex nothing, so it has no business acting on that flag."""
+        from shortlist.server.services.run_persistence import reconcile_from_events
+
+        with world() as s:
+            s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
+            s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=1,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=777,
+                    media_type="movie",
+                    rating_key=0,
+                    rank=1,
+                    title="Unplayed",
+                    created_at=NOW - timedelta(days=1),
+                )
+            )
+            s.commit()
+        # No session, no event — only a title sitting in a live row.
+        reconcile_from_events(world)
+
+        with world() as s:
+            assert s.query(PickRow).filter_by(tmdb_id=777).one().watched_at is None
+
+    def test_running_it_twice_changes_nothing_the_second_time(self, world):
+        from shortlist.server.services.run_persistence import reconcile_from_events
+
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+        reconcile_from_events(world)
+        with world() as s:
+            before = s.query(SharedRowWatch).one().watched_at
+
+        reconcile_from_events(world)
+
+        with world() as s:
+            rows = s.query(SharedRowWatch).all()
+            assert len(rows) == 1 and rows[0].watched_at == before
+
+
+class TestTheIdleCountIsNotASubtraction:
+    """`users_with_picks - users_watched` subtracts two differently-scoped populations: the second
+    counts anyone who WATCHED in the window, including someone whose pick was delivered last month.
+    So it can reach zero while people who got picks this week watched nothing — and the dashboard
+    then prints "everyone who got a pick watched something", which is false."""
+
+    def test_someone_watching_an_older_pick_does_not_cancel_out_an_idle_person(self, world):
+        from shortlist.server.services.report_service import effectiveness
+
+        with world() as s:
+            s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
+            s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
+            s.add(Delivery(collection_slug="mine", user_slug="sam", library_key="1", rating_key=601))
+            # Alex got a pick THIS window and watched nothing.
+            s.add(
+                PickRow(
+                    run_id=2,
+                    user_id=1,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=700,
+                    media_type="movie",
+                    rating_key=0,
+                    rank=1,
+                    title="Ignored",
+                    created_at=NOW - timedelta(days=1),
+                )
+            )
+            # Sam got hers LAST month and watched it yesterday — a watcher, but not one of the
+            # people this window delivered to.
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=3,
+                    collection_slug="mine",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=701,
+                    media_type="movie",
+                    rating_key=0,
+                    rank=1,
+                    title="Older",
+                    created_at=NOW - timedelta(days=40),
+                    watched_at=NOW - timedelta(days=1),
+                )
+            )
+            s.commit()
+
+        with world() as s:
+            cov = effectiveness(s, "30")["coverage"]
+
+        assert cov["users_with_picks"] == 1, "only alex was delivered to in this window"
+        assert cov["users_watched"] == 1, "sam watched in it"
+        assert cov["users_idle"] == 1, "alex got a pick and watched nothing — the subtraction would have said 0"
+
+    def test_a_shared_only_watcher_counts_as_having_watched(self, world):
+        from shortlist.server.services.report_service import effectiveness
+
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            cov = effectiveness(s, "30")["coverage"]
+        assert cov["users_watched"] >= 1
+
+
+class TestASharedRowIsTimedByItsOwnDelivery:
+    """`Run.started_at` is the wrong clock, and the per-person path already knew it: a run persists
+    each row as it finishes, so its start trails the delivery by minutes to tens of minutes.
+
+    Judging a play against the run's START judges it against the row the run was BUILDING rather than
+    the one Plex was still serving. The drop direction is permanent — a watched title is never
+    re-delivered, so no later play can rescue the credit."""
+
+    def test_a_play_during_a_long_run_is_judged_against_what_plex_was_serving(self, world):
+        run_started = NOW - timedelta(hours=2)
+        landed = NOW - timedelta(minutes=20)  # 100 minutes later — a real run's shape
+        played = NOW - timedelta(hours=1)  # mid-run, while the OLD contents were still up
+        with world() as s:
+            s.add(Run(id=3, trigger="schedule", status="ok", started_at=run_started))
+            # The run REMOVED Fight Club from the row. Its new contents landed at `landed`.
+            s.add(
+                RunSharedRow(
+                    run_id=3,
+                    collection_slug="staff",
+                    row_title="Staff Picks",
+                    status="ok",
+                    picks=[{"tmdb_id": 999, "media_type": "movie", "rating_key": 1, "title": "Something Else"}],
+                    audience=None,
+                    delivered_at=landed,
+                )
+            )
+            s.commit()
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=played, offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            credited = s.query(SharedRowWatch).filter_by(tmdb_id=550).count()
+        assert credited == 1, (
+            "Plex was still serving the old collection when they pressed play — dating the new "
+            "contents to the run's start would have silently refused this credit for ever"
+        )
+
+    def test_a_row_written_before_the_column_existed_still_works(self, world):
+        """NULL `delivered_at` falls back to `Run.started_at` — the behaviour those rows already had,
+        rather than a backfill inventing a precision the old data never carried."""
+        with world() as s:
+            assert s.query(RunSharedRow).filter_by(run_id=1).one().delivered_at is None
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).filter_by(tmdb_id=550).count() == 1
+
+
+class TestTwoPassesCreditingAtOnce:
+    """`watch.reconcile` deliberately does not wait for a run, and both it and the run's own
+    end-of-run reconcile recompute every credit from the same event log. So whenever anyone stops a
+    video mid-run, both produce the same new shared row — and the second insert violates the
+    four-column primary key.
+
+    The race is a STALE `existing` map: it is read at the top of a pass, and the other pass commits
+    after that. These drive `_apply_shared` with exactly that state — an empty map against a database
+    that already has the row — because a test that seeds the row BEFORE the pass starts does not
+    reproduce it at all (the map simply includes it, and passes with the fix removed)."""
+
+    def _row_already_committed(self, world):
+        with world() as s:
+            s.add(
+                SharedRowWatch(
+                    user_id=1,
+                    collection_slug="staff",
+                    tmdb_id=550,
+                    media_type="movie",
+                    title="Fight Club",
+                    watched_at=NOW - timedelta(hours=2),
+                )
+            )
+            s.commit()
+
+    def test_losing_the_insert_race_does_not_raise(self, world):
+        from shortlist.server.services.run_persistence import _apply_shared, _Outcome
+
+        self._row_already_committed(world)
+        with world() as s:
+            membership = RowMembership(s)
+            desired = {("staff", 550, "movie"): _Outcome(watched_at=NOW - timedelta(hours=2))}
+            # Empty: this pass read the table before the other one committed.
+            _apply_shared(s, s.query(User).filter_by(id=1).one(), desired, {}, membership)
+            s.commit()
+            assert s.query(SharedRowWatch).count() == 1
+
+    def test_the_surviving_row_still_gets_this_passes_progress(self, world):
+        """Losing the race must not lose the write — the other pass's row is the same row, so this
+        pass carries on into the update path against it."""
+        from shortlist.server.services.run_persistence import _apply_shared, _Outcome
+
+        self._row_already_committed(world)
+        with world() as s:
+            membership = RowMembership(s)
+            desired = {("staff", 550, "movie"): _Outcome(watched_at=NOW - timedelta(hours=2), max_percent=30)}
+            _apply_shared(s, s.query(User).filter_by(id=1).one(), desired, {}, membership)
+            s.commit()
+            assert s.query(SharedRowWatch).one().max_percent == 30
+
+    def test_a_full_pass_over_a_racing_row_still_commits(self, world):
+        """End to end: the pass completes and the session is still usable afterwards. An
+        `IntegrityError` that escapes poisons the transaction, so everything after it is lost too."""
+        from shortlist.server.services.run_persistence import reconcile_from_events
+
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+        self._row_already_committed(world)
+
+        reconcile_from_events(world)
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 1
+
+
+class TestADryRunNeverChangesWhoGetsCredited:
+    """`_persist_shared_row_report` writes `picks`, `audience` and `delivered_at` unconditionally —
+    only the delivery-ledger write is gated on `dry_run`. Its per-person twin writes no pick rows at
+    all on a preview, so the two paths disagreed, and a preview entered the membership timeline as
+    the NEWEST delivery.
+
+    Both directions last: a real watch of a title genuinely on the shelf becomes uncreditable, and a
+    title that only ever existed in a preview is credited as though the row had shown it. The owner's
+    runbook says to dry-run first, always — so this is the normal path."""
+
+    #: The preview must land BETWEEN the real delivery and the play, or membership skips it for the
+    #: ordinary reason (a delivery after the play cannot be why they pressed play) and the test proves
+    #: nothing — which is exactly how the first version of these passed with the fix removed.
+    PREVIEW_AT = NOW - timedelta(hours=4)
+
+    def _preview(self, world, run_id: int, tmdb: int):
+        with world() as s:
+            s.add(Run(id=run_id, trigger="manual", status="ok", started_at=self.PREVIEW_AT, dry_run=True))
+            s.add(
+                RunSharedRow(
+                    run_id=run_id,
+                    collection_slug="staff",
+                    row_title="Staff Picks",
+                    status="ok",
+                    picks=[{"tmdb_id": tmdb, "media_type": "movie", "rating_key": 7777, "title": "Preview"}],
+                    audience=None,
+                    delivered_at=self.PREVIEW_AT,
+                )
+            )
+            s.commit()
+
+    def test_a_preview_does_not_erase_a_real_delivery(self, world):
+        """The row really showed Fight Club yesterday. A preview today lists something else. They
+        then watch Fight Club — which was, and still is, on their shelf."""
+        self._preview(world, 9, tmdb=8888)
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            credited = [(r.tmdb_id, r.collection_slug) for r in s.query(SharedRowWatch)]
+        assert credited == [(550, "staff")], "the real delivery still decides membership"
+
+    def test_a_preview_does_not_invent_a_delivery(self, world):
+        """The mirror case: a title that has only ever appeared in a preview must credit nothing."""
+        with world() as s:
+            s.add(
+                PickRow(
+                    run_id=1,
+                    user_id=2,
+                    collection_slug="other",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=8888,
+                    media_type="movie",
+                    rating_key=7777,
+                    rank=1,
+                    created_at=NOW - timedelta(days=1),
+                )
+            )
+            s.commit()
+        self._preview(world, 9, tmdb=8888)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000, rating_key=7777)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).filter_by(tmdb_id=8888).count() == 0
+
+    def test_a_preview_cannot_decide_a_subset_rows_audience(self, world):
+        """The half that gating the WRITES would not have fixed: a preview's row carries
+        `audience = NULL`, which `_shared_visible_to` reads as "everyone" — and being the newest
+        delivery, it would decide visibility for a row that excludes this person."""
+        with world() as s:
+            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row.audience = [77]  # sam only — alex cannot see it
+            s.query(Collection).filter_by(slug="staff").one().audience = "subset"
+            s.commit()
+        self._preview(world, 9, tmdb=550)  # preview: audience NULL = "everyone"
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 0, "alex was never in this row's audience"
+
+
+class TestTheRowPanelAgreesWithTheDashboard:
+    """`row_effectiveness` feeds the panel the owner opens to judge ONE row. It read `picks` only, so
+    for a shared row it reported 0/0/0 and no first delivery — and `first_delivered_at is None`
+    selects the copy "This row hasn't delivered anything yet", on the very page that exists to answer
+    that question, while the dashboard credited the same row from the same data."""
+
+    def test_a_shared_rows_panel_shows_its_watches(self, world):
+        from shortlist.server.services.report_service import effectiveness, row_effectiveness
+
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            panel = row_effectiveness(s, "staff")
+            dash = next(r for r in effectiveness(s, "all")["per_row"] if r["slug"] == "staff")
+
+        assert panel["watched"] == dash["watched"] == 1, "the two surfaces must agree"
+        assert panel["first_delivered_at"] is not None, "it has demonstrably delivered something"
+
+    def test_it_still_offers_no_rate_for_a_shared_row(self, world):
+        """A shared row is one collection for the whole server: there is no per-person delivery, so
+        there is no denominator and a rate would be invented."""
+        from shortlist.server.services.report_service import row_effectiveness
+
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            panel = row_effectiveness(s, "staff")
+        assert panel["delivered"] == 0
+        assert panel.get("rate") in (None, 0) or panel["matured"] is None
+
+
+class TestAMuteDoesNotFreezeAPublicRowsAudience:
+    """One mute used to turn a public row's snapshot from "everyone" into a concrete list of whoever
+    existed that night. Anyone invited afterwards was permanently outside it and could never be
+    credited for that row — silently, and unrecoverably, because credit is decided from the past and
+    a watched title is never re-delivered."""
+
+    def test_someone_invited_after_the_delivery_is_still_credited(self, world):
+        with world() as s:
+            # Sam mutes the row; the run snapshots that.
+            s.add(CollectionUserOverride(collection_id=1, user_id=2, muted=True))
+            s.commit()
+        with world() as s:
+            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row.audience = _shared_audience(s, "staff")
+            row.muted = _shared_muted(s, "staff")
+            s.commit()
+        # A new person joins AFTER that delivery, and watches off the row.
+        with world() as s:
+            s.add(User(id=7, plex_account_id=707, username="newbie", slug="newbie"))
+            s.commit()
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 707, started=NOW - timedelta(hours=2), offset=1_800_000)
+
+        reconcile_watched(world, [profile(slug="newbie", account=707)])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).filter_by(user_id=7).count() == 1, (
+                "a public row is public — one mute must not exclude everyone who joined later"
+            )
+
+    def test_the_muted_person_is_still_excluded(self, world):
+        with world() as s:
+            s.add(CollectionUserOverride(collection_id=1, user_id=1, muted=True))
+            s.commit()
+        with world() as s:
+            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row.audience = _shared_audience(s, "staff")
+            row.muted = _shared_muted(s, "staff")
+            s.commit()
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 0, "they switched this row off"
+
+    def test_a_public_row_with_no_mutes_still_says_everyone(self, world):
+        """The cheap representation survives — `None` means no restriction at all."""
+        with world() as s:
+            assert _shared_audience(s, "staff") is None
+            assert _shared_muted(s, "staff") is None
+
+
+class TestAMuteIsNeverBakedIntoASubsetAudience:
+    """`RunSharedRow.audience` is the allow-list and `RunSharedRow.muted` is the deny-list, and
+    neither may encode the other's fact. Subtracting the mute into the allow-list — which is what
+    subset rows did until 2026-08-24 — makes `audience` mean "allowed AND not muted", indistinguishable
+    to any reader from "allowed".
+
+    Only the FIRST test here can fail if that regresses; it asserts the column's contents directly.
+    The other two assert the outcome, and the outcome is the same under both shapes — `_shared_visible_to`
+    applies the deny-list separately, so a doubly-excluded person is still just excluded. They are
+    kept as behaviour cover, not as proof of the split, because a reader who assumes they guard the
+    column will not add the test that does.
+    """
+
+    def _subset_with_a_mute(self, world):
+        with world() as s:
+            s.query(Collection).filter_by(slug="staff").one().audience = "subset"
+            s.add(CollectionAudience(collection_id=1, user_id=1))  # alex is in the audience
+            s.add(CollectionUserOverride(collection_id=1, user_id=1, muted=True))  # and has muted it
+            s.commit()
+
+    def test_the_allow_list_keeps_the_muted_person(self, world):
+        self._subset_with_a_mute(world)
+        with world() as s:
+            assert _shared_audience(s, "staff") == [99], "membership and muting are separate facts"
+            assert _shared_muted(s, "staff") == [99]
+
+    def test_they_are_still_excluded_while_muted(self, world):
+        """Outcome cover: the deny-list alone is enough to exclude them, which is why the column
+        being wrong was invisible."""
+        self._subset_with_a_mute(world)
+        with world() as s:
+            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row.audience = _shared_audience(s, "staff")
+            row.muted = _shared_muted(s, "staff")
+            s.commit()
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 0
+
+    def test_un_muting_lets_them_back_in(self, world):
+        """Outcome cover for the un-mute round trip. Note what this does NOT prove: it recomputes
+        BOTH columns after the un-mute, which is exactly what a real run does — so the allow-list it
+        reads was never frozen, and the old subtract-the-mute code passes this too. There is no
+        production path where one column is rewritten and the other is not."""
+        self._subset_with_a_mute(world)
+        with world() as s:
+            s.query(CollectionUserOverride).delete()  # they un-mute it
+            s.commit()
+        with world() as s:
+            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row.audience = _shared_audience(s, "staff")
+            row.muted = _shared_muted(s, "staff")
+            s.commit()
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).count() == 1
+
+
+class TestOneSharedRowsAudienceNeverAnswersForAnother:
+    """`_shared_visible_to` walks every `(slug, run_id)` it holds and keeps the NEWEST delivery — so
+    the `row_slug != slug` filter is the only thing stopping row B's snapshot from answering a
+    question about row A.
+
+    Deleting that filter left the suite green (audit 2026-08-24), because every audience test here
+    used a single shared row: a second one never existed in `_audience` for the newest-delivery rule
+    to pick up by mistake. With two rows the failure is concrete and it is a privacy-shaped one —
+    somebody deliberately excluded from a private row gets credited for watching off it, because an
+    unrelated public row was delivered more recently.
+    """
+
+    def _two_rows(self, world):
+        """A PRIVATE row alex cannot see, delivered first. A PUBLIC row, delivered after it."""
+        with world() as s:
+            s.add(Collection(id=2, slug="insiders", name="Insiders", enabled=True, build="shared"))
+            s.add(Run(id=2, trigger="schedule", status="ok", started_at=NOW - timedelta(hours=6)))
+            s.add(Delivery(collection_slug="insiders", user_slug="shared_insiders", library_key="1", rating_key=501))
+            # Private: only sam (account 77) is in the audience. Delivered EARLIER than the public row.
+            s.add(
+                RunSharedRow(
+                    run_id=2,
+                    collection_slug="insiders",
+                    row_title="Insiders",
+                    status="ok",
+                    picks=[{"tmdb_id": 680, "media_type": "movie", "title": "Pulp Fiction"}],
+                    audience=[77],
+                    delivered_at=NOW - timedelta(hours=6),
+                )
+            )
+            # The public row in the `world` fixture, re-stamped as the MOST RECENT delivery.
+            row = s.query(RunSharedRow).filter_by(run_id=1, collection_slug="staff").one()
+            row.audience = None
+            row.delivered_at = NOW - timedelta(hours=1)
+            s.commit()
+
+    def test_a_private_rows_audience_is_not_answered_by_a_newer_public_row(self, world):
+        self._two_rows(world)
+        with world() as s:
+            alex = s.query(User).filter_by(slug="alex").one()
+            membership = RowMembership(s)
+
+            assert membership._shared_visible_to("insiders", alex, NOW) is False, (
+                "alex is not in the private row's audience; a newer PUBLIC row answered for it"
+            )
+            # The control: the public row really is visible to them, so the assertion above is about
+            # the slug filter and not about alex being invisible to everything.
+            assert membership._shared_visible_to("staff", alex, NOW) is True
+
+    def test_the_person_who_is_in_the_private_audience_still_sees_it(self, world):
+        """The other direction, so the guard cannot be 'fixed' by refusing everyone."""
+        self._two_rows(world)
+        with world() as s:
+            sam = s.query(User).filter_by(slug="sam").one()
+            assert RowMembership(s)._shared_visible_to("insiders", sam, NOW) is True
+
+    def test_a_play_off_the_private_row_credits_nobody_outside_its_audience(self, world):
+        """End to end through the credit pass, not just the predicate."""
+        self._two_rows(world)
+        a_pick_so_the_rating_key_resolves(world, tmdb_id=680, rating_key=9002)
+        watch_session(world, 99, started=NOW - timedelta(minutes=30), offset=1_800_000, rating_key=9002)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert s.query(SharedRowWatch).filter_by(collection_slug="insiders").count() == 0, (
+                "credited a private shared row to somebody its own audience snapshot excludes"
+            )
+
+
+class TestTheSharedPathHasTheSameGuardsAsThePersonalOne:
+    """Three rules that ARE pinned on the personal path and were not on the shared one — an
+    asymmetric pair is how a fix lands on half its cases, which is this codebase's most-repeated bug.
+
+    All three survived the mutation audit of 2026-08-24 with the whole suite green.
+    """
+
+    def _watched_to(self, world, percent: int, *, duration: int = 6_000_000):
+        """A shared-row play that reached exactly `percent` of the film."""
+        a_pick_so_the_rating_key_resolves(world)
+        watch_session(
+            world,
+            99,
+            started=NOW - timedelta(hours=2),
+            offset=duration * percent // 100,
+            duration=duration,
+        )
+
+    def test_exactly_the_finished_threshold_is_finished_not_abandoned(self, world):
+        """`>= FINISHED_PERCENT`, not `>`. At exactly 90% the dashboard would otherwise file the film
+        under "gave up part-way at 90%" — the precise misreading that constant exists to prevent."""
+        self._watched_to(world, FINISHED_PERCENT)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            row = s.query(SharedRowWatch).one()
+            assert row.max_percent == FINISHED_PERCENT
+            assert row.finished_at is not None, f"exactly {FINISHED_PERCENT}% read as an abandonment"
+
+    def test_one_percent_short_of_the_threshold_is_not_finished(self, world):
+        """The other side of the same boundary, so it cannot be satisfied by finishing everything."""
+        self._watched_to(world, FINISHED_PERCENT - 1)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            row = s.query(SharedRowWatch).one()
+            assert row.finished_at is None, "called an abandonment a completion"
+
+    def test_a_completion_is_never_dated_before_its_own_credit(self, world):
+        """`max(...)`, not `min(...)`. Plex's watched flag carries the moment it was SET, which for a
+        title watched over several nights can precede the play that earned the credit — and a
+        completion stamped before its own start is a fact about nothing."""
+        self._watched_to(world, 100)
+        # Plex says they finished it a week ago; the play we OBSERVED is two hours old.
+        history = [
+            WatchedItem(
+                tmdb_id=550,
+                media_type=MediaType.MOVIE,
+                title="Fight Club",
+                watched_at=NOW - timedelta(days=7),
+            )  # a MOVIE in this type is finished by definition — see `WatchedItem.is_finished`
+        ]
+
+        reconcile_watched(world, [profile(history)])
+
+        with world() as s:
+            row = s.query(SharedRowWatch).one()
+            assert row.watched_at is not None and row.finished_at is not None
+            assert _as_utc(row.finished_at) >= _as_utc(row.watched_at), (
+                "finished before it was started — a completion predating its own credit"
+            )
+
+    def test_an_existing_credit_is_never_re_dated_by_a_later_pass(self, world):
+        """`if row.watched_at is None and ...` — the credit is pinned to the FIRST play we saw.
+
+        The existing idempotency test re-runs over identical evidence, so it passes with the guard
+        deleted. This one changes the evidence the way retention does: the oldest sessions are pruned,
+        so the earliest play still on record moves FORWARD. Without the guard the credit follows it
+        into a later week and the trend chart quietly rewrites its own history.
+        """
+        self._watched_to(world, 100)
+        reconcile_watched(world, [profile()])
+        with world() as s:
+            first_credit = _as_utc(s.query(SharedRowWatch).one().watched_at)
+
+        # Retention prunes the old session; a NEWER play of the same title is all that is left.
+        with world() as s:
+            s.query(WatchSession).delete()
+            s.commit()
+        watch_session(world, 99, started=NOW - timedelta(minutes=5), offset=5_400_000)
+
+        reconcile_watched(world, [profile()])
+
+        with world() as s:
+            assert _as_utc(s.query(SharedRowWatch).one().watched_at) == first_credit, (
+                "the credit moved to a later play after retention pruned the earlier one"
+            )

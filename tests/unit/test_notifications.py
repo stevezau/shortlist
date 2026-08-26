@@ -206,6 +206,55 @@ class TestRequestsFoundNothing:
         assert "702 titles" in body
         assert "minimum number of people or your release-year range" in body
 
+    def test_blames_the_language_setting_when_it_ruled_everything_out(self, session):
+        """Since the language mode became a base floor, a pool can be empty purely because "only
+        these languages" removed everything — and telling that owner to loosen their demand or
+        release-year settings is advice they can follow forever without any effect. This codebase
+        has already had to fix that exact mis-attribution once ("name the limit that ACTUALLY
+        bound"), which is why it is pinned here rather than left to review."""
+        session.add_all(
+            [
+                self._event(wanted=40, pool_size=0, examined=0, exhausted_pool=False, dropped_by_language=40)
+                for _ in range(2)
+            ]
+        )
+        session.commit()
+
+        body = notif._requests_found_nothing(session)["body"]
+
+        assert "Language setting ruled out every one of them" in body
+        assert "Prefer these" in body, "the fix has to be named, not just the cause"
+        assert "minimum number of people" not in body, "must not send them after the wrong setting"
+
+    def test_names_both_causes_when_the_language_setting_took_only_some(self, session):
+        session.add_all(
+            [
+                self._event(wanted=40, pool_size=0, examined=0, exhausted_pool=False, dropped_by_language=12)
+                for _ in range(2)
+            ]
+        )
+        session.commit()
+
+        body = notif._requests_found_nothing(session)["body"]
+
+        assert "ruled out 12 of them" in body
+        assert "minimum number of people or your release-year range" in body
+
+    def test_keeps_the_old_wording_when_language_ruled_out_nothing(self, session):
+        """The overwhelmingly common case — the mode is "any" — must read exactly as it did."""
+        session.add_all(
+            [
+                self._event(wanted=702, pool_size=0, examined=0, exhausted_pool=False, dropped_by_language=0)
+                for _ in range(2)
+            ]
+        )
+        session.commit()
+
+        body = notif._requests_found_nothing(session)["body"]
+
+        assert "minimum number of people or your release-year range" in body
+        assert "Language" not in body
+
     def test_stays_silent_when_nothing_was_missing_at_all(self, session):
         """`wanted == 0` is not a problem to report — the library simply had everything."""
         session.add_all([self._event(wanted=0, pool_size=0, examined=0) for _ in range(3)])
@@ -227,7 +276,12 @@ class TestRequestsFoundNothing:
         result = notif._requests_found_nothing(session)
 
         assert result["severity"] == "warning"
-        assert "100 of the 400" in result["body"]
+        assert "100 of 400 checks" in result["body"]
+        # Not "of the 400 titles people wanted": `pool_size` is a sum of per-row checks, so on a
+        # multi-row run it double-counts a title two rows share, while the `wanted` on the same
+        # card is distinct. Calling both "titles wanted" made them contradict each other in print
+        # (release review 2026-08-18).
+        assert "titles people wanted" not in result["body"]
         assert "looks further" in result["body"], "the actionable half: the gate never saw the rest"
 
     def test_blames_the_floor_when_the_whole_pool_was_rated(self, session):
@@ -238,7 +292,8 @@ class TestRequestsFoundNothing:
 
         body = notif._requests_found_nothing(session)["body"]
 
-        assert "rated every one of the 40" in body
+        assert "40 checks" in body
+        assert "titles people wanted" not in body
         assert "looks further" not in body
 
     def test_does_not_fire_for_events_older_than_the_window(self, session):
@@ -899,3 +954,32 @@ class TestTheEnforcementAlertCanClearItself:
 
         assert "ONE account of each kind" in body
         assert "every shared or managed account" in body
+
+
+class TestAFailedJobSaysOnlyWhatIsTrueOfIt:
+    """The body used to make two claims about every failure: that Plex might not reflect what you
+    asked for, and that you can run it again. `watch.reconcile` is the first kind for which BOTH are
+    false — it never touches Plex, and it is not in the manual allow-list, so "run it again" points
+    at a button that returns 422."""
+
+    def _alert(self, session, kind: str):
+        from shortlist.server.db.models import Job
+        from shortlist.server.notifications import _failed_jobs
+
+        session.add(Job(kind=kind, payload={}, status="failed", attempts=3, max_attempts=3))
+        session.commit()
+        return _failed_jobs(session)["body"]
+
+    def test_a_local_only_job_does_not_blame_plex(self, session):
+        body = self._alert(session, "watch.reconcile")
+        assert "Nothing on Plex changed" in body
+        assert "Plex may not reflect" not in body
+
+    def test_a_job_nobody_can_start_is_not_told_to_run_again(self, session):
+        body = self._alert(session, "watch.reconcile")
+        assert "run it again" not in body, "POST /api/system/jobs rejects it with 422"
+
+    def test_a_plex_writer_still_warns_and_still_offers_a_retry(self, session):
+        body = self._alert(session, "privacy.sync")
+        assert "Plex may not reflect" in body
+        assert "run it again" in body

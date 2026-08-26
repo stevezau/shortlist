@@ -128,9 +128,9 @@ describe("RecommendationsSection", () => {
     expect(slider).toHaveValue("50");
     fireEvent.change(slider, { target: { value: "75" } });
     await waitFor(() => expect(putSettings).toHaveBeenCalled());
-    expect(putSettings.mock.calls.at(-1)?.[0]?.["recommendations.recency"]).toBe(
-      0.75,
-    );
+    expect(
+      putSettings.mock.calls.at(-1)?.[0]?.["recommendations.recency"],
+    ).toBe(0.75);
   });
 
   it("shows a server that chose to turn it off as off, not as the shipped default", () => {

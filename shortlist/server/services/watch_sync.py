@@ -24,6 +24,8 @@ from shortlist.engine.models import MediaType, UserProfile, UserType
 from shortlist.server.db.models import User
 from shortlist.server.services.sse import EventBus
 from shortlist.server.services.watch_cache import DEFAULT_FULL_EVERY, WatchCache
+from shortlist.server.services.watch_events import ingest_play_history
+from shortlist.server.services.watching_account import stamp_true_dates
 from shortlist.server.settings_store import SettingsStore
 
 
@@ -177,6 +179,13 @@ class WatchSync:
             # exposure to a bad response by ~168.
             if force_full:
                 cache.forget_dead_sections(session, user_id, {str(section.key) for section in sections})
+            # A transferred account's rows are CREATED here, by reading back what the transfer wrote
+            # to Plex — so the transfer itself had nothing to stamp, and every one of them arrives
+            # dated today. Stamping after the read is what puts the real dates on them. Idempotent and
+            # a no-op for the 99% of accounts that carry no transferred events.
+            stamped = stamp_true_dates(session, user_id)
+            if stamped:
+                logger.info("watch cache: {} — restored the true watch dates on {} title(s)", profile.username, stamped)
             session.commit()
             history = cache.watched_set(session, user_id)
 
@@ -273,7 +282,7 @@ class WatchSync:
         *,
         build_context: Callable[..., object],
         enabled_profiles: Callable[[Session], list],
-        reconcile_watched: Callable[[list], None],
+        reconcile_watched: Callable[..., None],
         run_lock: asyncio.Lock,
     ) -> None:
         """Refresh every enabled user's ``watched_at`` (and the owner's — see ``_with_owner``) from
@@ -317,7 +326,24 @@ class WatchSync:
                 except Exception as e:
                     logger.warning("watch-sync: history fetch failed for {}: {}", profile.slug, type(e).__name__)
                 emit("sync.progress", {"done": i, "total": total})
-            reconcile_watched(profiles)
+            # The server's own play log, one admin call for every account. Deliberately AFTER the
+            # per-user reads and inside the same lock: it is the source of exact play TIMES, which is
+            # what lets the reconcile ask "was this in their row at the time" instead of "is it in
+            # their row now". Its failure must not cost us the watched-state refresh above, which is
+            # what the engine depends on — hence its own try.
+            try:
+                with self._sessions() as session:
+                    added = ingest_play_history(session, ctx.plex, SettingsStore(session))
+                    session.commit()
+                if added:
+                    emit("sync.progress", {"done": total, "total": total, "events": added})
+            except Exception as e:
+                logger.warning(
+                    "watch-sync: play-history read failed ({}) — watched state is still fresh", type(e).__name__
+                )
+            # `force_full` gates the un-watch withdrawal: only a COMPLETE re-read can tell a title
+            # someone un-watched from one this pass simply did not look at.
+            reconcile_watched(profiles, full_resync=force_full)
             with self._sessions() as session:
                 store = SettingsStore(session)
                 # Stamp the sync so the dashboard can show "watch status synced N ago".

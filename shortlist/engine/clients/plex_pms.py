@@ -30,9 +30,27 @@ from urllib3.util.retry import Retry
 
 from shortlist.engine.clients import http_retry
 from shortlist.engine.models import MediaType, OwnedRow, WatchedItem
+from shortlist.engine.watch_replica import ItemState, OpKind, WatchState, WriteOp
 
 # Label restrictions only apply on Home/Recommended/Related from this PMS build (PM-5174).
 MIN_PMS_VERSION = (1, 43, 2, 10687)
+
+
+@dataclass(frozen=True)
+class PlayEvent:
+    """One play from the server's own history log — who, what, exactly when.
+
+    Deliberately not a `WatchedItem`: that models watched STATE for a title (counts, flags, a
+    high-water timestamp), while this is a single event with no notion of how much was seen.
+    """
+
+    plex_account_id: int
+    rating_key: int
+    show_rating_key: int | None
+    media_type: str
+    viewed_at: datetime
+    #: Plex's own row id, unique per event — the dedupe key, since the log repeats itself.
+    history_key: str | None
 
 
 @dataclass(frozen=True)
@@ -259,6 +277,24 @@ def _is_newest_first(entries: list) -> bool:
     return all(a >= b for a, b in pairwise(_stamps(entries)))
 
 
+def _merge_leaf(prior: ItemState, later: ItemState) -> ItemState:
+    """Combine the two reads that can both return one item.
+
+    A title that is watched AND part-way through appears in `unwatched=0` and in `viewOffset>0`, and
+    each read carries only its own field reliably. Taking the max of both means the order the reads
+    ran in cannot change the answer.
+    """
+    return ItemState(
+        rating_key=prior.rating_key,
+        media_type=prior.media_type,
+        view_count=max(prior.view_count, later.view_count),
+        view_offset_ms=max(prior.view_offset_ms, later.view_offset_ms),
+        last_viewed_at=max(prior.last_viewed_at, later.last_viewed_at),
+        show_rating_key=prior.show_rating_key or later.show_rating_key,
+        title=prior.title or later.title,
+    )
+
+
 def _float_or_none(raw: str | None) -> float | None:
     """A PMS attribute as a float, or None when it is absent or unparseable.
 
@@ -313,6 +349,10 @@ class PlexClient:
             # plexapi issues the requests and would otherwise have to be trusted to pass the flag.
             _forbid_redirects(session)
         self._server = PlexServer(base_url, token, session=session, timeout=timeout)
+        # The ADMIN token, kept for the raw reads that are deliberately server-wide rather than
+        # per-user: `play_history` is one call covering every account, where the watched-state read is
+        # made as each user with their own share token.
+        self._token = token
         # Every raw (non-plexapi) PMS read in this class must use THIS, not a hardcoded number —
         # plexapi's own calls already get `timeout` via the PlexServer above; `user_hubs` and
         # `_read_watched_page` used to hardcode 30/45 here, silently ignoring the operator's
@@ -1237,11 +1277,336 @@ class PlexClient:
         r.raise_for_status()
         return True
 
+    def unscrobble_as(self, rating_key: int, token: str, *, dry_run: bool = False) -> bool:
+        """Mark one item UNWATCHED as another account — the only call here that removes state.
+
+        Zeroes `viewCount`. Returns False rather than raising when the item is not visible to that
+        account (401/403/404), exactly like `scrobble_as`: one unreachable title must not abandon a
+        run of thousands.
+
+        It ALSO clears any view offset the item carries, and it is the ONLY call that does —
+        `/:/progress?time=0` leaves one exactly where it was (live-probed: 1,139,347 stayed
+        1,139,347). An earlier version of this docstring claimed the opposite, and acting on that
+        left 293 items part-watched after an undo that reported success.
+        """
+        if dry_run:
+            logger.info("DRY RUN: would mark ratingKey={} UNWATCHED for the target account", rating_key)
+            return True
+        return self._user_write("/:/unscrobble", {"key": str(rating_key)}, rating_key, token)
+
+    def set_progress_as(self, rating_key: int, offset_ms: int, token: str, *, dry_run: bool = False) -> bool:
+        """Set one item's playback position as another account.
+
+        This is the only way a PARTIAL watch can be replicated: `unwatched=0` never returns one, and
+        `/:/scrobble` can only say "finished". Live-probed against a real server — the offset comes
+        back exactly as sent, with `viewCount` untouched, so a film that is both watched and 8 minutes
+        in survives scrobble-then-progress with both facts intact.
+
+        `offset_ms=0` does NOT clear the position — the PMS ignores it. Use `unscrobble_as`, which is
+        the only call that clears an offset (and zeroes the view count with it). Measured, twice.
+        """
+        if dry_run:
+            logger.info("DRY RUN: would set ratingKey={} to offset {}ms for the target account", rating_key, offset_ms)
+            return True
+        return self._user_write(
+            "/:/progress",
+            {"key": str(rating_key), "time": str(int(offset_ms)), "state": "stopped"},
+            rating_key,
+            token,
+        )
+
+    def _user_write(self, path: str, params: dict[str, str], rating_key: int, token: str) -> bool:
+        """One state write as another account. False (not an exception) when they cannot see the item.
+
+        `includeToken=False` keeps the OWNER's token out of the URL — the per-user token goes in the
+        header instead (rule 9).
+        """
+        r = http_retry.get(
+            self._server.url(path, includeToken=False),
+            params={**params, "identifier": "com.plexapp.plugins.library"},
+            headers={"X-Plex-Token": token, "Accept": "application/json"},
+            timeout=self._timeout,
+        )
+        if r.status_code in (401, 403, 404):
+            logger.debug("{} skipped for ratingKey={} (HTTP {})", path, rating_key, r.status_code)
+            return False
+        r.raise_for_status()
+        return True
+
+    def apply_watch_op(self, op: WriteOp, token: str, *, dry_run: bool = False) -> bool:
+        """Apply one planned write. Returns whether the PMS took it.
+
+        A scrobble only ever ADDS one, so `op.scrobbles` — the shortfall the planner worked out
+        against a fresh read of the target — is the call count, not `op.view_count`, which is the
+        total it should end up at. Using the total would take a film already watched once to four
+        rather than three. Probed live: three scrobbles 28 ms apart left `viewCount=3`, so the repeat
+        needs no pacing.
+        """
+        if op.kind is OpKind.MARK:
+            ok = True
+            for _ in range(max(1, op.scrobbles)):
+                ok = self.scrobble_as(op.rating_key, token, dry_run=dry_run) and ok
+            return ok
+        if op.kind is OpKind.UNMARK:
+            return self.unscrobble_as(op.rating_key, token, dry_run=dry_run)
+        if op.kind is OpKind.SET_OFFSET:
+            return self.set_progress_as(op.rating_key, op.offset_ms, token, dry_run=dry_run)
+        # CLEAR_OFFSET is an un-scrobble, NOT `/:/progress?time=0`. Live-probed: `time=0` leaves the
+        # offset exactly where it was, so an undo using it left 293 items still part-watched while
+        # reporting success. `unscrobble` is the only call that clears one, and the planner accounts
+        # for its zeroing the view count too.
+        return self.unscrobble_as(op.rating_key, token, dry_run=dry_run)
+
+    def read_watch_state(self, sections: list[tuple[str | int, MediaType]], token: str) -> WatchState:
+        """Everything one account has watched or started, across these libraries, read AS that account.
+
+        Four reads per library pair rather than one, because Plex has no single query for "watched or
+        in progress": `unwatched=0` filters on `viewCount>0` and so cannot see a partial, while
+        `viewOffset>0` cannot see a finished title. Both filters ARE honoured server-side (unlike
+        `lastViewedAt>=`, which this PMS silently ignores).
+
+        **Leaves only** — movies and EPISODES, never shows. A show row is state Plex derives, and it
+        can disagree with its own episodes: a show-key scrobble leaves it reading 47/47 while the
+        show-level query cannot see it at all. Show totals are aggregated from episodes by whoever
+        needs them.
+
+        Rating keys are server-scoped, and a transfer moves between two accounts on the SAME server,
+        so keys compare directly and no TMDB mapping is involved.
+
+        Args:
+            sections: `(section_key, media_type)` pairs to read.
+            token: The server-scoped token to read as — never the owner's when reading someone else.
+
+        Returns:
+            A `WatchState` keyed by rating key. A library this token cannot see is skipped, not an
+            error (`SectionNotShared`).
+        """
+        items: dict[int, ItemState] = {}
+        unreadable: list[str] = []
+        for section_key, media_type in sections:
+            plex_type = 1 if media_type is MediaType.MOVIE else 4
+            kind = "movie" if media_type is MediaType.MOVIE else "episode"
+            try:
+                for params in ({"unwatched": 0}, {"viewOffset>": 0}):
+                    for el in self._leaf_rows(section_key, plex_type, token, params):
+                        parsed = self._leaf_state(el, kind)
+                        if parsed is None:
+                            continue
+                        # The two reads overlap on a title that is both watched and in progress. Merge
+                        # rather than overwrite: whichever read came second would otherwise erase the
+                        # other's field and the item would replicate as half of what it is.
+                        prior = items.get(parsed.rating_key)
+                        items[parsed.rating_key] = _merge_leaf(prior, parsed) if prior else parsed
+            except SectionNotShared:
+                # Recorded, never silently swallowed. A caller that mirrors from this state must know
+                # it is partial: treating a truncated read as authoritative deletes everything the
+                # missing library holds on the other account. See `WatchState.unreadable`.
+                logger.warning("watch state: section {} is not shared with this token — read is PARTIAL", section_key)
+                unreadable.append(str(section_key))
+        return WatchState(items=items, unreadable=tuple(unreadable))
+
+    def _leaf_rows(self, section_key: str | int, plex_type: int, token: str, extra: dict) -> list[ET.Element]:
+        """Every row of one filtered leaf read, paged.
+
+        BOTH container headers or nothing — `X-Plex-Container-Size` alone is ignored by this PMS and
+        it returns the whole library, the same trap `_history_page` documents.
+        """
+        out: list[ET.Element] = []
+        start = 0
+        while True:
+            r = http_retry.get(
+                self._server.url(f"/library/sections/{section_key}/all", includeToken=False),
+                params={"type": plex_type, **extra},
+                headers={
+                    "X-Plex-Token": token,
+                    "X-Plex-Container-Start": str(start),
+                    "X-Plex-Container-Size": str(self._WATCHED_PAGE),
+                },
+                timeout=self._timeout,
+            )
+            if r.status_code == 403:
+                raise SectionNotShared(f"section {section_key} is not shared with this user")
+            r.raise_for_status()
+            rows = list(ET.fromstring(r.text))
+            out.extend(rows)
+            if len(rows) < self._WATCHED_PAGE:
+                return out
+            start += self._WATCHED_PAGE
+
+    @staticmethod
+    def _leaf_state(el: ET.Element, kind: str) -> ItemState | None:
+        """One `<Video>` row as an `ItemState`, or None if it carries no usable rating key."""
+        try:
+            rating_key = int(el.get("ratingKey") or 0)
+        except ValueError:
+            return None
+        if not rating_key:
+            return None
+        show_key: int | None = None
+        # Present on every episode of both show libraries on a real server (9,850 of 9,850), so unlike
+        # the history log — which carries only a `grandparentKey` path — this needs no parsing.
+        raw_show = el.get("grandparentRatingKey")
+        if raw_show and raw_show.isdigit():
+            show_key = int(raw_show)
+        return ItemState(
+            rating_key=rating_key,
+            media_type=kind,
+            view_count=int(el.get("viewCount") or 0),
+            view_offset_ms=int(el.get("viewOffset") or 0),
+            last_viewed_at=int(el.get("lastViewedAt") or 0),
+            show_rating_key=show_key,
+            title=el.get("title") or "",
+        )
+
     # A watched-titles read for one section, paged. Plex defaults to 50 unless X-Plex-Container-Size
     # says otherwise; a heavy watcher has thousands of watched titles, so we page rather than trust a
     # single response to hold them all (a silent cap here would hide older watches from the
     # already-watched filter — the very 200-row bug the share-token read exists to end).
     _WATCHED_PAGE = 500
+    #: History pages. Both container headers are required — see `play_history`.
+    _HISTORY_PAGE = 1000
+
+    @property
+    def token(self) -> str:
+        """The admin token, for the callers that must send it themselves (the notification socket)."""
+        return self._token
+
+    def notification_socket_url(self) -> str:
+        """The PMS notification websocket, WITHOUT the token.
+
+        Token-free on purpose: this URL is passed to a websocket library that puts it in log lines and
+        exception messages, and rule 9 says a token never reaches either. The caller sends it as a
+        header instead.
+        """
+        base = self._server._baseurl.rstrip("/")
+        scheme = "wss" if base.startswith("https://") else "ws"
+        return f"{scheme}://{base.split('://', 1)[1]}/:/websockets/notifications"
+
+    def active_sessions(self) -> dict[str, dict]:
+        """What is playing right now, keyed by Plex's `sessionKey`.
+
+        The notification socket carries no user and no runtime — only a session key, a rating key and
+        an offset — so this read is what turns an anonymous position update into "this person is 40%
+        through this title". `<User id>` here IS the plex.tv account id (verified against a live
+        server: 14136324 is the account we hold for that user), which is what makes it joinable where
+        a display name would not be.
+        """
+        r = http_retry.get(
+            self._server.url("/status/sessions", includeToken=False),
+            headers={"X-Plex-Token": self._token},
+            timeout=self._timeout,
+        )
+        r.raise_for_status()
+        out: dict[str, dict] = {}
+        for el in ET.fromstring(r.text):
+            key = el.get("sessionKey")
+            if not key:
+                continue
+            user = el.find("User")
+            grandparent = (el.get("grandparentRatingKey") or "").strip()
+            out[key] = {
+                "account_id": int(user.get("id")) if user is not None and (user.get("id") or "").isdigit() else None,
+                "rating_key": int(el.get("ratingKey") or 0) or None,
+                "show_rating_key": int(grandparent) if grandparent.isdigit() else None,
+                "media_type": el.get("type") or "",
+                # Milliseconds, and the denominator for every percentage we report. Absent on some
+                # live items, so it stays optional rather than defaulting to something wrong.
+                "duration_ms": int(el.get("duration") or 0) or None,
+                "state": (el.find("Player").get("state") if el.find("Player") is not None else "") or "",
+            }
+        return out
+
+    def play_history(self, *, since: datetime | None = None, limit: int = 20000) -> list[PlayEvent]:
+        """Every play the SERVER recorded, newest first, as the admin — one call for all users.
+
+        This is `/status/sessions/history/all`, the durable log Shortlist never read. It is the only
+        source of an exact per-play timestamp: the library read exposes `lastViewedAt`, which is the
+        LATEST view, so a rewatch erases the date of the first one. It is also self-healing — the log
+        lives on the server (101,604 rows reaching back to 2020-10-26 on the maintainer's box), so
+        anything missed while Shortlist was down is still there afterwards.
+
+        It records COMPLETIONS only. Probed live: an episode at 73% with no `viewCount` had no entry.
+        Starts come from the websocket, never from here.
+
+        Args:
+            since: Only plays at or after this moment. Unlike the library read — where `lastViewedAt>=`
+                is silently ignored by this PMS build — `viewedAt>` IS honoured here, verified against
+                a real server (101,604 rows unfiltered, 2,049 for 30 days, 102 for 24 hours). So the
+                incremental read is genuinely incremental rather than a sort-and-stop.
+            limit: Stop after this many events. A backstop for a first read with no cursor, which
+                would otherwise pull six years of history in one go.
+
+        Returns:
+            Newest first, so a caller that hits `limit` keeps the RECENT end rather than 2020's.
+        """
+        out: list[PlayEvent] = []
+        start = 0
+        while start < limit:
+            params: dict[str, object] = {"sort": "viewedAt:desc"}
+            if since is not None:
+                params["viewedAt>"] = int(since.timestamp())
+            root = self._history_page(params, start)
+            page = [event for el in root if (event := self._play_event(el)) is not None]
+            out.extend(page)
+            # `size` is what this page returned; a short page is the end. `totalSize` is the whole
+            # filtered set and is only present when the container headers are sent.
+            if len(list(root)) < self._HISTORY_PAGE:
+                break
+            start += self._HISTORY_PAGE
+        return out[:limit]
+
+    def _history_page(self, params: dict[str, object], start: int) -> ET.Element:
+        """One page of the play history.
+
+        BOTH container headers or nothing: `X-Plex-Container-Size` alone is IGNORED by this PMS and
+        the server returns the entire log — 101,604 rows, ~40 MB, on a request that asked for 1,000.
+        Live-probed 2026-08-23. Sending Start as well makes it honour both and fill in `totalSize`.
+        """
+        r = http_retry.get(
+            self._server.url("/status/sessions/history/all", includeToken=False),
+            params=params,
+            headers={
+                "X-Plex-Token": self._token,
+                "X-Plex-Container-Start": str(start),
+                "X-Plex-Container-Size": str(self._HISTORY_PAGE),
+            },
+            timeout=self._timeout,
+        )
+        r.raise_for_status()
+        return ET.fromstring(r.text)
+
+    @staticmethod
+    def _play_event(el: ET.Element) -> PlayEvent | None:
+        """One `<Video>` history row, or None if it carries nothing we can attribute.
+
+        A history row is thin — `accountID`, `ratingKey`, `viewedAt`, `type`, and for an episode the
+        show's `grandparentKey`. There is no duration, no viewOffset and no TMDB guid, so this cannot
+        say how much was watched and does not pretend to.
+        """
+        try:
+            account_id = int(el.get("accountID") or 0)
+            rating_key = int(el.get("ratingKey") or 0)
+            viewed_at = int(el.get("viewedAt") or 0)
+        except ValueError:
+            return None
+        if not account_id or not rating_key or not viewed_at:
+            return None
+        # The SHOW's key, dug out of `/library/metadata/592373` — history entries carry no
+        # `grandparentRatingKey` attribute, only the path. This is the field that actually matches a
+        # pick: a series pick stores the show's key while history reports the episode played, and over
+        # 30 days of real history 46 of 78 matches were reachable only this way.
+        show_key: int | None = None
+        tail = (el.get("grandparentKey") or "").rsplit("/", 1)[-1]
+        if tail.isdigit():
+            show_key = int(tail)
+        return PlayEvent(
+            plex_account_id=account_id,
+            rating_key=rating_key,
+            show_rating_key=show_key,
+            media_type=el.get("type") or "",
+            viewed_at=datetime.fromtimestamp(viewed_at, tz=UTC),
+            history_key=el.get("historyKey") or None,
+        )
 
     def watched_titles(
         self,

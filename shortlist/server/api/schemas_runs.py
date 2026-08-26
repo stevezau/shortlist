@@ -211,7 +211,7 @@ class RunsDeletedOut(PassthroughModel):
 
 
 class LandingOut(PassthroughModel):
-    """The landing rate over a matured cohort — picks old enough to have had their full 30 days."""
+    """The landing rate over a matured cohort — picks old enough to have had their chance."""
 
     delivered: int
     watched: int
@@ -239,6 +239,12 @@ class OverallOut(PassthroughModel):
     #: of now while the previous window's had an extra period to complete, so a steady server reports
     #: a permanent decline. See `report_service.effectiveness`.
     finished: int
+    #: The engagement split, from live playback rather than Plex's flag. `bounced` got under 5% in —
+    #: opened and closed, which reads as "wrong pick entirely"; `dropped` got further and still never
+    #: finished. Both count only picks a live session actually observed, so a title we never watched
+    #: anyone play is in neither: unknown is not the same as zero.
+    bounced: int
+    dropped: int
     avg_days_to_watch: float | None
     avg_days_to_watch_delta: int | float | None
     landing: LandingOut
@@ -247,6 +253,12 @@ class OverallOut(PassthroughModel):
 class WatchSyncOut(PassthroughModel):
     last: str | None
     next: str | None
+    #: When the live playback listener last connected. It is a separate mechanism from the scheduled
+    #: sync above and fails independently — and it is the ONLY source of a partial watch, so a dead
+    #: socket costs the one signal Plex's watched flag cannot give.
+    live_since: str | None
+    #: Set while the listener is down, cleared when it reconnects. Null is the healthy case.
+    live_down_since: str | None
 
 
 class CoverageOut(PassthroughModel):
@@ -256,6 +268,9 @@ class CoverageOut(PassthroughModel):
     users_enabled: int
     users_total: int
     users_with_picks: int
+    #: Got a pick in this window and watched none of it. Emitted rather than derived: the UI cannot
+    #: compute it from the other two, which count differently-scoped populations.
+    users_idle: int
     users_watched: int
     users_watched_delta: int | float | None
     rows_enabled: int
@@ -286,6 +301,8 @@ class TrendPointOut(PassthroughModel):
 
 
 class PerUserOut(PassthroughModel):
+    #: Their user id, so the dashboard can link the name to their page.
+    id: int
     username: str
     display_name: str
     slug: str
@@ -315,6 +332,8 @@ class TopTitleOut(PassthroughModel):
 
 
 class RecentWatchOut(PassthroughModel):
+    #: Null once the person has left the server — the watch stays on record with nowhere to link to.
+    user_id: int | None
     username: str
     display_name: str
     title: str
@@ -352,9 +371,12 @@ class EffectivenessReportOut(PassthroughModel):
 
 
 class DeletedRowOut(PassthroughModel):
-    """Pick history belonging to a row that no longer exists."""
+    """History belonging to a row that no longer exists."""
 
     slug: str
+    #: Pick rows PLUS shared-row watch credits. A shared row writes no picks at all, so for one of
+    #: those this number is entirely watch credits — the name is kept for wire compatibility, and it
+    #: always equals what the DELETE will remove.
     picks: int
     first_seen: str | None
     last_seen: str | None
@@ -362,6 +384,7 @@ class DeletedRowOut(PassthroughModel):
 
 class ClearedDeletedRowsOut(PassthroughModel):
     cleared: int
+    #: Pick rows PLUS shared-row watch credits removed — see `DeletedRowOut.picks`.
     picks: int
     slugs: list[str]
 
@@ -370,3 +393,62 @@ class SyncStartedOut(PassthroughModel):
     started: bool
     #: The queued `sync.history` job, so the caller can follow it like any other job.
     job_id: int
+
+
+class EngagementPickOut(PassthroughModel):
+    """One pick and what became of it.
+
+    `percent` is NULL where no live session ever observed the play — which is not 0%. Plex's watched
+    flag cannot see a partial play at all, so "we never watched this happen" and "they bailed at the
+    start" are genuinely different states and are not collapsed.
+    """
+
+    title: str
+    row: str
+    media_type: str
+    #: finished | dropped | bounced | watching (credited, but no session told us how far)
+    outcome: str
+    percent: int | None
+    watched_at: str | None
+    finished_at: str | None
+    #: When this outcome was observed — the credit if there is one, else the first delivery. What the
+    #: window is applied to, so an abandonment ages out instead of being kept alive by redelivery.
+    observed_at: str | None
+
+
+class EngagementPersonOut(PassthroughModel):
+    username: str
+    display_name: str | None
+    #: Capped at 40, ordered so observed outcomes lead — `total` is what they actually have, so the UI
+    #: can say "40 of 63" rather than presenting the cap as the number.
+    picks: list[EngagementPickOut]
+    total: int
+
+
+class LosingTitleOut(PassthroughModel):
+    """A pick several people started and few finished. One person abandoning something is a night;
+    the pattern across people is what makes it a bad recommendation."""
+
+    title: str
+    media_type: str
+    started: int
+    finished: int
+    #: The median point people stop at, as a percentage. An early number is a pick problem; a late one
+    #: is usually the title rather than the recommendation.
+    stops_at: int | None
+
+
+class StopPointOut(PassthroughModel):
+    label: str
+    count: int
+
+
+class EngagementOut(PassthroughModel):
+    window: str
+    people: list[EngagementPersonOut]
+    losing: list[LosingTitleOut]
+    stop_points: list[StopPointOut]
+    #: Whether any live playback has been observed at all. False on every server until the listener
+    #: has run — which is not the same as "nobody watches anything", and the page says so instead of
+    #: rendering zeroes.
+    observed: bool

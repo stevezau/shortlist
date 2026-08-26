@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="3">
+<Video duration="3050848" grandparentRatingKey="590681" grandparentTitle="A Series" index="3" librarySectionID="2" parentIndex="2" parentRatingKey="590687" ratingKey="654995" sessionKey="605" title="Episode Title" type="episode" viewOffset="2318480">
+<User id="501" title="alex" />
+<Player state="paused" title="Living Room TV" machineIdentifier="abc123" product="Plex for Android (TV)" />
+</Video>
+<Video duration="5818592" librarySectionID="1" ratingKey="585542" sessionKey="604" title="A Film" type="movie" viewOffset="1399736">
+<User id="502" title="sam" />
+<Player state="paused" title="Living Room TV" machineIdentifier="abc123" product="Plex for Android (TV)" />
+</Video>
+<Video sessionKey="999" ratingKey="123456" type="movie" duration="5400000" viewOffset="60000" title="Unattributable">
+<Player state="playing" title="Unknown client" machineIdentifier="zz" />
+</Video>
+</MediaContainer>

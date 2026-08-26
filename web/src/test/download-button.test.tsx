@@ -156,4 +156,33 @@ describe("DownloadButton", () => {
     ).toBeTruthy();
     expect(clicked).toHaveLength(0);
   });
+
+  it("leaves no timer armed after it unmounts", async () => {
+    // The revoke is deliberately delayed five seconds (a next-tick revoke raced a queued download
+    // into "Failed - Network error" in Chrome). Fire-and-forget, that timer outlives the component
+    // — and a callback touching `URL` after its environment is gone is an uncaught ReferenceError,
+    // not a no-op. In CI it killed the suite process AFTER all 1283 tests passed: "window is not
+    // defined", from processTimers, once in three runs.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      captureAnchorClicks();
+      vi.stubGlobal("fetch", vi.fn(async () => zip()));
+      const view = render(
+        <DownloadButton url="/api/support/bundle" filename="bundle.zip">
+          Download
+        </DownloadButton>,
+      );
+      await userEvent.click(screen.getByRole("button", { name: /Download/i }));
+      await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalled());
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+      view.unmount();
+
+      expect(vi.getTimerCount()).toBe(0);
+      // ...and the blob is released rather than simply abandoned with its timer.
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:fake");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

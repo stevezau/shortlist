@@ -45,3 +45,6 @@ web/.vite/
 # `pnpm --frozen-lockfile` against pnpm-lock.yaml). A stray `npm install` writes one of these, and a
 # second competing lockfile drifts from the real one and misleads anyone who reads it.
 package-lock.json
+
+# Scratch worktrees created by background agents — full repo copies, never committed.
+.claude/worktrees/

@@ -51,7 +51,10 @@ describe("mergeRunLog", () => {
   });
 
   it("orders merged events by timestamp regardless of arrival order", () => {
-    const live = legacyEntry({ ts: "2026-07-15T04:18:05Z", stage: "delivering" });
+    const live = legacyEntry({
+      ts: "2026-07-15T04:18:05Z",
+      stage: "delivering",
+    });
     const seededLater = legacyEntry({
       ts: "2026-07-15T04:18:04Z",
       stage: "curating",

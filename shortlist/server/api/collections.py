@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import UTC, datetime
 from typing import Annotated
 
@@ -19,7 +20,20 @@ from starlette.responses import StreamingResponse
 from shortlist.engine.candidates import KNOWN_SOURCES
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.delivery import target_sections
-from shortlist.engine.models import MAX_REFRESH_DAYS, MAX_ROW_SIZE, MIN_ROW_SIZE, RowSpec, dedupe_slug, slugify
+from shortlist.engine.models import (
+    LANGUAGE_MODES,
+    MAX_REFRESH_DAYS,
+    MAX_ROW_SIZE,
+    MIN_ROW_SIZE,
+    SONARR_MONITOR_MODES,
+    RowSpec,
+    dedupe_slug,
+    normalise_languages,
+    row_language_mode_or_inherit,
+    row_languages_or_inherit,
+    row_monitor_or_inherit,
+    slugify,
+)
 from shortlist.server.api.row_changes import (
     POSTER_RESET,
     PRIVACY_SYNC,
@@ -187,6 +201,26 @@ class CollectionIn(BaseModel):
     req_radarr_root_folder: str | None = Field(default=None, max_length=512)
     req_sonarr_quality_profile_id: int | None = Field(default=None, ge=1)
     req_sonarr_root_folder: str | None = Field(default=None, max_length=512)
+    # How much of a show Sonarr monitors for this row; null inherits requests.sonarr.monitor.
+    # Enforced in `_validate` (a plain-English 422 naming the modes, which a Pydantic enum error is
+    # not). The enum is ADVERTISED so the SPA's generated type is the union rather than a bare
+    # string — the row editor picks from it, and a bare string there checks nothing.
+    req_sonarr_monitor: str | None = Field(
+        default=None, max_length=32, json_schema_extra={"enum": [*SONARR_MONITOR_MODES, None]}
+    )
+    # This row's language preference; null on any of the three inherits the matching global. Same
+    # advertised-enum reasoning as `req_sonarr_monitor` above.
+    req_language_mode: str | None = Field(
+        default=None, max_length=16, json_schema_extra={"enum": [*LANGUAGE_MODES, None]}
+    )
+    # null inherits the owner's list; [] is a row that CLEARED its languages and means it (in "only"
+    # mode it requests nothing). The two must stay distinct all the way to the column — see 0085.
+    req_preferred_languages: list[str] | None = Field(default=None, max_length=50)
+    # null means "follow this row's own req_min_rating + 1.5", not "unset" — so a row that raises its
+    # base floor carries this bar up with it.
+    req_min_rating_other: float | None = Field(default=None, ge=0.0, le=10.0)
+    # Tag this row's requests with the wanting person's slug; null inherits requests.auto_user_tag.
+    req_auto_user_tag: bool | None = None
     # How many recent watches the row cycles between, one per run. 1 = always the most recent.
     # Capped at 20: past that the "recent" the row's title claims stops being true, and the cycle takes
     # three weeks to come round — indistinguishable from the stuck row this exists to fix.
@@ -269,6 +303,43 @@ class CollectionOut(PassthroughModel):
     req_radarr_root_folder: str | None
     req_sonarr_quality_profile_id: int | None
     req_sonarr_root_folder: str | None
+    # Required, not defaulted (see `_closed_set_out`): every one of these comes from `_serialize`,
+    # and a default would let a handler that stopped sending it INVENT the key instead of failing.
+    req_sonarr_monitor: str | None = Field(
+        description=(
+            "How much of a show Sonarr monitors for this row's requests "
+            "(Sonarr's Add Series 'Monitor' choice); null inherits the global requests.sonarr.monitor."
+        ),
+        json_schema_extra={"enum": [*SONARR_MONITOR_MODES, None]},
+    )
+    req_language_mode: str | None = Field(
+        description=(
+            "How this row treats a title's original language when requesting: 'any' (one bar for "
+            "everything), 'prefer' (other languages need a higher rating to auto-send), or 'only' "
+            "(never request another language); null inherits the global requests.language_mode."
+        ),
+        json_schema_extra={"enum": [*LANGUAGE_MODES, None]},
+    )
+    req_preferred_languages: list[str] | None = Field(
+        description=(
+            "ISO 639-1 codes this row treats as preferred; null inherits the global "
+            "requests.preferred_languages. An empty list is a row that cleared its languages."
+        )
+    )
+    req_min_rating_other: float | None = Field(
+        description=(
+            "Rating another language must reach for this row to auto-send it. Null inherits the "
+            "global requests.min_rating_other, which may itself be unset — in which case this row "
+            "derives from its own req_min_rating plus 1.5."
+        )
+    )
+    req_auto_user_tag: bool | None = Field(
+        default=None,
+        description=(
+            "Tag this row's Sonarr/Radarr requests with the wanting person's slug; "
+            "null inherits the global requests.auto_user_tag."
+        ),
+    )
     pick_order: str = _closed_set_out(ORDERS, "How the delivered collection is ordered.")
     placement: str = _closed_set_out(PLACEMENTS, "Where the OWNER's own collection appears.")
     placement_friends: str = _closed_set_out(PLACEMENTS, "Where each FRIEND's own collection appears.")
@@ -307,6 +378,36 @@ def _validate(body: CollectionIn) -> None:
         raise HTTPException(status_code=422, detail=f"pick_order must be one of {sorted(ORDERS)}")
     if body.cold_start is not None and body.cold_start not in COLD_STARTS:
         raise HTTPException(status_code=422, detail=f"cold_start must be null or one of {sorted(COLD_STARTS)}")
+    if body.req_sonarr_monitor is not None and body.req_sonarr_monitor not in SONARR_MONITOR_MODES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"req_sonarr_monitor must be null or one of {sorted(SONARR_MONITOR_MODES)}",
+        )
+    if body.req_language_mode is not None and body.req_language_mode not in LANGUAGE_MODES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"req_language_mode must be null or one of {sorted(LANGUAGE_MODES)}",
+        )
+    if body.req_preferred_languages is not None:
+        # `[a-z]{2}`, not `.isalpha()` — see `_language_codes` in api/settings.py for why a
+        # Unicode-aware check lets a homoglyph through that matches no TMDB language.
+        bad = [c for c in body.req_preferred_languages if not re.fullmatch(r"[a-z]{2}", str(c).strip().lower())]
+        if bad:
+            more = f" (+{len(bad) - 5} more)" if len(bad) > 5 else ""
+            raise HTTPException(
+                status_code=422,
+                # Only the first few, but the rest are COUNTED — otherwise an owner fixes what they
+                # were shown and is rejected again for values the message implied were fine.
+                detail=(
+                    f"req_preferred_languages must be ISO 639-1 codes (two letters, e.g. 'en'); got {bad[:5]}{more}"
+                ),
+            )
+        # Normalised on the way IN as well as on the way out. This is defence in depth, not a guard
+        # anything currently depends on: `_serialize` normalises this column on the way out, so the
+        # editor never sees a raw value and the run reads through `row_languages_or_inherit` anyway.
+        # It is here so the stored value matches what every reader assumes, for anything that reaches
+        # the column without going through those — a SQL query, a support bundle, a future consumer.
+        body.req_preferred_languages = list(normalise_languages(body.req_preferred_languages))
     if body.placement not in PLACEMENTS:
         raise HTTPException(status_code=422, detail=f"placement must be one of {sorted(PLACEMENTS)}")
     if body.placement_friends not in PLACEMENTS:
@@ -522,6 +623,15 @@ def _serialize(session, collection: Collection) -> dict:
         "req_radarr_root_folder": collection.req_radarr_root_folder,
         "req_sonarr_quality_profile_id": collection.req_sonarr_quality_profile_id,
         "req_sonarr_root_folder": collection.req_sonarr_root_folder,
+        # Not the raw column: a mode this build no longer offers is served as null ("inherits"),
+        # which is also what the run does with it. Serving it raw let the editor PATCH it straight
+        # back and be refused by the closed-set check, so a row holding a retired mode could not be
+        # saved at all — not even renamed.
+        "req_sonarr_monitor": row_monitor_or_inherit(collection.req_sonarr_monitor),
+        "req_language_mode": row_language_mode_or_inherit(collection.req_language_mode),
+        "req_preferred_languages": row_languages_or_inherit(collection.req_preferred_languages),
+        "req_min_rating_other": collection.req_min_rating_other,
+        "req_auto_user_tag": collection.req_auto_user_tag,
         "pick_order": collection.pick_order or "best",
         "placement": collection.placement or "both",
         "placement_friends": collection.placement_friends or "both",
@@ -701,6 +811,11 @@ _PATCHABLE_COLUMNS = (
     "req_radarr_root_folder",
     "req_sonarr_quality_profile_id",
     "req_sonarr_root_folder",
+    "req_sonarr_monitor",
+    "req_language_mode",
+    "req_preferred_languages",
+    "req_min_rating_other",
+    "req_auto_user_tag",
     "pick_order",
     "placement",
     "placement_friends",

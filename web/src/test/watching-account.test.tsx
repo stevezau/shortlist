@@ -228,3 +228,41 @@ describe("WatchingAccountPage", () => {
     );
   });
 });
+
+/** The deep link the Users page uses. The guide is what you read once; the tool is what you come
+ *  back for, so pressing "Watching account" has to land on the tool rather than the explainer. */
+describe("WatchingAccountPage opened with ?setup=1", () => {
+  function renderAt(path: string) {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[path]}>
+          <WatchingAccountPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("opens straight on the transfer step", async () => {
+    renderAt("/watching-account?setup=1");
+
+    expect(
+      await screen.findByRole("heading", {
+        name: /set up the watching account/i,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("still starts on the guide without it", async () => {
+    renderAt("/watching-account");
+
+    expect(
+      await screen.findByRole("heading", { name: /you see everyone/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: /set up the watching account/i }),
+    ).not.toBeInTheDocument();
+  });
+});

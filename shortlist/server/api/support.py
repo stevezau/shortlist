@@ -1346,6 +1346,11 @@ def _event_summary(event) -> str:
     """
     payload = event.message if isinstance(event.message, dict) else {}
     interesting = [f"{k}={payload[k]}" for k in ("user", "slug", "row", "collection", "kind") if payload.get(k)]
+    # The actor is nested under `actor`, so the flat lookup above would never surface it and the
+    # summary line would fall back to a 48-char repr that cuts it off.
+    actor = payload.get("actor") if isinstance(payload.get("actor"), dict) else None
+    if actor:
+        interesting.append("by=" + "/".join(str(actor[k]) for k in ("via", "account_id") if actor.get(k)))
     detail = " ".join(interesting) or str(payload)[:48]
     return f"{event.scope} {detail}".rstrip()
 
@@ -1626,8 +1631,21 @@ async def settings_history(request: Request) -> dict:
     """
     with request.app.state.sessions() as session:
         events = session.query(Event).filter(Event.scope.like("settings%")).order_by(Event.id.desc()).limit(30).all()
+        # `change` and `who` are rendered SEPARATELY. Truncating the whole message at 160 chars put
+        # the actor — appended last by `add_audit` — past the cut whenever more than a couple of
+        # settings moved in one save, so the attribution existed in the database and vanished from
+        # the export. This is the tool someone reaches for when a setting moved on its own, which is
+        # the one moment the "who" is the entire point.
         rows = [
-            {"at": e.ts.isoformat() if e.ts else None, "scope": e.scope, "change": str(e.message)[:160]} for e in events
+            {
+                "at": e.ts.isoformat() if e.ts else None,
+                "scope": e.scope,
+                "change": str((e.message or {}).get("changed", e.message))[:160]
+                if isinstance(e.message, dict)
+                else str(e.message)[:160],
+                "who": (e.message or {}).get("actor") if isinstance(e.message, dict) else None,
+            }
+            for e in events
         ]
         last_built = session.query(func.max(PickRow.created_at)).scalar()
         _audit(session, "settings-history", {"count": len(rows)})

@@ -43,7 +43,9 @@ restriction on the Home and Recommended shelves.
 The write ordering is the load-bearing part: rows are swept, delivered UNPROMOTED, the exclusions are
 merged into every account's share filter, and only THEN are rows promoted onto Home. A row is
 therefore never visible before the rule hiding it exists. Share filters are snapshotted before the
-first change and restored exactly on uninstall.
+first change and restored exactly on uninstall — except for an account that has since left the
+server, whose settings Shortlist can no longer reach; uninstall names those rather than counting
+them as restored.
 
 ## Key facts
 

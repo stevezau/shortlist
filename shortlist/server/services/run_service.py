@@ -314,6 +314,11 @@ class RunService:
                 # do its own complete per-user read — the same read the nightly sync had already
                 # done hours earlier — which was half the total cost of a night.
                 await loop.run_in_executor(None, self._watch.prefill_history, ctx, profiles, run_id)  # scoped inside
+                # What is in each person's rows RIGHT NOW, before the engine rebuilds them. This is
+                # the shelf they were actually looking at during the window they were watching in,
+                # and it stops existing the moment the run persists tonight's picks — so it has to be
+                # read here, not at the reconcile below. See `reconcile_watched`.
+                live_picks = await loop.run_in_executor(None, self._live_pick_ids)
                 # The ONE-WRITER lock, held for the whole engine run (plex-safety rule 3 + design
                 # doc §2 principle 6). Jobs deferring to runs via `_plex_busy` is only half of it:
                 # without this, a writer job already mid-flight kept merging share filters straight
@@ -327,7 +332,20 @@ class RunService:
                 # both "what we recommended" and "what they have since watched". A dry run is a
                 # preview and mutates nothing, matching the rest of persistence.
                 if not dry_run:
-                    self._reconcile_watched(profiles)
+                    # Guarded, and the guard is the point. Every row is already built and delivered
+                    # on Plex by the time this runs; crediting is bookkeeping over our own database.
+                    # An exception here used to land in the `except` below and mark a completely
+                    # successful run as ERROR — the same shape as the retention prune, which was
+                    # moved out of the persist transaction for exactly this reason. Whatever this
+                    # pass misses, the nightly sync reaches from the same records.
+                    try:
+                        self._reconcile_watched(profiles, live_picks)
+                    except Exception as e:
+                        logger.warning(
+                            "run {}: crediting watches failed ({}) — the run itself is unaffected",
+                            run_id,
+                            type(e).__name__,
+                        )
                 status = "aborted" if aborted else ("ok" if report.ok else "error")
             except Exception as e:
                 logger.exception("run {} failed", run_id)
@@ -460,8 +478,16 @@ class RunService:
 
     # -- persistence + audit (delegated to run_persistence) -------------------------------
 
-    def _reconcile_watched(self, profiles) -> None:
-        run_persistence.reconcile_watched(self._sessions, profiles)
+    def _reconcile_watched(
+        self, profiles, live_picks: dict[int, set[int]] | None = None, *, full_resync: bool = False
+    ) -> None:
+        run_persistence.reconcile_watched(self._sessions, profiles, live_picks, full_resync=full_resync)
+
+    def _live_pick_ids(self) -> dict[int, set[int]]:
+        """What is in everyone's rows right now — read BEFORE a run rebuilds them (see
+        `reconcile_watched`, which cannot ask this question after the fact)."""
+        with self._sessions() as session:
+            return run_persistence.live_pick_ids(session)
 
     def _persist_user_live(self, run_id: int, profile, user_report, dry_run: bool) -> None:
         run_persistence.persist_user_live(self._sessions, self._persist_lock, run_id, profile, user_report, dry_run)

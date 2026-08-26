@@ -2,10 +2,14 @@ name: CI
 
 on:
   push:
-    # master included so the stable branch gets its own CI signal after a promotion
-    # PR merges. It never publishes — see the docker job's `if:`, which is pinned to
-    # dev + tags rather than to "any push".
-    branches: [dev, master]
+    # NOT master. It used to be here "so the stable branch gets its own CI signal after a
+    # promotion", which sounds right and buys nothing: master only ever advances by merging a PR
+    # that just ran this whole workflow on the same content, and a master push publishes nothing
+    # (see the docker job's `if:`). Worse, the release tag points AT the merge commit, so master
+    # and the tag were running the identical SHA twice — v1.7.0 ran the full suite four times over
+    # one tree. The two runs that matter are kept: the PR (what protection gates the merge on) and
+    # the tag (the last gate before an image reaches other people's servers).
+    branches: [dev]
     tags: ["v*"]
   pull_request:
     branches: [master, dev]
@@ -122,7 +126,7 @@ jobs:
       # Renamed off the dotfile so upload-artifact keeps it — v4 silently drops hidden files, and
       # a missing shard here would combine into a QUIETLY LOWER coverage number, not an error.
       - run: mv .coverage coverage-data-${{ matrix.shard }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: coverage-data-${{ matrix.shard }}
           path: coverage-data-${{ matrix.shard }}
@@ -141,7 +145,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install coverage
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           pattern: coverage-data-*
           merge-multiple: true

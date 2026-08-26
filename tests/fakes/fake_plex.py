@@ -46,8 +46,13 @@ class FakeMovie:
     added_at: int  # epoch seconds
     tmdb_id: int
     audience_rating: float
-    media_type: str = "movie"  # "movie" | "show"
+    media_type: str = "movie"  # "movie" | "show" | "episode"
     leaf_count: int = 0  # total episodes (shows only); the share-token watched read serves it as leafCount
+    #: Episodes only — the SHOW this belongs to. A real PMS puts it on every episode row of a section
+    #: read (9,850 of 9,850 on a live server), unlike the history log, which carries only a path.
+    grandparent_rating_key: int | None = None
+    parent_index: int = 0  # season number
+    index: int = 0  # episode number within the season
 
 
 @dataclass
@@ -142,6 +147,13 @@ class FakePlexState:
     collections: dict[int, FakeCollection] = field(default_factory=dict)
     users: dict[int, FakeUser] = field(default_factory=dict)  # owner is NOT in this dict
     history: list[FakeHistoryEntry] = field(default_factory=list)
+    #: Per-account LEAF watch state — `{account_id: {rating_key: [view_count, view_offset_ms]}}`.
+    #:
+    #: Deliberately separate from `history`, because the real server keeps them separate too: a
+    #: scrobble changes this and writes NOTHING to `/status/sessions/history/all` (probed live, 31
+    #: scrobbles, log still empty). A fake that filed scrobbles as history would prove the opposite of
+    #: what the server does, and the whole watching-account transfer rests on the distinction.
+    leaf_state: dict[int, dict[int, list[int]]] = field(default_factory=dict)
     # What each account rated each title, {(account_id, rating_key): 0..10}. Keyed by ACCOUNT because
     # that is how Plex really scopes it: live-probed across 50 accounts on a real server, a title
     # reading 6.2 for the owner carried no `userRating` at all for any of the 49 viewers. A fake that
@@ -303,6 +315,94 @@ class FakePlexState:
         times = [h.viewed_at for h in self.history if h.account_id == account_id and h.rating_key == rating_key]
         return max(times, default=0)
 
+    def leaf(self, account_id: int, rating_key: int) -> list[int]:
+        """`[view_count, view_offset_ms]` for one account and one leaf, created empty on first touch."""
+        return self.leaf_state.setdefault(account_id, {}).setdefault(rating_key, [0, 0])
+
+    def episodes_of(self, show_rating_key: int) -> list[FakeMovie]:
+        for section in self.sections.values():
+            found = [i for i in section.items.values() if i.grandparent_rating_key == show_rating_key]
+            if found:
+                return sorted(found, key=lambda i: (i.parent_index, i.index))
+        return []
+
+    def scrobble(self, account_id: int, rating_key: int) -> bool:
+        """Mark one key played, exactly as the PMS does — INCREMENTING, never setting.
+
+        A SHOW key marks every episode. That is the real behaviour and it is the bug the transfer
+        exists to stop reintroducing, so the fake reproduces it rather than refusing: write a show key
+        here and the e2e will show all ten episodes watched, which is what a live server does.
+        """
+        item = self.item(rating_key)
+        if item is None:
+            return False
+        targets = self.episodes_of(rating_key) if item.media_type == "show" else [item]
+        for leaf in targets or [item]:
+            entry = self.leaf(account_id, leaf.rating_key)
+            entry[0] += 1
+            # A scrobble CLEARS an offset the item already carries — probed live, 480,000 read back
+            # as 0 after one scrobble. Leaving it here would make the fake easier than the server and
+            # hide a title losing its position every time its count is topped up.
+            entry[1] = 0
+        return True
+
+    def unscrobble(self, account_id: int, rating_key: int) -> bool:
+        """Clear a key. Zeroes the view count AND the offset — measured, and load-bearing.
+
+        It is the only call that clears an offset, which is why the planner treats clearing one as a
+        full reset of the item rather than a surgical edit.
+        """
+        item = self.item(rating_key)
+        if item is None:
+            return False
+        targets = self.episodes_of(rating_key) if item.media_type == "show" else [item]
+        for leaf in targets or [item]:
+            self.leaf(account_id, leaf.rating_key)[:] = [0, 0]
+        return True
+
+    def set_progress(self, account_id: int, rating_key: int, offset_ms: int) -> bool:
+        """Set a playback position — and IGNORE `time=0`, exactly as a real server does.
+
+        Live-probed 2026-08-25: `/:/progress?time=0` left an offset of 1,139,347 untouched. Only
+        `/:/unscrobble` clears one. The fake used to honour `time=0`, which made an undo look like it
+        worked here while leaving 293 items part-watched on a real account — a fake easier than the
+        server, which is the one thing it may never be.
+        """
+        if self.item(rating_key) is None:
+            return False
+        if offset_ms <= 0:
+            return True
+        self.leaf(account_id, rating_key)[1] = offset_ms
+        return True
+
+    def leaf_view(self, account_id: int, rating_key: int) -> tuple[int, int]:
+        """`(view_count, view_offset_ms)` without creating an entry — for the read path.
+
+        Falls back to `history` when this account has no explicit leaf entry, so the fake has ONE
+        watch-state model rather than two that can disagree. A real PMS serves the same `viewCount`
+        to every read of a title; a fake where the share-token read said "watched" and the leaf read
+        said "not watched" would let a real inconsistency through as a passing suite.
+
+        An explicit entry always wins, including an explicit zero — that is what an un-scrobble
+        leaves behind, and it has to be able to override seeded history.
+        """
+        entry = self.leaf_state.get(account_id, {}).get(rating_key)
+        if entry is not None:
+            return entry[0], entry[1]
+        plays = sum(1 for h in self.history if h.account_id == account_id and h.rating_key == rating_key)
+        return plays, 0
+
+    def watched_now(self, account_id: int) -> set[int]:
+        """Every key this account currently counts as watched, from BOTH sources.
+
+        `watched_keys` reads history alone and cannot see a scrobble (which writes no history row on
+        a real server, and none here either), so a read filtered on it would report a freshly
+        replicated account as empty.
+        """
+        keys = {h.rating_key for h in self.history if h.account_id == account_id}
+        keys |= {k for k, v in self.leaf_state.get(account_id, {}).items() if v[0] > 0}
+        return {k for k in keys if self.leaf_view(account_id, k)[0] > 0}
+
     @staticmethod
     def excluded_labels(user: FakeUser) -> set[str]:
         """Lowercased ``label!=`` values across the user's movie/TV share filters."""
@@ -389,6 +489,32 @@ def _container(**attrs) -> Element:
     return root
 
 
+def _leaf_xml(parent: Element, item: FakeMovie, view_count: int, view_offset: int) -> Element:
+    """One `<Video>` row of a LEAF read, shaped like the recorded fixtures.
+
+    `viewCount` and `viewOffset` are OMITTED when zero, exactly as a real server omits them — the
+    absent-vs-zero distinction is load-bearing: 72 films on a live account carried an offset and no
+    `viewCount` at all, and reading that as "watched once" would mark every one of them finished.
+    """
+    element = SubElement(parent, "Video")
+    element.set("ratingKey", str(item.rating_key))
+    element.set("key", f"/library/metadata/{item.rating_key}")
+    element.set("type", item.media_type)
+    element.set("title", item.title)
+    element.set("duration", "3600000")
+    if item.grandparent_rating_key is not None:
+        element.set("grandparentRatingKey", str(item.grandparent_rating_key))
+        element.set("grandparentKey", f"/library/metadata/{item.grandparent_rating_key}")
+        element.set("parentIndex", str(item.parent_index))
+        element.set("index", str(item.index))
+    if view_count:
+        element.set("viewCount", str(view_count))
+        element.set("lastViewedAt", str(item.added_at))
+    if view_offset:
+        element.set("viewOffset", str(view_offset))
+    return element
+
+
 def _movie_xml(parent: Element, state: FakePlexState, movie: FakeMovie, *, watched_by: int | None = None) -> Element:
     """One library item. Plex serves movies as <Video> and shows as <Directory>.
 
@@ -429,8 +555,12 @@ def _movie_xml(parent: Element, state: FakePlexState, movie: FakeMovie, *, watch
             element.set("leafCount", str(movie.leaf_count))
         else:
             # viewCount = how many times this account has this title in history (>= 1, since it's watched).
-            plays = sum(1 for h in state.history if h.account_id == watched_by and h.rating_key == movie.rating_key)
+            plays, offset = state.leaf_view(watched_by, movie.rating_key)
             element.set("viewCount", str(max(1, plays)))
+            # A title can be watched AND part-way through a rewatch. Omitted when zero, as a real
+            # server omits it — the absent-vs-zero distinction is load-bearing for partial plays.
+            if offset:
+                element.set("viewOffset", str(offset))
     _el(element, "Guid", id=f"tmdb://{movie.tmdb_id}")
     return element
 
@@ -578,12 +708,37 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
             for collection in owned:
                 _collection_xml(root, state, collection, labels=False)
             return _xml(root)
+        # LEAF reads — the watching-account transfer's four reads. `type=4` is episodes; `viewOffset>`
+        # is the only way a PARTIAL play is visible at all, and both filters ARE honoured server-side
+        # (unlike `lastViewedAt>=`, which this PMS silently drops — see the note further down).
+        if query.get("type") == "4" or query.get("viewOffset>") is not None:
+            account_id = state.watched_account_id(request.headers.get("X-Plex-Token", ""))
+            want_episodes = query.get("type") == "4"
+            listing = []
+            for item in _sorted_items(list(items.values()), None):
+                if want_episodes and item.media_type != "episode":
+                    continue
+                if not want_episodes and item.media_type != "movie":
+                    continue
+                count, offset = state.leaf_view(account_id or 0, item.rating_key)
+                if query.get("viewOffset>") is not None and offset <= int(query["viewOffset>"]):
+                    continue
+                if query.get("unwatched") == "0" and count <= 0:
+                    continue
+                listing.append((item, count, offset))
+            start, size = _page(request, len(listing))
+            root = _container(
+                size=len(listing[start : start + size]), totalSize=len(listing), librarySectionID=section_id
+            )
+            for item, count, offset in listing[start : start + size]:
+                _leaf_xml(root, item, count, offset)
+            return _xml(root)
         # The share-token watched read (ShareTokenWatchSource): `unwatched=0` filters to what the
         # REQUESTING account has watched, served AS them with their own per-user viewCount/leaf counts.
         # The token is in the X-Plex-Token header (includeToken=False keeps the owner's out of the URL).
         if query.get("unwatched") == "0":
             account_id = state.watched_account_id(request.headers.get("X-Plex-Token", ""))
-            watched = state.watched_keys(account_id) if account_id is not None else set()
+            watched = state.watched_now(account_id) if account_id is not None else set()
             listing = [item for item in _sorted_items(list(items.values()), None) if item.rating_key in watched]
             # The INCREMENTAL read asks for `sort=lastViewedAt:desc` and stops client-side at the
             # first title older than its cutoff. It deliberately does NOT send a `lastViewedAt>=`
@@ -607,6 +762,46 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
         for item in page:
             _movie_xml(root, state, item)
         return _xml(root)
+
+    @app.get("/:/scrobble")
+    def scrobble(request: Request) -> Response:
+        """Mark one key played AS the requesting account.
+
+        No history row is written, deliberately: probed against a real server, 31 scrobbles left
+        `/status/sessions/history/all` empty. The whole transfer design turns on that, so a fake that
+        recorded them here would let a regression through unnoticed.
+
+        404 for a key this account cannot see — the shape `scrobble_as` treats as skip, not failure.
+        """
+        account_id = state.watched_account_id(request.headers.get("X-Plex-Token", ""))
+        key = int(request.query_params.get("key") or 0)
+        if account_id is None or not state.scrobble(account_id, key):
+            raise HTTPException(status_code=404, detail="not found")
+        return _xml(_container(size=0))
+
+    @app.get("/:/unscrobble")
+    def unscrobble(request: Request) -> Response:
+        account_id = state.watched_account_id(request.headers.get("X-Plex-Token", ""))
+        key = int(request.query_params.get("key") or 0)
+        if account_id is None or not state.unscrobble(account_id, key):
+            raise HTTPException(status_code=404, detail="not found")
+        return _xml(_container(size=0))
+
+    @app.get("/:/progress")
+    def progress(request: Request) -> Response:
+        """Set a playback position — the only way a PARTIAL watch is written.
+
+        It does NOT clear one: `time=0` is ignored here exactly as the server ignores it (see
+        `set_progress`). Only `/:/unscrobble` clears an offset. The claim that this endpoint could
+        clear one is the assumption that left 293 items part-watched after a live undo, so it does not
+        get to live in the file whose job is to encode what the server really does.
+        """
+        account_id = state.watched_account_id(request.headers.get("X-Plex-Token", ""))
+        key = int(request.query_params.get("key") or 0)
+        offset = int(request.query_params.get("time") or 0)
+        if account_id is None or not state.set_progress(account_id, key, offset):
+            raise HTTPException(status_code=404, detail="not found")
+        return _xml(_container(size=0))
 
     @app.put("/library/sections/{section_id}/all")
     def section_edit(section_id: int, request: Request) -> Response:

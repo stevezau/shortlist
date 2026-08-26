@@ -47,6 +47,7 @@ export const queryKeys = {
   curatorModels: (provider: string, credential: string) =>
     ["curator-models", provider, credential] as const,
   userRows: (id: number) => ["users", id, "rows"] as const,
+  userOutcomes: (id: number) => ["users", id, "outcomes"] as const,
   userRuns: (id: number) => ["users", id, "runs"] as const,
   userRunsSummary: (id: number) => ["users", id, "runs", "summary"] as const,
   homeUsers: ["watching-account", "candidates"] as const,
@@ -62,6 +63,8 @@ export const queryKeys = {
   // what each windowed query itself is keyed on.
   report: ["report"] as const,
   reportWindow: (window: ReportWindow) => ["report", window] as const,
+  engagement: (window: ReportWindow) =>
+    ["report", "engagement", window] as const,
   deletedRows: ["report", "deleted-rows"] as const,
   schedule: ["schedule"] as const,
   libraries: ["libraries"] as const,
@@ -500,6 +503,14 @@ export function useUserHistory(id: number) {
 /** A page of someone's cached watched set. `placeholderData` keeps the previous page on screen while
  *  a new search resolves — without it every keystroke blanks the list to a skeleton, which reads as
  *  "no results" for a moment and makes typing feel broken. */
+/** What they did with their picks — finished, part-watched, abandoned. */
+export function useUserOutcomes(id: number) {
+  return useQuery({
+    queryKey: queryKeys.userOutcomes(id),
+    queryFn: () => api.getUserOutcomes(id),
+  });
+}
+
 export function useUserWatched(id: number, filters: WatchedFilters) {
   return useQuery({
     queryKey: queryKeys.userWatched(id, filters),
@@ -523,7 +534,7 @@ export function useTransferWatchHistory() {
   return useMutation({
     mutationFn: (body: {
       to_user_id: number;
-      scrobble: boolean;
+      from_user_id?: number;
       dry_run: boolean;
     }) => api.transferWatchHistory(body),
     onSuccess: (result) => {
@@ -532,6 +543,31 @@ export function useTransferWatchHistory() {
       if (result.dry_run) return;
       queryClient.invalidateQueries({ queryKey: queryKeys.users });
       queryClient.invalidateQueries({ queryKey: ["users"] });
+      queryClient.invalidateQueries({ queryKey: ["watch-snapshots"] });
+    },
+  });
+}
+
+export function useWatchSnapshots() {
+  return useQuery({
+    queryKey: ["watch-snapshots"],
+    queryFn: () => api.listWatchSnapshots(),
+    retry: false,
+  });
+}
+
+export function useUndoWatchTransfer() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { snapshot_id: number; dry_run: boolean }) =>
+      api.undoWatchTransfer(body),
+    onSuccess: (result) => {
+      // Same reasoning as the transfer: an undo rewrites the same watched set back again, so the
+      // views reading it are just as stale afterwards.
+      if (result.dry_run) return;
+      queryClient.invalidateQueries({ queryKey: queryKeys.users });
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+      queryClient.invalidateQueries({ queryKey: ["watch-snapshots"] });
     },
   });
 }
@@ -676,6 +712,13 @@ export function useVersion() {
   });
 }
 
+export function useEngagement(window: ReportWindow = "30") {
+  return useQuery({
+    queryKey: queryKeys.engagement(window),
+    queryFn: () => api.getEngagement(window),
+  });
+}
+
 export function useReport(window: ReportWindow = "30") {
   return useQuery({
     queryKey: queryKeys.reportWindow(window),
@@ -697,7 +740,11 @@ export function useSyncWatched() {
   const queryClient = useQueryClient();
   useSSE({
     onSyncFinished: (event) => {
-      if (event.kind === "watched") {
+      // Both kinds move the report: `watched` is the nightly sync re-reading Plex, `credited` is the
+      // live pass that runs the moment someone stops playing a pick. They are separate kinds because
+      // the Jobs page announces `watched` as "watch history is up to date", which is a claim the
+      // live pass cannot make — it reads nothing from Plex.
+      if (event.kind === "watched" || event.kind === "credited") {
         void queryClient.invalidateQueries({ queryKey: queryKeys.report });
       }
     },

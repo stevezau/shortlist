@@ -24,7 +24,7 @@ from shortlist.engine.models import (
     UserRunReport,
 )
 from shortlist.server.db.adapters import DbCache, DbSnapshotStore
-from shortlist.server.db.models import Event, PickRow, Run, RunUser, User
+from shortlist.server.db.models import Delivery, Event, PickRow, Run, RunUser, User
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.services.context_builder import ContextBuilder
 from shortlist.server.services.run_service import RunService
@@ -545,36 +545,54 @@ class TestRunExecution:
 
     def test_hit_rate_marks_the_picks_a_person_actually_watched(self, sessions, tmp_path, monkeypatch):
         """`picks.watched_at` was declared, migrated and READ by the hit-rate query — and written by
-        nothing. Every hit rate was structurally 0%, while the docs promised "expect 20-40%"."""
+        nothing. Every hit rate was structurally 0%, while the docs promised "expect 20-40%".
+
+        Credit lands one night LATER than delivery, and that is not an accident of the test: a title
+        is creditable because it was in the row the person was looking at, so the run that first
+        delivers it cannot also credit it — its own history read happened before it existed on the
+        shelf. Tonight's run credits what LAST night's row put there.
+        """
         from datetime import timedelta
 
         from shortlist.engine.models import UserProfile, UserType, WatchedItem
-        from shortlist.server.db.models import User
+        from shortlist.server.db.models import DEFAULT_SLUG, User
 
         bus = EventBus()
         service = RunService(sessions, bus, tmp_path, SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
 
-        # The `sessions` fixture already seeds sarah.
-        # We recommended tmdb 1 to sarah in this run; she then watched it. Title 2 she never watched,
-        # and title 3 she watched a YEAR later — too late to count as a hit.
+        # The `sessions` fixture already seeds sarah. Last night's run put tmdb 1 and 2 in her row;
+        # she has since watched 1 and ignored 2.
         now = datetime.now(UTC)
+        with sessions() as session:
+            sarah = session.query(User).filter_by(slug="sarah").one()
+            last_night = Run(trigger="schedule", status="ok", started_at=now - timedelta(days=1))
+            session.add(last_night)
+            # The ledger entry a real delivery leaves behind — liveness means the collection is still
+            # ON PLEX, and this is the only record of that.
+            session.add(Delivery(collection_slug=DEFAULT_SLUG, user_slug="sarah", library_key="1", rating_key=7))
+            session.flush()
+            for tmdb_id, title in ((1, "Watched"), (2, "Ignored")):
+                session.add(
+                    PickRow(
+                        run_id=last_night.id,
+                        user_id=sarah.id,
+                        collection_slug=DEFAULT_SLUG,
+                        section_key="1",
+                        library="Movies",
+                        tmdb_id=tmdb_id,
+                        media_type="movie",
+                        rating_key=tmdb_id * 10,
+                        rank=tmdb_id,
+                        title=title,
+                        created_at=now - timedelta(days=1),
+                    )
+                )
+            session.commit()
         report = RunReport(
             started_at=now,
             finished_at=now,
-            users=[
-                UserRunReport(
-                    username="sarah",
-                    slug="sarah",
-                    status="ok",
-                    picks=[
-                        Pick(tmdb_id=1, rating_key=10, title="Watched", rank=1, reason="r", media_type=MediaType.MOVIE),
-                        Pick(tmdb_id=2, rating_key=20, title="Ignored", rank=2, reason="r", media_type=MediaType.MOVIE),
-                    ],
-                    counts=StageCounts(picks=2),
-                    duration_s=0.1,
-                )
-            ],
+            users=[UserRunReport(username="sarah", slug="sarah", status="ok", counts=StageCounts(), duration_s=0.1)],
         )
         profile = UserProfile(
             username="sarah",
@@ -582,7 +600,7 @@ class TestRunExecution:
             user_type=UserType.SHARED,
             slug="sarah",
             history=[
-                WatchedItem(title="Watched", media_type=MediaType.MOVIE, watched_at=now + timedelta(days=2), tmdb_id=1),
+                WatchedItem(title="Watched", media_type=MediaType.MOVIE, watched_at=now, tmdb_id=1),
             ],
         )
         monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: report)
@@ -1084,3 +1102,99 @@ class TestThePerRowRequestBreakdownIsPersisted:
             return await _wait_for_run(sessions, run_id)
 
         assert "requests_by_row" not in asyncio.run(scenario()).stats
+
+
+class TestTheLiveRowSnapshotIsTakenBeforeTheRebuild:
+    """The ordering that makes the membership rule survivable, in the real run path.
+
+    Being watched is exactly what makes the engine drop a title from a row, so by the time a run
+    reaches its reconcile the row no longer lists what the person just watched. Read "what is in
+    their row" at that moment and every genuine hit scores zero. The run therefore snapshots the live
+    picks BEFORE `engine_run` and hands that in — and only a run that actually rebuilds the row can
+    tell the two orderings apart, which is why this test delivers a different pick set.
+    """
+
+    def test_a_watch_is_credited_even_though_tonights_run_replaced_the_row(self, sessions, tmp_path, monkeypatch):
+        from datetime import timedelta
+
+        from shortlist.engine.models import UserProfile, UserType, WatchedItem
+        from shortlist.server.db.models import DEFAULT_SLUG, User
+
+        bus = EventBus()
+        service = RunService(sessions, bus, tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+
+        now = datetime.now(UTC)
+        with sessions() as session:
+            sarah = session.query(User).filter_by(slug="sarah").one()
+            last_night = Run(trigger="schedule", status="ok", started_at=now - timedelta(days=1))
+            session.add(last_night)
+            session.add(Delivery(collection_slug=DEFAULT_SLUG, user_slug="sarah", library_key="1", rating_key=7))
+            session.flush()
+            session.add(
+                PickRow(
+                    run_id=last_night.id,
+                    user_id=sarah.id,
+                    collection_slug=DEFAULT_SLUG,
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=1,
+                    media_type="movie",
+                    rating_key=10,
+                    rank=1,
+                    title="Watched",
+                    created_at=now - timedelta(days=1),
+                )
+            )
+            session.commit()
+
+        # Tonight's run rebuilds the SAME row with a different title — the state the reconcile sees.
+        report = RunReport(
+            started_at=now,
+            finished_at=now,
+            users=[
+                UserRunReport(
+                    username="sarah",
+                    slug="sarah",
+                    status="ok",
+                    picks=[
+                        Pick(
+                            tmdb_id=2,
+                            rating_key=20,
+                            title="Fresh",
+                            rank=1,
+                            reason="r",
+                            media_type=MediaType.MOVIE,
+                            collection_slug=DEFAULT_SLUG,
+                            section_key="1",
+                            library="Movies",
+                        )
+                    ],
+                    counts=StageCounts(picks=1),
+                    duration_s=0.1,
+                )
+            ],
+        )
+        profile = UserProfile(
+            username="sarah",
+            plex_account_id=100,
+            user_type=UserType.SHARED,
+            slug="sarah",
+            history=[WatchedItem(title="Watched", media_type=MediaType.MOVIE, watched_at=now, tmdb_id=1)],
+        )
+        monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: report)
+        monkeypatch.setattr(service, "enabled_profiles", lambda session, user_ids=None: [profile])
+
+        async def scenario():
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        asyncio.run(scenario())
+
+        with sessions() as session:
+            watched = session.query(PickRow).filter_by(tmdb_id=1).one()
+            fresh = session.query(PickRow).filter_by(tmdb_id=2).one()
+            assert watched.watched_at is not None, (
+                "the snapshot was taken after the rebuild — the row had already dropped the title she watched"
+            )
+            assert fresh.watched_at is None, "tonight's pick was never watched"

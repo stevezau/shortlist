@@ -12,15 +12,22 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import defaultdict
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import cached_property
 
 from loguru import logger
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from shortlist.engine.models import SHARED_SLUG_PREFIX
 from shortlist.engine.requests import QUEUE_REASON_PREFIXES
 from shortlist.server.db.models import (
+    Collection,
+    CollectionAudience,
+    CollectionUserOverride,
     Delivery,
     Event,
     PickRow,
@@ -29,12 +36,48 @@ from shortlist.server.db.models import (
     RunLogLine,
     RunSharedRow,
     RunUser,
+    SharedRowWatch,
     User,
+    WatchEvent,
+    WatchSession,
 )
 from shortlist.server.services import jobs
 from shortlist.server.services.audit import add_audit
+from shortlist.server.services.watch_events import (
+    RowMembership,
+    _attribution_floor,
+    _scan_plays,
+    event_credits,
+    session_progress,
+    shared_credits,
+    tmdb_by_rating_key,
+)
 
-HIT_WINDOW_DAYS = 30  # a pick counts as a hit if it is watched within 30 days of being recommended
+# Bounds the effectiveness report's MATURED cohort (a pick delivered more recently than this has not
+# had a fair chance to be watched yet). It no longer gates whether a pick is credited: that is
+# `reconcile_watched`'s "was it in their row at the time" test, which needs no clock.
+#: Watch history never outlives this, whatever `runs.retention` says. It is the one table here that
+#: grows with the whole server's viewing rather than with Shortlist's own activity.
+WATCH_RETENTION_MONTHS = 6
+
+HIT_WINDOW_DAYS = 30
+
+#: How far through a FILM counts as having finished it, when all we have is live playback.
+#:
+#: Plex's own default watched threshold is ~90%, so a film we watched reach this WILL be flagged
+#: watched by Plex, and the nightly sync would stamp `finished_at` from that flag anyway. Inferring
+#: it here only makes the live pass agree with the conclusion already coming — the alternative is
+#: what shipped: a film someone watched to the very end was reported on the dashboard as
+#: "gave up on Fight Club after 100%", under a heading reading "where the picks are not landing",
+#: from the moment the credits rolled until 04:17 the next morning.
+#:
+#: Films only, and that needs no guard: `session_progress` returns None for a series, because one
+#: episode's progress is not the show's (migration 0077).
+FINISHED_PERCENT = 90
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 def _record_deliveries(session: Session, user_slug: str, breakdown: list[dict]) -> None:
@@ -113,6 +156,11 @@ def _refresh_pending(row: RequestCandidate, m) -> None:
     row.overview = m.overview or row.overview  # same rule again — and the backfill for pre-0071 rows
     row.rating = m.rating
     row.vote_count = m.vote_count
+    # Same keep-what-we-know rule as imdb_id above, and the backfill for rows queued before 0085: a
+    # run that re-surfaces the title from a TMDB source fills the language in. A later run that only
+    # saw it via Trakt must not blank it back to unknown, which would drop the inbox chip and, worse,
+    # re-classify the title as preferred at the next gate.
+    row.language = m.language or row.language
     row.demand = m.demand
     row.tags = sorted(m.tags)
     row.wanters = sorted(m.wanters)
@@ -140,6 +188,7 @@ def _candidate_row(m, run_id: int, *, status: str) -> RequestCandidate:
         overview=m.overview,
         rating=m.rating,
         vote_count=m.vote_count,
+        language=m.language,
         demand=m.demand,
         tags=sorted(m.tags),
         wanters=sorted(m.wanters),
@@ -170,24 +219,648 @@ def _row_slug(m) -> str | None:
     return next((w.row_slug for w in (m.why or []) if w.row_slug), None)
 
 
-def reconcile_watched(sessions: sessionmaker[Session], profiles) -> None:
+def live_pick_ids(session: Session) -> dict[int, set[int]]:
+    """The picks that are on Plex RIGHT NOW, as ``{user_id: {pick_id}}``.
+
+    A row+library's live contents are the picks from the MAX ``run_id`` that delivered it — the same
+    definition `context_builder._previous_picks` carries into the engine for carry-forward, so "what
+    is in their row" means one thing in this codebase rather than two. Grouping per (user, row,
+    library) is what makes it correct: rows carry their own crons, so the newest run is routinely
+    scoped to ONE row, and taking the newest run overall would read every other row as empty.
+
+    Existing is not the same as ON PLEX, so both are required. The row must still exist and be
+    enabled, AND the delivery ledger must still carry its `(row, user, library)` entry — the ledger is
+    the record of what is actually on the server, and `_forget_removed_deliveries` drops the entry
+    whenever a run REMOVES a collection (a muted or retired row, a cold-start skip, a user leaving the
+    audience). Testing `collections` alone would leave those picks creditable for ever: the Plex
+    collection is gone, the row definition stays so the owner can switch it back on, and no later run
+    re-delivers that group to move its MAX ``run_id``. Measured on the maintainer's server: 184 ledger
+    entries against 185 pick groups, the one difference being a row whose collection Plex no longer
+    has. The ledger join also drops the blank-`section_key` picks predating multi-row, which no
+    `library_key` can match.
+
+    Picks whose run was detached (`DELETE /api/runs`, or the retention prune) have no ``run_id`` and
+    so read as not-live until that row next delivers, which re-stamps them. Carry-forward already
+    behaves exactly this way — the clear-runs endpoint says so in as many words — and the cost here
+    is the same shape: a watch in that window is not credited.
+    """
+    live_slugs = [slug for (slug,) in session.query(Collection.slug).filter(Collection.enabled.is_(True)).all()]
+    if not live_slugs:
+        return {}
+    # Matched in Python, not as a third SQL join: the ledger is keyed by user SLUG where picks carry
+    # user_id, and it is small (one row per row/user/library actually on the server).
+    slug_by_user = {uid: slug for uid, slug in session.query(User.id, User.slug).all()}
+    on_plex = {
+        (row.user_slug, row.collection_slug, row.library_key)
+        for row in session.query(Delivery).filter(Delivery.collection_slug.in_(live_slugs))
+    }
+    latest = (
+        session.query(
+            PickRow.user_id.label("user_id"),
+            PickRow.collection_slug.label("slug"),
+            PickRow.section_key.label("section_key"),
+            func.max(PickRow.run_id).label("mrun"),
+        )
+        .filter(PickRow.collection_slug.in_(live_slugs))
+        .group_by(PickRow.user_id, PickRow.collection_slug, PickRow.section_key)
+        .subquery()
+    )
+    rows = (
+        session.query(PickRow.id, PickRow.user_id, PickRow.collection_slug, PickRow.section_key)
+        .join(
+            latest,
+            and_(
+                PickRow.user_id == latest.c.user_id,
+                PickRow.collection_slug == latest.c.slug,
+                PickRow.section_key == latest.c.section_key,
+                PickRow.run_id == latest.c.mrun,
+            ),
+        )
+        .all()
+    )
+    out: dict[int, set[int]] = {}
+    for pick_id, user_id, slug, section_key in rows:
+        if (slug_by_user.get(user_id), slug, section_key) not in on_plex:
+            continue
+        out.setdefault(user_id, set()).add(pick_id)
+    return out
+
+
+@dataclass
+class _Outcome:
+    """Everything concluded about one (person, title), before any of it is written.
+
+    The whole point is that this is decided ONCE. Five separate call sites used to write these three
+    columns — five writers across three columns, since collapsed into this one pair — and every
+    ordering bug this feature has had came from that: a
+    percentage walking backwards because one writer had the guard and another did not, a credit and a
+    percentage landing on different delivery rows, a completion dated before its own credit. With one
+    decider and one writer those are not bugs to fix, they are states that cannot be represented.
+    """
+
+    #: When the row got them to press play. Never moves once set: the hit belongs to the week it
+    #: happened, and a rewatch three weeks later is not when the recommendation worked.
+    watched_at: datetime | None = None
+    finished_at: datetime | None = None
+    #: Furthest observed, 0-100. None means no live session watched it happen — which is NOT 0%.
+    max_percent: int | None = None
+    #: The rows that may carry this credit. A row that had already dropped the title must not collect
+    #: a hit its shelf could not have caused (`row_effectiveness` counts per `collection_slug`).
+    slugs: frozenset[str] = frozenset()
+
+
+def _decide_outcomes(
+    session: Session,
+    user: User,
+    *,
+    credits: dict[tuple[int, int, str], tuple[datetime, frozenset[str]]],
+    progress: dict,
+    latest_watch: dict[tuple[int, str], datetime],
+    finished_keys: set[tuple[int, str]],
+    live_pick_ids_for_user: set[int],
+) -> dict[tuple[int, str], _Outcome]:
+    """Work out what is true for this person, from every source, without writing anything.
+
+    Two ways a credit is justified, in priority order:
+
+    1. **An event** — the play log or a live session, at a moment `RowMembership` confirms the title
+       was in a row they could see. This is the real timestamp and it knows which rows.
+    2. **The snapshot** — Plex flagged the title watched with no play behind it. 893 of one real
+       user's 1,840 watched titles are in this state (marked by hand, bulk-marked, or watched before
+       the log existed), so it is not a fallback for rare cases; it is half the data.
+    """
+    desired: dict[tuple[int, str], _Outcome] = defaultdict(_Outcome)
+
+    # 1. Event credits — the strongest evidence, and the only one that knows the exact moment.
+    for (user_id, tmdb_id, media_type), (when, slugs) in credits.items():
+        if user_id != user.id:
+            continue
+        out = desired[(tmdb_id, media_type)]
+        out.watched_at = when if out.watched_at is None else min(out.watched_at, when)
+        out.slugs |= slugs
+
+    # 2. The snapshot path, for titles Plex calls watched with no event behind them. Bounded to rows
+    #    currently on the person's shelf, and to a watch no earlier than THAT ROW first showed it —
+    #    per row, because a `rewatch` row leading with titles they have already seen would otherwise
+    #    inherit another row's older delivery and credit a watch from before it existed.
+    if live_pick_ids_for_user and latest_watch:
+        first_delivered: dict[tuple[str, int, str], datetime] = {
+            (slug, tid, mt): _as_utc(when)
+            for slug, tid, mt, when in session.query(
+                PickRow.collection_slug, PickRow.tmdb_id, PickRow.media_type, func.min(PickRow.created_at)
+            )
+            .filter(PickRow.user_id == user.id)
+            .group_by(PickRow.collection_slug, PickRow.tmdb_id, PickRow.media_type)
+            .all()
+        }
+        for pick in (
+            session.query(PickRow).filter(PickRow.user_id == user.id, PickRow.id.in_(live_pick_ids_for_user)).all()
+        ):
+            key = (pick.tmdb_id, pick.media_type)
+            watched = latest_watch.get(key)
+            # A percentage is a fact ABOUT a credited watch, never a reason to invent one — and this
+            # line is where that invariant is established, so step 4 below can stamp unconditionally.
+            # `desired` is a defaultdict, so READING it here mints an entry. That is not a style nit:
+            # an entry created on the reject path below survives, collects a percentage at step 4, and
+            # passes the filter at the end — so a title this branch explicitly refused to credit came
+            # out the far side as a "dropped" pick, dated to today's delivery. Membership decides the
+            # credit; a bare lookup must never be what decides it exists.
+            if watched is None or (key in desired and desired[key].watched_at is not None):
+                continue
+            since = first_delivered.get((pick.collection_slug, *key))
+            if since is None or watched < since:
+                continue  # recommending something they had already seen is not a hit
+            out = desired[key]
+            out.watched_at = watched
+            out.slugs |= {pick.collection_slug}
+
+    # 3. Completion. Deliberately NOT membership-gated, and that is the whole reason it is a separate
+    #    source: being watched is what makes the engine drop a title from a row, so by the time
+    #    someone finishes a series months later the row has long since moved on. Re-testing membership
+    #    would refuse to upgrade a single "started" to "finished", ever.
+    #
+    #    Covers two groups: titles credited in THIS pass (above), and titles credited in an earlier
+    #    one that are only now complete — which is the normal shape for a series.
+    already_credited = {
+        (tmdb_id, media_type)
+        for tmdb_id, media_type in session.query(PickRow.tmdb_id, PickRow.media_type)
+        .filter(PickRow.user_id == user.id, PickRow.watched_at.isnot(None), PickRow.finished_at.is_(None))
+        .distinct()
+        .all()
+    }
+    for key in (set(desired) | already_credited) & finished_keys:
+        completed = latest_watch.get(key, desired[key].watched_at)
+        if completed is not None:
+            desired[key].finished_at = completed
+
+    # 4. Progress, from live sessions only. Series get none: an episode's percentage is not the
+    #    show's, and one episode of sixty arriving as 100% told the dashboard people abandon shows
+    #    just before the end.
+    #
+    #    Stamped unconditionally, which is safe ONLY because every key in `desired` already carries a
+    #    credit or a completion by this point — see the `key in desired` guard in step 2. A future
+    #    source that mints a bare entry would reintroduce a percentage on an uncredited title, which
+    #    surfaces as a "dropped" pick nobody was ever recommended.
+    for key in list(desired):
+        found = progress.get((user.plex_account_id, key[0], key[1]))
+        if found and found[1] is not None:
+            desired[key].max_percent = found[1]
+            # A film played to the end IS finished — see `FINISHED_PERCENT`. Without this the live
+            # credit pass, whose whole point is to put the outcome up the moment playback stops,
+            # could only ever report "watched, not finished", which `resolve_outcomes` renders as
+            # "gave up".
+            if found[1] >= FINISHED_PERCENT and desired[key].finished_at is None:
+                desired[key].finished_at = desired[key].watched_at or found[0]
+
+    return {
+        key: out
+        for key, out in desired.items()
+        if out.watched_at is not None or out.max_percent is not None or out.finished_at is not None
+    }
+
+
+def _apply_outcomes(session: Session, user: User, desired: dict[tuple[int, str], _Outcome]) -> int:
+    """Write the decided state onto every delivery row it belongs on. The ONLY writer.
+
+    The report intersects at ROW level — `_landing` and `row_effectiveness` pick a cohort by
+    `created_at` and count rows in it that also carry `watched_at` — so a credit on one delivery row
+    and a percentage on another is invisible to it. Every row for the title gets the same answer here,
+    subject to two bounds that are the point of the whole feature:
+
+    * `created_at <= watched_at` — a delivery made after they watched it cannot be why they did;
+    * `collection_slug in slugs` — only the rows that were actually showing it.
+    """
+    # ONE query for the user, grouped in Python — not one per title. A real server carries ~139
+    # credited-but-unfinished titles per person plus the day's credits, across 47 people, seven times
+    # a day, against a single SQLite writer.
+    by_title: dict[tuple[int, str], list[PickRow]] = defaultdict(list)
+    if desired:
+        for pick in (
+            session.query(PickRow)
+            .filter(
+                PickRow.user_id == user.id,
+                PickRow.tmdb_id.in_({tmdb_id for tmdb_id, _mt in desired}),
+            )
+            .all()
+        ):
+            by_title[(pick.tmdb_id, pick.media_type)].append(pick)
+
+    wrote = 0
+    for (tmdb_id, media_type), out in desired.items():
+        for pick in by_title.get((tmdb_id, media_type), []):
+            before = (pick.watched_at, pick.finished_at, pick.max_percent)
+            eligible = (
+                out.watched_at is not None
+                and _as_utc(pick.created_at) <= out.watched_at
+                and (not out.slugs or pick.collection_slug in out.slugs)
+            )
+            if eligible and pick.watched_at is None:
+                pick.watched_at = out.watched_at
+            # Completion lands on any row already carrying a credit, whether or not this pass added
+            # one — a series finished months after the row dropped it still finished.
+            if out.finished_at is not None and pick.finished_at is None and (eligible or pick.watched_at is not None):
+                # Never before this row's own credit.
+                pick.finished_at = max(out.finished_at, _as_utc(pick.watched_at or out.finished_at))
+            # Progress is monotonic and applies to any row of the title, credited or not: retention
+            # deletes old sessions, so the maximum a session can report SHRINKS over time, and a fresh
+            # short session must never overwrite a real earlier one.
+            if out.max_percent is not None and (pick.max_percent is None or pick.max_percent < out.max_percent):
+                pick.max_percent = out.max_percent
+            # Counted, not assumed. `desired` is recomputed from the whole event log every pass, so
+            # "this user has a credit" is true for everyone who has ever watched anything — using it
+            # as "something changed" made one person pressing stop report all 47 users as credited
+            # and told every open dashboard to refetch.
+            if (pick.watched_at, pick.finished_at, pick.max_percent) != before:
+                wrote += 1
+    return wrote
+
+
+def _decide_shared(
+    user: User,
+    *,
+    shared: dict[tuple[int, str, int, str], datetime],
+    existing: dict[tuple[str, int, str], SharedRowWatch],
+    progress: dict,
+    latest_watch: dict[tuple[int, str], datetime],
+    finished_keys: set[tuple[int, str]],
+) -> dict[tuple[str, int, str], _Outcome]:
+    """What is true for this person on the SHARED rows, decided and written nowhere.
+
+    The shared twin of `_decide_outcomes`, and much the smaller of the two because it has only ONE
+    source. There is no snapshot path here on purpose: the snapshot asks "is this title on their shelf
+    NOW and did Plex flag it watched", and for a shared row that question cannot distinguish the row
+    doing its job from the title merely being popular — everyone sees a shared row, so every watch of
+    every title on it would credit. An event with a timestamp is the only evidence that survives that.
+    """
+    desired: dict[tuple[str, int, str], _Outcome] = {}
+    for (user_id, slug, tmdb_id, media_type), when in shared.items():
+        if user_id != user.id:
+            continue
+        out = desired.setdefault((slug, tmdb_id, media_type), _Outcome())
+        out.watched_at = when if out.watched_at is None else min(out.watched_at, when)
+
+    # Completion, ungated on membership for the same reason as the personal path: finishing a series
+    # months later happens long after the row moved on. Covers this pass's credits and any earlier
+    # one still open.
+    open_before = {key for key, row in existing.items() if row.watched_at is not None and row.finished_at is None}
+    for key in set(desired) | open_before:
+        title_key = (key[1], key[2])
+        if title_key not in finished_keys:
+            continue
+        out = desired.setdefault(key, _Outcome())
+        completed = latest_watch.get(title_key, out.watched_at)
+        if completed is not None:
+            out.finished_at = completed
+
+    # Films only — an episode's percentage is not the series', so `session_progress` returns None for
+    # a show and nothing is written.
+    for key, out in desired.items():
+        found = progress.get((user.plex_account_id, key[1], key[2]))
+        if found and found[1] is not None:
+            out.max_percent = found[1]
+            # Same rule as the personal path — see `FINISHED_PERCENT`.
+            if found[1] >= FINISHED_PERCENT and out.finished_at is None:
+                out.finished_at = out.watched_at or found[0]
+
+    return {k: v for k, v in desired.items() if any((v.watched_at, v.finished_at, v.max_percent))}
+
+
+def _apply_shared(
+    session: Session,
+    user: User,
+    desired: dict[tuple[str, int, str], _Outcome],
+    existing: dict[tuple[str, int, str], SharedRowWatch],
+    membership: RowMembership,
+) -> int:
+    """Write the decided shared-row state. The ONLY writer for `shared_row_watches`."""
+    wrote = 0
+    for key, out in desired.items():
+        slug, tmdb_id, media_type = key
+        row = existing.get(key)
+        created = row is None
+        if row is None:
+            # A SAVEPOINT around the insert, because two passes can be computing this same credit at
+            # once. `watch.reconcile` deliberately does not wait for a run (it writes no Plex state),
+            # and both it and the run's own end-of-run reconcile recompute every credit from the same
+            # event log — so whenever anyone stops a video mid-run, both produce the same new row and
+            # the second one violates the four-column primary key.
+            #
+            # Read-then-insert cannot fix that: `existing` was read at the top of the pass. The loser
+            # used to raise all the way out — and when the loser was the run, it landed in the run's
+            # own `except`, marking a run that had built and delivered every row on Plex as ERROR.
+            row = SharedRowWatch(
+                user_id=user.id,
+                collection_slug=slug,
+                tmdb_id=tmdb_id,
+                media_type=media_type,
+                title=membership.shared_title((tmdb_id, media_type)),
+            )
+            try:
+                with session.begin_nested():
+                    session.add(row)
+            except IntegrityError:
+                # The other pass got there first. Its row is the same row — both computed it from the
+                # same events — so take theirs and carry on into the update path below.
+                row = session.get(SharedRowWatch, (user.id, slug, tmdb_id, media_type))
+                if row is None:  # pragma: no cover — a conflict means it exists
+                    continue
+                created = False
+            existing[key] = row
+        before = (row.watched_at, row.finished_at, row.max_percent)
+        if row.watched_at is None and out.watched_at is not None:
+            row.watched_at = out.watched_at
+        # Only onto a credited watch, and never before its own credit.
+        if out.finished_at is not None and row.finished_at is None and row.watched_at is not None:
+            row.finished_at = max(out.finished_at, _as_utc(row.watched_at))
+        # Monotonic, same as `picks.max_percent`: retention deletes old sessions, so the maximum a
+        # session can report shrinks over time and a fresh short one must not overwrite a real
+        # earlier one.
+        if out.max_percent is not None and (row.max_percent is None or row.max_percent < out.max_percent):
+            row.max_percent = out.max_percent
+        if created or (row.watched_at, row.finished_at, row.max_percent) != before:
+            wrote += 1
+    return wrote
+
+
+#: How recent a credit must be for its ABSENCE to be read as an un-watch.
+#:
+#: A title goes missing from a watched-titles read for two very different reasons: the person
+#: un-watched it, or it is no longer in the library at all. Nothing distinguishes them — the read is
+#: "everything in this section with the watched flag set", and a deleted file is in no section. So an
+#: unbounded withdrawal would erase a year of hit-rate history the first time the owner tidied up
+#: their movies folder, silently, on the weekly pass.
+#:
+#: Bounding it keeps the case this exists for — Plex flags something watched wrongly and the person
+#: corrects it, which happens within days — and leaves settled history alone. The same 30 days the
+#: report already treats as a pick's fair chance.
+UNWATCH_WITHDRAW_DAYS = HIT_WINDOW_DAYS
+
+
+def _withdraw_unwatched(
+    session: Session,
+    user: User,
+    latest_watch: dict[tuple[int, str], datetime],
+    observed: set[tuple[int, str]],
+    *,
+    now: datetime,
+) -> int:
+    """Take back credits that Plex's flag was the ONLY evidence for, once that flag is gone.
+
+    Someone can un-watch a title, and Plex marks things watched wrongly often enough that correcting
+    it is normal housekeeping — a stray scrobble from a phone that woke in a pocket, a client
+    reporting a play for a trailer. Nothing here ever withdrew a credit, so one bad flag counted
+    toward the hit rate for ever and the dashboard's headline could only ever drift upward.
+
+    Two credits are NOT withdrawn, and the distinction is the whole point:
+
+    * **Anything we watched happen.** A `watch_sessions` row or a play-log event means we saw them
+      press play. Un-marking it in Plex afterwards does not undo that the row worked — the credit is
+      a fact about a moment, not a mirror of a checkbox. This is also what protects a partial watch,
+      which never sets the flag at all and would otherwise be withdrawn the instant it was credited.
+    * **Anything outside this read.** See the caller: only a FULL re-read can tell "they un-watched
+      it" from "this pass did not look".
+    * **Anything settled.** See `UNWATCH_WITHDRAW_DAYS`: past that, a title missing from the read is
+      far more likely to have left the library than to have been un-watched.
+
+    Returns how many were withdrawn, for the log.
+    """
+    cutoff = now - timedelta(days=UNWATCH_WITHDRAW_DAYS)
+    withdrawn = 0
+    for pick in session.query(PickRow).filter(PickRow.user_id == user.id, PickRow.watched_at.isnot(None)).all():
+        key = (pick.tmdb_id, pick.media_type)
+        if key in latest_watch or key in observed:
+            continue
+        # A percentage is playback we watched happen — the same evidence `observed` carries, but
+        # recorded on the pick itself rather than derived from a snapshot taken at the top of this
+        # pass. That snapshot is the gap: a live credit committed after `scan` was read but before
+        # this runs looks unjustified, and its credit AND its percentage were cleared. It healed on
+        # the next session end, but a partial watch is the one signal with no other source, so the
+        # cheap check is worth more than the tidiness of one rule.
+        if pick.max_percent is not None:
+            continue
+        if _as_utc(pick.watched_at) < cutoff:
+            continue  # settled history — see UNWATCH_WITHDRAW_DAYS
+        pick.watched_at = None
+        pick.finished_at = None
+        # The percentage is NOT cleared here, and cannot need to be: the guard above means a pick
+        # carrying one is never withdrawn at all. What protects against a percentage outliving its
+        # credit — which happens when the credited row is deleted and its history cleared — is
+        # `resolve_outcomes`, which refuses to call a percentage with no credit an outcome.
+        withdrawn += 1
+    return withdrawn
+
+
+@dataclass
+class _CreditInputs:
+    """Everything both credit passes need, built from ONE read of the play log.
+
+    :func:`reconcile_from_events` and :func:`reconcile_watched` must see the SAME world — the cheap
+    pass runs seconds after someone presses stop and the full one runs hours later over the same
+    events, and a disagreement between them shows up as a credit that appears and then vanishes.
+    They used to build these independently, in the same order, from the same tables, which is two
+    copies of "what happened" and two places for it to drift.
+
+    `progress` and `observed` are LAZY, and that is not a micro-optimisation. `reconcile_from_events`
+    fires on every single video stop and returns immediately when the play earned nobody a credit;
+    building them eagerly put `session_progress` (128-230ms at real-server sizes) on that path to be
+    thrown away. Reading either attribute computes it once and caches it, so both callers still write
+    `inputs.progress` and neither has to know.
+
+    Holding the session is safe by construction: the object is created and dropped inside one
+    `with sessions() as session:` block, and every field it derives is a pure read.
+    """
+
+    membership: RowMembership
+    credits: dict[tuple[int, int, str], tuple[datetime, frozenset[str]]]
+    shared: dict[tuple[int, str, int, str], datetime]
+    _session: Session
+    _tmdb_of: dict[int, tuple[int, str]]
+    _scan: list[tuple[int, datetime, set[tuple[int, str]]]]
+
+    @cached_property
+    def progress(self) -> dict[tuple[int, int, str], tuple[datetime, int | None]]:
+        """How far each title actually got, keyed the same way the events are. Stamped onto the pick
+        so the report can separate "opened and closed" from "gave it a real go" without joining
+        sessions on every read."""
+        return session_progress(self._session, _attribution_floor(self._session), self._tmdb_of)
+
+    @cached_property
+    def observed(self) -> dict[int, set[tuple[int, str]]]:
+        """Every title we have WATCHED HAPPEN for each account — a session or a play-log entry. Used
+        only to decide what `_withdraw_unwatched` must keep its hands off."""
+        out: dict[int, set[tuple[int, str]]] = defaultdict(set)
+        for account_id, _when, keys in self._scan:
+            out[account_id] |= keys
+        return out
+
+
+def _credit_inputs(session: Session) -> _CreditInputs:
+    """Read the play log once and derive everything the credit passes decide from.
+
+    Membership is a question about the PAST — "was this in their row when they pressed play" —
+    answered from the play log's exact timestamps against the delivery history in `picks` + `runs`.
+
+    `tmdb_by_rating_key` is a DISTINCT over the largest table in the schema (158,737 pick rows on a
+    real server) and `_scan_plays` walks the whole event log; between them the credit path was
+    rebuilding both up to five times per pass, seven passes a day, for byte-identical results. They
+    stay private to this object: they are how the credits are derived, not something a caller should
+    re-derive its own answer from.
+    """
+    membership = RowMembership(session)
+    tmdb_of = tmdb_by_rating_key(session)
+    scan = _scan_plays(session, tmdb_of)
+    return _CreditInputs(
+        membership=membership,
+        credits=event_credits(session, membership, scan),
+        # Shared rows credit into their own table: they write no pick rows, so before this they were
+        # invisible to watch tracking entirely — a title that lived only on a shared row credited
+        # nothing at all.
+        shared=shared_credits(session, membership, scan),
+        _session=session,
+        _tmdb_of=tmdb_of,
+        _scan=scan,
+    )
+
+
+def reconcile_from_events(sessions: sessionmaker[Session]) -> int:
+    """Apply the credits that PLAYBACK alone can justify, reading nothing from Plex. Returns the
+    number of people whose picks changed.
+
+    The cheap sibling of :func:`reconcile_watched`, for the moment a live session settles. Someone
+    watches twenty minutes of a pick and stops; the row earned that, and until this existed the fact
+    sat in `watch_sessions` until the next scheduled sync hours later — so the dashboard showed
+    nothing, and the owner reasonably concluded tracking was broken.
+
+    Deliberately NOT the full reconcile:
+
+    * **No Plex reads.** Everything here is already in our database. The full pass re-reads every
+      user's watched set from the PMS, which is minutes of work and pointless in response to one
+      person pressing stop.
+    * **No snapshot path.** That path exists for titles Plex flagged watched with no play behind
+      them; by definition a settling session is not one of those.
+    * **`history_depth` is not touched.** It means "how many titles this person has watched", answered
+      by the history read this function deliberately skips. Writing it from an empty history is
+      exactly the bug `reconcile_watched` documents — every user reading "0 titles watched".
+
+    Idempotent, like every job handler: it recomputes from the same events and writes the same
+    answers, and `_apply_outcomes` never moves a stamp that is already there.
+    """
+    changed = 0
+    with sessions() as session:
+        inputs = _credit_inputs(session)
+        # Before `inputs.progress` is read, so the lazy field is never computed on the path that
+        # returns here — which is most stops, since most plays are not of anything we recommended.
+        if not inputs.credits and not inputs.shared:
+            return 0
+        membership, credits, shared, progress = (
+            inputs.membership,
+            inputs.credits,
+            inputs.shared,
+            inputs.progress,
+        )
+
+        # Only the people an event actually names. The full pass walks every profile it was handed;
+        # here that would be 47 users to apply at most one person's watch.
+        touched = {user_id for user_id, _t, _m in credits} | {user_id for user_id, _s, _t, _m in shared}
+        shared_rows: dict[int, dict[tuple[str, int, str], SharedRowWatch]] = defaultdict(dict)
+        for row in session.query(SharedRowWatch).filter(SharedRowWatch.user_id.in_(touched)).all():
+            shared_rows[row.user_id][(row.collection_slug, row.tmdb_id, row.media_type)] = row
+
+        for user in session.query(User).filter(User.id.in_(touched), User.removed_at.is_(None)).all():
+            desired = _decide_outcomes(
+                session,
+                user,
+                credits=credits,
+                progress=progress,
+                latest_watch={},
+                finished_keys=set(),
+                # Empty: the snapshot path is what this argument drives, and it is deliberately not
+                # run here. Passing the live set would credit a title Plex flagged watched, from a
+                # function that never asked Plex anything.
+                live_pick_ids_for_user=set(),
+            )
+            existing = shared_rows[user.id]
+            shared_desired = _decide_shared(
+                user, shared=shared, existing=existing, progress=progress, latest_watch={}, finished_keys=set()
+            )
+            if not desired and not shared_desired:
+                continue
+            wrote = _apply_outcomes(session, user, desired)
+            wrote += _apply_shared(session, user, shared_desired, existing, membership)
+            if wrote:
+                changed += 1
+        session.commit()
+    return changed
+
+
+def reconcile_watched(
+    sessions: sessionmaker[Session],
+    profiles,
+    live_picks: dict[int, set[int]] | None = None,
+    *,
+    full_resync: bool = False,
+) -> None:
     """Mark the picks a person actually watched — the hit rate, and the whole point of the app.
 
     `picks.watched_at` was declared, migrated and read by the hit-rate query, but never WRITTEN:
     every user's hit rate was structurally 0%, while the docs promised "expect 20-40%".
 
-    A pick counts as a hit only when the watch happened AFTER we recommended it (the run that
-    produced it) and within 30 days — recommending something they had already seen isn't a hit,
-    and neither is a watch a year later. `history_depth` is refreshed here too; it was likewise
-    surfaced in the UI and written nowhere, so every user read "0 titles watched".
+    **A pick is credited only if the title was in one of their LIVE rows at the time.** It used to be
+    credited on a 30-day clock from delivery with no membership test at all, which credited a title
+    the row had dropped weeks earlier — they could not have watched it from a shelf that no longer
+    showed it, so ~27 of those 30 days were only ever measuring "they found it some other way". This
+    cannot be done by asking "is it in the row now" at the far end of a run: the engine drops titles
+    the person has watched, so the rebuild removes a title *because* it was watched, and every real
+    hit would score zero. Hence `live_picks` — a snapshot taken BEFORE the rebuild (see
+    `RunService.start_run`), which is what was on their shelf during the window they were watching in.
+
+    `history_depth` is refreshed here too; it was likewise surfaced in the UI and written nowhere, so
+    every user read "0 titles watched".
 
     `finished_at` is stamped alongside, and answers the harder question. `watched_at` comes from
     Plex's binary flag, which for a SERIES flips on the first finished episode — so it has always
     scored one episode of a 60-episode show like a whole film (measured 2026-08-16: only 21 of 158
     credited show picks were actually finished). See `WatchedItem.is_finished` for the threshold and
     why it is ours to choose rather than Plex's to report.
+
+    Completion is deliberately NOT gated on membership: once a pick is credited, the title leaves the
+    row (that is what being watched does), so re-testing membership when they finish a series months
+    later would refuse to upgrade a single "started" to "finished".
+
+    A new credit is carried onto every delivery row of that title by :func:`_apply_outcomes`, subject
+    to its two bounds — `created_at <= watched_at` (a delivery made after they watched cannot be why)
+    and `collection_slug in slugs` (only rows that were actually showing it). The membership test
+    decides IF; those bounds decide where the report can see it.
+
+    Args:
+        sessions: Session factory; one session covers the whole reconcile.
+        profiles: The profiles whose `history` this pass read. An empty history contributes nothing.
+        live_picks: What was in each person's rows before this run rebuilt them, from
+            :func:`live_pick_ids`. Computed fresh when omitted — correct for the standalone watch
+            sweep, which rebuilds no rows, and wrong for a run, which already has.
     """
     with sessions() as session:
+        # The same world the cheap pass sees — see `_credit_inputs`. `live_picks` below is the old
+        # snapshot path, kept only for the watches that produced no event (a title Plex marked watched
+        # with no play recorded, 48% of one real user's watched set) and therefore still have to be
+        # asked about as of now.
+        inputs = _credit_inputs(session)
+        membership, credits, shared, progress, observed = (
+            inputs.membership,
+            inputs.credits,
+            inputs.shared,
+            inputs.progress,
+            inputs.observed,
+        )
+        shared_rows: dict[int, dict[tuple[str, int, str], SharedRowWatch]] = defaultdict(dict)
+        for row in session.query(SharedRowWatch).all():
+            shared_rows[row.user_id][(row.collection_slug, row.tmdb_id, row.media_type)] = row
+        # The snapshot path is NOT redundant now that events exist, and was very nearly deleted as
+        # such. It credits a title Plex flagged as watched with no play event behind it — 893 of one
+        # real user's 1,840 watched titles, 48%: marked watched by hand, bulk-marked, or watched
+        # before the log existed. None of those ever generated an event, so the event path is blind
+        # to them. It runs first and wins where it has an answer; this catches the rest.
+        live = live_picks if live_picks is not None else live_pick_ids(session)
         for profile in profiles:
             user = session.query(User).filter_by(slug=profile.slug).first()
             if user is None:
@@ -209,60 +882,59 @@ def reconcile_watched(sessions: sessionmaker[Session], profiles) -> None:
                 if item.tmdb_id is None:
                     continue
                 key = (item.tmdb_id, str(item.media_type))
-                when = item.watched_at if item.watched_at.tzinfo else item.watched_at.replace(tzinfo=UTC)
+                when = _as_utc(item.watched_at)
                 if key not in latest_watch or when > latest_watch[key]:
                     latest_watch[key] = when
                 if item.is_finished:
                     finished_keys.add(key)
-            if not latest_watch:
-                continue
 
-            # Only picks recent enough to still be creditable: a pick older than the window can
-            # never become a hit, so scanning every unwatched pick ever recorded is dead work
-            # that grows without bound. Uses the pick's own created_at (when it was delivered),
-            # not the run's started_at — so picks that outlive their run (after clear/prune) are
-            # still creditable.
-            cutoff = datetime.now(UTC) - timedelta(days=HIT_WINDOW_DAYS)
-            # Two groups in one scan, both still missing `finished_at`:
-            #   * not yet credited, and young enough to still be creditable — the original case;
-            #   * ALREADY credited but unfinished — a series they have since watched out.
-            # The second group carries no age bound on purpose. A series finished 60 days after
-            # delivery is still a series they finished, and the pick is already counted, so stamping
-            # completion late cannot inflate any total. It is bounded by "credited but unfinished",
-            # which is small (139 rows on a real 47-user server), not by the size of `picks`.
-            candidates = (
-                session.query(PickRow)
-                .filter(
-                    PickRow.user_id == user.id,
-                    PickRow.finished_at.is_(None),
-                    or_(
-                        PickRow.watched_at.isnot(None),
-                        and_(PickRow.watched_at.is_(None), PickRow.created_at >= cutoff),
-                    ),
-                )
-                .all()
+            # DECIDE, then WRITE. Not gated on `latest_watch`: that is Plex's binary flag, and the two
+            # cases this feature exists for do not set it — a title the row has since dropped, and a
+            # partial watch, which never flips the flag at all.
+            desired = _decide_outcomes(
+                session,
+                user,
+                credits=credits,
+                progress=progress,
+                latest_watch=latest_watch,
+                finished_keys=finished_keys,
+                live_pick_ids_for_user=live.get(user.id, set()),
             )
-            for pick in candidates:
-                key = (pick.tmdb_id, pick.media_type)
-                watched = latest_watch.get(key)
-                if watched is None:
-                    continue
-                if pick.watched_at is None:
-                    since = pick.created_at if pick.created_at.tzinfo else pick.created_at.replace(tzinfo=UTC)
-                    if not (since <= watched <= since + timedelta(days=HIT_WINDOW_DAYS)):
-                        continue
-                    pick.watched_at = watched
-                if key in finished_keys:
-                    # The show's own `lastViewedAt` — the most recent episode they watched, which for
-                    # a series that is now complete IS when they finished it, rather than the night we
-                    # happened to notice.
-                    #
-                    # Nothing reads this VALUE today: every consumer asks only whether the column is
-                    # set, and the trend buckets on `watched_at` by design. It is stored truthfully
-                    # anyway so that a future consumer windowing on `finished_at` gets a real date
-                    # instead of a sync timestamp — which is a fact about this column that cannot be
-                    # recovered later if it is thrown away now.
-                    pick.finished_at = watched
+            _apply_outcomes(session, user, desired)
+
+            # Only on a FULL re-read, and only for someone whose history actually came back. An
+            # incremental read sees an un-watch only inside the window it covered (see
+            # `WatchSync._full_resync_due`), so "absent from this read" would withdraw half a
+            # roster's credits on any night the cursor was narrow. An EMPTY history is excluded for
+            # the same reason from the other direction: a read that failed and a person who has
+            # watched nothing are indistinguishable here, and wrongly wiping real history is far
+            # worse than leaving one stale credit for someone who un-watched their only title.
+            if full_resync and profile.history:
+                gone = _withdraw_unwatched(
+                    session,
+                    user,
+                    latest_watch,
+                    observed.get(user.plex_account_id, set()),
+                    now=datetime.now(UTC),
+                )
+                if gone:
+                    logger.info("watch-sync: withdrew {} un-watched credit(s) for {}", gone, user.username)
+
+            existing = shared_rows[user.id]
+            _apply_shared(
+                session,
+                user,
+                _decide_shared(
+                    user,
+                    shared=shared,
+                    existing=existing,
+                    progress=progress,
+                    latest_watch=latest_watch,
+                    finished_keys=finished_keys,
+                ),
+                existing,
+                membership,
+            )
         session.commit()
 
 
@@ -384,7 +1056,35 @@ def prune_runs(session: Session, retention_months: int) -> int:
       keyed by SLUG rather than by foreign key precisely so it outlives runs and rows; deleting
       it would strand real collections on real users' servers with nothing left that knows to
       clean them up.
+    * **shared_row_watches** — the impact ledger for SHARED rows, and kept for the same reason as
+      `picks`. It is deliberately NOT on the watch-table ceiling below: that ceiling exists because
+      `watch_events`/`watch_sessions` grow with every play by every account on the server, while this
+      is bounded by (people x titles a shared row has recommended) and is the only record that a
+      shared row ever worked.
     """
+    # Watch history ages out FIRST, on its own ceiling, before any of the run bookkeeping below. It is
+    # not tied to a run and it grows with every play by every account on the server rather than with
+    # Shortlist's own activity — so behind the run guards it grew without bound in three reachable
+    # states: `runs.retention = 0` ("keep run history for ever", a supported setting), no run old
+    # enough to prune yet, and after `DELETE /api/runs`, which is offered as a way to RECLAIM space.
+    watch_cutoff = datetime.now(UTC) - timedelta(days=max(retention_months, WATCH_RETENTION_MONTHS) * 30)
+    # `source='transfer'` rows are EXEMPT. They are not plays that happened here — they are a
+    # watching-account transfer's copy of the source's true watch dates, and they are the only carrier
+    # of those dates: `stamp_true_dates` reads them back from this table so `WatchSync` can re-run it
+    # once the target's `watched_titles` rows exist. Most are years old by construction, so the
+    # six-month ceiling deletes them almost in full — and a prune landing between the transfer and the
+    # target's first watch sync leaves `source_viewed_at` NULL for ever, silently, which is exactly the
+    # failure that column exists to prevent.
+    #
+    # They are also not what the ceiling is for: it bounds rows that grow with every play by every
+    # account, while these are bounded by titles-on-one-account and are written once.
+    (
+        session.query(WatchEvent)
+        .filter(WatchEvent.viewed_at < watch_cutoff, WatchEvent.source != "transfer")
+        .delete(synchronize_session=False)
+    )
+    session.query(WatchSession).filter(WatchSession.started_at < watch_cutoff).delete(synchronize_session=False)
+
     if retention_months <= 0:
         return 0
     cutoff = datetime.now(UTC) - timedelta(days=retention_months * 30)
@@ -454,6 +1154,17 @@ def _pick_dicts(user_report) -> list[dict]:
     """
     return [
         {
+            # The ids come FIRST because they are what makes this blob joinable. Without them a
+            # shared row's picks — which live only here, never in `picks` — could not be matched to a
+            # watch event at all: the event arrives carrying a rating key, and this carried title and
+            # year. Title matching is the kind of guess that has bitten this codebase before.
+            "tmdb_id": p.tmdb_id,
+            # TMDB ids are namespaced PER TYPE — movie 1399 is not show 1399 — so the id alone does
+            # not identify a title. Omitting this made every shared-row credit a silent no-op on the
+            # real server: the pool keyed `(tmdb_id, "")` and never intersected the `(tmdb_id,
+            # "movie")` the play log resolves to. Found on SFLIX 2026-08-24, not by any test.
+            "media_type": p.media_type.value,
+            "rating_key": p.rating_key,
             "rank": p.rank,
             "title": p.title,
             "reason": p.reason,
@@ -465,6 +1176,65 @@ def _pick_dicts(user_report) -> list[dict]:
         }
         for p in user_report.picks
     ]
+
+
+def _shared_muted(session: Session, slug: str) -> list[int] | None:
+    """Who had this row switched off at delivery, as a DENY-list.
+
+    Muting is the other way somebody does not get a row, and it applies to a public row too — so a
+    snapshot that only looked at `collection_audience` would credit a shared row for a play by
+    someone who had turned it off. Kept apart from `audience` because subtracting it there turns
+    "everyone" into a fixed list; see `RunSharedRow.muted`.
+    """
+    collection = session.query(Collection).filter_by(slug=slug).first()
+    if collection is None:
+        return None
+    muted = sorted(
+        account_id
+        for (account_id,) in session.query(User.plex_account_id)
+        .join(CollectionUserOverride, CollectionUserOverride.user_id == User.id)
+        .filter(
+            CollectionUserOverride.collection_id == collection.id,
+            CollectionUserOverride.muted.is_(True),
+        )
+        .all()
+    )
+    return muted or None
+
+
+def _shared_audience(session: Session, slug: str) -> list[int] | None:
+    """The plex account ids that could SEE this shared row at delivery; None = everyone.
+
+    Snapshotted per run because `collection_audience` is current state with no history. Without it,
+    adding someone to a subset row today would retroactively credit every watch they made before they
+    could see the row — attribution would silently change for the past every time the owner edited an
+    audience.
+    """
+    collection = session.query(Collection).filter_by(slug=slug).first()
+    if collection is None:
+        return None
+    if collection.audience != "subset":
+        # Public is public. `None` means no allow-list at all.
+        return None
+    # The allow-list ONLY. Mutes are a separate deny-list (`_shared_muted` / `RunSharedRow.muted`),
+    # and the two columns must not encode the same fact: subtract the mute here and `audience` stops
+    # meaning "who was allowed to see this" and starts meaning "who was allowed AND had not muted it",
+    # which no reader can tell apart from the first. `_shared_visible_to` then answers correctly only
+    # because it applies the deny-list a second time, so the column is wrong and the answer is right
+    # by luck. Any future reader of `audience` alone — a UI, an export, an audit of who a row went to
+    # — inherits the corruption.
+    #
+    # It is NOT a live credit-loss bug, and an earlier version of this comment claimed it was: both
+    # columns are frozen on the same `RunSharedRow` by the same run, so un-muting someone changes
+    # neither until the next run rewrites both, and both shapes exclude them meanwhile. Verified by
+    # review 2026-08-24 across the full matrix — the outcomes are identical, only the record differs.
+    return sorted(
+        account_id
+        for (account_id,) in session.query(User.plex_account_id)
+        .join(CollectionAudience, CollectionAudience.user_id == User.id)
+        .filter(CollectionAudience.collection_id == collection.id)
+        .all()
+    )
 
 
 def _persist_shared_row_report(session: Session, run_id: int, user_report, dry_run: bool) -> None:
@@ -498,6 +1268,11 @@ def _persist_shared_row_report(session: Session, run_id: int, user_report, dry_r
     row.breakdown = breakdown
     row.trace = user_report.trace
     row.picks = _pick_dicts(user_report)
+    row.audience = _shared_audience(session, slug)
+    row.muted = _shared_muted(session, slug)
+    # Stamped HERE, as the row is persisted, which is the moment its contents are on Plex. See the
+    # column's own comment for why `Run.started_at` is the wrong clock.
+    row.delivered_at = datetime.now(UTC)
     if not dry_run:
         _forget_removed_deliveries(session, user_report.slug, user_report.removed_deliveries)
         _record_deliveries(session, user_report.slug, breakdown)
@@ -690,6 +1465,7 @@ def _emit_request_events(session: Session, run_id: int, report) -> None:
             dry_run=report.dry_run,
             wanted=report.requests.wanted,
             pool_size=report.requests.pool_size,
+            dropped_by_language=report.requests.dropped_by_language,
             examined=report.requests.examined,
             lookups_spent=report.requests.lookups_spent,
             exhausted_pool=report.requests.examined >= report.requests.pool_size,

@@ -240,3 +240,96 @@ class TestPersistRequestQueue:
             # A dismissed title must not reappear, and a sent one must not be re-queued as pending.
             assert by_id[1].status == "rejected" and by_id[1].demand == 1
             assert by_id[2].status == "sent" and by_id[2].demand == 1
+
+
+class TestTheOtherLanguageReasonIsAThresholdNotAFailure:
+    """`_is_failure_detail` classifies a stored `detail` by its leading words, and the other-language
+    reason is covered only because it happens to start with "rating below" — the same prefix the
+    auto_min_rating reason uses.
+
+    That coupling is a coincidence of wording, and `QUEUE_REASON_PREFIXES` says so in a comment. This
+    pins it: reword either string on its own and a title merely held back starts being recorded as a
+    request that FAILED, which then outlives the threshold note it should have been replaced by.
+    """
+
+    def test_the_language_bar_reason_is_not_read_as_a_send_failure(self):
+        from shortlist.server.services.run_persistence import _is_failure_detail
+
+        assert not _is_failure_detail("rating below the bar for other languages (8.5)")
+        assert not _is_failure_detail("rating below auto_min_rating (8.0)")
+        # ...while a real Arr failure still is, or the two would be indistinguishable.
+        assert _is_failure_detail("Sonarr returned HTTP 503")
+
+    def test_every_queue_reason_the_gate_can_emit_classifies_as_a_threshold(self):
+        """Every reason `_auto_eligible` can assign, read out of its own AST — not restated here.
+
+        `requests.py` warns that restating these strings is what lets them drift: an unprefixed reason
+        makes `_is_failure_detail` record a merely-held title as a request that FAILED, which then
+        outlives the threshold note that should have replaced it.
+
+        Walked with `ast`, not a regex, and that difference is the point. A regex only sees reasons
+        written as `reason = "..."`, so one built by a lookup table, a helper call or a concatenation
+        is invisible to it — the test passes while covering nothing, which is the failure mode it
+        exists to prevent. This sees every FORM of assignment to `reason` (plain, annotated,
+        augmented, walrus, tuple-unpacked) and asserts each value is a plain literal, so anything it
+        cannot verify fails loudly instead of silently.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        from shortlist.engine import requests as requests_mod
+        from shortlist.engine.requests import QUEUE_REASON_PREFIXES
+        from shortlist.server.services.run_persistence import _is_failure_detail
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(requests_mod._auto_eligible)))
+
+        def targets_reason(node) -> bool:
+            """Every way `reason` can be written to, not just `reason = ...`.
+
+            `AnnAssign` (`reason: str = ...`), `AugAssign` (`reason += ...`), a walrus and a tuple
+            target are all real Python and all invisible to a bare `ast.Assign` + `ast.Name` filter —
+            so a new reason written any of those ways would pass SILENTLY, which is the failure this
+            test exists to end. Catching them here makes an unverifiable form fail loudly instead.
+            """
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            elif isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+                targets = [node.target]
+            else:
+                return False
+            flat = [e for t in targets for e in (t.elts if isinstance(t, (ast.Tuple, ast.List)) else [t])]
+            return any(isinstance(t, ast.Name) and t.id == "reason" for t in flat)
+
+        assigns = [node for node in ast.walk(tree) if targets_reason(node)]
+        assert assigns, "found no assignments to `reason` — has the gate been restructured?"
+
+        leading: list[str] = []
+        for node in assigns:
+            value = node.value
+            assert value is not None, "a bare `reason: str` annotation assigns nothing to check"
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                leading.append(value.value)
+            elif isinstance(value, ast.JoinedStr):
+                # An f-string: only the leading literal matters, because the prefixes are leading
+                # words and any interpolation comes after them. Both degenerate forms are checked
+                # rather than indexed blindly — `f""` parses to an EMPTY `values`, so `values[0]`
+                # would raise IndexError and report a crash where the point is to report a reason
+                # that cannot be prefix-matched.
+                first = value.values[0] if value.values else None
+                assert isinstance(first, ast.Constant), (
+                    "a reason that is empty or starts with an interpolation cannot be prefix-matched; "
+                    "give it a literal opening or add its form to QUEUE_REASON_PREFIXES"
+                )
+                leading.append(first.value)
+            else:
+                raise AssertionError(
+                    f"`reason` assigned a {type(value).__name__} this test cannot verify — a lookup "
+                    "table or helper would slip past prefix checking entirely. Keep reasons literal."
+                )
+
+        for text in leading:
+            assert text.startswith(QUEUE_REASON_PREFIXES), (
+                f"{text!r} matches no prefix in QUEUE_REASON_PREFIXES — a held title would be recorded as a failed send"
+            )
+            assert not _is_failure_detail(text), f"{text!r} reads as a send failure"

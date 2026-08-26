@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hmac
 import logging
@@ -42,6 +43,7 @@ from shortlist.server.scheduler import build_scheduler
 from shortlist.server.services.run_service import RunService
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.services.sse import EventBus
+from shortlist.server.services.watch_stream import WatchStream
 from shortlist.server.settings_store import SECRET_KEYS, SettingsStore
 
 WEB_DIST = Path(__file__).parent.parent.parent / "web" / "dist"
@@ -246,6 +248,27 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         scheduler = build_scheduler(app)
         scheduler.start()
         app.state.scheduler = scheduler
+
+        # The live playback listener. A long-lived socket rather than a scheduled job, because the
+        # thing it captures — someone STARTING something and giving up — exists nowhere else: Plex's
+        # own history log records completions only, so a poll of any frequency would miss it. It
+        # reconnects on its own and every gap it leaves is repaired by the play log on the next sweep,
+        # so a failure here degrades the data rather than breaking the app.
+        # `drain=`: the listener wakes the job worker the moment it queues a credit pass, instead of
+        # the job sitting out the worker's 60s tick. Measured before this: 87s from pressing play to
+        # the dashboard, 58.6s of it queue wait for 0.5s of work.
+        from shortlist.server.services import jobs
+
+        watch_stream = WatchStream(
+            app.state.sessions,
+            app.state.run_service.build_context,
+            # `drain_kind`, not `drain_now`: a playback event may only run the read-only credit
+            # pass it asked for. Draining the whole queue let pressing play start a plex.tv write.
+            drain=lambda: jobs.drain_kind(app.state, "watch.reconcile"),
+        )
+        app.state.watch_stream = watch_stream
+        stream_task = asyncio.create_task(watch_stream.run())
+
         from shortlist.server.safe_mode import force_dry_run, misconfigured_dry_run
 
         if force_dry_run():
@@ -259,6 +282,14 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
             yield
         finally:
             scheduler.shutdown(wait=False)
+            watch_stream.stop()
+            # Awaited, not just cancelled: `run()` closes every in-flight session on its way out, and
+            # cancelling immediately makes that unreachable — every open session would survive the
+            # restart with no `ended_at`, reading as "still playing" for ever.
+            try:
+                await asyncio.wait_for(stream_task, timeout=5)
+            except (TimeoutError, asyncio.CancelledError):
+                stream_task.cancel()
 
     # The interactive API docs + schema disclose the whole API surface unauthenticated. They're off
     # by default (nothing sensitive, but no reason to advertise); set SHORTLIST_ENABLE_DOCS=1 to
@@ -296,6 +327,14 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         app.mount("/assets", StaticFiles(directory=WEB_DIST / "assets"), name="assets")
         web_root = WEB_DIST.resolve()
         index = web_root / "index.html"
+        #: `index.html` is the only file that NAMES the hashed bundles, so it is the one file a
+        #: browser must never reuse without asking. It was served with no `cache-control` at all,
+        #: which leaves the browser to guess from `last-modified` — and a browser that guesses "still
+        #: fresh" keeps both the old shell AND the old bundle it names, so a deploy is invisible
+        #: until someone hard-refreshes. Reported 2026-08-25: an owner looking straight at wording
+        #: that had already shipped. `no-cache` means revalidate, not "do not store": the etag still
+        #: makes it a 304 on the overwhelmingly common unchanged case.
+        SHELL_HEADERS = {"cache-control": "no-cache, must-revalidate"}
 
         @app.get("/{path:path}", include_in_schema=False)
         async def spa(path: str):  # SPA fallback: every non-API path serves the app shell
@@ -306,8 +345,11 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
                 # web_root before serving it as a file (plex-safety: secrets never leave the box).
                 target = (web_root / path).resolve()
                 if target.is_relative_to(web_root) and target.is_file():
-                    return FileResponse(target)
-            return FileResponse(index)
+                    # The shell by any other route (`/index.html`) gets the same treatment; the
+                    # hashed assets under /assets are content-addressed and may be cached freely.
+                    headers = SHELL_HEADERS if target == index else None
+                    return FileResponse(target, headers=headers)
+            return FileResponse(index, headers=SHELL_HEADERS)
 
     return app
 

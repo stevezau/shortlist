@@ -27,6 +27,163 @@ class TestSettingsValidation:
         assert client.put("/api/settings", json={"values": {"plextv.throttle_s": -1}}).status_code == 422
         assert client.put("/api/settings", json={"values": {"plextv.throttle_s": 61}}).status_code == 422
 
+    def test_the_sonarr_monitor_mode_accepts_only_the_modes_shortlist_offers(self, client: TestClient):
+        # Sonarr 400s the whole add on a monitor value it doesn't know, so a typo saved here would
+        # surface a fortnight later as shows that never arrived — with nothing on screen to explain it.
+        for offered in ("all", "firstSeason", "lastSeason", "pilot", "none"):
+            resp = client.put("/api/settings", json={"values": {"requests.sonarr.monitor": offered}})
+            assert resp.status_code == 200, f"{offered}: {resp.text}"
+
+        # The accepted set is a SUBSET of Sonarr's enum, so these are refused even though Sonarr
+        # itself would take them. `future`/`existing`/`recent` monitor nothing at all on a show the
+        # server doesn't have yet (measured on Sonarr 4.0.19: 0 of 162 episodes), which is what
+        # `none` says plainly; `missing` is the opposite — with nothing on disk it measured
+        # identically to `all` (156/162), so it is `all` under a name suggesting restraint; `skip`
+        # and `monitorSpecials` are internal / season-0 only. Accepting any of them would put a mode
+        # in the DB that no screen can show or undo.
+        for refused in ("recent", "future", "existing", "missing", "skip", "monitorSpecials", "first season"):
+            resp = client.put("/api/settings", json={"values": {"requests.sonarr.monitor": refused}})
+            assert resp.status_code == 422, f"{refused} was accepted"
+
+    def test_the_language_mode_accepts_only_the_modes_shortlist_offers(self, client: TestClient):
+        for offered in ("any", "prefer", "only"):
+            resp = client.put("/api/settings", json={"values": {"requests.language_mode": offered}})
+            assert resp.status_code == 200, f"{offered}: {resp.text}"
+        for refused in ("english_only", "prefer_english", "en", "", "ANY"):
+            resp = client.put("/api/settings", json={"values": {"requests.language_mode": refused}})
+            assert resp.status_code == 422, f"{refused} was accepted"
+
+    def test_preferred_languages_must_be_iso_639_1_codes(self, client: TestClient):
+        """A code that isn't two letters matches no title's `original_language`, so every title on the
+        server would silently reclassify as "other" and take the higher bar — the feature appearing to
+        misbehave, with nothing on screen to connect it to the typo that caused it."""
+        assert client.put("/api/settings", json={"values": {"requests.preferred_languages": ["en"]}}).status_code == 200
+        assert (
+            client.put("/api/settings", json={"values": {"requests.preferred_languages": ["en", "ja"]}}).status_code
+            == 200
+        )
+        # Empty is legal and meaningful: in "only" mode it requests nothing.
+        assert client.put("/api/settings", json={"values": {"requests.preferred_languages": []}}).status_code == 200
+        for refused in (["english"], ["e"], ["en-US"], ["e1"], "en", [5]):
+            resp = client.put("/api/settings", json={"values": {"requests.preferred_languages": refused}})
+            assert resp.status_code == 422, f"{refused} was accepted"
+
+    def test_a_long_list_of_bad_codes_says_how_many_it_did_not_show(self, client: TestClient):
+        """Same reason as the row endpoint: a truncated list without a count sends the owner round
+        the loop twice."""
+        resp = client.put(
+            "/api/settings",
+            json={"values": {"requests.preferred_languages": [f"{c}1" for c in "abcdefg"]}},
+        )
+        assert resp.status_code == 422
+        assert "(+2 more)" in resp.text
+
+    def test_too_many_languages_is_refused(self, client: TestClient):
+        """Unbounded, this is a setting an owner can store megabytes into — and it is read on every
+        run, so the ceiling is cheaper than the audit."""
+        ok = client.put("/api/settings", json={"values": {"requests.preferred_languages": ["en"] * 50}})
+        assert ok.status_code == 200
+        too_many = client.put("/api/settings", json={"values": {"requests.preferred_languages": ["en"] * 51}})
+        assert too_many.status_code == 422
+        assert "too many languages" in too_many.text
+
+    def test_the_other_language_bar_accepts_null_because_null_is_a_meaning(self, client: TestClient):
+        """None is not "unset" here — it means "follow min_rating + 1.5", which is the SHIPPED default
+        precisely so no fixed number of ours is imposed on anyone's server. A validator that rejected
+        null would make the default unsettable from the UI."""
+        assert client.put("/api/settings", json={"values": {"requests.min_rating_other": 11}}).status_code == 422
+        assert client.put("/api/settings", json={"values": {"requests.min_rating_other": -1}}).status_code == 422
+
+        def round_trip(value):
+            """Accepting a value is not the same as STORING it — assert what reads back, because a
+            store that coerced null to 0.0 would pass a status-code check and then hand every run a
+            bar of zero."""
+            assert client.put("/api/settings", json={"values": {"requests.min_rating_other": value}}).status_code == 200
+            return client.get("/api/settings").json()["requests.min_rating_other"]
+
+        assert round_trip(8.5) == 8.5
+        assert round_trip(None) is None, "null must survive as null, or the bar stops following"
+        # 0.0 is falsy and is a REAL bar (nothing can fail it). It must not read back as null, or the
+        # owner's deliberate "send anything" becomes "follow my minimum rating + 1.5" on the next run.
+        assert round_trip(0.0) == 0.0
+
+    def test_the_shipped_language_defaults_change_nothing(self, client: TestClient):
+        """An upgrade must not start filtering anyone's requests. The mode is what is off; the
+        language list is merely the value that mode never reads."""
+        values = client.get("/api/settings").json()
+        assert values["requests.language_mode"] == "any"
+        assert values["requests.preferred_languages"] == ["en"]
+        assert values["requests.min_rating_other"] is None
+
+    @staticmethod
+    def _last_settings_event(client: TestClient) -> dict:
+        import json
+
+        from shortlist.server.db.models import Event
+
+        with client.app.state.sessions() as session:
+            event = session.query(Event).filter(Event.scope == "settings.change").order_by(Event.id.desc()).first()
+        assert event is not None, "a settings change must leave an audit row"
+        return json.loads(event.message) if isinstance(event.message, str) else event.message
+
+    def test_a_settings_change_records_who_made_it(self, client: TestClient):
+        """WHAT changed and WHEN were recorded; WHO was not — so a value that moved with nobody
+        owning up to it was unanswerable. Observed live (2026-08-26): a request threshold moved by
+        0.2 between two runs and no record could say what did it.
+
+        Asserted as an ALLOWLIST on the whole dict, not key-by-key. A blacklist of forbidden names
+        cannot catch a field added under a name nobody thought of — and the field this must never
+        carry is a client IP, which could arrive as `origin`, `remote`, `host` or anything else.
+        """
+        resp = client.put(
+            "/api/settings",
+            json={"values": {"requests.min_rating": 7.9}},
+            headers={"User-Agent": "Mozilla/5.0 (Macintosh) TestBrowser/1.0"},
+        )
+        assert resp.status_code == 200, resp.text
+
+        message = self._last_settings_event(client)
+        actor = message.get("actor")
+        assert actor, "the audit row must say who made the change"
+        assert set(actor) == {"via", "account_id", "client"}, (
+            f"unexpected actor fields {sorted(set(actor) - {'via', 'account_id', 'client'})} — a client IP "
+            f"must never reach an immutable row the support bundle exports"
+        )
+        assert actor["via"] == "browser", "a cookie session must not label itself as an API token"
+        assert actor["account_id"], "the account id is the field the whole feature exists to record"
+        assert "TestBrowser/1.0" in actor["client"]
+        # The change itself is still recorded — the actor is an addition, not a replacement.
+        assert "requests.min_rating" in message["changed"]
+
+    def test_the_actor_distinguishes_an_api_token_from_a_browser(self, client: TestClient):
+        """The untested half, and the likelier culprit: a value that moves with nobody owning up to
+        it is more often an automation than the owner's own browser."""
+        token = client.post("/api/settings/token").json().get("token")
+        if not token:  # the endpoint shape differs across builds; skip rather than assert on it
+            import pytest as _pytest
+
+            _pytest.skip("no API token endpoint on this build")
+        resp = client.put(
+            "/api/settings",
+            json={"values": {"requests.min_votes": 111}},
+            headers={"Authorization": f"Bearer {token}", "User-Agent": "curl/8.4.0"},
+        )
+        assert resp.status_code == 200, resp.text
+        actor = self._last_settings_event(client)["actor"]
+        assert actor["via"] == "api_token"
+        assert actor["client"] == "curl/8.4.0"
+
+    def test_a_client_that_sends_no_user_agent_simply_has_no_client_field(self, client: TestClient):
+        """A script with no UA must not store an empty string that reads like a real client."""
+        resp = client.put(
+            "/api/settings",
+            json={"values": {"requests.min_votes": 122}},
+            headers={"User-Agent": ""},
+        )
+        assert resp.status_code == 200, resp.text
+        actor = self._last_settings_event(client)["actor"]
+        assert "client" not in actor
+
     def test_a_bad_plex_timeout_is_refused(self, client: TestClient):
         # It's read unguarded as int(...) in build_context, so a bad stored value would crash every run.
         assert client.put("/api/settings", json={"values": {"plex.timeout_s": 45}}).status_code == 200

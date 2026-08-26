@@ -425,3 +425,42 @@ describe("UsersPage — Plex Home accounts", () => {
     expect(patchUser).toHaveBeenCalledWith(9, { enabled: true });
   });
 });
+
+/** The way back to the watching-account tool.
+ *
+ *  It used to live only on the owner note, which is dismissible — and dismissing "you see everyone's
+ *  rows" is how people say "yes, I know", not "hide the tool from me for ever". Once dismissed, the
+ *  only route back was remembering the URL.
+ */
+describe("UsersPage — reaching the watching account", () => {
+  beforeEach(() => {
+    getUsers.mockReset();
+  });
+
+  it("offers it in the header when an owner is registered", async () => {
+    getUsers.mockResolvedValue([
+      { ...SARAH, id: 1, username: "owner", slug: "owner", user_type: "owner" },
+      SARAH,
+    ]);
+
+    renderPage();
+
+    const link = await screen.findByRole("link", {
+      name: /watching account/i,
+    });
+    // Deep-links past the explainer to the tool itself.
+    expect(link).toHaveAttribute("href", "/watching-account?setup=1");
+  });
+
+  it("does not offer it when there is no owner row to act on", async () => {
+    // The stock roster is shared users only — nobody here HAS the owner's problem.
+    getUsers.mockResolvedValue([SARAH, MIKE]);
+
+    renderPage();
+
+    await screen.findByText(/sarah/i);
+    expect(
+      screen.queryByRole("link", { name: /watching account/i }),
+    ).not.toBeInTheDocument();
+  });
+})

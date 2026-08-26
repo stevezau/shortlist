@@ -38,6 +38,7 @@ def resolve_request_config(base: RequestConfig, overrides: RequestOverrides | No
         base,
         radarr=_retarget(base.radarr, overrides.radarr_quality_profile_id, overrides.radarr_root_folder),
         sonarr=_retarget(base.sonarr, overrides.sonarr_quality_profile_id, overrides.sonarr_root_folder),
+        sonarr_monitor=pick(overrides.sonarr_monitor, base.sonarr_monitor),
         min_rating=pick(overrides.min_rating, base.min_rating),
         min_votes=pick(overrides.min_votes, base.min_votes),
         min_demand=pick(overrides.min_demand, base.min_demand),
@@ -46,6 +47,15 @@ def resolve_request_config(base: RequestConfig, overrides: RequestOverrides | No
         auto_send=pick(overrides.auto_send, base.auto_send),
         auto_min_demand=pick(overrides.auto_min_demand, base.auto_min_demand),
         auto_min_rating=pick(overrides.auto_min_rating, base.auto_min_rating),
+        language_mode=pick(overrides.language_mode, base.language_mode),
+        preferred_languages=pick(overrides.preferred_languages, base.preferred_languages),
+        # Inherits as None, which is NOT the same as inheriting a number. When the GLOBAL is also
+        # unset, None means "follow this row's own `min_rating` + the gap", so a row that raises its
+        # base floor carries the other-language bar up with it. When the owner has pinned a global
+        # number, an inheriting row gets that number — which a stricter row can leave below its own
+        # base floor, and therefore inert. That is the same rule every other override follows:
+        # inheriting means taking the owner's value, not re-deriving one.
+        min_rating_other=pick(overrides.min_rating_other, base.min_rating_other),
         # Clamped, not trusted: a row asking for more than the run allows gets the run's number. The
         # UI should not offer it, but the ceiling cannot depend on the UI for its enforcement.
         max_per_row=min(max(0, row_cap), base.max_per_run),

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from types import SimpleNamespace
+from typing import Annotated
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -11,14 +13,20 @@ from loguru import logger
 from pydantic import BaseModel
 
 from shortlist.engine.clients.http_retry import redact
-from shortlist.engine.models import MAX_REFRESH_DAYS, MAX_ROW_SIZE, MIN_ROW_SIZE
+from shortlist.engine.models import (
+    LANGUAGE_MODES,
+    MAX_REFRESH_DAYS,
+    MAX_ROW_SIZE,
+    MIN_ROW_SIZE,
+    SONARR_MONITOR_MODES,
+)
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import DEFAULT_SLUG, Server
 from shortlist.server.net_guard import BlockedUrl, check_url
 from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services import jobs
-from shortlist.server.services.audit import add_audit
+from shortlist.server.services.audit import actor_of, add_audit
 from shortlist.server.settings_store import DEFAULTS, PRIVATE_KEYS, SECRET_KEYS, SettingsStore
 
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_owner)])
@@ -212,6 +220,51 @@ def _int_list(value: object) -> str | None:
     return None
 
 
+_MAX_PREFERRED_LANGUAGES = 50
+
+
+def _language_codes(value: object) -> str | None:
+    """A list of ISO 639-1 language codes, as TMDB reports `original_language`.
+
+    Two letters is the whole shape TMDB uses, so anything else is a typo that would silently classify
+    every title as "other" and quietly raise the bar on the entire library. An EMPTY list is legal and
+    meaningful — in "only" mode it means "request nothing" — so this checks the shape, not the length.
+    """
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        return "must be a list of language codes"
+    # Capped to match the per-row column's own `max_length=50`. Unbounded, this is a setting an owner
+    # can store megabytes into, and it is read on every run — the ceiling is cheaper than the audit.
+    if len(value) > _MAX_PREFERRED_LANGUAGES:
+        return f"too many languages (max {_MAX_PREFERRED_LANGUAGES})"
+    # `[a-z]{2}`, not `.isalpha()`: str.isalpha() is Unicode-aware, so a two-character CJK string
+    # passes — and worse, so does a Cyrillic homoglyph pair, which renders identically to its Latin
+    # spelling in the error message the owner reads back. Either matches no TMDB `original_language`,
+    # so "only" mode would silently stop requesting anything. (Ruff's RUF003 flags the homoglyph if
+    # you try to write one here, which is the same hazard from the other direction.)
+    bad = [v for v in value if not re.fullmatch(r"[a-z]{2}", v.strip().lower())]
+    # Only the first few are echoed: the message goes back in an error body, and repeating a large
+    # rejected list there just amplifies whatever was sent. The remainder is COUNTED, or an owner
+    # fixes the five they were shown and is rejected again for values the message implied were fine.
+    if not bad:
+        return None
+    more = f" (+{len(bad) - 5} more)" if len(bad) > 5 else ""
+    return f"not ISO 639-1 language codes: {bad[:5]}{more} (two letters, e.g. 'en', 'ja')"
+
+
+def _optional_bounded_float(low: float, high: float):
+    """A number in range, or None — where None is a MEANING, not an omission.
+
+    `requests.min_rating_other` uses this: None means "follow min_rating + 1.5", which is the shipped
+    default precisely so no fixed number of ours is imposed on anyone's server.
+    """
+    inner = _bounded_float(low, high)
+
+    def check(value: object) -> str | None:
+        return None if value is None else inner(value)
+
+    return check
+
+
 def _known_sources(value: object) -> str | None:
     from shortlist.engine.candidates import KNOWN_SOURCES
 
@@ -270,6 +323,10 @@ VALIDATORS = {
     "requests.rating_source": _one_of("tmdb", "imdb", "trakt", "tomatoes", "metacritic"),
     "requests.min_rating": _bounded_float(0.0, 10.0),
     "requests.auto_min_rating": _bounded_float(0.0, 10.0),
+    "requests.language_mode": _one_of(*LANGUAGE_MODES),
+    "requests.preferred_languages": _language_codes,
+    # Optional on purpose: None is "follow min_rating + 1.5", not "unset". See `_optional_bounded_float`.
+    "requests.min_rating_other": _optional_bounded_float(0.0, 10.0),
     "requests.min_votes": _bounded_int(0, 1_000_000),
     "requests.min_demand": _bounded_int(1, 1000),
     "requests.auto_min_demand": _bounded_int(1, 1000),
@@ -278,6 +335,9 @@ VALIDATORS = {
     "requests.max_per_run": _bounded_int(0, 100),
     "requests.radarr.quality_profile_id": _bounded_int(0, 1_000_000),
     "requests.sonarr.quality_profile_id": _bounded_int(0, 1_000_000),
+    # Sonarr 400s the whole add on a value outside its enum, so the typo is refused here rather than
+    # discovered a fortnight later as a request that never arrived.
+    "requests.sonarr.monitor": _one_of(*SONARR_MONITOR_MODES),
     "row.name_template": _non_blank_row_template,
 }
 
@@ -391,7 +451,14 @@ async def get_settings(request: Request) -> dict:
 
 
 @router.put("", response_model=SettingsOut)
-async def put_settings(update: SettingsUpdate, request: Request) -> dict:
+async def put_settings(
+    update: SettingsUpdate,
+    request: Request,
+    # `Annotated`, not `= Depends(...)`: ruff's B008 refuses a call in a default. Declaring the
+    # router's own dependency again is free — FastAPI caches it per request, so `require_owner`
+    # authenticates once and this just receives what it returned.
+    auth: Annotated[dict, Depends(require_owner)],
+) -> dict:
     unknown = set(update.values) - KNOWN_KEYS
     if unknown:
         raise HTTPException(status_code=422, detail=f"unknown settings: {sorted(unknown)}")
@@ -449,7 +516,9 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
                 value = value.strip()
             store.set(key, value)
         if changed:
-            add_audit(session, "settings.change", "info", changed=changed)
+            # WHO, not just what. `require_owner` is already this router's dependency, so FastAPI
+            # serves the cached result rather than re-authenticating.
+            add_audit(session, "settings.change", "info", changed=changed, actor=actor_of(auth, request))
             session.commit()
         if "log.level" in update.values:
             # Apply immediately so a live "turn on DEBUG to watch this run" takes effect without a

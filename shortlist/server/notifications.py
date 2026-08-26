@@ -22,6 +22,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from shortlist.server.db.models import Event, Run
+from shortlist.server.services.watch_stream import STREAM_DOWN_ALERT_MINUTES, STREAM_DOWN_SINCE_KEY
 from shortlist.server.settings_store import SettingsStore
 from shortlist.server.version_check import check_for_update
 
@@ -53,6 +54,67 @@ def _runs_paused(store: SettingsStore) -> dict | None:
         "body": "Scheduled and manual runs are paused, so no rows are being rebuilt. Resume in Settings.",
         "action_url": "/settings",
         "action_label": "Settings",
+        "dismissable": False,
+    }
+
+
+def _spell_duration(minutes: float) -> str:
+    """A duration the way the design doc's voice says one: "50 minutes", "an hour", "3 days".
+
+    The unit is chosen from the ROUNDED value, not the raw one. Choosing it from the raw value and
+    then rounding independently produced "1 hours" for anything from 60 to 89 minutes, and "60
+    minutes" at 59.6 — the two halves disagreeing about which unit they were in.
+    """
+    mins = round(minutes)
+    if mins < 60:
+        return f"{mins} minutes"
+    hours = round(mins / 60)
+    if hours < 24:
+        return "an hour" if hours == 1 else f"{hours} hours"
+    days = round(hours / 24)
+    return "a day" if days == 1 else f"{days} days"
+
+
+def _playback_listener_down(store: SettingsStore) -> dict | None:
+    """The playback listener has been unable to connect for a long time.
+
+    Worth telling the owner because the failure is SILENT in a way the other sources are not. The
+    nightly play-log sweep still runs and still credits completed watches, so the dashboard keeps
+    showing plausible numbers — what stops is the partial-watch signal, which only the live socket can
+    see (Plex records no progress for an unfinished title). "Nobody abandoned anything this week"
+    looks exactly like a healthy week.
+
+    Not dismissable, for the same reason "runs are paused" is not: a silenced alert would leave the
+    owner believing a feature is running that isn't. It clears itself the moment the socket connects.
+    """
+    down_since = store.get(STREAM_DOWN_SINCE_KEY)
+    if not down_since:
+        return None
+    try:
+        started = datetime.fromisoformat(str(down_since))
+    except ValueError:
+        return None
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=UTC)
+    minutes = (datetime.now(UTC) - started).total_seconds() / 60
+    if minutes < STREAM_DOWN_ALERT_MINUTES:
+        return None
+    return {
+        # A CONSTANT id, like `_runs_paused`. An earlier version encoded the outage's start hour so a
+        # new outage would "re-surface" — but `build_notifications` only consults the dismissed list
+        # for dismissable alerts, and this one is not, so the id was never compared against anything
+        # and the hour did nothing at all. The docs asserted the mechanism as fact; both are fixed.
+        "id": "playback-listener-down",
+        "severity": "warning",
+        "title": "Playback tracking is offline",
+        "body": (
+            f"Shortlist has not been able to watch playback for {_spell_duration(minutes)}. Finished "
+            "titles are still counted from Plex's own history, but partial watches — someone starting "
+            "a pick and giving up — are not being recorded while this is down. It retries on its own; "
+            "check that Plex is reachable."
+        ),
+        "action_url": "/logs",
+        "action_label": "Logs",
         "dismissable": False,
     }
 
@@ -245,20 +307,38 @@ def _requests_found_nothing(session: Session) -> dict | None:
         # honest sentence to write — "found 0 titles you don't have" reads as a fault and isn't one.
         return None
     if not pool:
-        body = (
-            f"The last {len(events)} runs found {wanted} titles people wanted that you don't have, and "
-            "none of them cleared your minimum number of people or your release-year range. Loosen "
-            "either to let some through."
-        )
+        # Name the limit that ACTUALLY bound. Since the language mode became a base floor, a pool can
+        # be empty purely because "only these languages" removed everything — and telling that owner
+        # to loosen their demand or year settings is advice they can follow forever without effect.
+        dropped_by_language = data.get("dropped_by_language", 0)
+        if dropped_by_language and dropped_by_language >= wanted:
+            body = (
+                f"The last {len(events)} runs found {wanted} titles people wanted that you don't have, and "
+                "your Language setting ruled out every one of them. Allow another language, or switch "
+                "to 'Prefer these' so the rest wait in your inbox instead."
+            )
+        elif dropped_by_language:
+            body = (
+                f"The last {len(events)} runs found {wanted} titles people wanted that you don't have. "
+                f"Your Language setting ruled out {dropped_by_language} of them, and the rest didn't clear "
+                "your minimum number of people or your release-year range."
+            )
+        else:
+            body = (
+                f"The last {len(events)} runs found {wanted} titles people wanted that you don't have, and "
+                "none of them cleared your minimum number of people or your release-year range. Loosen "
+                "either to let some through."
+            )
     elif data.get("exhausted_pool"):
         body = (
-            f"The last {len(events)} runs rated every one of the {pool} titles people wanted, and none "
-            "cleared your minimum rating. Lower it, or widen the year range, to let some through."
+            f"The last {len(events)} runs rated every title they checked ({pool} checks across the rows), "
+            "and none cleared your minimum rating. Lower it, or widen the year range, to let some "
+            "through."
         )
     else:
         body = (
-            f"The last {len(events)} runs got through {examined} of the {pool} titles people wanted "
-            "before running out of rating lookups, and none of those cleared your minimum rating. "
+            f"The last {len(events)} runs got through {examined} of {pool} checks before running out of "
+            "rating lookups, and none of those cleared your minimum rating. "
             "Raise how many to auto-request per run so each run looks further, or lower the minimum."
         )
     return {
@@ -346,13 +426,24 @@ def _failed_jobs(session: Session) -> dict | None:
     if not failed:
         return None
     kinds = sorted({job.kind for job in failed})
+    # The body used to make two claims about every failure. Neither is true of all of them, and
+    # `watch.reconcile` — the live credit pass — is the first kind in the catalog for which BOTH are
+    # false: it never touches Plex, and it is not in the manual allow-list, so "run it again" points
+    # at a button that returns 422. The same wrongness was already latent for `backup.take` and
+    # `maintenance.prune`.
+    from shortlist.server.services import jobs as jobs_service
+
+    entries = {e.kind: e for e in jobs_service.CATALOG}
+    touched_plex = any(entries[k].writes_plex for k in kinds if k in entries)
+    rerunnable = any(entries[k].manual for k in kinds if k in entries)
+    consequence = " Plex may not reflect what you asked for —" if touched_plex else " Nothing on Plex changed —"
+    remedy = " and run it again." if rerunnable else "."
     return {
         "id": f"failed-jobs-{failed[0].id}",
         "severity": "error",
         "title": f"{len(failed)} background job{'s' if len(failed) != 1 else ''} failed",
         "body": (
-            f"Shortlist gave up on {', '.join(kinds)} after retrying. Plex may not reflect what you "
-            "asked for — open Jobs to see the error and run it again."
+            f"Shortlist gave up on {', '.join(kinds)} after retrying.{consequence} Open Jobs to see the error{remedy}"
         ),
         "action_url": "/jobs",
         "action_label": "See jobs",
@@ -574,6 +665,7 @@ def build_notifications(session: Session, store: SettingsStore, current_version:
         _filters_not_enforced(session),
         _owner_sees_all_rows(session),
         _shelf_contention(session),
+        _playback_listener_down(store),
     ]
     dismissed = set(store.get(DISMISSED_KEY) or [])
     order = {"error": 0, "warning": 1, "info": 2}

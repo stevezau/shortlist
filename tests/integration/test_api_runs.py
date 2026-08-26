@@ -913,6 +913,8 @@ class TestRunsApi:
             "watched_prev",
             "watched_delta",
             "finished",
+            "bounced",
+            "dropped",
             "avg_days_to_watch",
             "avg_days_to_watch_delta",
             "landing",
@@ -927,11 +929,17 @@ class TestRunsApi:
             "cohort_to",
             "matured_days",
         }
-        assert set(body["watch_sync"]) == {"last", "next"}
+        # The LIVE listener is a separate mechanism from the scheduled sync and fails independently
+        # of it — and it is the only source of a partial watch, so a dead socket costs the one signal
+        # Plex's flag cannot give while every other number keeps looking healthy.
+        assert set(body["watch_sync"]) == {"last", "next", "live_since", "live_down_since"}
         assert set(body["coverage"]) == {
             "users_enabled",
             "users_total",
             "users_with_picks",
+            # Emitted, not derived: the UI cannot compute it from the two beside it, which count
+            # differently-scoped populations.
+            "users_idle",
             "users_watched",
             "users_watched_delta",
             "rows_enabled",
@@ -947,6 +955,9 @@ class TestRunsApi:
         assert set(body["requests"]) == {"sent", "pending", "watched_after_sent"}
         assert set(body["trend"][0]) == {"week", "watched", "finished"}
         assert set(body["per_user"][0]) == {
+            # The address, not a display field: the dashboard links each name to that person's page,
+            # and `slug` is not what `/users/:id` takes.
+            "id",
             "username",
             "display_name",
             "slug",
@@ -966,6 +977,9 @@ class TestRunsApi:
         }
         assert set(body["top_titles"][0]) == {"tmdb_id", "media_type", "title", "watchers"}
         assert set(body["recent"][0]) == {
+            # Null once someone has left the server: the watch stays on record, so the line still
+            # renders — it just has nowhere to send you.
+            "user_id",
             "username",
             "display_name",
             "title",
@@ -1047,6 +1061,13 @@ class TestRunsApi:
                 (1, 3, 3),  # this window
                 (2, 4, 4),  # this window
                 (3, 40, 40),  # the previous 30 days
+                # Delivered before the previous window even opens (which is 60 days back for a
+                # 30-day report), so that window is one Shortlist was fully installed for. Without
+                # it the earliest pick lands 40 days ago, the previous period is only two thirds
+                # covered, and the report correctly refuses to call the shortfall a comparison —
+                # see `TestADeltaNeedsAPreviousPeriodToCompareAgainst`. That refusal is the feature;
+                # this test is about the arithmetic once there IS something to compare.
+                (4, 70, None),
             ],
         )
 
@@ -1157,6 +1178,99 @@ class TestRunsApi:
         requests = client.get("/api/report?window=30").json()["requests"]
         assert requests["sent"] == 2
         assert requests["watched_after_sent"] == 1
+
+    def test_a_request_watched_from_a_shared_row_still_counts_as_paid_off(self, client: TestClient):
+        """A shared row writes NO pick rows, so a title requested for the server and then watched off
+        the shared row credited nothing here — the one figure that answers "was asking for this worth
+        it" could not see the row most of the server actually watches from."""
+        from shortlist.server.db.models import RequestCandidate, SharedRowWatch
+
+        with client.app.state.sessions() as session:
+            uid = session.query(User).order_by(User.id).first().id
+            now = datetime.now(UTC)
+            session.add(
+                RequestCandidate(
+                    tmdb_id=4242,
+                    media_type="movie",
+                    title="Only On The Shared Row",
+                    status="sent",
+                    sent_at=now - timedelta(days=5),
+                )
+            )
+            # Watched AFTER it was sent, and only ever from the shared row — no PickRow exists.
+            session.add(
+                SharedRowWatch(
+                    user_id=uid,
+                    collection_slug="staff",
+                    tmdb_id=4242,
+                    media_type="movie",
+                    title="Only On The Shared Row",
+                    watched_at=now - timedelta(days=1),
+                )
+            )
+            session.commit()
+
+        requests = client.get("/api/report?window=30").json()["requests"]
+        assert requests["sent"] == 1
+        assert requests["watched_after_sent"] == 1, "a shared-row watch is still a watch"
+
+    def test_a_title_watched_before_AND_after_the_request_still_counts(self, client: TestClient):
+        """Merging the personal and shared watch times takes the LATEST of the two, not the earliest.
+
+        The question is "did asking for this lead to a watch", so any watch after the send answers
+        yes. Someone who saw it once before it was requested and again after — the ordinary case for
+        a title deleted and re-requested — is a request that paid off. Taking the earliest instead
+        reports the pre-request viewing and scores it zero. Both directions survived a mutation audit
+        of this merge, because no fixture had a title watched twice.
+        """
+        from shortlist.server.db.models import PickRow, RequestCandidate, Run, SharedRowWatch
+
+        with client.app.state.sessions() as session:
+            uid = session.query(User).order_by(User.id).first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            now = datetime.now(UTC)
+            # Watched on a personal row BEFORE the request...
+            session.add(
+                PickRow(
+                    run_id=run.id,
+                    user_id=uid,
+                    tmdb_id=6161,
+                    media_type="movie",
+                    rating_key=6161,
+                    rank=1,
+                    collection_slug="picked",
+                    title="Seen It Twice",
+                    created_at=now - timedelta(days=20),
+                    watched_at=now - timedelta(days=15),
+                )
+            )
+            # ...requested ten days ago...
+            session.add(
+                RequestCandidate(
+                    tmdb_id=6161,
+                    media_type="movie",
+                    title="Seen It Twice",
+                    status="sent",
+                    sent_at=now - timedelta(days=10),
+                )
+            )
+            # ...and watched again off the shared row AFTER it arrived.
+            session.add(
+                SharedRowWatch(
+                    user_id=uid,
+                    collection_slug="staff",
+                    tmdb_id=6161,
+                    media_type="movie",
+                    title="Seen It Twice",
+                    watched_at=now - timedelta(days=1),
+                )
+            )
+            session.commit()
+
+        requests = client.get("/api/report?window=30").json()["requests"]
+        assert requests["watched_after_sent"] == 1, "the later watch is the one that answers the question"
 
     def test_report_uses_the_real_send_time_not_a_timestamp_that_drifts(self, client: TestClient):
         """`updated_at` has `onupdate`, so clearing an old title from the Sent log bumped it and pulled

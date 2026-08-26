@@ -182,6 +182,12 @@ class Candidate:
     # TMDB's synopsis, free in the same list response as the poster and carried the same way: only
     # the request inbox reads it, so the owner can judge an unfamiliar title without leaving the page.
     overview: str = ""
+    # TMDB's `original_language` (ISO 639-1, lowercase: "en", "ja", "ko"), free in every TMDB list
+    # response and used only by the request gate. Empty means UNKNOWN, not English: `merge()` builds
+    # candidates from a non-TMDB source's own fields and never sees a TMDB payload, so Trakt titles
+    # arrive without one. The gate treats unknown as preferred — see `is_preferred_language`
+    # in engine/requests.py (and `_language_allowed`, its base-gate wrapper).
+    language: str = ""
     seeds: list[Seed] = field(default_factory=list)  # every seed that suggested it
     rating_key: int | None = None  # set once matched to the library
     # Which candidate source(s) produced it. Ranking needs this: seedless sources (tmdb_discover,
@@ -341,6 +347,11 @@ class RowSpec:
     # qualify, so no one person's solo viewing can reach a public row (aggregate-privacy floor).
     min_watchers: int = 2
     request_tag: str = ""  # tag added to titles requested because they surfaced in this row
+    # Whether requests from this row also carry the WANTING PERSON'S slug as a tag, so the owner
+    # can tell in Sonarr/Radarr who a title was added for. None -> inherit the global
+    # `requests.auto_user_tag`; True/False overrides it for this row alone. Governs only the
+    # automatic slug — a tag the owner typed on a person is theirs and is never dropped here.
+    auto_user_tag: bool | None = None
     # Per-row override of which discovery sources feed this row; empty -> inherit EngineConfig.candidate_sources.
     candidate_sources: list[str] = field(default_factory=list)
     # Per-row cap on already-watched titles, as a fraction of the row (0.0 = all fresh, 1.0 = no
@@ -492,6 +503,123 @@ class RowSpec:
         return f"{SHARED_LABEL_PREFIX}{self.slug}" if self.shared else None
 
 
+# How much of a show Sonarr takes, as `addOptions.monitor` (MonitorTypes in Sonarr's
+# src/NzbDrone.Core/Tv/MonitoringOptions.cs). A SUBSET of that enum, and the cuts are measured rather
+# than guessed — every mode below was added to a real Sonarr 4.0.19 and its resulting season/episode
+# monitoring read back:
+#
+#   all 156/162 episodes · firstSeason 26 (season 1) · lastSeason 26 (the last) · pilot 1 · none 0
+#
+# Left out: `unknown` and `skip` are internal, `latestSeason` is [Obsolete], the two Specials entries
+# only toggle season 0 (a Season Pass concern, not "how much of this show do I want"), and
+# `future`/`existing`/`recent` all measured 0/162 on a show nobody has yet — `existing` monitors what
+# is on disk, `future` what has not aired, `recent` a 90-day window an older show is nowhere near.
+# Meaningful in Sonarr's own Season Pass; on the only thing Shortlist ever does — a NEW add — they are
+# an obscure spelling of `none`, which says it plainly. `missing` goes the other way for the same
+# reason: with nothing on disk, every aired episode is missing, so it measured identically to `all`
+# (156/162) and is that mode under a name that suggests restraint it does not provide.
+SONARR_MONITOR_MODES = (
+    "all",
+    "firstSeason",
+    "lastSeason",
+    "pilot",
+    "none",
+)
+
+
+# How the request gate treats a title's ORIGINAL language (TMDB's `original_language`, an ISO 639-1
+# code like "en"/"ja"/"ko" — the language it was MADE in, not the audio tracks a release happens to
+# carry). "any" is what every build before this setting did, and stays the default: an upgrade
+# changes nothing until an owner picks otherwise.
+LANGUAGE_MODES = (
+    "any",  # one bar for everything — today's behaviour
+    "prefer",  # preferred languages keep the normal bars; everything else needs `min_rating_other` to auto-send
+    "only",  # never request anything outside the preferred list at all
+)
+
+# How far above the owner's own `min_rating` the other-language auto-send bar sits when they have not
+# set one themselves. Derived rather than a flat constant so the shipped default carries the OWNER's
+# taste, not ours: a permissive 6.0 server starts at 7.5 and a strict 8.0 one at 9.5, where a fixed
+# 8.5 would be a huge jump for the first and a no-op for the second.
+OTHER_LANGUAGE_BAR_GAP = 1.5
+
+
+def row_language_mode_or_inherit(stored: str | None) -> str | None:
+    """One row's stored language mode, or None when it is not a mode this build offers.
+
+    Same degrade-to-inherit contract as :func:`row_monitor_or_inherit`, and for the same reason: a
+    row holding a value the API's closed-set check refuses cannot be saved at all — not even renamed
+    — because the editor PATCHes the whole row back. See that function for the full account.
+    """
+    return stored if stored in LANGUAGE_MODES else None
+
+
+def normalise_languages(codes) -> tuple[str, ...]:
+    """Clean a list of language codes into lowercase ISO 639-1, deduplicated, order preserved.
+
+    TMDB reports `original_language` lowercase ("ja"), but a code typed into the settings UI or
+    seeded from an env var may not be — and a case mismatch here silently reclassifies every title in
+    that language as "other", which is a bar change the owner never asked for.
+
+    NEVER RAISES, whatever it is handed. The API validates this setting, but the context builder reads
+    it on every run and the value can reach here from places validation does not cover: a hand-edited
+    database, a future storage format, a downgrade. A `TypeError` there is a crash loop rather than
+    one broken setting — the failure mode `SettingsStore._unwrap` exists to prevent, and the shape of
+    a bug this codebase has already shipped once (`row.size: "abc"` crashed every run and 500'd two
+    endpoints). Anything unusable degrades to "no preferred languages", which the modes above treat
+    conservatively rather than silently.
+
+    A bare string is taken as ONE code, not iterated: `"en"` must not become `("e", "n")`, which is
+    two nonsense codes that match nothing and would quietly put every title on the higher bar.
+    """
+    if codes is None:
+        return ()
+    if isinstance(codes, str):
+        codes = [codes]
+    elif not isinstance(codes, (list, tuple, set, frozenset)):
+        return ()  # silently, like `row_monitor_or_inherit` — this module deliberately has no logger
+    # A SET for the membership test, not the list — `code not in seen` on a list is O(n) per item,
+    # so a pathological setting (a list of many thousands of distinct codes) made this quadratic on a
+    # path the context builder runs on every single run. Order is still the owner's, from the list.
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for raw in codes:
+        if not isinstance(raw, str):
+            continue  # a number or a nested object is not a language code; skip it, never crash
+        code = raw.strip().lower()
+        if code and code not in seen:
+            seen.add(code)
+            ordered.append(code)
+    return tuple(ordered)
+
+
+def row_languages_or_inherit(stored: object) -> tuple[str, ...] | None:
+    """One row's stored language list, or None when it inherits the owner's.
+
+    NULL inherits; a LIST is taken as given, including an EMPTY one — a row that cleared its languages
+    means it, and in "only" mode that row requests nothing at all. The two must not collapse into each
+    other (see the 0085 migration note), so this tests for None rather than for falsiness.
+    """
+    if stored is None:
+        return None
+    return normalise_languages(stored)
+
+
+def row_monitor_or_inherit(stored: str | None) -> str | None:
+    """One row's stored monitor mode, or None when it is not a mode this build offers.
+
+    A mode can be RETIRED — `future`, `missing`, `existing` and `recent` were, once measured — and a
+    row can then be holding a value the API will refuse. Left alone that bricks the row: the editor
+    PATCHes the whole row back, the closed-set check rejects the field, and the owner cannot save so
+    much as a rename until somebody clears it in SQLite.
+
+    Degrades to None (inherit) rather than to a concrete mode, so the screen and the run agree — the
+    editor shows "use the global", and the run sends the global. Falling back to "all" here would
+    instead pick the most expensive answer on the one setting whose purpose is not doing that.
+    """
+    return stored if stored in SONARR_MONITOR_MODES else None
+
+
 @dataclass(frozen=True)
 class ArrTarget:
     """Where and how a Sonarr/Radarr instance should file a newly-requested title."""
@@ -536,6 +664,31 @@ class RequestConfig:
     auto_send: bool = True
     auto_min_demand: int = 3  # auto-send only titles wanted by at least this many distinct people
     auto_min_rating: float = 8.0  # ...and rated at least this high on the chosen source
+    # Language preference. `language_mode` is one of LANGUAGE_MODES; `preferred_languages` are the
+    # ISO 639-1 codes it treats as preferred. Defaults are "any" + ("en",) — the mode is what is off,
+    # so the language list is merely the value it would use, and an upgrade changes nothing.
+    #
+    # In "prefer" mode a non-preferred title keeps the same BASE floors as everything else and gains
+    # one extra AUTO-SEND bar, `min_rating_other`. That tier is deliberate: a title below a base floor
+    # is dropped and the owner never learns it existed, where a title held at the auto tier lands in
+    # the inbox with its reason on it. "Prefer" means "don't send this on its own, but tell me" —
+    # only "only" mode discards, and it does so at the base gate.
+    language_mode: str = "any"
+    preferred_languages: tuple[str, ...] = ("en",)
+    # None — not 0.0 — means "follow `min_rating` + OTHER_LANGUAGE_BAR_GAP". 0.0 is a real choice
+    # (a bar nothing can fail), so it cannot double as the unset sentinel; the same trap `max_per_row`
+    # above records. Resolved at gate time from the ROW's resolved `min_rating` — so a row that raises
+    # its own floor carries the bar up with it ONLY while this is None. Pin a number here and every
+    # inheriting row takes that number instead, exactly as the other overrides behave.
+    min_rating_other: float | None = None
+    # Tag every request with the wanting person's slug (`moo_house` -> `moo-house`, the Arr charset),
+    # so the owner can see IN Sonarr/Radarr who a title was added for — the Requests inbox why-line
+    # never reaches the Arr. Off by default. A row may override it either way (`RowSpec.auto_user_tag`),
+    # and an explicit per-user tag replaces the slug rather than stacking with it.
+    #
+    # The tag records who TRIGGERED the add, not everyone who has since wanted the title: a title the
+    # Arr already tracks is skipped whole (`clients/arr.py` `add_movie`/`add_series`), tags included.
+    auto_user_tag: bool = False
     # Populated by the context builder when a target was connected (URL+key) but incomplete (no
     # profile or folder selected). Surfaces in the run report so the UI can explain the skip.
     incomplete_targets: list[str] = field(default_factory=list)
@@ -547,6 +700,12 @@ class RequestConfig:
     # ("this row never asks for anything on its own"), so using it as the unset sentinel handed such
     # a row the FULL run cap: the exact inverse of the control, on a path that adds titles to Radarr.
     max_per_row: int | None = None
+    # Which episodes Sonarr monitors — and so searches for — when Shortlist adds a show. Passed
+    # straight through as `addOptions.monitor`. "all" is Sonarr's own default and what every add did
+    # before this setting existed, so an upgrade changes nothing until somebody picks another.
+    # A long-running show on "all" backfills every season the night it is added (issue #100), where a
+    # taster ("firstSeason") or a catch-up-from-here ("none", added unmonitored) is often what was meant.
+    sonarr_monitor: str = "all"
 
     def __post_init__(self) -> None:
         if self.max_per_row is None:
@@ -566,10 +725,10 @@ class RequestOverrides:
     rating-lookup budget and ``tag``. Those are the run's ceilings and its single API account — a row
     that could raise one would turn the owner's global setting into a suggestion.
 
-    The Arr overrides are PROFILE and ROOT FOLDER only. URL and API key stay global: the case this
-    serves is one Radarr filing a kids row into ``/data/Kids`` at a lower profile, not a second
-    Radarr. Overriding either on a row whose global target is unconfigured does nothing at all,
-    because there is no URL or key to send to.
+    The Arr overrides are the FILING choices — profile, root folder, and how much of a show Sonarr
+    monitors. URL and API key stay global: the case this serves is one Radarr filing a kids row into
+    ``/data/Kids`` at a lower profile, not a second Radarr. Overriding any of them on a row whose
+    global target is unconfigured does nothing at all, because there is no URL or key to send to.
     """
 
     min_rating: float | None = None
@@ -585,6 +744,12 @@ class RequestOverrides:
     radarr_root_folder: str | None = None
     sonarr_quality_profile_id: int | None = None
     sonarr_root_folder: str | None = None
+    sonarr_monitor: str | None = None
+    language_mode: str | None = None
+    # None means inherit, as everywhere else here. An EMPTY tuple is therefore not the same thing:
+    # it is a row that has cleared its language list, which in "only" mode requests nothing at all.
+    preferred_languages: tuple[str, ...] | None = None
+    min_rating_other: float | None = None
 
 
 @dataclass(frozen=True)
@@ -628,6 +793,12 @@ class MissingTitle:
     # bought with a detail call only for the gated few a non-TMDB source surfaced. Empty is normal —
     # TMDB has no synopsis for some titles, and the inbox simply omits the paragraph.
     overview: str = ""
+    # The candidate's `Candidate.language` (ISO 639-1, lowercase), carried through so the request gate
+    # can pick a bar and the inbox can show which language it is. "" means unknown — see Candidate.
+    # Declared after the fields every positional caller stops at (`vote_count`), never among them:
+    # a new field in the middle silently shifts every argument after it, the hazard RequestOverrides
+    # records.
+    language: str = ""
     # Per-user + per-row tags to apply on request, layered on top of the target's global tag. Unioned
     # across every user who wanted the title and every row it surfaced in (deduplication merges them).
     tags: set[str] = field(default_factory=set)
@@ -688,7 +859,10 @@ class RequestReport:
     # for five days in production (2026-08-13..18) it was the third, with nothing anywhere saying so.
     # Reconstructing it afterwards meant diffing settings timestamps against the rating cache by hand.
     wanted: int = 0  # missing titles the run collected at all, BEFORE any floor
-    pool_size: int = 0  # titles that cleared the base floors (demand, year) — what the gate was handed
+    pool_size: int = 0  # titles that cleared the base floors (demand, year, language) — what the gate was handed
+    # Titles the LANGUAGE mode alone removed from that pool ("only" mode). Kept apart from the other
+    # base floors so the "nothing qualified" alert can name the setting that actually bound.
+    dropped_by_language: int = 0
     examined: int = 0  # of those, how many the rating gate actually rated
     lookups_spent: int = 0  # live rating-API calls that cost; cached ratings are free and are not counted
     # The same three, per row slug, plus what each row actually got. A run-wide total cannot answer

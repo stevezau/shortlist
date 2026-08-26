@@ -204,6 +204,29 @@ CATALOG: tuple[JobKind, ...] = (
         schedule_setting="backup.cron",
     ),
     JobKind(
+        kind="watch.reconcile",
+        label="Credit a finished playback",
+        description=(
+            "Works out what someone just watched from their row, the moment they stop playing. It "
+            "reads nothing from Plex and changes nothing there — everything it needs was already "
+            "recorded while the video was playing."
+            "\n\nThis is what puts a partial watch on your dashboard straight away. Plex only "
+            "records that a title was finished, so someone who starts a pick and gives up halfway "
+            "leaves no trace in its history at all; the only moment that fact exists is while it is "
+            "playing, and this is what saves it."
+            "\n\nQueued automatically when a playback session ends. There is nothing to schedule "
+            "and nothing to run by hand — the nightly watch-history sync covers the same ground and "
+            "more."
+        ),
+        manual=False,
+        writes_plex=False,  # local database only
+        trigger=(
+            "Runs when a playback session ends — nothing schedules it, and there is nothing to run by "
+            "hand. If it never runs (Shortlist restarted mid-playback, say), nothing is lost: the "
+            "nightly watch-history sync reaches the same conclusion from the same records."
+        ),
+    ),
+    JobKind(
         kind="maintenance.prune",
         label="Clear out old records",
         description=(
@@ -268,6 +291,38 @@ CATALOG: tuple[JobKind, ...] = (
         ),
         manual=False,
         trigger="Queued when you un-pause somebody.",
+    ),
+    JobKind(
+        kind="watching_account.transfer",
+        label="Copy your watch history to your watching account",
+        description=(
+            "Makes your watching account's watch history match yours: the same films ticked off, the "
+            "same episodes of each show, and anything you are part-way through sitting at the same "
+            "point in Continue Watching. Anything watched on that account that you have not watched "
+            "is un-ticked, which is what makes the two match. Your own account is never written to."
+            "\n\nOn a heavy library this is several thousand writes to Plex, which is why it runs "
+            "here rather than while you wait. The account's state is saved before the first write, so "
+            "it can be put back exactly."
+        ),
+        manual=False,
+        # A writer, and the only one here that can REMOVE watch history. It takes the exclusive Plex
+        # lock like every other writer: a run converging collections while this rewrites thousands of
+        # watch flags is exactly the overlap that lock exists for.
+        writes_plex=True,
+        trigger="Queued from the watching-account page when you copy your history across.",
+    ),
+    JobKind(
+        kind="watching_account.undo",
+        label="Undo a watch-history copy",
+        description=(
+            "Puts a watching account back exactly as it was before the copy — rewatch counts and "
+            "part-watched positions included, not just watched or unwatched. Restores from the "
+            "snapshot the copy took rather than replaying its writes backwards, because re-ticking "
+            "what was un-ticked would leave a state that existed on neither account."
+        ),
+        manual=False,
+        writes_plex=True,
+        trigger="Queued when you press Undo after copying a watch history across.",
     ),
     JobKind(
         kind="row.reconcile",
@@ -431,7 +486,9 @@ def _claimable(kind: str, *, allow_writers: bool, allow_history: bool) -> bool:
     return allow_history or kind != "sync.history"
 
 
-def _claim(sessions, *, allow_writers: bool = True, allow_history: bool = True) -> tuple[int, str] | None:
+def _claim(
+    sessions, *, allow_writers: bool = True, allow_history: bool = True, only_kind: str | None = None
+) -> tuple[int, str] | None:
     """Take the oldest runnable queued job whose backoff has elapsed, atomically. Returns (id, kind).
 
     SQLite has no ``SELECT ... FOR UPDATE SKIP LOCKED``, so the select-then-update is wrapped in
@@ -442,7 +499,10 @@ def _claim(sessions, *, allow_writers: bool = True, allow_history: bool = True) 
     with sessions() as session:
         session.execute(text("BEGIN IMMEDIATE"))
         try:
-            for job in session.query(Job).filter(Job.status == "queued").order_by(Job.created_at, Job.id).all():
+            query = session.query(Job).filter(Job.status == "queued")
+            if only_kind is not None:
+                query = query.filter(Job.kind == only_kind)
+            for job in query.order_by(Job.created_at, Job.id).all():
                 if not _claimable(job.kind, allow_writers=allow_writers, allow_history=allow_history):
                     continue
                 if job.attempts:
@@ -578,6 +638,34 @@ def _max_parallel_readonly(state) -> int:
     return DEFAULT_MAX_PARALLEL_READONLY
 
 
+async def drain_kind(state, kind: str) -> int:
+    """Run the queued jobs of ONE kind, and nothing else.
+
+    `drain_now` drains the WHOLE queue, which is right for an operator action — they changed
+    something and everything pending should settle. It is wrong as a reflex to someone pressing play.
+    Seven kinds write to Plex or plex.tv, and the listener's wake fires on every session start and
+    stop, including from `_close_all` during shutdown — after the lifespan has deliberately stopped
+    the scheduler first. That let a playback event begin a share-filter merge on the way out of the
+    process, with the drain never resuming to mark the job finished.
+
+    So a playback event may only ever run the read-only pass it actually asked for. Same lock and
+    same claim path; only the kind is narrowed.
+    """
+    # NOT while a run holds the writer. Only the job HANDLER goes to an executor; `_claim`'s
+    # `BEGIN IMMEDIATE` is synchronous SQLite on the event loop, so against a held writer it stalls
+    # the loop for the full `busy_timeout` — measured at 5.24s, blocking the websocket, every SSE
+    # stream and every request — and then raises `OperationalError` anyway. The job is not lost: the
+    # scheduler tick drains it the moment the run finishes. Skipping costs a delay that was going to
+    # happen regardless; not skipping costs five seconds of the whole app.
+    if _plex_busy(state):
+        return 0
+    sessions = state.sessions
+    if _DRAIN_LOCK.locked():
+        return 0
+    async with _DRAIN_LOCK:
+        return await _drain(state, sessions, only_kind=kind)
+
+
 async def run_pending(state) -> int:
     """Drain the queue. Returns how many jobs were dispatched.
 
@@ -614,6 +702,12 @@ async def _execute(state, sessions, job_id: int, kind: str) -> None:
         # The kind was removed in an upgrade while a job was queued. Nothing can run it.
         _finish(sessions, job_id, error=f"no handler registered for {kind!r}")
         return
+    # A handler that declares `job_id` gets its own row id. Only the watching-account transfer wants
+    # it — a retry must reuse the snapshot the FIRST attempt took, or it records the half-mirrored
+    # state the failed attempt left behind and the real "before" is lost. Passed by signature rather
+    # than to every handler, so the other fifteen are untouched.
+    if "job_id" in inspect.signature(fn).parameters:
+        fn = functools.partial(fn, job_id=job_id)
     try:
         if inspect.iscoroutinefunction(fn):
             # An async handler is awaited on THIS loop rather than pushed to a worker thread.
@@ -670,7 +764,7 @@ async def _run_reader(sem: asyncio.Semaphore, state, sessions, job_id: int, kind
         await _execute(state, sessions, job_id, kind)
 
 
-async def _drain(state, sessions) -> int:
+async def _drain(state, sessions, only_kind: str | None = None) -> int:
     ran = 0
     dispatched: set[asyncio.Task] = set()
     # A separate list, because the done-callback below removes finished tasks from `dispatched` —
@@ -682,7 +776,7 @@ async def _drain(state, sessions) -> int:
     try:
         while True:
             busy = _plex_busy(state)
-            claimed = _claim(sessions, allow_writers=not busy, allow_history=not busy)
+            claimed = _claim(sessions, allow_writers=not busy, allow_history=not busy, only_kind=only_kind)
             if claimed is None:
                 break
             job_id, kind = claimed
@@ -977,6 +1071,37 @@ def _backup_take(state, payload: dict) -> dict:
     return {"path": str(path), "detail": f"Backed up to {path.name}"}
 
 
+@handler("watch.reconcile")
+def _watch_reconcile(state, payload: dict) -> dict:
+    """Credit what playback alone can justify, then tell the dashboard.
+
+    The SSE is not a nicety. Without it the owner watches something, the credit lands in the database
+    seconds later, and the page in front of them still says nothing until they reload — which reads as
+    the feature not working. It rides `sync.finished`, the event the report query already invalidates
+    on, rather than inventing a second channel for the same fact.
+
+    But under its OWN kind. Sent as `watched` it impersonated the watch-history sync, and the Jobs
+    page renders that as "Synced N users — watch history is up to date and the effectiveness report
+    reflects it now" — so anyone stopping a video while that page was open saw a green success for
+    work nobody did, with a count that means "users whose picks changed".
+
+    Deliberately does NOT wait for a run, unlike the full watch sync which takes `run_lock`. That lock
+    exists because the full pass re-reads Plex and rewrites every user; this writes only our own
+    `picks` stamps and touches no Plex state at all. Running mid-build is safe in the direction that
+    matters: `_apply_outcomes` will not stamp a delivery row whose `created_at` is later than the
+    watch, so a pick the run is creating right now can never be credited for a play that predates it.
+    The failure it can have is CONSERVATIVE — a row not yet in the delivery ledger yields no credit,
+    and the nightly sync reaches the same conclusion later from the same records. Waiting instead
+    would mean an 88-minute run silently swallowing every partial watch made during it.
+    """
+    from shortlist.server.services.run_persistence import reconcile_from_events
+
+    changed = reconcile_from_events(state.sessions)
+    if changed:
+        state.bus.publish("sync.finished", {"kind": "credited", "ok": True, "count": changed})
+    return {"users_credited": changed}
+
+
 @handler("maintenance.prune")
 def _maintenance_prune(state, payload: dict) -> dict:
     """Apply the retention limits to `runs`, `events` and the cache table.
@@ -1216,3 +1341,152 @@ def _row_reconcile(state, payload: dict) -> dict:
         "dry_run": dry_run,
         "detail": f"{verb} {len(removed)} collection(s) for row {slug}",
     }
+
+
+@handler("watching_account.transfer")
+def _watching_account_transfer(state, payload: dict, job_id: int | None = None) -> dict:
+    """Replicate one account's watch state onto a watching account.
+
+    The source is the owner unless `from_user_id` names another — and it is read with THAT account's
+    own server token, never the admin's, or the owner's history lands on the target while the audit
+    row records somebody else as the source.
+
+    On the queue rather than inline in the request for two reasons. It is ~11,000 PMS writes on a
+    heavy account, which is minutes of work behind a reverse proxy that will happily time the request
+    out at 60s — and the job row means the work still finishes, and is still recoverable from the
+    Jobs page, when it does. And it is the only path in Shortlist that can DELETE watch history, so it
+    needs the same durable record as every other writer.
+
+    Idempotent, which the queue requires of every handler: the write plan is rebuilt from a fresh read
+    of BOTH accounts each attempt, so a replay writes only what is still missing rather than
+    re-applying what already landed. The rewatch counts are the case that would break under a naive
+    replay, and `WriteOp.scrobbles` carries the shortfall precisely so they do not.
+    """
+    from shortlist.engine.history import ShareTokenWatchSource
+    from shortlist.engine.models import UserProfile, UserType
+    from shortlist.server.db.models import User
+    from shortlist.server.services.watching_account import transfer_watch_history
+
+    to_user_id = int(payload["to_user_id"])
+    requested = bool(payload.get("dry_run", False))
+    ctx = state.run_service.build_context(dry_run=requested, plex_only=True)
+    # `or requested` is the floor, matching every other writer here: the chokepoint may force a dry
+    # run ON, never off, so a context that dropped the flag cannot turn a preview into a real run.
+    dry_run = bool(ctx.config.dry_run) or requested
+
+    with state.sessions() as session:
+        owner = session.query(User).filter(User.user_type == "owner").first()
+        if owner is None:
+            raise LookupError("no owner account is registered yet — run a user sync first")
+        source_id = int(payload.get("from_user_id") or owner.id)
+        source = session.get(User, source_id)
+        target = session.get(User, to_user_id)
+        if source is None or target is None:
+            raise LookupError("both the source and the target must be known users")
+        source_profile = UserProfile(
+            username=source.username,
+            plex_account_id=source.plex_account_id,
+            user_type=UserType(source.user_type),
+            slug=source.slug,
+        )
+        account_id = target.plex_account_id
+
+    # The SOURCE's own token, not the admin's. Reading a shared account with the admin token would
+    # replicate the OWNER's watching onto the target while claiming to copy that person's — one
+    # account's history silently wearing another's name, which is the failure `_check_pair` guards
+    # for the target and nothing guarded for the source while it was hardcoded to the owner.
+    #
+    # `server_token_for` is the single implementation of the owner/shared/managed split; a second
+    # copy here would be a second place to get it wrong.
+    source_token = ShareTokenWatchSource(ctx.plex, ctx.plextv, owner_token=ctx.plex.token).server_token_for(
+        source_profile
+    )
+    if not source_token:
+        raise LookupError(f"no server token could be obtained for {source.username!r} — cannot read its watching")
+
+    token = ctx.plextv.canary_server_token(account_id)
+    with state.sessions() as session:
+        report = transfer_watch_history(
+            session,
+            sessions=state.sessions,
+            job_id=job_id,
+            from_user_id=source_id,
+            to_user_id=to_user_id,
+            plex=ctx.plex,
+            source_token=source_token,
+            target_token=token,
+            dry_run=dry_run,
+        )
+        add_audit(
+            session,
+            "watching_account.transfer",
+            "info",
+            from_user_id=source_id,
+            to_user_id=to_user_id,
+            **report.as_dict(),
+        )
+        session.commit()
+        out = report.as_dict()
+
+    verb = "Would copy" if dry_run else "Copied"
+    removed = report.unmarks + report.offsets_cleared
+    out["detail"] = (
+        f"{verb} {report.marks} title(s) onto that account"
+        + (f", removing {removed}" if removed else "")
+        + (" (preview)" if dry_run else "")
+    )
+    return out
+
+
+@handler("watching_account.undo")
+def _watching_account_undo(state, payload: dict, job_id: int | None = None) -> dict:
+    """Put a watching account back exactly as its transfer found it.
+
+    Restores from the snapshot rather than replaying the writes backwards — see `undo_transfer`. Safe
+    to replay: the snapshot is stamped `restored_at` on success and a second pass refuses rather than
+    planning against a state it no longer describes.
+    """
+    from shortlist.server.db.models import WatchStateSnapshot
+    from shortlist.server.services.watching_account import undo_transfer
+
+    snapshot_id = int(payload["snapshot_id"])
+    requested = bool(payload.get("dry_run", False))
+    with state.sessions() as session:
+        snapshot = session.get(WatchStateSnapshot, snapshot_id)
+        if snapshot is None:
+            raise LookupError("no snapshot with that id — nothing to restore")
+        user_id = snapshot.user_id
+        from shortlist.server.db.models import User
+
+        user = session.get(User, user_id)
+        account_id = user.plex_account_id if user else 0
+
+    ctx = state.run_service.build_context(dry_run=requested, plex_only=True)
+    dry_run = bool(ctx.config.dry_run) or requested
+    token = ctx.plextv.canary_server_token(account_id)
+
+    with state.sessions() as session:
+        report = undo_transfer(
+            session,
+            sessions=state.sessions,
+            job_id=job_id,
+            snapshot_id=snapshot_id,
+            plex=ctx.plex,
+            target_token=token,
+            dry_run=dry_run,
+        )
+        add_audit(
+            session,
+            "watching_account.undo",
+            "info",
+            restored_snapshot_id=snapshot_id,
+            to_user_id=user_id,
+            **report.as_dict(),
+        )
+        session.commit()
+        out = report.as_dict()
+
+    out["detail"] = f"{'Would restore' if dry_run else 'Restored'} {report.planned} change(s) on that account"
+    if report.errors:
+        out["detail"] = report.errors[0]
+    return out

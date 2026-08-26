@@ -130,11 +130,17 @@ terminal:
 - **Branch model** (mirrors media_preview_generator): `dev` is the default/working branch — commit
   and push here; every green `dev` push publishes `ghcr.io/stevezau/shortlist:dev`. `master` is the
   stable branch, advanced only by promoting `dev` → `master` via PR at release time. A `master` push
-  runs the five test jobs but never publishes — only `dev` pushes and `v*` tags do. Releases are cut
-  by tagging `vX.Y.Z` on `master` (CI builds `:latest` + `:X.Y.Z` + `:dev`). Publishing is gated on
-  lint+tests+e2e green.
+  runs NOTHING: master only advances by merging a PR that just ran the whole workflow on the same
+  content, and the release tag points at that very merge commit, so master and the tag were testing
+  one identical SHA twice (v1.7.0 ran the full suite four times over one tree before this was cut).
+  The two runs that gate a release are the PR and the tag. Releases are cut by tagging `vX.Y.Z` on
+  `master` (CI builds `:latest` + `:X.Y.Z` + `:dev`). Publishing is gated on lint+tests+e2e green.
 - **Branch protection.** Force-pushes and deletions are blocked on both branches. `master` also
-  requires `lint`/`test-python`/`test-web`/`e2e`. `dev` has no required checks on purpose — they
+  requires `lint`/`test-python`/`test-web`/`e2e` — which are GATE jobs (`test-python`/`e2e` just
+  assert their `*-shard` matrix legs passed), so the shard count can change without touching branch
+  protection. Sharding those jobs under their old names is what blocked the v1.7.0 release PR with
+  all checks green: the required contexts had been renamed out of existence and nothing noticed,
+  because `dev` requires no checks. `dev` has no required checks on purpose — they
   would block the direct pushes that are how you work on it. `enforce_admins` is off on both,
   leaving an override for a genuine emergency.
 

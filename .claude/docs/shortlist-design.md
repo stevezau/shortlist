@@ -178,8 +178,10 @@ Plex-adjacent accent color, responsive (phone-usable — owners administer from 
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Hit rate** = % of recommended items the user actually watched within 30 days — the app's own
-  proof of value, computed from the same history source. Shown globally and per user.
+- **Hit rate** = % of recommended items the user actually watched **while the row was still showing
+  them** — the app's own proof of value, computed from the same history source. Shown globally and
+  per user. A title the row has since dropped is not credited: they cannot have started it from a
+  shelf that no longer lists it. See `run_persistence.reconcile_watched`.
 
 ### User detail
 
@@ -221,6 +223,21 @@ One flow, with preview: deletes all Shortlist collections, strips `shortlist_*` 
 restores every user's share filters from the **original pre-Shortlist snapshot** (merging around any
 filters the owner changed since, shown as a diff before applying), then wipes local config. Ends
 with "your server is as we found it."
+
+**No single account can stop it** (issue #96). The restore resolves every snapshot against ONE
+plex.tv roster read, and sorts each into restorable / departed / unreachable. An account plex.tv omits
+that our own records already mark gone is *departed* — unreachable settings, nothing to do. One our
+records say is here is *unreachable* — reported as retryable, because that is what a partial roster
+read looks like and uninstall is one-shot. Both are NAMED in the report and on the page: the operator
+has already typed UNINSTALL, so the failure mode to design against is the flow stopping partway with
+everyone after that account silently keeping Shortlist's excludes. It never refuses outright — an
+owner who wound down every share gets an empty roster, and refusing on that would be a dead end they
+could never clear.
+
+The phase order is teardown order, not build order: rows are switched off first (local, cheap, and it
+means every later failure lands on a Shortlist that is genuinely off), then collections are deleted,
+and only then are share filters restored — so the curtain never comes down before what it was hiding.
+Whatever did change is audited before any failure reaches the operator (rule 10).
 
 ---
 

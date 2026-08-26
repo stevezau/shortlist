@@ -53,7 +53,10 @@ const BASE = {
 describe("run report pick line", () => {
   it("shows the release year beside the title", () => {
     render(
-      <UserPanel run={RUN} result={result([{ ...BASE, year: 1999, rating: 8.2 }])} />,
+      <UserPanel
+        run={RUN}
+        result={result([{ ...BASE, year: 1999, rating: 8.2 }])}
+      />,
     );
     expect(screen.getByText(/\(1999\)/)).toBeInTheDocument();
   });
@@ -62,14 +65,20 @@ describe("run report pick line", () => {
     // Labelled TMDB rather than the server's configured rating source: the stored number IS TMDB's
     // vote_average whatever that setting says, so any other label would misattribute it.
     render(
-      <UserPanel run={RUN} result={result([{ ...BASE, year: 1999, rating: 8.2 }])} />,
+      <UserPanel
+        run={RUN}
+        result={result([{ ...BASE, year: 1999, rating: 8.2 }])}
+      />,
     );
     expect(screen.getByText(/TMDB 8\.2/)).toBeInTheDocument();
   });
 
   it("keeps the provenance line alongside the score", () => {
     render(
-      <UserPanel run={RUN} result={result([{ ...BASE, year: 1999, rating: 8.2 }])} />,
+      <UserPanel
+        run={RUN}
+        result={result([{ ...BASE, year: 1999, rating: 8.2 }])}
+      />,
     );
     expect(screen.getByText(/TMDB 8\.2 · /)).toBeInTheDocument();
   });
@@ -77,13 +86,23 @@ describe("run report pick line", () => {
   it("says nothing at all for a pick with no year", () => {
     // A cold-start pick comes from the library's top-rated list, not a TMDB candidate. Rendering
     // "(null)" or "(0)" there would read as a data error rather than an absent field.
-    render(<UserPanel run={RUN} result={result([{ ...BASE, year: null, rating: 7 }])} />);
+    render(
+      <UserPanel
+        run={RUN}
+        result={result([{ ...BASE, year: null, rating: 7 }])}
+      />,
+    );
     expect(screen.getByText("The Matrix")).toBeInTheDocument();
     expect(screen.queryByText(/\(null\)|\(0\)/)).not.toBeInTheDocument();
   });
 
   it("does not render an unrated pick as a score of zero", () => {
-    render(<UserPanel run={RUN} result={result([{ ...BASE, year: 1999, rating: 0 }])} />);
+    render(
+      <UserPanel
+        run={RUN}
+        result={result([{ ...BASE, year: 1999, rating: 0 }])}
+      />,
+    );
     expect(screen.queryByText(/TMDB 0\.0/)).not.toBeInTheDocument();
   });
 
@@ -96,7 +115,10 @@ describe("run report pick line", () => {
 describe("run report pick line — look-it-up links", () => {
   it("links a pick to TMDB, IMDb and Trakt", () => {
     render(
-      <UserPanel run={RUN} result={result([{ ...BASE, year: 1999, rating: 8.2 }])} />,
+      <UserPanel
+        run={RUN}
+        result={result([{ ...BASE, year: 1999, rating: 8.2 }])}
+      />,
     );
     expect(screen.getByRole("link", { name: "TMDB" })).toHaveAttribute(
       "href",
@@ -110,7 +132,10 @@ describe("run report pick line — look-it-up links", () => {
 
   it("searches IMDb by title, since a delivered pick carries no IMDb id", () => {
     render(
-      <UserPanel run={RUN} result={result([{ ...BASE, year: 1999, rating: 8.2 }])} />,
+      <UserPanel
+        run={RUN}
+        result={result([{ ...BASE, year: 1999, rating: 8.2 }])}
+      />,
     );
     expect(screen.getByRole("link", { name: "IMDb" })).toHaveAttribute(
       "href",
@@ -122,7 +147,9 @@ describe("run report pick line — look-it-up links", () => {
     render(
       <UserPanel
         run={RUN}
-        result={result([{ ...BASE, media_type: "show", year: 2008, rating: 9.4 }])}
+        result={result([
+          { ...BASE, media_type: "show", year: 2008, rating: 9.4 },
+        ])}
       />,
     );
     expect(screen.getByRole("link", { name: "TMDB" })).toHaveAttribute(
@@ -136,12 +163,17 @@ describe("run report pick line — look-it-up links", () => {
     // no link — it looks like a working link and 404s.
     const { tmdb_id: _omitted, ...noId } = BASE;
     render(<UserPanel run={RUN} result={result([{ ...noId, year: 1999 }])} />);
-    expect(screen.queryByRole("link", { name: "TMDB" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "TMDB" }),
+    ).not.toBeInTheDocument();
   });
 
   it("opens them in a new tab without leaking the referrer", () => {
     render(
-      <UserPanel run={RUN} result={result([{ ...BASE, year: 1999, rating: 8.2 }])} />,
+      <UserPanel
+        run={RUN}
+        result={result([{ ...BASE, year: 1999, rating: 8.2 }])}
+      />,
     );
     const link = screen.getByRole("link", { name: "TMDB" });
     expect(link).toHaveAttribute("target", "_blank");

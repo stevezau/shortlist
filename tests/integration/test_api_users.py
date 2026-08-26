@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1337,3 +1338,152 @@ class TestAPerUserRowNameCannotFollowAWatch:
         assert bad.status_code == 422, bad.text
         ok = client.patch(f"/api/users/{uid}", json={"prefs": {"row_name_tpl": "✨ Just for {user}"}})
         assert ok.status_code < 300, ok.text
+
+
+class TestUserPickOutcomes:
+    """`/api/users/{id}/outcomes` — what this person did with the picks they were given.
+
+    The page could already show what Shortlist DELIVERED and what they had watched on Plex, but not
+    the join of the two: whether the recommendations were actually seen out. Finished, part-watched
+    and abandoned are the three answers the dashboard gives for the whole server, and they are at
+    least as interesting for one person.
+    """
+
+    def _pick(self, client, uid: int, **kw):
+        from shortlist.server.db.models import PickRow
+
+        with client.app.state.sessions() as session:
+            session.add(
+                PickRow(
+                    user_id=uid,
+                    run_id=None,
+                    rank=1,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="Movies",
+                    media_type="movie",
+                    created_at=datetime.now(UTC) - timedelta(days=30),
+                    **kw,
+                )
+            )
+            session.commit()
+
+    def _uid(self, client) -> int:
+        return next(u["id"] for u in client.get("/api/users").json())
+
+    def test_it_separates_finished_from_part_watched_from_abandoned(self, client: TestClient):
+        uid = self._uid(client)
+        settled = datetime.now(UTC) - timedelta(days=3)
+        self._pick(client, uid, tmdb_id=1, rating_key=1, title="Seen It Out", watched_at=settled, finished_at=settled)
+        self._pick(client, uid, tmdb_id=2, rating_key=2, title="Gave Up Late", watched_at=settled, max_percent=40)
+        self._pick(client, uid, tmdb_id=3, rating_key=3, title="Barely Started", watched_at=settled, max_percent=2)
+
+        body = client.get(f"/api/users/{uid}/outcomes").json()
+
+        by_title = {row["title"]: row for row in body}
+        assert by_title["Seen It Out"]["outcome"] == "finished"
+        assert by_title["Gave Up Late"]["outcome"] == "dropped"
+        assert by_title["Gave Up Late"]["percent"] == 40
+        assert by_title["Barely Started"]["outcome"] == "bounced"
+
+    def test_a_watch_too_recent_to_judge_reads_as_watching(self, client: TestClient):
+        """The same settling rule the dashboard uses — one classification, not two."""
+        uid = self._uid(client)
+        self._pick(
+            client,
+            uid,
+            tmdb_id=4,
+            rating_key=4,
+            title="Started Tonight",
+            watched_at=datetime.now(UTC) - timedelta(minutes=20),
+            max_percent=8,
+        )
+
+        body = client.get(f"/api/users/{uid}/outcomes").json()
+
+        assert [r["outcome"] for r in body] == ["watching"]
+
+    def test_it_names_the_row_that_was_showing_it(self, client: TestClient):
+        uid = self._uid(client)
+        self._pick(
+            client,
+            uid,
+            tmdb_id=5,
+            rating_key=5,
+            title="From A Row",
+            watched_at=datetime.now(UTC) - timedelta(days=3),
+            finished_at=datetime.now(UTC) - timedelta(days=3),
+        )
+
+        row = client.get(f"/api/users/{uid}/outcomes").json()[0]
+
+        assert row["row"], "the row label is what makes the line actionable"
+
+    def test_a_delivered_pick_nobody_played_is_not_an_outcome(self, client: TestClient):
+        """Delivered is not watched. This endpoint answers what they DID, and the rows page already
+        answers what they were given."""
+        uid = self._uid(client)
+        self._pick(client, uid, tmdb_id=6, rating_key=6, title="Never Touched")
+
+        assert client.get(f"/api/users/{uid}/outcomes").json() == []
+
+    def test_it_returns_only_THIS_person(self, client: TestClient):
+        """The gate that matters. Deleting the user filter left every test here green (mutation
+        audit 2026-08-25) because they all used a single person — so the endpoint could have served
+        the whole server's watch history on one person's page with nothing to catch it."""
+        users = client.get("/api/users").json()
+        mine, theirs = users[0]["id"], users[1]["id"]
+        settled = datetime.now(UTC) - timedelta(days=3)
+        self._pick(client, mine, tmdb_id=11, rating_key=11, title="Mine", watched_at=settled, finished_at=settled)
+        self._pick(client, theirs, tmdb_id=22, rating_key=22, title="Theirs", watched_at=settled, finished_at=settled)
+
+        titles = [r["title"] for r in client.get(f"/api/users/{mine}/outcomes").json()]
+
+        assert titles == ["Mine"], f"leaked another person's watches onto this page: {titles}"
+
+    def test_newest_first(self, client: TestClient):
+        """ "What did they just watch" is the question; "what did they watch in 2019" is not.
+
+        Includes an entry with NO `watched_at` — finished but never separately credited, the one
+        class this endpoint admits since it stopped filtering on `watched_at`. Sorting on
+        `str(watched_at)` put it FIRST, because "None" compares above every "2026-…": an
+        untimestamped row from any era announced as the most recent thing they watched.
+        """
+        uid = self._uid(client)
+        for n, days in ((1, 30), (2, 2), (3, 10)):
+            when = datetime.now(UTC) - timedelta(days=days)
+            self._pick(client, uid, tmdb_id=n, rating_key=n, title=f"T{days}", watched_at=when, finished_at=when)
+        self._pick(
+            client,
+            uid,
+            tmdb_id=4,
+            rating_key=4,
+            title="NoWatchStamp",
+            watched_at=None,
+            finished_at=datetime.now(UTC) - timedelta(days=20),
+            # `max_percent` is what gets a row with no `watched_at` into `resolve_outcomes` at all —
+            # its query selects on `watched_at IS NOT NULL OR max_percent IS NOT NULL`. A bare
+            # finish with neither never reaches the sort, so this is the shape that actually does.
+            max_percent=100,
+        )
+
+        titles = [r["title"] for r in client.get(f"/api/users/{uid}/outcomes").json()]
+
+        assert titles == ["T2", "T10", "NoWatchStamp", "T30"], f"not newest-first: {titles}"
+
+    def test_the_watch_time_and_the_finish_time_are_not_the_same_field(self, client: TestClient):
+        """A series watched over a month has a credit and a completion weeks apart, and the page
+        prints the credit. Reporting one as the other was invisible to every test here."""
+        uid = self._uid(client)
+        watched = datetime.now(UTC) - timedelta(days=30)
+        finished = datetime.now(UTC) - timedelta(days=2)
+        self._pick(client, uid, tmdb_id=9, rating_key=9, title="Long Series", watched_at=watched, finished_at=finished)
+
+        row = client.get(f"/api/users/{uid}/outcomes").json()[0]
+
+        assert row["watched_at"].startswith(watched.strftime("%Y-%m-%d"))
+        assert row["finished_at"].startswith(finished.strftime("%Y-%m-%d"))
+        assert row["watched_at"] != row["finished_at"]
+
+    def test_an_unknown_user_is_a_404(self, client: TestClient):
+        assert client.get("/api/users/999999/outcomes").status_code == 404

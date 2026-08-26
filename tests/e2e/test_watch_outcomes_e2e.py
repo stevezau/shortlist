@@ -25,6 +25,25 @@ pytestmark = pytest.mark.e2e
 PHONE = {"width": 390, "height": 844}
 
 
+def verdict(page: Page):
+    """The verdict card — the headline counts, whatever they are wrapped in.
+
+    Found by `data-testid`, never by class. This used to be `div.rounded-lg.border` filtered on the
+    word "Finished", which was `StatTile`'s class list: replacing the six tiles with one card broke
+    six assertions here and NOTHING reported it, because `web/dist` was a day stale and the whole
+    e2e run was exercising the previous dashboard. A styling change must not be able to do that.
+    """
+    return page.get_by_test_id("verdict")
+
+
+def watched_count(page: Page):
+    return page.get_by_test_id("verdict-watched")
+
+
+def finished_count(page: Page):
+    return page.get_by_test_id("verdict-finished")
+
+
 def seed_outcomes(app: ShortlistApp) -> None:
     """Picks covering every cell of the matrix, across two rows and two libraries.
 
@@ -76,12 +95,12 @@ def seed_outcomes(app: ShortlistApp) -> None:
 
 
 class TestTheDashboardShowsBothNumbers:
-    def test_the_finished_tile_renders_beside_watched(self, page: Page, app: ShortlistApp):
+    def test_the_finished_count_renders_beside_watched(self, page: Page, app: ShortlistApp):
         seed_outcomes(app)
         page.goto("/")
 
-        expect(page.get_by_text("Watched", exact=True)).to_be_visible(timeout=20_000)
-        expect(page.get_by_text("Finished", exact=True)).to_be_visible()
+        expect(watched_count(page)).to_be_visible(timeout=20_000)
+        expect(finished_count(page)).to_be_visible()
 
     def test_the_api_and_the_page_agree_on_the_split(self, page: Page, app: ShortlistApp):
         """5 watched (2 films + 3 series), 3 finished (2 films + 1 series seen out)."""
@@ -93,16 +112,16 @@ class TestTheDashboardShowsBothNumbers:
         assert overall["finished"] == 3, overall
 
         page.goto("/")
-        expect(page.get_by_text("Finished", exact=True)).to_be_visible(timeout=20_000)
-        tile = page.get_by_text("Finished", exact=True).locator("xpath=..")
-        expect(tile).to_contain_text("3")
+        expect(verdict(page)).to_be_visible(timeout=20_000)
+        expect(watched_count(page)).to_have_text("5")
+        expect(finished_count(page)).to_have_text("3")
 
     def test_each_row_line_carries_its_own_finished_count(self, page: Page, app: ShortlistApp):
         """The whole point, on one screen: the movie row finished everything it landed, the TV row
         finished one of three. Before the split these two lines were indistinguishable."""
         seed_outcomes(app)
         page.goto("/")
-        expect(page.get_by_text("Watched", exact=True)).to_be_visible(timeout=20_000)
+        expect(watched_count(page)).to_be_visible(timeout=20_000)
 
         body = page.locator("body")
         expect(body).to_contain_text(re.compile(r"2 watched · 2 finished"))
@@ -114,7 +133,7 @@ class TestTheDashboardShowsBothNumbers:
         page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
 
         page.goto("/")
-        page.get_by_text("Finished", exact=True).wait_for(timeout=20_000)
+        verdict(page).wait_for(timeout=20_000)
         page.wait_for_timeout(1500)
 
         assert not errors, errors
@@ -144,12 +163,41 @@ class TestTheRealSyncStampsTheRightColumn:
         raise AssertionError("the sync job never finished")
 
     def _pick(self, app: ShortlistApp, uid: int, tmdb_id: int, media_type: str, title: str) -> None:
+        """One pick delivered by a real run, two days ago.
+
+        The `run_id` is not decoration: the reconcile only credits a title that is in a LIVE row, and
+        a row's live contents are the picks from the newest run that delivered it. A pick with no run
+        belongs to no delivery, so it reads as a title the row has already dropped.
+        """
         with sqlite3.connect(app.config_dir / "shortlist.db") as con:
+            delivered = (datetime.now(UTC) - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")
+            # The newest run is REUSED across calls, not one run per pick: a later run delivering the
+            # same row is precisely what makes an earlier pick stale, so a run each would leave every
+            # pick but the last one out of the live row.
+            row = con.execute("SELECT id FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+            run_id = (
+                row[0]
+                if row
+                else con.execute(
+                    "INSERT INTO runs (trigger, started_at, finished_at, status, dry_run, stats) "
+                    "VALUES ('schedule', ?, ?, 'ok', 0, '{}')",
+                    (delivered, delivered),
+                ).lastrowid
+            )
+            # The delivery-ledger entry a real run writes alongside the picks. Liveness means the
+            # collection is still ON PLEX, and this is the only record of that — without it the row
+            # reads as one Plex no longer has and nothing is creditable.
             con.execute(
-                "INSERT INTO picks (user_id, tmdb_id, media_type, rating_key, rank, collection_slug, "
+                "INSERT OR REPLACE INTO deliveries (collection_slug, user_slug, library_key, rating_key, title, "
+                "updated_at) VALUES ('picked', 'sarah', ?, ?, 'Picked for You', ?)",
+                ("2" if media_type == "show" else "1", 900 + tmdb_id % 100, delivered),
+            )
+            con.execute(
+                "INSERT INTO picks (run_id, user_id, tmdb_id, media_type, rating_key, rank, collection_slug, "
                 "section_key, library, title, reason, sources, affinity, created_at, watched_at, finished_at) "
-                "VALUES (?,?,?,?,1,'picked',?,?,?,'','tmdb',1.0,?,NULL,NULL)",
+                "VALUES (?,?,?,?,?,1,'picked',?,?,?,'','tmdb',1.0,?,NULL,NULL)",
                 (
+                    run_id,
                     uid,
                     tmdb_id,
                     media_type,
@@ -157,7 +205,7 @@ class TestTheRealSyncStampsTheRightColumn:
                     "2" if media_type == "show" else "1",
                     "TV Shows" if media_type == "show" else "Movies",
                     title,
-                    (datetime.now(UTC) - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S"),
+                    delivered,
                 ),
             )
             con.commit()
@@ -216,7 +264,7 @@ class TestTheSplitBarsAreHonest:
         read as nonsense ("0 watched · 1 finished") and the bar silently clips instead of erroring."""
         seed_outcomes(app)
         page.goto("/")
-        expect(page.get_by_text("Watched", exact=True)).to_be_visible(timeout=20_000)
+        expect(watched_count(page)).to_be_visible(timeout=20_000)
 
         # Every split track on the page: children must fit inside their parent. The count is
         # asserted first because these tracks are `hidden xl:flex` — at any viewport below 1280 they
@@ -327,7 +375,7 @@ class TestTheSplitBarsAreHonest:
             con.commit()
 
         page.goto("/")
-        expect(page.get_by_text("Watched", exact=True)).to_be_visible(timeout=20_000)
+        expect(watched_count(page)).to_be_visible(timeout=20_000)
         page.wait_for_timeout(400)
         assert page.locator('[data-testid="trend-week"]').count() >= 3, (
             "the chart collapsed to its under-three-weeks form, so the check below measures nothing"
@@ -355,7 +403,7 @@ class TestItStillFitsAPhone:
         seed_outcomes(app)
         page.set_viewport_size(PHONE)
         page.goto("/")
-        expect(page.get_by_text("Watched", exact=True)).to_be_visible(timeout=20_000)
+        expect(watched_count(page)).to_be_visible(timeout=20_000)
         page.wait_for_timeout(500)
 
         widths = page.evaluate(
@@ -419,21 +467,30 @@ class TestItStillFitsAPhone:
         )
         assert widths["scroll"] <= widths["client"] + 1, widths
 
-    def test_the_headline_tiles_do_not_overflow_on_a_phone(self, page: Page, app: ShortlistApp):
-        """Five tiles where there were four. On a phone they wrap to a 2-column grid — this proves
-        they wrap rather than squeezing into an unreadable row."""
+    def test_the_verdict_does_not_overflow_on_a_phone(self, page: Page, app: ShortlistApp):
+        """The counts and the two rates stack on a phone rather than squeezing into one row.
+
+        Was written against the five stat tiles and their `div.rounded-lg` wrapper; it now measures
+        the card that replaced them, by test id. Same property, and it is the property that matters:
+        a headline you cannot read is not a headline."""
         seed_outcomes(app)
         page.set_viewport_size(PHONE)
         page.goto("/")
-        expect(page.get_by_text("Finished", exact=True)).to_be_visible(timeout=20_000)
+        expect(verdict(page)).to_be_visible(timeout=20_000)
 
         overflow = page.evaluate(
             """() => {
-                const el = document.evaluate("//*[text()='Finished']", document, null, 9, null).singleNodeValue;
-                const tile = el.closest('div.rounded-lg');
-                const r = tile.getBoundingClientRect();
-                return {right: r.right, width: r.width, viewport: document.documentElement.clientWidth};
+                const card = document.querySelector('[data-testid="verdict"]');
+                const r = card.getBoundingClientRect();
+                const n = document.querySelector('[data-testid="verdict-watched"]').getBoundingClientRect();
+                return {
+                    right: r.right,
+                    width: r.width,
+                    numberRight: n.right,
+                    viewport: document.documentElement.clientWidth,
+                };
             }"""
         )
         assert overflow["right"] <= overflow["viewport"] + 1, overflow
-        assert overflow["width"] > 80, f"the Finished tile squeezed to {overflow['width']}px"
+        assert overflow["numberRight"] <= overflow["viewport"] + 1, overflow
+        assert overflow["width"] > 200, f"the verdict squeezed to {overflow['width']}px"

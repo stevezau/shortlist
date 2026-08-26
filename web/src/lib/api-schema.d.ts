@@ -386,7 +386,11 @@ export interface paths {
         };
         /**
          * Deleted Rows
-         * @description Pick history belonging to rows that no longer exist, with how much of it there is.
+         * @description History belonging to rows that no longer exist, with how much of it there is.
+         *
+         *     "History", not "pick history": a SHARED row writes no `picks` at all, so for one of those the
+         *     `picks` field counts its `shared_row_watches` credits. The field name is kept for wire
+         *     compatibility; see `DeletedRowOut.picks`.
          *
          *     Its own endpoint rather than a field on the report: the report is windowed, and "what can I clear"
          *     is a question about ALL of a deleted row's history, not the last 30 days of it.
@@ -396,19 +400,47 @@ export interface paths {
         post?: never;
         /**
          * Clear Deleted Rows
-         * @description Permanently delete the pick history of rows that no longer exist. `slug` clears just one.
+         * @description Permanently delete the history of rows that no longer exist. `slug` clears just one.
+         *
+         *     "History", not "pick history": a SHARED row writes no `picks` at all, so what is removed for one
+         *     is its `shared_row_watches` credits. The returned `picks` field counts BOTH (its name is kept for
+         *     wire compatibility); the audit event splits them as `pick_rows` + `shared_watches`.
          *
          *     This is the one destructive action on the dashboard, so it is deliberately narrow:
          *
          *     * Only slugs with no live Collection are eligible — the eligible set is recomputed here rather
          *       than trusted from the request, so naming a live row's slug deletes nothing.
-         *     * Only `picks` rows are touched. `deliveries` is left alone: it is the ledger of what still
-         *       exists on Plex, and clearing it would strand a real collection with nothing left to clean it up.
+         *     * Only `picks` and `shared_row_watches` rows are touched. `deliveries` is left alone: it is the
+         *       ledger of what still exists on Plex, and clearing it would strand a real collection with nothing
+         *       left to clean it up.
          *     * These picks disappear from everywhere they are counted — not just this dashboard. The per-user
          *       lifetime stats and a person's pick history on their own page are read from the same rows, so the
          *       UI has to say "history", not "the numbers above".
          */
         delete: operations["clear_deleted_rows_api_report_deleted_rows_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/report/engagement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Engagement
+         * @description What people did with their picks: per person, per title, and where abandons cluster.
+         *
+         *     The detail behind the dashboard's Dropped tile. Sync like `effectiveness` and for the same reason
+         *     — it is a scan of `picks`, and running that on the event loop stalls SSE and every other request.
+         */
+        get: operations["engagement_api_report_engagement_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2294,6 +2326,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/{user_id}/outcomes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * User Outcomes
+         * @description What this person did with the picks they were given: finished, part-watched, or abandoned.
+         *
+         *     The user page could show what Shortlist DELIVERED and what they had watched on Plex, but not the
+         *     join of the two — whether the recommendations were actually seen out. That is the question the
+         *     dashboard answers for the whole server, and it is at least as interesting per person.
+         *
+         *     Reuses `resolve_outcomes`, the same function the dashboard reads, rather than re-deriving the
+         *     classification here. Two places deciding what "finished" means is how the user page and the
+         *     dashboard come to disagree about the same title.
+         *
+         *     A plain `def`: `resolve_outcomes` is synchronous and walks the picks table, so Starlette runs it
+         *     in a worker thread instead of stalling the event loop (see the effectiveness handler).
+         */
+        get: operations["user_outcomes_api_users__user_id__outcomes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/{user_id}/rows": {
         parameters: {
             query?: never;
@@ -2421,6 +2484,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/watching-account/snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Snapshots
+         * @description Transfers that can still be undone, newest first.
+         *
+         *     Without this the undo was reachable only from the in-flight response of the transfer that created
+         *     it — so the one case the durable queue exists for (a reverse proxy timing the request out at 60s,
+         *     a 503 while a run holds the Plex lock, or simply a page reload) was also the case where the
+         *     destructive run completed and its undo could not be found.
+         */
+        get: operations["list_snapshots_api_watching_account_snapshots_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/watching-account/transfer": {
         parameters: {
             query?: never;
@@ -2432,14 +2520,45 @@ export interface paths {
         put?: never;
         /**
          * Transfer
-         * @description Copy the owner's watched set onto their watching account.
+         * @description Replicate one account's watch state onto a watching account.
          *
-         *     The copy into Shortlist is what makes the new account's picks correct and writes nothing to
-         *     Plex. `scrobble` additionally marks each title played on the PMS so Plex shows checkmarks —
-         *     thousands of writes, and Plex dates every one of them today (it cannot be told otherwise), which
-         *     is why the true dates are stored separately.
+         *     The source defaults to the owner — the case the guide walks through — but `from_user_id` names
+         *     any account, because someone who already moved once has their history there rather than on the
+         *     admin account they left. It is read with THAT account's own server token.
+         *
+         *     Mirrors: the target ends up matching the source, which means un-marking anything the source has
+         *     not watched. That is what makes it a replica rather than a merge, and it is what repairs an account
+         *     the pre-1.x transfer spoiled by scrobbling show keys. It is also the only path here that can
+         *     delete watch history, so a snapshot is taken before the first write and `/undo` restores it.
+         *
+         *     Plex stamps every write `now` and accepts no date, so the writes go oldest-first — the dates
+         *     cannot be replicated, but the ORDER can, which is what Continue Watching sorts on.
          */
         post: operations["transfer_api_watching_account_transfer_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/watching-account/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo
+         * @description Put the watching account back exactly as the transfer found it.
+         *
+         *     Restores from the snapshot rather than replaying the writes backwards — with counts and offsets,
+         *     not just watched/unwatched, because re-marking a rewatched film once would leave a third state
+         *     that existed on neither account.
+         */
+        post: operations["undo_api_watching_account_undo_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2780,6 +2899,13 @@ export interface components {
             req_auto_min_rating?: number | null;
             /** Req Auto Send */
             req_auto_send?: boolean | null;
+            /** Req Auto User Tag */
+            req_auto_user_tag?: boolean | null;
+            /**
+             * Req Language Mode
+             * @enum {unknown}
+             */
+            req_language_mode?: "any" | "prefer" | "only" | null;
             /** Req Max Per Row */
             req_max_per_row?: number | null;
             /** Req Max Year */
@@ -2788,14 +2914,23 @@ export interface components {
             req_min_demand?: number | null;
             /** Req Min Rating */
             req_min_rating?: number | null;
+            /** Req Min Rating Other */
+            req_min_rating_other?: number | null;
             /** Req Min Votes */
             req_min_votes?: number | null;
             /** Req Min Year */
             req_min_year?: number | null;
+            /** Req Preferred Languages */
+            req_preferred_languages?: string[] | null;
             /** Req Radarr Quality Profile Id */
             req_radarr_quality_profile_id?: number | null;
             /** Req Radarr Root Folder */
             req_radarr_root_folder?: string | null;
+            /**
+             * Req Sonarr Monitor
+             * @enum {unknown}
+             */
+            req_sonarr_monitor?: "all" | "firstSeason" | "lastSeason" | "pilot" | "none" | null;
             /** Req Sonarr Quality Profile Id */
             req_sonarr_quality_profile_id?: number | null;
             /** Req Sonarr Root Folder */
@@ -2926,6 +3061,17 @@ export interface components {
             req_auto_min_rating: number | null;
             /** Req Auto Send */
             req_auto_send: boolean | null;
+            /**
+             * Req Auto User Tag
+             * @description Tag this row's Sonarr/Radarr requests with the wanting person's slug; null inherits the global requests.auto_user_tag.
+             */
+            req_auto_user_tag?: boolean | null;
+            /**
+             * Req Language Mode
+             * @description How this row treats a title's original language when requesting: 'any' (one bar for everything), 'prefer' (other languages need a higher rating to auto-send), or 'only' (never request another language); null inherits the global requests.language_mode.
+             * @enum {unknown}
+             */
+            req_language_mode: "any" | "prefer" | "only" | null;
             /** Req Max Per Row */
             req_max_per_row: number | null;
             /** Req Max Year */
@@ -2934,14 +3080,30 @@ export interface components {
             req_min_demand: number | null;
             /** Req Min Rating */
             req_min_rating: number | null;
+            /**
+             * Req Min Rating Other
+             * @description Rating another language must reach for this row to auto-send it. Null inherits the global requests.min_rating_other, which may itself be unset — in which case this row derives from its own req_min_rating plus 1.5.
+             */
+            req_min_rating_other: number | null;
             /** Req Min Votes */
             req_min_votes: number | null;
             /** Req Min Year */
             req_min_year: number | null;
+            /**
+             * Req Preferred Languages
+             * @description ISO 639-1 codes this row treats as preferred; null inherits the global requests.preferred_languages. An empty list is a row that cleared its languages.
+             */
+            req_preferred_languages: string[] | null;
             /** Req Radarr Quality Profile Id */
             req_radarr_quality_profile_id: number | null;
             /** Req Radarr Root Folder */
             req_radarr_root_folder: string | null;
+            /**
+             * Req Sonarr Monitor
+             * @description How much of a show Sonarr monitors for this row's requests (Sonarr's Add Series 'Monitor' choice); null inherits the global requests.sonarr.monitor.
+             * @enum {unknown}
+             */
+            req_sonarr_monitor: "all" | "firstSeason" | "lastSeason" | "pilot" | "none" | null;
             /** Req Sonarr Quality Profile Id */
             req_sonarr_quality_profile_id: number | null;
             /** Req Sonarr Root Folder */
@@ -2989,6 +3151,8 @@ export interface components {
             rows_enabled: number;
             /** Users Enabled */
             users_enabled: number;
+            /** Users Idle */
+            users_idle: number;
             /** Users Total */
             users_total: number;
             /** Users Watched */
@@ -3037,7 +3201,7 @@ export interface components {
         };
         /**
          * DeletedRowOut
-         * @description Pick history belonging to a row that no longer exists.
+         * @description History belonging to a row that no longer exists.
          */
         DeletedRowOut: {
             /** First Seen */
@@ -3094,6 +3258,62 @@ export interface components {
             window: "7" | "30" | "90" | "all";
             /** Window Days */
             window_days: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** EngagementOut */
+        EngagementOut: {
+            /** Losing */
+            losing: components["schemas"]["LosingTitleOut"][];
+            /** Observed */
+            observed: boolean;
+            /** People */
+            people: components["schemas"]["EngagementPersonOut"][];
+            /** Stop Points */
+            stop_points: components["schemas"]["StopPointOut"][];
+            /** Window */
+            window: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** EngagementPersonOut */
+        EngagementPersonOut: {
+            /** Display Name */
+            display_name: string | null;
+            /** Picks */
+            picks: components["schemas"]["EngagementPickOut"][];
+            /** Total */
+            total: number;
+            /** Username */
+            username: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * EngagementPickOut
+         * @description One pick and what became of it.
+         *
+         *     `percent` is NULL where no live session ever observed the play — which is not 0%. Plex's watched
+         *     flag cannot see a partial play at all, so "we never watched this happen" and "they bailed at the
+         *     start" are genuinely different states and are not collapsed.
+         */
+        EngagementPickOut: {
+            /** Finished At */
+            finished_at: string | null;
+            /** Media Type */
+            media_type: string;
+            /** Observed At */
+            observed_at: string | null;
+            /** Outcome */
+            outcome: string;
+            /** Percent */
+            percent: number | null;
+            /** Row */
+            row: string;
+            /** Title */
+            title: string;
+            /** Watched At */
+            watched_at: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -3299,7 +3519,7 @@ export interface components {
         };
         /**
          * LandingOut
-         * @description The landing rate over a matured cohort — picks old enough to have had their full 30 days.
+         * @description The landing rate over a matured cohort — picks old enough to have had their chance.
          */
         LandingOut: {
             /** Cohort From */
@@ -3434,6 +3654,25 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * LosingTitleOut
+         * @description A pick several people started and few finished. One person abandoning something is a night;
+         *     the pattern across people is what makes it a bad recommendation.
+         */
+        LosingTitleOut: {
+            /** Finished */
+            finished: number;
+            /** Media Type */
+            media_type: string;
+            /** Started */
+            started: number;
+            /** Stops At */
+            stops_at: number | null;
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * NotificationOut
          * @description One alert as the React bell renders it — plain text throughout, no HTML.
          *
@@ -3480,8 +3719,12 @@ export interface components {
             avg_days_to_watch: number | null;
             /** Avg Days To Watch Delta */
             avg_days_to_watch_delta: number | null;
+            /** Bounced */
+            bounced: number;
             /** Delivered */
             delivered: number;
+            /** Dropped */
+            dropped: number;
             /** Finished */
             finished: number;
             landing: components["schemas"]["LandingOut"];
@@ -3559,6 +3802,8 @@ export interface components {
             display_name: string;
             /** Finished */
             finished: number;
+            /** Id */
+            id: number;
             /** Slug */
             slug: string;
             /** Username */
@@ -3795,6 +4040,8 @@ export interface components {
             seed_title: string;
             /** Title */
             title: string;
+            /** User Id */
+            user_id: number | null;
             /** Username */
             username: string;
             /** Watched At */
@@ -3907,6 +4154,11 @@ export interface components {
              * @default
              */
             imdb_id: string;
+            /**
+             * Language
+             * @default
+             */
+            language: string;
             /** Media Type */
             media_type: string;
             /**
@@ -4570,6 +4822,26 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * SnapshotOut
+         * @description One un-restored snapshot — an undo that is still available.
+         */
+        SnapshotOut: {
+            /** Complete */
+            complete: boolean;
+            /** Entries */
+            entries: number;
+            /** Id */
+            id: number;
+            /** Taken At */
+            taken_at: string | null;
+            /** User Id */
+            user_id: number;
+            /** Username */
+            username: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** StatusOut */
         StatusOut: {
             /** Enabled */
@@ -4578,6 +4850,15 @@ export interface components {
             expires_at: string | null;
             /** Seconds Remaining */
             seconds_remaining: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /** StopPointOut */
+        StopPointOut: {
+            /** Count */
+            count: number;
+            /** Label */
+            label: string;
         } & {
             [key: string]: unknown;
         };
@@ -4599,7 +4880,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "watched" | "users";
+            kind: "watched" | "users" | "credited";
             /** Ok */
             ok: boolean;
             /** Total */
@@ -4624,7 +4905,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "watched" | "users";
+            kind: "watched" | "users" | "credited";
             /** Phase */
             phase?: ("fetch" | "save") | null;
             /** Total */
@@ -4718,30 +4999,58 @@ export interface components {
              * @default false
              */
             dry_run: boolean;
-            /**
-             * Scrobble
-             * @default false
-             */
-            scrobble: boolean;
+            /** From User Id */
+            from_user_id?: number | null;
             /** To User Id */
             to_user_id: number;
         };
-        /** TransferOut */
+        /**
+         * TransferOut
+         * @description The result of one replication.
+         *
+         *     `unmarks` and `offsets_cleared` are the destructive half and are reported separately from
+         *     `applied` on purpose: "wrote 11,000 things" and "removed 412 watches from that account" are not
+         *     the same sentence, and only the second needs anybody's consent.
+         */
         TransferOut: {
-            /** Already Present */
-            already_present: number;
-            /** Copied */
-            copied: number;
+            /** Applied */
+            applied: number;
             /** Dry Run */
             dry_run: boolean;
             /** Errors */
             errors: string[];
-            /** Scrobble Skipped */
-            scrobble_skipped: number;
-            /** Scrobbled */
-            scrobbled: number;
+            /** Events Copied */
+            events_copied: number;
+            /** Failed */
+            failed: number;
+            /** Marks */
+            marks: number;
+            /** Offsets Cleared */
+            offsets_cleared: number;
+            /** Offsets Set */
+            offsets_set: number;
+            /** Planned */
+            planned: number;
+            /** Removals Preview */
+            removals_preview: string[];
+            /** Shows Cleared */
+            shows_cleared: number;
+            /** Snapshot Id */
+            snapshot_id: number | null;
             /** Source Empty */
             source_empty: boolean;
+            /** Target Unreadable */
+            target_unreadable: string[];
+            /** Titles Cached */
+            titles_cached: number;
+            /** Unmarks */
+            unmarks: number;
+            /** Unreachable */
+            unreachable: number;
+            /** Verify Checked */
+            verify_checked: number;
+            /** Verify Mismatched */
+            verify_mismatched: number;
         } & {
             [key: string]: unknown;
         };
@@ -4756,14 +5065,42 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** UndoIn */
+        UndoIn: {
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
+            /** Snapshot Id */
+            snapshot_id: number;
+        };
+        /**
+         * UninstallFailedOut
+         * @description An account plex.tv refused. The rest of the uninstall still ran (issue #96).
+         */
+        UninstallFailedOut: {
+            /** Error */
+            error: string;
+            /** User */
+            user: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** UninstallOut */
         UninstallOut: {
             /** Collections Deleted */
             collections_deleted: string[];
             /** Dry Run */
             dry_run: boolean;
+            /** Filters Failed */
+            filters_failed: components["schemas"]["UninstallFailedOut"][];
             /** Filters Restored */
             filters_restored: number;
+            /** Filters Skipped */
+            filters_skipped: components["schemas"]["UninstallSkippedOut"][];
+            /** Filters Unreachable */
+            filters_unreachable: components["schemas"]["UninstallUnreachableOut"][];
             /** Message */
             message: string;
             /** Rows Disabled */
@@ -4798,6 +5135,39 @@ export interface components {
              * @default false
              */
             dry_run: boolean;
+        };
+        /**
+         * UninstallSkippedOut
+         * @description An account that has left this Plex server, so its snapshot can never be restored.
+         */
+        UninstallSkippedOut: {
+            /** Plex Account Id */
+            plex_account_id: number;
+            /** Reason */
+            reason: string;
+            /** User */
+            user: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * UninstallUnreachableOut
+         * @description An account plex.tv's roster did not list, but that our own records say IS on this server.
+         *
+         *     Its own field rather than folded into `filters_failed`, because the two need different things
+         *     from the operator — a refused write is worth retrying, an absent roster entry means plex.tv gave
+         *     an answer we don't believe — and a consumer should never have to match on an error string to
+         *     tell them apart.
+         */
+        UninstallUnreachableOut: {
+            /** Plex Account Id */
+            plex_account_id: number;
+            /** Reason */
+            reason: string;
+            /** User */
+            user: string;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * UserOut
@@ -4898,6 +5268,30 @@ export interface components {
             title: string;
             /** Year */
             year: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * UserPickOutcomeOut
+         * @description One title this person was recommended and then played.
+         */
+        UserPickOutcomeOut: {
+            /** Finished At */
+            finished_at: string | null;
+            /** Media Type */
+            media_type: string;
+            /** Outcome */
+            outcome: string;
+            /** Percent */
+            percent: number | null;
+            /** Row */
+            row: string;
+            /** Title */
+            title: string;
+            /** Tmdb Id */
+            tmdb_id: number;
+            /** Watched At */
+            watched_at: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -5067,6 +5461,10 @@ export interface components {
         WatchSyncOut: {
             /** Last */
             last: string | null;
+            /** Live Down Since */
+            live_down_since: string | null;
+            /** Live Since */
+            live_since: string | null;
             /** Next */
             next: string | null;
         } & {
@@ -5796,6 +6194,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ClearedDeletedRowsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    engagement_api_report_engagement_get: {
+        parameters: {
+            query?: {
+                /** @description Report window in days: 7, 30, 90, or 'all'. */
+                window?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngagementOut"];
                 };
             };
             /** @description Validation Error */
@@ -8087,6 +8517,37 @@ export interface operations {
             };
         };
     };
+    user_outcomes_api_users__user_id__outcomes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserPickOutcomeOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     user_rows_api_users__user_id__rows_get: {
         parameters: {
             query?: never;
@@ -8275,6 +8736,26 @@ export interface operations {
             };
         };
     };
+    list_snapshots_api_watching_account_snapshots_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SnapshotOut"][];
+                };
+            };
+        };
+    };
     transfer_api_watching_account_transfer_post: {
         parameters: {
             query?: never;
@@ -8285,6 +8766,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["TransferIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransferOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    undo_api_watching_account_undo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UndoIn"];
             };
         };
         responses: {

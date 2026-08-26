@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="3" totalSize="81" offset="0" allowSync="1" art="/:/resources/movie-fanart.jpg" identifier="com.plexapp.plugins.library" librarySectionID="1" librarySectionTitle="Movies" librarySectionUUID="16681dae-b1e4-4d36-8e2c-2a71dbbc6c31" mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="1786540085" thumb="/:/resources/movie.png" title1="Movies" title2="All Movies" viewGroup="movie" viewMode="65592">
+<Video ratingKey="60632" key="/library/metadata/60632" guid="plex://movie/5d776b8e96b655001fe14e31" slug="10-cloverfield-lane" studio="Bad Robot" type="movie" title="10 Cloverfield Lane" contentRating="PG-13" contentRatingAge="14" summary="After a catastrophic car crash, a young woman wakes up in a survivalist&#39;s underground bunker, where he claims to have saved her from an apocalyptic attack that has left the outside world uninhabitable." rating="9.1" audienceRating="7.2" userRating="7.9" viewOffset="490509" viewCount="1" lastViewedAt="1513057169" lastRatedAt="1696072109" year="2016" tagline="Monsters come in many forms." thumb="/library/metadata/60632/thumb/1787043065" art="/library/metadata/60632/art/1787043065" duration="6214816" originallyAvailableAt="2016-03-10" addedAt="1605186041" updatedAt="1787043065" chapterSource="media" primaryExtraKey="/library/metadata/646936" ratingImage="imdb://image.rating">
+<Media id="814973" duration="6214816" bitrate="16912" width="3840" height="1600" aspectRatio="2.35" audioChannels="8" audioCodec="truehd" videoCodec="hevc" videoResolution="4k" container="mkv" videoFrameRate="24p" audioProfile="/media/REDACTED" videoProfile="/media/REDACTED" hasVoiceActivity="1">
+<Part id="998159" key="/library/parts/998159/1517127923/file.mkv" duration="6214816" file="/media/REDACTED" size="13138126172" audioProfile="/media/REDACTED" container="mkv" indexes="sd" videoProfile="/media/REDACTED" />
+</Media>
+<Image alt="10 Cloverfield Lane" type="coverPoster" url="/library/metadata/60632/thumb/1787043065" />
+<Image alt="10 Cloverfield Lane" type="background" url="/library/metadata/60632/art/1787043065" />
+<Image alt="10 Cloverfield Lane" type="clearLogo" url="/library/metadata/60632/clearLogo/1787043065" />
+<Image alt="10 Cloverfield Lane" type="backgroundSquare" url="/library/metadata/60632/squareArt/1787043065" />
+<UltraBlurColors topLeft="173523" topRight="0e2c29" bottomRight="03030f" bottomLeft="030310" />
+<Genre tag="Horror" />
+<Genre tag="Science Fiction" />
+<Country tag="United States of America" />
+<Collection tag="&#127919; Because you watched Avatar Aang: The Last Airbender&#8203;&#8204;&#8204;&#8203;&#8204;&#8204;&#8204;&#8203;&#8203;&#8204;&#8203;&#8204;&#8204;&#8203;&#8203;&#8203;&#8204;&#8204;&#8203;&#8203;&#8203;&#8204;&#8204;&#8204;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;" />
+<Collection tag="Critically Acclaimed Movies" />
+<Director tag="Dan Trachtenberg" />
+<Writer tag="Josh Campbell" />
+<Writer tag="Matthew Stuecken" />
+<Role tag="John Goodman" />
+<Role tag="Mary Elizabeth Winstead" />
+<Role tag="John Gallagher Jr." />
+</Video>
+<Video ratingKey="228943" key="/library/metadata/228943" guid="plex://movie/626907e7cb0da9631cb3acb7" slug="752-is-not-a-number" studio="Payam Films" type="movie" title="752 Is Not a Number" summary="Chronicles Canadian-Iranian dentist Hamed Esmaelion&#39;s quest for justice in the aftermath of Ukraine International Airlines Flight 752, shot down in 2020 by the Islamic Revolutionary Guards Corps." audienceRating="7.2" viewOffset="1139347" lastViewedAt="1674449714" year="2022" tagline="An accomplished writer, a professional dentist, a loving father and passionate family man, Hamed Esmaeilion went from the quiet man to the activist in search of justice within a few short hours when he was picking fresh flowers for his wife and daughter on the eve of their return from vacation in Iran, to the time he got the devastating news of their death. His world was turned upside down and in the weakest point of his life, Hamed had to be the strongest man in the world." thumb="/library/metadata/228943/thumb/1787044140" art="/library/metadata/228943/art/1787044140" duration="6029857" originallyAvailableAt="2022-09-09" addedAt="1673791618" updatedAt="1787044140" primaryExtraKey="/library/metadata/648414">
+<Media id="375214" duration="6029857" bitrate="12345" width="3840" height="1604" aspectRatio="2.35" audioChannels="6" audioCodec="ac3" videoCodec="hevc" videoResolution="4k" container="mkv" videoFrameRate="24p" videoProfile="/media/REDACTED" hasVoiceActivity="1">
+<Part id="501724" key="/library/parts/501724/1673415632/file.mkv" duration="6029857" file="/media/REDACTED" size="9304920827" container="mkv" indexes="sd" videoProfile="/media/REDACTED" />
+</Media>
+<Image alt="752 Is Not a Number" type="coverPoster" url="/library/metadata/228943/thumb/1787044140" />
+<Image alt="752 Is Not a Number" type="background" url="/library/metadata/228943/art/1787044140" />
+<Image alt="752 Is Not a Number" type="clearLogo" url="/library/metadata/228943/clearLogo/1787044140" />
+<Image alt="752 Is Not a Number" type="backgroundSquare" url="/library/metadata/228943/squareArt/1787044140" />
+<UltraBlurColors topLeft="4b1e19" topRight="582322" bottomRight="77372c" bottomLeft="51221c" />
+<Genre tag="Documentary" />
+<Genre tag="Biography" />
+<Country tag="Canada" />
+<Director tag="Babak Payami" />
+<Writer tag="Babak Payami" />
+<Role tag="Hamed Esmaelion" />
+<Role tag="Babak Payami" />
+</Video>
+<Video ratingKey="155081" key="/library/metadata/155081" guid="plex://movie/61701b97fd9d8e4011a46b1d" slug="adele-one-night-only" studio="Harpo Productions" type="movie" title="Adele: One Night Only" contentRating="TV-14" summary="A primetime special with performances from the superstar including Adele&#8217;s first new material in six years plus her chart-topping hits. The special will also feature an exclusive interview with Adele by Oprah Winfrey from her rose garden, in Adele&#8217;s first televised wide-ranging conversation." rating="5.6" audienceRating="8.0" userRating="7.8" viewOffset="2039751" lastViewedAt="1702628303" lastRatedAt="1750225054" year="2021" thumb="/library/metadata/155081/thumb/1787044219" art="/library/metadata/155081/art/1787044219" duration="5273375" originallyAvailableAt="2021-11-14" addedAt="1637052386" updatedAt="1787044219" primaryExtraKey="/library/metadata/648575">
+<Media id="243912" duration="5273375" bitrate="2231" width="1920" height="1080" aspectRatio="1.78" audioChannels="6" audioCodec="aac" videoCodec="hevc" videoResolution="1080" container="mp4" videoFrameRate="24p" optimizedForStreaming="0" audioProfile="/media/REDACTED" has64bitOffsets="0" videoProfile="/media/REDACTED" hasVoiceActivity="1">
+<Part id="349983" key="/library/parts/349983/1636922346/file.mkv" duration="5273375" file="/media/REDACTED" size="1470307086" audioProfile="/media/REDACTED" container="mp4" has64bitOffsets="0" indexes="sd" optimizedForStreaming="0" videoProfile="/media/REDACTED" />
+</Media>
+<Image alt="Adele: One Night Only" type="coverPoster" url="/library/metadata/155081/thumb/1787044219" />
+<Image alt="Adele: One Night Only" type="background" url="/library/metadata/155081/art/1787044219" />
+<Image alt="Adele: One Night Only" type="clearLogo" url="/library/metadata/155081/clearLogo/1787044219" />
+<UltraBlurColors topLeft="172350" topRight="344988" bottomRight="020d16" bottomLeft="0f2e38" />
+<Genre tag="Documentary" />
+<Genre tag="Music" />
+<Country tag="United States of America" />
+<Country tag="United Kingdom" />
+<Collection tag="&#10024; Movies Picked for You&#8203;&#8204;&#8204;&#8204;&#8204;&#8203;&#8203;&#8204;&#8203;&#8204;&#8203;&#8204;&#8203;&#8204;&#8204;&#8204;&#8203;&#8204;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8204;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;" />
+<Collection tag="Hidden Gems Movies" />
+<Director tag="Paul Dugdale" />
+<Writer tag="Lauren Greenberg" />
+<Writer tag="David Young" />
+<Role tag="Adele" />
+<Role tag="Oprah Winfrey" />
+<Role tag="Louise Barnes" />
+</Video>
+</MediaContainer>

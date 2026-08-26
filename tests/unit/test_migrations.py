@@ -1084,3 +1084,273 @@ class TestPerRowRequestSettings0074:
         collections = self._columns(tmp_path, "collections")
         assert not [name for name in self._ROW_COLUMNS if name in collections]
         assert "row_slug" not in self._columns(tmp_path, "request_candidates")
+
+
+class TestRowAutoUserTag0075:
+    """0075 adds the per-row override for tagging requests with the wanting person's slug.
+
+    Nullable, no backfill, no server default — NULL is "inherit the global switch". A FALSE backfill
+    would pin every existing row to "off", and the global switch would then reach none of them.
+    """
+
+    @staticmethod
+    def _columns(config_dir: Path) -> dict[str, bool]:
+        """column -> whether it is NOT NULL."""
+        con = sqlite3.connect(config_dir / "shortlist.db")
+        try:
+            return {r[1]: bool(r[3]) for r in con.execute("PRAGMA table_info(collections)")}
+        finally:
+            con.close()
+
+    def test_the_column_is_nullable_and_the_seeded_row_inherits(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        columns = self._columns(tmp_path)
+        assert "req_auto_user_tag" in columns
+        assert not columns["req_auto_user_tag"], "NULL is how a row inherits the global switch"
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        try:
+            rows = con.execute("SELECT req_auto_user_tag FROM collections").fetchall()
+        finally:
+            con.close()
+        assert rows, "expected the seeded default row"
+        assert {r[0] for r in rows} == {None}
+
+    def test_the_downgrade_removes_it_again(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0074")
+        assert "req_auto_user_tag" not in self._columns(tmp_path)
+
+
+class TestRowSonarrMonitor0084:
+    """0084 adds the per-row override for how much of a show Sonarr takes (issue #100).
+
+    Nullable, no backfill, no server default — NULL is "inherit `requests.sonarr.monitor`", whose own
+    default is "all". Anything else would pin every existing row to a mode its owner never chose, on
+    the one setting that decides how much gets downloaded.
+    """
+
+    @staticmethod
+    def _columns(config_dir: Path) -> dict[str, bool]:
+        """column -> whether it is NOT NULL."""
+        con = sqlite3.connect(config_dir / "shortlist.db")
+        try:
+            return {r[1]: bool(r[3]) for r in con.execute("PRAGMA table_info(collections)")}
+        finally:
+            con.close()
+
+    def test_the_column_is_nullable_and_the_seeded_row_inherits(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        columns = self._columns(tmp_path)
+        assert "req_sonarr_monitor" in columns
+        assert not columns["req_sonarr_monitor"], "NULL is how a row inherits the global mode"
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        try:
+            rows = con.execute("SELECT req_sonarr_monitor FROM collections").fetchall()
+        finally:
+            con.close()
+        assert rows, "expected the seeded default row"
+        assert {r[0] for r in rows} == {None}
+
+    def test_running_it_again_over_an_already_migrated_database_is_a_no_op(self, tmp_path: Path):
+        """The maintainer's server runs `dev` builds, so this migration lands on databases that may
+        already carry the column from an earlier build of the same change."""
+        run_migrations(tmp_path)
+        run_migrations(tmp_path)
+        assert "req_sonarr_monitor" in self._columns(tmp_path)
+
+    def test_the_downgrade_removes_it_again(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0083")
+        assert "req_sonarr_monitor" not in self._columns(tmp_path)
+
+
+class TestSharedPickMediaTypeBackfill0081:
+    """0081 puts `media_type` back on shared-row picks written before `_pick_dicts` carried it.
+
+    Without it `_shared_key` refuses the entry — correctly, since TMDB ids are namespaced per type —
+    so every watch off a shared row before that fix credits nothing. Measured on a real server: 28
+    plays by five people, resolving to 9 credits the dashboard could not see.
+    """
+
+    @staticmethod
+    def _seed(config_dir: Path, picks: list[dict], pick_rows: list[tuple]) -> None:
+        con = sqlite3.connect(config_dir / "shortlist.db")
+        try:
+            con.execute(
+                "INSERT INTO runs (id, trigger, started_at, finished_at, status, dry_run, stats)"
+                " VALUES (900, 'schedule', '2026-08-23 17:30:00', '2026-08-23 18:58:00', 'ok', 0, '{}')"
+            )
+            con.execute(
+                "INSERT INTO run_shared_rows (run_id, collection_slug, row_title, status, picks) "
+                "VALUES (900, 'staff', 'Staff', 'ok', ?)",
+                (json.dumps(picks),),
+            )
+            for rating_key, tmdb_id, media_type in pick_rows:
+                con.execute(
+                    "INSERT INTO picks (run_id, user_id, collection_slug, section_key, library, "
+                    "tmdb_id, media_type, rating_key, rank, title, reason, created_at) "
+                    "VALUES (900, 1, 'other', '1', 'Movies', ?, ?, ?, 1, 'T', '', '2026-08-23 17:30:00')",
+                    (tmdb_id, media_type, rating_key),
+                )
+            con.commit()
+        finally:
+            con.close()
+
+    @staticmethod
+    def _picks_back(config_dir: Path) -> list[dict]:
+        con = sqlite3.connect(config_dir / "shortlist.db")
+        try:
+            (blob,) = con.execute(
+                "SELECT picks FROM run_shared_rows WHERE run_id=900 AND collection_slug='staff'"
+            ).fetchone()
+        finally:
+            con.close()
+        return json.loads(blob)
+
+    def _run_0081(self, tmp_path: Path, picks: list[dict], pick_rows: list[tuple]) -> list[dict]:
+        command.upgrade(_alembic(tmp_path), "0080")
+        self._seed(tmp_path, picks, pick_rows)
+        command.upgrade(_alembic(tmp_path), "0081")
+        return self._picks_back(tmp_path)
+
+    def test_a_typed_pick_is_recovered_from_its_rating_key(self, tmp_path: Path):
+        out = self._run_0081(
+            tmp_path,
+            [{"tmdb_id": 136315, "rating_key": 500, "title": "The Bear"}],
+            [(500, 136315, "show")],
+        )
+        assert out[0]["media_type"] == "show", "the credit path still cannot key this pick"
+
+    def test_a_rating_key_that_disagrees_on_the_title_is_left_alone(self, tmp_path: Path):
+        """Joined on rating_key AND tmdb_id. Plex reuses `metadata_items.id`, so a rating key alone
+        can point at a title that is no longer the one in the blob — and retyping from that would
+        credit the wrong thing, which is the exact failure `_shared_key` refuses to risk."""
+        out = self._run_0081(
+            tmp_path,
+            [{"tmdb_id": 136315, "rating_key": 500, "title": "The Bear"}],
+            [(500, 999999, "movie")],  # same key, a DIFFERENT title
+        )
+        assert "media_type" not in out[0], "retyped a pick from a reused rating key"
+
+    def test_a_pick_with_no_ids_at_all_is_left_alone(self, tmp_path: Path):
+        """The oldest rows carry only title/year/rank. Nothing can recover those, and this must not
+        invent an answer for them."""
+        out = self._run_0081(tmp_path, [{"title": "Ancient", "year": 2019}], [(500, 136315, "show")])
+        assert "media_type" not in out[0]
+
+    def test_an_already_typed_pick_is_untouched(self, tmp_path: Path):
+        """Idempotent — re-running must change nothing, and must never overwrite a real value."""
+        out = self._run_0081(
+            tmp_path,
+            [{"tmdb_id": 136315, "rating_key": 500, "media_type": "movie"}],
+            [(500, 136315, "show")],  # the table says show; the blob already says movie
+        )
+        assert out[0]["media_type"] == "movie", "overwrote a type the row already carried"
+
+
+def test_0083_adds_the_complete_column_to_a_database_already_stamped_0082(tmp_path):
+    """A database stamped 0082 never replays it, so editing 0082 fixes fresh installs and nothing else.
+
+    Not hypothetical: an earlier 0082 shipped without `complete` and ran against the development
+    server. Without 0083 every snapshot insert and every `/watching-account/snapshots` read there
+    raises `no such column` — loud rather than lossy, but the feature is dead on exactly the machine
+    it was built against. Same shape as 0032, a migration that was a no-op on every real database.
+
+    This test recreates the old table shape and stamps the DB back to 0082, which is the only way to
+    reproduce what the live server actually looks like.
+    """
+    import sqlalchemy as sa
+
+    from shortlist.server.db.session import make_engine, run_migrations
+
+    run_migrations(tmp_path)
+    engine = make_engine(tmp_path)
+    try:
+        with engine.begin() as conn:
+            conn.execute(sa.text("DROP TABLE watch_state_snapshots"))
+            # Recreate it exactly as the pre-`complete` version of 0082 did.
+            conn.execute(
+                sa.text(
+                    "CREATE TABLE watch_state_snapshots ("
+                    "id INTEGER NOT NULL PRIMARY KEY, user_id INTEGER NOT NULL, "
+                    "taken_at DATETIME NOT NULL, job_id INTEGER, restored_at DATETIME, "
+                    "state JSON NOT NULL, FOREIGN KEY(user_id) REFERENCES users (id))"
+                )
+            )
+            # Stamped back to 0082 — the state the development server is actually in.
+            conn.execute(sa.text("UPDATE alembic_version SET version_num = '0082'"))
+    finally:
+        engine.dispose()
+
+    run_migrations(tmp_path)
+
+    engine = make_engine(tmp_path)
+    try:
+        columns = {c["name"] for c in sa.inspect(engine).get_columns("watch_state_snapshots")}
+    finally:
+        engine.dispose()
+    assert "complete" in columns
+
+
+class TestRequestLanguagePreference0085:
+    """0085 adds the per-row language overrides and the language of a queued title.
+
+    Nullable with no backfill on the row columns — NULL is "inherit the global", whose own default is
+    "any", i.e. today's behaviour. Anything else would start filtering requests on servers whose owner
+    never asked for it.
+    """
+
+    @staticmethod
+    def _columns(config_dir: Path, table: str) -> dict[str, bool]:
+        """column -> whether it is NOT NULL."""
+        con = sqlite3.connect(config_dir / "shortlist.db")
+        try:
+            return {r[1]: bool(r[3]) for r in con.execute(f"PRAGMA table_info({table})")}
+        finally:
+            con.close()
+
+    def test_the_row_columns_are_nullable_and_the_seeded_row_inherits(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        columns = self._columns(tmp_path, "collections")
+        for name in ("req_language_mode", "req_preferred_languages", "req_min_rating_other"):
+            assert name in columns
+            assert not columns[name], f"{name}: NULL is how a row inherits the global setting"
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        try:
+            rows = con.execute(
+                "SELECT req_language_mode, req_preferred_languages, req_min_rating_other FROM collections"
+            ).fetchall()
+        finally:
+            con.close()
+        assert rows, "expected the seeded default row"
+        assert {r for r in rows} == {(None, None, None)}
+
+    def test_a_queued_title_gets_an_empty_language_not_a_null_one(self, tmp_path: Path):
+        """`language` is NOT NULL with a "" default because "" is the unknown sentinel the gate and
+        the inbox both test against — and a pre-0085 row genuinely IS unknown: nothing recorded it."""
+        run_migrations(tmp_path)
+        columns = self._columns(tmp_path, "request_candidates")
+        assert "language" in columns
+        assert columns["language"], "NOT NULL — the code treats '' as unknown, never None"
+
+    def test_running_it_again_over_an_already_migrated_database_is_a_no_op(self, tmp_path: Path):
+        """The maintainer's server runs `dev` builds, so this lands on databases that may already
+        carry the columns from an earlier build of the same change.
+
+        The `stamp` is what gives this test teeth. Without it the second `run_migrations` sees the
+        version already at head and executes no script at all — so it would pass just as happily with
+        every `if name not in existing` guard deleted. Winding the version back while LEAVING the
+        columns in place is the actual shape of the problem: a database that already has them under a
+        revision it no longer claims."""
+        run_migrations(tmp_path)
+        command.stamp(_alembic(tmp_path), "0084")
+        run_migrations(tmp_path)
+        assert "req_language_mode" in self._columns(tmp_path, "collections")
+        assert "language" in self._columns(tmp_path, "request_candidates")
+
+    def test_the_downgrade_removes_them_again(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0084")
+        rows = self._columns(tmp_path, "collections")
+        assert not ({"req_language_mode", "req_preferred_languages", "req_min_rating_other"} & set(rows))
+        assert "language" not in self._columns(tmp_path, "request_candidates")

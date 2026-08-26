@@ -78,6 +78,8 @@ def client(tmp_path: Path):
 class FakeArr:
     def __init__(self):
         self.movie_calls: list[tuple[int, bool]] = []
+        self.series_calls: list[tuple[int, bool]] = []
+        self.monitor_calls: list[str] = []  # the Sonarr monitor mode each approval was sent under
         self.tag_calls: list[set[str]] = []
 
     def add_movie(
@@ -86,6 +88,14 @@ class FakeArr:
         self.movie_calls.append((tmdb_id, dry_run))
         self.tag_calls.append(set(extra_tags or set()))
         return ("would_request" if dry_run else "requested", "queued in Radarr", f"movie-{tmdb_id}")
+
+    def add_series(
+        self, tvdb_id: int, *, dry_run: bool, extra_tags: set[str] | None = None, monitor: str = "all"
+    ) -> tuple[str, str, str | None]:
+        self.series_calls.append((tvdb_id, dry_run))
+        self.monitor_calls.append(monitor)
+        self.tag_calls.append(set(extra_tags or set()))
+        return ("would_request" if dry_run else "requested", "queued in Sonarr", f"series-{tvdb_id}")
 
 
 class FakeTmdb:
@@ -456,6 +466,36 @@ class TestApprovalUsesTheClaimingRowsTarget:
             session.commit()
         made = self._send(client, monkeypatch)
         assert [t for t, _ in made[("/movies", 1)].movie_calls] == [10]
+
+
+class TestApprovingAShowUsesItsRowsMonitorMode:
+    """An approval is a delayed send, so how much of a show it takes must be the row's answer months
+    later — not the global, and not the dataclass default. This is the seam the whole per-row control
+    hangs from: with it unasserted, dropping the column from `row_request_overrides` leaves every
+    other test green while every approved show quietly arrives whole (issue #100 reopened)."""
+
+    def _approve_the_show(self, client: TestClient, monkeypatch, **row_overrides) -> FakeArr:
+        sonarr = FakeArr()
+        monkeypatch.setattr(requests_mod, "SonarrClient", lambda *a, **kw: sonarr)
+        with client.app.state.sessions() as session:
+            session.add(Collection(slug="kids", name="Kids", build="per_person", **row_overrides))
+            session.query(RequestCandidate).filter_by(id=2).one().row_slug = "kids"  # id=2 is the show
+            session.commit()
+
+        cfg = RequestConfig(enabled=True, sonarr=_SONARR, sonarr_monitor="all")
+        monkeypatch.setattr(client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(cfg))
+        resp = client.post("/api/requests/send", json={"ids": [2]})
+        assert resp.status_code == 200, resp.text
+        return sonarr
+
+    def test_the_rows_mode_is_what_reaches_sonarr(self, client: TestClient, monkeypatch):
+        sonarr = self._approve_the_show(client, monkeypatch, req_sonarr_monitor="pilot")
+        assert sonarr.series_calls == [(7777, False)]
+        assert sonarr.monitor_calls == ["pilot"], "the row asked for the pilot; the global said every season"
+
+    def test_a_row_that_overrides_nothing_falls_back_to_the_global_mode(self, client: TestClient, monkeypatch):
+        sonarr = self._approve_the_show(client, monkeypatch)
+        assert sonarr.monitor_calls == ["all"]
 
 
 class TestApprovingAcrossRowsSharesOneClient:

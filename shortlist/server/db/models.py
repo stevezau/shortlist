@@ -17,6 +17,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -261,6 +262,28 @@ class Collection(Base):
     req_radarr_root_folder: Mapped[str | None] = mapped_column(String(512), nullable=True, default=None)
     req_sonarr_quality_profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     req_sonarr_root_folder: Mapped[str | None] = mapped_column(String(512), nullable=True, default=None)
+    # How much of a show Sonarr monitors for THIS row's requests (Sonarr's Add Series "Monitor"
+    # choice). NULL -> inherit the global `requests.sonarr.monitor`. A kids row can take season 1
+    # only while everything else keeps the whole run of a show.
+    req_sonarr_monitor: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
+    # This row's language preference for requests. NULL -> inherit the global `requests.language_mode`
+    # / `requests.preferred_languages` / `requests.min_rating_other`. A kids row can be English-only
+    # while an anime row stays on "any".
+    #
+    # `req_preferred_languages` is JSON rather than a comma string so an empty LIST stays distinct
+    # from NULL: [] is a row that cleared its languages (in "only" mode, requests nothing), where NULL
+    # is a row that inherits the owner's list. Collapsing the two would silently turn one into the
+    # other on a path that decides what gets added to Radarr.
+    req_language_mode: Mapped[str | None] = mapped_column(String(16), nullable=True, default=None)
+    req_preferred_languages: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
+    req_min_rating_other: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    # Tag this row's requests with the wanting person's slug, so the owner can see in Sonarr/Radarr
+    # who a title was added for. NULL -> inherit the global `requests.auto_user_tag`.
+    #
+    # Meaningless on a shared row, which is built from what the whole server watched and belongs to
+    # nobody in particular — there is no one person to name. The editor hides it there, exactly as it
+    # already hides `request_tag`.
+    req_auto_user_tag: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
     prompt: Mapped[dict] = mapped_column(JSON, default=dict)
     # Custom collection poster for this row. {} -> Plex's own artwork. Shape:
     # {"mode": "upload"|"generate", "title", "subtitle", "style"}. No image bytes live here — an
@@ -422,6 +445,30 @@ class RunSharedRow(Base):
     trace: Mapped[dict] = mapped_column(JSON, default=dict)
     #: The delivered picks, same field set the API renders for a user's picks.
     picks: Mapped[list] = mapped_column(JSON, default=list)
+    #: Which plex account ids could SEE this row when it was delivered; NULL = everyone, and also what
+    #: every pre-0076 row carries. `collection_audience` is current state with no history, so without
+    #: this snapshot, adding someone to a subset row today would retroactively credit their older
+    #: watches to a row they could not see at the time.
+    audience: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
+    #: Who had this row switched OFF at delivery — a deny-list, kept separate from `audience`.
+    #:
+    #: Folding mutes into `audience` forced a PUBLIC row to stop saying "everyone" the moment one
+    #: person muted it: the snapshot became a concrete list of whoever existed that night, so anyone
+    #: invited afterwards was permanently outside it and could never be credited for that row. The
+    #: miss is silent and unrecoverable, because credit is decided from the past and a watched title
+    #: is never re-delivered.
+    muted: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
+    #: When this row's contents actually landed on Plex — NOT `Run.started_at`.
+    #:
+    #: The per-person path learned this the hard way and wrote it down: a run persists each row as it
+    #: finishes, so the run's start trails the delivery by minutes to tens of minutes (a TV collection
+    #: write alone costs ~16.5s, times 47 people). Judging a play against the run's START means
+    #: judging it against the row the run was BUILDING rather than the one Plex was still serving —
+    #: which drops a credit for a title this run removed, and invents one for a title it added.
+    #: `_load_per_person` derives its equivalent from `min(picks.created_at)`; a shared row writes no
+    #: picks, so it has to be stamped here. NULL on rows written before this column existed, which
+    #: fall back to `Run.started_at`.
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     run: Mapped[Run] = relationship(back_populates="shared_rows")
 
@@ -481,6 +528,10 @@ class PickRow(Base):
     # (rows.py `_watched_titles`), which answers "engaged enough not to re-recommend?", a different
     # question from "did they finish it?". Two thresholds, on purpose.
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    # The furthest they got, 0-100, from `watch_sessions`. Denormalised so the report does not join
+    # sessions on every read, and NULL where we never saw a live session — which is not 0%: "we did
+    # not watch them watch it" and "they bailed immediately" are different facts.
+    max_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class RestrictionSnapshotRow(Base):
@@ -495,6 +546,46 @@ class RestrictionSnapshotRow(Base):
     reason: Mapped[str] = mapped_column(String(32), default="initial")  # initial | sync | uninstall_restore
     filters_before: Mapped[dict] = mapped_column(JSON, default=dict)
     filters_after: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class WatchStateSnapshot(Base):
+    """One account's complete watch state, taken before a transfer changed it.
+
+    The watching-account transfer MIRRORS: it un-marks whatever the source has not watched, so it is
+    the only path in Shortlist that can remove someone's watch history. Rule 2 governs exactly this
+    shape — snapshot before the first mutation, restore from the snapshot on undo — and it is here for
+    the same reason it exists for share filters: there is no second copy anywhere, and Plex keeps no
+    history of what a `viewCount` used to be.
+
+    Restoring must put back the COUNTS and OFFSETS, not merely watched/unwatched. Re-marking a
+    rewatched film once, or re-marking a part-watched episode as finished, produces a third state that
+    never existed on either account — which is worse than not restoring at all, because it looks like
+    it worked.
+
+    `state` is a compact list of `[rating_key, view_count, view_offset_ms, media_type,
+    show_rating_key]`, not a dict of objects: a heavy account runs to ~11,000 leaves and this row is
+    read whole or not at all. The fifth element is what lets a restore tell a show it has emptied from
+    one it still holds episodes of — rows written before it exists carry four, and `undo_transfer`
+    withholds show clearing entirely for any snapshot that is not uniformly five.
+    """
+
+    __tablename__ = "watch_state_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # RESTRICT, for the same reason as `restriction_snapshots`: this is the only record of what the
+    # account looked like before we touched it. See User's cascade policy.
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    taken_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    #: Which job wrote it, so an undo restores the snapshot for THAT transfer rather than the newest.
+    job_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    #: Set when this snapshot has been restored, so an undo cannot silently run twice and a second
+    #: press reports "already restored" rather than replaying against a state it no longer describes.
+    restored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: Whether the read behind this snapshot saw every library. False means a library 403'd, so the
+    #: snapshot describes LESS than the account held — and since the restore is a mirror of it, acting
+    #: on one would un-mark every watch it never recorded. `undo_transfer` refuses instead.
+    complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("1"))
+    state: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class Delivery(Base):
@@ -710,6 +801,11 @@ class RequestCandidate(Base):
     row_slug: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
     rating: Mapped[float] = mapped_column(Float, default=0.0)  # on the chosen source (TMDB, or IMDb)
     vote_count: Mapped[int] = mapped_column(Integer, default=0)  # vote count on that same source
+    # TMDB's `original_language` (ISO 639-1, lowercase), so the inbox can show WHICH language a title
+    # held back by the language bar is in — otherwise "rating below the bar for other languages" names
+    # a rule without naming the fact that triggered it. Empty on pre-0085 rows and on titles a
+    # non-TMDB source surfaced; the inbox simply omits the chip.
+    language: Mapped[str] = mapped_column(String(16), default="", server_default="")
     demand: Mapped[int] = mapped_column(Integer, default=1)  # distinct users whose picks wanted it
     tags: Mapped[list] = mapped_column(JSON, default=list)  # per-user/per-row tags to apply when sent
     wanters: Mapped[list] = mapped_column(JSON, default=list)  # usernames whose picks wanted it (the "who")
@@ -774,3 +870,119 @@ class Job(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WatchEvent(Base):
+    """One play Plex's own history log recorded — who, what, and exactly when.
+
+    The log (`/status/sessions/history/all`) is the signal Shortlist never read. It is server-side and
+    deep (101,604 rows back to 2020-10-26 on the maintainer's box), it carries the plex.tv
+    `accountID` rather than a display name, and `viewedAt>` filtering works on it — which the library
+    read's equivalent does not. So it survives our downtime completely: whatever we miss is still
+    there on the next sweep, with the right timestamps.
+
+    It records COMPLETIONS, not starts. Verified against a live server: an episode being played at 73%
+    with no `viewCount` had no entry. Starts live in :class:`WatchSession`.
+    """
+
+    __tablename__ = "watch_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: The plex.tv account id, deliberately NOT a FK to `users.id`: an event can arrive for an account
+    #: with no user row yet, and dropping it would lose history the moment someone is invited.
+    plex_account_id: Mapped[int] = mapped_column(Integer, index=True)
+    #: The movie, or the EPISODE that was played.
+    rating_key: Mapped[int] = mapped_column(Integer, index=True)
+    #: The SHOW, for an episode — parsed out of `grandparentKey`'s path, because history entries carry
+    #: no `grandparentRatingKey` attribute. This is what actually matches a pick: a pick for a series
+    #: stores the show's key, and over 30 days of real history 46 of 78 matches were reachable ONLY
+    #: through this column.
+    show_rating_key: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    media_type: Mapped[str] = mapped_column(String(16))
+    viewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    source: Mapped[str] = mapped_column(String(16), default="history")
+    #: Plex's own row id. Unique, because the log repeats itself — the same item for the same account
+    #: seconds apart, and twice within one second on one device (both observed live). Deduping on this
+    #: needs no time-window heuristic and cannot drop a genuine rewatch.
+    history_key: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SharedRowWatch(Base):
+    """One person's outcome for one title on one SHARED row.
+
+    The shared-row twin of the `watched_at`/`finished_at`/`max_percent` stamps on `picks`. A shared row
+    is built once for the whole server and has no per-user pick row to stamp, so without this a title
+    that lived only on a shared row credited nothing, and the feature quietly measured per-person rows
+    only. See migration 0078 for why it is neither a `picks` row nor a field on `run_shared_rows`.
+
+    Keyed by SLUG rather than by foreign key, like `deliveries` and for the same reason: the row this
+    describes may be deleted while the watch remains true.
+    """
+
+    __tablename__ = "shared_row_watches"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), primary_key=True)
+    collection_slug: Mapped[str] = mapped_column(String(255), primary_key=True)
+    tmdb_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: Part of the key: TMDB ids are namespaced per type, so movie 1399 is not show 1399.
+    media_type: Mapped[str] = mapped_column(String(16), primary_key=True)
+    title: Mapped[str] = mapped_column(String(512), default="")
+    # `timezone=True` to match every other DateTime in this file. SQLite ignores the flag, so this is
+    # not a behaviour change — but `_recent_watches` now sorts one list whose keys come from BOTH this
+    # column and `picks.watched_at`, and `deleted_rows` takes min/max across this and
+    # `picks.created_at`. Those are correct only because the two columns deserialise identically, and
+    # the odd one out reads as deliberate to the next editor.
+    watched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: Films only, same rule as `picks.max_percent` — an episode's progress is not the series'.
+    max_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class WatchSession(Base):
+    """One playback session as it happened — the only place a PARTIAL watch exists.
+
+    Plex publishes no partial-play API. The notification websocket pushes position
+    (`PlaySessionStateNotification`: `sessionKey`, `ratingKey`, `viewOffset`, `state`) and nothing
+    else — no user, no runtime — so this row is assembled: identity by resolving `session_key` against
+    `/status/sessions` on the first PLAYING event, runtime from metadata, progress from `viewOffset`.
+    That assembly is why Tautulli keeps its own database, and it is what we are doing here.
+
+    Measured on a live server before this existed: events arrive per session about every 10s, roughly
+    one a second across the whole server, and `viewOffset` advances 1:1 with wall clock. So state is
+    held in memory and flushed on a throttle — a write per event would be a write per second to record
+    that ten seconds passed.
+    """
+
+    __tablename__ = "watch_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    plex_account_id: Mapped[int] = mapped_column(Integer, index=True)
+    #: Plex's session key — unique only while the session is LIVE, and reused afterwards. The open
+    #: session is the one with `ended_at IS NULL`, never "the newest row with this key".
+    session_key: Mapped[str] = mapped_column(String(32), index=True)
+    rating_key: Mapped[int] = mapped_column(Integer, index=True)
+    show_rating_key: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    media_type: Mapped[str] = mapped_column(String(16))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    max_offset_ms: Mapped[int] = mapped_column(Integer, default=0)
+    #: NULL until the runtime is known. A percentage of an unknown runtime is worse than none.
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: stopped | timeout | replaced. `timeout` is recorded rather than dressed up as a stop: a client
+    #: that crashes or drops off the network never sends one, which is why Tautulli schedules a
+    #: force-stop instead of waiting for it, and why we do too.
+    end_reason: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    @property
+    def percent(self) -> int | None:
+        """How far they got, 0-100, or None when the runtime is unknown.
+
+        Capped at 100: a re-scanned library or a bulk mark can leave an offset past the runtime, and
+        `test_a_series_watched_beyond_its_episode_count_is_finished` records the same shape being
+        observed live at 145%.
+        """
+        if not self.duration_ms:
+            return None
+        return min(100, round(100 * self.max_offset_ms / self.duration_ms))

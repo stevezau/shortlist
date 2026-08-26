@@ -677,27 +677,67 @@ identified on release eve. Deliberately deferred rather than bundled into a rele
 **When doing it:** cover all three delivery strategies (create / in-place update / rebuild) with a
 dead key, and assert the persisted `titles_added` matches what Plex actually holds.
 
-## Cross-row sums are reported next to a distinct count, and the copy calls both "wanted" (open)
+---
 
-**Found:** architecture review of the v1.7.0 release diff, 2026-08-18.
+## FIXED 2026-08-24: shared-row watches are invisible to the hit rate (found 2026-08-23)
 
-`RequestReport.wanted` is the count of DISTINCT titles across rows, but `pool_size`, `considered` and
-`examined` are sums over rows — so a title two rows both want is counted twice in one number and once
-in the other. The run page prints them side by side (`run-stat-tiles.tsx:requestHint` — "rated 40 of
-3000 wanted"), and `notifications._requests_found_nothing` says "rated every one of the {pool} titles
-people wanted", both quoting the inflated figure. `pipeline.py:173`'s live SSE emits
-`sum(len(m) for m in demand.values())`, which disagrees with the `requests_wanted` the same run
-records when it finishes.
+Fixed by giving shared rows their own credit table rather than fanning picks out. Migration 0078 adds
+`shared_row_watches` — one row per (person, shared row, title) carrying the same
+`watched_at`/`finished_at`/`max_percent` triple `picks` carries. `watch_events.shared_credits` is the
+twin of `event_credits`, differing only in the title pool (every title a live shared row has carried,
+from `RunSharedRow.picks`, because there are no pick rows to intersect against) and in asking
+`RowMembership.visible_shared_rows`, which additionally tests the run's own audience snapshot.
+`report_service.resolve_outcomes` folds them into the same person-title outcome, so a title on both a
+personal and a shared row is still one thing they watched.
 
-Nothing behaves wrongly — the allocator already charges a shared title one slot, which is the part
-that matters. This is a reporting inconsistency: on a server with four per-person rows over
-overlapping pools, the number the owner reads can be several times the number of real titles.
+The two paths stay deliberately separate: letting a shared row satisfy PERSONAL membership would
+stamp someone's own pick for a title their own row had already dropped, because a different row was
+still showing it. Tests: `tests/unit/test_shared_row_watches.py`, including all four gates proven
+by breaking them — timeline, audience snapshot, delivery ledger, and earliest-credit.
 
-**Why it is not fixed yet:** it spans the engine report, the SSE payload, the notification copy and
-the web copy, and the right answer needs a decision rather than a patch — whether these tiles should
-report distinct titles (honest, but then "examined" no longer matches the work done) or row-title
-checks (accurate to the work, but needs different words). Deferred rather than bundled into a
-release on the day it was found.
+The decision the entry below asked for: NOT fanned out. The original text follows.
 
-**When doing it:** make the SSE emit and the finished run agree by construction, and pick wording
-that cannot be read as a title count if the number is a sum.
+### Original entry
+
+A shared row files its result under `shared_<slug>` (`engine/rows.py:2492`), which is nobody's user
+slug, so `persist_report` routes it to `_persist_shared_row_report` — and that writes
+`RunSharedRow.picks` as JSON and **no `PickRow` at all**. `reconcile_watched` only ever stamps
+`PickRow`, so a title watched from a shared row has never counted toward anyone's hit rate, and never
+appears in the dashboard's "Recently watched from Shortlist".
+
+Predates the membership rule and is unrelated to it; found while auditing that change. It means every
+hit-rate figure the app has ever shown measures per-person rows only.
+
+Not fixed here because it is a schema question, not a bug fix: a shared row's picks are one set
+delivered to N people, so crediting them needs a decision about whether to fan them out into one
+`PickRow` per audience member (which is what the report's `(person, title)` unit assumes, and what
+would make `per_row` work) or to track shared rows on their own axis. Worth deciding before the next
+report change.
+
+---
+
+## Known limitation: shared rows delivered before the `media_type` fix can never be credited
+
+**Status: accepted, not fixed. Verified on SFLIX 2026-08-24.**
+
+`RunSharedRow.picks` is a JSON blob, and `_shared_key` refuses to guess a title's type when the blob
+carries no `media_type` — correctly, because TMDB ids are namespaced per type and matching on the id
+alone would credit the wrong title. `_pick_dicts` now writes `media_type` on every pick, but the rows
+already in the database were written before it did.
+
+On SFLIX every `run_shared_rows` row up to and including run 25 (2026-08-23) carries
+`media_type: None` for every pick. The effect is measurable: `thats_no_moon` played The Bear at
+2026-08-23 19:41, the play is in the scan and resolves to `(136315, "show")`, run 25's shared row
+contains The Bear — and `shared_credits` returns **0**, because the row's key pool was built from
+picks with no type.
+
+Not backfilled, and mostly not backfillABLE. Measured on SFLIX across all twelve stored shared rows:
+runs 1-23 carry neither `tmdb_id` nor `rating_key` on any pick — their blobs hold only
+`title/year/rank/rating/reason/seed_title/sources/affinity`, so there is no id to join on by any
+route, and no migration can invent one. Only run 25 carries a `rating_key` (all 80 picks), and its
+type could in principle be recovered through `tmdb_by_rating_key`. That is one day of one row on one
+server, against a data migration on a live database. From the first run on the fixed build onward the
+rows key correctly, so this decays to nothing on its own.
+
+What it means for anyone reading the dashboard in the meantime: shared-row watch counts start from
+the first run after the upgrade, not from the row's whole history.

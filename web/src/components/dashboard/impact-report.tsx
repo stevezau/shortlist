@@ -1,24 +1,15 @@
-import {
-  CalendarClock,
-  CheckCircle2,
-  Clock,
-  RefreshCw,
-  Send,
-  Trash2,
-  TrendingUp,
-  Users as UsersIcon,
-} from "lucide-react";
+import { RefreshCw, Send, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 
+import { NeedsALook, WHY_GAVE_UP, Why } from "@/components/dashboard/engagement";
 import { QueryBoundary } from "@/components/query-boundary";
 import { Segmented } from "@/components/segmented";
-import { StatTile } from "@/components/stat-tile";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatDate, formatHitRate, timeAgo, weekStarting } from "@/lib/format";
+import { formatDate, timeAgo, weekStarting } from "@/lib/format";
 import {
   useClearDeletedRows,
   useDeletedRows,
@@ -42,8 +33,14 @@ const WINDOW_PHRASE: Record<ReportWindow, string> = {
   all: "all time",
 };
 
-/** Shows when the daily watch-status sync last ran and next fires, with a manual "Sync now". */
-function WatchSyncLine({ sync }: { sync: EffectivenessReport["watch_sync"] }) {
+/**
+ * The manual "Sync now" control, on its own.
+ *
+ * Split out of a line that also printed when the sync last ran: that fact now lives in the verdict
+ * card's status row beside the other health facts, and printing it twice on one screen was the kind
+ * of duplication that later disagrees with itself.
+ */
+function WatchSyncButton() {
   const syncNow = useSyncWatched();
   // Disabled only while the request is actually in flight — it used to also stay disabled (and
   // stuck reading "Syncing…") forever after a SUCCESSFUL sync, with no way to run it again short of
@@ -54,34 +51,283 @@ function WatchSyncLine({ sync }: { sync: EffectivenessReport["watch_sync"] }) {
       ? "Try again"
       : "Sync now";
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-      <span>
-        Watch status{" "}
-        {sync.last ? `synced ${timeAgo(sync.last)}` : "not synced yet"}
-        {/* "and on every run" is not filler: the sync job's interval is normally LONGER than the
-            run schedule, so "next check <in 3 days>" on its own reads as "this data is three days
-            out of date" when a run tonight will refresh it. */}
-        {sync.next &&
-          ` · next check ${formatDate(sync.next)}, and on every run`}
-        .
-      </span>
-      <div className="flex items-center gap-2">
-        {syncNow.isError && (
-          <span role="alert" className="text-destructive-text">
-            Couldn’t start the sync.
-          </span>
-        )}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => syncNow.mutate()}
-          disabled={syncNow.isPending}
-        >
-          <RefreshCw aria-hidden="true" />
-          {label}
-        </Button>
+    <span className="flex items-center gap-2">
+      {syncNow.isError && (
+        <span role="alert" className="text-destructive-text">
+          Couldn’t start the sync.
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={() => syncNow.mutate()}
+        disabled={syncNow.isPending}
+        className="flex items-center gap-1.5 rounded text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+      >
+        <RefreshCw className="h-3 w-3" aria-hidden="true" />
+        {label}
+      </button>
+    </span>
+  );
+}
+
+/**
+ * The landing rate as text, computed from the counts rather than the pre-rounded ratio.
+ *
+ * Never "0.0%" while something was watched: a rate too small to show at one decimal is reported as
+ * "<0.1%", because a zero and a very small number say opposite things about whether the setup works.
+ */
+function landingPercent(
+  landing: EffectivenessReport["overall"]["landing"],
+): string {
+  if (landing.delivered === 0) return "\u2014";
+  const pct = (landing.watched / landing.delivered) * 100;
+  if (pct > 0 && pct < 0.05) return "<0.1%";
+  return `${pct.toFixed(1)}%`;
+}
+
+/** A labelled rate with a bar under it. Two of these carry the whole "is it working" question. */
+function Rate({
+  label,
+  value,
+  detail,
+  fill,
+  tone = "primary",
+  children,
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+  /** 0-100. Clamped to a visible sliver so a real-but-tiny rate is not indistinguishable from zero. */
+  fill: number;
+  tone?: "primary" | "success";
+  children?: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-xs text-muted-foreground">{label}</span>
+        <span className="text-sm font-medium tabular-nums">{value}</span>
       </div>
+      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
+        <div
+          className={cn(
+            "h-full rounded-full",
+            tone === "success" ? "bg-success" : "bg-primary",
+          )}
+          style={{
+            width: `${Math.min(100, Math.max(fill > 0 ? 2 : 0, fill))}%`,
+          }}
+        />
+      </div>
+      {detail && (
+        <p className="mt-1 text-[11px] tabular-nums text-muted-foreground/70">
+          {detail}
+        </p>
+      )}
+      {children}
     </div>
+  );
+}
+
+/**
+ * Is it working? — the whole question, in one card.
+ *
+ * This replaced six stat tiles. Six equal boxes make six equal claims, and they were not equal: two
+ * of them were health rather than impact (how long a watch takes, how many runs happened), and the
+ * number that actually judges the setup — the share of delivered picks that got watched — was not a
+ * tile at all. It sat mid-page under a chart, which is where the answer to "is this thing working"
+ * had ended up.
+ *
+ * So the counts read as a sentence, the two RATES that judge the setup sit beside them, and the
+ * health facts drop to a status line where they can be checked without competing.
+ */
+function Verdict({
+  overall,
+  coverage,
+  runs,
+  sync,
+  firstPick,
+  reportWindow,
+}: {
+  overall: EffectivenessReport["overall"];
+  coverage: EffectivenessReport["coverage"];
+  runs: EffectivenessReport["runs"];
+  sync: EffectivenessReport["watch_sync"];
+  /** When the very first pick landed — the empty landing rate needs it to say when a score arrives. */
+  firstPick: string | null;
+  reportWindow: ReportWindow;
+}) {
+  const landing = overall.landing;
+  const gaveUp = overall.dropped + overall.bounced;
+  const reach =
+    coverage.users_enabled > 0
+      ? (coverage.users_watched / coverage.users_enabled) * 100
+      : 0;
+  return (
+    // Test ids, not class names. The e2e suite used to find these numbers by `div.rounded-lg.border`
+    // — `StatTile`'s classes — so replacing the tiles with this card broke six assertions silently,
+    // and they only surfaced once the SPA was rebuilt. A styling change must not be able to do that.
+    <Card className="min-w-0" data-testid="verdict">
+      <CardContent className="pt-6">
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] lg:items-center">
+          <div>
+            <p className="flex items-baseline gap-2">
+              <span
+                className="text-4xl font-semibold leading-none tabular-nums"
+                data-testid="verdict-watched"
+              >
+                {overall.watched}
+              </span>
+              <span className="text-sm text-muted-foreground">
+                watched · {WINDOW_PHRASE[reportWindow]}
+              </span>
+              <Delta
+                value={overall.watched_delta}
+                reportWindow={reportWindow}
+              />
+            </p>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+              <span
+                className="font-medium text-primary tabular-nums"
+                data-testid="verdict-finished"
+              >
+                {overall.finished}
+              </span>{" "}
+              finished them
+              {/* Only when there is one. A dashboard that says "0 gave up" every day teaches you to
+                  stop reading the line that matters on the day it is not zero. */}
+              {gaveUp > 0 && (
+                <>
+                  {" · "}
+                  <span className="font-medium text-destructive-text tabular-nums">
+                    {gaveUp}
+                  </span>{" "}
+                  gave up part-way
+                  {/* The SAME control the "Worth a look" card uses, not a `title` tooltip. Two
+                      conventions for one fact shipped together, and the hover-only half does not
+                      exist on the phone this app is read on. One sentence, one component. */}
+                  <Why text={WHY_GAVE_UP} />
+                </>
+              )}
+              {/* NO "N picks delivered" here.
+                  It was a denominator nobody could divide by: `watched` is windowed on when the
+                  watch happened, `delivered` on when the pick was CREATED, so the ratio the sentence
+                  invited ("15,069 delivered, 38 finished") was never a rate of anything. The
+                  correctly matched cohort already sits immediately below as "Picks watched while
+                  their row still showed them", and reach is on the same card as "N of M people". A
+                  five-figure count with no action attached to it only crowded both out. */}
+            </p>
+          </div>
+
+          <div className="grid gap-4">
+            <Rate
+              label="Picks watched while their row still showed them"
+              // From the exact COUNTS, not from `landing.rate`. The backend rounds that to three
+              // decimals before it leaves the server — a tenth of a percentage point — so on a large
+              // library a real 0.03% arrives as 0.0 and renders "0.0%", which reads as "nobody
+              // watched anything" when thirty people did.
+              value={landingPercent(landing)}
+              fill={
+                landing.delivered > 0
+                  ? (landing.watched / landing.delivered) * 100
+                  : 0
+              }
+              detail={
+                landing.rate !== null
+                  ? // The caveat is the point — without it the percentage is a number with no
+                    // meaning, because the denominator is not "every pick ever".
+                    `${landing.watched.toLocaleString()} of ${landing.delivered.toLocaleString()} · only picks that have had their full ${landing.matured_days} days`
+                  : undefined
+              }
+            >
+              {landing.rate === null && (
+                // Two rewrites' worth of lessons live in this sentence, and they survived the move
+                // out of its own card. "Try a longer window" is advice that cannot work — no window
+                // reaches picks that do not exist. And naming the CUTOFF ("needs picks delivered
+                // before 12 Jul") reads as though it wants OLD picks, when what it needs is for the
+                // picks it has to get older. So it says when a score arrives.
+                <p className="mt-1 text-[11px] leading-snug text-muted-foreground/70">
+                  Not enough time yet. Every pick gets {landing.matured_days}{" "}
+                  days to be watched before it counts.{" "}
+                  {firstPick ? (
+                    <>
+                      Your first picks landed{" "}
+                      {formatDate(firstPick, { dateOnly: true })}, so this
+                      starts showing a score around{" "}
+                      {formatDate(
+                        new Date(
+                          new Date(firstPick).getTime() +
+                            landing.matured_days * 86400000,
+                        ).toISOString(),
+                        { dateOnly: true },
+                      )}
+                      .
+                    </>
+                  ) : (
+                    <>It appears once your earliest picks reach that age.</>
+                  )}
+                </p>
+              )}
+            </Rate>
+            <Rate
+              label="People who watched something"
+              value={`${coverage.users_watched} of ${coverage.users_enabled}`}
+              fill={reach}
+              tone="success"
+            />
+          </div>
+        </div>
+
+        {/* Health, not impact — and therefore a line rather than two tiles competing with the
+            numbers above. */}
+        <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-1 border-t pt-4 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <span
+              className={cn(
+                "h-1.5 w-1.5 rounded-full",
+                runs.errors_last ? "bg-destructive" : "bg-success",
+              )}
+              aria-hidden="true"
+            />
+            {runs.last_finished
+              ? `Last run ${timeAgo(runs.last_finished)}${runs.errors_last ? ", with errors" : ", no errors"}`
+              : "No run yet"}
+          </span>
+          <span>
+            Watch status{" "}
+            {sync.last ? `synced ${timeAgo(sync.last)}` : "not synced yet"}
+          </span>
+          {/* The LIVE listener, beside the scheduled sync because they are two different mechanisms
+              that fail independently. This one is the ONLY source of a partial watch — Plex's flag
+              cannot see one — so while it is down the page quietly stops learning how far anyone
+              gets, and every other number here carries on looking healthy. Nothing said whether it
+              was up until an owner asked where that was shown. */}
+          <span className="flex items-center gap-1.5">
+            <span
+              className={cn(
+                "h-1.5 w-1.5 rounded-full",
+                sync.live_down_since ? "bg-destructive" : "bg-success",
+              )}
+              aria-hidden="true"
+            />
+            {sync.live_down_since
+              ? `Live tracking down ${timeAgo(sync.live_down_since)}`
+              : sync.live_since
+                ? "Live tracking on"
+                : "Live tracking not started"}
+          </span>
+          {overall.avg_days_to_watch !== null && (
+            <span className="tabular-nums">
+              Typically {overall.avg_days_to_watch} days from recommended to
+              watched
+            </span>
+          )}
+          <span className="ml-auto">
+            <WatchSyncButton />
+          </span>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -103,7 +349,12 @@ function Delta({
   lowerIsBetter?: boolean;
 }) {
   if (reportWindow === "all") return <>all time</>;
-  if (value === null || value === 0) {
+  // Null means the server found no previous period worth comparing against — it reached back past
+  // the first pick Shortlist ever delivered, so the comparison would be against an uninstalled app.
+  // Saying "vs previous 30 days" there is a dangling comparison; saying nothing hides why the arrow
+  // is missing on a server that is simply too new.
+  if (value === null) return <>no earlier period yet</>;
+  if (value === 0) {
     return (
       <>vs previous {WINDOW_PHRASE[reportWindow].replace("the last ", "")}</>
     );
@@ -475,9 +726,17 @@ function ByPerson({
           and rejected: that is exactly where these cards go two-across, so a card is ~360px and the
           counts alone want ~290 of it — the name came out at 55px, worse than before the fix. The
           two only fit side by side once a card is ~500px, which is `xl`. */}
-      <span className="min-w-0 truncate xl:flex-1">
+      {/* A link, because "who is this person and what else did they get" is the next question this
+          line provokes, and the answer is a page that already exists. `/users/:id` takes the id,
+          which is why the report carries one — `slug` addresses nothing. `?tab=history` lands on
+          what they WATCHED: arriving from a watch figure onto their row list is a second click for
+          something the click already asked for. */}
+      <Link
+        to={`/users/${p.id}?tab=history`}
+        className="min-w-0 truncate rounded-sm underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring xl:flex-1"
+      >
         {p.display_name || p.username}
-      </span>
+      </Link>
       <CountBar
         watched={p.watched}
         finished={p.finished}
@@ -600,7 +859,7 @@ function ByRow({
 
 /** Deleted rows, folded away — with a way to actually be rid of them.
  *
- *  Hiding is the default because their picks are real history that still counts in every total above.
+ *  Hiding is the default because their history is real and still counts in every total above.
  *  But "hidden for ever" is not the same as "gone", and a throwaway test row should not haunt the
  *  dashboard permanently, so clearing is offered too — explicitly, with what it costs stated. */
 function DeletedRows({
@@ -625,8 +884,8 @@ function DeletedRows({
       openLabel={`Hide ${count} deleted ${noun}`}
     >
       <p className="text-xs text-muted-foreground/80">
-        These rows were removed from Shortlist. Their picks still count in the
-        totals above.
+        These rows were removed from Shortlist. Their history still counts in
+        the totals above.
       </p>
       {children}
       {confirming ? (
@@ -635,15 +894,20 @@ function DeletedRows({
           className="mt-2 space-y-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs"
         >
           <p className="text-foreground">
-            Permanently delete the pick history of{" "}
+            Permanently delete the history of{" "}
             {count === 1 ? "this deleted row" : "these deleted rows"}?
           </p>
           {/* Name the all-time total, and why it exceeds the lines above. Clearing is never
-              windowed, so on a 30-day view "20 picks" sits next to a visible 5 + 5 + 5 and reads
-              as a bug unless the difference is said out loud. */}
+              windowed, so on a 30-day view "20 records" sits next to a visible 5 + 5 + 5 and reads
+              as a bug unless the difference is said out loud.
+
+              "Records", not "picks": for a SHARED row the number counts watch credits, because a
+              shared row writes no pick rows at all. Calling those picks is the noun drift the owner
+              already rejected once elsewhere on this page. */}
           {totalPicks > 0 && (
             <p className="text-foreground">
-              {totalPicks} picks in total
+              {totalPicks} history {totalPicks === 1 ? "record" : "records"} in
+              total
               {windowLabel && (
                 <> &mdash; the lines above show only {windowLabel}</>
               )}
@@ -653,9 +917,9 @@ function DeletedRows({
           {/* Say what it costs BEFORE asking. "The totals above" would under-warn: the same picks
               back each person's lifetime stats and their own pick history, so those drop too. */}
           <p className="text-muted-foreground">
-            Their picks disappear from every total that counts them &mdash; here
-            and on each person&rsquo;s page. This can&rsquo;t be undone. Rows
-            that still exist are never touched.
+            Their history disappears from every total that counts it &mdash;
+            here and on each person&rsquo;s page. This can&rsquo;t be undone.
+            Rows that still exist are never touched.
           </p>
           <div className="flex gap-2">
             <Button
@@ -704,7 +968,6 @@ function ReportBody({
   onWindowChange: (next: ReportWindow) => void;
 }) {
   const { overall, coverage, runs, requests } = report;
-  const { landing } = overall;
 
   // On a young install every window already covers all the data, so the numbers are identical
   // whichever button you press — a control that visibly does nothing reads as broken. Say why.
@@ -757,83 +1020,23 @@ function ReportBody({
     <div className="space-y-6">
       {selector}
 
-      {/* Is it working? Counts for the window, each against the previous equal period. */}
-      {/* Five tiles never divide evenly, so the last one spans the full width on a phone rather
-          than sitting alone in a half-width cell with a gap beside it. And five ACROSS starts at
-          `xl`, not `lg`: at 1024 five columns are ~148px each, which wraps "PEOPLE WATCHING" and
-          "TIME TO WATCH" onto two lines while their neighbours stay on one, so the row of tiles
-          comes out different heights. Three columns at that width fit every label on one line. */}
-      <div className="grid grid-cols-2 gap-3 [&>*:last-child]:col-span-2 sm:grid-cols-3 sm:[&>*:last-child]:col-span-1 xl:grid-cols-5">
-        <StatTile
-          icon={TrendingUp}
-          label="Watched"
-          value={overall.watched}
-          hint={
-            <Delta value={overall.watched_delta} reportWindow={reportWindow} />
-          }
-          title="Picks people started watching in this window. A series counts here from its first episode, which is Plex's own definition — see Finished for the ones they saw out. A pick delivered earlier and watched now counts here: this is about watching, not delivery."
-        />
-        {/* Beside Watched, never instead of it. A series is credited as watched on one episode, so
-            the two numbers together are what say whether a pick was enjoyed or merely sampled —
-            measured on a real server, only 21 of 158 credited show picks had actually been
-            finished. */}
-        {/* No `Delta` here, unlike its neighbours, and that is deliberate: this window's finishes
-            are counted as of now while the previous window's had a whole extra period to complete,
-            so a steady server would render a permanent decline. The hint says what the number is a
-            share OF instead, which is the comparison that actually reads. */}
-        <StatTile
-          icon={CheckCircle2}
-          label="Finished"
-          value={overall.finished}
-          hint={
-            overall.watched > 0
-              ? `of ${overall.watched} watched`
-              : "nothing watched yet"
-          }
-          title="Of the picks watched, the ones they saw out: a film played, or a series with every episode watched. Plex publishes no finished flag for a series, so this counts episodes."
-        />
-        <StatTile
-          icon={UsersIcon}
-          label="People watching"
-          value={`${coverage.users_watched} of ${coverage.users_enabled}`}
-          hint={
-            <Delta
-              value={coverage.users_watched_delta}
-              reportWindow={reportWindow}
-            />
-          }
-          title="People who watched at least one pick in this window, out of everyone currently enabled."
-        />
-        <StatTile
-          icon={Clock}
-          label="Time to watch"
-          value={
-            overall.avg_days_to_watch === null
-              ? "—"
-              : `${overall.avg_days_to_watch}d`
-          }
-          hint={
-            <Delta
-              value={overall.avg_days_to_watch_delta}
-              reportWindow={reportWindow}
-              suffix="d"
-              lowerIsBetter
-            />
-          }
-          title="Average days from a title first being recommended to it first being watched, over titles first watched in this window."
-        />
-        <StatTile
-          icon={CalendarClock}
-          label="Runs"
-          value={runs.in_window}
-          hint={runs.last_finished ? timeAgo(runs.last_finished) : "never"}
-          tone={runs.errors_last ? "destructive" : "default"}
-          title={`Runs started in this window. ${runs.total} in total since install.`}
-        />
-      </div>
+      {/* THE VERDICT, as one card that reads as a sentence.
+          This was six stat tiles. Six equal boxes make six equal claims, and they are not equal: two
+          of them (Time to watch, Runs) are health rather than impact, and the number that actually
+          judges the setup — the share of delivered picks that got watched — was not among them at
+          all. It sat mid-page under a chart. */}
+      <Verdict
+        overall={overall}
+        coverage={coverage}
+        runs={runs}
+        sync={report.watch_sync}
+        firstPick={(report.first_pick as string | null) ?? null}
+        reportWindow={reportWindow}
+      />
 
-      <WatchSyncLine sync={report.watch_sync} />
-
+      {/* The landing rate used to be the card beside this one. It is now the first thing in the
+          verdict, where the question it answers belongs — and two cards printing the same ratio at
+          two different roundings (1% beside 0.5%) is how a dashboard comes to disagree with itself. */}
       <div className="grid gap-4 lg:grid-cols-2">
         <Section
           title="Watches per week"
@@ -841,72 +1044,14 @@ function ReportBody({
         >
           <Trend trend={report.trend} />
         </Section>
-
-        <Section
-          title="Picks that get watched"
-          hint={`The share of delivered picks watched within ${landing.matured_days} days of landing.`}
-        >
-          {landing.rate === null ? (
-            // Say what it is waiting FOR and when it arrives — not the rule and a cutoff date the
-            // reader has to invert. "Needs picks delivered before <date>" reads as though it wants
-            // OLD picks; what it actually needs is for the picks it has to get older.
-            <p className="text-sm text-muted-foreground">
-              Not enough time yet. Every pick gets {landing.matured_days} days
-              to be watched before it counts, so a fair score needs picks that
-              have had their full {landing.matured_days} days.{" "}
-              {report.first_pick ? (
-                <>
-                  Your first picks landed{" "}
-                  {formatDate(report.first_pick as string, { dateOnly: true })},
-                  so this starts showing a score around{" "}
-                  {formatDate(
-                    new Date(
-                      new Date(report.first_pick as string).getTime() +
-                        landing.matured_days * 86400000,
-                    ).toISOString(),
-                    { dateOnly: true },
-                  )}
-                  .
-                </>
-              ) : (
-                <>It appears once your earliest picks reach that age.</>
-              )}
-            </p>
-          ) : (
-            <div className="space-y-1.5">
-              <p className="text-2xl font-semibold tabular-nums">
-                {formatHitRate(landing.rate)}
-              </p>
-              <p className="text-sm text-muted-foreground">
-                {landing.watched} of {landing.delivered} picks delivered
-                {landing.cohort_from
-                  ? ` between ${formatDate(landing.cohort_from)} and ${formatDate(landing.cohort_to)}`
-                  : ` before ${formatDate(landing.cohort_to)}`}
-                .
-              </p>
-              {/* The same cohort, the stricter question. Without it the headline percentage is the
-                  one number on the page that still counts a single episode of a series as a win. */}
-              <p className="text-sm text-muted-foreground">
-                <span className="font-medium text-foreground tabular-nums">
-                  {formatHitRate(landing.finished_rate)}
-                </span>{" "}
-                were finished ({landing.finished} of {landing.delivered}).
-              </p>
-              {/* One clause, not a paragraph. The reason a young pick is excluded (it has not had
-                  its chance yet) follows from the rule itself; spelling the reasoning out was four
-                  lines of prose under a single number. */}
-              <p className="text-xs text-muted-foreground/80">
-                Only picks that have had their full {landing.matured_days} days
-                are counted.
-              </p>
-            </div>
-          )}
-        </Section>
+        <ByRow rows={report.per_row} reportWindow={reportWindow} />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      {/* Beside the people, because its first line is about them: how many were given picks and
+          watched none. Every other line points at a row or a person elsewhere on this page. */}
+      <div className="grid items-start gap-4 lg:grid-cols-2">
         <ByPerson people={report.per_user} reportWindow={reportWindow} />
-        <ByRow rows={report.per_row} reportWindow={reportWindow} />
+        <NeedsALook report={report} reportWindow={reportWindow} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -964,6 +1109,11 @@ function ReportBody({
       </div>
 
       {report.recent.length > 0 && <RecentlyWatched recent={report.recent} />}
+
+      {/* The detail behind the Dropped tile: who dropped what, and where people stop. Its own
+          component because it is a separate request — the engagement scan is per-pick where the
+          report above is aggregate, and making the dashboard wait on both would delay the numbers
+          that are ready. */}
     </div>
   );
 }
@@ -1010,9 +1160,21 @@ function RecentlyWatched({
       key={`${w.username}-${w.title}-${w.watched_at ?? i}`}
       className="flex flex-wrap items-baseline gap-x-2 text-muted-foreground"
     >
-      <span className="font-medium text-foreground">
-        {w.display_name || w.username}
-      </span>
+      {/* Linked when there is somebody to link to. `user_id` is null once they have left the
+          server — the watch stays on record, so the line still renders, it just becomes plain text
+          rather than a link to a page that would 404. */}
+      {w.user_id !== null ? (
+        <Link
+          to={`/users/${w.user_id}?tab=history`}
+          className="rounded-sm font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {w.display_name || w.username}
+        </Link>
+      ) : (
+        <span className="font-medium text-foreground">
+          {w.display_name || w.username}
+        </span>
+      )}
       {watchVerb(w)}
       <span className="text-foreground">{w.title}</span>
       <Badge variant="secondary" className="font-normal">
@@ -1050,7 +1212,7 @@ function RecentlyWatched({
  *
  * Windowed on purpose. Every figure here used to be lifetime-cumulative, which made each ratio a
  * measure of how long Shortlist had been installed rather than of how good the picks were: a pick
- * can only be credited within 30 days of delivery, but the old denominator kept every pick ever
+ * stops being creditable once the row drops it, but the old denominator kept every pick ever
  * delivered, forever.
  */
 export function ImpactReport() {

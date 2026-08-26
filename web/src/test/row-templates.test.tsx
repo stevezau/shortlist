@@ -78,7 +78,10 @@ describe("ROW_TEMPLATES", () => {
       // "Picked for You" is the deliberate exception: it IS the everyday defaults, and its whole
       // point is to be the plain starting row.
       if (template.id === "picked-for-you") continue;
-      expect(moved.length, `${template.id} only changes its name`).toBeGreaterThan(0);
+      expect(
+        moved.length,
+        `${template.id} only changes its name`,
+      ).toBeGreaterThan(0);
     }
   });
 
@@ -112,9 +115,14 @@ describe("ROW_TEMPLATES", () => {
 
       // A row builds one collection PER LIBRARY, so a title with no variable gives a `show` row two
       // identically-named collections (Sports and TV Shows) with nothing to tell them apart.
-      expect(used.length, `${template.id} has no variable in its title`).toBeGreaterThan(0);
+      expect(
+        used.length,
+        `${template.id} has no variable in its title`,
+      ).toBeGreaterThan(0);
       for (const placeholder of used) {
-        expect(SUPPORTED, `${template.id} uses "${placeholder}"`).toContain(placeholder);
+        expect(SUPPORTED, `${template.id} uses "${placeholder}"`).toContain(
+          placeholder,
+        );
       }
     }
   });

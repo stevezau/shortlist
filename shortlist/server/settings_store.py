@@ -37,8 +37,19 @@ DEFAULTS: dict[str, Any] = {
     "requests.sonarr.url": "",
     "requests.sonarr.quality_profile_id": 0,
     "requests.sonarr.root_folder": "",
+    # How much of a show Sonarr monitors when Shortlist adds it — Sonarr's own Add Series "Monitor"
+    # choice, passed through. "all" is Sonarr's default and the only behaviour there used to be.
+    "requests.sonarr.monitor": "all",
     "requests.rating_source": "tmdb",  # tmdb (no setup) | imdb | trakt | tomatoes | metacritic (via MDBList)
     "requests.min_rating": 7.0,  # rating floor on the chosen source
+    # How the request gate treats a title's original language. "any" is what every build before this
+    # setting did and stays the default, so an upgrade changes nothing until an owner picks otherwise.
+    "requests.language_mode": "any",  # any | prefer | only
+    "requests.preferred_languages": ["en"],  # ISO 639-1 codes; the value "any" mode simply never reads
+    # None = follow `requests.min_rating` + 1.5 (engine `OTHER_LANGUAGE_BAR_GAP`). Deliberately not a
+    # number: a fixed default would encode OUR taste, where following the owner's own floor tracks
+    # theirs — a permissive 6.0 server starts at 7.5 and a strict 8.0 one at 9.5.
+    "requests.min_rating_other": None,
     "requests.min_votes": 100,  # vote-count floor on the chosen source
     "requests.min_demand": 1,  # a title must be wanted by at least this many distinct people
     "requests.min_year": 0,  # 0 = no lower bound; else only titles from >= this year (shows: first-air year)
@@ -49,6 +60,9 @@ DEFAULTS: dict[str, Any] = {
     "requests.auto_min_demand": 3,  # auto-send only titles wanted by at least this many people
     "requests.auto_min_rating": 8.0,  # ...and rated at least this high on the chosen source
     "requests.tag": "shortlist",  # tag applied to every title Shortlist adds ("" = no tag)
+    # Also tag each request with the WANTING PERSON'S slug, so the owner can tell in Sonarr/Radarr
+    # who a title was added for. Off by default; a row may override it either way.
+    "requests.auto_user_tag": False,
     # (per-row schedules replaced the old global `schedule.cron` — each row carries its own cron on
     # the collections table; see Collection.schedule and shortlist/server/scheduler.py)
     # Where Shortlist's rows sit in each library's Plex "Recommended" shelf, keyed by library (section)
@@ -237,6 +251,11 @@ PRIVATE_KEYS = {
     # own gate, and the whole point is that switching it on is audited and self-reversing. Its three
     # dedicated endpoints (`/support/status|enable|disable`) are the only way in.
     "support.enabled_until",
+    # The playback listener's own health. Facts it observes about itself, not preferences anyone sets:
+    # `watch.stream_down_since` is what raises a NON-dismissable alert, so a settings write that could
+    # clear it would be a way to silence exactly the warning that must not be silenceable.
+    "watch.stream_connected_at",
+    "watch.stream_down_since",
 }
 
 # Dropped keys purged from the settings table on boot, so stale rows don't linger.
@@ -252,7 +271,6 @@ LEGACY_KEYS = {
     "api.token_hint",
     "requests.omdb.apikey",
     "staleness_runs",
-    "requests.auto_user_tag",
     "agregarr.url",
     "agregarr.apikey",
 }

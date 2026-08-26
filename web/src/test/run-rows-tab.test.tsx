@@ -742,7 +742,11 @@ describe("RunRowsTab — per-row cost", () => {
 
     // No click: with a single row in the run the card starts open (`defaultOpen={groups.length === 1}`).
     render(
-      <RunRowsTab run={onlyRowSkipped} titles={CONFIG_NAMES} idBySlug={new Map()} />,
+      <RunRowsTab
+        run={onlyRowSkipped}
+        titles={CONFIG_NAMES}
+        idBySlug={new Map()}
+      />,
     );
 
     const person = await screen.findByRole("tab", { name: /Sarah/ });

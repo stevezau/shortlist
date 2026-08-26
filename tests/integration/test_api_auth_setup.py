@@ -426,7 +426,16 @@ class TestUninstall:
 
         assert r.status_code == 200
         body = r.json()
-        assert set(body) == {"filters_restored", "collections_deleted", "rows_disabled", "dry_run", "message"}
+        assert set(body) == {
+            "filters_restored",
+            "filters_skipped",  # left Plex for good — named, never silently dropped (#96)
+            "filters_unreachable",  # roster disagreed with our records — retryable, and NOT the same
+            "filters_failed",
+            "collections_deleted",
+            "rows_disabled",
+            "dry_run",
+            "message",
+        }
         assert body["dry_run"] is True
         assert body["collections_deleted"] == ["Picked for You"]
         plex.delete_owned_collection.assert_not_called()  # a preview deletes nothing

@@ -1,5 +1,5 @@
 import { Download } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 
@@ -35,6 +35,26 @@ export function DownloadButton({
 }) {
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  // Object URLs awaiting their delayed revoke, and the timers that will do it. Both are tracked so
+  // unmounting can finish the job — a bare `setTimeout` here outlives the component by five seconds,
+  // and a callback that runs after its world has gone is an uncaught `ReferenceError` rather than a
+  // no-op. That is exactly how it surfaced: every test passed, then the suite process died at
+  // teardown with "window is not defined", once, on one CI run out of three.
+  const pending = useRef<{ timer: ReturnType<typeof setTimeout>; href: string }[]>([]);
+
+  useEffect(
+    () => () => {
+      // Revoke NOW rather than leaving the timer armed. The five seconds below exist for a
+      // next-tick race inside a live page; by the time this button is unmounting the download has
+      // long since been handed to the browser, and holding the blob past that is just a leak.
+      for (const { timer, href } of pending.current) {
+        clearTimeout(timer);
+        URL.revokeObjectURL(href);
+      }
+      pending.current = [];
+    },
+    [],
+  );
 
   const start = async () => {
     setBusy(true);
@@ -79,7 +99,11 @@ export function DownloadButton({
       // "Failed - Network error" in Chrome.
       if (href) {
         const created = href;
-        setTimeout(() => URL.revokeObjectURL(created), 5_000);
+        const timer = setTimeout(() => {
+          URL.revokeObjectURL(created);
+          pending.current = pending.current.filter((p) => p.href !== created);
+        }, 5_000);
+        pending.current.push({ timer, href: created });
       }
     }
   };

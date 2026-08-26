@@ -17,6 +17,7 @@ from shortlist.engine.privacy import (
     merge_label_excludes,
     parse_filter,
     remove_label_excludes,
+    resolve_restore_targets,
     serialize_filter,
     shortlist_labels_in,
     summarise_filter_diff,
@@ -680,7 +681,7 @@ class TestRestore:
             mock_plextv.users[0].filters.update(fields)
 
         mock_plextv.update_user_filters.side_effect = put
-        assert privacy.restore_user_restrictions(mock_plextv, snapshot) is True
+        assert privacy.restore_user_restrictions(mock_plextv, snapshot, mock_plextv.users[0]) is True
         call = mock_plextv.update_user_filters.call_args
         assert call.args[1] == {"filterMovies": "contentRating!=R", "filterTelevision": ""}
 
@@ -703,7 +704,143 @@ class TestRestore:
         # The write silently doesn't take — the read-back still shows the shortlist exclude.
         mock_plextv.update_user_filters.side_effect = lambda account_id, fields: None
         with pytest.raises(RuntimeError, match="restore mismatch"):
-            privacy.restore_user_restrictions(mock_plextv, snapshot)
+            privacy.restore_user_restrictions(mock_plextv, snapshot, mock_plextv.users[0])
+
+
+class TestResolveRestoreTargets:
+    """Issue #96: one departed account used to abort the entire uninstall with a 500.
+
+    `restore_user_restrictions` asked plex.tv for each account as it went, and an account that had
+    left the share raised `LookupError` through a loop with no per-user guard. Everyone after them
+    kept Shortlist's excludes for ever, and the collection deletion and row disabling that follow the
+    loop never ran at all — after the operator had already typed UNINSTALL.
+    """
+
+    def _snapshot(self, account_id: int, username: str):
+        from datetime import UTC, datetime
+
+        from shortlist.engine.models import FilterSnapshot
+
+        return FilterSnapshot(
+            plex_account_id=account_id,
+            username=username,
+            taken_at=datetime.now(UTC),
+            filters={"filterMovies": "contentRating!=R"},
+        )
+
+    def test_a_departed_account_is_separated_rather_than_raised(self, mock_plextv):
+        """The #96 regression. plex.tv no longer lists sarah; that must not stop mike's restore."""
+        mock_plextv.users = [plextv_user(200, "mike")]
+        snapshots = [self._snapshot(100, "sarah"), self._snapshot(200, "mike")]
+
+        targets, departed, unreachable = resolve_restore_targets(
+            mock_plextv, snapshots, believed_departed=frozenset({100})
+        )
+
+        assert [s.username for s, _ in targets] == ["mike"]
+        assert [s.username for s in departed] == ["sarah"]
+        assert unreachable == []
+
+    def test_missing_from_the_roster_without_corroboration_is_unreachable_not_departed(self, mock_plextv):
+        """The distinction a truncated read turns on. Our records say sarah IS on this server, so a
+        roster that omits her is two observations disagreeing — not a departure. Collapsing the two
+        is how a partial read becomes permanent filter pollution reported as a clean uninstall."""
+        mock_plextv.users = [plextv_user(200, "mike")]
+        snapshots = [self._snapshot(100, "sarah"), self._snapshot(200, "mike")]
+
+        targets, departed, unreachable = resolve_restore_targets(mock_plextv, snapshots)
+
+        assert [s.username for s, _ in targets] == ["mike"]
+        assert departed == []
+        assert [s.username for s in unreachable] == ["sarah"]
+
+    def test_an_empty_roster_does_not_block_an_owner_who_wound_down_every_share(self, mock_plextv):
+        """This must not be a dead end. An owner who has un-shared everyone gets an EMPTY roster, and
+        `user_sync` never marks anyone departed from an empty roster (`gone = ... if roster else []`)
+        — so a hard refusal here could never be cleared by any amount of waiting or re-syncing, and
+        the operator could never uninstall at all."""
+        mock_plextv.users = []
+        snapshots = [self._snapshot(100, "sarah"), self._snapshot(200, "mike")]
+
+        targets, departed, unreachable = resolve_restore_targets(
+            mock_plextv, snapshots, believed_departed=frozenset({100, 200})
+        )
+
+        assert targets == []
+        assert [s.username for s in departed] == ["sarah", "mike"]
+        assert unreachable == []
+
+    def test_an_uncorroborated_empty_roster_is_reported_rather_than_silently_skipped(self, mock_plextv):
+        """The other half. An empty read that our records DISAGREE with must never pass as "everyone
+        left" — that would restore nobody and still report a clean uninstall, which is worse than the
+        crash it replaced because nothing about it looks wrong."""
+        mock_plextv.users = []
+
+        targets, departed, unreachable = resolve_restore_targets(mock_plextv, [self._snapshot(100, "sarah")])
+
+        assert targets == []
+        assert departed == []
+        assert [s.username for s in unreachable] == ["sarah"], "an unexplained absence must be surfaced"
+
+    def test_the_roster_is_read_once_for_the_whole_restore(self, mock_plextv):
+        """`get_user` re-fetched /api/users per call, so a 40-user uninstall paid ~80 round-trips
+        before the read-backs. If removing the batching wouldn't break this, it isn't covering it."""
+        mock_plextv.users = [plextv_user(i, f"u{i}") for i in range(100, 105)]
+
+        resolve_restore_targets(mock_plextv, [self._snapshot(i, f"u{i}") for i in range(100, 105)])
+
+        assert mock_plextv.list_users.call_count == 1
+
+    def test_no_snapshots_reads_nothing(self, mock_plextv):
+        """A server Shortlist never wrote to has nothing to restore, and must not pay a roster read
+        on the way to finding that out."""
+        assert resolve_restore_targets(mock_plextv, []) == ([], [], [])
+        mock_plextv.list_users.assert_not_called()
+
+
+class TestRestoreVerification:
+    """A write plex.tv ACCEPTED but that we could not confirm has still changed that account.
+
+    It must carry what it wrote, or the caller reports a failure with no diff and the write exists
+    nowhere in the audit log (rule 10) — on the most privacy-sensitive path in the product.
+    """
+
+    def _snapshot(self):
+        from datetime import UTC, datetime
+
+        from shortlist.engine.models import FilterSnapshot
+
+        return FilterSnapshot(
+            plex_account_id=100,
+            username="sarah",
+            taken_at=datetime.now(UTC),
+            filters={"filterMovies": "contentRating!=R"},
+        )
+
+    def test_a_readback_mismatch_carries_what_was_written(self, mock_plextv):
+        from shortlist.engine.privacy import RestoreVerificationError
+
+        mock_plextv.users = [plextv_user(100, "sarah", filters={"filterMovies": "contentRating!=R|label!=x"})]
+        mock_plextv.update_user_filters.side_effect = lambda _id, fields: None  # accepted, not applied
+
+        with pytest.raises(RestoreVerificationError) as caught:
+            privacy.restore_user_restrictions(mock_plextv, self._snapshot(), mock_plextv.users[0])
+
+        assert caught.value.attempted == {"filterMovies": "contentRating!=R"}
+
+    def test_a_readback_that_cannot_be_made_also_carries_it(self, mock_plextv):
+        """The write landed; only the confirmation failed. Reporting that as a plain transport error
+        would drop the diff for an account whose filters have already changed."""
+        from shortlist.engine.privacy import RestoreVerificationError
+
+        mock_plextv.users = [plextv_user(100, "sarah", filters={"filterMovies": "contentRating!=R|label!=x"})]
+        mock_plextv.update_user_filters.side_effect = lambda _id, fields: None
+        mock_plextv.get_user.side_effect = TimeoutError("plex.tv stopped answering")
+
+        with pytest.raises(RestoreVerificationError) as caught:
+            privacy.restore_user_restrictions(mock_plextv, self._snapshot(), mock_plextv.users[0])
+
+        assert caught.value.attempted == {"filterMovies": "contentRating!=R"}
 
 
 class TestFilterDiffSummary:

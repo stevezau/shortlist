@@ -50,6 +50,9 @@ class RequestCandidateOut(PassthroughModel):
     overview: str = ""
     rating: float
     vote_count: int
+    # TMDB's `original_language` (ISO 639-1, lowercase). "" -> unknown, and the inbox draws no chip:
+    # a title queued before 0085, or one only a non-TMDB source ever surfaced.
+    language: str = ""
     demand: int
     tags: list[str]
     wanters: list[str]
@@ -136,6 +139,7 @@ def list_requests(
             overview=r.overview or "",
             rating=r.rating,
             vote_count=r.vote_count,
+            language=r.language or "",
             demand=r.demand,
             tags=list(r.tags or []),
             wanters=list(r.wanters or []),
@@ -406,6 +410,7 @@ async def send_requests(body: RequestAction, request: Request) -> dict:
                     year=row.year,
                     rating=row.rating,
                     vote_count=row.vote_count,
+                    language=row.language or "",
                     demand=row.demand,
                     tags=set(row.tags or []),
                 )

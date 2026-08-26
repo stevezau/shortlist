@@ -206,9 +206,7 @@ describe("api — a reverse proxy's own error page", () => {
       }),
     );
 
-    await expect(api.getUsers()).rejects.toThrow(
-      /didn't answer.*restarting/i,
-    );
+    await expect(api.getUsers()).rejects.toThrow(/didn't answer.*restarting/i);
     await expect(api.getUsers()).rejects.not.toThrow(/Apache/);
   });
 

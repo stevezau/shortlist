@@ -1,5 +1,6 @@
 import type {
   Job,
+  UserPickOutcome,
   RowEffectiveness,
   JobCatalogEntry,
   JobResult,
@@ -12,6 +13,7 @@ import type {
   BlockedSeed,
   DeletedRowHistory,
   EffectivenessReport,
+  EngagementReport,
   OwnedCollectionsAudit,
   PlexLibrary,
   ConnectionTestResult,
@@ -64,6 +66,7 @@ import type {
   HomeUserCandidate,
   TransferResult,
   WatchItem,
+  WatchSnapshot,
   WatchedFilters,
   WatchedPage,
 } from "./types";
@@ -334,6 +337,10 @@ export const api = {
 
   /** Search one person's cached watched set. Unlike `getUserHistory` this never touches Plex, so it
    *  can search the whole set rather than the page on screen. */
+  /** What this person did with the picks they were given: finished, part-watched, or abandoned. */
+  getUserOutcomes: (id: number): Promise<UserPickOutcome[]> =>
+    request(`/api/users/${id}/outcomes`),
+
   getUserWatched: (
     id: number,
     { q, mediaType, limit }: WatchedFilters,
@@ -349,14 +356,34 @@ export const api = {
   listHomeUsers: (): Promise<HomeUserCandidate[]> =>
     request("/api/watching-account/candidates"),
 
-  /** Copy the owner's watched set onto their watching account. `scrobble` also marks the titles
-   *  played in Plex — thousands of writes, all dated today because Plex cannot backdate them. */
+  /** Make the watching account's watch state match the owner's, exactly.
+   *
+   *  Mirrors — anything the owner has not watched is un-marked on the target, which is what makes
+   *  the result a replica rather than a merge. Always dry-run it first: `removals_preview` names
+   *  what would be removed, and that is the only destructive part of the feature. */
   transferWatchHistory: (body: {
     to_user_id: number;
-    scrobble: boolean;
+    /** Whose watching to copy. Omit for the owner, which is the case the guide walks through. */
+    from_user_id?: number;
     dry_run: boolean;
   }): Promise<TransferResult> =>
     request("/api/watching-account/transfer", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  /** Transfers that can still be undone. The undo used to be reachable only from the response of
+   *  the transfer that created it — so a timed-out request, a 503, or a page reload left a
+   *  completed destructive run with no way back. */
+  listWatchSnapshots: (): Promise<WatchSnapshot[]> =>
+    request("/api/watching-account/snapshots"),
+
+  /** Put the watching account back exactly as the transfer found it, from its snapshot. */
+  undoWatchTransfer: (body: {
+    snapshot_id: number;
+    dry_run: boolean;
+  }): Promise<TransferResult> =>
+    request("/api/watching-account/undo", {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -506,6 +533,10 @@ export const api = {
   /** The effectiveness report: delivered-vs-watched hit rates + a recent-watches feed. */
   getReport: (window: ReportWindow = "30"): Promise<EffectivenessReport> =>
     request(`/api/report?window=${window}`),
+
+  /** What people did with their picks: per person, per title, and where abandons cluster. */
+  getEngagement: (window: ReportWindow = "30"): Promise<EngagementReport> =>
+    request(`/api/report/engagement?window=${window}`),
 
   /** Pick history belonging to rows that no longer exist, and how much of it there is. */
   getDeletedRows: (): Promise<DeletedRowHistory[]> =>

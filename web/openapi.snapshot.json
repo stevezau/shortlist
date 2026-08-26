@@ -708,6 +708,35 @@
             ],
             "title": "Req Auto Send"
           },
+          "req_auto_user_tag": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Auto User Tag"
+          },
+          "req_language_mode": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "enum": [
+              "any",
+              "prefer",
+              "only",
+              null
+            ],
+            "title": "Req Language Mode"
+          },
           "req_max_per_row": {
             "anyOf": [
               {
@@ -759,6 +788,19 @@
             ],
             "title": "Req Min Rating"
           },
+          "req_min_rating_other": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Min Rating Other"
+          },
           "req_min_votes": {
             "anyOf": [
               {
@@ -784,6 +826,21 @@
             ],
             "title": "Req Min Year"
           },
+          "req_preferred_languages": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Preferred Languages"
+          },
           "req_radarr_quality_profile_id": {
             "anyOf": [
               {
@@ -807,6 +864,26 @@
               }
             ],
             "title": "Req Radarr Root Folder"
+          },
+          "req_sonarr_monitor": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "enum": [
+              "all",
+              "firstSeason",
+              "lastSeason",
+              "pilot",
+              "none",
+              null
+            ],
+            "title": "Req Sonarr Monitor"
           },
           "req_sonarr_quality_profile_id": {
             "anyOf": [
@@ -1124,6 +1201,36 @@
             ],
             "title": "Req Auto Send"
           },
+          "req_auto_user_tag": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tag this row's Sonarr/Radarr requests with the wanting person's slug; null inherits the global requests.auto_user_tag.",
+            "title": "Req Auto User Tag"
+          },
+          "req_language_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How this row treats a title's original language when requesting: 'any' (one bar for everything), 'prefer' (other languages need a higher rating to auto-send), or 'only' (never request another language); null inherits the global requests.language_mode.",
+            "enum": [
+              "any",
+              "prefer",
+              "only",
+              null
+            ],
+            "title": "Req Language Mode"
+          },
           "req_max_per_row": {
             "anyOf": [
               {
@@ -1168,6 +1275,18 @@
             ],
             "title": "Req Min Rating"
           },
+          "req_min_rating_other": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Rating another language must reach for this row to auto-send it. Null inherits the global requests.min_rating_other, which may itself be unset \u2014 in which case this row derives from its own req_min_rating plus 1.5.",
+            "title": "Req Min Rating Other"
+          },
           "req_min_votes": {
             "anyOf": [
               {
@@ -1190,6 +1309,21 @@
             ],
             "title": "Req Min Year"
           },
+          "req_preferred_languages": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ISO 639-1 codes this row treats as preferred; null inherits the global requests.preferred_languages. An empty list is a row that cleared its languages.",
+            "title": "Req Preferred Languages"
+          },
           "req_radarr_quality_profile_id": {
             "anyOf": [
               {
@@ -1211,6 +1345,26 @@
               }
             ],
             "title": "Req Radarr Root Folder"
+          },
+          "req_sonarr_monitor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How much of a show Sonarr monitors for this row's requests (Sonarr's Add Series 'Monitor' choice); null inherits the global requests.sonarr.monitor.",
+            "enum": [
+              "all",
+              "firstSeason",
+              "lastSeason",
+              "pilot",
+              "none",
+              null
+            ],
+            "title": "Req Sonarr Monitor"
           },
           "req_sonarr_quality_profile_id": {
             "anyOf": [
@@ -1318,6 +1472,10 @@
           "req_radarr_root_folder",
           "req_sonarr_quality_profile_id",
           "req_sonarr_root_folder",
+          "req_sonarr_monitor",
+          "req_language_mode",
+          "req_preferred_languages",
+          "req_min_rating_other",
           "pick_order",
           "placement",
           "placement_friends",
@@ -1361,6 +1519,10 @@
             "title": "Users Enabled",
             "type": "integer"
           },
+          "users_idle": {
+            "title": "Users Idle",
+            "type": "integer"
+          },
           "users_total": {
             "title": "Users Total",
             "type": "integer"
@@ -1392,6 +1554,7 @@
           "users_enabled",
           "users_total",
           "users_with_picks",
+          "users_idle",
           "users_watched",
           "users_watched_delta",
           "rows_enabled"
@@ -1478,7 +1641,7 @@
       },
       "DeletedRowOut": {
         "additionalProperties": true,
-        "description": "Pick history belonging to a row that no longer exists.",
+        "description": "History belonging to a row that no longer exists.",
         "properties": {
           "first_seen": {
             "anyOf": [
@@ -1662,6 +1825,166 @@
           "recent"
         ],
         "title": "EffectivenessReportOut",
+        "type": "object"
+      },
+      "EngagementOut": {
+        "additionalProperties": true,
+        "properties": {
+          "losing": {
+            "items": {
+              "$ref": "#/components/schemas/LosingTitleOut"
+            },
+            "title": "Losing",
+            "type": "array"
+          },
+          "observed": {
+            "title": "Observed",
+            "type": "boolean"
+          },
+          "people": {
+            "items": {
+              "$ref": "#/components/schemas/EngagementPersonOut"
+            },
+            "title": "People",
+            "type": "array"
+          },
+          "stop_points": {
+            "items": {
+              "$ref": "#/components/schemas/StopPointOut"
+            },
+            "title": "Stop Points",
+            "type": "array"
+          },
+          "window": {
+            "title": "Window",
+            "type": "string"
+          }
+        },
+        "required": [
+          "window",
+          "people",
+          "losing",
+          "stop_points",
+          "observed"
+        ],
+        "title": "EngagementOut",
+        "type": "object"
+      },
+      "EngagementPersonOut": {
+        "additionalProperties": true,
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "picks": {
+            "items": {
+              "$ref": "#/components/schemas/EngagementPickOut"
+            },
+            "title": "Picks",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "display_name",
+          "picks",
+          "total"
+        ],
+        "title": "EngagementPersonOut",
+        "type": "object"
+      },
+      "EngagementPickOut": {
+        "additionalProperties": true,
+        "description": "One pick and what became of it.\n\n`percent` is NULL where no live session ever observed the play \u2014 which is not 0%. Plex's watched\nflag cannot see a partial play at all, so \"we never watched this happen\" and \"they bailed at the\nstart\" are genuinely different states and are not collapsed.",
+        "properties": {
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "observed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed At"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "percent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Percent"
+          },
+          "row": {
+            "title": "Row",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "watched_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watched At"
+          }
+        },
+        "required": [
+          "title",
+          "row",
+          "media_type",
+          "outcome",
+          "percent",
+          "watched_at",
+          "finished_at",
+          "observed_at"
+        ],
+        "title": "EngagementPickOut",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -2060,7 +2383,7 @@
       },
       "LandingOut": {
         "additionalProperties": true,
-        "description": "The landing rate over a matured cohort \u2014 picks old enough to have had their full 30 days.",
+        "description": "The landing rate over a matured cohort \u2014 picks old enough to have had their chance.",
         "properties": {
           "cohort_from": {
             "anyOf": [
@@ -2360,6 +2683,48 @@
         "title": "LogsOut",
         "type": "object"
       },
+      "LosingTitleOut": {
+        "additionalProperties": true,
+        "description": "A pick several people started and few finished. One person abandoning something is a night;\nthe pattern across people is what makes it a bad recommendation.",
+        "properties": {
+          "finished": {
+            "title": "Finished",
+            "type": "integer"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "started": {
+            "title": "Started",
+            "type": "integer"
+          },
+          "stops_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stops At"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "media_type",
+          "started",
+          "finished",
+          "stops_at"
+        ],
+        "title": "LosingTitleOut",
+        "type": "object"
+      },
       "NotificationOut": {
         "additionalProperties": true,
         "description": "One alert as the React bell renders it \u2014 plain text throughout, no HTML.\n\n``extra=\"allow\"`` (here and on the wrapper) is not optional: a strict Pydantic response model\nsilently DROPS any key it does not declare, so a field missed here would vanish from the payload\ninstead of failing loudly.",
@@ -2464,8 +2829,16 @@
             ],
             "title": "Avg Days To Watch Delta"
           },
+          "bounced": {
+            "title": "Bounced",
+            "type": "integer"
+          },
           "delivered": {
             "title": "Delivered",
+            "type": "integer"
+          },
+          "dropped": {
+            "title": "Dropped",
             "type": "integer"
           },
           "finished": {
@@ -2511,6 +2884,8 @@
           "watched_prev",
           "watched_delta",
           "finished",
+          "bounced",
+          "dropped",
           "avg_days_to_watch",
           "avg_days_to_watch_delta",
           "landing"
@@ -2658,6 +3033,10 @@
             "title": "Finished",
             "type": "integer"
           },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
           "slug": {
             "title": "Slug",
             "type": "string"
@@ -2672,6 +3051,7 @@
           }
         },
         "required": [
+          "id",
           "username",
           "display_name",
           "slug",
@@ -3160,6 +3540,17 @@
             "title": "Title",
             "type": "string"
           },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          },
           "username": {
             "title": "Username",
             "type": "string"
@@ -3177,6 +3568,7 @@
           }
         },
         "required": [
+          "user_id",
           "username",
           "display_name",
           "title",
@@ -3394,6 +3786,11 @@
           "imdb_id": {
             "default": "",
             "title": "Imdb Id",
+            "type": "string"
+          },
+          "language": {
+            "default": "",
+            "title": "Language",
             "type": "string"
           },
           "media_type": {
@@ -4951,6 +5348,53 @@
         "title": "SettingsUpdate",
         "type": "object"
       },
+      "SnapshotOut": {
+        "additionalProperties": true,
+        "description": "One un-restored snapshot \u2014 an undo that is still available.",
+        "properties": {
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "entries": {
+            "title": "Entries",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "taken_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taken At"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "username",
+          "taken_at",
+          "entries",
+          "complete"
+        ],
+        "title": "SnapshotOut",
+        "type": "object"
+      },
       "StatusOut": {
         "additionalProperties": true,
         "properties": {
@@ -4980,6 +5424,25 @@
           "seconds_remaining"
         ],
         "title": "StatusOut",
+        "type": "object"
+      },
+      "StopPointOut": {
+        "additionalProperties": true,
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "count"
+        ],
+        "title": "StopPointOut",
         "type": "object"
       },
       "SyncFinishedEvent": {
@@ -5022,7 +5485,8 @@
           "kind": {
             "enum": [
               "watched",
-              "users"
+              "users",
+              "credited"
             ],
             "title": "Kind",
             "type": "string"
@@ -5079,7 +5543,8 @@
           "kind": {
             "enum": [
               "watched",
-              "users"
+              "users",
+              "credited"
             ],
             "title": "Kind",
             "type": "string"
@@ -5318,10 +5783,16 @@
             "title": "Dry Run",
             "type": "boolean"
           },
-          "scrobble": {
-            "default": false,
-            "title": "Scrobble",
-            "type": "boolean"
+          "from_user_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From User Id"
           },
           "to_user_id": {
             "title": "To User Id",
@@ -5336,13 +5807,10 @@
       },
       "TransferOut": {
         "additionalProperties": true,
+        "description": "The result of one replication.\n\n`unmarks` and `offsets_cleared` are the destructive half and are reported separately from\n`applied` on purpose: \"wrote 11,000 things\" and \"removed 412 watches from that account\" are not\nthe same sentence, and only the second needs anybody's consent.",
         "properties": {
-          "already_present": {
-            "title": "Already Present",
-            "type": "integer"
-          },
-          "copied": {
-            "title": "Copied",
+          "applied": {
+            "title": "Applied",
             "type": "integer"
           },
           "dry_run": {
@@ -5356,24 +5824,101 @@
             "title": "Errors",
             "type": "array"
           },
-          "scrobble_skipped": {
-            "title": "Scrobble Skipped",
+          "events_copied": {
+            "title": "Events Copied",
             "type": "integer"
           },
-          "scrobbled": {
-            "title": "Scrobbled",
+          "failed": {
+            "title": "Failed",
             "type": "integer"
+          },
+          "marks": {
+            "title": "Marks",
+            "type": "integer"
+          },
+          "offsets_cleared": {
+            "title": "Offsets Cleared",
+            "type": "integer"
+          },
+          "offsets_set": {
+            "title": "Offsets Set",
+            "type": "integer"
+          },
+          "planned": {
+            "title": "Planned",
+            "type": "integer"
+          },
+          "removals_preview": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Removals Preview",
+            "type": "array"
+          },
+          "shows_cleared": {
+            "title": "Shows Cleared",
+            "type": "integer"
+          },
+          "snapshot_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Id"
           },
           "source_empty": {
             "title": "Source Empty",
             "type": "boolean"
+          },
+          "target_unreadable": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Target Unreadable",
+            "type": "array"
+          },
+          "titles_cached": {
+            "title": "Titles Cached",
+            "type": "integer"
+          },
+          "unmarks": {
+            "title": "Unmarks",
+            "type": "integer"
+          },
+          "unreachable": {
+            "title": "Unreachable",
+            "type": "integer"
+          },
+          "verify_checked": {
+            "title": "Verify Checked",
+            "type": "integer"
+          },
+          "verify_mismatched": {
+            "title": "Verify Mismatched",
+            "type": "integer"
           }
         },
         "required": [
-          "copied",
-          "already_present",
-          "scrobbled",
-          "scrobble_skipped",
+          "planned",
+          "applied",
+          "unreachable",
+          "failed",
+          "marks",
+          "unmarks",
+          "offsets_set",
+          "offsets_cleared",
+          "removals_preview",
+          "verify_mismatched",
+          "verify_checked",
+          "shows_cleared",
+          "target_unreadable",
+          "events_copied",
+          "titles_cached",
+          "snapshot_id",
           "dry_run",
           "source_empty",
           "errors"
@@ -5405,6 +5950,44 @@
         "title": "TrendPointOut",
         "type": "object"
       },
+      "UndoIn": {
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "snapshot_id": {
+            "title": "Snapshot Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "snapshot_id"
+        ],
+        "title": "UndoIn",
+        "type": "object"
+      },
+      "UninstallFailedOut": {
+        "additionalProperties": true,
+        "description": "An account plex.tv refused. The rest of the uninstall still ran (issue #96).",
+        "properties": {
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "user": {
+            "title": "User",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user",
+          "error"
+        ],
+        "title": "UninstallFailedOut",
+        "type": "object"
+      },
       "UninstallOut": {
         "additionalProperties": true,
         "properties": {
@@ -5419,9 +6002,30 @@
             "title": "Dry Run",
             "type": "boolean"
           },
+          "filters_failed": {
+            "items": {
+              "$ref": "#/components/schemas/UninstallFailedOut"
+            },
+            "title": "Filters Failed",
+            "type": "array"
+          },
           "filters_restored": {
             "title": "Filters Restored",
             "type": "integer"
+          },
+          "filters_skipped": {
+            "items": {
+              "$ref": "#/components/schemas/UninstallSkippedOut"
+            },
+            "title": "Filters Skipped",
+            "type": "array"
+          },
+          "filters_unreachable": {
+            "items": {
+              "$ref": "#/components/schemas/UninstallUnreachableOut"
+            },
+            "title": "Filters Unreachable",
+            "type": "array"
           },
           "message": {
             "title": "Message",
@@ -5434,6 +6038,9 @@
         },
         "required": [
           "filters_restored",
+          "filters_skipped",
+          "filters_unreachable",
+          "filters_failed",
           "collections_deleted",
           "rows_disabled",
           "dry_run",
@@ -5493,6 +6100,56 @@
           }
         },
         "title": "UninstallRequest",
+        "type": "object"
+      },
+      "UninstallSkippedOut": {
+        "additionalProperties": true,
+        "description": "An account that has left this Plex server, so its snapshot can never be restored.",
+        "properties": {
+          "plex_account_id": {
+            "title": "Plex Account Id",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "user": {
+            "title": "User",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user",
+          "plex_account_id",
+          "reason"
+        ],
+        "title": "UninstallSkippedOut",
+        "type": "object"
+      },
+      "UninstallUnreachableOut": {
+        "additionalProperties": true,
+        "description": "An account plex.tv's roster did not list, but that our own records say IS on this server.\n\nIts own field rather than folded into `filters_failed`, because the two need different things\nfrom the operator \u2014 a refused write is worth retrying, an absent roster entry means plex.tv gave\nan answer we don't believe \u2014 and a consumer should never have to match on an error string to\ntell them apart.",
+        "properties": {
+          "plex_account_id": {
+            "title": "Plex Account Id",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "user": {
+            "title": "User",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user",
+          "plex_account_id",
+          "reason"
+        ],
+        "title": "UninstallUnreachableOut",
         "type": "object"
       },
       "UserOut": {
@@ -5786,6 +6443,77 @@
           "rating"
         ],
         "title": "UserPickOut",
+        "type": "object"
+      },
+      "UserPickOutcomeOut": {
+        "additionalProperties": true,
+        "description": "One title this person was recommended and then played.",
+        "properties": {
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "percent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Percent"
+          },
+          "row": {
+            "title": "Row",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tmdb_id": {
+            "title": "Tmdb Id",
+            "type": "integer"
+          },
+          "watched_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watched At"
+          }
+        },
+        "required": [
+          "tmdb_id",
+          "media_type",
+          "title",
+          "row",
+          "outcome",
+          "percent",
+          "watched_at",
+          "finished_at"
+        ],
+        "title": "UserPickOutcomeOut",
         "type": "object"
       },
       "UserPrefs": {
@@ -6258,6 +6986,28 @@
             ],
             "title": "Last"
           },
+          "live_down_since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Down Since"
+          },
+          "live_since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Since"
+          },
           "next": {
             "anyOf": [
               {
@@ -6272,7 +7022,9 @@
         },
         "required": [
           "last",
-          "next"
+          "next",
+          "live_since",
+          "live_down_since"
         ],
         "title": "WatchSyncOut",
         "type": "object"
@@ -6503,7 +7255,7 @@
   },
   "info": {
     "title": "Shortlist",
-    "version": "1.7.0"
+    "version": "1.8.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -7326,7 +8078,7 @@
     },
     "/api/report/deleted-rows": {
       "delete": {
-        "description": "Permanently delete the pick history of rows that no longer exist. `slug` clears just one.\n\nThis is the one destructive action on the dashboard, so it is deliberately narrow:\n\n* Only slugs with no live Collection are eligible \u2014 the eligible set is recomputed here rather\n  than trusted from the request, so naming a live row's slug deletes nothing.\n* Only `picks` rows are touched. `deliveries` is left alone: it is the ledger of what still\n  exists on Plex, and clearing it would strand a real collection with nothing left to clean it up.\n* These picks disappear from everywhere they are counted \u2014 not just this dashboard. The per-user\n  lifetime stats and a person's pick history on their own page are read from the same rows, so the\n  UI has to say \"history\", not \"the numbers above\".",
+        "description": "Permanently delete the history of rows that no longer exist. `slug` clears just one.\n\n\"History\", not \"pick history\": a SHARED row writes no `picks` at all, so what is removed for one\nis its `shared_row_watches` credits. The returned `picks` field counts BOTH (its name is kept for\nwire compatibility); the audit event splits them as `pick_rows` + `shared_watches`.\n\nThis is the one destructive action on the dashboard, so it is deliberately narrow:\n\n* Only slugs with no live Collection are eligible \u2014 the eligible set is recomputed here rather\n  than trusted from the request, so naming a live row's slug deletes nothing.\n* Only `picks` and `shared_row_watches` rows are touched. `deliveries` is left alone: it is the\n  ledger of what still exists on Plex, and clearing it would strand a real collection with nothing\n  left to clean it up.\n* These picks disappear from everywhere they are counted \u2014 not just this dashboard. The per-user\n  lifetime stats and a person's pick history on their own page are read from the same rows, so the\n  UI has to say \"history\", not \"the numbers above\".",
         "operationId": "clear_deleted_rows_api_report_deleted_rows_delete",
         "parameters": [
           {
@@ -7374,7 +8126,7 @@
         ]
       },
       "get": {
-        "description": "Pick history belonging to rows that no longer exist, with how much of it there is.\n\nIts own endpoint rather than a field on the report: the report is windowed, and \"what can I clear\"\nis a question about ALL of a deleted row's history, not the last 30 days of it.",
+        "description": "History belonging to rows that no longer exist, with how much of it there is.\n\n\"History\", not \"pick history\": a SHARED row writes no `picks` at all, so for one of those the\n`picks` field counts its `shared_row_watches` credits. The field name is kept for wire\ncompatibility; see `DeletedRowOut.picks`.\n\nIts own endpoint rather than a field on the report: the report is windowed, and \"what can I clear\"\nis a question about ALL of a deleted row's history, not the last 30 days of it.",
         "operationId": "deleted_rows_api_report_deleted_rows_get",
         "responses": {
           "200": {
@@ -7393,6 +8145,52 @@
           }
         },
         "summary": "Deleted Rows",
+        "tags": [
+          "report"
+        ]
+      }
+    },
+    "/api/report/engagement": {
+      "get": {
+        "description": "What people did with their picks: per person, per title, and where abandons cluster.\n\nThe detail behind the dashboard's Dropped tile. Sync like `effectiveness` and for the same reason\n\u2014 it is a scan of `picks`, and running that on the event loop stalls SSE and every other request.",
+        "operationId": "engagement_api_report_engagement_get",
+        "parameters": [
+          {
+            "description": "Report window in days: 7, 30, 90, or 'all'.",
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "default": "30",
+              "description": "Report window in days: 7, 30, 90, or 'all'.",
+              "title": "Window",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EngagementOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Engagement",
         "tags": [
           "report"
         ]
@@ -10478,6 +11276,53 @@
         ]
       }
     },
+    "/api/users/{user_id}/outcomes": {
+      "get": {
+        "description": "What this person did with the picks they were given: finished, part-watched, or abandoned.\n\nThe user page could show what Shortlist DELIVERED and what they had watched on Plex, but not the\njoin of the two \u2014 whether the recommendations were actually seen out. That is the question the\ndashboard answers for the whole server, and it is at least as interesting per person.\n\nReuses `resolve_outcomes`, the same function the dashboard reads, rather than re-deriving the\nclassification here. Two places deciding what \"finished\" means is how the user page and the\ndashboard come to disagree about the same title.\n\nA plain `def`: `resolve_outcomes` is synchronous and walks the picks table, so Starlette runs it\nin a worker thread instead of stalling the event loop (see the effectiveness handler).",
+        "operationId": "user_outcomes_api_users__user_id__outcomes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/UserPickOutcomeOut"
+                  },
+                  "title": "Response User Outcomes Api Users  User Id  Outcomes Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "User Outcomes",
+        "tags": [
+          "users"
+        ]
+      }
+    },
     "/api/users/{user_id}/rows": {
       "get": {
         "description": "The rows this user gets, each with its effective settings, their override, and latest picks.",
@@ -10805,9 +11650,35 @@
         ]
       }
     },
+    "/api/watching-account/snapshots": {
+      "get": {
+        "description": "Transfers that can still be undone, newest first.\n\nWithout this the undo was reachable only from the in-flight response of the transfer that created\nit \u2014 so the one case the durable queue exists for (a reverse proxy timing the request out at 60s,\na 503 while a run holds the Plex lock, or simply a page reload) was also the case where the\ndestructive run completed and its undo could not be found.",
+        "operationId": "list_snapshots_api_watching_account_snapshots_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SnapshotOut"
+                  },
+                  "title": "Response List Snapshots Api Watching Account Snapshots Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Snapshots",
+        "tags": [
+          "watching-account"
+        ]
+      }
+    },
     "/api/watching-account/transfer": {
       "post": {
-        "description": "Copy the owner's watched set onto their watching account.\n\nThe copy into Shortlist is what makes the new account's picks correct and writes nothing to\nPlex. `scrobble` additionally marks each title played on the PMS so Plex shows checkmarks \u2014\nthousands of writes, and Plex dates every one of them today (it cannot be told otherwise), which\nis why the true dates are stored separately.",
+        "description": "Replicate one account's watch state onto a watching account.\n\nThe source defaults to the owner \u2014 the case the guide walks through \u2014 but `from_user_id` names\nany account, because someone who already moved once has their history there rather than on the\nadmin account they left. It is read with THAT account's own server token.\n\nMirrors: the target ends up matching the source, which means un-marking anything the source has\nnot watched. That is what makes it a replica rather than a merge, and it is what repairs an account\nthe pre-1.x transfer spoiled by scrobbling show keys. It is also the only path here that can\ndelete watch history, so a snapshot is taken before the first write and `/undo` restores it.\n\nPlex stamps every write `now` and accepts no date, so the writes go oldest-first \u2014 the dates\ncannot be replicated, but the ORDER can, which is what Continue Watching sorts on.",
         "operationId": "transfer_api_watching_account_transfer_post",
         "requestBody": {
           "content": {
@@ -10842,6 +11713,48 @@
           }
         },
         "summary": "Transfer",
+        "tags": [
+          "watching-account"
+        ]
+      }
+    },
+    "/api/watching-account/undo": {
+      "post": {
+        "description": "Put the watching account back exactly as the transfer found it.\n\nRestores from the snapshot rather than replaying the writes backwards \u2014 with counts and offsets,\nnot just watched/unwatched, because re-marking a rewatched film once would leave a third state\nthat existed on neither account.",
+        "operationId": "undo_api_watching_account_undo_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UndoIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransferOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Undo",
         "tags": [
           "watching-account"
         ]

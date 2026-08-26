@@ -65,10 +65,14 @@ describe("hasWebSearch across the backend × configuration matrix", () => {
   it("is satisfied by the chosen backend alone", () => {
     // `auto` (which accepted either) was removed in 1.3 — a backend is now always named.
     expect(
-      hasWebSearch(settings({ ...OLLAMA, ...SEARX, "llm_web.search_provider": "searxng" })),
+      hasWebSearch(
+        settings({ ...OLLAMA, ...SEARX, "llm_web.search_provider": "searxng" }),
+      ),
     ).toBe(true);
     expect(
-      hasWebSearch(settings({ ...OLLAMA, ...EXA, "llm_web.search_provider": "exa" })),
+      hasWebSearch(
+        settings({ ...OLLAMA, ...EXA, "llm_web.search_provider": "exa" }),
+      ),
     ).toBe(true);
     expect(hasWebSearch(settings(OLLAMA))).toBe(false);
   });

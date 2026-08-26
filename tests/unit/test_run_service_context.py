@@ -457,6 +457,49 @@ class TestBuildRequests:
         assert cfg.sonarr.api_key == "sk" and cfg.sonarr.quality_profile_id == 7
         assert (cfg.min_rating, cfg.min_votes, cfg.max_per_run) == (7.5, 250, 3)
 
+    def test_auto_user_tag_is_off_unless_the_owner_turns_it_on(self, sessions, tmp_path):
+        """Default off, so an upgrade adds no username tags to anybody's Sonarr/Radarr."""
+        base = {
+            "requests.enabled": True,
+            "requests.sonarr.url": "http://sonarr:8989",
+            "requests.sonarr.apikey": "sk",
+            "requests.sonarr.quality_profile_id": 1,
+            "requests.sonarr.root_folder": "/tv",
+        }
+        assert ContextBuilder._build_requests(self._store(sessions, tmp_path, base)).auto_user_tag is False
+        on = self._store(sessions, tmp_path, base | {"requests.auto_user_tag": True})
+        assert ContextBuilder._build_requests(on).auto_user_tag is True
+
+    def test_a_retired_row_mode_inherits_rather_than_overriding(self, sessions, tmp_path):
+        """The screen serves a retired mode as "inherits", so the run must agree — otherwise the row
+        editor says one thing and tonight's request does another."""
+        from shortlist.engine.models import row_monitor_or_inherit
+        from shortlist.server.db.models import Collection
+        from shortlist.server.services.context_builder import row_request_overrides
+
+        assert row_monitor_or_inherit("recent") is None
+        assert row_monitor_or_inherit("firstSeason") == "firstSeason"
+        assert row_monitor_or_inherit(None) is None
+        assert (
+            row_request_overrides(Collection(slug="r", name="R", build="per_person", req_sonarr_monitor="recent"))
+            is None
+        )
+
+    def test_the_sonarr_monitor_mode_reaches_the_engine_config(self, sessions, tmp_path):
+        """The owner's choice is only worth anything if it travels; without this, deleting the one
+        line that reads it leaves every test green while every show quietly arrives whole again."""
+        base = {
+            "requests.enabled": True,
+            "requests.sonarr.url": "http://sonarr:8989",
+            "requests.sonarr.apikey": "sk",
+            "requests.sonarr.quality_profile_id": 1,
+            "requests.sonarr.root_folder": "/tv",
+        }
+        # Unset -> "all", which is what every add did before this setting existed.
+        assert ContextBuilder._build_requests(self._store(sessions, tmp_path, base)).sonarr_monitor == "all"
+        chosen = self._store(sessions, tmp_path, base | {"requests.sonarr.monitor": "firstSeason"})
+        assert ContextBuilder._build_requests(chosen).sonarr_monitor == "firstSeason"
+
     def test_half_configured_app_is_left_as_none(self, sessions, tmp_path):
         # Radarr has a URL but no key -> its target is None (movies skipped), Sonarr is whole.
         store = self._store(
@@ -499,10 +542,13 @@ class TestBuildRequests:
 
 
 class TestRequestTag:
-    """Only an EXPLICIT per-user request tag is applied — automatic username-tagging was removed
-    (owner decision 2026-07-20; the requester is already shown in the inbox why-line)."""
+    """`UserProfile.request_tag` carries only the tag the owner TYPED on a person.
 
-    def test_only_explicit_tags_are_used_never_the_username(self, sessions, tmp_path):
+    The automatic alternative — their slug, under `requests.auto_user_tag` — is applied in the engine
+    instead (`rows.py` `_record_demand`), because a row may override it either way and one value baked
+    in here would be shared by every row."""
+
+    def test_the_profile_carries_only_the_explicit_tag(self, sessions, tmp_path):
         with sessions() as session:
             session.add_all(
                 [
@@ -521,7 +567,7 @@ class TestRequestTag:
         builder = ContextBuilder(sessions, SecretBox(tmp_path), EventBus())
         with sessions() as session:
             tags = {p.username: p.request_tag for p in builder.enabled_profiles(session)}
-        assert tags["MooHouse"] == ""  # no explicit tag -> no per-user tag (never the username)
+        assert tags["MooHouse"] == ""  # no explicit tag -> nothing here; the slug is the engine's job
         assert tags["Sarah"] == "vip"  # an explicit tag is used
 
 
@@ -534,7 +580,7 @@ class TestSyncWatched:
         from types import SimpleNamespace
 
         from shortlist.engine.models import UserProfile, UserType, WatchedItem
-        from shortlist.server.db.models import PickRow, Run, User
+        from shortlist.server.db.models import DEFAULT_SLUG, Delivery, PickRow, Run, User
 
         with sessions() as s:
             user = User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True)
@@ -543,9 +589,21 @@ class TestSyncWatched:
             run = Run(trigger="manual", status="ok", started_at=datetime.now(UTC) - timedelta(days=1))
             s.add(run)
             s.flush()
+            # In her row, and the collection is still on Plex (the ledger entry): a pick is only
+            # creditable while the person could actually have been looking at it
+            # (`run_persistence.live_pick_ids`).
+            s.add(Delivery(collection_slug=DEFAULT_SLUG, user_slug="sarah", library_key="1", rating_key=7))
             s.add(
                 PickRow(
-                    run_id=run.id, user_id=user.id, tmdb_id=42, media_type="movie", rating_key=1, rank=1, title="Dune"
+                    run_id=run.id,
+                    user_id=user.id,
+                    collection_slug=DEFAULT_SLUG,
+                    section_key="1",
+                    tmdb_id=42,
+                    media_type="movie",
+                    rating_key=1,
+                    rank=1,
+                    title="Dune",
                 )
             )
             s.commit()

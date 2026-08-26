@@ -4,6 +4,116 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+## [1.8.0] - 2026-08-26
+
+### Added
+
+- **Shortlist can now tell you whether its picks actually get watched.** It only ever read one
+  signal — Plex's binary watched flag — which cannot answer either question that matters. *When* did
+  they watch it, since a rewatch overwrites the original date? And what about the film someone is
+  two nights into, which the flag calls unwatched right up until the credits?
+
+  Shortlist now watches playback itself. A pick is credited at the moment someone presses play, a
+  part-watch is captured when playback stops rather than waiting for the next sync, and picks
+  delivered through shared rows count too — previously they credited nothing at all, because a
+  shared row writes no per-person pick record to match a play against. If tracking stops working,
+  the dashboard says so rather than quietly reporting zero.
+
+  A watch still in progress is no longer called an abandonment. "Gave up part-way" is the harshest
+  thing this app says about a pick, and the rule behind it was invisible — so it now explains itself
+  where the claim is made, instead of leaving you to conclude the tracking is broken.
+
+- **The dashboard leads with whether your setup is working.** It had grown to six stat tiles and
+  eleven sections, with the one number that actually judges a setup — the share of delivered picks
+  that got watched — nowhere near the top. It now opens with whether it is working and what isn't,
+  and every person and row links through to its own page.
+
+- **Requests can be tagged with the person they were picked for.** Radarr and Sonarr have no field
+  for "who wanted this", only tags, so the Requests inbox's why-line never reached them. Turn it on
+  and each request carries the wanting person's name as a second tag, so you can tell in Radarr and
+  Sonarr who a title was added for. Off by default, and any row can opt in or out on its own.
+
+- **Settings changes now record who made them.** The audit log said what changed and when, but
+  never who — so a value that moved with nobody owning up to it was simply unanswerable. That
+  happened on a live server: a request threshold shifted by 0.2 between two runs and no record could
+  say what did it. Each `settings.change` event now carries the actor (a browser session or an API
+  token, plus a short client hint). Deliberately not the client IP: these rows are immutable and the
+  support bundle exports them, and a LAN address is the kind of environment detail that should not
+  end up in something people paste into public issues.
+
+- **Prefer a language when requesting.** The request pool is by definition what your library
+  _lacks_, so on a library that already holds the popular English titles what's left missing skews
+  non-English before any setting applies — and the rating floor then favours it further, because
+  TMDB's audience rates anime and K-drama generously. Nightly runs ended up mostly asking Sonarr and
+  Radarr for subtitled titles.
+
+  Settings → Requests → Guardrails now has a **Language** choice, and any per-person row can override
+  it. **Any language** is the default and behaves exactly as before, so an upgrade changes nothing.
+  **Prefer these** keeps your languages on the normal bars and makes everything else clear a higher
+  rating to be sent on its own — below that bar a title waits in the inbox with the reason on it
+  rather than being dropped, so a great foreign film is still one click away. **Only these** never
+  asks for another language at all.
+
+  The higher bar has no fixed default: it follows your own minimum rating plus 1.5 and keeps
+  following it, so a permissive 6.0 server starts at 7.5 and a strict 8.0 server at 9.5. Type a
+  number to pin it. The ranking is deliberately unchanged — a foreign title that clears the bar still
+  competes on merit and usually wins, because it out-rates the English titles around it. This thins
+  the middle; it doesn't exclude a language.
+
+  The inbox now shows a language chip on any title outside your languages, so a held-back one
+  explains itself without opening TMDB.
+
+- **Choose how much of a show to grab.** Every show Shortlist requested arrived with all seasons
+  monitored, so one pick of a long-running series started the whole back catalogue downloading that
+  night — enough to fill a disk, and enough to spend a day's worth of indexer queries on a show
+  nobody had watched an episode of yet.
+
+  Settings → Requests now has **How much of a show to grab** on the Sonarr card, and any per-person
+  row can override it in the row editor. The choices are Sonarr's own Add Series _Monitor_ options,
+  passed through unchanged, so they mean exactly what they mean in Sonarr: **All Episodes** (still
+  the default), **First Season** for a taster you can extend later, **Last Season**, **Pilot
+  Episode**, and **None** to file the show in Sonarr without downloading anything.
+
+  Anything other than **All Episodes** also switches off Sonarr's separate **Monitor New Seasons**
+  for that show, so "first season only" still means that when season eight airs. Without it a
+  restriction on a still-running series quietly grows back a season at a time.
+
+  It applies only to shows Shortlist adds. One Sonarr already tracks is left exactly as you have it,
+  as before.
+
+### Fixed
+
+- **Moving your watching to a second account now copies your history exactly.** It was marking whole
+  shows watched when you were part-way through one. If you were 400 episodes into One Piece, the new
+  account said you had finished all 1,100 — and the same happened to any series you had not
+  completed. On a real 50-account server, 342 of 535 watched shows were part-watched, so this was the
+  normal outcome rather than an edge case.
+
+  The cause was that Shortlist only ever knew _how many_ episodes you had watched, never _which_. It
+  now reads your account episode by episode and copies that, so the new account matches yours:
+
+  - the exact episodes of each show, not the whole show
+  - how many times you have rewatched something, not just that you watched it
+  - anything you are part-way through, at the same position, back in Continue Watching — these could
+    not be carried across at all before
+
+  It also **removes** anything watched on the new account that you have not watched, which is what
+  makes the two match, and what repairs an account an earlier version over-marked. The preview lists
+  what would be removed **by name** and asks you to confirm before anything is written. Your own
+  account is never written to.
+
+  It is now reversible: the new account's state is saved before the first write, and **Undo** puts it
+  back exactly — rewatch counts and positions included. The one exception is an account that can't see
+  all of your libraries, where a complete picture can't be saved; the preview tells you that before
+  you agree to anything. Afterwards Shortlist re-reads the account and
+  tells you what did not land, instead of reporting the writes it sent.
+
+  Plex still records everything as watched _today_ — no Plex API accepts a date, and that has not
+  changed. The writes now go oldest-first so Continue Watching still comes out in the right order,
+  and Shortlist keeps your real dates itself, so your recommendations are unaffected.
+
 ## [1.7.0] - 2026-08-18
 
 ### Added
@@ -19,7 +129,7 @@ All notable changes to this project are documented here. This project follows
   row you never touch behaves exactly as it does today.
 
   Two limits stay global on purpose. **Max per run** is the ceiling for the whole run and a row can
-  only ask for *less* than it, never more — otherwise the one setting protecting your download queue
+  only ask for _less_ than it, never more — otherwise the one setting protecting your download queue
   would be a suggestion. And the rating source (plus its API key) stays global, because it is one
   account shared by everything.
 
@@ -32,7 +142,7 @@ All notable changes to this project are documented here. This project follows
   ([#88](https://github.com/stevezau/shortlist/discussions/88)). Shortlist keeps each row private by
   adding label exclusions to everyone else's Plex share, and every check it had said the same thing:
   the exclusions were written, plex.tv stored them, and reading them back confirmed it. None of that
-  proves Plex is *applying* them. Six Home accounts saw all six rows anyway, and the first person to
+  proves Plex is _applying_ them. Six Home accounts saw all six rows anyway, and the first person to
   notice was a user rather than the owner.
 
   Each run now looks at one account's home screen through that account's own eyes and reports it if
@@ -77,7 +187,7 @@ All notable changes to this project are documented here. This project follows
   account can then see other people's rows, unless — as with an allow-only list — its own Plex
   restrictions already keep it away from them.
 
-  Two things stay true regardless. Everyone else still hides *that* person's row, so leaving one
+  Two things stay true regardless. Everyone else still hides _that_ person's row, so leaving one
   account alone never makes their row public. And a **shared row you have limited to certain people**
   stays hidden from them: that exclusion is the only thing keeping the row away from people you did
   not pick, so removing it would undo a choice you made on the row itself. The trade-off to know is
@@ -170,8 +280,8 @@ All notable changes to this project are documented here. This project follows
   so in the wizard — and then ended with "look for **You see everyone's rows** on the Users page",
   which is homework, handed out during setup, for a problem that only becomes visible in Plex days
   later. Someone was told exactly that, never went to the Users page, and reported 22 rows on their
-  shelf as a bug. The wizard now asks the question where the decision is being made — *do you watch on
-  this admin account?* — and opens the real "move my watching to a separate account" flow in place,
+  shelf as a bug. The wizard now asks the question where the decision is being made — _do you watch on
+  this admin account?_ — and opens the real "move my watching to a separate account" flow in place,
   watch-history transfer and all. Skip it and nothing changes: the note on the Users page and the
   alert are both still there, both dismissable.
 
@@ -208,7 +318,7 @@ All notable changes to this project are documented here. This project follows
   for "The Haunting of Bly Manor" is "The Haunting", a different and much larger series.) The reason
   on the **Requests** page used to read "no TheTVDB id for this show" — true, and no help at all
   unless you already knew what a TVDB id was. It now says TMDB has none and that adding the show in
-  Sonarr yourself is the way through. A lookup that *failed* — TMDB down or slow — says something
+  Sonarr yourself is the way through. A lookup that _failed_ — TMDB down or slow — says something
   different again, because that one is worth waiting a night for.
 
 - **The errors notification can be dismissed.** "N errors in the last day" counts what has already
@@ -289,7 +399,6 @@ All notable changes to this project are documented here. This project follows
 
 Tagged and published for about half an hour, then pulled before anyone was told about it. Everything
 in it ships in 1.5.1; the notes are kept here because the images were briefly public.
-
 
 ### Added
 

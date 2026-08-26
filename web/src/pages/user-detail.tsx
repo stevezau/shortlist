@@ -1,7 +1,6 @@
 import { Clock } from "lucide-react";
 import type { ReactNode } from "react";
-import { useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 
 import { BackLink } from "@/components/back-link";
 import { OwnerNote } from "@/components/owner-note";
@@ -15,6 +14,7 @@ import { UserNickname } from "@/components/user-detail/user-nickname";
 import { UserRequestTag } from "@/components/user-detail/user-request-tag";
 import { UserRowsSection } from "@/components/user-detail/user-row-card";
 import { UserSharing } from "@/components/user-detail/user-sharing";
+import { PickOutcomes } from "@/components/user-detail/pick-outcomes";
 import { WatchHistory } from "@/components/user-detail/watch-history";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -28,8 +28,20 @@ function SectionHeading({ children }: { children: ReactNode }) {
 
 type UserTab = "rows" | "runs" | "settings" | "history";
 
-function UserDetailBody({ user }: { user: User }) {
-  const [tab, setTab] = useState<UserTab>("rows");
+const TABS: UserTab[] = ["rows", "runs", "settings", "history"];
+
+export function UserDetailBody({ user }: { user: User }) {
+  // In the URL, not component state. Someone arriving from the dashboard's "who watched what" wants
+  // the watched view, and a link is the only way to say so — `?tab=` also survives a refresh and the
+  // back button, which local state does not.
+  const [params, setParams] = useSearchParams();
+  const asked = params.get("tab") as UserTab | null;
+  const tab: UserTab = asked && TABS.includes(asked) ? asked : "rows";
+  const setTab = (next: UserTab) => {
+    // `replace`, so flicking between tabs does not fill the back button with them — Back should
+    // return to where you came from, which is the dashboard.
+    setParams(next === "rows" ? {} : { tab: next }, { replace: true });
+  };
 
   return (
     <div className="space-y-8">
@@ -43,7 +55,10 @@ function UserDetailBody({ user }: { user: User }) {
           { value: "rows", label: "Rows" },
           { value: "runs", label: "Runs" },
           { value: "settings", label: "Settings" },
-          { value: "history", label: "Watch History" },
+          // "Watched" rather than "Watch History": the tab now holds two different things — what
+          // they did with SHORTLIST'S picks, and everything they have ever watched on Plex. The old
+          // label described only the second.
+          { value: "history", label: "Watched" },
         ]}
         value={tab}
         onChange={(value) => setTab(value as UserTab)}
@@ -113,14 +128,36 @@ function UserDetailBody({ user }: { user: User }) {
       )}
 
       {tab === "history" && (
-        <section className="space-y-3">
-          <SectionHeading>Watch history</SectionHeading>
-          <Card>
-            <CardContent className="pt-6">
-              <WatchHistory userId={user.id} user={user} />
-            </CardContent>
-          </Card>
-        </section>
+        <div className="space-y-6">
+          {/* Shortlist's picks FIRST. This is the question the app exists to answer for this person,
+              and it is the one the page could not answer at all — it could show what was delivered
+              and what they had watched, but never whether the recommendations were seen out. */}
+          <section className="space-y-3">
+            <SectionHeading>What they did with their picks</SectionHeading>
+            <p className="text-sm text-muted-foreground">
+              Titles Shortlist put in one of their rows that they then played,
+              and how far they got.
+            </p>
+            <Card>
+              <CardContent className="pt-6">
+                <PickOutcomes userId={user.id} />
+              </CardContent>
+            </Card>
+          </section>
+
+          <section className="space-y-3">
+            <SectionHeading>Everything they&rsquo;ve watched</SectionHeading>
+            <p className="text-sm text-muted-foreground">
+              Their whole Plex history &mdash; the same set every recommendation
+              is filtered against.
+            </p>
+            <Card>
+              <CardContent className="pt-6">
+                <WatchHistory userId={user.id} user={user} />
+              </CardContent>
+            </Card>
+          </section>
+        </div>
       )}
     </div>
   );

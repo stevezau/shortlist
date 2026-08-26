@@ -2601,6 +2601,128 @@ class TestRequestsWiring:
         assert report.users[0].counts.candidates == 3
 
 
+class TestAutoUserTag:
+    """The global "tag requests by person" switch and its per-row override.
+
+    Tagging each request with the wanting person's slug is how the owner sees, from inside
+    Sonarr/Radarr, WHO a title was added for — the inbox's why-line never reaches the Arr. Off by
+    default, so an upgrade tags nothing until it is switched on. A row's own `auto_user_tag`
+    overrides the global in either direction (None -> inherit), and an explicit per-user tag always
+    beats the automatic slug: someone with a hand-set tag keeps it.
+    """
+
+    def _missing_tags(
+        self,
+        ctx: EngineContext,
+        mock_plextv,
+        monkeypatch,
+        *,
+        global_on: bool,
+        row_override: bool | None,
+        user_tag: str = "",
+    ) -> set[str]:
+        """Tags on the one missing title, for a single "gems" row that surfaced it."""
+        from shortlist.engine.models import ArrTarget, RequestConfig, RequestReport, RowSpec
+        from shortlist.engine.models import MediaType as MT
+
+        ctx.config.rows = [
+            RowSpec(
+                slug="gems",
+                name_template="Hidden Gems",
+                size=5,
+                candidate_sources=["tmdb_discover"],
+                request_tag="gems",
+                auto_user_tag=row_override,
+            )
+        ]
+        sarah = make_profile("sarah", account_id=100, request_tag=user_tag)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        ctx.tmdb.genre_ids_for.side_effect = lambda tid, mt: [18]
+        ctx.tmdb.discover.side_effect = lambda mt, gids, **kw: [
+            {"id": 30, "title": "Missing Gem", "genre_ids": [], "vote_average": 8.4}
+        ]
+        ctx.config.requests = RequestConfig(
+            enabled=True,
+            radarr=ArrTarget(url="http://radarr.test", api_key="k", quality_profile_id=1, root_folder="/m"),
+            auto_user_tag=global_on,
+        )
+        captured = {}
+        monkeypatch.setattr(
+            pipeline_mod.requests_mod,
+            "request_missing",
+            lambda cfg, tmdb, demand, **kw: captured.setdefault("demand", demand) or RequestReport(),
+        )
+
+        pipeline_mod.run(ctx, [sarah])
+
+        rows = {row.slug: row.demand for row in captured["demand"]}
+        return rows["gems"][(30, MT.MOVIE)].tags
+
+    def test_off_by_default_tags_no_username(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        # The upgrade case: nobody has touched the setting, so the Arr sees only the row's own tag.
+        tags = self._missing_tags(ctx, mock_plextv, monkeypatch, global_on=False, row_override=None)
+        assert tags == {"gems"}
+
+    def test_global_switch_tags_the_users_slug(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        tags = self._missing_tags(ctx, mock_plextv, monkeypatch, global_on=True, row_override=None)
+        assert tags == {"gems", "sarah"}
+
+    def test_row_override_off_beats_the_global_switch(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        # A row opting out still keeps its OWN tag — only the person's slug is suppressed.
+        tags = self._missing_tags(ctx, mock_plextv, monkeypatch, global_on=True, row_override=False)
+        assert tags == {"gems"}
+
+    def test_row_override_on_beats_the_global_switch(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        tags = self._missing_tags(ctx, mock_plextv, monkeypatch, global_on=False, row_override=True)
+        assert tags == {"gems", "sarah"}
+
+    def test_an_explicit_user_tag_replaces_the_automatic_slug(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        # Not layered: someone who set "vip" by hand chose their tag, and getting "vip" AND "sarah"
+        # is the clutter the automatic tag was dropped for in the first place.
+        tags = self._missing_tags(ctx, mock_plextv, monkeypatch, global_on=True, row_override=None, user_tag="vip")
+        assert tags == {"gems", "vip"}
+
+    def test_the_slug_reaches_the_arr_client_as_a_real_tag(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        """The join nothing else covers: the switch is read at one end of the run and the tag is sent
+        at the other, and every test either side of this stops at `MissingTitle.tags`. Runs the REAL
+        request pass so a break anywhere in between shows up here."""
+        from shortlist.engine import requests as requests_mod
+        from shortlist.engine.models import ArrTarget, RequestConfig, RowSpec
+        from tests.unit.test_requests import FakeArr
+
+        radarr = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: radarr)
+
+        ctx.config.rows = [
+            RowSpec(slug="gems", name_template="Hidden Gems", size=5, candidate_sources=["tmdb_discover"])
+        ]
+        # A slug with an underscore, because that is what a two-word Plex name produces. It reaches
+        # the client verbatim; turning it into `moo-house` for the Arr's charset is the CLIENT's job
+        # and is pinned separately (`test_arr.py::test_tags_are_sanitized_to_the_arr_charset`).
+        steve = make_profile("MooHouse", account_id=100, slug="moo_house")
+        mock_plextv.users = [plextv_user(100, "MooHouse")]
+        ctx.tmdb.genre_ids_for.side_effect = lambda tid, mt: [18]
+        ctx.tmdb.discover.side_effect = lambda mt, gids, **kw: [
+            {"id": 30, "title": "Missing Gem", "genre_ids": [], "vote_average": 9.0, "vote_count": 900}
+        ]
+        ctx.config.requests = RequestConfig(
+            enabled=True,
+            radarr=ArrTarget(url="http://radarr.test", api_key="k", quality_profile_id=1, root_folder="/m"),
+            auto_user_tag=True,
+            auto_min_demand=1,  # one person is enough, or nothing is SENT and there is no call to assert
+        )
+
+        pipeline_mod.run(ctx, [steve])
+
+        assert radarr.tag_calls == [{"moo_house"}], "the wanting person's slug never reached Radarr"
+
+    def test_an_explicit_user_tag_survives_a_row_opting_out(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        # `auto_user_tag` governs the AUTOMATIC slug only. A tag the owner typed on a person is not
+        # Shortlist's to drop, or turning the switch off on one row would silently unpick it.
+        tags = self._missing_tags(ctx, mock_plextv, monkeypatch, global_on=True, row_override=False, user_tag="vip")
+        assert tags == {"gems", "vip"}
+
+
 class TestPlacement:
     """Per-row placement (Home / Library / Both) and pin-to-top reach promote() with the right flags."""
 

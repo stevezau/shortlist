@@ -121,6 +121,28 @@ class TestTargetOverrides:
         assert out.radarr.tag == "shortlist"
 
 
+class TestTheSonarrMonitorMode:
+    """How much of a show Sonarr takes is taste, not a shared ceiling, so it goes per row."""
+
+    def test_it_inherits_the_global_when_the_row_says_nothing(self):
+        resolved = resolve_request_config(_cfg(sonarr_monitor="firstSeason"), RequestOverrides())
+        assert resolved.sonarr_monitor == "firstSeason"
+
+    def test_a_row_can_take_less_of_a_show_than_the_global(self):
+        resolved = resolve_request_config(_cfg(sonarr_monitor="all"), RequestOverrides(sonarr_monitor="firstSeason"))
+        assert resolved.sonarr_monitor == "firstSeason"
+
+    def test_a_row_can_also_take_more_because_this_is_taste_not_a_ceiling(self):
+        # Unlike max_per_row, nothing here is clamped: the mode says which episodes of ONE show the
+        # row wanted, and max_per_run still caps how many shows the run may ask for at all.
+        resolved = resolve_request_config(_cfg(sonarr_monitor="firstSeason"), RequestOverrides(sonarr_monitor="all"))
+        assert resolved.sonarr_monitor == "all"
+
+    def test_overriding_the_mode_leaves_the_sonarr_target_alone(self):
+        resolved = resolve_request_config(_cfg(), RequestOverrides(sonarr_monitor="pilot"))
+        assert resolved.sonarr == SONARR
+
+
 class TestZeroIsARealChoiceNotAnUnsetSentinel:
     """Architecture review, 2026-08-18 (HIGH). `max_per_row` used 0 as its "inherit" sentinel, so a
     row set to 0 — which the editor offers, and describes as "this row never asks for anything on its
@@ -138,3 +160,47 @@ class TestZeroIsARealChoiceNotAnUnsetSentinel:
     def test_a_bare_config_still_defaults_to_its_own_run_cap(self):
         """Nothing else in the codebase passes `max_per_row`, so the default must keep working."""
         assert _cfg(max_per_run=7).max_per_row == 7
+
+
+class TestLanguageOverrides:
+    """A row's language settings resolve like every other floor: None inherits, a value wins."""
+
+    def test_a_row_inherits_all_three_when_it_sets_none(self):
+        base = RequestConfig(language_mode="prefer", preferred_languages=("en",), min_rating_other=8.5)
+        cfg = resolve_request_config(base, RequestOverrides())
+        assert (cfg.language_mode, cfg.preferred_languages, cfg.min_rating_other) == ("prefer", ("en",), 8.5)
+
+    def test_a_row_may_pick_its_own_mode(self):
+        base = RequestConfig(language_mode="prefer")
+        assert resolve_request_config(base, RequestOverrides(language_mode="only")).language_mode == "only"
+        assert resolve_request_config(base, RequestOverrides(language_mode="any")).language_mode == "any"
+
+    def test_an_empty_language_list_on_a_row_is_kept_not_treated_as_unset(self):
+        """`pick()` compares against None, never falsiness. An empty tuple is a row that CLEARED its
+        languages — in "only" mode it requests nothing — and collapsing it into "inherit the owner's"
+        would be the inverse of the control on a path that adds titles to Radarr."""
+        base = RequestConfig(preferred_languages=("en",))
+        cfg = resolve_request_config(base, RequestOverrides(preferred_languages=()))
+        assert cfg.preferred_languages == ()
+
+    def test_a_row_that_raises_its_own_floor_carries_the_derived_bar_up_with_it(self):
+        """The point of inheriting `min_rating_other` as None rather than as a number: the bar is
+        derived from THIS row's resolved floor, so a stricter row is stricter in both places."""
+        from shortlist.engine.requests import other_language_bar
+
+        base = RequestConfig(min_rating=7.0, language_mode="prefer")  # min_rating_other unset -> derive
+        assert other_language_bar(resolve_request_config(base, RequestOverrides())) == 8.5
+        assert other_language_bar(resolve_request_config(base, RequestOverrides(min_rating=8.0))) == 9.5
+
+    def test_a_row_may_set_an_explicit_bar_over_the_derived_one(self):
+        from shortlist.engine.requests import other_language_bar
+
+        base = RequestConfig(min_rating=7.0, language_mode="prefer")
+        assert other_language_bar(resolve_request_config(base, RequestOverrides(min_rating_other=9.5))) == 9.5
+
+    def test_a_row_zero_bar_survives_resolution(self):
+        """0.0 is falsy and is a real choice (a bar nothing can fail). It must not be read as unset."""
+        from shortlist.engine.requests import other_language_bar
+
+        base = RequestConfig(min_rating=7.0, language_mode="prefer")
+        assert other_language_bar(resolve_request_config(base, RequestOverrides(min_rating_other=0.0))) == 0.0

@@ -30,6 +30,7 @@ import { Link, useSearchParams } from "react-router";
 
 import { apiErrorMessage } from "@/lib/api";
 import { formatDate, settingBool, settingString } from "@/lib/format";
+import { languageName } from "@/lib/request-language";
 import {
   useArrStatus,
   useClearRequests,
@@ -253,10 +254,14 @@ function TitleMeta({
   item,
   globalTag,
   nameOf,
+  preferredLanguages,
+  languageModeOn,
 }: {
   item: RequestCandidate;
   globalTag: string;
   nameOf: DisplayNameLookup;
+  preferredLanguages: string[];
+  languageModeOn: boolean;
 }) {
   // The global tag is applied at send time and never stored on the candidate, so add it here to
   // show the full set of tags this title will actually get (deduped against the per-user/row tags).
@@ -266,6 +271,22 @@ function TitleMeta({
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <TypeBadge mediaType={item.media_type} />
         {item.year ? <span>{item.year}</span> : null}
+        {/* Only shown for a title that is NOT in a preferred language, and only when a language mode
+            is actually on: the chip's job is to explain why a title is being held back, and on the
+            default "any" server nothing is, so it would be pure noise on every foreign tile.
+            "" (unknown) draws nothing — see the `language` column note. */}
+        {languageModeOn &&
+        item.language &&
+        !preferredLanguages.includes(item.language) ? (
+          <Badge
+            variant="outline"
+            className="font-normal"
+            data-testid="language-chip"
+            title={`Original language: ${languageName(item.language)}`}
+          >
+            {languageName(item.language)}
+          </Badge>
+        ) : null}
         <span className="inline-flex items-center gap-1">
           <Star
             className="h-3.5 w-3.5 fill-current text-amber-500"
@@ -339,12 +360,24 @@ function RequestsOffBanner() {
  *  which for a waiting title is the normal case, so nothing is drawn rather than "not found". */
 const ARR_STATUS_LABELS: Record<
   string,
-  { label: string; variant: "success" | "default" | "secondary" | "warning" }
+  {
+    label: string;
+    variant: "success" | "default" | "secondary" | "warning";
+    hint?: string;
+  }
 > = {
   downloaded: { label: "Downloaded", variant: "success" },
   downloading: { label: "Downloading", variant: "default" },
   queued: { label: "Searching", variant: "secondary" },
-  unmonitored: { label: "Not monitored", variant: "warning" },
+  // Amber, because nothing is coming and only a person can change that. It used to have exactly one
+  // cause — somebody unmonitored it by hand — so the colour was the whole message. "How much of a
+  // show to grab" set to None now produces the same state on purpose, so the badge has to say which
+  // it might be rather than leaving a warning colour to imply something went wrong.
+  unmonitored: {
+    label: "Not monitored",
+    variant: "warning",
+    hint: "Sonarr or Radarr has this title but isn't looking for it, so nothing will download until it's monitored there. If you set “How much of a show to grab” to None — either in Settings › Requests or on the row itself — this is that working as asked.",
+  },
 };
 
 /**
@@ -390,7 +423,11 @@ function ArrStatusBadge({ view }: { view: ArrView }) {
   if (view.kind === "none") return null;
   const shown = ARR_STATUS_LABELS[view.status];
   if (!shown) return null;
-  return <Badge variant={shown.variant}>{shown.label}</Badge>;
+  return (
+    <Badge variant={shown.variant} title={shown.hint}>
+      {shown.label}
+    </Badge>
+  );
 }
 
 function PendingRow({
@@ -398,6 +435,8 @@ function PendingRow({
   checked,
   onToggle,
   globalTag,
+  preferredLanguages,
+  languageModeOn,
   disabled,
   arrView,
   nameOf,
@@ -411,6 +450,8 @@ function PendingRow({
   checked: boolean;
   onToggle: (id: number) => void;
   globalTag: string;
+  preferredLanguages: string[];
+  languageModeOn: boolean;
   /** Requests are off — the row is still readable, but it cannot be selected for sending. */
   disabled: boolean;
   arrView: ArrView;
@@ -465,7 +506,13 @@ function PendingRow({
           <p className="text-base font-semibold leading-tight">{item.title}</p>
           <ArrStatusBadge view={arrView} />
         </div>
-        <TitleMeta item={item} globalTag={globalTag} nameOf={nameOf} />
+        <TitleMeta
+          item={item}
+          globalTag={globalTag}
+          nameOf={nameOf}
+          preferredLanguages={preferredLanguages}
+          languageModeOn={languageModeOn}
+        />
         <Synopsis text={item.overview} />
         <WhyBreakdown why={item.why} nameOf={nameOf} />
         <ExternalLinks item={item} />
@@ -1247,6 +1294,18 @@ export function RequestsPage() {
           // queues them with the reason "auto-send is off").
           const autoSend = settingBool(settings, "requests.auto_send");
           const globalTag = settingString(settings, "requests.tag");
+          // Which languages count as "the owner's". Read once here rather than per tile, so one bad
+          // stored value cannot make every card render a chip it shouldn't.
+          const rawLanguages = settings?.["requests.preferred_languages"];
+          const preferredLanguages = Array.isArray(rawLanguages)
+            ? rawLanguages
+                .filter((c): c is string => typeof c === "string")
+                .map((c) => c.trim().toLowerCase())
+            : ["en"];
+          // The chip explains a HOLD, so it only earns its place when a mode is actually holding
+          // things back. On the default "any" server nothing is.
+          const languageModeOn =
+            settingString(settings, "requests.language_mode", "any") !== "any";
           const radarrUrl = settingString(settings, "requests.radarr.url");
           const sonarrUrl = settingString(settings, "requests.sonarr.url");
           return (
@@ -1571,6 +1630,8 @@ export function RequestsPage() {
                                   checked={selected.has(item.id)}
                                   onToggle={toggle}
                                   globalTag={globalTag}
+                                  preferredLanguages={preferredLanguages}
+                                  languageModeOn={languageModeOn}
                                   disabled={!requestsEnabled}
                                   arrView={arrView(item)}
                                   nameOf={nameOf}

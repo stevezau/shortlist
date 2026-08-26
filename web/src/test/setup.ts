@@ -1,6 +1,23 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup } from "@testing-library/react";
+import { cleanup, configure } from "@testing-library/react";
 import { afterEach } from "vitest";
+
+// testing-library gives an async query ONE SECOND to find its element, and that budget is spent on
+// whatever else the machine is doing. The dashboard tests render a tree that waits on two queries
+// (`getReport` and `getEngagement`) before the assertion's text exists, and under contention that
+// exceeded 1s — intermittently, on a different assertion each time, so it read as "the suite is
+// flaky" rather than "one timeout is too tight".
+//
+// Measured 2026-08-25: `vitest run --sequence.shuffle` on two dashboard files failed 2 of 6 runs,
+// and 4 of 6 under `--pool=forks` — MORE isolation meaning more failures is the signature of a time
+// budget, not of leaked state, because forks are slower to start.
+//
+// It must stay well UNDER vitest's own 5s per-test timeout, and the first attempt at this did not:
+// setting it to exactly 5000 made 24 tests fail with "Test timed out in 5000ms". Those are the
+// tests that legitimately exhaust the budget — the ones asserting an element never appears — and
+// with the two numbers equal they blew the whole test instead of failing their query fast. 2.5s is
+// 2.5x the old budget for a slow render while leaving 2.5s of slack beneath the test timeout.
+configure({ asyncUtilTimeout: 2500 });
 
 afterEach(() => {
   cleanup();

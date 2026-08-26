@@ -18,7 +18,17 @@ Set it up under **Settings → Requests**:
    `http://localhost:8989` for Sonarr) and **API key** (found in the app under _Settings →
    General_), then click **Test connection**. Save.
 3. Once connected, pick a **Quality** profile and a **Save to** folder from the dropdowns. Shortlist
-   reads these straight from the app, so there are no ids to look up.
+   reads these straight from the app, so there are no ids to look up. For Sonarr, also pick **how
+   much of a show to grab** — these are Sonarr's own Add Series _Monitor_ choices, so they mean
+   exactly what they mean there. (Sonarr's other monitor options aren't offered: on a show your
+   server doesn't have yet, _Future_, _Existing_ and _Recent_ each monitor nothing at all, which
+   **None** already says plainly.) **All Episodes** (the default) takes the whole back catalogue, which
+   on a twelve-season show is twelve seasons of downloads the night it is added; **First Season**
+   makes it a taster you can extend in Sonarr later; **None** files the show unmonitored so nothing
+   downloads until you say so. Anything other than All Episodes also turns Sonarr's **Monitor New
+   Seasons** off for that show, so a restriction on a still-running series holds when the next season
+   airs instead of quietly growing back. It applies only to shows Shortlist adds — one Sonarr already tracks is
+   left exactly as you have it.
 4. Choose **Send on its own, or ask me first**: titles wanted by enough people _and_ rated highly
    enough go out as soon as a run finds them; everything else that clears the guardrails waits in
    your **Requests** inbox. Turn it off for a fully manual queue. While it's on, also set **the most
@@ -105,12 +115,16 @@ without asking only if it clears **both** `requests.auto_min_demand` (default 3 
 - **On an exclusion list** — a past delete in Radarr/Sonarr leaves the title on an import-exclusion
   list, and Shortlist will never auto-send one (the app would refuse the add anyway). The card says
   so; clear it in Radarr/Sonarr first, then approve.
+- **It's in another language** — if you've set a language preference (below), a title outside your
+  languages has a higher bar to clear before it is sent on its own. Below that bar it waits here
+  rather than being dropped, so you can still approve it. The card shows the language as a chip.
 - **Over the per-run cap** — `requests.max_per_run` auto-worthy titles go per run; the rest wait.
 - **The run never rated it** — when `requests.rating_source` is not `tmdb`, a run only rates as many
   titles as its lookup budget allows (see below).
 - **Already in Radarr/Sonarr** — the card shows a **Downloaded / Downloading / Searching / Not
   monitored** badge if either app already tracks it, which normally means it was added by hand after
-  it landed here. Films drop off the list on the next run. **Shows only drop off on Sonarr v4**,
+  it landed here. **Not monitored** is also what a show added under **None** reads as, which is that
+  setting working as asked rather than a problem to fix. Films drop off the list on the next run. **Shows only drop off on Sonarr v4**,
   because matching them back to the request needs Sonarr's own TMDB id, which v3 doesn't report. On v3
   the badge appears but the entry stays until you clear it yourself.
 
@@ -135,11 +149,50 @@ but judges them on **rating**. On a large library the most-wanted _missing_ titl
 nobody thought worth adding, so the top of the list can be the worst-rated part of it, and the titles
 that would pass sit further down. A bigger budget reaches them.
 
+## Too many subtitles
+
+The request pool is, by definition, **what your library doesn't have**. If your library already holds
+the popular English titles, what's left missing skews non-English before any setting is applied — and
+the rating floor then favours it further, because TMDB's audience rates anime and K-drama generously.
+The result is a nightly run that mostly asks for subtitled titles.
+
+**Settings → Requests → Guardrails → Language** fixes it without throwing the good ones away:
+
+- **Any language** — one bar for everything. This is the default and how Shortlist has always
+  behaved; nothing changes until you pick something else.
+- **Prefer these** — titles in your languages keep the normal bars. Anything else has to be rated
+  higher to be sent on its own. Below that bar it waits in your inbox with the reason on it, so a
+  Korean thriller you'd have wanted is still one click away rather than gone.
+- **Only these** — never ask for another language at all. These are dropped rather than queued: if
+  you've said never, being asked about them nightly isn't an answer.
+
+The second bar has **no fixed default**. It follows your own minimum rating plus 1.5 and keeps
+following it — so a permissive 6.0 server starts at 7.5 and a strict 8.0 server at 9.5. Type a number
+to pin it; "Follow my minimum rating again" puts it back.
+
+Two things worth knowing before you choose a number:
+
+- **8.5 on TMDB is a soft bar for anime.** TMDB's audience rates it generously, and plenty sits above
+  8.5 there. If you want the bar to actually bite, switch **Judge titles by** to **IMDb** first — its
+  scale is harsher and the gate already supports it.
+- **You'll get fewer requests, not automatically more English ones.** Cutting the mid-tier foreign
+  titles frees the slots they were taking, and the English titles below them move up into those slots
+  by the ordinary ranking. But if nothing English is left above your minimum rating, the run simply
+  sends fewer titles rather than reaching down.
+
+The ranking itself is untouched: a foreign title that clears the higher bar competes on merit and
+usually wins, because it out-rates the English titles around it. That is the point — this thins the
+middle, it doesn't exclude a language.
+
+A title Shortlist can't identify a language for — only a non-TMDB source like Trakt produces one —
+counts as preferred, so turning this on never silently stops a source you've enabled from working.
+
 ## Different settings per row
 
 Everything above is the server-wide default. Any per-person row can override most of it in the row
-editor, under **Requests** — a kids row can file into its own folder at a lower quality profile, ask
-for a lower rating, and hold itself to one title a night, while your main row carries on as it was.
+editor, under **Requests** — a kids row can file into its own folder at a lower quality profile, take
+only the first season of a show, stay English-only, ask for a lower rating, and hold itself to one
+title a night, while your main row carries on as it was.
 
 A field left on "use the setting from Settings › Requests" follows the global, and follows it as you
 change it. Only the ones you deliberately override differ.
@@ -147,7 +200,7 @@ change it. Only the ones you deliberately override differ.
 Two things stay server-wide on purpose:
 
 - **How many a run may request.** This is what stops a library ballooning, so a row can only ever ask
-  for *less* of it, never more.
+  for _less_ of it, never more.
 - **The rating source and its MDBList key.** One account, one place to set it.
 
 ### How rows share the limit

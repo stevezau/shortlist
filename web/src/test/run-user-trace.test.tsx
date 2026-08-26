@@ -673,7 +673,10 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
     // beside what was delivered, because that is the thing the owner is looking at and doubting.
     render(
       <TraceView
-        data={withSelection({ decision: "carried_forward", refresh_night: false })}
+        data={withSelection({
+          decision: "carried_forward",
+          refresh_night: false,
+        })}
       />,
     );
     expect(screen.getByText(/not re-picked tonight/i)).toBeInTheDocument();
@@ -686,7 +689,9 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
   });
 
   it("names a settings change as the reason a row rebuilt early", () => {
-    render(<TraceView data={withSelection({ decision: "settings_changed" })} />);
+    render(
+      <TraceView data={withSelection({ decision: "settings_changed" })} />,
+    );
     expect(
       screen.getByText(/a setting that decides its titles changed/i),
     ).toBeInTheDocument();
@@ -696,13 +701,19 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
     // Between search and order, because that is where it happens: the cut decides what can be
     // ordered at all, so explaining ordering without it describes half the mechanism.
     render(<TraceView data={withSelection()} />);
-    expect(screen.getByText(/62 candidates survived filtering/i)).toBeInTheDocument();
-    expect(screen.getByText(/strongest 40 per media type/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/62 candidates survived filtering/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/strongest 40 per media type/i),
+    ).toBeInTheDocument();
   });
 
   it("says release date applied to the CUT, not merely to the order", () => {
     render(<TraceView data={withSelection()} />);
-    expect(screen.getByText(/Release date counted for 50%/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Release date counted for 50%/i),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/applied to the cut itself, not just the order/i),
     ).toBeInTheDocument();
@@ -743,7 +754,12 @@ describe("TraceView — why a title won or lost", () => {
                     media: "movie",
                     total: 1,
                     returned: [
-                      { tmdb_id: 863, title: "Toy Story 2", fate: "kept" as const, ...patch },
+                      {
+                        tmdb_id: 863,
+                        title: "Toy Story 2",
+                        fate: "kept" as const,
+                        ...patch,
+                      },
                     ],
                   },
                 ],
@@ -768,13 +784,21 @@ describe("TraceView — why a title won or lost", () => {
   it("shows the release-date multiplier that was applied to it", () => {
     // The number that answers "why did the older one win?" — without it a fate is an outcome with
     // no reasoning attached.
-    render(<TraceView data={withReturn({ year: 1994, rating: 8.6, age_weight: 0.27 })} />);
+    render(
+      <TraceView
+        data={withReturn({ year: 1994, rating: 8.6, age_weight: 0.27 })}
+      />,
+    );
     expect(screen.getByText(/age ×0\.27/)).toBeInTheDocument();
   });
 
   it("omits the multiplier when release date was not consulted", () => {
     // "×1.0" is the absence of information dressed as information.
-    render(<TraceView data={withReturn({ year: 1994, rating: 8.6, age_weight: 1 })} />);
+    render(
+      <TraceView
+        data={withReturn({ year: 1994, rating: 8.6, age_weight: 1 })}
+      />,
+    );
     expect(screen.queryByText(/age ×/)).not.toBeInTheDocument();
   });
 

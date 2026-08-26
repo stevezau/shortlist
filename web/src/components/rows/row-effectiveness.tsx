@@ -73,8 +73,8 @@ function LibraryBar({
 /**
  * Whether this row is actually working, beside the settings that decide it.
  *
- * The rate is computed over a MATURED cohort — picks that have had their full 30 days to be watched
- * — and the panel refuses to show a rate before such a cohort exists. That refusal is the whole
+ * The rate is computed over a MATURED cohort — picks delivered long enough ago to have had their
+ * chance — and the panel refuses to show a rate before such a cohort exists. That refusal is the whole
  * point: a row delivered last night lands 0% for no reason but time, and a settings page reporting
  * that as failure would send someone to change settings that were never the problem. Three states,
  * and the difference between them is what makes the number trustworthy:
@@ -142,7 +142,7 @@ export function RowEffectivenessPanel({
             />
           </div>
           <p className="text-sm text-muted-foreground">
-            Too early for a score. A pick counts as a hit if it’s watched within{" "}
+            Too early for a score. A pick is judged once it’s had{" "}
             {data.matured_days} days, and none of these have had that long yet.
           </p>
         </>
@@ -156,7 +156,7 @@ export function RowEffectivenessPanel({
               label="Hit rate"
               value={pct(data.matured.rate)}
               hint="of judged picks watched"
-              title={`Picks watched within ${data.matured_days} days, as a share of the picks old enough to judge.`}
+              title="Picks watched while this row was still showing them, as a share of the picks old enough to judge."
             />
             {/* The finished count rides in the hint here too, not just in the pre-cohort branch —
                 this is the state a real row spends its life in, and shipping the split to only the
@@ -165,7 +165,7 @@ export function RowEffectivenessPanel({
               icon={Eye}
               label="Watched"
               value={data.matured.watched}
-              hint={`${data.matured.finished} finished, within ${data.matured_days} days`}
+              hint={`${data.matured.finished} finished`}
               title="Watched counts a series from its first episode — Plex's own definition. Finished counts the ones seen out."
             />
             <StatTile

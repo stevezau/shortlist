@@ -74,6 +74,16 @@ class ShareTokenWatchSource:
                 self._shared_tokens = self._plextv.shared_server_tokens()
             return self._shared_tokens
 
+    def server_token_for(self, user: UserProfile) -> str | None:
+        """The server token to read this user's watched state with, or None if none can be obtained.
+
+        Public because the watching-account transfer needs exactly this and must not reimplement it:
+        the three cases below are the whole reason a shared account can be a transfer SOURCE at all,
+        and a second copy of them would be a second place to get the owner/shared/managed split
+        wrong. See `plex-safety` rule 9 — the token is live and per-user, never logged.
+        """
+        return self._token_for(user)
+
     def _token_for(self, user: UserProfile) -> str | None:
         """The server token to read this user's watched state with, or None if none can be obtained."""
         if user.user_type is UserType.OWNER:

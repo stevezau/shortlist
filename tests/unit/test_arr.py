@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 import httpx
 import pytest
@@ -17,9 +18,11 @@ import respx
 
 from shortlist.engine.clients import arr as arr_mod
 from shortlist.engine.clients.arr import ArrError, RadarrClient, SonarrClient
-from shortlist.engine.models import ArrTarget
+from shortlist.engine.models import SONARR_MONITOR_MODES, ArrTarget
 
 pytestmark = pytest.mark.integration
+
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
 RADARR = ArrTarget(url="http://radarr.test", api_key="rk", quality_profile_id=4, root_folder="/movies")
 SONARR = ArrTarget(url="http://sonarr.test", api_key="sk", quality_profile_id=7, root_folder="/tv")
@@ -32,14 +35,16 @@ MOVIE_LOOKUP = {
     "titleSlug": "sicario-273481",
     "images": [],
 }
-# A Sonarr series/lookup resource for a show NOT yet added.
-SERIES_LOOKUP = {
-    "title": "Severance",
-    "tvdbId": 371980,
-    "titleSlug": "severance",
-    "seasons": [],
-    "images": [],
-}
+# A REAL /api/v3/series/lookup response (Sonarr 4.0.19), for a show that instance does not track,
+# recorded VERBATIM — nothing removed, so the next person to trust it for a different field can.
+#
+# Recorded rather than hand-built because of two fields the payload forwards wholesale: a real lookup
+# returns every season already `monitored: true` AND `monitorNewItems: "all"`, so the body says "all
+# seasons, and every future one" while `addOptions.monitor` says "firstSeason". The hand-built stub
+# had `seasons: []` and no `monitorNewItems` at all, which removed both of the only interesting
+# things about the payload (testing rule: the fake must be no easier than the real server).
+SERIES_LOOKUP = json.loads((FIXTURES / "sonarr_series_lookup.json").read_text())[0]
+SERIES_TVDB = SERIES_LOOKUP["tvdbId"]
 
 
 class TestRadarrAddMovie:
@@ -273,8 +278,8 @@ class TestSonarrAddSeries:
         route = respx.get("http://sonarr.test/api/v3/series/lookup").mock(
             return_value=httpx.Response(200, json=[SERIES_LOOKUP])
         )
-        SonarrClient(SONARR).add_series(371980, dry_run=True)
-        assert route.calls.last.request.url.params.get("term") == "tvdb:371980"
+        SonarrClient(SONARR).add_series(SERIES_TVDB, dry_run=True)
+        assert route.calls.last.request.url.params.get("term") == f"tvdb:{SERIES_TVDB}"
 
     @respx.mock
     def test_posts_target_profile_folder_and_search_when_missing(self):
@@ -283,7 +288,7 @@ class TestSonarrAddSeries:
         )
         post = respx.post("http://sonarr.test/api/v3/series").mock(return_value=httpx.Response(201, json={"id": 3}))
 
-        status, _, _ = SonarrClient(SONARR).add_series(371980, dry_run=False)
+        status, _, _ = SonarrClient(SONARR).add_series(SERIES_TVDB, dry_run=False)
 
         assert status == "requested"
         body = json.loads(post.calls.last.request.content)
@@ -292,11 +297,89 @@ class TestSonarrAddSeries:
         assert body["monitored"] is True
         assert body["seasonFolder"] is True
         assert body["addOptions"] == {"searchForMissingEpisodes": True, "monitor": "all"}
-        assert body["tvdbId"] == 371980
+        assert body["tvdbId"] == SERIES_TVDB
         # tags==[] here (no tag configured). The create/reuse tag path lives in the shared
         # _ArrClient._tag_ids() and is exercised by the Radarr tag tests above, so it isn't
         # duplicated for Sonarr; add_series wires it in the same way (body["tags"]).
         assert body["tags"] == []
+
+    @pytest.mark.parametrize("mode", ["all", "firstSeason", "lastSeason", "pilot"])
+    @respx.mock
+    def test_posts_the_monitor_mode_it_was_given(self, mode):
+        # The whole of issue #100: "all" backfills every season of a 12-season show the night it is
+        # added. The mode is what the owner chose, so assert it reaches the wire — not merely that
+        # a POST happened. Parametrised rather than one case plus a note: the four are the same
+        # passthrough today, and the parametrise is what keeps that true if one ever stops being.
+        respx.get("http://sonarr.test/api/v3/series/lookup").mock(
+            return_value=httpx.Response(200, json=[SERIES_LOOKUP])
+        )
+        post = respx.post("http://sonarr.test/api/v3/series").mock(return_value=httpx.Response(201, json={"id": 3}))
+
+        SonarrClient(SONARR).add_series(SERIES_TVDB, dry_run=False, monitor=mode)
+
+        body = json.loads(post.calls.last.request.content)
+        assert body["addOptions"] == {"searchForMissingEpisodes": True, "monitor": mode}
+        assert body["monitored"] is True
+        # Sonarr's separate "Monitor New Seasons": only "all" keeps taking them. Without this a
+        # restricted mode holds only until the next season airs (measured on 4.0.19 — the recorded
+        # lookup carries `monitorNewItems: all` and this body forwards the resource wholesale).
+        assert body["monitorNewItems"] == ("all" if mode == "all" else "none")
+
+    @respx.mock
+    def test_the_posted_seasons_stay_as_the_lookup_returned_them(self):
+        """The body carries `seasons` with EVERY season monitored — straight out of the lookup — while
+        `addOptions.monitor` asks for one. Sonarr resolves that in favour of the monitor option on its
+        post-add scan, which is the single assumption this feature rests on and cannot be asserted
+        against a stub. Measured on a real Sonarr 4.0.19: adding with `firstSeason` left 26 of 162
+        episodes monitored (season 1 only), `pilot` left 1, `none` left 0.
+
+        So this test does not claim Sonarr's behaviour. It pins OURS: we send the lookup's seasons
+        untouched. If a future change starts hand-building that array, this fails and the measurement
+        above has to be redone rather than assumed.
+        """
+        respx.get("http://sonarr.test/api/v3/series/lookup").mock(
+            return_value=httpx.Response(200, json=[SERIES_LOOKUP])
+        )
+        post = respx.post("http://sonarr.test/api/v3/series").mock(return_value=httpx.Response(201, json={"id": 3}))
+
+        SonarrClient(SONARR).add_series(SERIES_TVDB, dry_run=False, monitor="firstSeason")
+
+        body = json.loads(post.calls.last.request.content)
+        assert [s["monitored"] for s in SERIES_LOOKUP["seasons"] if s["seasonNumber"] > 0] == [True] * 6, (
+            "the recorded fixture must keep a real lookup's all-seasons-monitored shape"
+        )
+        assert SERIES_LOOKUP["monitorNewItems"] == "all", (
+            "the recorded lookup must keep the field the monitorNewItems override exists to overwrite"
+        )
+        assert body["seasons"] == SERIES_LOOKUP["seasons"]
+
+    @respx.mock
+    def test_none_adds_the_show_unmonitored_and_searches_for_nothing(self):
+        respx.get("http://sonarr.test/api/v3/series/lookup").mock(
+            return_value=httpx.Response(200, json=[SERIES_LOOKUP])
+        )
+        post = respx.post("http://sonarr.test/api/v3/series").mock(return_value=httpx.Response(201, json={"id": 3}))
+
+        SonarrClient(SONARR).add_series(SERIES_TVDB, dry_run=False, monitor="none")
+
+        body = json.loads(post.calls.last.request.content)
+        assert body["monitored"] is False
+        assert body["addOptions"] == {"searchForMissingEpisodes": False, "monitor": "none"}
+        assert body["monitorNewItems"] == "none"
+
+    @respx.mock
+    def test_an_unknown_mode_falls_back_to_all_rather_than_failing_the_add(self):
+        # Sonarr 400s on a monitor value it doesn't know. The API validates what is SAVED, so this is
+        # the stored-value case: a setting written by a newer build and read back by an older one.
+        respx.get("http://sonarr.test/api/v3/series/lookup").mock(
+            return_value=httpx.Response(200, json=[SERIES_LOOKUP])
+        )
+        post = respx.post("http://sonarr.test/api/v3/series").mock(return_value=httpx.Response(201, json={"id": 3}))
+
+        status, _, _ = SonarrClient(SONARR).add_series(SERIES_TVDB, dry_run=False, monitor="seasonsIWant")
+
+        assert status == "requested"
+        assert json.loads(post.calls.last.request.content)["addOptions"]["monitor"] == "all"
 
     @respx.mock
     def test_skips_when_already_present(self):
@@ -305,7 +388,7 @@ class TestSonarrAddSeries:
         )
         post = respx.post("http://sonarr.test/api/v3/series").mock(return_value=httpx.Response(201))
 
-        status, _, _ = SonarrClient(SONARR).add_series(371980, dry_run=False)
+        status, _, _ = SonarrClient(SONARR).add_series(SERIES_TVDB, dry_run=False)
 
         assert status == "skipped_present"
         assert not post.called
@@ -316,8 +399,15 @@ class TestSonarrAddSeries:
         respx.get("http://sonarr.test/api/v3/series/lookup").mock(
             return_value=httpx.Response(200, json=[{**SERIES_LOOKUP, "tvdbId": 999999}])
         )
-        status, _, _ = SonarrClient(SONARR).add_series(371980, dry_run=False)
+        status, _, _ = SonarrClient(SONARR).add_series(SERIES_TVDB, dry_run=False)
         assert status == "error"
+
+
+class TestTheMonitorModeTable:
+    def test_every_offered_mode_has_a_plain_english_detail(self):
+        # `add_series` indexes this table by the resolved mode on every successful add, so a mode
+        # added to the list without a detail is a KeyError on a real request, not a missing string.
+        assert set(arr_mod._MONITOR_DETAIL) == set(SONARR_MONITOR_MODES)
 
 
 class TestArrPlumbing:

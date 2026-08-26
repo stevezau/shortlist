@@ -44,7 +44,66 @@ function ChangeSummary({ result }: { result: UninstallResult }) {
       {result.collections_deleted.length} collection
       {result.collections_deleted.length === 1 ? "" : "s"} ·{" "}
       {result.rows_disabled} row{result.rows_disabled === 1 ? "" : "s"}
+      {result.filters_skipped.length > 0 && (
+        <> · {result.filters_skipped.length} account
+        {result.filters_skipped.length === 1 ? "" : "s"} that can&rsquo;t be
+        restored</>
+      )}
     </p>
+  );
+}
+
+/**
+ * The accounts uninstall could NOT put back, named. The two reasons need different things from the
+ * owner — a failure is worth retrying, a departed account never will be — so they are never merged
+ * into one count. Silence here is how issue #96 would have looked if it had been fixed by simply
+ * swallowing the error.
+ */
+function AccountsNotRestored({
+  result,
+  preview = false,
+}: {
+  result: UninstallResult;
+  preview?: boolean;
+}) {
+  const { filters_failed: failed, filters_unreachable: unreachable } = result;
+  const skipped = result.filters_skipped;
+  if (!failed.length && !unreachable.length && !skipped.length) return null;
+  const names = (rows: { user: string }[]) =>
+    rows.map((r) => r.user).join(", ");
+  return (
+    <div className="space-y-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-sm">
+      {failed.length > 0 && (
+        <p>
+          <span className="font-medium">Could not be restored:</span>{" "}
+          {names(failed)}.{" "}
+          {failed.length === 1
+            ? "Their share filter still carries"
+            : "Their share filters still carry"}{" "}
+          the entries Shortlist added. Run the uninstall again to retry.
+        </p>
+      )}
+      {unreachable.length > 0 && (
+        <p>
+          <span className="font-medium">plex.tv didn&rsquo;t list:</span>{" "}
+          {names(unreachable)}.{" "}
+          {preview
+            ? "Your records say they are still on this server, so this looks like plex.tv giving an incomplete answer. Worth waiting a few minutes before you uninstall."
+            : "Your records say they are still on this server, so their share filters still carry the entries Shortlist added. Run the uninstall again to retry."}
+        </p>
+      )}
+      {skipped.length > 0 && (
+        <p>
+          <span className="font-medium">No longer on this server:</span>{" "}
+          {names(skipped)}.{" "}
+          {skipped.length === 1
+            ? "Their Plex account has"
+            : "Their Plex accounts have"}{" "}
+          left the share, so Shortlist can no longer reach their settings.
+          Nothing to fix — this is expected.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -82,19 +141,28 @@ export function UninstallPage() {
       {done ? (
         <Card>
           <CardContent className="space-y-3 pt-6">
-            <p className="flex items-center gap-2 text-lg font-medium text-success">
-              <Check aria-hidden="true" /> Uninstall complete
-            </p>
+            {done.filters_failed.length > 0 ||
+            done.filters_unreachable.length > 0 ? (
+              <p className="flex items-start gap-2 text-lg font-medium text-warning">
+                <AlertTriangle className="mt-1 shrink-0" aria-hidden="true" />{" "}
+                Uninstall finished, with
+                some accounts left to retry
+              </p>
+            ) : (
+              <p className="flex items-center gap-2 text-lg font-medium text-success">
+                <Check aria-hidden="true" /> Uninstall complete
+              </p>
+            )}
             <p className="text-sm text-muted-foreground">
               {done.filters_restored} share filter
               {done.filters_restored === 1 ? "" : "s"} restored ·{" "}
               {done.collections_deleted.length} collection
               {done.collections_deleted.length === 1 ? "" : "s"} deleted ·{" "}
               {done.rows_disabled} row{done.rows_disabled === 1 ? "" : "s"}{" "}
-              switched off. Your Plex server is as Shortlist found it, and
-              nothing will rebuild. Set Shortlist up again any time to start
-              fresh.
+              switched off. {done.message} Nothing will rebuild — set Shortlist
+              up again any time to start fresh.
             </p>
+            <AccountsNotRestored result={done} />
             {log.length > 0 && <LogBox lines={log} />}
             <div className="flex flex-wrap gap-2 pt-1">
               <Button asChild>
@@ -142,6 +210,9 @@ export function UninstallPage() {
                   <p className="mt-1 text-muted-foreground">
                     {preview.data.message}
                   </p>
+                  <div className="mt-2">
+                    <AccountsNotRestored result={preview.data} preview />
+                  </div>
                 </div>
               )}
             </div>

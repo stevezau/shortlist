@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="3" totalSize="267" offset="0" allowSync="1" art="/:/resources/show-fanart.jpg" identifier="com.plexapp.plugins.library" librarySectionID="2" librarySectionTitle="TV Shows" librarySectionUUID="0ecbeed4-1ecc-4a88-80c1-dfa00fd54944" mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="1786540085" nocache="1" thumb="/:/resources/show.png" title1="TV Shows" title2="All Shows" viewGroup="show" viewMode="65592">
+<Video ratingKey="633569" key="/library/metadata/633569" parentRatingKey="31037" grandparentRatingKey="31036" guid="plex://episode/5fbdb92c5c0f40002d225bbb" parentGuid="plex://season/602e72be33eb76002d629fbb" grandparentGuid="plex://show/5d9c08e9705e7a001e6e645b" grandparentSlug="9-1-1" type="episode" title="Point of Origin" grandparentKey="/library/metadata/31036" parentKey="/library/metadata/31037" grandparentTitle="9-1-1" parentTitle="Season 1" contentRating="TV-14" summary="The crew races to an emergency when disaster strikes at an Indian wedding. Abby enlists the help of Buck to try and find her mother and, for the first time, meets Athena face-to-face. Meanwhile, Bobby has a difficult time confronting his past and Hen struggles to make the right decision." index="5" parentIndex="1" audienceRating="6.8" viewOffset="1697756" lastViewedAt="1578575394" year="2018" thumb="/library/metadata/633569/thumb/1787039411" art="/library/metadata/31036/art/1787432073" parentThumb="/library/metadata/31037/thumb/1773379675" grandparentThumb="/library/metadata/31036/thumb/1787432073" grandparentArt="/library/metadata/31036/art/1787432073" grandparentTheme="/library/metadata/31036/theme/1787432073" duration="2649898" originallyAvailableAt="2018-01-31" addedAt="1787039409" updatedAt="1787039411" audienceRatingImage="themoviedb://image.rating">
+<Media id="939724" duration="2649898" bitrate="3790" width="1920" height="1080" aspectRatio="1.78" audioChannels="6" audioCodec="eac3" videoCodec="hevc" videoResolution="1080" container="mkv" videoFrameRate="24p" videoProfile="/media/REDACTED" hasVoiceActivity="0">
+<Part id="1122931" key="/library/parts/1122931/1703273888/file.mkv" duration="2649898" file="/media/REDACTED" size="1255419651" container="mkv" indexes="sd" videoProfile="/media/REDACTED" />
+</Media>
+<Image alt="Point of Origin" type="coverPoster" url="/library/metadata/31036/thumb/1787432073" />
+<Image alt="Point of Origin" type="snapshot" url="/library/metadata/633569/thumb/1787039411" />
+<Image alt="Point of Origin" type="background" url="/library/metadata/31036/art/1787432073" />
+<Image alt="Point of Origin" type="clearLogo" url="/library/metadata/31036/clearLogo/1787432073" />
+<Image alt="Point of Origin" type="backgroundSquare" url="/library/metadata/31036/squareArt/1787432073" />
+<UltraBlurColors topLeft="521611" topRight="733f1b" bottomRight="1d0706" bottomLeft="801f19" />
+<Director tag="Gwyneth Horder-Payton" />
+<Writer tag="Erica L. Anderson" />
+<Role tag="Angela Bassett" />
+<Role tag="Peter Krause" />
+<Role tag="Oliver Stark" />
+</Video>
+<Video ratingKey="304446" key="/library/metadata/304446" parentRatingKey="31037" grandparentRatingKey="31036" guid="plex://episode/5fbdb92f5c0f40002d225c07" parentGuid="plex://season/602e72be33eb76002d629fbb" grandparentGuid="plex://show/5d9c08e9705e7a001e6e645b" grandparentSlug="9-1-1" type="episode" title="Full Moon (Creepy AF)" grandparentKey="/library/metadata/31036" parentKey="/library/metadata/31037" grandparentTitle="9-1-1" parentTitle="Season 1" contentRating="TV-14" summary="A full moon keeps the crew busy with some of the craziest calls yet, as Athena investigates a potential home invasion and &#34;faces off&#34; against a rabid criminal. Meanwhile, Abby helps investigate the murder of a caller, Bobby and Buck have their hands full at a yoga studio for pregnant women and Hen&#39;s past may become her future." index="7" parentIndex="1" audienceRating="7.6" viewOffset="100457" lastViewedAt="1578196719" year="2018" thumb="/library/metadata/304446/thumb/1787019936" art="/library/metadata/31036/art/1787432073" parentThumb="/library/metadata/31037/thumb/1773379675" grandparentThumb="/library/metadata/31036/thumb/1787432073" grandparentArt="/library/metadata/31036/art/1787432073" grandparentTheme="/library/metadata/31036/theme/1787432073" duration="2676925" originallyAvailableAt="2018-02-28" addedAt="1703273939" updatedAt="1787019936" audienceRatingImage="themoviedb://image.rating">
+<Media id="888465" duration="2676925" bitrate="3954" width="1920" height="1080" aspectRatio="1.78" audioChannels="6" audioCodec="eac3" videoCodec="hevc" videoResolution="1080" container="mkv" videoFrameRate="24p" videoProfile="/media/REDACTED" hasVoiceActivity="1">
+<Part id="1071672" key="/library/parts/1071672/1703273892/file.mkv" duration="2676925" file="/media/REDACTED" size="1322913903" container="mkv" indexes="sd" videoProfile="/media/REDACTED" />
+</Media>
+<Image alt="Full Moon (Creepy AF)" type="coverPoster" url="/library/metadata/31036/thumb/1787432073" />
+<Image alt="Full Moon (Creepy AF)" type="snapshot" url="/library/metadata/304446/thumb/1787019936" />
+<Image alt="Full Moon (Creepy AF)" type="background" url="/library/metadata/31036/art/1787432073" />
+<Image alt="Full Moon (Creepy AF)" type="clearLogo" url="/library/metadata/31036/clearLogo/1787432073" />
+<Image alt="Full Moon (Creepy AF)" type="backgroundSquare" url="/library/metadata/31036/squareArt/1787432073" />
+<UltraBlurColors topLeft="1d2a55" topRight="933d4c" bottomRight="3f2a65" bottomLeft="8c3c3e" />
+<Director tag="Maggie Kiley" />
+<Writer tag="Adam Penn" />
+<Role tag="Angela Bassett" />
+<Role tag="Peter Krause" />
+<Role tag="Oliver Stark" />
+</Video>
+<Video ratingKey="633576" key="/library/metadata/633576" parentRatingKey="31048" grandparentRatingKey="31036" guid="plex://episode/5e161d95c176f9003fa4666d" parentGuid="plex://season/602e72be33eb76002d629fbc" grandparentGuid="plex://show/5d9c08e9705e7a001e6e645b" grandparentSlug="9-1-1" type="episode" title="Dosed" grandparentKey="/library/metadata/31036" parentKey="/library/metadata/31048" grandparentTitle="9-1-1" parentTitle="Season 2" contentRating="TV-14" summary="When the first responders race to the rescue of a crashed news copter, they unwittingly become the subject of an eager reporter&#39;s first on-air assignment. Meanwhile, Bobby tries to deal with his daughter&#39;s death, as Athena prepares for May&#39;s homecoming dance. Then, Maddie struggles to let go of her fear of the past. Also, the team responds to emergencies at an eating contest, a bodybuilding competition and a toddler pageant." index="6" parentIndex="2" audienceRating="7.4" viewOffset="735953" lastViewedAt="1544924745" year="2018" thumb="/library/metadata/633576/thumb/1787039412" art="/library/metadata/31036/art/1787432073" parentThumb="/library/metadata/31048/thumb/1764118130" grandparentThumb="/library/metadata/31036/thumb/1787432073" grandparentArt="/library/metadata/31036/art/1787432073" grandparentTheme="/library/metadata/31036/theme/1787432073" duration="2690368" originallyAvailableAt="2018-10-22" addedAt="1787039410" updatedAt="1787039412" audienceRatingImage="themoviedb://image.rating">
+<Media id="939731" duration="2690368" bitrate="4188" width="1920" height="1080" aspectRatio="1.78" audioChannels="6" audioCodec="eac3" videoCodec="hevc" videoResolution="1080" container="mkv" videoFrameRate="24p" videoProfile="/media/REDACTED" hasVoiceActivity="0">
+<Part id="1122938" key="/library/parts/1122938/1703272500/file.mkv" duration="2690368" file="/media/REDACTED" size="1408239997" container="mkv" indexes="sd" videoProfile="/media/REDACTED" />
+</Media>
+<Image alt="Dosed" type="coverPoster" url="/library/metadata/31036/thumb/1787432073" />
+<Image alt="Dosed" type="snapshot" url="/library/metadata/633576/thumb/1787039412" />
+<Image alt="Dosed" type="background" url="/library/metadata/31036/art/1787432073" />
+<Image alt="Dosed" type="clearLogo" url="/library/metadata/31036/clearLogo/1787432073" />
+<Image alt="Dosed" type="backgroundSquare" url="/library/metadata/31036/squareArt/1787432073" />
+<UltraBlurColors topLeft="521618" topRight="a41f2a" bottomRight="7f343c" bottomLeft="a7252a" />
+<Director tag="Gwyneth Horder-Payton" />
+<Writer tag="Juan Carlos Coto" />
+<Role tag="Angela Bassett" />
+<Role tag="Peter Krause" />
+<Role tag="Jennifer Love Hewitt" />
+</Video>
+</MediaContainer>

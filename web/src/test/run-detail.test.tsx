@@ -1188,7 +1188,11 @@ describe("RunDetailPage — a run that failed for PEOPLE, not for itself", () =>
       status: "error",
       error: null,
       promotion_blockers: [],
-      stats: { users_ok: ok, users_error: failures.length, titles_requested: 0 },
+      stats: {
+        users_ok: ok,
+        users_error: failures.length,
+        titles_requested: 0,
+      },
       users: [
         ...base.users,
         ...failures.map((f) => ({
@@ -1204,7 +1208,9 @@ describe("RunDetailPage — a run that failed for PEOPLE, not for itself", () =>
   }
 
   it("names the person and the reason instead of an empty failure", async () => {
-    getRun.mockResolvedValue(runWithFailures([{ name: "Jarrah", error: PLEX_409 }]));
+    getRun.mockResolvedValue(
+      runWithFailures([{ name: "Jarrah", error: PLEX_409 }]),
+    );
     renderDetail();
 
     const alert = await screen.findByTestId("run-failure");
@@ -1223,15 +1229,18 @@ describe("RunDetailPage — a run that failed for PEOPLE, not for itself", () =>
       runWithFailures([
         {
           name: "Jarrah",
-          error: "BadRequest: (500) internal_server_error; http://pms:32400/library/sections/2/all?id=771",
+          error:
+            "BadRequest: (500) internal_server_error; http://pms:32400/library/sections/2/all?id=771",
         },
         {
           name: "Sam",
-          error: "BadRequest: (500) internal_server_error; http://pms:32400/library/sections/2/all?id=982",
+          error:
+            "BadRequest: (500) internal_server_error; http://pms:32400/library/sections/2/all?id=982",
         },
         {
           name: "Nikki",
-          error: "BadRequest: (500) internal_server_error; http://pms:32400/library/sections/1/all?id=1043",
+          error:
+            "BadRequest: (500) internal_server_error; http://pms:32400/library/sections/1/all?id=1043",
         },
       ]),
     );
@@ -1241,7 +1250,9 @@ describe("RunDetailPage — a run that failed for PEOPLE, not for itself", () =>
     expect(alert).toHaveTextContent(/3 people didn.t get their rows/i);
     expect(alert).not.toHaveTextContent(/different reasons/i);
     expect(alert).toHaveTextContent(/Jarrah, Sam, Nikki/);
-    expect(within(alert).getAllByText(/internal_server_error/i)).toHaveLength(1);
+    expect(within(alert).getAllByText(/internal_server_error/i)).toHaveLength(
+      1,
+    );
   });
 
   it("says so when the failures had different causes", async () => {
@@ -1254,13 +1265,18 @@ describe("RunDetailPage — a run that failed for PEOPLE, not for itself", () =>
     renderDetail();
 
     const alert = await screen.findByTestId("run-failure");
-    expect(alert).toHaveTextContent(/2 people didn.t get their rows, for 2 different reasons/i);
+    expect(alert).toHaveTextContent(
+      /2 people didn.t get their rows, for 2 different reasons/i,
+    );
   });
 
   it("still leads with the run-level reason when there is one", async () => {
     // A run-level failure is not a per-person one, and must not be reworded as though it were.
     const base = runWithFailures([{ name: "Jarrah", error: PLEX_409 }]);
-    getRun.mockResolvedValue({ ...base, error: "Engine blew up before it started" });
+    getRun.mockResolvedValue({
+      ...base,
+      error: "Engine blew up before it started",
+    });
     renderDetail();
 
     const alert = await screen.findByTestId("run-failure");
