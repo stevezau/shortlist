@@ -169,6 +169,7 @@ Switching management back on resyncs it.
 ```
 GET  /api/users/{id}/rows · PUT /api/users/{id}/rows/{collection_id} {muted?, row_size?, recent_count?} (per-person, per-row: `recent_count` (1–25) overrides how many recent watches the `llm_web` source searches for this person on this row; null on any field clears it back to the row's own setting)
 GET  /api/users/{id}/runs (this person's outcome per run — `status`, `reason` for a non-failing skip, `duration_ms`, their diff and picks) · GET /api/users/{id}/runs/summary -> {included, total} (a run is server-wide, so "6 runs" on a person's page only reads honestly next to "of 148")
+GET  /api/users/{id}/outcomes -> [{tmdb_id, media_type, title, row, outcome, percent, watched_at, finished_at}] (what became of each pick delivered to this person — `outcome` is `finished|dropped|bounced|watching`, resolved by the same `resolve_outcomes` the dashboard uses, so the two can never disagree)
 GET  /api/users/search/titles?q=&media_type=movie|show -> [{tmdb_id, title, media_type, year}] (TMDB's best guess, for the block-a-seed picker)
 POST /api/users/{id}/blocked-seeds {tmdb_id, title?, media_type?, year?} · DELETE /api/users/{id}/blocked-seeds/{tmdb_id} -> {blocked_seeds: [{tmdb_id, title, media_type, year}]}
      Titles that must never SEED this person's recommendations. The watch stays in their history, it just stops shaping their picks.
