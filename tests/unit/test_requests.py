@@ -1472,6 +1472,27 @@ class TestLanguagePreference:
         fake, _ = self._run(cfg, demand, monkeypatch)
         assert [c[0] for c in fake.movie_calls] == [2]
 
+    def test_prefer_with_an_empty_language_list_raises_the_bar_on_everything_it_can_identify(self, monkeypatch):
+        """The fourth corner of the mode x list-state matrix, and the one the warning copy describes.
+
+        With no languages listed, nothing is preferred — so every title whose language is KNOWN takes
+        the higher bar, and only the unknown ones still go on the ordinary one. That last clause is
+        why the on-screen warning says "every title Shortlist can identify a language for" rather
+        than "every title": unknown stays permissive here, unlike in "only" mode.
+        """
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        demand = self._demand(
+            self._title(1, "en", rating=8.2),  # known, and now "other" — below the 8.5 bar
+            self._title(2, "ja", rating=8.2),  # known, likewise
+            self._title(3, "", rating=8.2),  # unknown — still preferred, still sent
+        )
+        cfg = self._cfg_lang(language_mode="prefer", preferred_languages=())
+        fake, report = self._run(cfg, demand, monkeypatch)
+        assert [c[0] for c in fake.movie_calls] == [3], "only the unidentifiable one goes"
+        assert sorted(m.tmdb_id for m in report.queued) == [1, 2]
+        assert all("other languages" in (m.detail or "") for m in report.queued)
+
     # ---- mode "only": never request another language at all ----
 
     def test_only_mode_drops_another_language_entirely(self, monkeypatch):
@@ -1585,6 +1606,25 @@ class TestLanguagePreference:
         report = _request_missing(self._cfg_lang(language_mode="only"), FakeTmdb(), demand, dry_run=False)
         assert report.dropped_by_language == 2
         assert report.pool_size == 1
+
+    def test_a_poisoned_language_list_fails_closed_in_only_mode(self, monkeypatch):
+        """`normalise_languages` degrades an unusable stored value to `()`, which lands in the same
+        branch as a deliberately-cleared list — so in "only" mode a corrupt setting makes the run
+        request NOTHING rather than everything.
+
+        That direction is the point. This path adds titles to someone's library: a run that asks for
+        nothing is a visible non-event the owner can investigate, where a run that asks for
+        everything is a mess to undo.
+        """
+        from shortlist.engine.models import normalise_languages
+
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        cfg = self._cfg_lang(language_mode="only", preferred_languages=normalise_languages(12345))
+        assert cfg.preferred_languages == (), "a poisoned value degrades to empty, not to a crash"
+        demand = self._demand(self._title(1, "en", rating=9.5), self._title(2, "ja", rating=9.5))
+        fake, _ = self._run(cfg, demand, monkeypatch)
+        assert fake.movie_calls == [], "fail closed — never request everything on a corrupt setting"
 
     def test_a_poisoned_language_list_degrades_instead_of_crashing_every_run(self):
         """The context builder reads this on EVERY run, and validation does not cover every way a

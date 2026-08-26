@@ -68,6 +68,25 @@ class TestSettingsValidation:
             resp = client.put("/api/settings", json={"values": {"requests.preferred_languages": refused}})
             assert resp.status_code == 422, f"{refused} was accepted"
 
+    def test_a_long_list_of_bad_codes_says_how_many_it_did_not_show(self, client: TestClient):
+        """Same reason as the row endpoint: a truncated list without a count sends the owner round
+        the loop twice."""
+        resp = client.put(
+            "/api/settings",
+            json={"values": {"requests.preferred_languages": [f"{c}1" for c in "abcdefg"]}},
+        )
+        assert resp.status_code == 422
+        assert "(+2 more)" in resp.text
+
+    def test_too_many_languages_is_refused(self, client: TestClient):
+        """Unbounded, this is a setting an owner can store megabytes into — and it is read on every
+        run, so the ceiling is cheaper than the audit."""
+        ok = client.put("/api/settings", json={"values": {"requests.preferred_languages": ["en"] * 50}})
+        assert ok.status_code == 200
+        too_many = client.put("/api/settings", json={"values": {"requests.preferred_languages": ["en"] * 51}})
+        assert too_many.status_code == 422
+        assert "too many languages" in too_many.text
+
     def test_the_other_language_bar_accepts_null_because_null_is_a_meaning(self, client: TestClient):
         """None is not "unset" here — it means "follow min_rating + 1.5", which is the SHIPPED default
         precisely so no fixed number of ours is imposed on anyone's server. A validator that rejected

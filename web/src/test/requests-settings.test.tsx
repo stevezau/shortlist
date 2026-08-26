@@ -367,7 +367,7 @@ describe("RequestsSettings", () => {
         "requests.preferred_languages": [],
       });
       expect(
-        await screen.findByText(/every title counts as another language/i),
+        await screen.findByText(/can identify a language for counts as another language/i),
       ).toBeTruthy();
       expect(screen.queryByText(/never ask for anything/i)).toBeNull();
     });

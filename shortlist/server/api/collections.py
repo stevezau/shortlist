@@ -403,8 +403,9 @@ def _validate(body: CollectionIn) -> None:
                 ),
             )
         # Normalised on the way IN as well as on the way out. Reads already normalise, so the run is
-        # correct either way — but the editor keys its chips on the raw stored value, and "  EN  "
-        # beside "en" is two chips with the same React key.
+        # correct either way — but the editor keys its chips on the RAW stored value, so `["en", "en"]`
+        # renders two chips sharing one React key, and `["  EN  ", "en"]` renders two chips that read
+        # identically. Deduping here means the editor only ever sees one entry per language.
         body.req_preferred_languages = list(normalise_languages(body.req_preferred_languages))
     if body.placement not in PLACEMENTS:
         raise HTTPException(status_code=422, detail=f"placement must be one of {sorted(PLACEMENTS)}")

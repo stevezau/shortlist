@@ -2718,6 +2718,29 @@ class TestPerRowRequestSettingsApi:
         ).json()
         assert patched["req_preferred_languages"] == []
 
+    def test_row_language_codes_are_normalised_and_deduped_on_the_way_in(self, client: TestClient):
+        """The editor keys its chips on the RAW stored value, so `["en", "en"]` renders two chips
+        sharing one React key and `["  EN  ", "en"]` renders two that read identically. Reads
+        normalise anyway, so the run is correct either way — this is about what the editor is
+        handed."""
+        created = client.post("/api/collections", json={"name": "Kids", "build": "per_person"}).json()
+        patched = client.patch(
+            f"/api/collections/{created['id']}",
+            json={"name": "Kids", "req_preferred_languages": ["EN", "  ja  ", "en"]},
+        ).json()
+        assert patched["req_preferred_languages"] == ["en", "ja"], "lowercased, trimmed, deduped"
+
+    def test_a_long_list_of_bad_row_codes_says_how_many_it_did_not_show(self, client: TestClient):
+        """Truncating without a count means the owner fixes the five they were shown, resubmits, and
+        is rejected again for values the first message implied were fine."""
+        created = client.post("/api/collections", json={"name": "Kids", "build": "per_person"}).json()
+        resp = client.patch(
+            f"/api/collections/{created['id']}",
+            json={"name": "Kids", "req_preferred_languages": [f"{c}1" for c in "abcdefg"]},
+        )
+        assert resp.status_code == 422
+        assert "(+2 more)" in resp.json()["detail"]
+
     def test_a_row_language_mode_outside_the_offered_set_is_refused(self, client: TestClient):
         created = client.post("/api/collections", json={"name": "Kids", "build": "per_person"}).json()
         resp = client.patch(

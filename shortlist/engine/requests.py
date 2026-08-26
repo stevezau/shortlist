@@ -310,6 +310,13 @@ def _language_allowed(cfg: RequestConfig, m: MissingTitle) -> bool:
     screen, the row editor and the reference table all promise. Without this, a server in that state
     still auto-sent every Trakt-sourced title — the copy and the code disagreeing on a path that adds
     titles to Radarr.
+
+    That also decides how a POISONED setting behaves, and the direction is deliberate.
+    `normalise_languages` degrades an unusable stored value to `()` rather than raising, so a corrupt
+    list lands in exactly this branch: in ``"only"`` mode the run now requests NOTHING, where before
+    it would have requested everything. Failing closed is the right way round here — this path adds
+    titles to someone's library, and a run that asks for nothing is a visible non-event the owner can
+    investigate, while a run that asks for everything is a mess to undo.
     """
     if cfg.language_mode != "only":
         return True

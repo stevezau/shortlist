@@ -213,7 +213,7 @@ describe("RowRequestSettings", () => {
         req_preferred_languages: [],
       });
       expect(
-        screen.getByText(/every title counts as another language/i),
+        screen.getByText(/can identify a language for counts as another language/i),
       ).toBeInTheDocument();
       expect(
         screen.queryByText(/never ask for anything/i),

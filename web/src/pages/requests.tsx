@@ -281,6 +281,7 @@ function TitleMeta({
           <Badge
             variant="outline"
             className="font-normal"
+            data-testid="language-chip"
             title={`Original language: ${languageName(item.language)}`}
           >
             {languageName(item.language)}

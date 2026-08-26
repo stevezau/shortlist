@@ -499,7 +499,7 @@ export function RowRequestSettings({
                   <p role="alert" className="w-full text-sm text-destructive-text">
                     {input.req_language_mode === "only"
                       ? "With no languages listed, this row will never ask for anything. Add at least one."
-                      : "With no languages listed, every title counts as another language and has to clear the higher bar."}
+                      : "With no languages listed, every title Shortlist can identify a language for counts as another language and has to clear the higher bar."}
                   </p>
                 )}
             </div>

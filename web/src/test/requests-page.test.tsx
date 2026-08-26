@@ -1499,28 +1499,34 @@ describe("RequestsPage — what Sonarr/Radarr has", () => {
       await screen.findByText("Kaiju no Kodomo");
     }
 
+    // Asserted on the ELEMENT, not on a string. `languageName("")` returns "", so querying for the
+    // text "Unknown" would pass even with the guard deleted — the badge would just render empty.
+    const chips = () => screen.queryAllByTestId("language-chip");
+
     it("draws no chip on the default 'any' server", async () => {
       // The chip's job is to explain why a title is being HELD BACK. On "any" nothing is, so a chip
       // on every foreign tile would be pure noise on the shipped default.
       await renderWith("any", "ja");
-      expect(screen.queryByText("Japanese")).not.toBeInTheDocument();
+      expect(chips()).toHaveLength(0);
     });
 
     it("draws a chip for a non-preferred language once a mode is on", async () => {
       await renderWith("prefer", "ja");
-      expect(await screen.findByText("Japanese")).toBeInTheDocument();
+      expect(chips()).toHaveLength(1);
+      expect(chips()[0]).toHaveTextContent("Japanese");
     });
 
     it("draws no chip for a preferred language", async () => {
       // An "English" chip on every tile of a mostly-English inbox is the noise this avoids.
       await renderWith("prefer", "en");
-      expect(screen.queryByText("English")).not.toBeInTheDocument();
+      expect(chips()).toHaveLength(0);
     });
 
     it("draws no chip when the language is unknown", async () => {
       // "" is a title queued before the column existed, or one only a non-TMDB source surfaced.
+      // The empty-badge case: a string assertion here cannot tell "no chip" from "blank chip".
       await renderWith("prefer", "");
-      expect(screen.queryByText("Unknown")).not.toBeInTheDocument();
+      expect(chips()).toHaveLength(0);
     });
   });
 });

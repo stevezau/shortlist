@@ -261,30 +261,56 @@ class TestTheOtherLanguageReasonIsAThresholdNotAFailure:
         assert _is_failure_detail("Sonarr returned HTTP 503")
 
     def test_every_queue_reason_the_gate_can_emit_classifies_as_a_threshold(self):
-        """Every reason `_auto_eligible` can assign, READ OUT OF ITS SOURCE — not restated here.
+        """Every reason `_auto_eligible` can assign, read out of its own AST — not restated here.
 
-        `requests.py` warns that restating these strings is exactly what lets them drift, so a
-        hand-written copy in the test would reproduce the bug it is meant to catch: a new
-        `reason = ...` added to the gate would simply be invisible, and an unprefixed one makes
-        `_is_failure_detail` record a merely-held title as a request that FAILED — which then
+        `requests.py` warns that restating these strings is what lets them drift: an unprefixed reason
+        makes `_is_failure_detail` record a merely-held title as a request that FAILED, which then
         outlives the threshold note that should have replaced it.
+
+        Walked with `ast`, not a regex, and that difference is the point. A regex only sees reasons
+        written as `reason = "..."`, so one built by a lookup table, a helper call or a concatenation
+        is invisible to it — the test passes while covering nothing, which is the failure mode it
+        exists to prevent. The AST sees every assignment to `reason`, and this asserts each is a plain
+        literal, so a form it cannot verify fails loudly instead of silently.
         """
+        import ast
         import inspect
-        import re
+        import textwrap
 
         from shortlist.engine import requests as requests_mod
         from shortlist.engine.requests import QUEUE_REASON_PREFIXES
         from shortlist.server.services.run_persistence import _is_failure_detail
 
-        source = inspect.getsource(requests_mod._auto_eligible)
-        reasons = re.findall(r'reason = f?"([^"]+)"', source)
-        assert len(reasons) >= 4, f"expected to find the gate's reasons in its source, got {reasons}"
+        tree = ast.parse(textwrap.dedent(inspect.getsource(requests_mod._auto_eligible)))
+        assigns = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "reason" for t in node.targets)
+        ]
+        assert assigns, "found no `reason = ...` assignments — has the gate been restructured?"
 
-        for reason in reasons:
-            literal = reason.replace("{cfg.auto_min_demand}", "3").replace("{cfg.auto_min_rating}", "8.0")
-            literal = literal.replace("{other_bar}", "8.5")
-            assert literal.startswith(QUEUE_REASON_PREFIXES), (
-                f"{literal!r} matches no prefix in QUEUE_REASON_PREFIXES — a held title would be "
-                f"recorded as a failed send"
+        leading: list[str] = []
+        for node in assigns:
+            value = node.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                leading.append(value.value)
+            elif isinstance(value, ast.JoinedStr):
+                # An f-string: only the leading literal matters, because the prefixes are leading
+                # words and any interpolation comes after them.
+                first = value.values[0]
+                assert isinstance(first, ast.Constant), (
+                    "a reason starting with an interpolation cannot be prefix-matched; give it a "
+                    "literal opening or add its form to QUEUE_REASON_PREFIXES"
+                )
+                leading.append(first.value)
+            else:
+                raise AssertionError(
+                    f"`reason` assigned a {type(value).__name__} this test cannot verify — a lookup "
+                    "table or helper would slip past prefix checking entirely. Keep reasons literal."
+                )
+
+        for text in leading:
+            assert text.startswith(QUEUE_REASON_PREFIXES), (
+                f"{text!r} matches no prefix in QUEUE_REASON_PREFIXES — a held title would be recorded as a failed send"
             )
-            assert not _is_failure_detail(literal), f"{literal!r} reads as a send failure"
+            assert not _is_failure_detail(text), f"{text!r} reads as a send failure"

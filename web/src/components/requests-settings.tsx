@@ -730,7 +730,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                       >
                         {form.languageMode === "only"
                           ? "With no languages listed, Shortlist will never ask for anything. Add at least one."
-                          : "With no languages listed, every title counts as another language and has to clear the higher bar."}
+                          : "With no languages listed, every title Shortlist can identify a language for counts as another language and has to clear the higher bar."}
                       </p>
                     )}
                   </div>
