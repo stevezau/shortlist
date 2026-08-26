@@ -115,6 +115,49 @@ class TestSettingsValidation:
         assert values["requests.preferred_languages"] == ["en"]
         assert values["requests.min_rating_other"] is None
 
+    def test_a_settings_change_records_who_made_it(self, client: TestClient):
+        """WHAT changed and WHEN were recorded; WHO was not — so a value that moved with nobody
+        owning up to it was unanswerable. Observed live (2026-08-26): a request threshold moved by
+        0.2 between two runs and no record could say what did it. Rule 10 exists so a change is
+        always attributable; this is the same principle for the settings that drive the runs.
+        """
+        import json
+
+        from shortlist.server.db.models import Event
+
+        resp = client.put(
+            "/api/settings",
+            json={"values": {"requests.min_rating": 7.9}},
+            headers={"User-Agent": "Mozilla/5.0 (Macintosh) TestBrowser/1.0"},
+        )
+        assert resp.status_code == 200, resp.text
+
+        with client.app.state.sessions() as session:
+            event = session.query(Event).filter(Event.scope == "settings.change").order_by(Event.id.desc()).first()
+        assert event is not None, "a settings change must leave an audit row"
+        message = json.loads(event.message) if isinstance(event.message, str) else event.message
+        actor = message.get("actor")
+        assert actor, "the audit row must say who made the change"
+        assert actor["via"] in ("browser", "api_token")
+        assert "TestBrowser/1.0" in actor["client"]
+        # The change itself is still recorded — the actor is an addition, not a replacement.
+        assert "requests.min_rating" in message["changed"]
+
+    def test_the_audit_actor_never_records_a_client_ip(self, client: TestClient):
+        """These rows are immutable and the support bundle exports them, so a LAN address would be
+        exactly the environment-specific detail this project keeps out of anything shareable."""
+        import json
+
+        from shortlist.server.db.models import Event
+
+        client.put("/api/settings", json={"values": {"requests.min_votes": 123}})
+        with client.app.state.sessions() as session:
+            event = session.query(Event).filter(Event.scope == "settings.change").order_by(Event.id.desc()).first()
+        message = json.loads(event.message) if isinstance(event.message, str) else event.message
+        blob = json.dumps(message)
+        assert "testclient" not in blob.lower() or "client" in message.get("actor", {})
+        assert not any(k in message.get("actor", {}) for k in ("ip", "client_ip", "remote_addr"))
+
     def test_a_bad_plex_timeout_is_refused(self, client: TestClient):
         # It's read unguarded as int(...) in build_context, so a bad stored value would crash every run.
         assert client.put("/api/settings", json={"values": {"plex.timeout_s": 45}}).status_code == 200

@@ -24,6 +24,46 @@ Level = Literal["info", "warning", "error"]
 LEVELS: frozenset[str] = frozenset(("info", "warning", "error"))
 
 
+# How much of a User-Agent to keep. Enough to tell a desktop browser from a phone, and no more —
+# these rows are immutable and the support bundle exports them, so a full UA string is a long, noisy,
+# fingerprintable value in an artifact people paste into public issues.
+_MAX_CLIENT_CHARS = 80
+
+
+def actor_of(auth: dict | None, request) -> dict:
+    """Who made this change, in a form safe to store forever in an immutable audit row.
+
+    `settings.change` recorded WHAT changed and WHEN but never WHO, so a value that moved without
+    anyone owning up to it was simply unanswerable — observed on a live server (2026-08-26): a
+    request threshold changed by 0.2 between two runs and no record could say what did it. Rule 10
+    exists so "what changed on whose share at 03:31" is always answerable; this is the same principle
+    one level up, for the settings that decide what the runs then do.
+
+    Deliberately NOT the client IP. It would narrow "which device" further, but these rows are
+    exported by the support bundle, and a LAN address is exactly the environment-specific detail this
+    project keeps out of anything shareable. `via` plus a short UA answers the real question — an API
+    token versus a browser, and which kind of browser.
+
+    Args:
+        auth: What ``require_owner`` returned — the browser session, or ``{"via": "api_token", ...}``.
+        request: For the User-Agent header only.
+
+    Never raises: an audit row that cannot be written is worse than one missing a field, and this is
+    called on the write path of every settings change.
+    """
+    try:
+        session = auth if isinstance(auth, dict) else {}
+        ua = str(request.headers.get("user-agent") or "").strip()
+        actor: dict[str, object] = {"via": session.get("via", "browser")}
+        if session.get("account_id") is not None:
+            actor["account_id"] = session["account_id"]
+        if ua:
+            actor["client"] = ua[:_MAX_CLIENT_CHARS]
+        return actor
+    except Exception:  # pragma: no cover - an audit field must never break the write it describes
+        return {"via": "unknown"}
+
+
 def add_audit(session: Session, scope: str, level: Level, **message) -> None:
     """Add one audit Event to an OPEN session — the caller owns the commit.
 

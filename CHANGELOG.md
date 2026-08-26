@@ -8,6 +8,14 @@ All notable changes to this project are documented here. This project follows
 
 ### Added
 
+- **Settings changes now record who made them.** The audit log said what changed and when, but
+  never who — so a value that moved with nobody owning up to it was simply unanswerable. That
+  happened on a live server: a request threshold shifted by 0.2 between two runs and no record could
+  say what did it. Each `settings.change` event now carries the actor (a browser session or an API
+  token, plus a short client hint). Deliberately not the client IP: these rows are immutable and the
+  support bundle exports them, and a LAN address is the kind of environment detail that should not
+  end up in something people paste into public issues.
+
 - **Prefer a language when requesting.** The request pool is by definition what your library
   _lacks_, so on a library that already holds the popular English titles what's left missing skews
   non-English before any setting applies — and the rating floor then favours it further, because

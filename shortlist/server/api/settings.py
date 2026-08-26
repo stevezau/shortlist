@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 from types import SimpleNamespace
+from typing import Annotated
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -25,7 +26,7 @@ from shortlist.server.db.models import DEFAULT_SLUG, Server
 from shortlist.server.net_guard import BlockedUrl, check_url
 from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services import jobs
-from shortlist.server.services.audit import add_audit
+from shortlist.server.services.audit import actor_of, add_audit
 from shortlist.server.settings_store import DEFAULTS, PRIVATE_KEYS, SECRET_KEYS, SettingsStore
 
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_owner)])
@@ -450,7 +451,14 @@ async def get_settings(request: Request) -> dict:
 
 
 @router.put("", response_model=SettingsOut)
-async def put_settings(update: SettingsUpdate, request: Request) -> dict:
+async def put_settings(
+    update: SettingsUpdate,
+    request: Request,
+    # `Annotated`, not `= Depends(...)`: ruff's B008 refuses a call in a default. Declaring the
+    # router's own dependency again is free — FastAPI caches it per request, so `require_owner`
+    # authenticates once and this just receives what it returned.
+    auth: Annotated[dict, Depends(require_owner)],
+) -> dict:
     unknown = set(update.values) - KNOWN_KEYS
     if unknown:
         raise HTTPException(status_code=422, detail=f"unknown settings: {sorted(unknown)}")
@@ -508,7 +516,9 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
                 value = value.strip()
             store.set(key, value)
         if changed:
-            add_audit(session, "settings.change", "info", changed=changed)
+            # WHO, not just what. `require_owner` is already this router's dependency, so FastAPI
+            # serves the cached result rather than re-authenticating.
+            add_audit(session, "settings.change", "info", changed=changed, actor=actor_of(auth, request))
             session.commit()
         if "log.level" in update.values:
             # Apply immediately so a live "turn on DEBUG to watch this run" takes effect without a
