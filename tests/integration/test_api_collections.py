@@ -2719,16 +2719,24 @@ class TestPerRowRequestSettingsApi:
         assert patched["req_preferred_languages"] == []
 
     def test_row_language_codes_are_normalised_and_deduped_on_the_way_in(self, client: TestClient):
-        """The editor keys its chips on the RAW stored value, so `["en", "en"]` renders two chips
-        sharing one React key and `["  EN  ", "en"]` renders two that read identically. Reads
-        normalise anyway, so the run is correct either way — this is about what the editor is
-        handed."""
+        """Asserted against the COLUMN, not the response.
+
+        `_serialize` normalises this field on the way out too, so a response-only assertion passes
+        with the write-side normalisation deleted — proving the reader works and nothing about the
+        writer. Reads normalising anyway is exactly why this has to look at what was stored.
+        """
+        from shortlist.server.db.models import Collection
+
         created = client.post("/api/collections", json={"name": "Kids", "build": "per_person"}).json()
-        patched = client.patch(
+        resp = client.patch(
             f"/api/collections/{created['id']}",
             json={"name": "Kids", "req_preferred_languages": ["EN", "  ja  ", "en"]},
-        ).json()
-        assert patched["req_preferred_languages"] == ["en", "ja"], "lowercased, trimmed, deduped"
+        )
+        assert resp.status_code == 200, resp.text
+
+        with client.app.state.sessions() as session:
+            row = session.query(Collection).filter(Collection.id == created["id"]).one()
+            assert row.req_preferred_languages == ["en", "ja"], "lowercased, trimmed, deduped in the DB"
 
     def test_a_long_list_of_bad_row_codes_says_how_many_it_did_not_show(self, client: TestClient):
         """Truncating without a count means the owner fixes the five they were shown, resubmits, and

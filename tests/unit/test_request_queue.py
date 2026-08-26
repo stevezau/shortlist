@@ -270,8 +270,9 @@ class TestTheOtherLanguageReasonIsAThresholdNotAFailure:
         Walked with `ast`, not a regex, and that difference is the point. A regex only sees reasons
         written as `reason = "..."`, so one built by a lookup table, a helper call or a concatenation
         is invisible to it — the test passes while covering nothing, which is the failure mode it
-        exists to prevent. The AST sees every assignment to `reason`, and this asserts each is a plain
-        literal, so a form it cannot verify fails loudly instead of silently.
+        exists to prevent. This sees every FORM of assignment to `reason` (plain, annotated,
+        augmented, walrus, tuple-unpacked) and asserts each value is a plain literal, so anything it
+        cannot verify fails loudly instead of silently.
         """
         import ast
         import inspect
@@ -282,25 +283,43 @@ class TestTheOtherLanguageReasonIsAThresholdNotAFailure:
         from shortlist.server.services.run_persistence import _is_failure_detail
 
         tree = ast.parse(textwrap.dedent(inspect.getsource(requests_mod._auto_eligible)))
-        assigns = [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "reason" for t in node.targets)
-        ]
-        assert assigns, "found no `reason = ...` assignments — has the gate been restructured?"
+
+        def targets_reason(node) -> bool:
+            """Every way `reason` can be written to, not just `reason = ...`.
+
+            `AnnAssign` (`reason: str = ...`), `AugAssign` (`reason += ...`), a walrus and a tuple
+            target are all real Python and all invisible to a bare `ast.Assign` + `ast.Name` filter —
+            so a new reason written any of those ways would pass SILENTLY, which is the failure this
+            test exists to end. Catching them here makes an unverifiable form fail loudly instead.
+            """
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            elif isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+                targets = [node.target]
+            else:
+                return False
+            flat = [e for t in targets for e in (t.elts if isinstance(t, (ast.Tuple, ast.List)) else [t])]
+            return any(isinstance(t, ast.Name) and t.id == "reason" for t in flat)
+
+        assigns = [node for node in ast.walk(tree) if targets_reason(node)]
+        assert assigns, "found no assignments to `reason` — has the gate been restructured?"
 
         leading: list[str] = []
         for node in assigns:
             value = node.value
+            assert value is not None, "a bare `reason: str` annotation assigns nothing to check"
             if isinstance(value, ast.Constant) and isinstance(value.value, str):
                 leading.append(value.value)
             elif isinstance(value, ast.JoinedStr):
                 # An f-string: only the leading literal matters, because the prefixes are leading
-                # words and any interpolation comes after them.
-                first = value.values[0]
+                # words and any interpolation comes after them. Both degenerate forms are checked
+                # rather than indexed blindly — `f""` parses to an EMPTY `values`, so `values[0]`
+                # would raise IndexError and report a crash where the point is to report a reason
+                # that cannot be prefix-matched.
+                first = value.values[0] if value.values else None
                 assert isinstance(first, ast.Constant), (
-                    "a reason starting with an interpolation cannot be prefix-matched; give it a "
-                    "literal opening or add its form to QUEUE_REASON_PREFIXES"
+                    "a reason that is empty or starts with an interpolation cannot be prefix-matched; "
+                    "give it a literal opening or add its form to QUEUE_REASON_PREFIXES"
                 )
                 leading.append(first.value)
             else:

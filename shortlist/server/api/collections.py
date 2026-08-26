@@ -402,10 +402,11 @@ def _validate(body: CollectionIn) -> None:
                     f"req_preferred_languages must be ISO 639-1 codes (two letters, e.g. 'en'); got {bad[:5]}{more}"
                 ),
             )
-        # Normalised on the way IN as well as on the way out. Reads already normalise, so the run is
-        # correct either way — but the editor keys its chips on the RAW stored value, so `["en", "en"]`
-        # renders two chips sharing one React key, and `["  EN  ", "en"]` renders two chips that read
-        # identically. Deduping here means the editor only ever sees one entry per language.
+        # Normalised on the way IN as well as on the way out. This is defence in depth, not a guard
+        # anything currently depends on: `_serialize` normalises this column on the way out, so the
+        # editor never sees a raw value and the run reads through `row_languages_or_inherit` anyway.
+        # It is here so the stored value matches what every reader assumes, for anything that reaches
+        # the column without going through those — a SQL query, a support bundle, a future consumer.
         body.req_preferred_languages = list(normalise_languages(body.req_preferred_languages))
     if body.placement not in PLACEMENTS:
         raise HTTPException(status_code=422, detail=f"placement must be one of {sorted(PLACEMENTS)}")

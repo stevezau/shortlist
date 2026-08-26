@@ -206,8 +206,9 @@ describe("RowRequestSettings", () => {
     });
 
     it("warns differently in 'prefer', where an empty list raises the bar on everything", async () => {
-      // Not the same consequence as "only", so not the same sentence: here nothing is discarded,
-      // every title just counts as another language and has to clear the higher bar.
+      // Not the same consequence as "only", so not the same sentence: here nothing is discarded —
+      // every title Shortlist can identify a language for takes the higher bar, while one it cannot
+      // still goes on the ordinary one.
       renderSection({
         req_language_mode: "prefer",
         req_preferred_languages: [],
