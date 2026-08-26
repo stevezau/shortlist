@@ -12,7 +12,28 @@
       "Comedy",
       "Family"
     ],
-    "images": [],
+    "images": [
+      {
+        "coverType": "banner",
+        "remoteUrl": "https://artworks.thetvdb.com/banners/graphical/75669-g2.jpg",
+        "url": "/MediaCoverProxy/54aeb7b860515a2d17672022e57e9d45779dc76805d4a4ee08f2c0a15248b129/75669-g2.jpg"
+      },
+      {
+        "coverType": "poster",
+        "remoteUrl": "https://artworks.thetvdb.com/banners/posters/75669-1.jpg",
+        "url": "/MediaCoverProxy/f2ab06415f98ee1bc90b55b591927c4ba7b594a415edf1309b4b0ee0b9614ef2/75669-1.jpg"
+      },
+      {
+        "coverType": "fanart",
+        "remoteUrl": "https://artworks.thetvdb.com/banners/fanart/original/75669-1.jpg",
+        "url": "/MediaCoverProxy/0ddf28bc4c6bcbf284841bbaa18ecca9d54fc7a294265b952011b4f0574056c7/75669-1.jpg"
+      },
+      {
+        "coverType": "clearlogo",
+        "remoteUrl": "https://artworks.thetvdb.com/banners/v4/series/75669/clearlogo/611bda9a3490a.png",
+        "url": "/MediaCoverProxy/b743a3d74abe0fb5f65800a064ab27860c44d0f710ba52391e57893230b9fc14/611bda9a3490a.png"
+      }
+    ],
     "imdbId": "tt0366069",
     "languageProfileId": 1,
     "lastAired": "2006-03-03T00:00:00Z",

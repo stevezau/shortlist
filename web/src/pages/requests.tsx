@@ -339,12 +339,24 @@ function RequestsOffBanner() {
  *  which for a waiting title is the normal case, so nothing is drawn rather than "not found". */
 const ARR_STATUS_LABELS: Record<
   string,
-  { label: string; variant: "success" | "default" | "secondary" | "warning" }
+  {
+    label: string;
+    variant: "success" | "default" | "secondary" | "warning";
+    hint?: string;
+  }
 > = {
   downloaded: { label: "Downloaded", variant: "success" },
   downloading: { label: "Downloading", variant: "default" },
   queued: { label: "Searching", variant: "secondary" },
-  unmonitored: { label: "Not monitored", variant: "warning" },
+  // Amber, because nothing is coming and only a person can change that. It used to have exactly one
+  // cause — somebody unmonitored it by hand — so the colour was the whole message. "How much of a
+  // show to grab" set to None now produces the same state on purpose, so the badge has to say which
+  // it might be rather than leaving a warning colour to imply something went wrong.
+  unmonitored: {
+    label: "Not monitored",
+    variant: "warning",
+    hint: "Sonarr or Radarr has this title but isn't looking for it, so nothing will download until it's monitored there. That's also exactly what Settings › Requests › How much of a show to grab does when it's set to None — so if you chose that, this is it working.",
+  },
 };
 
 /**
@@ -390,7 +402,11 @@ function ArrStatusBadge({ view }: { view: ArrView }) {
   if (view.kind === "none") return null;
   const shown = ARR_STATUS_LABELS[view.status];
   if (!shown) return null;
-  return <Badge variant={shown.variant}>{shown.label}</Badge>;
+  return (
+    <Badge variant={shown.variant} title={shown.hint}>
+      {shown.label}
+    </Badge>
+  );
 }
 
 function PendingRow({

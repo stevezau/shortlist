@@ -37,8 +37,10 @@ class TestSettingsValidation:
         # The accepted set is a SUBSET of Sonarr's enum, so these are refused even though Sonarr
         # itself would take them. `future`/`existing`/`recent` monitor nothing at all on a show the
         # server doesn't have yet (measured on Sonarr 4.0.19: 0 of 162 episodes), which is what
-        # `none` says plainly; `skip` and `monitorSpecials` are internal / season-0 only. Accepting
-        # any of them would put a mode in the DB that no screen can show or undo.
+        # `none` says plainly; `missing` is the opposite — with nothing on disk it measured
+        # identically to `all` (156/162), so it is `all` under a name suggesting restraint; `skip`
+        # and `monitorSpecials` are internal / season-0 only. Accepting any of them would put a mode
+        # in the DB that no screen can show or undo.
         for refused in ("recent", "future", "existing", "missing", "skip", "monitorSpecials", "first season"):
             resp = client.put("/api/settings", json={"values": {"requests.sonarr.monitor": refused}})
             assert resp.status_code == 422, f"{refused} was accepted"

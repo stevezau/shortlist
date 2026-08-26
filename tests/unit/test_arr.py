@@ -35,13 +35,14 @@ MOVIE_LOOKUP = {
     "titleSlug": "sicario-273481",
     "images": [],
 }
-# A REAL /api/v3/series/lookup response (Sonarr 4.0.19), for a show that instance does not track.
+# A REAL /api/v3/series/lookup response (Sonarr 4.0.19), for a show that instance does not track,
+# recorded VERBATIM — nothing removed, so the next person to trust it for a different field can.
 #
-# Recorded rather than hand-built because of one field: a real lookup returns every season already
-# `monitored: true`, and `add_series` posts `{**resource, ...}` — so the body says "all seasons
-# monitored" while `addOptions.monitor` says "firstSeason". The hand-built stub had `seasons: []`,
-# which quietly removed the only interesting thing about the payload (testing rule: the fake must be
-# no easier than the real server).
+# Recorded rather than hand-built because of two fields the payload forwards wholesale: a real lookup
+# returns every season already `monitored: true` AND `monitorNewItems: "all"`, so the body says "all
+# seasons, and every future one" while `addOptions.monitor` says "firstSeason". The hand-built stub
+# had `seasons: []` and no `monitorNewItems` at all, which removed both of the only interesting
+# things about the payload (testing rule: the fake must be no easier than the real server).
 SERIES_LOOKUP = json.loads((FIXTURES / "sonarr_series_lookup.json").read_text())[0]
 SERIES_TVDB = SERIES_LOOKUP["tvdbId"]
 
@@ -319,6 +320,10 @@ class TestSonarrAddSeries:
         body = json.loads(post.calls.last.request.content)
         assert body["addOptions"] == {"searchForMissingEpisodes": True, "monitor": mode}
         assert body["monitored"] is True
+        # Sonarr's separate "Monitor New Seasons": only "all" keeps taking them. Without this a
+        # restricted mode holds only until the next season airs (measured on 4.0.19 — the recorded
+        # lookup carries `monitorNewItems: all` and this body forwards the resource wholesale).
+        assert body["monitorNewItems"] == ("all" if mode == "all" else "none")
 
     @respx.mock
     def test_the_posted_seasons_stay_as_the_lookup_returned_them(self):
@@ -343,6 +348,9 @@ class TestSonarrAddSeries:
         assert [s["monitored"] for s in SERIES_LOOKUP["seasons"] if s["seasonNumber"] > 0] == [True] * 6, (
             "the recorded fixture must keep a real lookup's all-seasons-monitored shape"
         )
+        assert SERIES_LOOKUP["monitorNewItems"] == "all", (
+            "the recorded lookup must keep the field the monitorNewItems override exists to overwrite"
+        )
         assert body["seasons"] == SERIES_LOOKUP["seasons"]
 
     @respx.mock
@@ -357,6 +365,7 @@ class TestSonarrAddSeries:
         body = json.loads(post.calls.last.request.content)
         assert body["monitored"] is False
         assert body["addOptions"] == {"searchForMissingEpisodes": False, "monitor": "none"}
+        assert body["monitorNewItems"] == "none"
 
     @respx.mock
     def test_an_unknown_mode_falls_back_to_all_rather_than_failing_the_add(self):

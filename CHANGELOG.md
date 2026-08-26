@@ -19,6 +19,10 @@ All notable changes to this project are documented here. This project follows
   the default), **First Season** for a taster you can extend later, **Last Season**, **Pilot
   Episode**, and **None** to file the show in Sonarr without downloading anything.
 
+  Anything other than **All Episodes** also switches off Sonarr's separate **Monitor New Seasons**
+  for that show, so "first season only" still means that when season eight airs. Without it a
+  restriction on a still-running series quietly grows back a season at a time.
+
   It applies only to shows Shortlist adds. One Sonarr already tracks is left exactly as you have it,
   as before.
 

@@ -394,6 +394,14 @@ class SonarrClient(_ArrClient):
             # says so at the one place a reader can see it, instead of relying on that.
             "monitored": wanted,
             "seasonFolder": True,
+            # Sonarr's SEPARATE "Monitor New Seasons" control, and it has to be set here because the
+            # lookup resource carries `monitorNewItems: "all"` and this body forwards that resource
+            # wholesale. Left alone, a restricted mode holds only until the next season airs: measured
+            # on Sonarr 4.0.19 against a continuing series, a `firstSeason` add stored
+            # `monitorNewItems: all`, so season 39 of a 38-season show would monitor itself on air —
+            # issue #100 again in slow motion, and it would make "season 1 only" a lie in the UI.
+            # Only "all" keeps taking new seasons, because that is the one choice that asked for them.
+            "monitorNewItems": "all" if mode == "all" else "none",
             "tags": self._tag_ids(extra_tags),
             # Searching is what the mode is FOR: a search with nothing monitored finds nothing, so
             # asking for one on `none` only queues a command that reports zero results.

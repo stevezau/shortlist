@@ -25,7 +25,9 @@ Set it up under **Settings → Requests**:
    **None** already says plainly.) **All Episodes** (the default) takes the whole back catalogue, which
    on a twelve-season show is twelve seasons of downloads the night it is added; **First Season**
    makes it a taster you can extend in Sonarr later; **None** files the show unmonitored so nothing
-   downloads until you say so. It applies only to shows Shortlist adds — one Sonarr already tracks is
+   downloads until you say so. Anything other than All Episodes also turns Sonarr's **Monitor New
+   Seasons** off for that show, so a restriction on a still-running series holds when the next season
+   airs instead of quietly growing back. It applies only to shows Shortlist adds — one Sonarr already tracks is
    left exactly as you have it.
 4. Choose **Send on its own, or ask me first**: titles wanted by enough people _and_ rated highly
    enough go out as soon as a run finds them; everything else that clears the guardrails waits in

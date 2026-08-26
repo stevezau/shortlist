@@ -35,10 +35,11 @@ export const SONARR_MONITOR_LABELS: Record<SonarrMonitor, string> = {
 
 /** What actually lands on disk — the reason someone picks one of these. */
 export const SONARR_MONITOR_HINTS: Record<SonarrMonitor, string> = {
-  all: "Grabs every season, including the whole back catalogue of a long-running show.",
+  all: "Grabs every season, including the whole back catalogue of a long-running show — and each new season as it airs.",
   firstSeason:
-    "Season 1 only — a taster. Add the rest in Sonarr if it lands well.",
-  lastSeason: "The most recent season only.",
+    "Season 1 only — a taster. Later seasons stay put, including ones that haven’t aired yet; add the rest in Sonarr if it lands well.",
+  lastSeason:
+    "The season airing now, and no further back. It stops there — the next season isn’t picked up on its own.",
   pilot: "The first episode, and nothing else.",
   none: "Files the show in Sonarr unmonitored — nothing downloads until you say so.",
 };

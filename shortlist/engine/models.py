@@ -509,7 +509,9 @@ class RowSpec:
 # `future`/`existing`/`recent` all measured 0/162 on a show nobody has yet — `existing` monitors what
 # is on disk, `future` what has not aired, `recent` a 90-day window an older show is nowhere near.
 # Meaningful in Sonarr's own Season Pass; on the only thing Shortlist ever does — a NEW add — they are
-# an obscure spelling of `none`, which says it plainly.
+# an obscure spelling of `none`, which says it plainly. `missing` goes the other way for the same
+# reason: with nothing on disk, every aired episode is missing, so it measured identically to `all`
+# (156/162) and is that mode under a name that suggests restraint it does not provide.
 SONARR_MONITOR_MODES = (
     "all",
     "firstSeason",
