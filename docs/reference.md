@@ -306,7 +306,7 @@ GET  /api/notifications -> {items[]} · POST /api/notifications/dismiss {id} (di
 ### Settings and connections
 
 ```
-GET/PUT /api/settings · POST /api/settings/test/{plex|tautulli|tmdb|llm|radarr|sonarr|mdblist|trakt|exa} (a PUT that changes anything also writes a `settings.change` audit event carrying `{key: {from, to}}` for the changed keys only — secrets record `<redacted>` on both sides, and long object values are summarised; read it back with `/api/events/log?scope=settings.change` to see which thresholds a past run actually used)
+GET/PUT /api/settings · POST /api/settings/test/{plex|tautulli|tmdb|llm|radarr|sonarr|mdblist|trakt|exa} (a PUT that changes anything also writes a `settings.change` audit event carrying `{changed: {key: {from, to}}, actor: {via, account_id, client}}` — `changed` covers the changed keys only (secrets record `<redacted>` on both sides, long object values are summarised), and `actor` says WHO: `via` is `browser` or `api_token`, `client` is a truncated User-Agent. No client IP is recorded, deliberately: these rows are immutable and the support bundle exports them. Read it back with `/api/events/log?scope=settings.change` to see which thresholds a past run actually used, and what changed them)
 GET  /api/settings/arr/{radarr|sonarr}/options -> {quality_profiles, root_folders}
 POST /api/settings/curator/models {provider?, api_key?, ollama_url?} -> {provider, models[]} (models the provider offers; the body lets the picker list the provider being edited before it is saved — blank fields fall back to saved settings, a redacted key means "use the saved key"; [] = free-text fallback)
 ```

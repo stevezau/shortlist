@@ -115,16 +115,26 @@ class TestSettingsValidation:
         assert values["requests.preferred_languages"] == ["en"]
         assert values["requests.min_rating_other"] is None
 
-    def test_a_settings_change_records_who_made_it(self, client: TestClient):
-        """WHAT changed and WHEN were recorded; WHO was not — so a value that moved with nobody
-        owning up to it was unanswerable. Observed live (2026-08-26): a request threshold moved by
-        0.2 between two runs and no record could say what did it. Rule 10 exists so a change is
-        always attributable; this is the same principle for the settings that drive the runs.
-        """
+    @staticmethod
+    def _last_settings_event(client: TestClient) -> dict:
         import json
 
         from shortlist.server.db.models import Event
 
+        with client.app.state.sessions() as session:
+            event = session.query(Event).filter(Event.scope == "settings.change").order_by(Event.id.desc()).first()
+        assert event is not None, "a settings change must leave an audit row"
+        return json.loads(event.message) if isinstance(event.message, str) else event.message
+
+    def test_a_settings_change_records_who_made_it(self, client: TestClient):
+        """WHAT changed and WHEN were recorded; WHO was not — so a value that moved with nobody
+        owning up to it was unanswerable. Observed live (2026-08-26): a request threshold moved by
+        0.2 between two runs and no record could say what did it.
+
+        Asserted as an ALLOWLIST on the whole dict, not key-by-key. A blacklist of forbidden names
+        cannot catch a field added under a name nobody thought of — and the field this must never
+        carry is a client IP, which could arrive as `origin`, `remote`, `host` or anything else.
+        """
         resp = client.put(
             "/api/settings",
             json={"values": {"requests.min_rating": 7.9}},
@@ -132,31 +142,47 @@ class TestSettingsValidation:
         )
         assert resp.status_code == 200, resp.text
 
-        with client.app.state.sessions() as session:
-            event = session.query(Event).filter(Event.scope == "settings.change").order_by(Event.id.desc()).first()
-        assert event is not None, "a settings change must leave an audit row"
-        message = json.loads(event.message) if isinstance(event.message, str) else event.message
+        message = self._last_settings_event(client)
         actor = message.get("actor")
         assert actor, "the audit row must say who made the change"
-        assert actor["via"] in ("browser", "api_token")
+        assert set(actor) == {"via", "account_id", "client"}, (
+            f"unexpected actor fields {sorted(set(actor) - {'via', 'account_id', 'client'})} — a client IP "
+            f"must never reach an immutable row the support bundle exports"
+        )
+        assert actor["via"] == "browser", "a cookie session must not label itself as an API token"
+        assert actor["account_id"], "the account id is the field the whole feature exists to record"
         assert "TestBrowser/1.0" in actor["client"]
         # The change itself is still recorded — the actor is an addition, not a replacement.
         assert "requests.min_rating" in message["changed"]
 
-    def test_the_audit_actor_never_records_a_client_ip(self, client: TestClient):
-        """These rows are immutable and the support bundle exports them, so a LAN address would be
-        exactly the environment-specific detail this project keeps out of anything shareable."""
-        import json
+    def test_the_actor_distinguishes_an_api_token_from_a_browser(self, client: TestClient):
+        """The untested half, and the likelier culprit: a value that moves with nobody owning up to
+        it is more often an automation than the owner's own browser."""
+        token = client.post("/api/settings/token").json().get("token")
+        if not token:  # the endpoint shape differs across builds; skip rather than assert on it
+            import pytest as _pytest
 
-        from shortlist.server.db.models import Event
+            _pytest.skip("no API token endpoint on this build")
+        resp = client.put(
+            "/api/settings",
+            json={"values": {"requests.min_votes": 111}},
+            headers={"Authorization": f"Bearer {token}", "User-Agent": "curl/8.4.0"},
+        )
+        assert resp.status_code == 200, resp.text
+        actor = self._last_settings_event(client)["actor"]
+        assert actor["via"] == "api_token"
+        assert actor["client"] == "curl/8.4.0"
 
-        client.put("/api/settings", json={"values": {"requests.min_votes": 123}})
-        with client.app.state.sessions() as session:
-            event = session.query(Event).filter(Event.scope == "settings.change").order_by(Event.id.desc()).first()
-        message = json.loads(event.message) if isinstance(event.message, str) else event.message
-        blob = json.dumps(message)
-        assert "testclient" not in blob.lower() or "client" in message.get("actor", {})
-        assert not any(k in message.get("actor", {}) for k in ("ip", "client_ip", "remote_addr"))
+    def test_a_client_that_sends_no_user_agent_simply_has_no_client_field(self, client: TestClient):
+        """A script with no UA must not store an empty string that reads like a real client."""
+        resp = client.put(
+            "/api/settings",
+            json={"values": {"requests.min_votes": 122}},
+            headers={"User-Agent": ""},
+        )
+        assert resp.status_code == 200, resp.text
+        actor = self._last_settings_event(client)["actor"]
+        assert "client" not in actor
 
     def test_a_bad_plex_timeout_is_refused(self, client: TestClient):
         # It's read unguarded as int(...) in build_context, so a bad stored value would crash every run.

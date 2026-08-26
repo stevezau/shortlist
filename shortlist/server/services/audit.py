@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from loguru import logger
 from sqlalchemy.orm import Session
 
 from shortlist.server.db.models import Event
@@ -60,7 +61,10 @@ def actor_of(auth: dict | None, request) -> dict:
         if ua:
             actor["client"] = ua[:_MAX_CLIENT_CHARS]
         return actor
-    except Exception:  # pragma: no cover - an audit field must never break the write it describes
+    except Exception as e:  # an audit field must never break the write it describes
+        # Say so. A feature built because "there was no record" must not fail by leaving no record of
+        # why. Type only, never the message — rule 9.
+        logger.warning("could not identify the actor for an audit row ({})", type(e).__name__)
         return {"via": "unknown"}
 
 
