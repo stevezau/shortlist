@@ -8,6 +8,28 @@ All notable changes to this project are documented here. This project follows
 
 ### Added
 
+- **Prefer a language when requesting.** The request pool is by definition what your library
+  _lacks_, so on a library that already holds the popular English titles what's left missing skews
+  non-English before any setting applies — and the rating floor then favours it further, because
+  TMDB's audience rates anime and K-drama generously. Nightly runs ended up mostly asking Sonarr and
+  Radarr for subtitled titles.
+
+  Settings → Requests → Guardrails now has a **Language** choice, and any per-person row can override
+  it. **Any language** is the default and behaves exactly as before, so an upgrade changes nothing.
+  **Prefer these** keeps your languages on the normal bars and makes everything else clear a higher
+  rating to be sent on its own — below that bar a title waits in the inbox with the reason on it
+  rather than being dropped, so a great foreign film is still one click away. **Only these** never
+  asks for another language at all.
+
+  The higher bar has no fixed default: it follows your own minimum rating plus 1.5 and keeps
+  following it, so a permissive 6.0 server starts at 7.5 and a strict 8.0 server at 9.5. Type a
+  number to pin it. The ranking is deliberately unchanged — a foreign title that clears the bar still
+  competes on merit and usually wins, because it out-rates the English titles around it. This thins
+  the middle; it doesn't exclude a language.
+
+  The inbox now shows a language chip on any title outside your languages, so a held-back one
+  explains itself without opening TMDB.
+
 - **Choose how much of a show to grab.** Every show Shortlist requested arrived with all seasons
   monitored, so one pick of a long-running series started the whole back catalogue downloading that
   night — enough to fill a disk, and enough to spend a day's worth of indexer queries on a show

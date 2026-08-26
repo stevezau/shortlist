@@ -266,6 +266,17 @@ class Collection(Base):
     # choice). NULL -> inherit the global `requests.sonarr.monitor`. A kids row can take season 1
     # only while everything else keeps the whole run of a show.
     req_sonarr_monitor: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
+    # This row's language preference for requests. NULL -> inherit the global `requests.language_mode`
+    # / `requests.preferred_languages` / `requests.min_rating_other`. A kids row can be English-only
+    # while an anime row stays on "any".
+    #
+    # `req_preferred_languages` is JSON rather than a comma string so an empty LIST stays distinct
+    # from NULL: [] is a row that cleared its languages (in "only" mode, requests nothing), where NULL
+    # is a row that inherits the owner's list. Collapsing the two would silently turn one into the
+    # other on a path that decides what gets added to Radarr.
+    req_language_mode: Mapped[str | None] = mapped_column(String(16), nullable=True, default=None)
+    req_preferred_languages: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
+    req_min_rating_other: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     # Tag this row's requests with the wanting person's slug, so the owner can see in Sonarr/Radarr
     # who a title was added for. NULL -> inherit the global `requests.auto_user_tag`.
     #
@@ -790,6 +801,11 @@ class RequestCandidate(Base):
     row_slug: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
     rating: Mapped[float] = mapped_column(Float, default=0.0)  # on the chosen source (TMDB, or IMDb)
     vote_count: Mapped[int] = mapped_column(Integer, default=0)  # vote count on that same source
+    # TMDB's `original_language` (ISO 639-1, lowercase), so the inbox can show WHICH language a title
+    # held back by the language bar is in — otherwise "rating below the bar for other languages" names
+    # a rule without naming the fact that triggered it. Empty on pre-0085 rows and on titles a
+    # non-TMDB source surfaced; the inbox simply omits the chip.
+    language: Mapped[str] = mapped_column(String(16), default="", server_default="")
     demand: Mapped[int] = mapped_column(Integer, default=1)  # distinct users whose picks wanted it
     tags: Mapped[list] = mapped_column(JSON, default=list)  # per-user/per-row tags to apply when sent
     wanters: Mapped[list] = mapped_column(JSON, default=list)  # usernames whose picks wanted it (the "who")

@@ -9,6 +9,7 @@ can fail without affecting a single row's visibility.
 
 from __future__ import annotations
 
+import math
 from collections import Counter
 from typing import NamedTuple
 
@@ -23,6 +24,7 @@ from shortlist.engine.clients.mdblist import (
 )
 from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.models import (
+    OTHER_LANGUAGE_BAR_GAP,
     ArrTarget,
     Candidate,
     MediaType,
@@ -161,6 +163,7 @@ def accumulate(
                 vote_count=c.vote_count,
                 poster_path=c.poster_path,
                 overview=c.overview,
+                language=c.language,
                 demand=1,
                 tags=set(tags),
                 wanters=set(who),
@@ -172,6 +175,9 @@ def accumulate(
             # them and a TMDB list for another — keep whichever copy actually has the artwork.
             existing.poster_path = existing.poster_path or c.poster_path
             existing.overview = existing.overview or c.overview
+            # Same rule as the artwork: one person's copy may have come from Trakt (no language) and
+            # another's from TMDB. Keep whichever copy actually knows, or the bar is picked blind.
+            existing.language = existing.language or c.language
             existing.tags |= tags
             existing.wanters |= who
             for reason in reasons:
@@ -192,6 +198,10 @@ QUEUE_REASON_PREFIXES = (
     "rating below",
     "max_per_run",
 )
+# "rating below" above already covers the other-language reason ("rating below the bar for other
+# languages (8.5)") — it is a threshold note, not a failure, and must classify as one. Spelled out
+# here because the shared prefix is a coincidence of wording: reword either string independently and
+# the classifier silently starts calling a held title a failed request.
 
 
 def _within_year_window(year: int | None, min_year: int, max_year: int) -> bool:
@@ -207,6 +217,105 @@ def _within_year_window(year: int | None, min_year: int, max_year: int) -> bool:
     if year is None:
         return False
     return (min_year <= 0 or year >= min_year) and (max_year <= 0 or year <= max_year)
+
+
+def is_preferred_language(cfg: RequestConfig, language: str) -> bool:
+    """Whether this title counts as one of the owner's preferred languages.
+
+    An UNKNOWN language ("") counts as preferred, and that is a deliberate choice with a real cost,
+    not a free one. Only `merge()`-built candidates lack a language — in practice Trakt, an opt-in
+    source — because every TMDB list response carries `original_language`. We COULD resolve those:
+    TMDB's detail endpoint has the field. What makes it the wrong trade is WHERE the answer is
+    needed. The base gate runs over the whole demand pool (thousands of titles on a real server),
+    before anything has been narrowed, so resolving there is a detail call per unknown title on every
+    run. Doing it later — in `_enrich`, which already fetches that same cached payload for the gated
+    few — would fix "prefer" and leave "only" judging the same title differently, which is worse than
+    one rule applied consistently.
+
+    So the rule is: unknown is preferred, deliberately permissive, so that enabling a second
+    candidate source never silently stops it contributing. The year window makes the opposite call
+    because a year bound is a hard restriction, where this is a preference.
+
+    Consistency across rows is handled separately — see `_agree_on_language`.
+    """
+    return not language or language in cfg.preferred_languages
+
+
+def _agree_on_language(rows: list[RowRequest]) -> None:
+    """Give every row's copy of a title the language whichever row actually knows it.
+
+    Per-row demand splits one title into one object per row, and each row's copy is built from its
+    OWN users' candidates — so a title one row saw only via Trakt carries "" while another row's copy,
+    found via TMDB, carries "ja". The two rows would then judge the same title against different
+    bars, and in "only" mode the row holding the blank copy can request a title the owner said never
+    to ask for.
+
+    Runs BEFORE `_gate_rows`, unlike `_merge_across_rows` (tags/wanters/why), and that is the whole
+    point: "only" mode drops at the base gate, so a fold that happens after it is already too late.
+
+    Costs one pass over the pool and no API calls — it only moves knowledge the run already has.
+    """
+    known: dict[tuple[int, MediaType], str] = {}
+    for row in rows:
+        for m in row.demand.values():
+            key = (m.tmdb_id, m.media_type)
+            if m.language and not known.get(key):
+                known[key] = m.language
+    if not known:
+        return
+    for row in rows:
+        for m in row.demand.values():
+            if not m.language:
+                m.language = known.get((m.tmdb_id, m.media_type), "")
+
+
+def other_language_bar(cfg: RequestConfig) -> float:
+    """The auto-send rating bar a non-preferred title must clear, resolved for THIS row's config.
+
+    Follows the row's own ``min_rating`` plus :data:`OTHER_LANGUAGE_BAR_GAP` until the owner sets a
+    number, so a row that raises its base floor carries this bar up with it and the shipped default
+    encodes the owner's taste rather than ours.
+
+    CLAMPED to 10 and rounded to one decimal, and both matter:
+
+    * ``min_rating`` may legally be up to 10, so the raw sum reaches 11.5 — a bar no rating can
+      clear, which turns "prefer" into "hold back every other language" without ever saying so.
+    * The settings API accepts two decimals (``7.25``), so an unrounded ``8.75`` would disagree with
+      the ``8.8`` the settings screen shows for the same server.
+
+    ``floor(x * 10 + 0.5) / 10`` rather than the obvious ``round(x, 1)``, because this rule has a
+    second implementation — ``otherLanguageBar`` in ``web/src/lib/request-language.ts`` — and the two
+    have to agree on every input. They did not: Python's ``round`` is banker's rounding applied to the
+    true binary value, while JavaScript's ``Math.round`` scales first and rounds half UP, so the pair
+    disagreed by 0.1 on 42 of the 1001 two-decimal floors between 0 and 10 (``7.15`` → 8.6 against
+    8.7). This expression is JS's ``Math.round`` spelled out, and matches it on all 1001. The engine
+    is the source of truth; the TS mirrors it, and neither may be "tidied" alone.
+    """
+    if cfg.min_rating_other is None:
+        return math.floor(min(10.0, cfg.min_rating + OTHER_LANGUAGE_BAR_GAP) * 10 + 0.5) / 10
+    return cfg.min_rating_other
+
+
+def _language_allowed(cfg: RequestConfig, m: MissingTitle) -> bool:
+    """Whether the base gate may keep this title at all, on language grounds.
+
+    Only ``"only"`` mode ever answers False, and that is the one language decision that DISCARDS: a
+    title dropped here never reaches the inbox, exactly like one below ``min_rating``. ``"prefer"``
+    never drops — it holds back at the auto tier instead, where the reason survives onto the title
+    and the owner can still say yes.
+
+    An EMPTY preferred list in ``"only"`` mode rejects everything, unknown included. That is the one
+    state where :func:`is_preferred_language`'s permissiveness has nothing to be permissive relative
+    TO: "only these languages" with none listed reads as "nothing", and it is what the settings
+    screen, the row editor and the reference table all promise. Without this, a server in that state
+    still auto-sent every Trakt-sourced title — the copy and the code disagreeing on a path that adds
+    titles to Radarr.
+    """
+    if cfg.language_mode != "only":
+        return True
+    if not cfg.preferred_languages:
+        return False
+    return is_preferred_language(cfg, m.language)
 
 
 def _gate_rows(
@@ -231,14 +340,28 @@ def _gate_rows(
     # From the RUN's budget, not a row's share of it — see `_gate_by_source`. Every row walks past the
     # same run-wide rating cache, so every row gets the same allowance for getting past it.
     walk_limit = _walk_limit(budget)
+    # TITLES dropped for language, deduplicated across rows — never a per-row sum. `report.wanted` is
+    # a deduplicated set of keys, and the notification compares the two ("did the language setting
+    # rule out EVERYTHING the run wanted?"). A sum counts a title two rows both wanted twice, so it
+    # can exceed `wanted` and claim the language setting is the sole cause when it is not — the very
+    # mis-attribution this counter exists to prevent, reintroduced one level up.
+    dropped_language_keys: set[tuple[int, MediaType]] = set()
     for index, row in enumerate(rows):
-        pool = [
+        in_play = [
             m
             for m in row.demand.values()
             if (m.tmdb_id, str(m.media_type)) not in handled
             and m.demand >= row.cfg.min_demand
             and _within_year_window(m.year, row.cfg.min_year, row.cfg.max_year)
         ]
+        pool = [m for m in in_play if _language_allowed(row.cfg, m)]
+        # Counted separately from the demand/year drops, because the "nothing qualified" alert tells
+        # the owner WHICH limit to loosen. A pool emptied by "only" mode would otherwise be reported
+        # as their demand and year settings being too tight — advice they could follow forever
+        # without effect. This codebase has fixed that exact mis-attribution once already (step 4
+        # below, "Name the limit that ACTUALLY bound").
+        kept = {(m.tmdb_id, m.media_type) for m in pool}
+        dropped_language_keys |= {(m.tmdb_id, m.media_type) for m in in_play} - kept
         report.pool_size += len(pool)
         report.pool_by_row[row.slug] = len(pool)
         share = -(-(budget - report.lookups_spent) // (len(rows) - index))  # ceiling division
@@ -250,6 +373,7 @@ def _gate_rows(
             report.examined += len(pool)  # the TMDB gate reads the whole pool and bills nothing
         report.examined_by_row[row.slug] = report.examined - before_examined
         gated.append((row.slug, row.cfg, qualifying))
+    report.dropped_by_language = len(dropped_language_keys)
     return gated
 
 
@@ -268,6 +392,7 @@ def _auto_eligible(
     """
     eligible: list[MissingTitle] = []
     held_back: list[MissingTitle] = []
+    other_bar = other_language_bar(cfg)
     for m in survivors:  # already ranked best-first by the gate
         if not cfg.auto_send:
             reason = "auto-send is off"
@@ -277,6 +402,8 @@ def _auto_eligible(
             reason = f"demand below auto_min_demand ({cfg.auto_min_demand})"
         elif m.rating < cfg.auto_min_rating:
             reason = f"rating below auto_min_rating ({cfg.auto_min_rating})"
+        elif cfg.language_mode == "prefer" and not is_preferred_language(cfg, m.language) and m.rating < other_bar:
+            reason = f"rating below the bar for other languages ({other_bar})"
         else:
             eligible.append(m)
             continue
@@ -329,6 +456,11 @@ def request_missing(
     # so they stay missing, so they stay in demand — and the alert then tells the owner to loosen
     # floors that were never the reason. Only titles still in play count as wanted.
     report.wanted = len({key for row in rows for key in row.demand if (key[0], str(key[1])) not in handled})
+
+    # Before any gate: make every row's copy of a title agree on what language it is. "only" mode
+    # drops at the base gate, so a row holding a blank copy would otherwise request a title another
+    # row already knew was excluded.
+    _agree_on_language(rows)
 
     gated = _gate_rows(rows, handled, report, mdblist=mdblist, budget=budget)
 

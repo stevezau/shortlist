@@ -307,11 +307,28 @@ def _requests_found_nothing(session: Session) -> dict | None:
         # honest sentence to write — "found 0 titles you don't have" reads as a fault and isn't one.
         return None
     if not pool:
-        body = (
-            f"The last {len(events)} runs found {wanted} titles people wanted that you don't have, and "
-            "none of them cleared your minimum number of people or your release-year range. Loosen "
-            "either to let some through."
-        )
+        # Name the limit that ACTUALLY bound. Since the language mode became a base floor, a pool can
+        # be empty purely because "only these languages" removed everything — and telling that owner
+        # to loosen their demand or year settings is advice they can follow forever without effect.
+        dropped_by_language = data.get("dropped_by_language", 0)
+        if dropped_by_language and dropped_by_language >= wanted:
+            body = (
+                f"The last {len(events)} runs found {wanted} titles people wanted that you don't have, and "
+                "your Language setting ruled out every one of them. Allow another language, or switch "
+                "to 'Prefer these' so the rest wait in your inbox instead."
+            )
+        elif dropped_by_language:
+            body = (
+                f"The last {len(events)} runs found {wanted} titles people wanted that you don't have. "
+                f"Your Language setting ruled out {dropped_by_language} of them, and the rest didn't clear "
+                "your minimum number of people or your release-year range."
+            )
+        else:
+            body = (
+                f"The last {len(events)} runs found {wanted} titles people wanted that you don't have, and "
+                "none of them cleared your minimum number of people or your release-year range. Loosen "
+                "either to let some through."
+            )
     elif data.get("exhausted_pool"):
         body = (
             f"The last {len(events)} runs rated every title they checked ({pool} checks across the rows), "

@@ -27,11 +27,21 @@ import {
   requestAutoUserTagGlobal,
   requestDemandGlobal,
   requestMaxPerRunGlobal,
+  requestLanguageGlobal,
   requestRatingGlobal,
   requestRootFolderGlobal,
   requestSonarrMonitorGlobal,
   requestYearGlobal,
 } from "@/lib/row-globals";
+import type { RowLanguageMode } from "@/lib/request-language";
+import {
+  asLanguageMode,
+  COMMON_LANGUAGES,
+  LANGUAGE_MODE_HINTS,
+  LANGUAGE_MODE_LABELS,
+  LANGUAGE_MODES,
+  languageName,
+} from "@/lib/request-language";
 import type { RowSonarrMonitor } from "@/lib/sonarr-monitor";
 import {
   asSonarrMonitor,
@@ -55,6 +65,9 @@ export type RowRequestInput = {
   req_sonarr_root_folder: string | null;
   req_sonarr_quality_profile_id: number | null;
   req_sonarr_monitor: RowSonarrMonitor;
+  req_language_mode: RowLanguageMode;
+  req_preferred_languages: string[] | null;
+  req_min_rating_other: number | null;
 };
 
 function Field({
@@ -388,6 +401,109 @@ export function RowRequestSettings({
         <p className="text-sm text-muted-foreground">
           {SONARR_MONITOR_HINTS[input.req_sonarr_monitor ?? "all"]}
         </p>
+      </Field>
+
+      <Field
+        label="Language for this row"
+        labelFor="row-req-language-mode"
+        description="A kids row can stay in English while the rest of the server takes anything good. Turning this off puts the row back on whatever you chose in Settings."
+        ariaLabel="Use the global language setting for this row"
+        inheriting={input.req_language_mode === null}
+        globalValue={requestLanguageGlobal(settings)}
+        onToggle={(on) =>
+          set(
+            on
+              ? {
+                  req_language_mode: null,
+                  req_preferred_languages: null,
+                  req_min_rating_other: null,
+                }
+              : // "prefer", not "only": flipping a toggle to see what a control does should not
+                // land on the one mode that DISCARDS titles rather than queueing them for you.
+                { req_language_mode: "prefer", req_preferred_languages: ["en"] },
+          )
+        }
+      >
+        <select
+          id="row-req-language-mode"
+          className="h-9 w-full rounded-md border bg-elevated px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          value={input.req_language_mode ?? "any"}
+          onChange={(e) =>
+            set({ req_language_mode: asLanguageMode(e.target.value) })
+          }
+        >
+          {LANGUAGE_MODES.map((mode) => (
+            <option key={mode} value={mode}>
+              {LANGUAGE_MODE_LABELS[mode]}
+            </option>
+          ))}
+        </select>
+        <p className="text-sm text-muted-foreground">
+          {LANGUAGE_MODE_HINTS[input.req_language_mode ?? "any"]}
+        </p>
+        {input.req_language_mode !== null &&
+          input.req_language_mode !== "any" && (
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {(input.req_preferred_languages ?? []).map((code) => (
+                <span
+                  key={code}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/5 px-3 py-1 text-sm"
+                >
+                  {languageName(code)}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${languageName(code)} from this row`}
+                    className="text-muted-foreground hover:text-foreground"
+                    onClick={() =>
+                      set({
+                        req_preferred_languages: (
+                          input.req_preferred_languages ?? []
+                        ).filter((c) => c !== code),
+                      })
+                    }
+                  >
+                    &times;
+                  </button>
+                </span>
+              ))}
+              <select
+                aria-label="Add a language to this row"
+                className="h-8 rounded-md border bg-elevated px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                value=""
+                onChange={(e) => {
+                  const code = e.target.value;
+                  if (!code) return;
+                  set({
+                    req_preferred_languages: [
+                      ...(input.req_preferred_languages ?? []),
+                      code,
+                    ],
+                  });
+                }}
+              >
+                <option value="">Add a language…</option>
+                {COMMON_LANGUAGES.filter(
+                  (c) => !(input.req_preferred_languages ?? []).includes(c),
+                ).map((c) => (
+                  <option key={c} value={c}>
+                    {languageName(c)} ({c})
+                  </option>
+                ))}
+              </select>
+              {/* `[]` is a row that CLEARED its languages; `null` means it inherits the owner's
+                  list and the run will use that — warning there would contradict what actually
+                  happens. Only reachable via a PATCH that sets the mode without the list, but that
+                  is a documented API shape. */}
+              {input.req_preferred_languages !== null &&
+                input.req_preferred_languages.length === 0 && (
+                  <p role="alert" className="w-full text-sm text-destructive-text">
+                    {input.req_language_mode === "only"
+                      ? "With no languages listed, this row will never ask for anything. Add at least one."
+                      : "With no languages listed, every title counts as another language and has to clear the higher bar."}
+                  </p>
+                )}
+            </div>
+          )}
       </Field>
     </div>
   );

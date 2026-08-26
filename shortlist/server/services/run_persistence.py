@@ -156,6 +156,11 @@ def _refresh_pending(row: RequestCandidate, m) -> None:
     row.overview = m.overview or row.overview  # same rule again — and the backfill for pre-0071 rows
     row.rating = m.rating
     row.vote_count = m.vote_count
+    # Same keep-what-we-know rule as imdb_id above, and the backfill for rows queued before 0085: a
+    # run that re-surfaces the title from a TMDB source fills the language in. A later run that only
+    # saw it via Trakt must not blank it back to unknown, which would drop the inbox chip and, worse,
+    # re-classify the title as preferred at the next gate.
+    row.language = m.language or row.language
     row.demand = m.demand
     row.tags = sorted(m.tags)
     row.wanters = sorted(m.wanters)
@@ -183,6 +188,7 @@ def _candidate_row(m, run_id: int, *, status: str) -> RequestCandidate:
         overview=m.overview,
         rating=m.rating,
         vote_count=m.vote_count,
+        language=m.language,
         demand=m.demand,
         tags=sorted(m.tags),
         wanters=sorted(m.wanters),
@@ -1459,6 +1465,7 @@ def _emit_request_events(session: Session, run_id: int, report) -> None:
             dry_run=report.dry_run,
             wanted=report.requests.wanted,
             pool_size=report.requests.pool_size,
+            dropped_by_language=report.requests.dropped_by_language,
             examined=report.requests.examined,
             lookups_spent=report.requests.lookups_spent,
             exhausted_pool=report.requests.examined >= report.requests.pool_size,

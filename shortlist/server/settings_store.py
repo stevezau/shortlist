@@ -42,6 +42,14 @@ DEFAULTS: dict[str, Any] = {
     "requests.sonarr.monitor": "all",
     "requests.rating_source": "tmdb",  # tmdb (no setup) | imdb | trakt | tomatoes | metacritic (via MDBList)
     "requests.min_rating": 7.0,  # rating floor on the chosen source
+    # How the request gate treats a title's original language. "any" is what every build before this
+    # setting did and stays the default, so an upgrade changes nothing until an owner picks otherwise.
+    "requests.language_mode": "any",  # any | prefer | only
+    "requests.preferred_languages": ["en"],  # ISO 639-1 codes; the value "any" mode simply never reads
+    # None = follow `requests.min_rating` + 1.5 (engine `OTHER_LANGUAGE_BAR_GAP`). Deliberately not a
+    # number: a fixed default would encode OUR taste, where following the owner's own floor tracks
+    # theirs — a permissive 6.0 server starts at 7.5 and a strict 8.0 one at 9.5.
+    "requests.min_rating_other": None,
     "requests.min_votes": 100,  # vote-count floor on the chosen source
     "requests.min_demand": 1,  # a title must be wanted by at least this many distinct people
     "requests.min_year": 0,  # 0 = no lower bound; else only titles from >= this year (shows: first-air year)

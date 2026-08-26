@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import UTC, datetime
 from typing import Annotated
 
@@ -20,12 +21,16 @@ from shortlist.engine.candidates import KNOWN_SOURCES
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.delivery import target_sections
 from shortlist.engine.models import (
+    LANGUAGE_MODES,
     MAX_REFRESH_DAYS,
     MAX_ROW_SIZE,
     MIN_ROW_SIZE,
     SONARR_MONITOR_MODES,
     RowSpec,
     dedupe_slug,
+    normalise_languages,
+    row_language_mode_or_inherit,
+    row_languages_or_inherit,
     row_monitor_or_inherit,
     slugify,
 )
@@ -203,6 +208,17 @@ class CollectionIn(BaseModel):
     req_sonarr_monitor: str | None = Field(
         default=None, max_length=32, json_schema_extra={"enum": [*SONARR_MONITOR_MODES, None]}
     )
+    # This row's language preference; null on any of the three inherits the matching global. Same
+    # advertised-enum reasoning as `req_sonarr_monitor` above.
+    req_language_mode: str | None = Field(
+        default=None, max_length=16, json_schema_extra={"enum": [*LANGUAGE_MODES, None]}
+    )
+    # null inherits the owner's list; [] is a row that CLEARED its languages and means it (in "only"
+    # mode it requests nothing). The two must stay distinct all the way to the column — see 0085.
+    req_preferred_languages: list[str] | None = Field(default=None, max_length=50)
+    # null means "follow this row's own req_min_rating + 1.5", not "unset" — so a row that raises its
+    # base floor carries this bar up with it.
+    req_min_rating_other: float | None = Field(default=None, ge=0.0, le=10.0)
     # Tag this row's requests with the wanting person's slug; null inherits requests.auto_user_tag.
     req_auto_user_tag: bool | None = None
     # How many recent watches the row cycles between, one per run. 1 = always the most recent.
@@ -296,6 +312,27 @@ class CollectionOut(PassthroughModel):
         ),
         json_schema_extra={"enum": [*SONARR_MONITOR_MODES, None]},
     )
+    req_language_mode: str | None = Field(
+        description=(
+            "How this row treats a title's original language when requesting: 'any' (one bar for "
+            "everything), 'prefer' (other languages need a higher rating to auto-send), or 'only' "
+            "(never request another language); null inherits the global requests.language_mode."
+        ),
+        json_schema_extra={"enum": [*LANGUAGE_MODES, None]},
+    )
+    req_preferred_languages: list[str] | None = Field(
+        description=(
+            "ISO 639-1 codes this row treats as preferred; null inherits the global "
+            "requests.preferred_languages. An empty list is a row that cleared its languages."
+        )
+    )
+    req_min_rating_other: float | None = Field(
+        description=(
+            "Rating another language must reach for this row to auto-send it. Null inherits the "
+            "global requests.min_rating_other, which may itself be unset — in which case this row "
+            "derives from its own req_min_rating plus 1.5."
+        )
+    )
     req_auto_user_tag: bool | None = Field(
         default=None,
         description=(
@@ -346,6 +383,29 @@ def _validate(body: CollectionIn) -> None:
             status_code=422,
             detail=f"req_sonarr_monitor must be null or one of {sorted(SONARR_MONITOR_MODES)}",
         )
+    if body.req_language_mode is not None and body.req_language_mode not in LANGUAGE_MODES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"req_language_mode must be null or one of {sorted(LANGUAGE_MODES)}",
+        )
+    if body.req_preferred_languages is not None:
+        # `[a-z]{2}`, not `.isalpha()` — see `_language_codes` in api/settings.py for why a
+        # Unicode-aware check lets a homoglyph through that matches no TMDB language.
+        bad = [c for c in body.req_preferred_languages if not re.fullmatch(r"[a-z]{2}", str(c).strip().lower())]
+        if bad:
+            more = f" (+{len(bad) - 5} more)" if len(bad) > 5 else ""
+            raise HTTPException(
+                status_code=422,
+                # Only the first few, but the rest are COUNTED — otherwise an owner fixes what they
+                # were shown and is rejected again for values the message implied were fine.
+                detail=(
+                    f"req_preferred_languages must be ISO 639-1 codes (two letters, e.g. 'en'); got {bad[:5]}{more}"
+                ),
+            )
+        # Normalised on the way IN as well as on the way out. Reads already normalise, so the run is
+        # correct either way — but the editor keys its chips on the raw stored value, and "  EN  "
+        # beside "en" is two chips with the same React key.
+        body.req_preferred_languages = list(normalise_languages(body.req_preferred_languages))
     if body.placement not in PLACEMENTS:
         raise HTTPException(status_code=422, detail=f"placement must be one of {sorted(PLACEMENTS)}")
     if body.placement_friends not in PLACEMENTS:
@@ -566,6 +626,9 @@ def _serialize(session, collection: Collection) -> dict:
         # back and be refused by the closed-set check, so a row holding a retired mode could not be
         # saved at all — not even renamed.
         "req_sonarr_monitor": row_monitor_or_inherit(collection.req_sonarr_monitor),
+        "req_language_mode": row_language_mode_or_inherit(collection.req_language_mode),
+        "req_preferred_languages": row_languages_or_inherit(collection.req_preferred_languages),
+        "req_min_rating_other": collection.req_min_rating_other,
         "req_auto_user_tag": collection.req_auto_user_tag,
         "pick_order": collection.pick_order or "best",
         "placement": collection.placement or "both",
@@ -747,6 +810,9 @@ _PATCHABLE_COLUMNS = (
     "req_sonarr_quality_profile_id",
     "req_sonarr_root_folder",
     "req_sonarr_monitor",
+    "req_language_mode",
+    "req_preferred_languages",
+    "req_min_rating_other",
     "req_auto_user_tag",
     "pick_order",
     "placement",

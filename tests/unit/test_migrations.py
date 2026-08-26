@@ -1290,3 +1290,67 @@ def test_0083_adds_the_complete_column_to_a_database_already_stamped_0082(tmp_pa
     finally:
         engine.dispose()
     assert "complete" in columns
+
+
+class TestRequestLanguagePreference0085:
+    """0085 adds the per-row language overrides and the language of a queued title.
+
+    Nullable with no backfill on the row columns — NULL is "inherit the global", whose own default is
+    "any", i.e. today's behaviour. Anything else would start filtering requests on servers whose owner
+    never asked for it.
+    """
+
+    @staticmethod
+    def _columns(config_dir: Path, table: str) -> dict[str, bool]:
+        """column -> whether it is NOT NULL."""
+        con = sqlite3.connect(config_dir / "shortlist.db")
+        try:
+            return {r[1]: bool(r[3]) for r in con.execute(f"PRAGMA table_info({table})")}
+        finally:
+            con.close()
+
+    def test_the_row_columns_are_nullable_and_the_seeded_row_inherits(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        columns = self._columns(tmp_path, "collections")
+        for name in ("req_language_mode", "req_preferred_languages", "req_min_rating_other"):
+            assert name in columns
+            assert not columns[name], f"{name}: NULL is how a row inherits the global setting"
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        try:
+            rows = con.execute(
+                "SELECT req_language_mode, req_preferred_languages, req_min_rating_other FROM collections"
+            ).fetchall()
+        finally:
+            con.close()
+        assert rows, "expected the seeded default row"
+        assert {r for r in rows} == {(None, None, None)}
+
+    def test_a_queued_title_gets_an_empty_language_not_a_null_one(self, tmp_path: Path):
+        """`language` is NOT NULL with a "" default because "" is the unknown sentinel the gate and
+        the inbox both test against — and a pre-0085 row genuinely IS unknown: nothing recorded it."""
+        run_migrations(tmp_path)
+        columns = self._columns(tmp_path, "request_candidates")
+        assert "language" in columns
+        assert columns["language"], "NOT NULL — the code treats '' as unknown, never None"
+
+    def test_running_it_again_over_an_already_migrated_database_is_a_no_op(self, tmp_path: Path):
+        """The maintainer's server runs `dev` builds, so this lands on databases that may already
+        carry the columns from an earlier build of the same change.
+
+        The `stamp` is what gives this test teeth. Without it the second `run_migrations` sees the
+        version already at head and executes no script at all — so it would pass just as happily with
+        every `if name not in existing` guard deleted. Winding the version back while LEAVING the
+        columns in place is the actual shape of the problem: a database that already has them under a
+        revision it no longer claims."""
+        run_migrations(tmp_path)
+        command.stamp(_alembic(tmp_path), "0084")
+        run_migrations(tmp_path)
+        assert "req_language_mode" in self._columns(tmp_path, "collections")
+        assert "language" in self._columns(tmp_path, "request_candidates")
+
+    def test_the_downgrade_removes_them_again(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0084")
+        rows = self._columns(tmp_path, "collections")
+        assert not ({"req_language_mode", "req_preferred_languages", "req_min_rating_other"} & set(rows))
+        assert "language" not in self._columns(tmp_path, "request_candidates")

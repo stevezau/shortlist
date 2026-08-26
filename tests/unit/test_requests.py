@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from shortlist.engine import requests as requests_mod
 from shortlist.engine.clients.arr import ArrError
 from shortlist.engine.clients.mdblist import MdbListRateLimitError
@@ -1348,3 +1350,300 @@ class TestTheCachedHeadStarvesRowsToo:
             "it spends nothing and hands its share to a later row, which then clears the head"
         )
         assert report.sent or report.queued, "the run as a whole must still find the good titles"
+
+
+class TestLanguagePreference:
+    """The language gate: which bar a title is judged against, and what "prefer" versus "only" means.
+
+    The matrix `.claude/rules/testing.md` asks for, in full — mode (any / prefer / only) crossed with
+    the title's language (preferred / other / unknown). No cell collapses into another: each of the
+    three modes answers differently for a non-preferred title, and unknown is deliberately NOT the
+    same case as "other" (see `is_preferred_language`).
+    """
+
+    def _demand(self, *titles: MissingTitle) -> requests_mod.DemandMap:
+        return {(t.tmdb_id, t.media_type): t for t in titles}
+
+    def _title(self, tmdb_id: int, language: str, *, rating: float, demand: int = 5) -> MissingTitle:
+        m = MissingTitle(tmdb_id, f"t{tmdb_id}", MediaType.MOVIE, 2020, rating=rating, vote_count=900, demand=demand)
+        m.language = language
+        return m
+
+    def _cfg_lang(self, **kw) -> RequestConfig:
+        """min_rating 7.0 -> the derived other-language bar is 8.5, and auto_min_rating sits below it
+        at 8.0 so the LANGUAGE bar is what decides, not the ordinary auto bar."""
+        base = dict(
+            enabled=True,
+            radarr=RADARR,
+            min_rating=7.0,
+            min_votes=100,
+            min_demand=1,
+            auto_send=True,
+            auto_min_demand=1,
+            auto_min_rating=8.0,
+            max_per_run=10,
+        )
+        base.update(kw)
+        return RequestConfig(**base)
+
+    def _run(self, cfg, demand, monkeypatch):
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        report = _request_missing(cfg, FakeTmdb(), demand, dry_run=False)
+        return fake, report
+
+    # ---- mode "any": one bar for everything (the shipped default) ----
+
+    def test_any_mode_sends_every_language_on_the_one_bar(self, monkeypatch):
+        """The default must be byte-identical to the behaviour before this setting existed."""
+        demand = self._demand(
+            self._title(1, "en", rating=8.2),
+            self._title(2, "ja", rating=8.2),
+            self._title(3, "", rating=8.2),
+        )
+        fake, _ = self._run(self._cfg_lang(language_mode="any"), demand, monkeypatch)
+        assert sorted(c[0] for c in fake.movie_calls) == [1, 2, 3]
+
+    # ---- mode "prefer": preferred keeps the normal bars, others need a higher one ----
+
+    def test_prefer_sends_a_preferred_title_on_the_ordinary_bar(self, monkeypatch):
+        demand = self._demand(self._title(1, "en", rating=8.2))
+        fake, report = self._run(self._cfg_lang(language_mode="prefer"), demand, monkeypatch)
+        assert [c[0] for c in fake.movie_calls] == [1]
+        assert report.queued == []
+
+    def test_prefer_holds_back_another_language_below_the_higher_bar(self, monkeypatch):
+        """8.2 clears min_rating (7.0) AND auto_min_rating (8.0), and is still held — only the
+        language bar (7.0 + 1.5 = 8.5) can explain that, which is exactly what it must say."""
+        demand = self._demand(self._title(2, "ja", rating=8.2))
+        fake, report = self._run(self._cfg_lang(language_mode="prefer"), demand, monkeypatch)
+        assert fake.movie_calls == []
+        assert [m.tmdb_id for m in report.queued] == [2]
+        assert report.queued[0].detail == "rating below the bar for other languages (8.5)"
+
+    def test_prefer_still_sends_another_language_that_is_really_highly_rated(self, monkeypatch):
+        """The whole promise of the feature: great foreign titles are not excluded, only mid-tier ones."""
+        demand = self._demand(self._title(2, "ja", rating=8.7))
+        fake, report = self._run(self._cfg_lang(language_mode="prefer"), demand, monkeypatch)
+        assert [c[0] for c in fake.movie_calls] == [2]
+        assert report.queued == []
+
+    def test_prefer_sends_a_title_sitting_exactly_on_the_bar(self, monkeypatch):
+        """The comparison is `<`, so the bar itself passes. An off-by-one here silently moves
+        everyone's threshold by a tenth of a point."""
+        demand = self._demand(self._title(2, "ko", rating=8.5))
+        fake, _ = self._run(self._cfg_lang(language_mode="prefer"), demand, monkeypatch)
+        assert [c[0] for c in fake.movie_calls] == [2]
+
+    def test_prefer_treats_an_unknown_language_as_preferred(self, monkeypatch):
+        """Only a non-TMDB source (Trakt) leaves this empty. Holding those back would look like
+        Trakt being broken rather than a language preference working."""
+        demand = self._demand(self._title(3, "", rating=8.2))
+        fake, _ = self._run(self._cfg_lang(language_mode="prefer"), demand, monkeypatch)
+        assert [c[0] for c in fake.movie_calls] == [3]
+
+    def test_prefer_never_discards_it_holds_back(self, monkeypatch):
+        """The tier this lives in is load-bearing. A title below a BASE floor is dropped and the
+        owner never learns it existed; this one has to reach the inbox so they can still say yes."""
+        demand = self._demand(self._title(2, "ja", rating=7.4))
+        _, report = self._run(self._cfg_lang(language_mode="prefer"), demand, monkeypatch)
+        assert [m.tmdb_id for m in report.queued] == [2], "a held-back title must still reach the inbox"
+
+    def test_prefer_honours_extra_languages_the_owner_added(self, monkeypatch):
+        demand = self._demand(self._title(2, "ja", rating=8.2))
+        cfg = self._cfg_lang(language_mode="prefer", preferred_languages=("en", "ja"))
+        fake, _ = self._run(cfg, demand, monkeypatch)
+        assert [c[0] for c in fake.movie_calls] == [2]
+
+    def test_prefer_uses_an_explicit_bar_over_the_derived_one(self, monkeypatch):
+        """min_rating_other=9.0 must beat the derived 8.5 — otherwise the setting reads back but
+        never applies, the worst kind of disagreement between screen and run."""
+        demand = self._demand(self._title(2, "ja", rating=8.7))
+        cfg = self._cfg_lang(language_mode="prefer", min_rating_other=9.0)
+        fake, report = self._run(cfg, demand, monkeypatch)
+        assert fake.movie_calls == []
+        assert report.queued[0].detail == "rating below the bar for other languages (9.0)"
+
+    def test_a_zero_bar_is_a_real_choice_not_an_unset_one(self, monkeypatch):
+        """0.0 is falsy, and the None-means-derive sentinel exists precisely so it cannot be mistaken
+        for "unset" — a `x or derived` anywhere in the chain would turn this into 8.5."""
+        demand = self._demand(self._title(2, "ja", rating=8.05))
+        cfg = self._cfg_lang(language_mode="prefer", min_rating_other=0.0)
+        fake, _ = self._run(cfg, demand, monkeypatch)
+        assert [c[0] for c in fake.movie_calls] == [2]
+
+    # ---- mode "only": never request another language at all ----
+
+    def test_only_mode_drops_another_language_entirely(self, monkeypatch):
+        """ "Only" is the one language decision that DISCARDS — a 9.9 must not reach the inbox either,
+        or "never ask for this" would still be asking the owner about it every night."""
+        demand = self._demand(self._title(1, "en", rating=8.2), self._title(2, "ja", rating=9.9))
+        fake, report = self._run(self._cfg_lang(language_mode="only"), demand, monkeypatch)
+        assert [c[0] for c in fake.movie_calls] == [1]
+        assert [m.tmdb_id for m in report.queued] == []
+        assert report.pool_size == 1, "the dropped title must not even be counted in the gated pool"
+
+    def test_only_mode_keeps_an_unknown_language(self, monkeypatch):
+        """Same call as `prefer` makes, and for the same reason — but here it is the difference
+        between a Trakt title being requested and being silently deleted from the run."""
+        demand = self._demand(self._title(3, "", rating=8.2))
+        fake, _ = self._run(self._cfg_lang(language_mode="only"), demand, monkeypatch)
+        assert [c[0] for c in fake.movie_calls] == [3]
+
+    def test_only_mode_with_an_empty_language_list_requests_nothing(self, monkeypatch):
+        """An empty list is a real state the row editor can produce, and it must not silently mean
+        "everything" — the inverse of the control, on a path that adds titles to Radarr.
+
+        The UNKNOWN title is the one that matters and the one this test originally missed. Unknown
+        normally counts as preferred, so with an empty list every Trakt-sourced title was still
+        auto-sent while the settings screen, the row editor and the reference table all said the
+        server would ask for nothing. A test named `_requests_nothing` that only feeds it an English
+        title proves the weaker claim and lets that copy go unchallenged.
+        """
+        demand = self._demand(
+            self._title(1, "en", rating=9.0),
+            self._title(2, "ja", rating=9.0),
+            self._title(3, "", rating=9.0),  # unknown — the Trakt case
+        )
+        cfg = self._cfg_lang(language_mode="only", preferred_languages=())
+        fake, report = self._run(cfg, demand, monkeypatch)
+        assert fake.movie_calls == [], "nothing listed means nothing requested — unknown included"
+        assert report.queued == [], "and nothing queued either; 'only' discards"
+
+    # ---- the bar itself ----
+
+    def test_the_derived_bar_follows_the_owners_own_floor(self):
+        assert requests_mod.other_language_bar(self._cfg_lang(min_rating=6.0)) == 7.5
+        assert requests_mod.other_language_bar(self._cfg_lang(min_rating=7.0)) == 8.5
+        assert requests_mod.other_language_bar(self._cfg_lang(min_rating=8.0)) == 9.5
+
+    def test_the_derived_bar_is_clamped_to_a_reachable_number(self):
+        """`min_rating` may legally be 10, and 10 + 1.5 is a bar no rating can clear — which turns
+        "prefer" into "hold back every other language" while the screen still says 8.5-ish. The
+        settings UI clamps its preview at 10, so an unclamped engine would also disagree with it."""
+        assert requests_mod.other_language_bar(self._cfg_lang(min_rating=8.6)) == 10.0
+        assert requests_mod.other_language_bar(self._cfg_lang(min_rating=10.0)) == 10.0
+
+    def test_the_derived_bar_rounds_the_way_the_settings_screen_does(self):
+        """The API accepts two decimals, so 7.25 + 1.5 = 8.75 — which the screen renders as 8.8.
+        Two implementations of one rule that disagree is how a setting starts lying about itself.
+
+        7.15 is the regression case: `round(8.65, 1)` is 8.6 (banker's rounding on the true binary
+        value) where the browser's `Math.round(86.5) / 10` is 8.7. The obvious Python spelling was
+        wrong on 42 of the 1001 two-decimal floors in range, and this is one of them."""
+        assert requests_mod.other_language_bar(self._cfg_lang(min_rating=7.25)) == 8.8
+        assert requests_mod.other_language_bar(self._cfg_lang(min_rating=7.15)) == 8.7
+
+    def test_the_derived_bar_matches_the_browsers_arithmetic_on_every_legal_floor(self):
+        """The settings screen previews this number and the engine enforces it. If they disagree
+        anywhere in range, the field shows a bar that is not the one applied — so the agreement is
+        pinned across the whole domain, not at the two values a hand-written test would pick.
+
+        This is `Math.round(Math.min(10, m + 1.5) * 10) / 10` transcribed; keep it that way.
+        """
+        for hundredths in range(0, 1001):
+            floor_value = hundredths / 100
+            browser = math.floor(min(10.0, floor_value + 1.5) * 10 + 0.5) / 10
+            assert requests_mod.other_language_bar(self._cfg_lang(min_rating=floor_value)) == browser, (
+                f"min_rating={floor_value} diverges from the settings screen"
+            )
+
+    def test_a_title_one_row_knows_the_language_of_is_not_blank_in_another(self, monkeypatch):
+        """Per-row demand builds one copy of a title per row, from that row's OWN users' candidates —
+        so a row that only saw it via Trakt has no language while another row's TMDB copy does. In
+        "only" mode the blank copy would be requested: the exact title the owner said never to ask
+        for, sent because a different row happened to find it a different way."""
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        cfg = self._cfg_lang(language_mode="only")
+
+        knows = self._title(42, "ja", rating=9.0)
+        blank = self._title(42, "", rating=9.0)
+        report = requests_mod.request_missing(
+            cfg,
+            FakeTmdb(),
+            [
+                requests_mod.RowRequest("trakt_row", cfg, self._demand(blank)),
+                requests_mod.RowRequest("tmdb_row", cfg, self._demand(knows)),
+            ],
+            dry_run=False,
+        )
+        assert fake.movie_calls == [], "the row with the blank copy must not request an excluded title"
+        assert report.pool_size == 0
+
+    def test_the_language_drops_are_counted_apart_from_the_other_floors(self, monkeypatch):
+        """`pool_size` drives the "nothing qualified" alert, which tells the owner which limit to
+        loosen. A pool emptied by the language mode must not be reported as their demand and year
+        settings being too tight — advice they could follow forever without effect."""
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        demand = self._demand(
+            self._title(1, "ja", rating=9.0),
+            self._title(2, "ko", rating=9.0),
+            self._title(3, "en", rating=9.0),
+        )
+        report = _request_missing(self._cfg_lang(language_mode="only"), FakeTmdb(), demand, dry_run=False)
+        assert report.dropped_by_language == 2
+        assert report.pool_size == 1
+
+    def test_a_poisoned_language_list_degrades_instead_of_crashing_every_run(self):
+        """The context builder reads this on EVERY run, and validation does not cover every way a
+        value can get into the database — a hand edit, a future format, a downgrade. A TypeError here
+        is a crash loop rather than one broken setting, which is the shape of a bug this codebase has
+        already shipped once (`row.size: "abc"` crashed every run and 500'd two endpoints).
+
+        A bare string is the subtle one: iterating "en" yields ("e", "n"), two codes that match
+        nothing, silently putting every title on the higher bar.
+        """
+        from shortlist.engine.models import normalise_languages, row_languages_or_inherit
+
+        assert normalise_languages("en") == ("en",), "a bare string is ONE code, not two letters"
+        assert normalise_languages(["EN", None, 5, "", "  ja  "]) == ("en", "ja")
+        for poison in (123, 4.5, True, {"a": 1}, object()):
+            assert normalise_languages(poison) == ()
+            assert row_languages_or_inherit(poison) == ()
+        # The inherit/cleared distinction must survive the hardening — they mean different things.
+        assert row_languages_or_inherit(None) is None, "None inherits the owner's list"
+        assert row_languages_or_inherit([]) == (), "[] is a row that cleared its languages"
+
+    def test_a_title_two_rows_wanted_counts_as_one_language_drop(self, monkeypatch):
+        """`report.wanted` is a DEDUPLICATED set of keys, and the "nothing qualified" alert compares
+        the two to ask "did the language setting rule out everything?". Summing per row counts a
+        title two rows both wanted twice, so the drop count can exceed `wanted` and the alert then
+        blames the language setting as the sole cause when it was not — the exact mis-attribution
+        this counter was added to prevent, reintroduced one level up."""
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        cfg = self._cfg_lang(language_mode="only")
+        report = requests_mod.request_missing(
+            cfg,
+            FakeTmdb(),
+            [
+                requests_mod.RowRequest("row_a", cfg, self._demand(self._title(42, "ja", rating=9.0))),
+                requests_mod.RowRequest("row_b", cfg, self._demand(self._title(42, "ja", rating=9.0))),
+            ],
+            dry_run=False,
+        )
+        assert report.wanted == 1, "one title, however many rows wanted it"
+        assert report.dropped_by_language == 1, "and one drop — not one per row"
+        assert report.dropped_by_language <= report.wanted
+
+    def test_nothing_is_counted_as_a_language_drop_in_the_other_modes(self, monkeypatch):
+        """ "prefer" holds back at the AUTO tier, so it must never register as a base-floor drop —
+        or the alert would blame the language setting for titles sitting safely in the inbox."""
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        demand = self._demand(self._title(1, "ja", rating=7.4))
+        report = _request_missing(self._cfg_lang(language_mode="prefer"), FakeTmdb(), demand, dry_run=False)
+        assert report.dropped_by_language == 0
+        assert [m.tmdb_id for m in report.queued] == [1]
+
+    def test_language_matching_is_case_insensitive_at_the_boundary(self, monkeypatch):
+        """TMDB reports lowercase, but a code typed into settings or seeded from an env var may not
+        be — and a case mismatch would reclassify a whole language as "other" silently."""
+        from shortlist.engine.models import normalise_languages
+
+        demand = self._demand(self._title(2, "ja", rating=8.2))
+        cfg = self._cfg_lang(language_mode="prefer", preferred_languages=normalise_languages(["EN", "JA"]))
+        fake, _ = self._run(cfg, demand, monkeypatch)
+        assert [c[0] for c in fake.movie_calls] == [2]

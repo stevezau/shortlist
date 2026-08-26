@@ -62,6 +62,9 @@ COLLECTION_KEYS = {
     "req_sonarr_quality_profile_id",
     "req_sonarr_root_folder",
     "req_sonarr_monitor",
+    "req_language_mode",
+    "req_preferred_languages",
+    "req_min_rating_other",
     "req_auto_user_tag",
     "pick_order",
     "placement",
@@ -2669,6 +2672,68 @@ class TestPerRowRequestSettingsApi:
             f"/api/collections/{created['id']}", json={"name": "Kids", "req_sonarr_monitor": None}
         ).json()
         assert cleared["req_sonarr_monitor"] is None
+
+    def test_a_rows_language_settings_round_trip_and_clear(self, client: TestClient):
+        created = client.post("/api/collections", json={"name": "Kids", "build": "per_person"}).json()
+        assert (created["req_language_mode"], created["req_preferred_languages"], created["req_min_rating_other"]) == (
+            None,
+            None,
+            None,
+        )
+
+        patched = client.patch(
+            f"/api/collections/{created['id']}",
+            json={
+                "name": "Kids",
+                "req_language_mode": "only",
+                "req_preferred_languages": ["en"],
+                "req_min_rating_other": 9.0,
+            },
+        ).json()
+        assert patched["req_language_mode"] == "only"
+        assert patched["req_preferred_languages"] == ["en"]
+        assert patched["req_min_rating_other"] == 9.0
+
+        cleared = client.patch(
+            f"/api/collections/{created['id']}",
+            json={
+                "name": "Kids",
+                "req_language_mode": None,
+                "req_preferred_languages": None,
+                "req_min_rating_other": None,
+            },
+        ).json()
+        assert (cleared["req_language_mode"], cleared["req_preferred_languages"], cleared["req_min_rating_other"]) == (
+            None,
+            None,
+            None,
+        )
+
+    def test_an_empty_row_language_list_is_stored_rather_than_read_as_unset(self, client: TestClient):
+        """[] is a row that CLEARED its languages, which in "only" mode requests nothing. NULL is a
+        row that inherits the owner's list. Collapsing the two changes what the row asks Radarr for."""
+        created = client.post("/api/collections", json={"name": "None", "build": "per_person"}).json()
+        patched = client.patch(
+            f"/api/collections/{created['id']}", json={"name": "None", "req_preferred_languages": []}
+        ).json()
+        assert patched["req_preferred_languages"] == []
+
+    def test_a_row_language_mode_outside_the_offered_set_is_refused(self, client: TestClient):
+        created = client.post("/api/collections", json={"name": "Kids", "build": "per_person"}).json()
+        resp = client.patch(
+            f"/api/collections/{created['id']}", json={"name": "Kids", "req_language_mode": "english_only"}
+        )
+        assert resp.status_code == 422
+        assert "req_language_mode" in resp.json()["detail"]
+
+    def test_a_row_language_code_that_is_not_iso_639_1_is_refused(self, client: TestClient):
+        """A typo here would silently reclassify a whole language as "other" and raise the bar on it,
+        which reads as the feature misbehaving rather than as bad input."""
+        created = client.post("/api/collections", json={"name": "Kids", "build": "per_person"}).json()
+        resp = client.patch(
+            f"/api/collections/{created['id']}", json={"name": "Kids", "req_preferred_languages": ["english"]}
+        )
+        assert resp.status_code == 422
 
     def test_a_row_holding_a_retired_mode_can_still_be_saved(self, client: TestClient):
         """`future`/`missing`/`existing`/`recent` were offered by an earlier build and then retired,

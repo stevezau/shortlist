@@ -206,6 +206,55 @@ class TestRequestsFoundNothing:
         assert "702 titles" in body
         assert "minimum number of people or your release-year range" in body
 
+    def test_blames_the_language_setting_when_it_ruled_everything_out(self, session):
+        """Since the language mode became a base floor, a pool can be empty purely because "only
+        these languages" removed everything — and telling that owner to loosen their demand or
+        release-year settings is advice they can follow forever without any effect. This codebase
+        has already had to fix that exact mis-attribution once ("name the limit that ACTUALLY
+        bound"), which is why it is pinned here rather than left to review."""
+        session.add_all(
+            [
+                self._event(wanted=40, pool_size=0, examined=0, exhausted_pool=False, dropped_by_language=40)
+                for _ in range(2)
+            ]
+        )
+        session.commit()
+
+        body = notif._requests_found_nothing(session)["body"]
+
+        assert "Language setting ruled out every one of them" in body
+        assert "Prefer these" in body, "the fix has to be named, not just the cause"
+        assert "minimum number of people" not in body, "must not send them after the wrong setting"
+
+    def test_names_both_causes_when_the_language_setting_took_only_some(self, session):
+        session.add_all(
+            [
+                self._event(wanted=40, pool_size=0, examined=0, exhausted_pool=False, dropped_by_language=12)
+                for _ in range(2)
+            ]
+        )
+        session.commit()
+
+        body = notif._requests_found_nothing(session)["body"]
+
+        assert "ruled out 12 of them" in body
+        assert "minimum number of people or your release-year range" in body
+
+    def test_keeps_the_old_wording_when_language_ruled_out_nothing(self, session):
+        """The overwhelmingly common case — the mode is "any" — must read exactly as it did."""
+        session.add_all(
+            [
+                self._event(wanted=702, pool_size=0, examined=0, exhausted_pool=False, dropped_by_language=0)
+                for _ in range(2)
+            ]
+        )
+        session.commit()
+
+        body = notif._requests_found_nothing(session)["body"]
+
+        assert "minimum number of people or your release-year range" in body
+        assert "Language" not in body
+
     def test_stays_silent_when_nothing_was_missing_at_all(self, session):
         """`wanted == 0` is not a problem to report — the library simply had everything."""
         session.add_all([self._event(wanted=0, pool_size=0, examined=0) for _ in range(3)])

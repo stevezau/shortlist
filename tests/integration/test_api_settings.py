@@ -45,6 +45,57 @@ class TestSettingsValidation:
             resp = client.put("/api/settings", json={"values": {"requests.sonarr.monitor": refused}})
             assert resp.status_code == 422, f"{refused} was accepted"
 
+    def test_the_language_mode_accepts_only_the_modes_shortlist_offers(self, client: TestClient):
+        for offered in ("any", "prefer", "only"):
+            resp = client.put("/api/settings", json={"values": {"requests.language_mode": offered}})
+            assert resp.status_code == 200, f"{offered}: {resp.text}"
+        for refused in ("english_only", "prefer_english", "en", "", "ANY"):
+            resp = client.put("/api/settings", json={"values": {"requests.language_mode": refused}})
+            assert resp.status_code == 422, f"{refused} was accepted"
+
+    def test_preferred_languages_must_be_iso_639_1_codes(self, client: TestClient):
+        """A code that isn't two letters matches no title's `original_language`, so every title on the
+        server would silently reclassify as "other" and take the higher bar — the feature appearing to
+        misbehave, with nothing on screen to connect it to the typo that caused it."""
+        assert client.put("/api/settings", json={"values": {"requests.preferred_languages": ["en"]}}).status_code == 200
+        assert (
+            client.put("/api/settings", json={"values": {"requests.preferred_languages": ["en", "ja"]}}).status_code
+            == 200
+        )
+        # Empty is legal and meaningful: in "only" mode it requests nothing.
+        assert client.put("/api/settings", json={"values": {"requests.preferred_languages": []}}).status_code == 200
+        for refused in (["english"], ["e"], ["en-US"], ["e1"], "en", [5]):
+            resp = client.put("/api/settings", json={"values": {"requests.preferred_languages": refused}})
+            assert resp.status_code == 422, f"{refused} was accepted"
+
+    def test_the_other_language_bar_accepts_null_because_null_is_a_meaning(self, client: TestClient):
+        """None is not "unset" here — it means "follow min_rating + 1.5", which is the SHIPPED default
+        precisely so no fixed number of ours is imposed on anyone's server. A validator that rejected
+        null would make the default unsettable from the UI."""
+        assert client.put("/api/settings", json={"values": {"requests.min_rating_other": 11}}).status_code == 422
+        assert client.put("/api/settings", json={"values": {"requests.min_rating_other": -1}}).status_code == 422
+
+        def round_trip(value):
+            """Accepting a value is not the same as STORING it — assert what reads back, because a
+            store that coerced null to 0.0 would pass a status-code check and then hand every run a
+            bar of zero."""
+            assert client.put("/api/settings", json={"values": {"requests.min_rating_other": value}}).status_code == 200
+            return client.get("/api/settings").json()["requests.min_rating_other"]
+
+        assert round_trip(8.5) == 8.5
+        assert round_trip(None) is None, "null must survive as null, or the bar stops following"
+        # 0.0 is falsy and is a REAL bar (nothing can fail it). It must not read back as null, or the
+        # owner's deliberate "send anything" becomes "follow my minimum rating + 1.5" on the next run.
+        assert round_trip(0.0) == 0.0
+
+    def test_the_shipped_language_defaults_change_nothing(self, client: TestClient):
+        """An upgrade must not start filtering anyone's requests. The mode is what is off; the
+        language list is merely the value that mode never reads."""
+        values = client.get("/api/settings").json()
+        assert values["requests.language_mode"] == "any"
+        assert values["requests.preferred_languages"] == ["en"]
+        assert values["requests.min_rating_other"] is None
+
     def test_a_bad_plex_timeout_is_refused(self, client: TestClient):
         # It's read unguarded as int(...) in build_context, so a bad stored value would crash every run.
         assert client.put("/api/settings", json={"values": {"plex.timeout_s": 45}}).status_code == 200

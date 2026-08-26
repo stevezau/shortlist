@@ -37,6 +37,9 @@ from shortlist.engine.models import (
     RowSpec,
     UserProfile,
     UserType,
+    normalise_languages,
+    row_language_mode_or_inherit,
+    row_languages_or_inherit,
     row_monitor_or_inherit,
 )
 from shortlist.server.db.adapters import DbCache, DbSnapshotStore
@@ -153,6 +156,20 @@ def _refuse_a_different_server(session, machine_id: str) -> None:
     )
 
 
+def _optional_float(raw: object) -> float | None:
+    """A stored number, or None when the setting is unset — never a silent 0.0.
+
+    Used for the settings whose None is a MEANING ("derive this") rather than an absence, where the
+    usual ``float(store.get(...) or default)`` would erase a deliberate 0.0.
+    """
+    if raw is None or raw == "":
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def row_request_overrides(collection: Collection) -> RequestOverrides | None:
     """This row's own request floors and target, or None when it overrides nothing.
 
@@ -181,6 +198,9 @@ def row_request_overrides(collection: Collection) -> RequestOverrides | None:
         sonarr_quality_profile_id=collection.req_sonarr_quality_profile_id,
         sonarr_root_folder=collection.req_sonarr_root_folder or None,
         sonarr_monitor=row_monitor_or_inherit(collection.req_sonarr_monitor),
+        language_mode=row_language_mode_or_inherit(collection.req_language_mode),
+        preferred_languages=row_languages_or_inherit(collection.req_preferred_languages),
+        min_rating_other=collection.req_min_rating_other,
     )
     return overrides if overrides != RequestOverrides() else None
 
@@ -1083,4 +1103,9 @@ class ContextBuilder:
             auto_min_rating=float(store.get("requests.auto_min_rating")),
             auto_user_tag=bool(store.get("requests.auto_user_tag")),
             sonarr_monitor=store.get("requests.sonarr.monitor") or "all",
+            language_mode=store.get("requests.language_mode") or "any",
+            preferred_languages=normalise_languages(store.get("requests.preferred_languages")),
+            # Read WITHOUT `or`: None means "follow min_rating + the gap" and 0.0 is a real bar, so
+            # `x or default` would turn an owner's deliberate 0.0 into the derived 8.5.
+            min_rating_other=_optional_float(store.get("requests.min_rating_other")),
         )

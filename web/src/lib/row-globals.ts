@@ -4,6 +4,11 @@ import {
   RECENCY_DEFAULT,
   WATCHED_PCT_DEFAULT,
 } from "@/lib/constants";
+import {
+  asLanguageMode,
+  languageName,
+  otherLanguageBar,
+} from "@/lib/request-language";
 import { asSonarrMonitor, SONARR_MONITOR_LABELS } from "@/lib/sonarr-monitor";
 import type { Settings } from "@/lib/types";
 
@@ -208,4 +213,30 @@ export function requestSonarrMonitorGlobal(
   return SONARR_MONITOR_LABELS[
     asSonarrMonitor(settings["requests.sonarr.monitor"])
   ];
+}
+
+/**
+ * The owner's language choice, as one readable phrase — "prefer English, others need 8.5".
+ *
+ * All three settings collapse into a single caption because the row editor offers one toggle for the
+ * lot: a row either follows the owner's language policy or sets its own, and three separate captions
+ * under one toggle would be three answers to a question nobody asked separately.
+ */
+export function requestLanguageGlobal(
+  settings: Settings | undefined,
+): string | null {
+  if (!settings) return null;
+  const mode = asLanguageMode(settings["requests.language_mode"]);
+  if (mode === "any") return "any language";
+
+  const raw = settings["requests.preferred_languages"];
+  const codes = Array.isArray(raw)
+    ? raw.filter((c): c is string => typeof c === "string")
+    : [];
+  const names = codes.map(languageName).join(", ") || "no languages";
+  if (mode === "only") return `only ${names}`;
+
+  const minRating = num(settings, "requests.min_rating") ?? 7;
+  const explicit = num(settings, "requests.min_rating_other");
+  return `prefer ${names}, others need ${otherLanguageBar(minRating, explicit)}`;
 }

@@ -719,6 +719,24 @@
             ],
             "title": "Req Auto User Tag"
           },
+          "req_language_mode": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "enum": [
+              "any",
+              "prefer",
+              "only",
+              null
+            ],
+            "title": "Req Language Mode"
+          },
           "req_max_per_row": {
             "anyOf": [
               {
@@ -770,6 +788,19 @@
             ],
             "title": "Req Min Rating"
           },
+          "req_min_rating_other": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Min Rating Other"
+          },
           "req_min_votes": {
             "anyOf": [
               {
@@ -794,6 +825,21 @@
               }
             ],
             "title": "Req Min Year"
+          },
+          "req_preferred_languages": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Preferred Languages"
           },
           "req_radarr_quality_profile_id": {
             "anyOf": [
@@ -1167,6 +1213,24 @@
             "description": "Tag this row's Sonarr/Radarr requests with the wanting person's slug; null inherits the global requests.auto_user_tag.",
             "title": "Req Auto User Tag"
           },
+          "req_language_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How this row treats a title's original language when requesting: 'any' (one bar for everything), 'prefer' (other languages need a higher rating to auto-send), or 'only' (never request another language); null inherits the global requests.language_mode.",
+            "enum": [
+              "any",
+              "prefer",
+              "only",
+              null
+            ],
+            "title": "Req Language Mode"
+          },
           "req_max_per_row": {
             "anyOf": [
               {
@@ -1211,6 +1275,18 @@
             ],
             "title": "Req Min Rating"
           },
+          "req_min_rating_other": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Rating another language must reach for this row to auto-send it. Null inherits the global requests.min_rating_other, which may itself be unset \u2014 in which case this row derives from its own req_min_rating plus 1.5.",
+            "title": "Req Min Rating Other"
+          },
           "req_min_votes": {
             "anyOf": [
               {
@@ -1232,6 +1308,21 @@
               }
             ],
             "title": "Req Min Year"
+          },
+          "req_preferred_languages": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ISO 639-1 codes this row treats as preferred; null inherits the global requests.preferred_languages. An empty list is a row that cleared its languages.",
+            "title": "Req Preferred Languages"
           },
           "req_radarr_quality_profile_id": {
             "anyOf": [
@@ -1382,6 +1473,9 @@
           "req_sonarr_quality_profile_id",
           "req_sonarr_root_folder",
           "req_sonarr_monitor",
+          "req_language_mode",
+          "req_preferred_languages",
+          "req_min_rating_other",
           "pick_order",
           "placement",
           "placement_friends",
@@ -3692,6 +3786,11 @@
           "imdb_id": {
             "default": "",
             "title": "Imdb Id",
+            "type": "string"
+          },
+          "language": {
+            "default": "",
+            "title": "Language",
             "type": "string"
           },
           "media_type": {

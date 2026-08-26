@@ -2901,6 +2901,11 @@ export interface components {
             req_auto_send?: boolean | null;
             /** Req Auto User Tag */
             req_auto_user_tag?: boolean | null;
+            /**
+             * Req Language Mode
+             * @enum {unknown}
+             */
+            req_language_mode?: "any" | "prefer" | "only" | null;
             /** Req Max Per Row */
             req_max_per_row?: number | null;
             /** Req Max Year */
@@ -2909,10 +2914,14 @@ export interface components {
             req_min_demand?: number | null;
             /** Req Min Rating */
             req_min_rating?: number | null;
+            /** Req Min Rating Other */
+            req_min_rating_other?: number | null;
             /** Req Min Votes */
             req_min_votes?: number | null;
             /** Req Min Year */
             req_min_year?: number | null;
+            /** Req Preferred Languages */
+            req_preferred_languages?: string[] | null;
             /** Req Radarr Quality Profile Id */
             req_radarr_quality_profile_id?: number | null;
             /** Req Radarr Root Folder */
@@ -3057,6 +3066,12 @@ export interface components {
              * @description Tag this row's Sonarr/Radarr requests with the wanting person's slug; null inherits the global requests.auto_user_tag.
              */
             req_auto_user_tag?: boolean | null;
+            /**
+             * Req Language Mode
+             * @description How this row treats a title's original language when requesting: 'any' (one bar for everything), 'prefer' (other languages need a higher rating to auto-send), or 'only' (never request another language); null inherits the global requests.language_mode.
+             * @enum {unknown}
+             */
+            req_language_mode: "any" | "prefer" | "only" | null;
             /** Req Max Per Row */
             req_max_per_row: number | null;
             /** Req Max Year */
@@ -3065,10 +3080,20 @@ export interface components {
             req_min_demand: number | null;
             /** Req Min Rating */
             req_min_rating: number | null;
+            /**
+             * Req Min Rating Other
+             * @description Rating another language must reach for this row to auto-send it. Null inherits the global requests.min_rating_other, which may itself be unset — in which case this row derives from its own req_min_rating plus 1.5.
+             */
+            req_min_rating_other: number | null;
             /** Req Min Votes */
             req_min_votes: number | null;
             /** Req Min Year */
             req_min_year: number | null;
+            /**
+             * Req Preferred Languages
+             * @description ISO 639-1 codes this row treats as preferred; null inherits the global requests.preferred_languages. An empty list is a row that cleared its languages.
+             */
+            req_preferred_languages: string[] | null;
             /** Req Radarr Quality Profile Id */
             req_radarr_quality_profile_id: number | null;
             /** Req Radarr Root Folder */
@@ -4129,6 +4154,11 @@ export interface components {
              * @default
              */
             imdb_id: string;
+            /**
+             * Language
+             * @default
+             */
+            language: string;
             /** Media Type */
             media_type: string;
             /**

@@ -28,6 +28,9 @@ const INHERITS: RowRequestInput = {
   req_sonarr_root_folder: null,
   req_sonarr_quality_profile_id: null,
   req_sonarr_monitor: null,
+  req_language_mode: null,
+  req_preferred_languages: null,
+  req_min_rating_other: null,
 };
 
 const SETTINGS = {
@@ -39,6 +42,9 @@ const SETTINGS = {
   "requests.radarr.root_folder": "/data/Movies",
   "requests.sonarr.monitor": "all",
   "requests.auto_user_tag": true,
+  "requests.language_mode": "prefer",
+  "requests.preferred_languages": ["en"],
+  "requests.min_rating_other": null,
 } as unknown as Settings;
 
 function renderSection(
@@ -165,5 +171,125 @@ describe("RowRequestSettings", () => {
     // Otherwise the whole section reads as live configuration that does nothing.
     renderSection({}, { requestsEnabled: false });
     expect(screen.getByText(/Requests are turned off/)).toBeInTheDocument();
+  });
+
+  describe("language", () => {
+    it("names the global language policy, including the bar it derives", () => {
+      // min_rating 7.3 + 1.5 = 8.8. The caption has to show the number the run will actually use,
+      // not "follows your minimum rating" — a row editor that restates the rule answers nothing.
+      renderSection();
+      expect(
+        screen.getByText(/prefer English, others need 8.8/),
+      ).toBeInTheDocument();
+    });
+
+    it("hides the language picker while the row inherits", () => {
+      renderSection();
+      expect(
+        screen.queryByLabelText("Add a language to this row"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("seeds a sensible override when the row stops inheriting", async () => {
+      // Turning the toggle off must produce a row that DOES something (a null language list would
+      // be a row that silently requests nothing) — but it must NOT land on "only", the one mode
+      // that DISCARDS titles rather than queueing them. Flipping a toggle to see what a control
+      // does should not quietly start throwing candidates away.
+      const set = renderSection();
+      await userEvent.click(
+        screen.getByLabelText("Use the global language setting for this row"),
+      );
+      expect(set).toHaveBeenCalledWith({
+        req_language_mode: "prefer",
+        req_preferred_languages: ["en"],
+      });
+    });
+
+    it("warns differently in 'prefer', where an empty list raises the bar on everything", async () => {
+      // Not the same consequence as "only", so not the same sentence: here nothing is discarded,
+      // every title just counts as another language and has to clear the higher bar.
+      renderSection({
+        req_language_mode: "prefer",
+        req_preferred_languages: [],
+      });
+      expect(
+        screen.getByText(/every title counts as another language/i),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText(/never ask for anything/i),
+      ).not.toBeInTheDocument();
+    });
+
+    it("does not warn about an empty list when the row is inheriting one", async () => {
+      // null means "use the owner's list", and the run will. Warning "this row will never ask for
+      // anything" there tells the owner the opposite of what happens.
+      renderSection({
+        req_language_mode: "only",
+        req_preferred_languages: null,
+      });
+      expect(
+        screen.queryByText(/never ask for anything/i),
+      ).not.toBeInTheDocument();
+    });
+
+    it("clears all three fields when the row goes back to inheriting", async () => {
+      // Leaving a stale list or bar behind would mean a row that reads as "inherits" on screen
+      // while the run still had its own values to resolve.
+      const set = renderSection({
+        req_language_mode: "only",
+        req_preferred_languages: ["en"],
+        req_min_rating_other: 9,
+      });
+      await userEvent.click(
+        screen.getByLabelText("Use the global language setting for this row"),
+      );
+      expect(set).toHaveBeenCalledWith({
+        req_language_mode: null,
+        req_preferred_languages: null,
+        req_min_rating_other: null,
+      });
+    });
+
+    it("lets a row pick its own mode", async () => {
+      const set = renderSection({
+        req_language_mode: "only",
+        req_preferred_languages: ["en"],
+      });
+      await userEvent.selectOptions(
+        screen.getByLabelText("Language for this row"),
+        "prefer",
+      );
+      expect(set).toHaveBeenCalledWith({ req_language_mode: "prefer" });
+    });
+
+    it("warns when the last language is removed, as the settings screen does", async () => {
+      // The settings screen already warns here. Without the same warning on the row, removing the
+      // last chip leaves a row reading "Only these" with nothing listed — which the run reads as
+      // "request nothing from this row", the inverse of the control and entirely silent.
+      renderSection({
+        req_language_mode: "only",
+        req_preferred_languages: [],
+      });
+      expect(
+        screen.getByText(/this row will never ask for anything/i),
+      ).toBeInTheDocument();
+    });
+
+    it("adds and removes languages on the row", async () => {
+      const set = renderSection({
+        req_language_mode: "only",
+        req_preferred_languages: ["en"],
+      });
+      await userEvent.selectOptions(
+        screen.getByLabelText("Add a language to this row"),
+        "ja",
+      );
+      expect(set).toHaveBeenCalledWith({
+        req_preferred_languages: ["en", "ja"],
+      });
+
+      await userEvent.click(screen.getByLabelText(/Remove English/));
+      expect(set).toHaveBeenCalledWith({ req_preferred_languages: [] });
+    });
   });
 });

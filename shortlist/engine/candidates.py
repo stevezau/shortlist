@@ -332,6 +332,7 @@ def gather_candidates(
                 vote_count=int(item.get("vote_count") or 0),
                 poster_path=item.get("poster_path") or "",
                 overview=item.get("overview") or "",
+                language=str(item.get("original_language") or "").lower(),
             )
         # Artwork folds like the rest: `merge()` (Trakt, and any other non-TMDB source) has no poster
         # to give and runs BEFORE the TMDB-backed sources, so a title both found would otherwise keep
@@ -339,6 +340,10 @@ def gather_candidates(
         # while a list response carrying it was already in hand. Same rule `accumulate` uses.
         pool[key].poster_path = pool[key].poster_path or (item.get("poster_path") or "")
         pool[key].overview = pool[key].overview or (item.get("overview") or "")
+        # Language folds the same way, and for the same reason: `merge()` (Trakt) runs first and has
+        # none to give, so a title both sources found would otherwise keep the unknown "" and be
+        # judged as preferred when TMDB knew perfectly well it was not.
+        pool[key].language = pool[key].language or str(item.get("original_language") or "").lower()
         # A title two sources both found belongs to both — it competes in each one's share, and
         # keeps the STRONGEST claim any of them made for it. A source with nothing to claim
         # (`affinity is None`) adds itself to `sources` but never touches the score.

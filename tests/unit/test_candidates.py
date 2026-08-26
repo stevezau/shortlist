@@ -1121,3 +1121,57 @@ class TestTheWebSourceCanFillTheLargestRow:
         )
 
         assert seen["k"] >= MAX_ROW_SIZE
+
+
+class TestOriginalLanguageIsCarried:
+    """The request gate can only pick a bar if the candidate actually knows its language.
+
+    It is free in every TMDB list response, so this costs nothing — but a title that arrives without
+    one is judged as PREFERRED, so a source that quietly drops the field would raise nobody's bar and
+    the whole feature would look like it simply does not work.
+    """
+
+    def test_a_tmdb_suggestion_carries_its_original_language(self, mock_tmdb):
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [{"id": 42, "title": "Kaiju", "genre_ids": [], "vote_average": 8.7, "original_language": "ja"}]
+        )
+        pool = gather_candidates(mock_tmdb, [seed(1)])
+        assert next(c for c in pool if c.tmdb_id == 42).language == "ja"
+
+    def test_a_discover_result_carries_it_too(self, mock_tmdb):
+        """discover is the source that most needs it: it sorts by GLOBAL popularity with no language
+        constraint, which is where most of the non-English pool comes from in the first place."""
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: []
+        mock_tmdb.discover.side_effect = lambda mt, gids, **kw: [
+            {"id": 77, "title": "Popular Elsewhere", "genre_ids": [], "vote_average": 8.4, "original_language": "ko"}
+        ]
+        pool = gather_candidates(mock_tmdb, [seed(1)], sources=["tmdb_discover"])
+        assert next(c for c in pool if c.tmdb_id == 77).language == "ko"
+
+    def test_a_missing_original_language_is_empty_not_none(self, mock_tmdb):
+        """ "" is the unknown sentinel the gate tests against; None would raise on `.lower()` upstream
+        and compare wrong downstream."""
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [{"id": 42, "title": "No Language", "genre_ids": [], "vote_average": 8.0}]
+        )
+        pool = gather_candidates(mock_tmdb, [seed(1)])
+        assert next(c for c in pool if c.tmdb_id == 42).language == ""
+
+    def test_it_is_lowercased_at_the_boundary(self, mock_tmdb):
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [{"id": 42, "title": "Shouty", "genre_ids": [], "vote_average": 8.0, "original_language": "JA"}]
+        )
+        pool = gather_candidates(mock_tmdb, [seed(1)])
+        assert next(c for c in pool if c.tmdb_id == 42).language == "ja"
+
+    def test_a_tmdb_source_fills_in_what_a_languageless_source_left_empty(self, mock_tmdb):
+        """Trakt runs FIRST and builds candidates from its own fields, so a title both sources found
+        would otherwise keep the unknown "" and be judged preferred when TMDB knew it was not."""
+        trakt = SimpleNamespace(related=lambda tid, mt: [{"tmdb_id": 42, "title": "Kaiju", "year": 2020, "genres": []}])
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [{"id": 42, "title": "Kaiju", "genre_ids": [], "vote_average": 8.7, "original_language": "ja"}]
+        )
+        pool = gather_candidates(mock_tmdb, [seed(1)], sources=["trakt", "tmdb_similar"], trakt=trakt)
+        merged = next(c for c in pool if c.tmdb_id == 42)
+        assert merged.sources == {"trakt", "tmdb_similar"}
+        assert merged.language == "ja", "the copy that KNOWS the language must win"

@@ -101,6 +101,7 @@ function candidate(
     title: "Dune: Part Two",
     year: 2024,
     imdb_id: "",
+  language: "",
     poster_path: "",
     overview: "",
     rating: 8.3,
@@ -1482,5 +1483,44 @@ describe("RequestsPage — what Sonarr/Radarr has", () => {
     await waitFor(() =>
       expect(getArrStatus.mock.calls.length).toBeGreaterThan(before),
     );
+  });
+
+  describe("the language chip", () => {
+    async function renderWith(languageMode: string, language: string) {
+      getSettings.mockResolvedValue({
+        "requests.enabled": true,
+        "requests.language_mode": languageMode,
+        "requests.preferred_languages": ["en"],
+      });
+      listRequests.mockResolvedValue([
+        candidate({ title: "Kaiju no Kodomo", language }),
+      ]);
+      renderPage();
+      await screen.findByText("Kaiju no Kodomo");
+    }
+
+    it("draws no chip on the default 'any' server", async () => {
+      // The chip's job is to explain why a title is being HELD BACK. On "any" nothing is, so a chip
+      // on every foreign tile would be pure noise on the shipped default.
+      await renderWith("any", "ja");
+      expect(screen.queryByText("Japanese")).not.toBeInTheDocument();
+    });
+
+    it("draws a chip for a non-preferred language once a mode is on", async () => {
+      await renderWith("prefer", "ja");
+      expect(await screen.findByText("Japanese")).toBeInTheDocument();
+    });
+
+    it("draws no chip for a preferred language", async () => {
+      // An "English" chip on every tile of a mostly-English inbox is the noise this avoids.
+      await renderWith("prefer", "en");
+      expect(screen.queryByText("English")).not.toBeInTheDocument();
+    });
+
+    it("draws no chip when the language is unknown", async () => {
+      // "" is a title queued before the column existed, or one only a non-TMDB source surfaced.
+      await renderWith("prefer", "");
+      expect(screen.queryByText("Unknown")).not.toBeInTheDocument();
+    });
   });
 });

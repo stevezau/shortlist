@@ -240,3 +240,51 @@ class TestPersistRequestQueue:
             # A dismissed title must not reappear, and a sent one must not be re-queued as pending.
             assert by_id[1].status == "rejected" and by_id[1].demand == 1
             assert by_id[2].status == "sent" and by_id[2].demand == 1
+
+
+class TestTheOtherLanguageReasonIsAThresholdNotAFailure:
+    """`_is_failure_detail` classifies a stored `detail` by its leading words, and the other-language
+    reason is covered only because it happens to start with "rating below" — the same prefix the
+    auto_min_rating reason uses.
+
+    That coupling is a coincidence of wording, and `QUEUE_REASON_PREFIXES` says so in a comment. This
+    pins it: reword either string on its own and a title merely held back starts being recorded as a
+    request that FAILED, which then outlives the threshold note it should have been replaced by.
+    """
+
+    def test_the_language_bar_reason_is_not_read_as_a_send_failure(self):
+        from shortlist.server.services.run_persistence import _is_failure_detail
+
+        assert not _is_failure_detail("rating below the bar for other languages (8.5)")
+        assert not _is_failure_detail("rating below auto_min_rating (8.0)")
+        # ...while a real Arr failure still is, or the two would be indistinguishable.
+        assert _is_failure_detail("Sonarr returned HTTP 503")
+
+    def test_every_queue_reason_the_gate_can_emit_classifies_as_a_threshold(self):
+        """Every reason `_auto_eligible` can assign, READ OUT OF ITS SOURCE — not restated here.
+
+        `requests.py` warns that restating these strings is exactly what lets them drift, so a
+        hand-written copy in the test would reproduce the bug it is meant to catch: a new
+        `reason = ...` added to the gate would simply be invisible, and an unprefixed one makes
+        `_is_failure_detail` record a merely-held title as a request that FAILED — which then
+        outlives the threshold note that should have replaced it.
+        """
+        import inspect
+        import re
+
+        from shortlist.engine import requests as requests_mod
+        from shortlist.engine.requests import QUEUE_REASON_PREFIXES
+        from shortlist.server.services.run_persistence import _is_failure_detail
+
+        source = inspect.getsource(requests_mod._auto_eligible)
+        reasons = re.findall(r'reason = f?"([^"]+)"', source)
+        assert len(reasons) >= 4, f"expected to find the gate's reasons in its source, got {reasons}"
+
+        for reason in reasons:
+            literal = reason.replace("{cfg.auto_min_demand}", "3").replace("{cfg.auto_min_rating}", "8.0")
+            literal = literal.replace("{other_bar}", "8.5")
+            assert literal.startswith(QUEUE_REASON_PREFIXES), (
+                f"{literal!r} matches no prefix in QUEUE_REASON_PREFIXES — a held title would be "
+                f"recorded as a failed send"
+            )
+            assert not _is_failure_detail(literal), f"{literal!r} reads as a send failure"

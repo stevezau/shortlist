@@ -11,6 +11,17 @@ import { REDACTED } from "@/components/ui/secret-input";
 import { Switch } from "@/components/ui/switch";
 import type { RatingSource } from "@/lib/rating-sources";
 import { RATING_LABELS, RATING_SOURCES } from "@/lib/rating-sources";
+import {
+  COMMON_LANGUAGES,
+  LANGUAGE_MODE_HINTS,
+  LANGUAGE_MODE_LABELS,
+  LANGUAGE_MODES,
+  OTHER_LANGUAGE_BAR_GAP,
+  asLanguageMode,
+  languageName,
+  otherLanguageBar,
+  type LanguageMode,
+} from "@/lib/request-language";
 import { useAutosavedSettings } from "@/lib/autosave";
 import { settingBool, settingNumber, settingString } from "@/lib/format";
 import { useArrOptions } from "@/lib/queries";
@@ -41,6 +52,11 @@ interface RequestsForm {
   /** How much of a show Sonarr monitors when a request goes out. Sonarr's own Add Series choice. */
   sonarrMonitor: SonarrMonitor;
   ratingSource: RatingSource;
+  /** How the gate treats a title's original language. "any" is the shipped default. */
+  languageMode: LanguageMode;
+  preferredLanguages: string[];
+  /** null = follow `minRating` + 1.5. Not 0 — 0 is a real bar that nothing can fail. */
+  minRatingOther: number | null;
   minRating: number;
   minVotes: number;
   minDemand: number;
@@ -52,6 +68,23 @@ interface RequestsForm {
   autoMinRating: number;
   tag: string;
   autoUserTag: boolean;
+}
+
+/** A stored language list, defensively cleaned — the API accepts any two-letter code, and this
+ * screen must render whatever is already in the DB rather than assume it wrote it. */
+function readLanguages(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return ["en"];
+  return raw
+    .filter((c): c is string => typeof c === "string")
+    .map((c) => c.trim().toLowerCase())
+    .filter((c, i, all) => c.length === 2 && all.indexOf(c) === i);
+}
+
+/** A stored number, or null — never a silent 0. `null` is "follow the minimum rating". */
+function readOptionalNumber(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
 }
 
 function readArr(settings: Settings, prefix: string): ArrForm {
@@ -82,6 +115,11 @@ function readForm(settings: Settings): RequestsForm {
           "tmdb",
         ) as RatingSource)
       : "tmdb",
+    languageMode: asLanguageMode(settings["requests.language_mode"]),
+    preferredLanguages: readLanguages(settings["requests.preferred_languages"]),
+    // Read WITHOUT a `??` fallback to a number: null is a MEANING here ("follow the minimum
+    // rating"), so defaulting it to one would show the owner a bar they never chose.
+    minRatingOther: readOptionalNumber(settings["requests.min_rating_other"]),
     minRating: settingNumber(settings, "requests.min_rating", 7),
     minVotes: settingNumber(settings, "requests.min_votes", 100),
     minDemand: settingNumber(settings, "requests.min_demand", 1),
@@ -266,6 +304,8 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
   const mdblistConnected = hasMdblist(settings);
 
   const ratingId = useId();
+  const ratingOtherId = useId();
+  const addLanguageId = useId();
   const votesId = useId();
   const demandId = useId();
   const yearId = useId();
@@ -307,6 +347,9 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
       "requests.sonarr.root_folder": form.sonarr.rootFolder,
       "requests.sonarr.monitor": form.sonarrMonitor,
       "requests.rating_source": form.ratingSource,
+      "requests.language_mode": form.languageMode,
+      "requests.preferred_languages": form.preferredLanguages,
+      "requests.min_rating_other": form.minRatingOther,
       "requests.min_rating": form.minRating,
       "requests.min_votes": form.minVotes,
       "requests.min_demand": form.minDemand,
@@ -610,6 +653,90 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                   ))}
               </div>
 
+              <div className="space-y-2">
+                <Segmented
+                  legend="Language"
+                  value={form.languageMode}
+                  options={LANGUAGE_MODES.map((mode) => ({
+                    value: mode,
+                    label: LANGUAGE_MODE_LABELS[mode],
+                  }))}
+                  onChange={(languageMode) => set({ languageMode })}
+                />
+                <p className="text-sm text-muted-foreground">
+                  {LANGUAGE_MODE_HINTS[form.languageMode]}
+                </p>
+                {form.languageMode !== "any" && (
+                  <div className="space-y-2 pt-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {form.preferredLanguages.map((code) => (
+                        <span
+                          key={code}
+                          className="inline-flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/5 py-1 pl-3 pr-1 text-sm"
+                        >
+                          {languageName(code)}
+                          <span className="font-mono text-xs text-muted-foreground">
+                            {code}
+                          </span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 rounded-full p-0"
+                            aria-label={`Remove ${languageName(code)}`}
+                            onClick={() =>
+                              set({
+                                preferredLanguages:
+                                  form.preferredLanguages.filter(
+                                    (c) => c !== code,
+                                  ),
+                              })
+                            }
+                          >
+                            &times;
+                          </Button>
+                        </span>
+                      ))}
+                      <select
+                        id={addLanguageId}
+                        aria-label="Add a language"
+                        className={selectClass + " h-8 w-auto"}
+                        value=""
+                        onChange={(e) => {
+                          const code = e.target.value;
+                          if (!code) return;
+                          set({
+                            preferredLanguages: [
+                              ...form.preferredLanguages,
+                              code,
+                            ],
+                          });
+                        }}
+                      >
+                        <option value="">Add a language…</option>
+                        {COMMON_LANGUAGES.filter(
+                          (c) => !form.preferredLanguages.includes(c),
+                        ).map((c) => (
+                          <option key={c} value={c}>
+                            {languageName(c)} ({c})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {form.preferredLanguages.length === 0 && (
+                      <p
+                        role="alert"
+                        className="text-sm text-destructive-text"
+                      >
+                        {form.languageMode === "only"
+                          ? "With no languages listed, Shortlist will never ask for anything. Add at least one."
+                          : "With no languages listed, every title counts as another language and has to clear the higher bar."}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor={ratingId}>Minimum {ratingLabel} rating</Label>
@@ -627,6 +754,56 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                     Out of 10. A title must score at least this to be requested.
                   </p>
                 </div>
+                {form.languageMode === "prefer" && (
+                  <div className="space-y-2">
+                    <Label htmlFor={ratingOtherId}>
+                      Minimum {ratingLabel} rating, other languages
+                    </Label>
+                    <Input
+                      id={ratingOtherId}
+                      type="number"
+                      min={0}
+                      max={10}
+                      step={0.1}
+                      value={otherLanguageBar(form.minRating, form.minRatingOther)}
+                      onChange={(e) =>
+                        // "" must become null, not 0. `Number("") === 0`, and 0 is a REAL bar here
+                        // (nothing can fail it) — so clearing the box would silently turn "Prefer
+                        // these" into "Any language" for auto-send. Clearing is the natural inverse
+                        // of the hint's "Type a number to set it yourself", so it has to mean un-pin.
+                        set({
+                          minRatingOther:
+                            e.target.value === "" ? null : Number(e.target.value),
+                        })
+                      }
+                      className="w-28"
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      {form.minRatingOther === null
+                        ? `Following your minimum rating, plus ${OTHER_LANGUAGE_BAR_GAP}. Type a number to set it yourself.`
+                        : "What a title in another language has to score to be asked for on its own. Anything lower waits in your inbox."}
+                    </p>
+                    {form.minRatingOther !== null && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-auto p-0 text-sm font-medium text-primary underline underline-offset-2"
+                        onClick={() => set({ minRatingOther: null })}
+                      >
+                        Follow my minimum rating again
+                      </Button>
+                    )}
+                    {form.minRatingOther !== null &&
+                      form.minRatingOther < form.minRating && (
+                        <p role="alert" className="text-sm text-destructive-text">
+                          This is below your minimum rating of {form.minRating},
+                          so it never applies — a title under {form.minRating} is
+                          already out.
+                        </p>
+                      )}
+                  </div>
+                )}
                 <div className="space-y-2">
                   <Label htmlFor={votesId}>Minimum votes</Label>
                   <Input
