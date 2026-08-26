@@ -497,6 +497,28 @@ class RowSpec:
         return f"{SHARED_LABEL_PREFIX}{self.slug}" if self.shared else None
 
 
+# How much of a show Sonarr takes, as `addOptions.monitor` (MonitorTypes in Sonarr's
+# src/NzbDrone.Core/Tv/MonitoringOptions.cs). A SUBSET of that enum, and the cuts are measured rather
+# than guessed — every mode below was added to a real Sonarr 4.0.19 and its resulting season/episode
+# monitoring read back:
+#
+#   all 156/162 episodes · firstSeason 26 (season 1) · lastSeason 26 (the last) · pilot 1 · none 0
+#
+# Left out: `unknown` and `skip` are internal, `latestSeason` is [Obsolete], the two Specials entries
+# only toggle season 0 (a Season Pass concern, not "how much of this show do I want"), and
+# `future`/`existing`/`recent` all measured 0/162 on a show nobody has yet — `existing` monitors what
+# is on disk, `future` what has not aired, `recent` a 90-day window an older show is nowhere near.
+# Meaningful in Sonarr's own Season Pass; on the only thing Shortlist ever does — a NEW add — they are
+# an obscure spelling of `none`, which says it plainly.
+SONARR_MONITOR_MODES = (
+    "all",
+    "firstSeason",
+    "lastSeason",
+    "pilot",
+    "none",
+)
+
+
 @dataclass(frozen=True)
 class ArrTarget:
     """Where and how a Sonarr/Radarr instance should file a newly-requested title."""
@@ -560,6 +582,12 @@ class RequestConfig:
     # ("this row never asks for anything on its own"), so using it as the unset sentinel handed such
     # a row the FULL run cap: the exact inverse of the control, on a path that adds titles to Radarr.
     max_per_row: int | None = None
+    # Which episodes Sonarr monitors — and so searches for — when Shortlist adds a show. Passed
+    # straight through as `addOptions.monitor`. "all" is Sonarr's own default and what every add did
+    # before this setting existed, so an upgrade changes nothing until somebody picks another.
+    # A long-running show on "all" backfills every season the night it is added (issue #100), where a
+    # taster ("firstSeason") or a catch-up-from-here ("none", added unmonitored) is often what was meant.
+    sonarr_monitor: str = "all"
 
     def __post_init__(self) -> None:
         if self.max_per_row is None:
@@ -579,10 +607,10 @@ class RequestOverrides:
     rating-lookup budget and ``tag``. Those are the run's ceilings and its single API account — a row
     that could raise one would turn the owner's global setting into a suggestion.
 
-    The Arr overrides are PROFILE and ROOT FOLDER only. URL and API key stay global: the case this
-    serves is one Radarr filing a kids row into ``/data/Kids`` at a lower profile, not a second
-    Radarr. Overriding either on a row whose global target is unconfigured does nothing at all,
-    because there is no URL or key to send to.
+    The Arr overrides are the FILING choices — profile, root folder, and how much of a show Sonarr
+    monitors. URL and API key stay global: the case this serves is one Radarr filing a kids row into
+    ``/data/Kids`` at a lower profile, not a second Radarr. Overriding any of them on a row whose
+    global target is unconfigured does nothing at all, because there is no URL or key to send to.
     """
 
     min_rating: float | None = None
@@ -598,6 +626,7 @@ class RequestOverrides:
     radarr_root_folder: str | None = None
     sonarr_quality_profile_id: int | None = None
     sonarr_root_folder: str | None = None
+    sonarr_monitor: str | None = None
 
 
 @dataclass(frozen=True)

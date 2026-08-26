@@ -74,6 +74,7 @@ function row(patch: Partial<Collection> = {}): Collection {
     req_radarr_root_folder: null,
     req_sonarr_quality_profile_id: null,
     req_sonarr_root_folder: null,
+    req_sonarr_monitor: null,
     seed_window: 1,
     pick_order: "best",
     placement: "both",

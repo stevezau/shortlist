@@ -2917,6 +2917,11 @@ export interface components {
             req_radarr_quality_profile_id?: number | null;
             /** Req Radarr Root Folder */
             req_radarr_root_folder?: string | null;
+            /**
+             * Req Sonarr Monitor
+             * @enum {unknown}
+             */
+            req_sonarr_monitor?: "all" | "firstSeason" | "lastSeason" | "pilot" | "none" | null;
             /** Req Sonarr Quality Profile Id */
             req_sonarr_quality_profile_id?: number | null;
             /** Req Sonarr Root Folder */
@@ -3068,6 +3073,12 @@ export interface components {
             req_radarr_quality_profile_id: number | null;
             /** Req Radarr Root Folder */
             req_radarr_root_folder: string | null;
+            /**
+             * Req Sonarr Monitor
+             * @description How much of a show Sonarr monitors for this row's requests (Sonarr's Add Series 'Monitor' choice); null inherits the global requests.sonarr.monitor.
+             * @enum {unknown}
+             */
+            req_sonarr_monitor: "all" | "firstSeason" | "lastSeason" | "pilot" | "none" | null;
             /** Req Sonarr Quality Profile Id */
             req_sonarr_quality_profile_id: number | null;
             /** Req Sonarr Root Folder */

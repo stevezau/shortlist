@@ -1121,6 +1121,49 @@ class TestRowAutoUserTag0075:
         assert "req_auto_user_tag" not in self._columns(tmp_path)
 
 
+class TestRowSonarrMonitor0084:
+    """0084 adds the per-row override for how much of a show Sonarr takes (issue #100).
+
+    Nullable, no backfill, no server default — NULL is "inherit `requests.sonarr.monitor`", whose own
+    default is "all". Anything else would pin every existing row to a mode its owner never chose, on
+    the one setting that decides how much gets downloaded.
+    """
+
+    @staticmethod
+    def _columns(config_dir: Path) -> dict[str, bool]:
+        """column -> whether it is NOT NULL."""
+        con = sqlite3.connect(config_dir / "shortlist.db")
+        try:
+            return {r[1]: bool(r[3]) for r in con.execute("PRAGMA table_info(collections)")}
+        finally:
+            con.close()
+
+    def test_the_column_is_nullable_and_the_seeded_row_inherits(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        columns = self._columns(tmp_path)
+        assert "req_sonarr_monitor" in columns
+        assert not columns["req_sonarr_monitor"], "NULL is how a row inherits the global mode"
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        try:
+            rows = con.execute("SELECT req_sonarr_monitor FROM collections").fetchall()
+        finally:
+            con.close()
+        assert rows, "expected the seeded default row"
+        assert {r[0] for r in rows} == {None}
+
+    def test_running_it_again_over_an_already_migrated_database_is_a_no_op(self, tmp_path: Path):
+        """The maintainer's server runs `dev` builds, so this migration lands on databases that may
+        already carry the column from an earlier build of the same change."""
+        run_migrations(tmp_path)
+        run_migrations(tmp_path)
+        assert "req_sonarr_monitor" in self._columns(tmp_path)
+
+    def test_the_downgrade_removes_it_again(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0083")
+        assert "req_sonarr_monitor" not in self._columns(tmp_path)
+
+
 class TestSharedPickMediaTypeBackfill0081:
     """0081 puts `media_type` back on shared-row picks written before `_pick_dicts` carried it.
 

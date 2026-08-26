@@ -61,6 +61,7 @@ class FakeArr:
     ):
         self.movie_calls: list[tuple[int, bool]] = []
         self.series_calls: list[tuple[int, bool]] = []
+        self.monitor_calls: list[str] = []  # the Sonarr monitor mode each add was sent with
         self.tag_calls: list[set[str]] = []  # extra_tags passed on each add, in call order
         self.raise_on = raise_on
         self.skip_present = skip_present or set()
@@ -99,10 +100,11 @@ class FakeArr:
         return ("would_request" if dry_run else "requested", "ok", f"movie-{tmdb_id}")
 
     def add_series(
-        self, tvdb_id: int, *, dry_run: bool, extra_tags: set[str] | None = None
+        self, tvdb_id: int, *, dry_run: bool, extra_tags: set[str] | None = None, monitor: str = "all"
     ) -> tuple[str, str, str | None]:
         self.series_calls.append((tvdb_id, dry_run))
         self.tag_calls.append(set(extra_tags or set()))
+        self.monitor_calls.append(monitor)
         return ("would_request" if dry_run else "requested", "ok", f"series-{tvdb_id}")
 
 
@@ -952,6 +954,28 @@ class TestRequestTitles:
         assert radarr.movie_calls == [(10, False)]
         assert sonarr.series_calls == [(7777, False)]  # routed by TVDB id, same path as the auto pass
         assert report.requested == 2
+
+    def test_each_row_sends_shows_under_its_own_monitor_mode(self, monkeypatch):
+        """The per-row control is worth nothing if every row's shows reach Sonarr the same way.
+
+        Both rows share one Sonarr (one client, one rate limiter), so the mode has to travel with the
+        title rather than with the client — the mistake this asserts against.
+        """
+        sonarr = FakeArr()
+        monkeypatch.setattr(requests_mod, "SonarrClient", lambda *a, **k: sonarr)
+        taster = MissingTitle(20, "kids show", MediaType.SHOW, 2020, rating=8.0, vote_count=500)
+        everything = MissingTitle(21, "long show", MediaType.SHOW, 2020, rating=8.0, vote_count=500)
+        cfg_by_row = {
+            "kids": RequestConfig(enabled=True, sonarr=SONARR, sonarr_monitor="firstSeason"),
+            "grown": RequestConfig(enabled=True, sonarr=SONARR, sonarr_monitor="all"),
+        }
+
+        requests_mod.request_titles_by_row(
+            cfg_by_row, FakeTmdb({20: 7777, 21: 8888}), [("kids", taster), ("grown", everything)], dry_run=False
+        )
+
+        assert sonarr.series_calls == [(7777, False), (8888, False)]
+        assert sonarr.monitor_calls == ["firstSeason", "all"]
 
     def test_dry_run_flows_through(self, monkeypatch):
         fake = FakeArr()

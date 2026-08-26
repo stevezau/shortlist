@@ -27,6 +27,22 @@ class TestSettingsValidation:
         assert client.put("/api/settings", json={"values": {"plextv.throttle_s": -1}}).status_code == 422
         assert client.put("/api/settings", json={"values": {"plextv.throttle_s": 61}}).status_code == 422
 
+    def test_the_sonarr_monitor_mode_accepts_only_the_modes_shortlist_offers(self, client: TestClient):
+        # Sonarr 400s the whole add on a monitor value it doesn't know, so a typo saved here would
+        # surface a fortnight later as shows that never arrived — with nothing on screen to explain it.
+        for offered in ("all", "firstSeason", "lastSeason", "pilot", "none"):
+            resp = client.put("/api/settings", json={"values": {"requests.sonarr.monitor": offered}})
+            assert resp.status_code == 200, f"{offered}: {resp.text}"
+
+        # The accepted set is a SUBSET of Sonarr's enum, so these are refused even though Sonarr
+        # itself would take them. `future`/`existing`/`recent` monitor nothing at all on a show the
+        # server doesn't have yet (measured on Sonarr 4.0.19: 0 of 162 episodes), which is what
+        # `none` says plainly; `skip` and `monitorSpecials` are internal / season-0 only. Accepting
+        # any of them would put a mode in the DB that no screen can show or undo.
+        for refused in ("recent", "future", "existing", "missing", "skip", "monitorSpecials", "first season"):
+            resp = client.put("/api/settings", json={"values": {"requests.sonarr.monitor": refused}})
+            assert resp.status_code == 422, f"{refused} was accepted"
+
     def test_a_bad_plex_timeout_is_refused(self, client: TestClient):
         # It's read unguarded as int(...) in build_context, so a bad stored value would crash every run.
         assert client.put("/api/settings", json={"values": {"plex.timeout_s": 45}}).status_code == 200

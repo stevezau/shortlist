@@ -14,6 +14,13 @@ import { RATING_LABELS, RATING_SOURCES } from "@/lib/rating-sources";
 import { useAutosavedSettings } from "@/lib/autosave";
 import { settingBool, settingNumber, settingString } from "@/lib/format";
 import { useArrOptions } from "@/lib/queries";
+import type { SonarrMonitor } from "@/lib/sonarr-monitor";
+import {
+  asSonarrMonitor,
+  SONARR_MONITOR_HINTS,
+  SONARR_MONITOR_LABELS,
+  SONARR_MONITOR_MODES,
+} from "@/lib/sonarr-monitor";
 import { hasMdblist } from "@/lib/sources";
 import type { Settings } from "@/lib/types";
 
@@ -31,6 +38,8 @@ interface RequestsForm {
   enabled: boolean;
   radarr: ArrForm;
   sonarr: ArrForm;
+  /** How much of a show Sonarr monitors when a request goes out. Sonarr's own Add Series choice. */
+  sonarrMonitor: SonarrMonitor;
   ratingSource: RatingSource;
   minRating: number;
   minVotes: number;
@@ -63,6 +72,7 @@ function readForm(settings: Settings): RequestsForm {
     enabled: settingBool(settings, "requests.enabled"),
     radarr: readArr(settings, "requests.radarr"),
     sonarr: readArr(settings, "requests.sonarr"),
+    sonarrMonitor: asSonarrMonitor(settings["requests.sonarr.monitor"]),
     ratingSource: RATING_SOURCES.includes(
       settingString(settings, "requests.rating_source", "tmdb") as RatingSource,
     )
@@ -92,7 +102,8 @@ const selectClass =
 
 /** One app's where-to-file choices for requests (Radarr for movies, Sonarr for shows). The
  *  connection itself — address + API key — lives in Settings → Connections; this only picks the
- *  quality profile and folder, and only once that app is connected. */
+ *  quality profile, folder and (Sonarr) how much of a show to take, and only once that app is
+ *  connected. */
 function ArrCard({
   service,
   title,
@@ -101,6 +112,8 @@ function ArrCard({
   onChange,
   connected,
   onGoToConnections,
+  monitor,
+  onMonitorChange,
 }: {
   service: "radarr" | "sonarr";
   title: string;
@@ -110,10 +123,14 @@ function ArrCard({
   /** True once this app's URL + key are SAVED (in Connections), so its profiles/folders can load. */
   connected: boolean;
   onGoToConnections: () => void;
+  /** Sonarr only — how much of a show to take. Films have no seasons, so Radarr passes neither. */
+  monitor?: SonarrMonitor;
+  onMonitorChange?: (next: SonarrMonitor) => void;
 }) {
   const options = useArrOptions(service, connected);
   const profileId = useId();
   const folderId = useId();
+  const monitorId = useId();
 
   return (
     <Card>
@@ -148,60 +165,91 @@ function ArrCard({
               Go to Connections
             </Button>
           </div>
-        ) : options.isError ? (
-          <p className="text-sm text-destructive-text">
-            Couldn&rsquo;t reach {title} to load its quality profiles and
-            folders. Check its address and API key on the {title} card in
-            Connections, and press Test there.
-          </p>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor={profileId}>Quality</Label>
-              <select
-                id={profileId}
-                className={selectClass}
-                disabled={options.isPending}
-                value={form.qualityProfileId}
-                onChange={(e) =>
-                  onChange({
-                    ...form,
-                    qualityProfileId: Number(e.target.value),
-                  })
-                }
-              >
-                <option value={0} disabled>
-                  {options.isPending ? "Loading…" : "Choose a quality profile"}
-                </option>
-                {options.data?.quality_profiles.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor={folderId}>Save to</Label>
-              <select
-                id={folderId}
-                className={selectClass}
-                disabled={options.isPending}
-                value={form.rootFolder}
-                onChange={(e) =>
-                  onChange({ ...form, rootFolder: e.target.value })
-                }
-              >
-                <option value="" disabled>
-                  {options.isPending ? "Loading…" : "Choose a folder"}
-                </option>
-                {options.data?.root_folders.map((f) => (
-                  <option key={f.id} value={f.path}>
-                    {f.path}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+          <>
+            {options.isError ? (
+              <p className="text-sm text-destructive-text">
+                Couldn&rsquo;t reach {title} to load its quality profiles and
+                folders. Check its address and API key on the {title} card in
+                Connections, and press Test there.
+              </p>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor={profileId}>Quality</Label>
+                  <select
+                    id={profileId}
+                    className={selectClass}
+                    disabled={options.isPending}
+                    value={form.qualityProfileId}
+                    onChange={(e) =>
+                      onChange({
+                        ...form,
+                        qualityProfileId: Number(e.target.value),
+                      })
+                    }
+                  >
+                    <option value={0} disabled>
+                      {options.isPending
+                        ? "Loading…"
+                        : "Choose a quality profile"}
+                    </option>
+                    {options.data?.quality_profiles.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor={folderId}>Save to</Label>
+                  <select
+                    id={folderId}
+                    className={selectClass}
+                    disabled={options.isPending}
+                    value={form.rootFolder}
+                    onChange={(e) =>
+                      onChange({ ...form, rootFolder: e.target.value })
+                    }
+                  >
+                    <option value="" disabled>
+                      {options.isPending ? "Loading…" : "Choose a folder"}
+                    </option>
+                    {options.data?.root_folders.map((f) => (
+                      <option key={f.id} value={f.path}>
+                        {f.path}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {/* Sonarr only, and outside the error branch above on purpose: this list is Sonarr's
+                enum, not something fetched, so an unreachable Sonarr is no reason to hide it. */}
+            {monitor !== undefined && onMonitorChange && (
+              <div className="space-y-2">
+                <Label htmlFor={monitorId}>How much of a show to grab</Label>
+                <select
+                  id={monitorId}
+                  className={selectClass}
+                  value={monitor}
+                  onChange={(e) =>
+                    onMonitorChange(asSonarrMonitor(e.target.value))
+                  }
+                >
+                  {SONARR_MONITOR_MODES.map((mode) => (
+                    <option key={mode} value={mode}>
+                      {SONARR_MONITOR_LABELS[mode]}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-sm text-muted-foreground">
+                  {SONARR_MONITOR_HINTS[monitor]}
+                </p>
+              </div>
+            )}
+          </>
         )}
       </CardContent>
     </Card>
@@ -257,6 +305,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
       "requests.radarr.root_folder": form.radarr.rootFolder,
       "requests.sonarr.quality_profile_id": form.sonarr.qualityProfileId,
       "requests.sonarr.root_folder": form.sonarr.rootFolder,
+      "requests.sonarr.monitor": form.sonarrMonitor,
       "requests.rating_source": form.ratingSource,
       "requests.min_rating": form.minRating,
       "requests.min_votes": form.minVotes,
@@ -337,6 +386,8 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                 onChange={(sonarr) => set({ sonarr })}
                 connected={sonarrConnected}
                 onGoToConnections={goToConnections}
+                monitor={form.sonarrMonitor}
+                onMonitorChange={(sonarrMonitor) => set({ sonarrMonitor })}
               />
             </div>
 

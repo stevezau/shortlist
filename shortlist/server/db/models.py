@@ -262,6 +262,10 @@ class Collection(Base):
     req_radarr_root_folder: Mapped[str | None] = mapped_column(String(512), nullable=True, default=None)
     req_sonarr_quality_profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     req_sonarr_root_folder: Mapped[str | None] = mapped_column(String(512), nullable=True, default=None)
+    # How much of a show Sonarr monitors for THIS row's requests (Sonarr's Add Series "Monitor"
+    # choice). NULL -> inherit the global `requests.sonarr.monitor`. A kids row can take season 1
+    # only while everything else keeps the whole run of a show.
+    req_sonarr_monitor: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
     # Tag this row's requests with the wanting person's slug, so the owner can see in Sonarr/Radarr
     # who a title was added for. NULL -> inherit the global `requests.auto_user_tag`.
     #

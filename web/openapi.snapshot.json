@@ -819,6 +819,26 @@
             ],
             "title": "Req Radarr Root Folder"
           },
+          "req_sonarr_monitor": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "enum": [
+              "all",
+              "firstSeason",
+              "lastSeason",
+              "pilot",
+              "none",
+              null
+            ],
+            "title": "Req Sonarr Monitor"
+          },
           "req_sonarr_quality_profile_id": {
             "anyOf": [
               {
@@ -1235,6 +1255,26 @@
             ],
             "title": "Req Radarr Root Folder"
           },
+          "req_sonarr_monitor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How much of a show Sonarr monitors for this row's requests (Sonarr's Add Series 'Monitor' choice); null inherits the global requests.sonarr.monitor.",
+            "enum": [
+              "all",
+              "firstSeason",
+              "lastSeason",
+              "pilot",
+              "none",
+              null
+            ],
+            "title": "Req Sonarr Monitor"
+          },
           "req_sonarr_quality_profile_id": {
             "anyOf": [
               {
@@ -1341,6 +1381,7 @@
           "req_radarr_root_folder",
           "req_sonarr_quality_profile_id",
           "req_sonarr_root_folder",
+          "req_sonarr_monitor",
           "pick_order",
           "placement",
           "placement_friends",

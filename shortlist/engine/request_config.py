@@ -38,6 +38,7 @@ def resolve_request_config(base: RequestConfig, overrides: RequestOverrides | No
         base,
         radarr=_retarget(base.radarr, overrides.radarr_quality_profile_id, overrides.radarr_root_folder),
         sonarr=_retarget(base.sonarr, overrides.sonarr_quality_profile_id, overrides.sonarr_root_folder),
+        sonarr_monitor=pick(overrides.sonarr_monitor, base.sonarr_monitor),
         min_rating=pick(overrides.min_rating, base.min_rating),
         min_votes=pick(overrides.min_votes, base.min_votes),
         min_demand=pick(overrides.min_demand, base.min_demand),

@@ -605,7 +605,7 @@ def _send_claims(
         cfg = cfg_by_row[slug]
         radarr = _cached_client(clients, clocks, cfg.radarr, RadarrClient, min_write_interval)
         sonarr = _cached_client(clients, clocks, cfg.sonarr, SonarrClient, min_write_interval)
-        outcomes.append(_request_one(title, radarr, sonarr, tmdb, dry_run=dry_run))
+        outcomes.append(_request_one(title, radarr, sonarr, tmdb, dry_run=dry_run, sonarr_monitor=cfg.sonarr_monitor))
     return outcomes
 
 
@@ -835,6 +835,7 @@ def _request_one(
     tmdb: TmdbClient,
     *,
     dry_run: bool,
+    sonarr_monitor: str = "all",
 ) -> RequestOutcome:
     """Route one missing title to the right app; translate any failure into an outcome, never a raise."""
 
@@ -887,7 +888,9 @@ def _request_one(
                 "skipped_no_tvdb",
                 "TMDB has no TheTVDB id for this show, and Sonarr needs one — add it in Sonarr yourself",
             )
-        status, detail, slug = sonarr.add_series(tvdb_id, dry_run=dry_run, extra_tags=title.tags)
+        status, detail, slug = sonarr.add_series(
+            tvdb_id, dry_run=dry_run, extra_tags=title.tags, monitor=sonarr_monitor
+        )
         return outcome(status, detail, slug)
     except ArrError as e:
         # A request failing is a footnote, never a run failure — Sonarr/Radarr are optional plumbing.

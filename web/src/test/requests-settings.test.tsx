@@ -195,6 +195,37 @@ describe("RequestsSettings", () => {
     expect(screen.getByText("Save to")).toBeTruthy();
   });
 
+  it("offers the amount-of-a-show choice for Sonarr and saves it", async () => {
+    // Issue #100: every show used to arrive with all seasons monitored, so a twelve-season show
+    // started twelve seasons of downloads the night it was picked.
+    renderPanel({
+      "requests.enabled": true,
+      "requests.sonarr.url": "http://sonarr",
+      "requests.sonarr.apikey": "•••••",
+    });
+
+    const monitor = await screen.findByLabelText(/How much of a show to grab/i);
+    expect(monitor).toHaveValue("all");
+    await userEvent.selectOptions(monitor, "firstSeason");
+
+    expect(screen.getByText(/Season 1 only/)).toBeTruthy();
+    await waitFor(() =>
+      expect(putSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ "requests.sonarr.monitor": "firstSeason" }),
+      ),
+    );
+  });
+
+  it("does not offer it for Radarr, which has no seasons to limit", async () => {
+    renderPanel({
+      "requests.enabled": true,
+      "requests.radarr.url": "http://radarr",
+      "requests.radarr.apikey": "•••••",
+    });
+    await screen.findByText("Quality");
+    expect(screen.queryByLabelText(/How much of a show to grab/i)).toBeNull();
+  });
+
   it("teaches the auto-send choice before the guardrails it sits on top of", async () => {
     renderPanel({ "requests.enabled": true });
     const autoSend = await screen.findByText(

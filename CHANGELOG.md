@@ -6,6 +6,22 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+
+- **Choose how much of a show to grab.** Every show Shortlist requested arrived with all seasons
+  monitored, so one pick of a long-running series started the whole back catalogue downloading that
+  night — enough to fill a disk, and enough to spend a day's worth of indexer queries on a show
+  nobody had watched an episode of yet.
+
+  Settings → Requests now has **How much of a show to grab** on the Sonarr card, and any per-person
+  row can override it in the row editor. The choices are Sonarr's own Add Series _Monitor_ options,
+  passed through unchanged, so they mean exactly what they mean in Sonarr: **All Episodes** (still
+  the default), **First Season** for a taster you can extend later, **Last Season**, **Pilot
+  Episode**, and **None** to file the show in Sonarr without downloading anything.
+
+  It applies only to shows Shortlist adds. One Sonarr already tracks is left exactly as you have it,
+  as before.
+
 ### Fixed
 
 - **Moving your watching to a second account now copies your history exactly.** It was marking whole

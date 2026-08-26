@@ -4,6 +4,7 @@ import {
   RECENCY_DEFAULT,
   WATCHED_PCT_DEFAULT,
 } from "@/lib/constants";
+import { asSonarrMonitor, SONARR_MONITOR_LABELS } from "@/lib/sonarr-monitor";
 import type { Settings } from "@/lib/types";
 
 /** Mirrors the server's `recommendations.*` defaults (shortlist/server/settings_store.py) — used
@@ -197,4 +198,14 @@ export function requestRootFolderGlobal(
   if (!settings) return null;
   const raw = settings[`requests.${app}.root_folder`];
   return typeof raw === "string" && raw ? raw : null;
+}
+
+/** Sonarr's monitor choice, in its own words — "All Episodes", "First Season". */
+export function requestSonarrMonitorGlobal(
+  settings: Settings | undefined,
+): string | null {
+  if (!settings) return null;
+  return SONARR_MONITOR_LABELS[
+    asSonarrMonitor(settings["requests.sonarr.monitor"])
+  ];
 }

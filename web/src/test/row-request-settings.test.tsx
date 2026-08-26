@@ -27,6 +27,7 @@ const INHERITS: RowRequestInput = {
   req_radarr_quality_profile_id: null,
   req_sonarr_root_folder: null,
   req_sonarr_quality_profile_id: null,
+  req_sonarr_monitor: null,
 };
 
 const SETTINGS = {
@@ -36,6 +37,7 @@ const SETTINGS = {
   "requests.max_per_run": 10,
   "requests.auto_send": true,
   "requests.radarr.root_folder": "/data/Movies",
+  "requests.sonarr.monitor": "all",
   "requests.auto_user_tag": true,
 } as unknown as Settings;
 
@@ -132,6 +134,31 @@ describe("RowRequestSettings", () => {
       screen.getByLabelText("Tag this row's requests by person"),
     );
     expect(set).toHaveBeenCalledWith({ req_auto_user_tag: true });
+  });
+
+  it("names the global amount-of-a-show in Sonarr's own words while inheriting", () => {
+    // Sonarr's label, not ours: someone comparing this row with Sonarr's Add Series screen must not
+    // have to work out which of our words means which of theirs.
+    renderSection();
+    expect(screen.getByText(/All Episodes/)).toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).toBeNull();
+  });
+
+  it("overriding seeds a real mode, since inheriting 'all' would look like nothing happened", async () => {
+    const set = renderSection();
+    await userEvent.click(
+      screen.getByLabelText(
+        "Use the global amount-of-a-show setting for this row",
+      ),
+    );
+    expect(set).toHaveBeenCalledWith({ req_sonarr_monitor: "firstSeason" });
+  });
+
+  it("says what the chosen mode actually downloads", async () => {
+    const set = renderSection({ req_sonarr_monitor: "firstSeason" });
+    expect(screen.getByText(/Season 1 only/)).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByRole("combobox"), "none");
+    expect(set).toHaveBeenCalledWith({ req_sonarr_monitor: "none" });
   });
 
   it("warns when requests are switched off entirely", () => {

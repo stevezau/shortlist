@@ -121,6 +121,28 @@ class TestTargetOverrides:
         assert out.radarr.tag == "shortlist"
 
 
+class TestTheSonarrMonitorMode:
+    """How much of a show Sonarr takes is taste, not a shared ceiling, so it goes per row."""
+
+    def test_it_inherits_the_global_when_the_row_says_nothing(self):
+        resolved = resolve_request_config(_cfg(sonarr_monitor="firstSeason"), RequestOverrides())
+        assert resolved.sonarr_monitor == "firstSeason"
+
+    def test_a_row_can_take_less_of_a_show_than_the_global(self):
+        resolved = resolve_request_config(_cfg(sonarr_monitor="all"), RequestOverrides(sonarr_monitor="firstSeason"))
+        assert resolved.sonarr_monitor == "firstSeason"
+
+    def test_a_row_can_also_take_more_because_this_is_taste_not_a_ceiling(self):
+        # Unlike max_per_row, nothing here is clamped: the mode says which episodes of ONE show the
+        # row wanted, and max_per_run still caps how many shows the run may ask for at all.
+        resolved = resolve_request_config(_cfg(sonarr_monitor="firstSeason"), RequestOverrides(sonarr_monitor="all"))
+        assert resolved.sonarr_monitor == "all"
+
+    def test_overriding_the_mode_leaves_the_sonarr_target_alone(self):
+        resolved = resolve_request_config(_cfg(), RequestOverrides(sonarr_monitor="pilot"))
+        assert resolved.sonarr == SONARR
+
+
 class TestZeroIsARealChoiceNotAnUnsetSentinel:
     """Architecture review, 2026-08-18 (HIGH). `max_per_row` used 0 as its "inherit" sentinel, so a
     row set to 0 — which the editor offers, and describes as "this row never asks for anything on its

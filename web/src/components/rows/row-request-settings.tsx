@@ -10,8 +10,9 @@
  *  - **Ceilings are not overridable.** `max_per_run` and the rating source belong to the run and to
  *    the one MDBList account. A row may set `req_max_per_row` to take LESS of the run's cap; it can
  *    never take more, so the caption says what the run allows rather than offering to raise it.
- *  - **Only the profile and root folder are per row.** URL and API key stay global: the case this
- *    serves is one Radarr filing a kids row into /data/Kids at a lower profile, not a second Radarr.
+ *  - **Only the filing choices are per row** — profile, root folder, and how much of a show Sonarr
+ *    takes. URL and API key stay global: the case this serves is one Radarr filing a kids row into
+ *    /data/Kids at a lower profile, not a second Radarr.
  *
  * Not rendered at all for a shared row. A shared row is built from titles people have already
  * WATCHED, which are by definition already on the server, so it can never surface a missing title to
@@ -28,8 +29,16 @@ import {
   requestMaxPerRunGlobal,
   requestRatingGlobal,
   requestRootFolderGlobal,
+  requestSonarrMonitorGlobal,
   requestYearGlobal,
 } from "@/lib/row-globals";
+import type { RowSonarrMonitor } from "@/lib/sonarr-monitor";
+import {
+  asSonarrMonitor,
+  SONARR_MONITOR_HINTS,
+  SONARR_MONITOR_LABELS,
+  SONARR_MONITOR_MODES,
+} from "@/lib/sonarr-monitor";
 import type { Settings } from "@/lib/types";
 
 /** The subset of the row draft this section reads and writes. */
@@ -45,6 +54,7 @@ export type RowRequestInput = {
   req_radarr_quality_profile_id: number | null;
   req_sonarr_root_folder: string | null;
   req_sonarr_quality_profile_id: number | null;
+  req_sonarr_monitor: RowSonarrMonitor;
 };
 
 function Field({
@@ -348,6 +358,36 @@ export function RowRequestSettings({
             })
           }
         />
+      </Field>
+
+      <Field
+        label="How much of a show this row grabs"
+        labelFor="row-req-sonarr-monitor"
+        description="Sonarr downloads what it monitors, so a long-running show normally arrives whole. A row that's meant as a taster can take the first season and no more."
+        ariaLabel="Use the global amount-of-a-show setting for this row"
+        inheriting={input.req_sonarr_monitor === null}
+        globalValue={requestSonarrMonitorGlobal(settings)}
+        onToggle={(on) =>
+          set({ req_sonarr_monitor: on ? null : "firstSeason" })
+        }
+      >
+        <select
+          id="row-req-sonarr-monitor"
+          className="h-9 w-full rounded-md border bg-elevated px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          value={input.req_sonarr_monitor ?? "all"}
+          onChange={(e) =>
+            set({ req_sonarr_monitor: asSonarrMonitor(e.target.value) })
+          }
+        >
+          {SONARR_MONITOR_MODES.map((mode) => (
+            <option key={mode} value={mode}>
+              {SONARR_MONITOR_LABELS[mode]}
+            </option>
+          ))}
+        </select>
+        <p className="text-sm text-muted-foreground">
+          {SONARR_MONITOR_HINTS[input.req_sonarr_monitor ?? "all"]}
+        </p>
       </Field>
     </div>
   );

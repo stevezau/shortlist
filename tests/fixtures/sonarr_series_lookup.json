@@ -1,0 +1,86 @@
+[
+  {
+    "added": "0001-01-01T00:00:00Z",
+    "certification": "TV-G",
+    "cleanTitle": "pingu",
+    "ended": true,
+    "firstAired": "1989-10-15T00:00:00Z",
+    "folder": "Pingu (1989) {tvdb-75669}",
+    "genres": [
+      "Animation",
+      "Children",
+      "Comedy",
+      "Family"
+    ],
+    "images": [],
+    "imdbId": "tt0366069",
+    "languageProfileId": 1,
+    "lastAired": "2006-03-03T00:00:00Z",
+    "monitorNewItems": "all",
+    "monitored": true,
+    "network": "BBC Two",
+    "originalLanguage": {
+      "id": 1,
+      "name": "English"
+    },
+    "overview": "Pingu finds himself in tricky and comical situations, but he always learns a lesson. Pingu spends his days with his parents and baby sister, Pinga. Everyone in his town speaks \"Penguinese.\" Laugh along and find out what happens.",
+    "qualityProfileId": 0,
+    "ratings": {
+      "value": 0,
+      "votes": 0
+    },
+    "remotePoster": "https://artworks.thetvdb.com/banners/posters/75669-1.jpg",
+    "runtime": 5,
+    "seasonFolder": false,
+    "seasons": [
+      {
+        "monitored": false,
+        "seasonNumber": 0
+      },
+      {
+        "monitored": true,
+        "seasonNumber": 1
+      },
+      {
+        "monitored": true,
+        "seasonNumber": 2
+      },
+      {
+        "monitored": true,
+        "seasonNumber": 3
+      },
+      {
+        "monitored": true,
+        "seasonNumber": 4
+      },
+      {
+        "monitored": true,
+        "seasonNumber": 5
+      },
+      {
+        "monitored": true,
+        "seasonNumber": 6
+      }
+    ],
+    "seriesType": "standard",
+    "sortTitle": "pingu",
+    "statistics": {
+      "episodeCount": 0,
+      "episodeFileCount": 0,
+      "percentOfEpisodes": 0,
+      "seasonCount": 6,
+      "sizeOnDisk": 0,
+      "totalEpisodeCount": 0
+    },
+    "status": "ended",
+    "tags": [],
+    "title": "Pingu",
+    "titleSlug": "pingu",
+    "tmdbId": 9262,
+    "tvMazeId": 6751,
+    "tvRageId": 2381,
+    "tvdbId": 75669,
+    "useSceneNumbering": false,
+    "year": 1989
+  }
+]

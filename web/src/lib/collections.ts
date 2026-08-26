@@ -56,6 +56,7 @@ export function blankInput(): CollectionInput {
     req_radarr_root_folder: null,
     req_sonarr_quality_profile_id: null,
     req_sonarr_root_folder: null,
+    req_sonarr_monitor: null,
     req_auto_user_tag: null,
     seed_window: 1,
     pick_order: "best",
@@ -103,10 +104,13 @@ export function toInput(collection: Collection): CollectionInput {
     req_auto_min_demand: collection.req_auto_min_demand ?? null,
     req_auto_min_rating: collection.req_auto_min_rating ?? null,
     req_max_per_row: collection.req_max_per_row ?? null,
-    req_radarr_quality_profile_id: collection.req_radarr_quality_profile_id ?? null,
+    req_radarr_quality_profile_id:
+      collection.req_radarr_quality_profile_id ?? null,
     req_radarr_root_folder: collection.req_radarr_root_folder ?? null,
-    req_sonarr_quality_profile_id: collection.req_sonarr_quality_profile_id ?? null,
+    req_sonarr_quality_profile_id:
+      collection.req_sonarr_quality_profile_id ?? null,
     req_sonarr_root_folder: collection.req_sonarr_root_folder ?? null,
+    req_sonarr_monitor: collection.req_sonarr_monitor ?? null,
     req_auto_user_tag: collection.req_auto_user_tag ?? null,
     seed_window: collection.seed_window ?? 1,
     pick_order: collection.pick_order ?? "best",

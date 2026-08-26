@@ -18,7 +18,15 @@ Set it up under **Settings → Requests**:
    `http://localhost:8989` for Sonarr) and **API key** (found in the app under _Settings →
    General_), then click **Test connection**. Save.
 3. Once connected, pick a **Quality** profile and a **Save to** folder from the dropdowns. Shortlist
-   reads these straight from the app, so there are no ids to look up.
+   reads these straight from the app, so there are no ids to look up. For Sonarr, also pick **how
+   much of a show to grab** — these are Sonarr's own Add Series _Monitor_ choices, so they mean
+   exactly what they mean there. (Sonarr's other monitor options aren't offered: on a show your
+   server doesn't have yet, _Future_, _Existing_ and _Recent_ each monitor nothing at all, which
+   **None** already says plainly.) **All Episodes** (the default) takes the whole back catalogue, which
+   on a twelve-season show is twelve seasons of downloads the night it is added; **First Season**
+   makes it a taster you can extend in Sonarr later; **None** files the show unmonitored so nothing
+   downloads until you say so. It applies only to shows Shortlist adds — one Sonarr already tracks is
+   left exactly as you have it.
 4. Choose **Send on its own, or ask me first**: titles wanted by enough people _and_ rated highly
    enough go out as soon as a run finds them; everything else that clears the guardrails waits in
    your **Requests** inbox. Turn it off for a fully manual queue. While it's on, also set **the most
@@ -110,7 +118,8 @@ without asking only if it clears **both** `requests.auto_min_demand` (default 3 
   titles as its lookup budget allows (see below).
 - **Already in Radarr/Sonarr** — the card shows a **Downloaded / Downloading / Searching / Not
   monitored** badge if either app already tracks it, which normally means it was added by hand after
-  it landed here. Films drop off the list on the next run. **Shows only drop off on Sonarr v4**,
+  it landed here. **Not monitored** is also what a show added under **None** reads as, which is that
+  setting working as asked rather than a problem to fix. Films drop off the list on the next run. **Shows only drop off on Sonarr v4**,
   because matching them back to the request needs Sonarr's own TMDB id, which v3 doesn't report. On v3
   the badge appears but the entry stays until you clear it yourself.
 
@@ -138,8 +147,9 @@ that would pass sit further down. A bigger budget reaches them.
 ## Different settings per row
 
 Everything above is the server-wide default. Any per-person row can override most of it in the row
-editor, under **Requests** — a kids row can file into its own folder at a lower quality profile, ask
-for a lower rating, and hold itself to one title a night, while your main row carries on as it was.
+editor, under **Requests** — a kids row can file into its own folder at a lower quality profile, take
+only the first season of a show, ask for a lower rating, and hold itself to one title a night, while
+your main row carries on as it was.
 
 A field left on "use the setting from Settings › Requests" follows the global, and follows it as you
 change it. Only the ones you deliberately override differ.
@@ -147,7 +157,7 @@ change it. Only the ones you deliberately override differ.
 Two things stay server-wide on purpose:
 
 - **How many a run may request.** This is what stops a library ballooning, so a row can only ever ask
-  for *less* of it, never more.
+  for _less_ of it, never more.
 - **The rating source and its MDBList key.** One account, one place to set it.
 
 ### How rows share the limit

@@ -37,6 +37,9 @@ DEFAULTS: dict[str, Any] = {
     "requests.sonarr.url": "",
     "requests.sonarr.quality_profile_id": 0,
     "requests.sonarr.root_folder": "",
+    # How much of a show Sonarr monitors when Shortlist adds it — Sonarr's own Add Series "Monitor"
+    # choice, passed through. "all" is Sonarr's default and the only behaviour there used to be.
+    "requests.sonarr.monitor": "all",
     "requests.rating_source": "tmdb",  # tmdb (no setup) | imdb | trakt | tomatoes | metacritic (via MDBList)
     "requests.min_rating": 7.0,  # rating floor on the chosen source
     "requests.min_votes": 100,  # vote-count floor on the chosen source

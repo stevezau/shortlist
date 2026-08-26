@@ -61,6 +61,7 @@ COLLECTION_KEYS = {
     "req_radarr_root_folder",
     "req_sonarr_quality_profile_id",
     "req_sonarr_root_folder",
+    "req_sonarr_monitor",
     "req_auto_user_tag",
     "pick_order",
     "placement",
@@ -2654,6 +2655,28 @@ class TestPerRowRequestSettingsApi:
         created = client.post("/api/collections", json={"name": "Never", "build": "per_person"}).json()
         patched = client.patch(f"/api/collections/{created['id']}", json={"name": "Never", "req_max_per_row": 0}).json()
         assert patched["req_max_per_row"] == 0
+
+    def test_a_rows_sonarr_monitor_mode_round_trips_and_clears(self, client: TestClient):
+        created = client.post("/api/collections", json={"name": "Kids", "build": "per_person"}).json()
+        assert created["req_sonarr_monitor"] is None
+
+        patched = client.patch(
+            f"/api/collections/{created['id']}", json={"name": "Kids", "req_sonarr_monitor": "firstSeason"}
+        ).json()
+        assert patched["req_sonarr_monitor"] == "firstSeason"
+
+        cleared = client.patch(
+            f"/api/collections/{created['id']}", json={"name": "Kids", "req_sonarr_monitor": None}
+        ).json()
+        assert cleared["req_sonarr_monitor"] is None
+
+    def test_a_monitor_mode_sonarr_does_not_accept_is_refused(self, client: TestClient):
+        created = client.post("/api/collections", json={"name": "Bad", "build": "per_person"}).json()
+        resp = client.patch(
+            f"/api/collections/{created['id']}", json={"name": "Bad", "req_sonarr_monitor": "seasonsIWant"}
+        )
+        assert resp.status_code == 422
+        assert "req_sonarr_monitor" in resp.text
 
     def test_an_out_of_range_rating_is_refused(self, client: TestClient):
         created = client.post("/api/collections", json={"name": "Bad", "build": "per_person"}).json()

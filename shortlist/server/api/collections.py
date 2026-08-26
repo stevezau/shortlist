@@ -19,7 +19,15 @@ from starlette.responses import StreamingResponse
 from shortlist.engine.candidates import KNOWN_SOURCES
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.delivery import target_sections
-from shortlist.engine.models import MAX_REFRESH_DAYS, MAX_ROW_SIZE, MIN_ROW_SIZE, RowSpec, dedupe_slug, slugify
+from shortlist.engine.models import (
+    MAX_REFRESH_DAYS,
+    MAX_ROW_SIZE,
+    MIN_ROW_SIZE,
+    SONARR_MONITOR_MODES,
+    RowSpec,
+    dedupe_slug,
+    slugify,
+)
 from shortlist.server.api.row_changes import (
     POSTER_RESET,
     PRIVACY_SYNC,
@@ -187,6 +195,13 @@ class CollectionIn(BaseModel):
     req_radarr_root_folder: str | None = Field(default=None, max_length=512)
     req_sonarr_quality_profile_id: int | None = Field(default=None, ge=1)
     req_sonarr_root_folder: str | None = Field(default=None, max_length=512)
+    # How much of a show Sonarr monitors for this row; null inherits requests.sonarr.monitor.
+    # Enforced in `_validate` (a plain-English 422 naming the modes, which a Pydantic enum error is
+    # not). The enum is ADVERTISED so the SPA's generated type is the union rather than a bare
+    # string — the row editor picks from it, and a bare string there checks nothing.
+    req_sonarr_monitor: str | None = Field(
+        default=None, max_length=32, json_schema_extra={"enum": [*SONARR_MONITOR_MODES, None]}
+    )
     # Tag this row's requests with the wanting person's slug; null inherits requests.auto_user_tag.
     req_auto_user_tag: bool | None = None
     # How many recent watches the row cycles between, one per run. 1 = always the most recent.
@@ -271,6 +286,15 @@ class CollectionOut(PassthroughModel):
     req_radarr_root_folder: str | None
     req_sonarr_quality_profile_id: int | None
     req_sonarr_root_folder: str | None
+    # Required, not defaulted (see `_closed_set_out`): every one of these comes from `_serialize`,
+    # and a default would let a handler that stopped sending it INVENT the key instead of failing.
+    req_sonarr_monitor: str | None = Field(
+        description=(
+            "How much of a show Sonarr monitors for this row's requests "
+            "(Sonarr's Add Series 'Monitor' choice); null inherits the global requests.sonarr.monitor."
+        ),
+        json_schema_extra={"enum": [*SONARR_MONITOR_MODES, None]},
+    )
     req_auto_user_tag: bool | None = Field(
         default=None,
         description=(
@@ -316,6 +340,11 @@ def _validate(body: CollectionIn) -> None:
         raise HTTPException(status_code=422, detail=f"pick_order must be one of {sorted(ORDERS)}")
     if body.cold_start is not None and body.cold_start not in COLD_STARTS:
         raise HTTPException(status_code=422, detail=f"cold_start must be null or one of {sorted(COLD_STARTS)}")
+    if body.req_sonarr_monitor is not None and body.req_sonarr_monitor not in SONARR_MONITOR_MODES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"req_sonarr_monitor must be null or one of {sorted(SONARR_MONITOR_MODES)}",
+        )
     if body.placement not in PLACEMENTS:
         raise HTTPException(status_code=422, detail=f"placement must be one of {sorted(PLACEMENTS)}")
     if body.placement_friends not in PLACEMENTS:
@@ -531,6 +560,7 @@ def _serialize(session, collection: Collection) -> dict:
         "req_radarr_root_folder": collection.req_radarr_root_folder,
         "req_sonarr_quality_profile_id": collection.req_sonarr_quality_profile_id,
         "req_sonarr_root_folder": collection.req_sonarr_root_folder,
+        "req_sonarr_monitor": collection.req_sonarr_monitor,
         "req_auto_user_tag": collection.req_auto_user_tag,
         "pick_order": collection.pick_order or "best",
         "placement": collection.placement or "both",
@@ -711,6 +741,7 @@ _PATCHABLE_COLUMNS = (
     "req_radarr_root_folder",
     "req_sonarr_quality_profile_id",
     "req_sonarr_root_folder",
+    "req_sonarr_monitor",
     "req_auto_user_tag",
     "pick_order",
     "placement",

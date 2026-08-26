@@ -11,7 +11,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from shortlist.engine.clients.http_retry import redact
-from shortlist.engine.models import MAX_REFRESH_DAYS, MAX_ROW_SIZE, MIN_ROW_SIZE
+from shortlist.engine.models import MAX_REFRESH_DAYS, MAX_ROW_SIZE, MIN_ROW_SIZE, SONARR_MONITOR_MODES
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import DEFAULT_SLUG, Server
@@ -278,6 +278,9 @@ VALIDATORS = {
     "requests.max_per_run": _bounded_int(0, 100),
     "requests.radarr.quality_profile_id": _bounded_int(0, 1_000_000),
     "requests.sonarr.quality_profile_id": _bounded_int(0, 1_000_000),
+    # Sonarr 400s the whole add on a value outside its enum, so the typo is refused here rather than
+    # discovered a fortnight later as a request that never arrived.
+    "requests.sonarr.monitor": _one_of(*SONARR_MONITOR_MODES),
     "row.name_template": _non_blank_row_template,
 }
 

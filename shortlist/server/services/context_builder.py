@@ -179,6 +179,7 @@ def row_request_overrides(collection: Collection) -> RequestOverrides | None:
         radarr_root_folder=collection.req_radarr_root_folder or None,
         sonarr_quality_profile_id=collection.req_sonarr_quality_profile_id,
         sonarr_root_folder=collection.req_sonarr_root_folder or None,
+        sonarr_monitor=collection.req_sonarr_monitor or None,
     )
     return overrides if overrides != RequestOverrides() else None
 
@@ -1080,4 +1081,5 @@ class ContextBuilder:
             auto_min_demand=int(store.get("requests.auto_min_demand")),
             auto_min_rating=float(store.get("requests.auto_min_rating")),
             auto_user_tag=bool(store.get("requests.auto_user_tag")),
+            sonarr_monitor=store.get("requests.sonarr.monitor") or "all",
         )

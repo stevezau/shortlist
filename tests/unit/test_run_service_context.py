@@ -470,6 +470,21 @@ class TestBuildRequests:
         on = self._store(sessions, tmp_path, base | {"requests.auto_user_tag": True})
         assert ContextBuilder._build_requests(on).auto_user_tag is True
 
+    def test_the_sonarr_monitor_mode_reaches_the_engine_config(self, sessions, tmp_path):
+        """The owner's choice is only worth anything if it travels; without this, deleting the one
+        line that reads it leaves every test green while every show quietly arrives whole again."""
+        base = {
+            "requests.enabled": True,
+            "requests.sonarr.url": "http://sonarr:8989",
+            "requests.sonarr.apikey": "sk",
+            "requests.sonarr.quality_profile_id": 1,
+            "requests.sonarr.root_folder": "/tv",
+        }
+        # Unset -> "all", which is what every add did before this setting existed.
+        assert ContextBuilder._build_requests(self._store(sessions, tmp_path, base)).sonarr_monitor == "all"
+        chosen = self._store(sessions, tmp_path, base | {"requests.sonarr.monitor": "firstSeason"})
+        assert ContextBuilder._build_requests(chosen).sonarr_monitor == "firstSeason"
+
     def test_half_configured_app_is_left_as_none(self, sessions, tmp_path):
         # Radarr has a URL but no key -> its target is None (movies skipped), Sonarr is whole.
         store = self._store(
