@@ -355,7 +355,7 @@ const ARR_STATUS_LABELS: Record<
   unmonitored: {
     label: "Not monitored",
     variant: "warning",
-    hint: "Sonarr or Radarr has this title but isn't looking for it, so nothing will download until it's monitored there. That's also exactly what Settings › Requests › How much of a show to grab does when it's set to None — so if you chose that, this is it working.",
+    hint: "Sonarr or Radarr has this title but isn't looking for it, so nothing will download until it's monitored there. If you set “How much of a show to grab” to None — either in Settings › Requests or on the row itself — this is that working as asked.",
   },
 };
 

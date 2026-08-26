@@ -37,6 +37,7 @@ from shortlist.engine.models import (
     RowSpec,
     UserProfile,
     UserType,
+    row_monitor_or_inherit,
 )
 from shortlist.server.db.adapters import DbCache, DbSnapshotStore
 from shortlist.server.db.models import (
@@ -179,7 +180,7 @@ def row_request_overrides(collection: Collection) -> RequestOverrides | None:
         radarr_root_folder=collection.req_radarr_root_folder or None,
         sonarr_quality_profile_id=collection.req_sonarr_quality_profile_id,
         sonarr_root_folder=collection.req_sonarr_root_folder or None,
-        sonarr_monitor=collection.req_sonarr_monitor or None,
+        sonarr_monitor=row_monitor_or_inherit(collection.req_sonarr_monitor),
     )
     return overrides if overrides != RequestOverrides() else None
 

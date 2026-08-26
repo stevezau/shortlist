@@ -470,6 +470,21 @@ class TestBuildRequests:
         on = self._store(sessions, tmp_path, base | {"requests.auto_user_tag": True})
         assert ContextBuilder._build_requests(on).auto_user_tag is True
 
+    def test_a_retired_row_mode_inherits_rather_than_overriding(self, sessions, tmp_path):
+        """The screen serves a retired mode as "inherits", so the run must agree — otherwise the row
+        editor says one thing and tonight's request does another."""
+        from shortlist.engine.models import row_monitor_or_inherit
+        from shortlist.server.db.models import Collection
+        from shortlist.server.services.context_builder import row_request_overrides
+
+        assert row_monitor_or_inherit("recent") is None
+        assert row_monitor_or_inherit("firstSeason") == "firstSeason"
+        assert row_monitor_or_inherit(None) is None
+        assert (
+            row_request_overrides(Collection(slug="r", name="R", build="per_person", req_sonarr_monitor="recent"))
+            is None
+        )
+
     def test_the_sonarr_monitor_mode_reaches_the_engine_config(self, sessions, tmp_path):
         """The owner's choice is only worth anything if it travels; without this, deleting the one
         line that reads it leaves every test green while every show quietly arrives whole again."""

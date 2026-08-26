@@ -521,6 +521,21 @@ SONARR_MONITOR_MODES = (
 )
 
 
+def row_monitor_or_inherit(stored: str | None) -> str | None:
+    """One row's stored monitor mode, or None when it is not a mode this build offers.
+
+    A mode can be RETIRED — `future`, `missing`, `existing` and `recent` were, once measured — and a
+    row can then be holding a value the API will refuse. Left alone that bricks the row: the editor
+    PATCHes the whole row back, the closed-set check rejects the field, and the owner cannot save so
+    much as a rename until somebody clears it in SQLite.
+
+    Degrades to None (inherit) rather than to a concrete mode, so the screen and the run agree — the
+    editor shows "use the global", and the run sends the global. Falling back to "all" here would
+    instead pick the most expensive answer on the one setting whose purpose is not doing that.
+    """
+    return stored if stored in SONARR_MONITOR_MODES else None
+
+
 @dataclass(frozen=True)
 class ArrTarget:
     """Where and how a Sonarr/Radarr instance should file a newly-requested title."""

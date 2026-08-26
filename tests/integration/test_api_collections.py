@@ -2670,6 +2670,30 @@ class TestPerRowRequestSettingsApi:
         ).json()
         assert cleared["req_sonarr_monitor"] is None
 
+    def test_a_row_holding_a_retired_mode_can_still_be_saved(self, client: TestClient):
+        """`future`/`missing`/`existing`/`recent` were offered by an earlier build and then retired,
+        so a row can hold one. The editor PATCHes the whole row back, so serving the raw value made
+        the closed-set check refuse it — and the owner could not save that row at all, not even to
+        rename it. It reads as "inherits" instead, which is what the run does with it too."""
+        from shortlist.server.db.models import Collection
+
+        created = client.post("/api/collections", json={"name": "Legacy", "build": "per_person"}).json()
+        with client.app.state.sessions() as session:
+            row = session.query(Collection).filter_by(id=created["id"]).one()
+            row.req_sonarr_monitor = "recent"  # as written by the build that still offered it
+            session.commit()
+
+        served = next(c for c in client.get("/api/collections").json() if c["id"] == created["id"])
+        assert served["req_sonarr_monitor"] is None, "a retired mode reads as inherit, not as itself"
+
+        # The rename the owner actually wanted, carrying the field back exactly as the editor does.
+        resp = client.patch(
+            f"/api/collections/{created['id']}",
+            json={"name": "Legacy renamed", "req_sonarr_monitor": served["req_sonarr_monitor"]},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["name"] == "Legacy renamed"
+
     def test_a_monitor_mode_sonarr_does_not_accept_is_refused(self, client: TestClient):
         created = client.post("/api/collections", json={"name": "Bad", "build": "per_person"}).json()
         resp = client.patch(

@@ -26,6 +26,7 @@ from shortlist.engine.models import (
     SONARR_MONITOR_MODES,
     RowSpec,
     dedupe_slug,
+    row_monitor_or_inherit,
     slugify,
 )
 from shortlist.server.api.row_changes import (
@@ -560,7 +561,11 @@ def _serialize(session, collection: Collection) -> dict:
         "req_radarr_root_folder": collection.req_radarr_root_folder,
         "req_sonarr_quality_profile_id": collection.req_sonarr_quality_profile_id,
         "req_sonarr_root_folder": collection.req_sonarr_root_folder,
-        "req_sonarr_monitor": collection.req_sonarr_monitor,
+        # Not the raw column: a mode this build no longer offers is served as null ("inherits"),
+        # which is also what the run does with it. Serving it raw let the editor PATCH it straight
+        # back and be refused by the closed-set check, so a row holding a retired mode could not be
+        # saved at all — not even renamed.
+        "req_sonarr_monitor": row_monitor_or_inherit(collection.req_sonarr_monitor),
         "req_auto_user_tag": collection.req_auto_user_tag,
         "pick_order": collection.pick_order or "best",
         "placement": collection.placement or "both",
