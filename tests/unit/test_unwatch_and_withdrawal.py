@@ -31,7 +31,13 @@ from shortlist.server.services.report_service import (
 )
 from shortlist.server.services.run_persistence import reconcile_watched
 
-NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
+# The real clock, deliberately not a pinned date. Every fixture here places its data RELATIVE to
+# this instant, and the code under test reads `datetime.now(UTC)` — so a pinned NOW is a second clock
+# that drifts away from the first one day at a time. The withdrawal boundary tests sit ±5 days from
+# `UNWATCH_WITHDRAW_DAYS`, so they began failing 5 days after the date last pinned here, reporting a
+# bug in code nobody had touched. Nothing in this file needs a fixed calendar date; it needs the
+# same "now" the SUT sees.
+NOW = datetime.now(UTC)
 
 
 @pytest.fixture
