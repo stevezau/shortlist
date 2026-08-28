@@ -548,6 +548,21 @@ class TestRequestMissing:
         assert report.arr_present == {(5, "movie"), (6, "movie"), (20, "show"), (21, "show")}
         assert radarr.movie_calls == [] and sonarr.series_calls == []  # both tracked -> neither sent
 
+    def test_a_show_sonarr_tracks_by_tmdb_is_dropped_even_when_tvdb_disagrees(self, monkeypatch):
+        # Issue #104. Presence had two keyings that could disagree: the pool drop matched Sonarr's
+        # tvdbIds, `arr_present` its tmdbIds. A show whose TVDB id TMDB maps differently (or not at
+        # all) therefore survived the drop and was queued, while the server's prune read the SAME
+        # title as already tracked — and persisting a run that both prunes and re-queues one key
+        # died with an IntegrityError. Either keying counts as tracked, so the two agree by
+        # construction.
+        sonarr = FakeArr(present={99999}, present_tmdb={20})
+        monkeypatch.setattr(requests_mod, "SonarrClient", lambda *a, **k: sonarr)
+        demand = self._demand(MissingTitle(20, "tracked show", MediaType.SHOW, 2020, rating=8.0, vote_count=500))
+        report = _request_missing(_cfg(sonarr=SONARR), FakeTmdb({20: 55555}), demand, dry_run=False)
+        assert sonarr.series_calls == []  # Sonarr already has it — never sent
+        assert report.queued == []  # and never offered for approval either
+        assert (20, "show") in report.arr_present
+
     def test_show_without_tvdb_is_skipped_not_requested(self, monkeypatch):
         sonarr = FakeArr()
         monkeypatch.setattr(requests_mod, "SonarrClient", lambda *a, **k: sonarr)

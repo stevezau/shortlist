@@ -821,6 +821,16 @@ def _apply_arr_state(
     kept: list[MissingTitle] = []
     dropped = 0
     for m in pool:
+        # Sonarr's own tmdbId settles a show without a TVDB crossing — and MUST settle it, because
+        # `arr_present` is keyed that way for the server's stale-row prune. Matching presence on TVDB
+        # here and on TMDB there gave two answers to one question: a show whose TVDB id TMDB maps
+        # differently (or not at all) was simultaneously "the arr already has it" and "queue it", so
+        # the run re-sent it to Sonarr AND the persist both pruned and re-filed one inbox key — which
+        # dies on its UNIQUE constraint, losing the whole run's report (issue #104). For movies the
+        # two keyings are the same set, so this changes nothing there.
+        if (m.tmdb_id, m.media_type.value) in arr_present:
+            dropped += 1
+            continue
         if m.media_type is MediaType.MOVIE:
             present, excluded = movie_present, movie_excluded
             key: int | None = m.tmdb_id

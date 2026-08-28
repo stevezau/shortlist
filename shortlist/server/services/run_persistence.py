@@ -1511,12 +1511,30 @@ def persist_request_queue(session: Session, run_id: int, report) -> None:
     # Drop pending candidates the library now holds; leave sent/rejected alone (owner-actioned).
     present = {(tid, mt.value) for tid, mt in report.library_present}
     present |= report.requests.arr_present  # best-effort; empty when a check was skipped/failed
-    for key in [k for k, r in existing.items() if r.status == "pending" and k in present]:
+    # A title this run SENT is never pruned, however the presence checks read it: the send is the
+    # newer fact, and filing it as `sent` is the whole reason a downloading title isn't re-requested
+    # tomorrow night. Without this the sent pass below re-inserts the key the prune just deleted.
+    sent_keys = {(m.tmdb_id, m.media_type.value) for m in report.requests.sent}
+    for key in [k for k, r in existing.items() if r.status == "pending" and k in present and k not in sent_keys]:
         session.delete(existing.pop(key))
+    # The deletes go out BEFORE any insert below. SQLAlchemy orders a flush by mapper, not by the
+    # order you called it in, so INSERTs for a table precede its DELETEs — and one key that is both
+    # pruned and re-filed then trips the UNIQUE constraint, losing the ENTIRE report, not just the
+    # inbox row (issue #104). Nothing below re-files a pruned key any more; this keeps it that way.
+    session.flush()
     for m in report.requests.queued:
-        row = existing.get((m.tmdb_id, m.media_type.value))
+        key = (m.tmdb_id, m.media_type.value)
+        if key in present:
+            # The library or an Arr already has it — the prune above is the right answer, and
+            # re-queueing would put the row straight back for the next run to delete again.
+            continue
+        row = existing.get(key)
         if row is None:
-            session.add(_candidate_row(m, run_id, status="pending"))
+            # Registered, not just added: a key reaching this loop twice would otherwise insert
+            # twice and lose the ENTIRE report to the UNIQUE constraint. The engine dedupes before
+            # this point, but the barrier belongs on both sides of that contract (issue #104).
+            existing[key] = _candidate_row(m, run_id, status="pending")
+            session.add(existing[key])
         elif row.status == "pending":
             _refresh_pending(row, m)
 
@@ -1528,13 +1546,15 @@ def persist_request_queue(session: Session, run_id: int, report) -> None:
     # "already in Radarr", …), not just that it went.
     auto_outcomes = {(o.tmdb_id, o.media_type.value): o for o in report.requests.outcomes}
     for m in report.requests.sent:
-        row = existing.get((m.tmdb_id, m.media_type.value))
-        outcome = auto_outcomes.get((m.tmdb_id, m.media_type.value))
+        key = (m.tmdb_id, m.media_type.value)
+        row = existing.get(key)
+        outcome = auto_outcomes.get(key)
         if row is None:
             new_row = _candidate_row(m, run_id, status="sent")
             new_row.sent_at = datetime.now(UTC)
             if outcome is not None:
                 new_row.detail = outcome.detail
+            existing[key] = new_row  # same barrier as the queued pass above
             session.add(new_row)
         else:
             # Only on the TRANSITION: a title re-surfaced by a later run is not a second send,

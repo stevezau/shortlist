@@ -5,8 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
 from shortlist.engine.models import MediaType, MissingTitle, RequestOutcome, RequestReport
-from shortlist.server.db.models import RequestCandidate
+from shortlist.server.db.models import Base, RequestCandidate
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.services.run_service import RunService
 
@@ -210,6 +215,77 @@ class TestPersistRequestQueue:
             rows = [(r.tmdb_id, r.media_type, r.status) for r in s.query(RequestCandidate).all()]
             assert rows == [(1, "show", "sent")]  # both pending pruned; the sent ledger row survives
 
+    def test_a_title_pruned_as_present_is_not_re_queued_the_same_run(self, tmp_path: Path):
+        # Issue #104. The two answers to "does Sonarr have this show?" can disagree — the pool drop
+        # matches on TVDB, `arr_present` on Sonarr's own tmdbId — so one run can both prune a pending
+        # row as present AND re-queue the same title. Deleting and re-inserting one unique key in a
+        # single flush dies with an IntegrityError, because SQLAlchemy emits the INSERT before the
+        # DELETE — and the whole run's report was lost with it, not just the inbox row.
+        sessions = _sessions(tmp_path)
+        with sessions() as s:
+            RunService._persist_request_queue(s, 1, _report([_title(1, media_type=MediaType.SHOW)]))
+            s.commit()
+        with sessions() as s:
+            RunService._persist_request_queue(
+                s, 2, _report([_title(1, media_type=MediaType.SHOW)], arr_present={(1, "show")})
+            )
+            s.commit()
+        with sessions() as s:
+            # The arr has it: the prune wins, and the run does not put it straight back.
+            assert s.query(RequestCandidate).all() == []
+
+    def test_a_title_present_but_never_queued_before_is_not_inserted(self, tmp_path: Path):
+        # Same disagreement, first sighting: nothing to prune, so the queued copy would land a row
+        # for a title the arr already tracks — an inbox entry the NEXT run would only delete again.
+        sessions = _sessions(tmp_path)
+        with sessions() as s:
+            RunService._persist_request_queue(
+                s, 1, _report([_title(1, media_type=MediaType.SHOW)], arr_present={(1, "show")})
+            )
+            s.commit()
+        with sessions() as s:
+            assert s.query(RequestCandidate).all() == []
+
+    def test_a_key_reaching_the_persist_twice_lands_one_row(self, tmp_path: Path):
+        # Belt and braces for #104. The engine dedupes `queued` before it gets here, but the crash
+        # this guards is worth a barrier in BOTH modules: two copies of one key cost the entire run's
+        # report, not the duplicate row. Registering each insert makes the second copy a refresh.
+        sessions = _sessions(tmp_path)
+        with sessions() as s:
+            RunService._persist_request_queue(s, 1, _report([_title(1, demand=2), _title(1, demand=5), _title(2)]))
+            s.commit()
+        with sessions() as s:
+            rows = {(r.tmdb_id, r.demand) for r in s.query(RequestCandidate).all()}
+            assert rows == {(1, 5), (2, 2)}  # the later copy refreshed the first
+
+    def test_a_sent_key_reaching_the_persist_twice_lands_one_row(self, tmp_path: Path):
+        # Same barrier on the sent pass, where a fresh insert is followed by a second copy of the key.
+        sessions = _sessions(tmp_path)
+        with sessions() as s:
+            RunService._persist_request_queue(s, 1, _report([], sent=[_title(1), _title(1)]))
+            s.commit()
+        with sessions() as s:
+            row = s.query(RequestCandidate).one()
+            assert (row.tmdb_id, row.status) == (1, "sent")
+
+    def test_a_title_the_run_sent_survives_the_present_prune(self, tmp_path: Path):
+        # The send is the newer fact and the one worth keeping: filing it as `sent` is what stops the
+        # title being re-requested every night. So the prune must leave its row for the sent pass,
+        # rather than deleting it into the same delete-then-insert collision.
+        sessions = _sessions(tmp_path)
+        with sessions() as s:
+            RunService._persist_request_queue(s, 1, _report([_title(1, media_type=MediaType.SHOW)]))
+            s.commit()
+        with sessions() as s:
+            RunService._persist_request_queue(
+                s, 2, _report([], arr_present={(1, "show")}, sent=[_title(1, media_type=MediaType.SHOW)])
+            )
+            s.commit()
+        with sessions() as s:
+            row = s.query(RequestCandidate).one()
+            assert (row.tmdb_id, row.media_type, row.status) == (1, "show", "sent")
+            assert row.sent_at is not None
+
     def test_present_does_not_drop_sent_or_rejected(self, tmp_path: Path):
         sessions = _sessions(tmp_path)
         with sessions() as s:
@@ -333,3 +409,52 @@ class TestTheOtherLanguageReasonIsAThresholdNotAFailure:
                 f"{text!r} matches no prefix in QUEUE_REASON_PREFIXES — a held title would be recorded as a failed send"
             )
             assert not _is_failure_detail(text), f"{text!r} reads as a send failure"
+
+
+_KEYS = st.sampled_from([(1, MediaType.MOVIE), (1, MediaType.SHOW), (2, MediaType.MOVIE), (3, MediaType.SHOW)])
+
+
+class TestOneRowPerTitleHolds:
+    """Issue #104's real invariant: NO report shape may make the persist raise.
+
+    The bug was never about one title — it was that a single duplicate key costs the ENTIRE run's
+    report, the whole `persist_report` transaction rolling back with it. Hand-picked cases proved the
+    two routes found by reading the code; this proves there is no third, across every combination of
+    what a run can claim: rows already in the inbox in any status, titles queued, titles sent, and
+    either presence check reporting the title as already there — including the contradictory shapes
+    the engine should never emit, since the engine is the module the barrier exists to be independent
+    of.
+    """
+
+    @given(
+        pre=st.lists(st.tuples(_KEYS, st.sampled_from(["pending", "sent", "rejected"])), max_size=4),
+        queued=st.lists(_KEYS, max_size=4),
+        sent=st.lists(_KEYS, max_size=4),
+        present=st.lists(_KEYS, max_size=4),
+    )
+    @settings(max_examples=300, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    def test_no_report_shape_can_break_the_persist(self, pre, queued, sent, present):
+        engine = create_engine("sqlite://")
+        Base.metadata.create_all(engine)
+        sessions = sessionmaker(engine)
+        with sessions() as s:
+            for (tmdb_id, media_type), status in {k: v for k, v in pre}.items():
+                s.add(
+                    RequestCandidate(
+                        tmdb_id=tmdb_id, media_type=media_type.value, title="x", rating=1.0, vote_count=1, status=status
+                    )
+                )
+            s.commit()
+
+        report = _report(
+            [_title(tmdb_id, media_type=media_type) for tmdb_id, media_type in queued],
+            sent=[_title(tmdb_id, media_type=media_type) for tmdb_id, media_type in sent],
+            arr_present={(tmdb_id, media_type.value) for tmdb_id, media_type in present},
+        )
+        with sessions() as s:
+            RunService._persist_request_queue(s, 1, report)
+            s.commit()  # the assertion IS this line: a duplicate key here loses the whole report
+
+        with sessions() as s:
+            keys = [(r.tmdb_id, r.media_type) for r in s.query(RequestCandidate).all()]
+            assert len(keys) == len(set(keys)), "the inbox must hold one row per title"
