@@ -16,6 +16,53 @@ heading: Reference
 | `LOG_LEVEL`                                                                | `DEBUG`   | **seed once**: initial value for the `log.level` setting; change it live in Settings → Advanced                                                                                                                                                                 |
 | `SHORTLIST_DRY_RUN`                                                        | unset     | live: when set (`1`/`true`), EVERY run is forced to dry-run. The app builds its clients and logs the would-be changes but writes NOTHING to Plex/plex.tv. Safe mode for a demo/test instance pointed at a real server (even a manual "Run now" can't modify it) |
 | `SHORTLIST_ENABLE_DOCS`                                                    | unset     | live: when set (`1`), exposes the API docs at `/api/docs` and `/api/openapi.json` (off by default)                                                                                                                                                              |
+| `APP_BASE_PATH`                                                            | `/`       | live: serve the app from a subpath behind a reverse proxy, e.g. `/shortlist`. Read at startup, so the published image works unmodified — no rebuild. Accepts `/shortlist` or `/shortlist/`. The proxy just forwards; it does not need to strip the prefix. See [Serving from a subpath](#serving-from-a-subpath). |
+
+### Serving from a subpath
+
+Set `APP_BASE_PATH` and point the proxy at the container. No rebuild, and no prefix-stripping
+middleware — the app strips its own prefix, rewrites the asset URLs in the shell it serves, and
+publishes the prefix to the SPA so the router and API client use it too.
+
+```yaml
+services:
+  shortlist:
+    image: ghcr.io/stevezau/shortlist:latest
+    environment:
+      - APP_BASE_PATH=/shortlist
+```
+
+Traefik — router and service only:
+
+```yaml
+http:
+  routers:
+    shortlist:
+      rule: "Host(`media.example.com`) && PathPrefix(`/shortlist`)"
+      service: shortlist
+  services:
+    shortlist:
+      loadBalancer:
+        servers:
+          - url: "http://shortlist:5959/"
+```
+
+nginx — note there is no trailing slash on `proxy_pass`, so the prefix is forwarded intact:
+
+```nginx
+location /shortlist/ {
+    proxy_pass http://shortlist:5959;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+```
+
+A proxy that strips the prefix anyway still works — an already-stripped path simply doesn't match
+and is passed through untouched. That is also why the container's own healthcheck, which requests
+an unprefixed `/api/system/health` on localhost, keeps working.
+
+Leaving it unset serves the shell's bytes exactly as they shipped.
 
 ## Settings keys (DB-backed; Settings UI or `PUT /api/settings`)
 

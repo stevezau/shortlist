@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import FileResponse
+from starlette.responses import FileResponse, HTMLResponse, Response
 
 import shortlist
 from shortlist.logging_config import configure_logging, normalize_level
@@ -37,6 +37,7 @@ from shortlist.server.api import (
     watching_account,
 )
 from shortlist.server.api import settings as settings_api
+from shortlist.server.base_path import BasePathMiddleware, base_path_from_env, render_shell
 from shortlist.server.db.models import Run, Server
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.scheduler import build_scheduler
@@ -304,6 +305,11 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
     )
     app.add_middleware(_SecurityHeaders)
 
+    # Added last so it runs first, before routing.
+    app_base_path = base_path_from_env()
+    if app_base_path:
+        app.add_middleware(BasePathMiddleware, base_path=app_base_path)
+
     app.include_router(auth.router, prefix="/api")
     for module in (
         setup,
@@ -336,6 +342,15 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         #: makes it a 304 on the overwhelmingly common unchanged case.
         SHELL_HEADERS = {"cache-control": "no-cache, must-revalidate"}
 
+        # Rendered once: APP_BASE_PATH cannot change without a restart.
+        base_path = app_base_path
+        shell_html = render_shell(index.read_text(encoding="utf-8"), base_path) if index.is_file() else None
+
+        def shell_response() -> Response:
+            if shell_html is None:
+                return FileResponse(index, headers=SHELL_HEADERS)
+            return HTMLResponse(shell_html, headers=SHELL_HEADERS)
+
         @app.get("/{path:path}", include_in_schema=False)
         async def spa(path: str):  # SPA fallback: every non-API path serves the app shell
             if path:
@@ -345,11 +360,11 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
                 # web_root before serving it as a file (plex-safety: secrets never leave the box).
                 target = (web_root / path).resolve()
                 if target.is_relative_to(web_root) and target.is_file():
-                    # The shell by any other route (`/index.html`) gets the same treatment; the
-                    # hashed assets under /assets are content-addressed and may be cached freely.
-                    headers = SHELL_HEADERS if target == index else None
-                    return FileResponse(target, headers=headers)
-            return FileResponse(index, headers=SHELL_HEADERS)
+                    # `/index.html` needs the same rewrite as the fallback shell.
+                    if target == index:
+                        return shell_response()
+                    return FileResponse(target)
+            return shell_response()
 
     return app
 
