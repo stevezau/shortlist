@@ -27,10 +27,13 @@ class FakeHub:
 
     def __init__(self, title: str, ident: str, *, promoted: bool = True, collection: bool = True, identifier: str = ""):
         self.title = title
-        # Plex identifies a promoted COLLECTION's hub as `custom.collection.<sectionID>.<ratingKey>`
-        # (see `is_collection_hub`, and `fake_plex._managed_hub_xml`, which records the same shape).
-        # A built-in hub carries an identifier of its own kind — `collection=False` models one, which
-        # is what tells the ordering guard the two apart.
+        # A COLLECTION's hub carries an identifier in the `custom.collection` FAMILY. Not a format:
+        # the two shapes recorded off a real PMS are `custom.collection.1.527794.527794` and
+        # `custom.collection.571285`, and plexapi's synthesized
+        # `custom.collection.<sectionID>.<ratingKey>` matches neither — so the string built below is
+        # one arbitrary member of the family, never evidence of what Plex sends. A built-in hub
+        # carries an identifier of another kind; `collection=False` models one, which is what tells
+        # the ordering guard the two apart. See `is_collection_hub`.
         self.identifier = identifier or (f"custom.collection.2.{ident}" if collection else ident)
         self.promotedToSharedHome = promoted
         self.promotedToOwnHome = False

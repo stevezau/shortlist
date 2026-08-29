@@ -21,9 +21,11 @@ def _hub(title: str, *, promoted: bool = True, recommended: bool = False):
 
     Two things a lazier fake would leave out, both of which the endpoint now reads (testing rule: the
     fake must be no easier than the real server). The three promotion flags — without them it reads as
-    promoted-nowhere, the very state being told apart. And a `custom.collection.<sectionID>.<ratingKey>`
-    identifier, which is how a collection's hub is told from one of Plex's built-ins; a built-in is
-    modelled by a plain `SimpleNamespace(title=...)`, carrying an identifier of another kind or none.
+    promoted-nowhere, the very state being told apart. And an identifier in the `custom.collection`
+    FAMILY, which is how a collection's hub is told from one of Plex's built-ins; a built-in is
+    modelled by a plain `SimpleNamespace(title=...)` carrying an identifier of another kind. The exact
+    string below is one arbitrary member of that family — see `is_collection_hub`, which matches the
+    family precisely because the recorded shapes disagree on everything after it.
 
     Default promoted-on-shared-Home, because that is what a collection on the shelf looks like.
     """

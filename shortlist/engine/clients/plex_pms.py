@@ -124,6 +124,19 @@ def is_collection_hub(hub) -> bool:
     return str(getattr(hub, "identifier", "") or "").startswith(_COLLECTION_HUB_PREFIX)
 
 
+def can_anchor(hub) -> bool:
+    """Whether a hub is something a row can be placed relative to — i.e. it HAS a position to sit
+    next to. Only a collection is judged; see `is_collection_hub` for why a built-in never is.
+
+    ONE definition, called by the engine's ordering pass AND by the editor's anchor picker
+    (`api/system.library_collections`). They have to agree: `on_shelf` in the picker exists purely to
+    predict what the ordering pass will do, so a disagreement greys out an anchor that places fine, or
+    offers one that will be refused. This rule has been rewritten three times over issue #106 with the
+    two copies kept in step by hand, which is a function's job, not a reviewer's.
+    """
+    return not is_collection_hub(hub) or is_promoted(hub)
+
+
 def is_promoted(hub) -> bool:
     """Whether a managed hub is on ANY surface — shared Home, the owner's Home, or Recommended.
 
@@ -1015,10 +1028,7 @@ class PlexClient:
                 # Refusing to place a row needs positive evidence that its anchor is off the shelf, and
                 # a collection is where we have it; an attribute we cannot vouch for must never be the
                 # reason a working placement stops.
-                anchor = next(
-                    (h for h in named if not is_collection_hub(h) or is_promoted(h)),
-                    None,
-                )
+                anchor = next((h for h in named if can_anchor(h)), None)
                 if anchor is None:
                     logger.warning(
                         "hub order: anchor {!r} {} in {} — {}",

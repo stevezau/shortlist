@@ -58,3 +58,60 @@ class TestARealFailureOutlivesAThresholdReason:
         assert _is_failure_detail("on an Arr exclusion list") is False
         assert _is_failure_detail("") is False
         assert _is_failure_detail(None) is False
+
+
+class TestTheShelfEventsANightlyRunEmits:
+    """`_emit_hub_ordering_events` — the RUN path, which `jobs._audit_hub_orderings` mirrors for the
+    on-demand handlers.
+
+    Tested separately from the jobs path because they are separate emitters with separate scope
+    names, and `docs/guides.md` sends owners looking for THIS one (`run.hub_unplaced`) after a
+    nightly run. The jobs-path tests in `test_jobs.py` cannot see a regression here.
+    """
+
+    @staticmethod
+    def _emit(entries: list[dict], *, dry_run: bool = False) -> list[tuple]:
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from shortlist.server.services import run_persistence as rp
+
+        seen: list[tuple] = []
+        report = SimpleNamespace(hub_orderings=entries, dry_run=dry_run)
+        with patch.object(rp, "add_audit", lambda session, scope, level, **f: seen.append((scope, level, f))):
+            rp._emit_hub_ordering_events(None, 7, report)
+        return seen
+
+    def test_a_placement_that_could_not_be_applied_gets_its_own_scope_and_no_verified(self):
+        """`verified` answers "we asked Plex and it stuck". Nothing was asked here, so answering it
+        would be a fabrication — and the separate scope is what keeps `_shelf_contention`'s bounded
+        window holding only the repeated moves it counts."""
+        seen = self._emit([{"library": "Movies", "placed": False, "moved": [], "reason": "anchor not on the shelf"}])
+
+        assert [(a[0], a[1]) for a in seen] == [("run.hub_unplaced", "warning")]
+        fields = seen[0][2]
+        assert fields["reason"] == "anchor not on the shelf" and fields["verified"] is None
+        assert fields["library"] == "Movies" and fields["run_id"] == 7
+
+    def test_a_move_still_uses_the_ordinary_scope(self):
+        seen = self._emit([{"library": "Movies", "moved": ["Picked for You"], "verified": True}])
+
+        assert [(a[0], a[1]) for a in seen] == [("run.hub_order", "info")]
+
+    def test_an_unverified_move_is_a_warning(self):
+        """A shelf we asked for and did not get — the SFLIX case the whole audit was rebuilt around."""
+        seen = self._emit([{"library": "Movies", "moved": ["Picked for You"], "verified": False}])
+
+        assert [(a[0], a[1]) for a in seen] == [("run.hub_order", "warning")]
+
+    def test_a_dry_run_is_never_a_warning_on_either_scope(self):
+        """A preview asked Plex for nothing, so neither kind is an alarm."""
+        seen = self._emit(
+            [
+                {"library": "Movies", "placed": False, "moved": [], "reason": "anchor not found"},
+                {"library": "TV", "moved": ["row"], "verified": False},
+            ],
+            dry_run=True,
+        )
+
+        assert [(a[0], a[1]) for a in seen] == [("run.hub_unplaced", "info"), ("run.hub_order", "info")]

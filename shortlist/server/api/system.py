@@ -494,7 +494,7 @@ async def library_collections(key: str, request: Request) -> list[dict]:
     how the reporter came to have one saved: the option was a flicker, and it never placed anything.
     The marker is in the title we already have, so it cannot fail that way.
     """
-    from shortlist.engine.clients.plex_pms import PlexClient, has_shortlist_marker, is_collection_hub, is_promoted
+    from shortlist.engine.clients.plex_pms import PlexClient, can_anchor, has_shortlist_marker
     from shortlist.server.settings_store import SettingsStore
 
     state = request.app.state
@@ -516,20 +516,19 @@ async def library_collections(key: str, request: Request) -> list[dict]:
         # see the collection they picked last week has no way to tell "not on the shelf" from
         # "deleted".
         #
-        # Mirrors the engine's test exactly, including its limit: only a collection is judged, and by
-        # the hub's own identifier. A built-in hub is one the engine never refuses, so marking one
-        # unusable here would be a lie the owner acts on.
+        # `can_anchor` is the ENGINE's own predicate, imported rather than restated: this endpoint
+        # exists to predict what the ordering pass will do, and a second copy of the rule is a
+        # disagreement waiting to happen.
         #
         # OR-accumulated per title, because the engine scans every hub with that title and takes the
-        # first that is on a shelf. Two hubs CAN share one ("Top Rated" is both a stock Plex hub and a
+        # first that can anchor. Two hubs CAN share one ("Top Rated" is both a stock Plex hub and a
         # stock Kometa collection), and first-hub-wins would grey out an anchor that places fine.
         seen: dict[str, bool] = {}
         for hub in section.managedHubs():
             title = getattr(hub, "title", "") or ""
             if not title or has_shortlist_marker(title):
                 continue
-            usable = not is_collection_hub(hub) or is_promoted(hub)
-            seen[title] = seen.get(title, False) or usable
+            seen[title] = seen.get(title, False) or can_anchor(hub)
         return [{"title": t, "on_shelf": on_shelf} for t, on_shelf in seen.items()]
 
     return await asyncio.get_running_loop().run_in_executor(
