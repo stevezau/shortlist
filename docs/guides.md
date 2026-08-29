@@ -58,8 +58,10 @@ log as well, which has no screen yet — read it at `/api/events/log?scope=run.h
 nightly run, or `?scope=shelf.unplaced` after **Check and fix rows on Plex** or a privacy sync.
 
 A row that has never been built in that library yet looks the same from the shelf, but is not the
-same thing: there is nothing to position until the row exists, so nothing is recorded on either
-screen. Run it once and it lands in place.
+same thing: there is nothing to position until the row exists. Run it once and it lands in place.
+Nothing is recorded in the change log for this, and usually nothing on the Logs page either — the
+exception is a library where another row has its own placement, which puts a `hub order` line there
+naming the row that is missing.
 
 ## Another tool keeps moving your rows
 
