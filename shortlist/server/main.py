@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import hmac
 import logging
 import os
@@ -308,6 +309,9 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
     # Added last so it runs first, before routing.
     app_base_path = base_path_from_env()
     if app_base_path:
+        # Said out loud once at startup: when a subpath install is misconfigured the symptom is a
+        # blank page, and the first question is always "what does the app think its prefix is".
+        logger.info("serving under the base path {} (APP_BASE_PATH)", app_base_path)
         app.add_middleware(BasePathMiddleware, base_path=app_base_path)
 
     app.include_router(auth.router, prefix="/api")
@@ -338,18 +342,34 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         #: which leaves the browser to guess from `last-modified` — and a browser that guesses "still
         #: fresh" keeps both the old shell AND the old bundle it names, so a deploy is invisible
         #: until someone hard-refreshes. Reported 2026-08-25: an owner looking straight at wording
-        #: that had already shipped. `no-cache` means revalidate, not "do not store": the etag still
-        #: makes it a 304 on the overwhelmingly common unchanged case.
+        #: that had already shipped. `no-cache` means revalidate, not "do not store".
+        #: It does NOT currently save the round trip: `FileResponse` sets an `etag` but does no
+        #: conditional handling — `is_not_modified` lives in `StaticFiles`, which this route does
+        #: not use — so an unchanged shell is still answered with a full 200. The validator is worth
+        #: sending anyway, because a caching proxy in front of us can act on it even though we don't.
         SHELL_HEADERS = {"cache-control": "no-cache, must-revalidate"}
 
-        # Rendered once: APP_BASE_PATH cannot change without a restart.
-        base_path = app_base_path
-        shell_html = render_shell(index.read_text(encoding="utf-8"), base_path) if index.is_file() else None
+        # Rendered once: APP_BASE_PATH cannot change without a restart. Only ever built when
+        # there IS a prefix to write in, so a root install keeps serving the file straight off disk
+        # — same bytes, same `etag`/`last-modified` headers, no behaviour to re-verify.
+        shell_html = (
+            render_shell(index.read_text(encoding="utf-8"), app_base_path)
+            if app_base_path and index.is_file()
+            else None
+        )
+        # A rewritten shell is not the file on disk, so `FileResponse`'s validators (built from
+        # mtime + size) would describe the wrong bytes. Hash what we actually serve instead: a
+        # caching proxy in front of a subpath install is the whole point of this feature, and a
+        # response with no validator is one it can never revalidate cheaply.
+        shell_headers = SHELL_HEADERS
+        if shell_html is not None:
+            digest = hashlib.md5(shell_html.encode("utf-8"), usedforsecurity=False).hexdigest()
+            shell_headers = SHELL_HEADERS | {"etag": f'"{digest}"'}
 
         def shell_response() -> Response:
             if shell_html is None:
                 return FileResponse(index, headers=SHELL_HEADERS)
-            return HTMLResponse(shell_html, headers=SHELL_HEADERS)
+            return HTMLResponse(shell_html, headers=shell_headers)
 
         @app.get("/{path:path}", include_in_schema=False)
         async def spa(path: str):  # SPA fallback: every non-API path serves the app shell

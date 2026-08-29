@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from loguru import logger
 
 from shortlist.server.base_path import (
     BasePathMiddleware,
@@ -118,3 +119,55 @@ def test_no_base_path_is_a_pass_through() -> None:
     scope = _call(mw, "/shortlist/api/x")
     assert scope["path"] == "/shortlist/api/x"
     assert scope["root_path"] == ""
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '/a"onload="alert(1)',  # breaks out of the src="…" attribute the prefix is written into
+        '/"><img src=x onerror=alert(1)>',
+        "/shortlist?x=1",  # a query is not part of a path, so this matches no request ever sent
+        "/shortlist#frag",
+        "//evil.com",  # protocol-relative: the SPA would send every API call off-origin
+        "/has space",
+        "/back\\slash",
+    ],
+)
+def test_a_value_that_is_not_a_url_path_is_refused(raw: str) -> None:
+    """Refused at the ONE boundary, because it has two sinks with different escaping.
+
+    `render_shell` JSON-escapes the value for the injected `<script>` but interpolates it RAW into
+    the shell's `src=`/`href=` attributes. The four middle cases are worse than they look: each
+    normalises without complaint and then matches no path the server will ever be asked for, so the
+    app serves from the root while the SPA believes it is prefixed — a blank page, and before this
+    there was nothing in the log to say why.
+    """
+    assert resolve_base_path(raw) == ""
+
+
+@pytest.mark.parametrize("raw", ["/\u0444\u0438\u043b\u044c\u043c\u044b", "/media-1_2.3~x", "/apps/shortlist"])
+def test_an_ordinary_path_is_still_accepted(raw: str) -> None:
+    # Refused by CHARACTER, not permitted by one — an operator whose site is not in ASCII gets to
+    # use a prefix too. The rejected set is only what breaks an HTML attribute or cannot appear in
+    # a request path.
+    assert resolve_base_path(raw) == raw
+
+
+def test_refusing_a_value_says_so() -> None:
+    # loguru does not route through stdlib logging, so `caplog` sees nothing — sink pattern, as
+    # used by the rest of the suite. The whole point of the warning is that the symptom this
+    # prevents (an app serving from the root while the SPA thinks otherwise) is otherwise silent.
+    lines: list[str] = []
+    sink = logger.add(lines.append, level="WARNING", format="{message}")
+    try:
+        assert resolve_base_path("/shortlist?x=1") == ""
+    finally:
+        logger.remove(sink)
+    assert any("APP_BASE_PATH" in line and "/shortlist?x=1" in line for line in lines), lines
+
+
+def test_a_shell_with_no_head_is_a_hard_failure() -> None:
+    # The quiet version of this is a white screen: the assets still resolve, so the app boots, and
+    # then every API call goes to the server root. Better to refuse to start.
+    with pytest.raises(RuntimeError, match="<head>"):
+        render_shell("<html><body>no head here</body></html>", "/shortlist")
