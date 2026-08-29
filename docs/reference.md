@@ -21,7 +21,7 @@ heading: Reference
 ### Serving from a subpath
 
 Set `APP_BASE_PATH` and point the proxy at the container. No rebuild, and no prefix-stripping
-middleware — the app strips its own prefix, rewrites the asset URLs in the shell it serves, and
+middleware — the app recognises its own prefix, rewrites the asset URLs in the shell it serves, and
 publishes the prefix to the SPA so the router and API client use it too.
 
 ```yaml
@@ -47,10 +47,13 @@ http:
           - url: "http://shortlist:5959/"
 ```
 
-nginx — note there is no trailing slash on `proxy_pass`, so the prefix is forwarded intact:
+nginx — note there is no trailing slash on either the `location` or the `proxy_pass`. On
+`proxy_pass` it is what forwards the prefix intact; on `location` it is what lets `/shortlist`
+match as well as `/shortlist/`, so the bare URL people actually type reaches the app (which
+redirects it to `/shortlist/`) instead of being 404'd by nginx:
 
 ```nginx
-location /shortlist/ {
+location /shortlist {
     proxy_pass http://shortlist:5959;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
@@ -63,6 +66,11 @@ and is passed through untouched. That is also why the container's own healthchec
 an unprefixed `/api/system/health` on localhost, keeps working.
 
 Leaving it unset serves the shell's bytes exactly as they shipped.
+
+If the app comes up blank behind the proxy, check the container log first: it states the base path
+it is using at startup, and warns if `APP_BASE_PATH` held something it could not use (a query, a
+fragment, a space) — in which case it ignores it and serves from the root, which on its own looks
+exactly like a proxy problem.
 
 ## Settings keys (DB-backed; Settings UI or `PUT /api/settings`)
 
