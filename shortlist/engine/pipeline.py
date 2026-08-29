@@ -1467,8 +1467,17 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
         return
     for section in ctx.delivery_sections:
         key = str(section.key)
+        # Only rows that actually DELIVER here. A row's media type and `library_keys` decide which
+        # libraries it builds in, and without that filter a movies-only row picked up this TV
+        # library's anchor, never had a ledger entry for it, and logged "no delivered collection in
+        # TV Shows yet — it will be placed once that row has been built here" on every run, privacy
+        # sync and Fix, for ever. That line is INFO and owner-visible; a promise that can never come
+        # true is worse than the silence it replaced. It also dragged the library off the one-block
+        # path onto the ledger-partitioned one, so any hub of ours the ledger does not name — a
+        # retired row's leftovers — stopped being repositioned at all.
+        here = [spec for spec in ctx.config.rows if target_sections([section], spec)]
         anchors_by_slug = {}
-        for spec in ctx.config.rows:
+        for spec in here:
             effective = spec.hub_anchors.get(key) or global_anchors.get(key)
             if effective is not None:
                 anchors_by_slug[spec.slug] = effective
@@ -1485,7 +1494,7 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
                 logger.debug("hub order: no anchor configured for {} — leaving its shelf alone", section.title)
             continue
         distinct = {(a.to_top, a.anchor_title, a.anchor_row, a.before) for a in anchors_by_slug.values()}
-        unanchored = [spec.slug for spec in ctx.config.rows if spec.slug not in anchors_by_slug]
+        unanchored = [spec.slug for spec in here if spec.slug not in anchors_by_slug]
         # A ROW anchor can never take the one-block path: the anchor is itself one of the things being
         # moved, so the rows have to be placed in dependency order, one group at a time.
         any_row_anchor = any(a.anchor_row for a in anchors_by_slug.values())

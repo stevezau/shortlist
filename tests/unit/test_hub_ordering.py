@@ -658,7 +658,10 @@ def _order_ctx(cfg, plex, delivered_keys=None):
     import threading
     from types import SimpleNamespace
 
-    section = SimpleNamespace(key=2, title="TV Shows")
+    # `type` is not optional on this fake: a real `LibrarySection` always carries it, and the order
+    # phase now asks `target_sections` which rows deliver here — a fake without it was easier than
+    # the server (testing rule) and hid the perpetual-INFO bug below.
+    section = SimpleNamespace(key=2, title="TV Shows", type="show")
     return SimpleNamespace(
         config=cfg,
         delivery_sections=[section],
@@ -869,6 +872,51 @@ def test_order_phase_does_not_record_the_ordinary_skips():
     _order_phase(_order_ctx(cfg, plex), report)
 
     assert report.hub_orderings == []
+
+
+def test_order_phase_ignores_rows_that_never_deliver_to_this_library():
+    """A movies-only row has no business in a TV library's shelf decision.
+
+    Without the media/`library_keys` filter it picked up this library's anchor, could never have a
+    ledger entry here, and logged "no delivered collection in TV Shows yet — it will be placed once
+    that row has been built here" on every run, privacy sync and Fix, for ever. That line is INFO and
+    owner-visible, and the promise in it can never come true — worse than the silence it replaced.
+
+    It also cost the shelf. The show row here has its own anchor, so an unfiltered list makes the two
+    rows "disagree", which forces this library off the single-call path onto the ledger-partitioned
+    one — and there any hub of ours the ledger does not name (a retired row's leftovers) stops being
+    repositioned at all. Filtered, the show row is the only one here, so nothing disagrees.
+    """
+    from unittest.mock import MagicMock
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec
+    from shortlist.engine.pipeline import _order_phase
+
+    plex = MagicMock()
+    plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"]}
+    cfg = EngineConfig(
+        hub_anchors={"2": HubAnchor(to_top=True)},  # the global default the movie rows would inherit
+        rows=[
+            RowSpec(
+                slug="picked",
+                name_template="Picked",
+                size=10,
+                media="show",
+                hub_anchors={"2": HubAnchor(anchor_title="Recently Added")},
+            ),
+            RowSpec(slug="movienight", name_template="Movie Night", size=10, media="movie"),
+            # Targets a library by key, and not this one — the other half of `target_sections`.
+            RowSpec(slug="elsewhere", name_template="Elsewhere", size=10, library_keys=["9"]),
+        ],
+    )
+    _order_phase(_order_ctx(cfg, plex), _report_with_titles())
+
+    # One call, whole library, no row subset: the show row is the only one that builds here, so there
+    # is nothing to tell apart. An unfiltered list partitions instead and passes `only_keys`.
+    plex.order_owned_hubs.assert_called_once()
+    kwargs = plex.order_owned_hubs.call_args.kwargs
+    assert kwargs["only_keys"] is None
+    assert kwargs["anchor_title"] == "Recently Added"
 
 
 def test_order_phase_still_orders_on_a_run_with_no_users():
