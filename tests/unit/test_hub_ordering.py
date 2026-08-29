@@ -25,9 +25,13 @@ class FakeHub:
     lists hubs promoted nowhere — which is exactly what `order_owned_hubs` was wasting moves on.
     """
 
-    def __init__(self, title: str, ident: str, *, promoted: bool = True):
+    def __init__(self, title: str, ident: str, *, promoted: bool = True, collection: bool = True):
         self.title = title
-        self.identifier = ident
+        # Plex identifies a promoted COLLECTION's hub as `custom.collection.<sectionID>.<ratingKey>`
+        # (see `is_collection_hub`, and `fake_plex._managed_hub_xml`, which records the same shape).
+        # A built-in hub carries an identifier of its own kind — `collection=False` models one, which
+        # is what tells the ordering guard the two apart.
+        self.identifier = f"custom.collection.2.{ident}" if collection else ident
         self.promotedToSharedHome = promoted
         self.promotedToOwnHome = False
         self.promotedToRecommended = False
@@ -199,17 +203,96 @@ def test_an_unpromoted_collection_anchor_leaves_the_shelf_untouched():
     assert section.titles() == ["Recently Added", "Picked for You", "Archive 2019"]
 
 
+def test_a_built_in_hub_is_not_refused_even_when_a_collection_shares_its_title():
+    """Titles COLLIDE: "Top Rated" is both a stock Plex hub and a stock Kometa collection.
+
+    The guard identifies a collection by the hub's own `custom.collection.*` identifier, never by
+    matching its title against the library's collection list. A title check refused the built-in here
+    and stopped ordering the whole library — and a title check has to be answered from
+    `section.collections()`, a listing that can come back SHORT, which would reclassify a real
+    collection as a built-in and wave the #106 burial straight back through.
+    """
+    builtin = FakeHub("Top Rated", "home.television.toprated", promoted=False, collection=False)
+    same_name = FakeHub("Top Rated", "77", promoted=False)  # a Kometa collection, on no shelf
+    r1 = FakeHub("Picked for You", "o1")
+    section = FakeSection([builtin, same_name, FakeHub("Kometa Genre", "g"), r1])
+    client = _client(
+        [
+            FakeColl("Picked for You", ["shortlist_sarah"]),
+            FakeColl("Top Rated", ["kometa"], 77),
+            FakeColl("Kometa Genre", ["kometa"]),
+        ]
+    )
+
+    result = client.order_owned_hubs(section, label_prefix="shortlist", anchor_title="Top Rated")
+
+    assert result["skipped"] is False and result["verified"] is True
+    assert section.titles() == ["Top Rated", "Picked for You", "Top Rated", "Kometa Genre"]
+
+
+def test_a_short_collections_read_cannot_wave_an_off_shelf_anchor_through():
+    """The anchor's own identifier says it is a collection, so a listing that omits it changes nothing.
+
+    Modelled on `covers_window` for watched titles: a PMS that under-reports a container is a failure
+    mode this codebase already takes seriously, and the previous title-based guard turned one into a
+    silent `verified: True` over a buried row.
+    """
+    archive = FakeHub("Archive 2019", "55", promoted=False)
+    r1 = FakeHub("Picked for You", "o1")
+    section = FakeSection([FakeHub("Recently Added", "g"), r1, archive])
+    # The listing carries our row but NOT the anchor — a truncated read.
+    client = _client([FakeColl("Picked for You", ["shortlist_sarah"])])
+
+    result = client.order_owned_hubs(section, label_prefix="shortlist", anchor_title="Archive 2019")
+
+    assert result["skipped"] is True and result["reason"] == "anchor not on the shelf"
+    assert r1.moved_after == _UNSET
+
+
+def test_the_reasons_that_stop_a_placement_are_the_ones_the_pipeline_records():
+    """`pipeline.UNPLACEABLE` matches on reason STRINGS this module returns. Reword one here and the
+    audit recording stops silently, with every other test still green — they feed hand-written
+    dicts. This drives the real client into each state instead."""
+    from shortlist.engine.pipeline import UNPLACEABLE
+
+    def reason_for(hubs, colls, **kwargs) -> str:
+        return _client(colls).order_owned_hubs(FakeSection(hubs), label_prefix="shortlist", **kwargs)["reason"]
+
+    ours = [FakeColl("Picked for You", ["shortlist_sarah"], 101)]
+
+    # (a) the named collection is nowhere on the shelf at all
+    assert (
+        reason_for([FakeHub("Genre", "g"), FakeHub("Picked for You", "101")], ours, anchor_title="Nonexistent")
+        in UNPLACEABLE
+    )
+    # (b) it is there but on no shelf
+    off = FakeHub("Archive 2019", "55", promoted=False)
+    assert reason_for([off, FakeHub("Picked for You", "101")], ours, anchor_title="Archive 2019") in UNPLACEABLE
+    # (c) a ROW anchor with nothing promoted here
+    dormant = FakeHub("Gems", "202", promoted=False)
+    assert (
+        reason_for(
+            [dormant, FakeHub("Picked for You", "101")],
+            [*ours, FakeColl("Gems", ["shortlist_mike"], 202)],
+            anchor_keys={202},
+            only_keys={101},
+        )
+        in UNPLACEABLE
+    )
+
+
 def test_a_built_in_plex_hub_anchor_is_never_refused():
     """The other half of the #106 guard, and the one that would be a WORSE bug than #106 if it broke.
 
     "Recently Added" is an ordinary anchor — `test_order_phase_still_orders_on_a_run_with_no_users`
     configures exactly that — and it is not a collection, so nothing in this repo has ever read a
     promotion flag off one and there is no recorded fixture for its shape (plex-safety rule 11). The
-    guard therefore judges COLLECTIONS only: refusing to place a row needs positive evidence, and a
-    flag we cannot vouch for must never be the reason a working placement silently stops. This fake
-    reports every flag off, which is the worst case the real server could hand us.
+    guard therefore judges COLLECTIONS only — told apart by the hub's own `custom.collection.*`
+    identifier: refusing to place a row needs positive evidence, and a flag we cannot vouch for must
+    never be the reason a working placement silently stops. This fake reports every flag off, which is
+    the worst case the real server could hand us.
     """
-    builtin = FakeHub("Recently Added", "a", promoted=False)  # no flags, and NOT in the collections
+    builtin = FakeHub("Recently Added", "home.television.recentlyadded", promoted=False, collection=False)
     r1 = FakeHub("Picked for You", "o1")
     section = FakeSection([builtin, FakeHub("Kometa Genre", "g"), r1])
     client = _client([FakeColl("Picked for You", ["shortlist_sarah"]), FakeColl("Kometa Genre", ["kometa"])])

@@ -1365,6 +1365,65 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
         assert [a[1] for a in shelf] == ["warning"]
         assert shelf[0][2]["verified"] is False
 
+    def test_a_placement_we_could_not_apply_is_audited_under_its_own_scope(self, monkeypatch):
+        """Issue #106's second half. A configured placement we cannot honour was a container-log
+        warning and nothing else, so the Rows page went on showing a setting that had silently done
+        nothing since the night it was saved.
+
+        Its OWN scope, not `shelf.order`: `_shelf_contention` counts repeated MOVES within a bounded
+        event budget, and one stale anchor re-reported on every privacy sync has nothing to tell it.
+        And no `verified` — nothing was asked of Plex, so that question has no answer here.
+        """
+        self._converge_spy(monkeypatch)
+        audits: list[tuple] = []
+        monkeypatch.setattr(jobs, "write_audit", lambda st, scope, level, **f: audits.append((scope, level, f)))
+        state = self._state(sections=[MagicMock(type="movie", key="1", title="Movies")])
+        original = state.run_service.build_context
+
+        def unplaceable_context(dry_run: bool, plex_only: bool = False):
+            ctx = original(dry_run, plex_only)
+            ctx.plex.order_owned_hubs.return_value = {
+                "anchor": "Archive 2019",
+                "moved": [],
+                "skipped": True,
+                "reason": "anchor not on the shelf",
+            }
+            return ctx
+
+        state.run_service.build_context = unplaceable_context
+        result = jobs._HANDLERS["sync.check"](state, {"confirmed": True})
+
+        assert [a[0] for a in audits if a[0].startswith("shelf.")] == ["shelf.unplaced"]
+        _, level, fields = next(a for a in audits if a[0] == "shelf.unplaced")
+        assert level == "warning"
+        assert fields["reason"] == "anchor not on the shelf"
+        assert fields["verified"] is None  # never fabricated: we asked Plex for nothing
+        # And the operator's line says so instead of claiming a reposition.
+        assert "could NOT place rows in Movies" in result["detail"]
+        assert "repositioned rows on the shelf" not in result["detail"]
+
+    def test_a_dry_run_never_files_an_unplaceable_row_as_a_warning(self, monkeypatch):
+        """A dry run asked Plex for nothing, so it is a preview either way — the rule
+        `run_persistence._emit_hub_ordering_events` already states for `verified`.
+
+        Driven through `_audit_hub_orderings` directly: `sync.check` without `confirmed` previews
+        DELETES but still writes, so it is not a dry run and cannot exercise this branch.
+        """
+        from types import SimpleNamespace
+
+        audits: list[tuple] = []
+        monkeypatch.setattr(jobs, "write_audit", lambda st, scope, level, **f: audits.append((scope, level, f)))
+        report = SimpleNamespace(
+            hub_orderings=[
+                {"library": "Movies", "placed": False, "moved": [], "reason": "anchor not on the shelf"},
+                {"library": "TV", "moved": ["row"], "verified": False},
+            ]
+        )
+
+        jobs._audit_hub_orderings(None, report, dry_run=True)
+
+        assert [(a[0], a[1]) for a in audits] == [("shelf.unplaced", "info"), ("shelf.order", "info")]
+
     def test_the_unattended_nightly_pass_still_has_no_delete_authority(self, monkeypatch):
         """The scheduled pass sends neither flag. It must demote and report, never destroy — upgrading
         must not turn on a job that silently deletes from somebody's Plex server."""

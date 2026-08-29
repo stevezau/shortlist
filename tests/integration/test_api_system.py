@@ -13,17 +13,25 @@ from tests.conftest import plextv_user
 pytestmark = pytest.mark.integration
 
 
-def _hub(title: str, *, promoted: bool = True, recommended: bool = False):
-    """A managed hub as `managedHubs()` really returns one — with its three promotion flags.
+_HUB_IDS = iter(range(500, 999))
 
-    A fake without them is easier than the real server (testing rule): it reads as promoted-nowhere,
-    which is exactly the state the anchor picker now has to tell apart. Default promoted-on-shared-
-    Home, because that is what a collection on the shelf looks like.
+
+def _hub(title: str, *, promoted: bool = True, recommended: bool = False):
+    """A COLLECTION's managed hub, as `managedHubs()` really returns one.
+
+    Two things a lazier fake would leave out, both of which the endpoint now reads (testing rule: the
+    fake must be no easier than the real server). The three promotion flags — without them it reads as
+    promoted-nowhere, the very state being told apart. And a `custom.collection.<sectionID>.<ratingKey>`
+    identifier, which is how a collection's hub is told from one of Plex's built-ins; a built-in is
+    modelled by a plain `SimpleNamespace(title=...)`, carrying an identifier of another kind or none.
+
+    Default promoted-on-shared-Home, because that is what a collection on the shelf looks like.
     """
     from types import SimpleNamespace
 
     return SimpleNamespace(
         title=title,
+        identifier=f"custom.collection.1.{next(_HUB_IDS)}",
         promotedToSharedHome=promoted,
         promotedToOwnHome=False,
         promotedToRecommended=recommended,
@@ -344,7 +352,6 @@ class TestSystemResponseShapes:
             key=1,
             title="Movies",
             type="movie",
-            collections=lambda: [SimpleNamespace(title="New Series (Unwatched)")],
             managedHubs=lambda: [
                 _hub("Picked for You" + row_marker(100)),
                 _hub("New Series (Unwatched)"),
@@ -408,10 +415,11 @@ class TestSystemResponseShapes:
         so; it is NOT filtered out here, because an owner whose saved anchor vanished from the list
         cannot tell "not on the shelf" from "deleted".
 
-        The matrix that matters is COLLECTION vs BUILT-IN. Only a collection is judged, because Plex
-        sends the promotion flags for those and the app reads them on every promote. A built-in hub is
-        never marked unusable: the engine never refuses one, so saying so here would be a lie the
-        owner acts on.
+        The matrix that matters is COLLECTION vs BUILT-IN, told apart by the hub's own
+        `custom.collection.*` identifier rather than by title. Only a collection is judged, because
+        Plex sends the promotion flags for those and the app reads them on every promote. A built-in
+        hub is never marked unusable: the engine never refuses one, so saying so here would be a lie
+        the owner acts on — and titles collide, so a title check would refuse one for real.
         """
         from types import SimpleNamespace
 
@@ -420,15 +428,10 @@ class TestSystemResponseShapes:
             key=1,
             title="Movies",
             type="movie",
-            collections=lambda: [
-                SimpleNamespace(title="New Series (Unwatched)"),
-                SimpleNamespace(title="Archive 2019"),
-                SimpleNamespace(title="Kometa Genre"),
-            ],
             managedHubs=lambda: [
-                # A built-in Plex hub carrying no promotion flags at all — the shape this repo has
-                # never recorded (plex-safety rule 11). It must stay selectable.
-                SimpleNamespace(title="Recently Added"),
+                # A built-in Plex hub: no promotion flags, and an identifier of another kind — the
+                # shape this repo has never recorded (plex-safety rule 11). It must stay selectable.
+                SimpleNamespace(title="Recently Added", identifier="home.television.recentlyadded"),
                 _hub("New Series (Unwatched)"),
                 _hub("Archive 2019", promoted=False),
                 # Any ONE flag is a real, visible position — a Kometa anchor is usually this one.

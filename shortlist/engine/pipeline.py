@@ -1512,6 +1512,11 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
                 # does after giving one row its own placement can turn the whole library's ordering
                 # off, and at DEBUG the only trace was a line nobody runs the container verbose enough
                 # to see — which is half of issue #106's "it just stopped ordering anything".
+                #
+                # A log line and NOT a `placed: False` audit record, unlike the outcomes `_apply_order`
+                # files. This one is TRANSIENT and self-clearing — the row is placed the moment it has
+                # been built here — so an audit warning would be raised against a state that fixes
+                # itself on the next run, which is how a warning stops being read.
                 logger.info(
                     "hub order: row '{}' has no delivered collection in {} yet — not ordering it this "
                     "run; it will be placed once that row has been built here",
@@ -1545,6 +1550,13 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
                 # The row someone anchored to has nothing in this library. Left alone rather than
                 # quietly falling back to the library default: reinterpreting where a row was asked to
                 # go is worse than not moving it, and the next run places it once that row delivers.
+                #
+                # Log-only for the same reason as the ledger gap above: normally transient, and
+                # self-clearing once the named row delivers here. It is not reachable from the editor
+                # in its permanent form — `RowShelfPlacement` only offers rows that target THIS library
+                # — though `_validate_anchor_rows` checks existence and cycles, not targeting, so a
+                # hand-written API call can still set one. The outcome is the same either way: leave
+                # the shelf alone rather than reinterpret where the row was asked to go.
                 logger.info(
                     "hub order: anchor row '{}' has nothing in {} yet — leaving the rows that follow it "
                     "where they are this run",

@@ -91,6 +91,23 @@ def has_shortlist_marker(title: str) -> bool:
     return len(suffix) == 64 and all(c in _MARKER_CHARS for c in suffix)
 
 
+def is_collection_hub(hub, section_key) -> bool:
+    """Whether a managed hub IS one of the library's collections, as opposed to a built-in Plex hub.
+
+    By IDENTIFIER, never by title. Plex identifies a collection's hub as
+    ``custom.collection.<sectionID>.<ratingKey>``: plexapi synthesizes exactly that string when it has
+    to construct one (``collection.py`` ``visibility()``) and then re-finds the hub by it, and
+    ``tests/fakes/fake_plex.py`` records the same shape.
+
+    Title would be wrong twice over. Titles COLLIDE — "Top Rated" is both a stock Plex hub and a stock
+    Kometa collection — so a built-in would be mistaken for a collection and refused as an anchor. And
+    a title check has to be answered from ``section.collections()``, a listing that can come back
+    SHORT; a truncated one would silently reclassify a real collection as a built-in and wave through
+    the very burial issue #106 is about. The identifier travels on the hub itself, so neither applies.
+    """
+    return str(getattr(hub, "identifier", "") or "").startswith(f"custom.collection.{section_key}.")
+
+
 def is_promoted(hub) -> bool:
     """Whether a managed hub is on ANY surface — shared Home, the owner's Home, or Recommended.
 
@@ -857,16 +874,12 @@ class PlexClient:
         # whole library in silence, the same shape of quiet nothing that hid the ordering bug. Ordering
         # only ever changes a POSITION, so the marker alone is safe proof of ownership: rule 4's two
         # guards exist because a wrong answer there DELETES, and nothing here can.
-        collections = self._section_collections(section)
         key_by_title = {
             c.title: c.ratingKey
-            for c in collections
+            for c in self._section_collections(section)
             if has_shortlist_marker(c.title) or any(label.tag.lower().startswith(prefix) for label in c.labels)
         }
         owned_all = set(key_by_title)
-        # Which shelf entries are COLLECTIONS, which is the only kind of anchor we may judge. See
-        # `is_on_shelf` at the foreign-anchor branch below.
-        collection_titles = {c.title for c in collections}
         # What the audit and the logs CALL this anchor. A row anchor has no title of its own — one
         # collection per person — so without a label every ordering record for one would read
         # 'anchor: ""', which is not an answer to "what moved where" (rule 10).
@@ -980,16 +993,16 @@ class PlexClient:
                 # collections in the library.
                 #
                 # Judged ONLY for collections, and that limit is the point. Plex sends the promotion
-                # booleans for a collection — the app reads them on every promote — but a hub matching
-                # no collection here is one of Plex's own built-ins ("Recently Added"), an ordinary
-                # anchor that nothing in this repo has ever read those flags from and for which there
-                # is no recorded fixture (plex-safety rule 11). Refusing to place a row needs positive
-                # evidence that its anchor is off the shelf, and a collection is where we have it; an
-                # attribute we cannot vouch for must never be the reason a working placement stops.
-                def is_on_shelf(hub) -> bool:
-                    return (getattr(hub, "title", "") or "") not in collection_titles or is_promoted(hub)
-
-                anchor = next((h for h in named if is_on_shelf(h)), None)
+                # booleans for a collection — the app reads them on every promote — but a built-in hub
+                # ("Recently Added") is an ordinary anchor that nothing in this repo has ever read
+                # those flags from, and for which there is no recorded fixture (plex-safety rule 11).
+                # Refusing to place a row needs positive evidence that its anchor is off the shelf, and
+                # a collection is where we have it; an attribute we cannot vouch for must never be the
+                # reason a working placement stops.
+                anchor = next(
+                    (h for h in named if not is_collection_hub(h, section.key) or is_promoted(h)),
+                    None,
+                )
                 if anchor is None:
                     logger.warning(
                         "hub order: anchor {!r} {} in {} — {}",

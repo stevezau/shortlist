@@ -716,6 +716,32 @@ class TestShelfContention:
         assert "Kometa" in result["body"] and "Agregarr" in result["body"]
         assert result["action_url"] == "/settings#placement"
 
+    def test_a_flood_of_unplaceable_records_cannot_crowd_out_the_contention_evidence(self, session):
+        """The entire reason issue #106's "could not place" record got its own scope.
+
+        This query reads a BOUNDED window of the most recent shelf events. One stale anchor writes a
+        record on every pass, and `privacy.sync` fires on every who-sees-what change (31 in one day on
+        SFLIX), so sharing `shelf.order` would let a setting nobody has fixed push the repeated MOVES
+        out of the window — and contention would stop being detected on a genuinely contested shelf.
+        """
+        old = datetime.now(UTC) - timedelta(hours=1)
+        for _ in range(3):
+            self._ordered(session, "Movies", ["Picked for You"], when=old)
+        for _ in range(600):  # newer, and far past the query's limit
+            session.add(
+                Event(
+                    scope="shelf.unplaced",
+                    level="warning",
+                    ts=datetime.now(UTC),
+                    message={"library": "Movies", "moved": [], "reason": "anchor not on the shelf"},
+                )
+            )
+        session.commit()
+
+        result = notif._shelf_contention(session)
+
+        assert result is not None and "3 times" in result["body"]
+
     def test_points_agregarr_users_at_the_maintained_fork(self, session):
         """Shortlist no longer connects to agregarr, so this notification is where an owner is told
         that the widely-run version re-promotes rows onto their OWN Home — a privacy problem, not
