@@ -528,7 +528,7 @@ async def library_collections(key: str, request: Request) -> list[dict]:
             title = getattr(hub, "title", "") or ""
             if not title or has_shortlist_marker(title):
                 continue
-            usable = not is_collection_hub(hub, section.key) or is_promoted(hub)
+            usable = not is_collection_hub(hub) or is_promoted(hub)
             seen[title] = seen.get(title, False) or usable
         return [{"title": t, "on_shelf": on_shelf} for t, on_shelf in seen.items()]
 

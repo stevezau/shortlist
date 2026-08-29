@@ -436,6 +436,14 @@ class TestSystemResponseShapes:
                 _hub("Archive 2019", promoted=False),
                 # Any ONE flag is a real, visible position — a Kometa anchor is usually this one.
                 _hub("Kometa Genre", promoted=False, recommended=True),
+                # TITLE COLLISION, both orders. The engine takes the first hub with this title that is
+                # usable, so the answer must be OR-ed across all of them rather than first-hub-wins —
+                # otherwise the API greys out an anchor the engine places happily. "Top Rated" is a
+                # stock Plex hub and a stock Kometa collection; "Trending" is the same, reversed.
+                SimpleNamespace(title="Top Rated", identifier="home.movies.toprated"),
+                _hub("Top Rated", promoted=False),
+                _hub("Trending", promoted=False),
+                SimpleNamespace(title="Trending", identifier="home.movies.trending"),
             ],
         )
 
@@ -453,6 +461,8 @@ class TestSystemResponseShapes:
             {"title": "New Series (Unwatched)", "on_shelf": True},
             {"title": "Archive 2019", "on_shelf": False},
             {"title": "Kometa Genre", "on_shelf": True},
+            {"title": "Top Rated", "on_shelf": True},
+            {"title": "Trending", "on_shelf": True},
         ]
 
     def test_the_library_list_is_read_from_plex_once_not_once_per_page_load(self, client: TestClient, monkeypatch):

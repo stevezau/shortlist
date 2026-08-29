@@ -50,8 +50,9 @@ the library's own Plex shelves, or there is no position to sit after.
 
 Open the library in Plex → **Manage Recommendations**. If the collection you anchored to is in that
 list with every toggle off, turn one on, or pick a different anchor. Shortlist leaves the rows where
-they are until then. You'll see it on the **Logs** page as a `run.hub_unplaced` entry naming the
-library and the anchor. Plex's own rows — "Recently Added" and the like — always work as anchors.
+they are until then. You'll see it on the **Logs** page, naming the library and the anchor —
+`run.hub_unplaced` after a nightly run, or `shelf.unplaced` after **Check and fix rows on Plex** or a
+privacy sync. Plex's own rows — "Recently Added" and the like — always work as anchors.
 
 The same thing happens with a row that has never been built in that library yet: there is nothing to
 position until it exists. Run it once and it lands in place.

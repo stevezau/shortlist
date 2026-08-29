@@ -25,13 +25,13 @@ class FakeHub:
     lists hubs promoted nowhere — which is exactly what `order_owned_hubs` was wasting moves on.
     """
 
-    def __init__(self, title: str, ident: str, *, promoted: bool = True, collection: bool = True):
+    def __init__(self, title: str, ident: str, *, promoted: bool = True, collection: bool = True, identifier: str = ""):
         self.title = title
         # Plex identifies a promoted COLLECTION's hub as `custom.collection.<sectionID>.<ratingKey>`
         # (see `is_collection_hub`, and `fake_plex._managed_hub_xml`, which records the same shape).
         # A built-in hub carries an identifier of its own kind — `collection=False` models one, which
         # is what tells the ordering guard the two apart.
-        self.identifier = f"custom.collection.2.{ident}" if collection else ident
+        self.identifier = identifier or (f"custom.collection.2.{ident}" if collection else ident)
         self.promotedToSharedHome = promoted
         self.promotedToOwnHome = False
         self.promotedToRecommended = False
@@ -93,6 +93,47 @@ def _client(colls: list[FakeColl]) -> PlexClient:
     client = PlexClient.__new__(PlexClient)  # bypass __init__ (no real PlexServer)
     client._section_collections = lambda section: colls
     return client
+
+
+def test_is_collection_hub_accepts_every_identifier_shape_a_real_pms_has_produced():
+    """The guard's one piece of evidence, pinned to RECORDED captures rather than to plexapi's guess.
+
+    The two shapes in the fixtures agree on nothing after the family name — one carries a section id
+    and a DOUBLED ratingKey, the other no section id at all. Matching plexapi's synthesized
+    `custom.collection.<sectionID>.<ratingKey>` rejects both, and each rejection silently disables the
+    #106 guard for that hub. Read from `hubIdentifier` because that is the key `/hubs` uses; the
+    manage endpoint calls it `identifier`, and no fixture records it (see `is_collection_hub`).
+    """
+    import json
+    from pathlib import Path
+
+    from shortlist.engine.clients.plex_pms import is_collection_hub
+
+    fixtures = Path(__file__).resolve().parents[1] / "fixtures"
+    recorded = {
+        ident
+        for name in ("pms_hubs_home.json", "pms_hubs_shared_account.json")
+        for ident in _hub_identifiers(json.loads((fixtures / name).read_text()))
+        if ident.startswith("custom.collection")
+    }
+    # Guard the guard: if a re-record ever drops these, this test must fail rather than pass vacuously.
+    assert len(recorded) >= 2, recorded
+    for ident in recorded:
+        assert is_collection_hub(FakeHub("x", "", collection=False, identifier=ident)), ident
+
+    # Built-ins are a different family and must never be judged.
+    for ident in ("home.television.recentlyadded", "movie.recentlyadded", "home.movies.toprated", ""):
+        assert not is_collection_hub(FakeHub("x", "", collection=False, identifier=ident)), ident
+
+
+def _hub_identifiers(node) -> list[str]:
+    """Every hub identifier anywhere in a recorded hubs payload, under either key `/hubs` uses."""
+    if isinstance(node, dict):
+        found = [v for k in ("hubIdentifier", "identifier") if isinstance(v := node.get(k), str)]
+        return found + [i for v in node.values() for i in _hub_identifiers(v)]
+    if isinstance(node, list):
+        return [i for v in node for i in _hub_identifiers(v)]
+    return []
 
 
 def test_moves_our_rows_immediately_after_the_anchor():

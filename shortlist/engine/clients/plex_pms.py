@@ -91,21 +91,37 @@ def has_shortlist_marker(title: str) -> bool:
     return len(suffix) == 64 and all(c in _MARKER_CHARS for c in suffix)
 
 
-def is_collection_hub(hub, section_key) -> bool:
+#: The identifier family Plex gives a COLLECTION's hub. Prefix only, and deliberately NOT a format.
+#: The two shapes recorded off a real PMS disagree about everything after it:
+#: `custom.collection.1.527794.527794` (section id, and the ratingKey DOUBLED —
+#: `pms_hubs_shared_account.json`, PMS 1.43.3) and `custom.collection.571285` (no section id at all —
+#: `pms_hubs_home.json`). plexapi's own `custom.collection.<sectionID>.<ratingKey>` (`collection.py`,
+#: `visibility()`) is what it SYNTHESIZES when a hub is missing, and matches neither capture — so
+#: anything stricter than the family name rejects a real collection and silently disables the guard.
+#: Built-ins are a different family (`home.television.recentlyadded`, `movie.recentlyadded`).
+#:
+#: Both captures are `hubIdentifier` on `/hubs`, not `identifier` on `/hubs/sections/<key>/manage`,
+#: which is what this actually reads — hence the fail-open note below. (The `custom.collection~68`
+#: and bare `custom.collection` strings in those fixtures are `context` values, a different field.)
+_COLLECTION_HUB_PREFIX = "custom.collection"
+
+
+def is_collection_hub(hub) -> bool:
     """Whether a managed hub IS one of the library's collections, as opposed to a built-in Plex hub.
 
-    By IDENTIFIER, never by title. Plex identifies a collection's hub as
-    ``custom.collection.<sectionID>.<ratingKey>``: plexapi synthesizes exactly that string when it has
-    to construct one (``collection.py`` ``visibility()``) and then re-finds the hub by it, and
-    ``tests/fakes/fake_plex.py`` records the same shape.
-
-    Title would be wrong twice over. Titles COLLIDE — "Top Rated" is both a stock Plex hub and a stock
+    By IDENTIFIER, never by title. Titles COLLIDE — "Top Rated" is both a stock Plex hub and a stock
     Kometa collection — so a built-in would be mistaken for a collection and refused as an anchor. And
     a title check has to be answered from ``section.collections()``, a listing that can come back
-    SHORT; a truncated one would silently reclassify a real collection as a built-in and wave through
-    the very burial issue #106 is about. The identifier travels on the hub itself, so neither applies.
+    SHORT; a truncated one would reclassify a real collection as a built-in and wave through the very
+    burial issue #106 is about. The identifier travels on the hub itself, so neither applies.
+
+    FAILS OPEN, and that is the intended direction. No fixture records
+    ``/hubs/sections/<key>/manage`` itself (plex-safety rule 11) — the identifier captures we have are
+    from ``/hubs`` — so if that endpoint ever names a collection differently this returns False, the
+    hub reads as a built-in, and the row is placed exactly as it was before issue #106 was fixed. That
+    is the old bug back, never a placement that works being refused.
     """
-    return str(getattr(hub, "identifier", "") or "").startswith(f"custom.collection.{section_key}.")
+    return str(getattr(hub, "identifier", "") or "").startswith(_COLLECTION_HUB_PREFIX)
 
 
 def is_promoted(hub) -> bool:
@@ -1000,7 +1016,7 @@ class PlexClient:
                 # a collection is where we have it; an attribute we cannot vouch for must never be the
                 # reason a working placement stops.
                 anchor = next(
-                    (h for h in named if not is_collection_hub(h, section.key) or is_promoted(h)),
+                    (h for h in named if not is_collection_hub(h) or is_promoted(h)),
                     None,
                 )
                 if anchor is None:

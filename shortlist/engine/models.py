@@ -1256,9 +1256,13 @@ class RunReport:
     # any run's user list — so without this, "what changed on whose share at 03:31" would have no
     # answer for them at all (plex-safety rule 10).
     filter_writes: dict[int, dict] = field(default_factory=dict)
-    # Managed-recommendation shelf reorders applied this run, one per library actually moved (a title
-    # anchor + the row titles moved). Empty when no anchors are configured or everything was already
-    # in place — a run-level audit of a server-wide Plex write (plex-safety rule 10).
+    # Managed-recommendation shelf outcomes for this run — a run-level audit of a server-wide Plex
+    # write (plex-safety rule 10). TWO kinds of entry, and a consumer has to branch on them:
+    #   * a MOVE — `moved` (the row titles) and `verified` (did the shelf actually end up that way);
+    #   * a placement that could NOT be applied — `placed: False`, `moved: []`, `reason` in
+    #     `pipeline.UNPLACEABLE`, and deliberately NO `verified`, because nothing was asked of Plex.
+    # Reporting the second as the first is exactly what the Jobs detail line used to do: a buried row
+    # announced as "repositioned". Empty when no anchors are configured or everything was in place.
     hub_orderings: list[dict] = field(default_factory=list)
     # Sonarr/Radarr requests made (or, in dry-run, that would be made) for picks the library lacks.
     # None when the feature is off — distinct from an empty report (on, but nothing qualified).
