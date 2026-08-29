@@ -65,8 +65,9 @@ class TestTheShelfEventsANightlyRunEmits:
     on-demand handlers.
 
     Tested separately from the jobs path because they are separate emitters with separate scope
-    names, and `docs/guides.md` sends owners looking for THIS one (`run.hub_unplaced`) after a
-    nightly run. The jobs-path tests in `test_jobs.py` cannot see a regression here.
+    names, and `docs/guides.md` tells owners to read THIS one back after a nightly run
+    (`/api/events/log?scope=run.hub_unplaced` — the change log has no screen yet). The jobs-path
+    tests in `test_jobs.py` cannot see a regression here.
     """
 
     @staticmethod
