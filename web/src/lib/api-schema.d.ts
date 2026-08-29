@@ -3543,9 +3543,12 @@ export interface components {
         };
         /**
          * LibraryCollectionOut
-         * @description A candidate anchor title. Title only — the shelf is ordered by title, not by rating key.
+         * @description A candidate anchor. Title, because the shelf is ordered by title, not by rating key — plus
+         *     whether it has a position on a Plex shelf at all, which decides if it can anchor anything.
          */
         LibraryCollectionOut: {
+            /** On Shelf */
+            on_shelf: boolean;
             /** Title */
             title: string;
         } & {

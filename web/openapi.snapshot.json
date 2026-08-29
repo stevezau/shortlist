@@ -2461,15 +2461,20 @@
       },
       "LibraryCollectionOut": {
         "additionalProperties": true,
-        "description": "A candidate anchor title. Title only \u2014 the shelf is ordered by title, not by rating key.",
+        "description": "A candidate anchor. Title, because the shelf is ordered by title, not by rating key \u2014 plus\nwhether it has a position on a Plex shelf at all, which decides if it can anchor anything.",
         "properties": {
+          "on_shelf": {
+            "title": "On Shelf",
+            "type": "boolean"
+          },
           "title": {
             "title": "Title",
             "type": "string"
           }
         },
         "required": [
-          "title"
+          "title",
+          "on_shelf"
         ],
         "title": "LibraryCollectionOut",
         "type": "object"

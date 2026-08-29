@@ -55,6 +55,12 @@ function LibraryPlacement({
   const mode = modeOf(entry);
   const relative = mode === "after" || mode === "before";
   const collections = useLibraryCollections(library.key, relative);
+  // Only collections actually on a Plex shelf can anchor anything — one promoted nowhere
+  // has no position to sit after, and following it buries the row (issue #106). Off-shelf ones are
+  // shown unselectable rather than hidden, so a saved anchor never silently disappears.
+  const onShelf = (collections.data ?? []).filter((c) => c.on_shelf);
+  const offShelf = (collections.data ?? []).filter((c) => !c.on_shelf);
+  const anchorOffShelf = offShelf.some((c) => c.title === entry?.anchor);
 
   const setMode = (next: "default" | "top" | "after" | "before") => {
     if (next === "default") return onChange(undefined);
@@ -116,11 +122,24 @@ function LibraryPlacement({
                       {entry.anchor} (not found)
                     </option>
                   )}
-                {collections.data?.map((c) => (
-                  <option key={c.title} value={c.title}>
-                    {c.title}
-                  </option>
-                ))}
+                {onShelf.length > 0 && (
+                  <optgroup label="On a Plex shelf">
+                    {onShelf.map((c) => (
+                      <option key={c.title} value={c.title}>
+                        {c.title}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {offShelf.length > 0 && (
+                  <optgroup label="Not on a Plex shelf — can’t be used">
+                    {offShelf.map((c) => (
+                      <option key={c.title} value={c.title} disabled>
+                        {c.title}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             )}
           </div>
@@ -129,6 +148,14 @@ function LibraryPlacement({
       {relative && !entry?.anchor && (
         <p className="text-sm text-muted-foreground">
           Pick a collection to anchor to, or nothing changes.
+        </p>
+      )}
+      {anchorOffShelf && (
+        <p className="text-sm text-destructive-text">
+          “{entry?.anchor}” isn’t on any of this library’s Plex shelves, so there’s
+          no position to anchor to. Turn it on in Plex (the library’s Manage
+          Recommendations screen) or choose something else — until then these
+          rows stay where they are.
         </p>
       )}
     </div>

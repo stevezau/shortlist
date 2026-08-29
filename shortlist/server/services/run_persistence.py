@@ -1414,24 +1414,31 @@ def _emit_privacy_sync_events(session: Session, run_id: int, report) -> None:
 def _emit_hub_ordering_events(session: Session, run_id: int, report) -> None:
     # Recommended-shelf reorders. Moving a managed hub shifts every collection's position on a
     # server-wide shelf that a co-managing tool (Kometa) also cares about, so each library we
-    # actually moved rows in is audited — "what changed on the shelf at 03:31" (plex-safety rule 10).
+    # actually moved rows in is audited — "what changed on the shelf at 03:31" (plex-safety rule 10)
+    # — and so is each one whose configured placement could not be applied (`pipeline.UNPLACEABLE`).
     for entry in report.hub_orderings:
         # `verified` is the whole point of the record. "We asked" and "it happened" are different
         # facts — a co-managing tool (agregarr, Kometa) reorders the same shelf on its own clock — and an
         # audit that only ever said the first is how a shelf owned by another tool was reported as a
         # successful reorder for weeks (SFLIX 2026-08-12). A dry run asked for nothing, so it is neither
         # verified nor a warning.
+        #
+        # An unplaceable entry asked Plex for nothing either, so it carries NO `verified` and gets its
+        # own scope — `_shelf_contention` counts repeated moves within a bounded event budget, and a
+        # stale anchor re-reported every pass has nothing to tell it.
         verified = entry.get("verified")
+        unplaced = entry.get("placed") is False
         _add_event(
             session,
-            "run.hub_order",
-            "warning" if verified is False else "info",
+            "run.hub_unplaced" if unplaced else "run.hub_order",
+            "info" if report.dry_run else ("warning" if unplaced or verified is False else "info"),
             run_id,
             dry_run=report.dry_run,
             library=entry.get("library"),
             anchor=entry.get("anchor"),
             moved=entry.get("moved", []),
             verified=verified,
+            reason=entry.get("reason"),
         )
 
 

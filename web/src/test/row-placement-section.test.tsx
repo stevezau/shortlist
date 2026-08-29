@@ -40,8 +40,9 @@ describe("RowPlacementSection", () => {
       { key: "2", title: "TV Shows", type: "show" },
     ]);
     getLibraryCollections.mockResolvedValue([
-      { title: "New Series (Unwatched)" },
-      { title: "Trending" },
+      { title: "New Series (Unwatched)", on_shelf: true },
+      { title: "Trending", on_shelf: true },
+      { title: "Archive 2019", on_shelf: false },
     ]);
   });
 
@@ -142,5 +143,21 @@ describe("RowPlacementSection", () => {
     expect(
       screen.getByRole("link", { name: /bitr8\/agregarr-dev/i }),
     ).toHaveAttribute("href", "https://github.com/bitr8/agregarr-dev");
+  });
+  it("won't let the global default anchor to a collection that has no shelf position", async () => {
+    // Same trap as the per-row picker (issue #106), reachable from Settings too.
+    renderSection({
+      "rows.hub_anchor": { "2": { anchor: "Archive 2019", before: false } },
+    });
+    expect(await screen.findByText("TV Shows")).toBeTruthy();
+
+    const anchor = await screen.findByLabelText("Collection");
+    const offShelf = Array.from(anchor.querySelectorAll("option")).find(
+      (o) => o.textContent === "Archive 2019",
+    );
+    expect(offShelf?.disabled).toBe(true);
+    expect(
+      screen.getByText(/isn’t on any of this library’s Plex shelves/),
+    ).toBeTruthy();
   });
 });

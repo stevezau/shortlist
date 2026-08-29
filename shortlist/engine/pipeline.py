@@ -1320,6 +1320,12 @@ def _anchor_group_order(
     return ordered
 
 
+#: Reorder outcomes that mean "the owner asked for a placement and we could not honour it", as
+#: opposed to the ordinary skips a converged server produces every night. These are the ones worth a
+#: warning in the audit: each names a setting on the Rows page that is silently doing nothing.
+UNPLACEABLE = frozenset({"anchor not found", "anchor not on the shelf", "anchor row not on this shelf"})
+
+
 def _apply_order(
     ctx: EngineContext,
     report: RunReport,
@@ -1350,6 +1356,19 @@ def _apply_order(
         # out here for looking like a failure.
         if result.get("moved") and not result.get("skipped"):
             report.hub_orderings.append({"library": section.title, **result})
+        elif result.get("reason") in UNPLACEABLE:
+            # A placement the owner CONFIGURED that we could not honour — the anchor is gone from the
+            # shelf, or is a collection that is not on it at all (issue #106). Recorded so it reaches
+            # the events audit and the Jobs detail line, because the alternative is a warning in the
+            # container log and a Rows page that shows a setting doing nothing, for good, with nothing
+            # on screen saying why. The ordinary skips ("already in place", "rows not promoted yet")
+            # are NOT in that set: they are the steady state of a converged server and would bury this
+            # under a nightly warning per library.
+            #
+            # `placed: False` and NOT `verified: False`. `verified` answers "we asked Plex to move
+            # these and it stuck", the distinction the whole shelf audit was rebuilt around; nothing
+            # was asked here, so an answer to that question would be a fabricated one.
+            report.hub_orderings.append({"library": section.title, "placed": False, **result})
     except Exception as e:
         # `redact` because this is plexapi error text (rule 9). plexapi raises
         # `f'({status}) {codename}; {response.url} {errtext}'`, and `response.url` carries the
@@ -1487,8 +1506,15 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
                 # Nothing delivered for this row here yet (a first run, or a row that has never
                 # reached this library). Said out loud rather than skipped in silence — silence here
                 # is exactly what made the original bug invisible. The next run places it.
-                logger.debug(
-                    "hub order: row '{}' has no delivered collection in {} yet — not ordering it this run",
+                #
+                # INFO, not DEBUG. This branch is reachable ONLY once rows disagree about where they
+                # belong: the one-block path above needs no ledger at all. So the first thing an owner
+                # does after giving one row its own placement can turn the whole library's ordering
+                # off, and at DEBUG the only trace was a line nobody runs the container verbose enough
+                # to see — which is half of issue #106's "it just stopped ordering anything".
+                logger.info(
+                    "hub order: row '{}' has no delivered collection in {} yet — not ordering it this "
+                    "run; it will be placed once that row has been built here",
                     slug,
                     section.title,
                 )

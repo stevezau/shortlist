@@ -467,9 +467,13 @@ async def libraries(request: Request) -> list[dict]:
 
 
 class LibraryCollectionOut(PassthroughModel):
-    """A candidate anchor title. Title only — the shelf is ordered by title, not by rating key."""
+    """A candidate anchor. Title, because the shelf is ordered by title, not by rating key — plus
+    whether it has a position on a Plex shelf at all, which decides if it can anchor anything."""
 
     title: str
+    #: False ONLY for a collection Plex reports as promoted nowhere. Plex's own built-in hubs are
+    #: always True: the engine never refuses one, so the editor must not grey one out either.
+    on_shelf: bool
 
 
 @_authed.get("/libraries/{key}/collections", response_model=list[LibraryCollectionOut])
@@ -490,7 +494,7 @@ async def library_collections(key: str, request: Request) -> list[dict]:
     how the reporter came to have one saved: the option was a flicker, and it never placed anything.
     The marker is in the title we already have, so it cannot fail that way.
     """
-    from shortlist.engine.clients.plex_pms import PlexClient, has_shortlist_marker
+    from shortlist.engine.clients.plex_pms import PlexClient, has_shortlist_marker, is_promoted
     from shortlist.server.settings_store import SettingsStore
 
     state = request.app.state
@@ -505,12 +509,23 @@ async def library_collections(key: str, request: Request) -> list[dict]:
         section = next((s for s in client.sections() if str(s.key) == key), None)
         if section is None:
             raise HTTPException(status_code=404, detail="library not found")
-        titles: list[str] = []
+        # `on_shelf` decides whether an anchor can work at all. `managedHubs()` lists every hub the
+        # library CAN manage, and a COLLECTION promoted nowhere has no position on the shelf —
+        # following it buries the row (issue #106), which is why the engine now refuses to. The editor
+        # still shows them, greyed out and labelled, rather than dropping them: an owner who cannot
+        # see the collection they picked last week has no way to tell "not on the shelf" from
+        # "deleted".
+        #
+        # Mirrors the engine's test exactly, including its limit: only a collection is judged. A hub
+        # matching no collection is one of Plex's built-ins, which the engine never refuses, so
+        # marking one unusable here would be a lie the owner acts on.
+        collection_titles = {c.title for c in section.collections()}
+        seen: dict[str, bool] = {}
         for hub in section.managedHubs():
             title = getattr(hub, "title", "") or ""
-            if title and not has_shortlist_marker(title) and title not in titles:
-                titles.append(title)
-        return [{"title": t} for t in titles]
+            if title and not has_shortlist_marker(title) and title not in seen:
+                seen[title] = title not in collection_titles or is_promoted(hub)
+        return [{"title": t, "on_shelf": on_shelf} for t, on_shelf in seen.items()]
 
     return await asyncio.get_running_loop().run_in_executor(
         None, lambda: _cached_plex_read(state, f"collections:{key}", read)

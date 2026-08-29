@@ -91,7 +91,7 @@ def has_shortlist_marker(title: str) -> bool:
     return len(suffix) == 64 and all(c in _MARKER_CHARS for c in suffix)
 
 
-def _is_promoted(hub) -> bool:
+def is_promoted(hub) -> bool:
     """Whether a managed hub is on ANY surface — shared Home, the owner's Home, or Recommended.
 
     ``managedHubs()`` lists every managed hub, promoted or not. A hub with all three flags off is
@@ -819,6 +819,11 @@ class PlexClient:
         collection ratingKeys (used when different rows anchor to different collections) — ``None``
         moves them all.
 
+        An anchor that is a COLLECTION must itself be promoted. One promoted nowhere is in
+        ``managedHubs()`` but on no shelf, so it names no position a viewer can see, and following it
+        buries the row (issue #106); the row is then left where it is rather than placed somewhere
+        nobody asked for. Plex's own built-in hubs are never refused — see the branch for why.
+
         ``anchor_keys`` anchors to one of OUR OWN rows instead of a foreign collection: the ratingKeys
         of that row's collections in this section, from the delivery ledger. The anchor hub is then the
         last of them in current shelf order (or the first, for ``before``) rather than a title match —
@@ -852,12 +857,16 @@ class PlexClient:
         # whole library in silence, the same shape of quiet nothing that hid the ordering bug. Ordering
         # only ever changes a POSITION, so the marker alone is safe proof of ownership: rule 4's two
         # guards exist because a wrong answer there DELETES, and nothing here can.
+        collections = self._section_collections(section)
         key_by_title = {
             c.title: c.ratingKey
-            for c in self._section_collections(section)
+            for c in collections
             if has_shortlist_marker(c.title) or any(label.tag.lower().startswith(prefix) for label in c.labels)
         }
         owned_all = set(key_by_title)
+        # Which shelf entries are COLLECTIONS, which is the only kind of anchor we may judge. See
+        # `is_on_shelf` at the foreign-anchor branch below.
+        collection_titles = {c.title for c in collections}
         # What the audit and the logs CALL this anchor. A row anchor has no title of its own — one
         # collection per person — so without a label every ordering record for one would read
         # 'anchor: ""', which is not an answer to "what moved where" (rule 10).
@@ -912,7 +921,7 @@ class PlexClient:
             # a position nobody can see, since all three promotion flags are off. On SFLIX that was 4
             # wasted moves per library per pass, and it kept a reconciled shelf looking contested: a
             # co-managing tool (agregarr) rightly ignores those rows, so we alone kept shuffling them.
-            ours = [h for h in order if (getattr(h, "title", "") or "") in owned_titles and _is_promoted(h)]
+            ours = [h for h in order if (getattr(h, "title", "") or "") in owned_titles and is_promoted(h)]
             if not ours:
                 return outcome("rows not promoted yet")
 
@@ -928,7 +937,7 @@ class PlexClient:
                 # so it sits wherever Plex appended it, at the bottom. Anchoring to it dragged the
                 # follower down there with it, underneath the co-managing tool's hubs: precisely the
                 # burial this whole function exists to undo, reported as a verified success.
-                block = [h for h in order if (getattr(h, "title", "") or "") in anchor_titles and _is_promoted(h)]
+                block = [h for h in order if (getattr(h, "title", "") or "") in anchor_titles and is_promoted(h)]
                 if not block:
                     # Every copy of the anchor row here is dormant. Same answer as "not on this shelf":
                     # there is no position to be relative to, and inventing one puts the follower
@@ -956,23 +965,40 @@ class PlexClient:
                 else:
                     target = block[-1]
             else:
-                anchor = next(
-                    (
-                        h
-                        for h in order
-                        if (getattr(h, "title", "") or "") == anchor_title
-                        and (getattr(h, "title", "") or "") not in owned_all
-                    ),
-                    None,
-                )
+                named = [
+                    h
+                    for h in order
+                    if (getattr(h, "title", "") or "") == anchor_title
+                    and (getattr(h, "title", "") or "") not in owned_all
+                ]
+
+                # Issue #106: `managedHubs()` lists every manageable hub, and a COLLECTION promoted
+                # nowhere has no position on the shelf anyone can see. Following one landed our rows
+                # wherever Plex keeps it — in practice below every standard Plex hub — and the verify
+                # pass then agreed the shelf was exactly what we asked for, so the run reported
+                # `verified: True` over a buried row. The picker offered these, because they are real
+                # collections in the library.
+                #
+                # Judged ONLY for collections, and that limit is the point. Plex sends the promotion
+                # booleans for a collection — the app reads them on every promote — but a hub matching
+                # no collection here is one of Plex's own built-ins ("Recently Added"), an ordinary
+                # anchor that nothing in this repo has ever read those flags from and for which there
+                # is no recorded fixture (plex-safety rule 11). Refusing to place a row needs positive
+                # evidence that its anchor is off the shelf, and a collection is where we have it; an
+                # attribute we cannot vouch for must never be the reason a working placement stops.
+                def is_on_shelf(hub) -> bool:
+                    return (getattr(hub, "title", "") or "") not in collection_titles or is_promoted(hub)
+
+                anchor = next((h for h in named if is_on_shelf(h)), None)
                 if anchor is None:
                     logger.warning(
-                        "hub order: anchor {!r} not found in {} — {}",
+                        "hub order: anchor {!r} {} in {} — {}",
                         anchor_title,
+                        "is a collection that is not on any Plex shelf" if named else "not found",
                         section.title,
                         f"stopping after {len(moved)} move(s)" if moved else "leaving the shelf order unchanged",
                     )
-                    return outcome("anchor not found")
+                    return outcome("anchor not on the shelf" if named else "anchor not found")
                 # 'after anchor' -> the anchor; 'before anchor' -> the hub just before it that isn't one
                 # of ours (None -> the very top of the shelf).
                 if before:

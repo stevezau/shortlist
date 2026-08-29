@@ -13,6 +13,23 @@ from tests.conftest import plextv_user
 pytestmark = pytest.mark.integration
 
 
+def _hub(title: str, *, promoted: bool = True, recommended: bool = False):
+    """A managed hub as `managedHubs()` really returns one — with its three promotion flags.
+
+    A fake without them is easier than the real server (testing rule): it reads as promoted-nowhere,
+    which is exactly the state the anchor picker now has to tell apart. Default promoted-on-shared-
+    Home, because that is what a collection on the shelf looks like.
+    """
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        title=title,
+        promotedToSharedHome=promoted,
+        promotedToOwnHome=False,
+        promotedToRecommended=recommended,
+    )
+
+
 class TestLogsApi:
     """The in-app Logs view. Owner-only, and redacted — it exists to be copied into bug reports."""
 
@@ -327,9 +344,10 @@ class TestSystemResponseShapes:
             key=1,
             title="Movies",
             type="movie",
+            collections=lambda: [SimpleNamespace(title="New Series (Unwatched)")],
             managedHubs=lambda: [
-                SimpleNamespace(title="Picked for You" + row_marker(100)),
-                SimpleNamespace(title="New Series (Unwatched)"),
+                _hub("Picked for You" + row_marker(100)),
+                _hub("New Series (Unwatched)"),
             ],
         )
 
@@ -344,8 +362,8 @@ class TestSystemResponseShapes:
 
         body = client.get("/api/system/libraries/1/collections").json()
 
-        assert body == [{"title": "New Series (Unwatched)"}]
-        assert set(body[0]) == {"title"}
+        assert body == [{"title": "New Series (Unwatched)", "on_shelf": True}]
+        assert set(body[0]) == {"title", "on_shelf"}
 
     def test_library_collections_excludes_our_rows_even_when_plex_reports_no_labels(
         self, client: TestClient, monkeypatch
@@ -362,10 +380,13 @@ class TestSystemResponseShapes:
             key=1,
             title="Movies",
             type="movie",
-            collections=lambda: [SimpleNamespace(title="Picked for You" + row_marker(100), labels=[])],
-            managedHubs=lambda: [
-                SimpleNamespace(title="Picked for You" + row_marker(100)),
+            collections=lambda: [
+                SimpleNamespace(title="Picked for You" + row_marker(100), labels=[]),
                 SimpleNamespace(title="Kometa Genre"),
+            ],
+            managedHubs=lambda: [
+                _hub("Picked for You" + row_marker(100)),
+                _hub("Kometa Genre"),
             ],
         )
 
@@ -378,7 +399,58 @@ class TestSystemResponseShapes:
 
         monkeypatch.setattr("shortlist.engine.clients.plex_pms.PlexClient", FakePlex)
 
-        assert client.get("/api/system/libraries/1/collections").json() == [{"title": "Kometa Genre"}]
+        assert client.get("/api/system/libraries/1/collections").json() == [{"title": "Kometa Genre", "on_shelf": True}]
+
+    def test_library_collections_flags_a_collection_with_no_shelf_position(self, client: TestClient, monkeypatch):
+        """Issue #106. `managedHubs()` lists every hub the library CAN manage, promoted or not, so the
+        picker was offering collections with no position on the shelf — and the engine followed one
+        and buried the row underneath every standard Plex hub. The flag is what lets the editor say
+        so; it is NOT filtered out here, because an owner whose saved anchor vanished from the list
+        cannot tell "not on the shelf" from "deleted".
+
+        The matrix that matters is COLLECTION vs BUILT-IN. Only a collection is judged, because Plex
+        sends the promotion flags for those and the app reads them on every promote. A built-in hub is
+        never marked unusable: the engine never refuses one, so saying so here would be a lie the
+        owner acts on.
+        """
+        from types import SimpleNamespace
+
+        self._connect_plex(client)
+        section = SimpleNamespace(
+            key=1,
+            title="Movies",
+            type="movie",
+            collections=lambda: [
+                SimpleNamespace(title="New Series (Unwatched)"),
+                SimpleNamespace(title="Archive 2019"),
+                SimpleNamespace(title="Kometa Genre"),
+            ],
+            managedHubs=lambda: [
+                # A built-in Plex hub carrying no promotion flags at all — the shape this repo has
+                # never recorded (plex-safety rule 11). It must stay selectable.
+                SimpleNamespace(title="Recently Added"),
+                _hub("New Series (Unwatched)"),
+                _hub("Archive 2019", promoted=False),
+                # Any ONE flag is a real, visible position — a Kometa anchor is usually this one.
+                _hub("Kometa Genre", promoted=False, recommended=True),
+            ],
+        )
+
+        class FakePlex:
+            def __init__(self, *a, **k):
+                pass
+
+            def sections(self):
+                return [section]
+
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.PlexClient", FakePlex)
+
+        assert client.get("/api/system/libraries/1/collections").json() == [
+            {"title": "Recently Added", "on_shelf": True},
+            {"title": "New Series (Unwatched)", "on_shelf": True},
+            {"title": "Archive 2019", "on_shelf": False},
+            {"title": "Kometa Genre", "on_shelf": True},
+        ]
 
     def test_the_library_list_is_read_from_plex_once_not_once_per_page_load(self, client: TestClient, monkeypatch):
         """`/libraries` backs every row card, the library picker and the placement settings, and each

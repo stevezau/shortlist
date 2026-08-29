@@ -3,7 +3,11 @@ import { useEffect, useRef } from "react";
 import { QueryBoundary } from "@/components/query-boundary";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useCollections, useLibraries, useLibraryCollections } from "@/lib/queries";
+import {
+  useCollections,
+  useLibraries,
+  useLibraryCollections,
+} from "@/lib/queries";
 import type { CollectionInput, HubAnchorMap, PlexLibrary } from "@/lib/types";
 
 const selectClass =
@@ -72,6 +76,13 @@ function LibraryAnchor({
   const candidates = otherRows.filter((row) =>
     targetsLibrary(library, row.libraryKeys, row.media),
   );
+  // A collection on no Plex shelf has no position to be relative to, so it can
+  // anchor nothing (issue #106 — the engine used to follow it anyway and bury the row at the very
+  // bottom). Shown but unselectable rather than hidden: an owner whose saved anchor simply vanished
+  // from the list has no way to tell "not on the shelf" from "deleted".
+  const onShelf = (collections.data ?? []).filter((c) => c.on_shelf);
+  const offShelf = (collections.data ?? []).filter((c) => !c.on_shelf);
+  const anchorOffShelf = offShelf.some((c) => c.title === entry?.anchor);
 
   const setMode = (next: Mode) => {
     if (next === "default") return onChange(undefined);
@@ -131,11 +142,12 @@ function LibraryAnchor({
                 </option>
                 {/* A saved anchor that no longer exists still shows, so the setting reads truthfully
                     rather than silently appearing unset. */}
-                {entry?.row && !candidates.some((r) => r.slug === entry.row) && (
-                  <option value={`row:${entry.row}`}>
-                    {entry.row} (row not found)
-                  </option>
-                )}
+                {entry?.row &&
+                  !candidates.some((r) => r.slug === entry.row) && (
+                    <option value={`row:${entry.row}`}>
+                      {entry.row} (row not found)
+                    </option>
+                  )}
                 {entry?.anchor &&
                   !collections.data?.some((c) => c.title === entry.anchor) && (
                     <option value={`coll:${entry.anchor}`}>
@@ -151,13 +163,24 @@ function LibraryAnchor({
                     ))}
                   </optgroup>
                 )}
-                <optgroup label="Collections in this library">
-                  {collections.data?.map((c) => (
-                    <option key={c.title} value={`coll:${c.title}`}>
-                      {c.title}
-                    </option>
-                  ))}
-                </optgroup>
+                {onShelf.length > 0 && (
+                  <optgroup label="Collections in this library">
+                    {onShelf.map((c) => (
+                      <option key={c.title} value={`coll:${c.title}`}>
+                        {c.title}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {offShelf.length > 0 && (
+                  <optgroup label="Not on a Plex shelf — can’t be used">
+                    {offShelf.map((c) => (
+                      <option key={c.title} value={`coll:${c.title}`} disabled>
+                        {c.title}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             )}
           </div>
@@ -165,7 +188,16 @@ function LibraryAnchor({
       </div>
       {relative && !chosen && (
         <p className="text-sm text-muted-foreground">
-          Pick a row or collection to sit {mode === "before" ? "before" : "after"}, or nothing moves.
+          Pick a row or collection to sit{" "}
+          {mode === "before" ? "before" : "after"}, or nothing moves.
+        </p>
+      )}
+      {anchorOffShelf && (
+        <p className="text-sm text-destructive-text">
+          “{entry?.anchor}” isn’t on any of this library’s Plex shelves, so
+          there’s no position to sit {mode === "before" ? "before" : "after"}.
+          Turn it on in Plex (the library’s Manage Recommendations screen) or
+          choose something else — until then this row stays where it is.
         </p>
       )}
       {rowSlug && entry?.row === rowSlug && (

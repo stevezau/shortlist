@@ -559,8 +559,12 @@ export const api = {
 
   /** A library's managed collections — the candidate anchors for placing rows in the shelf. */
   /** A library's FOREIGN collections — ours are excluded server-side, because a Shortlist row is
-   *  anchored by row slug rather than by title (a per-person row is one collection per person). */
-  getLibraryCollections: (key: string): Promise<{ title: string }[]> =>
+   *  anchored by row slug rather than by title (a per-person row is one collection per person).
+   *  `on_shelf` is whether it has a position on a Plex shelf at all: a collection that has none
+   *  cannot anchor anything (issue #106). Plex's own built-in hubs are always true. */
+  getLibraryCollections: (
+    key: string,
+  ): Promise<{ title: string; on_shelf: boolean }[]> =>
     request(`/api/system/libraries/${encodeURIComponent(key)}/collections`),
 
   /** Cleanup audit: every shortlist-labelled collection on Plex, with drift/orphan flags. */

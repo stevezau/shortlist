@@ -82,8 +82,10 @@ describe("RowShelfPlacement", () => {
       { key: "2", title: "TV Shows", type: "show" },
     ]);
     getLibraryCollections.mockResolvedValue([
-      { title: "New Series" },
-      { title: "Trending" },
+      { title: "New Series", on_shelf: true },
+      { title: "Trending", on_shelf: true },
+      // A real collection in the library that is on no Plex shelf (issue #106).
+      { title: "Archive 2019", on_shelf: false },
     ]);
     // The row being edited ("because") plus two siblings — only the siblings may be offered.
     listCollections.mockResolvedValue([
@@ -204,6 +206,28 @@ describe("RowShelfPlacement", () => {
     expect(latest.value).toEqual({
       "2": { row: "deleted-row", before: false },
     });
+  });
+
+  it("offers an off-shelf collection only as an unselectable option, and says why", async () => {
+    // Issue #106: the picker listed every collection the library can manage. One that is not on the
+    // Recommended shelf has no position to sit after, so following it buried the row at the very
+    // bottom — and nothing on this screen said the setting could never work.
+    renderControl({ "2": { anchor: "Archive 2019", row: "", before: false } });
+    await screen.findByText("TV Shows");
+
+    const select = await screen.findByLabelText("After");
+    const offShelf = Array.from(select.querySelectorAll("option")).find(
+      (o) => o.textContent === "Archive 2019",
+    );
+    expect(offShelf?.disabled).toBe(true);
+    expect(
+      screen.getByText(/isn’t on any of this library’s Plex shelves/),
+    ).toBeTruthy();
+    // The ones that CAN anchor are still selectable.
+    const onShelf = Array.from(select.querySelectorAll("option")).find(
+      (o) => o.textContent === "New Series",
+    );
+    expect(onShelf?.disabled).toBe(false);
   });
 
   it("sets a per-row 'Top' with no collection needed", async () => {

@@ -42,6 +42,20 @@ Eight short pages instead of one long one. If you know what you want to do, star
 New here? [Getting started](getting-started.md) covers the install and the setup wizard first.
 Looking for a specific setting or API endpoint? That's [Reference](reference.md).
 
+## Your rows sit at the bottom of the shelf
+
+Check what the row is anchored to. **Rows → the row → Placement**, or **Settings → Row placement**
+for the default, can be set to sit right after a collection — and that collection has to be on one of
+the library's own Plex shelves, or there is no position to sit after.
+
+Open the library in Plex → **Manage Recommendations**. If the collection you anchored to is in that
+list with every toggle off, turn one on, or pick a different anchor. Shortlist leaves the rows where
+they are until then, and says so on the run's Activity. Plex's own rows — "Recently Added" and the
+like — always work as anchors.
+
+The same thing happens with a row that has never been built in that library yet: there is nothing to
+position until it exists. Run it once and it lands in place.
+
 ## Another tool keeps moving your rows
 
 Agregarr, Kometa and similar tools reorder the same Plex Recommended shelf Shortlist does, so rows

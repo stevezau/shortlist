@@ -888,9 +888,15 @@ def _sync_check(state, payload: dict) -> dict:
             if confirmed and not dry_run
             else f"; {len(removed)} orphaned collection(s) to remove"
         )
-    if report.hub_orderings:
-        libraries = ", ".join(entry.get("library", "?") for entry in report.hub_orderings)
+    moved_in = [e for e in report.hub_orderings if e.get("placed") is not False]
+    if moved_in:
+        libraries = ", ".join(entry.get("library", "?") for entry in moved_in)
         detail += f"; {'would reposition' if dry_run else 'repositioned'} rows on the shelf in {libraries}"
+    # Placements we could NOT honour (`pipeline.UNPLACEABLE`). Said out loud rather than folded into
+    # the line above, which would report a burial as a reposition.
+    unplaced = [e for e in report.hub_orderings if e.get("placed") is False]
+    if unplaced:
+        detail += f"; could NOT place rows in {', '.join(e.get('library', '?') for e in unplaced)}"
     return {"fixed": report.converged, "orphans": removed, "detail": detail}
 
 
@@ -919,23 +925,32 @@ def _require_filters_merged(report, what: str) -> None:
 
 
 def _audit_hub_orderings(state, report, dry_run: bool) -> None:
-    """Audit each library whose Recommended-shelf order we moved (plex-safety rule 10).
+    """Audit each library whose Recommended-shelf order we moved, and each one whose configured
+    placement could not be applied at all (`pipeline.UNPLACEABLE`) — plex-safety rule 10.
 
     `run_persistence._emit_hub_ordering_events` only fires for a persisted RUN, and the two handlers
     that now order — `privacy.sync` and `sync.check` — persist no run. Without this the `verified: False`
     record exists only on the one path that never needed it, and a shelf we lost to another tool would
     go unrecorded on both paths this was fixed for.
+
+    An unplaceable entry gets its OWN scope. `_shelf_contention` reads `shelf.order`/`run.hub_order`
+    within a 500-event budget looking for rows moved over and over; one stale anchor writes a record
+    every pass, and `privacy.sync` fires on every who-sees-what change, so sharing the scope would let
+    a setting nobody has fixed crowd out the evidence contention detection actually needs.
     """
     for entry in report.hub_orderings:
         verified = entry.get("verified")
+        unplaced = entry.get("placed") is False
         write_audit(
             state,
-            "shelf.order",
-            "warning" if verified is False else "info",
+            "shelf.unplaced" if unplaced else "shelf.order",
+            # A dry run asked Plex for nothing, so it is a preview either way, never a warning.
+            "info" if dry_run else ("warning" if unplaced or verified is False else "info"),
             library=entry.get("library"),
             anchor=entry.get("anchor"),
             moved=entry.get("moved", []),
             verified=verified,
+            reason=entry.get("reason"),
             dry_run=dry_run,
         )
 
@@ -994,9 +1009,15 @@ def _privacy_sync(state, payload: dict) -> dict:
     # here in the same words `sync.check` uses, so the two jobs do not describe the same write
     # differently — the audit event is written either way (`_audit_hub_orderings`, rule 10); this is
     # the line an operator actually reads on the Jobs page.
-    if report.hub_orderings:
-        libraries = ", ".join(entry.get("library", "?") for entry in report.hub_orderings)
+    moved_in = [e for e in report.hub_orderings if e.get("placed") is not False]
+    if moved_in:
+        libraries = ", ".join(entry.get("library", "?") for entry in moved_in)
         detail += f"; {'would reposition' if dry_run else 'repositioned'} rows on the shelf in {libraries}"
+    # Placements we could NOT honour (`pipeline.UNPLACEABLE`). Said out loud rather than folded into
+    # the line above, which would report a burial as a reposition.
+    unplaced = [e for e in report.hub_orderings if e.get("placed") is False]
+    if unplaced:
+        detail += f"; could NOT place rows in {', '.join(e.get('library', '?') for e in unplaced)}"
     return {"swept": swept, "converged": report.converged, "reason": reason, "dry_run": dry_run, "detail": detail}
 
 

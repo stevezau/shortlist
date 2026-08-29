@@ -177,6 +177,65 @@ def test_missing_anchor_leaves_the_shelf_untouched():
     assert r1.moved_after == _UNSET
 
 
+def test_an_unpromoted_collection_anchor_leaves_the_shelf_untouched():
+    """Issue #106: the anchor is a COLLECTION in this library that is on no shelf.
+
+    The matrix cell every neighbour missed — `promoted=False` was only ever tested on OUR rows and on
+    a ROW anchor, never on a foreign collection one, which is the kind the picker actually offers.
+    Following it moved the row after a hub with no visible position and buried it below every
+    standard Plex hub, and the verify pass then agreed the shelf was exactly what we asked for.
+    """
+    archive = FakeHub("Archive 2019", "a", promoted=False)  # a real collection, not on the shelf
+    r1 = FakeHub("Picked for You", "o1")
+    section = FakeSection([FakeHub("Recently Added", "g"), r1, archive])
+    client = _client([FakeColl("Picked for You", ["shortlist_sarah"]), FakeColl("Archive 2019", [])])
+
+    result = client.order_owned_hubs(section, label_prefix="shortlist", anchor_title="Archive 2019")
+
+    assert result["skipped"] is True
+    # Told apart from a DELETED anchor on purpose: the two need different things from the owner.
+    assert result["reason"] == "anchor not on the shelf"
+    assert r1.moved_after == _UNSET
+    assert section.titles() == ["Recently Added", "Picked for You", "Archive 2019"]
+
+
+def test_a_built_in_plex_hub_anchor_is_never_refused():
+    """The other half of the #106 guard, and the one that would be a WORSE bug than #106 if it broke.
+
+    "Recently Added" is an ordinary anchor — `test_order_phase_still_orders_on_a_run_with_no_users`
+    configures exactly that — and it is not a collection, so nothing in this repo has ever read a
+    promotion flag off one and there is no recorded fixture for its shape (plex-safety rule 11). The
+    guard therefore judges COLLECTIONS only: refusing to place a row needs positive evidence, and a
+    flag we cannot vouch for must never be the reason a working placement silently stops. This fake
+    reports every flag off, which is the worst case the real server could hand us.
+    """
+    builtin = FakeHub("Recently Added", "a", promoted=False)  # no flags, and NOT in the collections
+    r1 = FakeHub("Picked for You", "o1")
+    section = FakeSection([builtin, FakeHub("Kometa Genre", "g"), r1])
+    client = _client([FakeColl("Picked for You", ["shortlist_sarah"]), FakeColl("Kometa Genre", ["kometa"])])
+
+    result = client.order_owned_hubs(section, label_prefix="shortlist", anchor_title="Recently Added")
+
+    assert result["skipped"] is False and result["verified"] is True
+    assert section.titles() == ["Recently Added", "Picked for You", "Kometa Genre"]
+
+
+def test_an_anchor_on_the_recommended_shelf_alone_still_places_the_row():
+    """ANY one promotion flag is a real position, so the check must not tighten into "promoted to
+    shared Home". A collection promoted only to the library's Recommended shelf is the ordinary case
+    for a Kometa-managed anchor."""
+    anchor = FakeHub("New Series", "a", promoted=False)
+    anchor.promotedToRecommended = True
+    r1 = FakeHub("Picked for You", "o1")
+    section = FakeSection([anchor, FakeHub("Recently Added", "g"), r1])
+    client = _client([FakeColl("Picked for You", ["shortlist_sarah"]), FakeColl("New Series", [])])
+
+    result = client.order_owned_hubs(section, label_prefix="shortlist", anchor_title="New Series")
+
+    assert result["skipped"] is False and result["verified"] is True
+    assert section.titles() == ["New Series", "Picked for You", "Recently Added"]
+
+
 def test_before_with_the_anchor_at_the_top_moves_our_row_to_position_zero():
     anchor = FakeHub("New Series", "a")  # already first
     r1 = FakeHub("Picked for You", "o1")
@@ -623,6 +682,66 @@ def test_order_phase_partitions_when_a_row_here_has_no_anchor_at_all():
     kwargs = plex.order_owned_hubs.call_args.kwargs
     assert kwargs["only_keys"] == {11, 12}, "only the anchored row moves; the unanchored one stays put"
     assert kwargs["to_top"] is True
+
+
+def test_order_phase_records_a_placement_it_could_not_honour():
+    """Issue #106: a configured placement we could not apply must reach the audit, not just the log.
+
+    `_apply_order` recorded only calls that MOVED something, so "your anchor is not on the shelf"
+    was a container-log warning and nothing else — the Rows page went on showing a setting that had
+    silently done nothing since the night it was saved.
+    """
+    from unittest.mock import MagicMock
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec
+    from shortlist.engine.pipeline import _order_phase
+
+    plex = MagicMock()
+    plex.order_owned_hubs.return_value = {
+        "anchor": "Archive 2019",
+        "moved": [],
+        "skipped": True,
+        "reason": "anchor not on the shelf",
+    }
+    cfg = EngineConfig(
+        hub_anchors={},
+        rows=[RowSpec(slug="gems", name_template="Gems", size=10, hub_anchors={"2": HubAnchor("Archive 2019")})],
+    )
+    report = _report_with_titles()
+    _order_phase(_order_ctx(cfg, plex), report)
+
+    assert report.hub_orderings == [
+        {
+            "library": "TV Shows",
+            # NOT `verified` — nothing was asked of Plex, so that question has no answer here. Its own
+            # key, and its own audit scope, so contention detection never counts it (rule 10).
+            "placed": False,
+            "anchor": "Archive 2019",
+            "moved": [],
+            "skipped": True,
+            "reason": "anchor not on the shelf",
+        }
+    ]
+
+
+def test_order_phase_does_not_record_the_ordinary_skips():
+    """A converged server skips every library every night. Recording those would put a warning per
+    library per run into the audit and bury the one that means something."""
+    from unittest.mock import MagicMock
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec
+    from shortlist.engine.pipeline import _order_phase
+
+    plex = MagicMock()
+    plex.order_owned_hubs.return_value = {"anchor": "top", "moved": [], "skipped": True, "reason": "already in place"}
+    cfg = EngineConfig(
+        hub_anchors={"2": HubAnchor(to_top=True)},
+        rows=[RowSpec(slug="picked", name_template="", size=10)],
+    )
+    report = _report_with_titles()
+    _order_phase(_order_ctx(cfg, plex), report)
+
+    assert report.hub_orderings == []
 
 
 def test_order_phase_still_orders_on_a_run_with_no_users():
