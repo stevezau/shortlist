@@ -98,6 +98,52 @@ def _client(colls: list[FakeColl]) -> PlexClient:
     return client
 
 
+def test_the_guard_against_the_real_manage_endpoint_capture():
+    """`is_collection_hub` / `is_promoted` / `can_anchor` against a RECORDED
+    `GET /hubs/sections/1/manage` — the exact endpoint `managedHubs()` reads (plex-safety rule 11).
+
+    Everything the #106 guard rests on was inferred until this capture existed: the identifier family,
+    and whether Plex's built-in hubs even carry the promotion flags. They do — so an owner who
+    switches a built-in off in Manage Recommendations gets all three at 0, which is precisely why the
+    guard must never judge one. `can_anchor` keeps every built-in usable regardless.
+    """
+    import xml.etree.ElementTree as ET
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from shortlist.engine.clients.plex_pms import can_anchor, is_collection_hub, is_promoted
+
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "pms_managed_hubs.xml.txt"
+    hubs = [
+        SimpleNamespace(
+            identifier=el.get("identifier"),
+            title=el.get("title"),
+            promotedToRecommended=el.get("promotedToRecommended") == "1",
+            promotedToOwnHome=el.get("promotedToOwnHome") == "1",
+            promotedToSharedHome=el.get("promotedToSharedHome") == "1",
+        )
+        for el in ET.parse(fixture).getroot()
+    ]
+    assert len(hubs) >= 8  # a re-record that empties this must fail, not pass vacuously
+
+    by_ident = {h.identifier: h for h in hubs}
+    # Collections are told apart by identifier family, built-ins by theirs.
+    assert [h.identifier for h in hubs if is_collection_hub(h)] == [
+        "custom.collection.1.683081",
+        "custom.collection.1.577628",
+        "custom.collection.1.343546",
+    ]
+    # Built-ins really do carry the flags, and a switched-off one reads unpromoted...
+    assert not is_promoted(by_ident["movie.recentlyreleased"])
+    assert not is_promoted(by_ident["movie.genre"])
+    # ...yet stays a usable anchor, because the guard judges collections only. This is the review
+    # finding that would have been a worse bug than #106: refusing "Recently Released" as an anchor.
+    assert all(can_anchor(h) for h in hubs if not is_collection_hub(h))
+    # Every collection on this server was on the Recommended shelf, so all of them can anchor. The
+    # off-shelf case #106 is about is NOT in this capture — see tests/fixtures/README.md.
+    assert all(can_anchor(h) for h in hubs)
+
+
 def test_is_collection_hub_accepts_every_identifier_shape_a_real_pms_has_produced():
     """The guard's one piece of evidence, pinned to RECORDED captures rather than to plexapi's guess.
 

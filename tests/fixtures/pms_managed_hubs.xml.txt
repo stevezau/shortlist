@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="8">
+  <Hub identifier="movie.recentlyadded" title="Recently Added" recommendationsVisibility="all" homeVisibility="all" promotedToRecommended="1" promotedToOwnHome="1" promotedToSharedHome="1" />
+  <Hub identifier="movie.recentlyreleased" title="Recently Released" recommendationsVisibility="none" homeVisibility="none" promotedToRecommended="0" promotedToOwnHome="0" promotedToSharedHome="0" />
+  <Hub identifier="movie.genre" title="By Genre" recommendationsVisibility="none" homeVisibility="none" promotedToRecommended="0" promotedToOwnHome="0" promotedToSharedHome="0" />
+  <Hub identifier="movie.topunwatched" title="Top Unwatched" recommendationsVisibility="all" homeVisibility="none" promotedToRecommended="1" promotedToOwnHome="0" promotedToSharedHome="0" />
+  <Hub identifier="recent.library.playlists" title="Recent Playlists" recommendationsVisibility="all" homeVisibility="none" promotedToRecommended="1" promotedToOwnHome="0" promotedToSharedHome="0" />
+  <Hub identifier="custom.collection.1.683081" title="A Shortlist row" recommendationsVisibility="all" homeVisibility="shared" promotedToRecommended="1" promotedToOwnHome="0" promotedToSharedHome="1" deletable="1" />
+  <Hub identifier="custom.collection.1.577628" title="A co-managed collection" recommendationsVisibility="all" homeVisibility="all" promotedToRecommended="1" promotedToOwnHome="1" promotedToSharedHome="1" deletable="1" />
+  <Hub identifier="custom.collection.1.343546" title="Another collection" recommendationsVisibility="all" homeVisibility="none" promotedToRecommended="1" promotedToOwnHome="0" promotedToSharedHome="0" deletable="1" />
+</MediaContainer>
