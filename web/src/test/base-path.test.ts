@@ -61,3 +61,35 @@ describe("api base path", () => {
     expect(apiUrl("/api/runs")).toBe("/api/runs");
   });
 });
+
+describe("every API URL goes through apiUrl()", () => {
+  /**
+   * A link that builds its own `/api/...` string works perfectly at the root and 404s the moment
+   * anyone sets APP_BASE_PATH — and nothing else would catch it, because the component renders
+   * fine and the URL only becomes wrong in a deployment the test suite never runs in. The run-log
+   * Download button was exactly this. Scanning the source is the only place the rule is checkable:
+   * it is about the URLs that are NOT constructed, so no rendered output can assert it.
+   */
+  const OFFENDERS = [
+    /(?:href|src|action)=\{?[`"']\/api\//,
+    /\b(?:fetch|EventSource)\(\s*[`"']\/api\//,
+  ];
+
+  // `import.meta.glob` rather than node:fs — the web tsconfig ships no @types/node, so reading the
+  // tree through Vite keeps this typed and keeps `tsc -b` (which CI runs) green.
+  const sources = import.meta.glob("../**/*.{ts,tsx}", {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  }) as Record<string, string>;
+
+  it("has no hand-built /api URL outside lib/api.ts", () => {
+    const offenders = Object.entries(sources)
+      // `lib/api.ts` is where the prefix is applied; the tests describe URLs rather than use them.
+      .filter(([file]) => file !== "../lib/api.ts" && !file.startsWith("../test/"))
+      .filter(([, source]) => OFFENDERS.some((pattern) => pattern.test(source)))
+      .map(([file]) => file);
+
+    expect(offenders).toEqual([]);
+  });
+});
