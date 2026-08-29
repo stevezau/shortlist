@@ -1262,7 +1262,9 @@ class RunReport:
     #   * a placement that could NOT be applied — `placed: False`, `moved: []`, `reason` in
     #     `pipeline.UNPLACEABLE`, and deliberately NO `verified`, because nothing was asked of Plex.
     # Reporting the second as the first is exactly what the Jobs detail line used to do: a buried row
-    # announced as "repositioned". Empty when no anchors are configured or everything was in place.
+    # announced as "repositioned". Empty when every library was already in place, when none holds a
+    # row of ours, or when `manage_shelf_order` is off — NOT when no anchor is configured, which
+    # falls back to moving every row to the top and so fills this normally.
     hub_orderings: list[dict] = field(default_factory=list)
     # Sonarr/Radarr requests made (or, in dry-run, that would be made) for picks the library lacks.
     # None when the feature is off — distinct from an empty report (on, but nothing qualified).
