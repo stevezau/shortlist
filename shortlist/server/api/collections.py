@@ -437,9 +437,10 @@ def _validate_anchor_rows(session: Session, body: CollectionIn, editing_slug: st
     """Refuse a row anchor that names a row which doesn't exist, itself, or a cycle.
 
     Checked HERE and not only in the engine because the engine's only sane response to a cycle is to
-    leave those rows where they are — silently, once a night, in a log nobody is reading. The moment
-    to say "these two rows point at each other" is while someone is looking at the screen that
-    created it.
+    drop the placement and fall back to the library default — so the row lands somewhere the owner
+    did not choose. It is recorded (`placed: False` in the run's shelf audit) rather than silent, but
+    the moment to say "these two rows point at each other" is still while someone is looking at the
+    screen that created it.
 
     ``editing_slug`` is "" when creating: a brand-new row has no slug yet and nothing can point at it,
     so it cannot be part of a cycle — only its own outgoing edges need checking.

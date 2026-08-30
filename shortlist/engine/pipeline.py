@@ -1313,8 +1313,8 @@ def _anchor_group_order(
             # States the finding, not the outcome: this function does not know whether the library
             # has a default for those rows to fall back to, and the caller says so straight after.
             logger.warning(
-                "hub order: row {!r} is part of a placement cycle in {} — not placing these rows "
-                "relative to each other rather than picking a winner",
+                "hub order: row {!r} is part of, or behind, a placement cycle in {} — not placing "
+                "these rows relative to each other rather than picking a winner",
                 anchor_row,
                 section_title,
             )
