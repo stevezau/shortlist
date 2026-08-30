@@ -849,6 +849,7 @@ class PlexClient:
         label_prefix: str,
         anchor_title: str = "",
         anchor_keys: set[int] | None = None,
+        anchor_exclude_keys: set[int] | None = None,
         anchor_label: str = "",
         before: bool = False,
         dry_run: bool = False,
@@ -935,8 +936,19 @@ class PlexClient:
         # rule is exactly what it was. A row that named ITSELF would be asked to move relative to its
         # own hubs, which is meaningless and would thrash the shelf; the caller rejects that, and the
         # subtraction here means a slip cannot reach Plex.
-        anchor_titles = {t for t, key in key_by_title.items() if anchor_keys and key in anchor_keys} - owned_titles
-        if anchor_keys and not anchor_titles:
+        anchor_titles: set[str] = set()
+        if anchor_keys:
+            anchor_titles = {t for t, key in key_by_title.items() if key in anchor_keys} - owned_titles
+        elif anchor_exclude_keys is not None:
+            # The anchor row is itself placed BY EXCLUSION (it follows the library default), so its
+            # block is every row of ours here minus the hand-placed ones — the same set the catch-all
+            # call moves. Naming it by exclusion is what makes this converge: aimed at the anchor
+            # row's own hubs instead, the follower lands INSIDE that contiguous block, the next
+            # catch-all restores contiguity and evicts it, and neither call ever settles while both
+            # report `verified: True`. That is the churn the group-anchoring comment below describes,
+            # and it costs one PUT per account per library every run, for ever.
+            anchor_titles = {t for t, key in key_by_title.items() if key not in anchor_exclude_keys} - owned_titles
+        if (anchor_keys or anchor_exclude_keys is not None) and not anchor_titles:
             # Named row has nothing on this shelf (never delivered here, or its collections are gone).
             # Leaving the shelf alone beats falling back to a different slot: a silent reinterpretation
             # of where someone asked their row to go is worse than not moving it, and the next run

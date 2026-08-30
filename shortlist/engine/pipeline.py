@@ -1335,6 +1335,7 @@ def _apply_order(
     anchor_keys: set[int] | None = None,
     anchor_label: str = "",
     exclude_keys: set[int] | None = None,
+    anchor_exclude_keys: set[int] | None = None,
 ) -> None:
     """One best-effort, gated reorder call + its audit. A shelf reorder is cosmetic and privacy-neutral
     (hubs are already promoted and browse-hidden; only position changes), so a failure never fails the
@@ -1346,6 +1347,7 @@ def _apply_order(
                 label_prefix=LABEL_PREFIX,
                 anchor_title=anchor.anchor_title,
                 anchor_keys=anchor_keys,
+                anchor_exclude_keys=anchor_exclude_keys,
                 anchor_label=anchor_label,
                 before=anchor.before,
                 to_top=anchor.to_top,
@@ -1520,6 +1522,12 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
         # owner just configured by hand, which are the ones it reliably names.
         keys_by_slug = _row_keys_by_slug(ctx, key)
         by_slug = {spec.slug: spec for spec in here}
+        # What the audit CALLS each row. The default row carries no template of its own — its title is
+        # the global one — so without that fallback the most likely anchor of all audits as a bare
+        # internal slug, which is not an answer to "what moved where" (rule 10).
+        names = {
+            spec.slug: (spec.name_template or ctx.config.row_name_template or spec.slug) for spec in ctx.config.rows
+        }
         overridden = {slug for slug in anchors_by_slug if by_slug[slug].hub_anchors.get(key)}
         groups: dict[tuple[bool, str, str, bool], set[int]] = {}
         group_of_slug: dict[str, tuple[bool, str, str, bool]] = {}
@@ -1544,15 +1552,28 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
                 # off, and at DEBUG the only trace was a line nobody runs the container verbose enough
                 # to see — which is half of issue #106's "it just stopped ordering anything".
                 #
-                # A log line and NOT a `placed: False` audit record, unlike the outcomes `_apply_order`
-                # files. This one is TRANSIENT and self-clearing — the row is placed the moment it has
-                # been built here — so an audit warning would be raised against a state that fixes
-                # itself on the next run, which is how a warning stops being read.
+                # Say what actually HAPPENS to it, which is not "nothing". Its collections cannot be
+                # excluded from the catch-all either — identifying them is exactly what the missing
+                # ledger entry would have done — so they are swept to the library default instead of
+                # the slot the owner chose. That is better than the stranding this replaced, and it
+                # is still not what was asked for, so it is recorded rather than described as a
+                # no-op. `placed: False` puts it in the events audit and the Jobs detail line beside
+                # the other placements we could not honour (rule 10).
                 logger.info(
-                    "hub order: row '{}' has no delivered collection in {} yet — not ordering it this "
-                    "run; it will be placed once that row has been built here",
+                    "hub order: row '{}' has no delivered collection recorded in {}, so its rows go to "
+                    "the library default rather than the slot it asks for; the next run that builds it "
+                    "here puts that right",
                     slug,
                     section.title,
+                )
+                report.hub_orderings.append(
+                    {
+                        "library": section.title,
+                        "placed": False,
+                        "anchor": names.get(slug, slug),
+                        "moved": [],
+                        "reason": "row not in the delivery ledger — placed at the library default",
+                    }
                 )
                 continue
             group = (effective.to_top, effective.anchor_title, effective.anchor_row, effective.before)
@@ -1565,12 +1586,6 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
         excluded: set[int] = {k for keys in groups.values() for k in keys}
         if rest is not None:
             _apply_order(ctx, report, section, rest, only_keys=None, exclude_keys=excluded)
-        # What the audit CALLS each row. The default row carries no template of its own — its title is
-        # the global one — so without that fallback the most likely anchor of all audits as a bare
-        # internal slug, which is not an answer to "what moved where" (rule 10).
-        names = {
-            spec.slug: (spec.name_template or ctx.config.row_name_template or spec.slug) for spec in ctx.config.rows
-        }
         for group in _anchor_group_order(groups, group_of_slug, section.title):
             to_top, anchor_title, anchor_row, before = group
             # Anchor to the GROUP the anchor row was placed as part of, not to that row's own keys.
@@ -1581,10 +1596,19 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
             # library forever. Following the whole block is stable, and "after Picked" when Picked
             # shares its slot with another row can only sensibly mean after that slot.
             anchor_group = group_of_slug.get(anchor_row) if anchor_row else None
-            anchor_keys = (
-                groups.get(anchor_group) if anchor_group else (keys_by_slug.get(anchor_row) if anchor_row else None)
-            )
-            if anchor_row and not anchor_keys:
+            # A row anchored to one that FOLLOWS THE LIBRARY DEFAULT. That row is in no enumerated
+            # group — it is placed by exclusion — so its block has to be named the same way, or the
+            # follower is aimed at one row's hubs inside a larger contiguous block and the two calls
+            # fight for ever (see `order_owned_hubs`). Not `keys_by_slug` either: that is the anchor
+            # row alone, which is the same mistake by another route, and it re-introduces the ledger
+            # dependency this commit removed.
+            follows_default = bool(anchor_row) and anchor_row in anchors_by_slug and anchor_row not in overridden
+            anchor_keys = None
+            if anchor_group:
+                anchor_keys = groups.get(anchor_group)
+            elif anchor_row and not follows_default:
+                anchor_keys = keys_by_slug.get(anchor_row)
+            if anchor_row and not anchor_keys and not follows_default:
                 # The row someone anchored to has nothing in this library. Left alone rather than
                 # quietly falling back to the library default: reinterpreting where a row was asked to
                 # go is worse than not moving it, and the next run places it once that row delivers.
@@ -1610,6 +1634,7 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
                 anchor,
                 only_keys=groups[group],
                 anchor_keys=anchor_keys,
+                anchor_exclude_keys=excluded if follows_default else None,
                 anchor_label=f"the {names.get(anchor_row, anchor_row)!r} row" if anchor_row else "",
             )
 

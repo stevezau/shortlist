@@ -871,25 +871,37 @@ def test_a_row_can_still_follow_a_row_that_uses_the_library_default():
     """The cell the catch-all could have broken (issue #81 meets #106).
 
     Rows following the default are placed by exclusion and so belong to no enumerated group. A row
-    anchored to one of them must therefore resolve the anchor from the LEDGER, not from a group — and
-    the follower must stay out of `group_of_slug` entirely, or the topological sort puts a group into
-    the placement order that `groups` has no keys for and the run dies with a KeyError.
+    anchored to one of them must therefore name that block BY EXCLUSION too — not from the ledger,
+    and not from the anchor row's own hubs, both of which aim inside a contiguous block and never
+    converge. The follower must also stay out of `group_of_slug`, or the topological sort puts a
+    group into the placement order that `groups` has no keys for and the run dies with a KeyError.
     """
     from types import SimpleNamespace
 
     from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec, RunReport
     from shortlist.engine.pipeline import _order_phase
 
-    hubs = [FakeHub("Recently Added", "ra", collection=False), FakeHub("picked-ann", "11"), FakeHub("gems-ann", "21")]
-    colls = [FakeColl("picked-ann", ["shortlist_ann"], 11), FakeColl("gems-ann", ["shortlist_ann"], 21)]
+    hubs = [FakeHub("Recently Added", "ra", collection=False)]
+    colls = [FakeColl("Recently Added", [])]
+    ledger, key = {}, 100
+    # TWO rows follow the default, over TWO accounts. Both matter: with one of either, the anchor
+    # row's last hub IS the block's last hub, which is the single combination that works by accident.
+    for row in ("picked", "gems", "extra"):
+        for user in ("ann", "bob"):
+            key += 1
+            hubs.append(FakeHub(f"{row}-{user}", str(key)))
+            colls.append(FakeColl(f"{row}-{user}", [f"shortlist_{user}"], key))
+            ledger[(user, row, "1")] = key
+
     section = FakeSection(hubs, title="Filme", key=1)
     section.type = "movie"
     cfg = EngineConfig(
         manage_shelf_order=True,
-        hub_anchors={"1": HubAnchor(to_top=True)},  # 'picked' follows this
+        hub_anchors={"1": HubAnchor(to_top=True)},  # 'picked' and 'gems' both follow this
         rows=[
             RowSpec(slug="picked", name_template="Picked", size=10),
-            RowSpec(slug="gems", name_template="Gems", size=10, hub_anchors={"1": HubAnchor(anchor_row="picked")}),
+            RowSpec(slug="gems", name_template="Gems", size=10),
+            RowSpec(slug="extra", name_template="Extra", size=10, hub_anchors={"1": HubAnchor(anchor_row="picked")}),
         ],
     )
     ctx = SimpleNamespace(
@@ -897,11 +909,69 @@ def test_a_row_can_still_follow_a_row_that_uses_the_library_default():
         delivery_sections=[section],
         plex=_client(colls),
         write_lock=threading.Lock(),
-        delivered_keys={("ann", "picked", "1"): 11, ("ann", "gems", "1"): 21},
+        delivered_keys=ledger,
     )
     _order_phase(ctx, RunReport(started_at=datetime.now(UTC), users=[]))
 
-    assert section.titles() == ["picked-ann", "gems-ann", "Recently Added"]
+    # 'extra' sits after the whole default BLOCK, which stays contiguous — not wedged inside it.
+    assert section.titles() == [
+        "picked-ann",
+        "picked-bob",
+        "gems-ann",
+        "gems-bob",
+        "extra-ann",
+        "extra-bob",
+        "Recently Added",
+    ]
+
+    # And it CONVERGES. Aimed at the anchor row's own hubs, 'extra' lands inside the default block,
+    # the next catch-all evicts it, and the two calls trade places at one PUT per account per library
+    # every run — while both report `verified: True` and `_shelf_contention` blames Kometa for it.
+    moves = sum(h.moves for h in hubs)
+    _order_phase(ctx, RunReport(started_at=datetime.now(UTC), users=[]))
+    assert sum(h.moves for h in hubs) == moves
+
+
+def test_a_hand_placed_row_missing_from_the_ledger_is_reported_not_silently_defaulted():
+    """The one row the catch-all cannot honour, and it must say so.
+
+    A row with its own placement is identified by the ledger. Without an entry, its collections
+    cannot be told from anyone else's — so they cannot be excluded either, and the catch-all sweeps
+    them to the library default instead of the slot the owner picked. Better than the stranding this
+    replaced, still not what was asked for, so it is audited rather than reported as a no-op.
+    """
+    from types import SimpleNamespace
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec, RunReport
+    from shortlist.engine.pipeline import _order_phase
+
+    hubs = [FakeHub("Letzte Chance", "lc", collection=False), FakeHub("picked-ann", "11"), FakeHub("extra-ann", "21")]
+    colls = [FakeColl("picked-ann", ["shortlist_ann"], 11), FakeColl("extra-ann", ["shortlist_ann"], 21)]
+    section = FakeSection(hubs, title="Filme", key=1)
+    section.type = "movie"
+    cfg = EngineConfig(
+        manage_shelf_order=True,
+        hub_anchors={"1": HubAnchor(to_top=True)},
+        rows=[
+            RowSpec(slug="picked", name_template="Picked", size=10),
+            RowSpec(slug="extra", name_template="Extra", size=10, hub_anchors={"1": HubAnchor("Letzte Chance")}),
+        ],
+    )
+    ctx = SimpleNamespace(
+        config=cfg,
+        delivery_sections=[section],
+        plex=_client(colls),
+        write_lock=threading.Lock(),
+        delivered_keys={("ann", "picked", "1"): 11},  # nothing for 'extra'
+    )
+    report = RunReport(started_at=datetime.now(UTC), users=[])
+    _order_phase(ctx, report)
+
+    unplaced = [e for e in report.hub_orderings if e.get("placed") is False]
+    assert len(unplaced) == 1
+    assert unplaced[0]["anchor"] == "Extra"  # the row's NAME, not its internal slug (rule 10)
+    assert "delivery ledger" in unplaced[0]["reason"]
+    assert unplaced[0]["library"] == "Filme"
 
 
 def test_order_phase_mixes_a_top_override_with_an_anchor_override():
