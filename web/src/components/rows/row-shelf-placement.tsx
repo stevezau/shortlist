@@ -154,7 +154,12 @@ function LibraryAnchor({
                       {entry.anchor} (not found)
                     </option>
                   )}
-                {candidates.length > 0 && (
+                {/* Rows are offered for "after" only. "Right before <one of our rows>" cannot be
+                    satisfied: Shortlist places that row's block at a fixed point and keeps it
+                    contiguous, so anything put ahead of it is moved back on the next run — the
+                    engine refuses it and records why, rather than writing forever. A collection is
+                    different: we do not position it, so sitting before it is stable. */}
+                {mode === "after" && candidates.length > 0 && (
                   <optgroup label="Your Shortlist rows">
                     {candidates.map((row) => (
                       <option key={row.slug} value={`row:${row.slug}`}>
@@ -190,6 +195,13 @@ function LibraryAnchor({
         <p className="text-sm text-muted-foreground">
           Pick a row or collection to sit{" "}
           {mode === "before" ? "before" : "after"}, or nothing moves.
+        </p>
+      )}
+      {mode === "before" && entry?.row && (
+        <p className="text-sm text-destructive-text">
+          A row can’t sit right before another Shortlist row — Shortlist positions
+          that one too, so the two can’t both hold, and it will be left where it
+          is. Use <strong>Right after…</strong>, or pick a collection instead.
         </p>
       )}
       {anchorOffShelf && (

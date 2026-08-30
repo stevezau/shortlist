@@ -230,6 +230,22 @@ describe("RowShelfPlacement", () => {
     expect(onShelf?.disabled).toBe(false);
   });
 
+  it("won't offer another row as a 'before' anchor, and explains a saved one", async () => {
+    // Shortlist positions its own rows, so nothing can hold a slot immediately before one — the
+    // engine refuses it rather than writing moves that are undone on the next run.
+    renderControl({ "2": { row: "picked", anchor: "", before: true } });
+    await screen.findByText("TV Shows");
+
+    const select = await screen.findByLabelText("Before");
+    const groups = Array.from(select.querySelectorAll("optgroup")).map(
+      (g) => g.label,
+    );
+    expect(groups).not.toContain("Your Shortlist rows");
+    expect(
+      screen.getByText(/can’t sit right before another Shortlist row/),
+    ).toBeTruthy();
+  });
+
   it("sets a per-row 'Top' with no collection needed", async () => {
     const latest = renderControl();
     await screen.findByText("TV Shows");

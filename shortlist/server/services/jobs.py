@@ -951,6 +951,9 @@ def _audit_hub_orderings(state, report, dry_run: bool) -> None:
             moved=entry.get("moved", []),
             verified=verified,
             reason=entry.get("reason"),
+            # The row that could not be placed, when the record is about one. Kept apart from
+            # `anchor`, which everywhere else names what we anchored TO (rule 10).
+            row=entry.get("row"),
             dry_run=dry_run,
         )
 

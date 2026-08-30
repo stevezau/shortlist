@@ -1570,7 +1570,11 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
                     {
                         "library": section.title,
                         "placed": False,
-                        "anchor": names.get(slug, slug),
+                        # The row that was displaced, in its OWN key. `anchor` means "the thing we
+                        # anchored to" in every other entry, and both audit writers emit it under that
+                        # name — reusing it here would make one field mean two opposite things (rule 10).
+                        "row": names.get(slug, slug),
+                        "anchor": "",
                         "moved": [],
                         "reason": "row not in the delivery ledger — placed at the library default",
                     }
@@ -1608,6 +1612,35 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
                 anchor_keys = groups.get(anchor_group)
             elif anchor_row and not follows_default:
                 anchor_keys = keys_by_slug.get(anchor_row)
+            if anchor_row and before and (anchor_row in group_of_slug or follows_default):
+                # "Right BEFORE row X", where X is a row we also place. Structurally unsatisfiable, and
+                # measurably so: we put X's block at a fixed point (the top, or immediately after a
+                # foreign hub) and make it contiguous, so anything inserted ahead of it is evicted on
+                # the next pass and re-inserted by this one. Measured 6, 6, 6, 6 moves per pass against
+                # a default-following anchor and 4, 4, 4, 4 against an enumerated one, for ever, both
+                # calls reporting `verified: True` throughout.
+                #
+                # Refusing costs the owner a placement that never worked. Not refusing costs a write
+                # per account per library on every run, and — because `_shelf_contention` counts a
+                # title moved three times in a day — an alert telling them Kometa or agregarr is
+                # fighting them, for churn Shortlist is generating itself. Recorded, not silent.
+                logger.warning(
+                    "hub order: rows cannot be placed BEFORE '{}' in {} — Shortlist positions that row "
+                    "too, so the two requests cannot both hold; leaving these where they are",
+                    names.get(anchor_row, anchor_row),
+                    section.title,
+                )
+                report.hub_orderings.append(
+                    {
+                        "library": section.title,
+                        "placed": False,
+                        "anchor": f"the {names.get(anchor_row, anchor_row)!r} row",
+                        "moved": [],
+                        "reason": "cannot sit before a row Shortlist also places — choose 'after', or "
+                        "anchor to a collection instead",
+                    }
+                )
+                continue
             if anchor_row and not anchor_keys and not follows_default:
                 # The row someone anchored to has nothing in this library. Left alone rather than
                 # quietly falling back to the library default: reinterpreting where a row was asked to
@@ -1635,7 +1668,14 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
                 only_keys=groups[group],
                 anchor_keys=anchor_keys,
                 anchor_exclude_keys=excluded if follows_default else None,
-                anchor_label=f"the {names.get(anchor_row, anchor_row)!r} row" if anchor_row else "",
+                # A default-following anchor is a BLOCK, not one row — and that row may have nothing on
+                # this shelf yet while the block does. Naming the row would assert a landmark that is
+                # not there (rule 10).
+                anchor_label=(
+                    f"the {names.get(anchor_row, anchor_row)!r} row"
+                    if anchor_row and not follows_default
+                    else ("the rows that follow this library's default" if follows_default else "")
+                ),
             )
 
 

@@ -969,9 +969,72 @@ def test_a_hand_placed_row_missing_from_the_ledger_is_reported_not_silently_defa
 
     unplaced = [e for e in report.hub_orderings if e.get("placed") is False]
     assert len(unplaced) == 1
-    assert unplaced[0]["anchor"] == "Extra"  # the row's NAME, not its internal slug (rule 10)
+    # The displaced row goes in its OWN key: `anchor` means "the thing we anchored to" everywhere
+    # else, and both audit writers emit it under that name (rule 10).
+    assert unplaced[0]["row"] == "Extra" and unplaced[0]["anchor"] == ""
     assert "delivery ledger" in unplaced[0]["reason"]
     assert unplaced[0]["library"] == "Filme"
+
+
+def test_placing_a_row_before_one_we_also_place_is_refused_not_churned():
+    """ "Right before <one of our rows>" cannot be satisfied, so it is recorded instead of written.
+
+    We put the anchor row's block at a fixed point and make it contiguous, so anything inserted ahead
+    of it is evicted next pass and re-inserted by this one. Measured 6, 6, 6, 6 moves per pass against
+    a default-following anchor and 4, 4, 4, 4 against an enumerated one — for ever, with both calls
+    reporting `verified: True`, and `_shelf_contention` blaming Kometa for Shortlist's own writes.
+
+    'after' is unaffected, and so is 'before' a FOREIGN collection: neither is a row we position.
+    """
+    from types import SimpleNamespace
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec, RunReport
+    from shortlist.engine.pipeline import _order_phase
+
+    hubs = [FakeHub("Recently Added", "ra", collection=False)]
+    colls = [FakeColl("Recently Added", [])]
+    ledger, key = {}, 100
+    for row in ("picked", "gems", "extra"):
+        for user in ("ann", "bob"):
+            key += 1
+            hubs.append(FakeHub(f"{row}-{user}", str(key)))
+            colls.append(FakeColl(f"{row}-{user}", [f"shortlist_{user}"], key))
+            ledger[(user, row, "1")] = key
+    section = FakeSection(hubs, title="Filme", key=1)
+    section.type = "movie"
+    cfg = EngineConfig(
+        manage_shelf_order=True,
+        hub_anchors={"1": HubAnchor(to_top=True)},
+        rows=[
+            RowSpec(slug="picked", name_template="Picked", size=10),
+            RowSpec(slug="gems", name_template="Gems", size=10),
+            RowSpec(
+                slug="extra",
+                name_template="Extra",
+                size=10,
+                hub_anchors={"1": HubAnchor(anchor_row="picked", before=True)},
+            ),
+        ],
+    )
+    ctx = SimpleNamespace(
+        config=cfg,
+        delivery_sections=[section],
+        plex=_client(colls),
+        write_lock=threading.Lock(),
+        delivered_keys=ledger,
+    )
+    report = RunReport(started_at=datetime.now(UTC), users=[])
+    _order_phase(ctx, report)
+
+    unplaced = [e for e in report.hub_orderings if e.get("placed") is False]
+    assert len(unplaced) == 1
+    assert "cannot sit before a row Shortlist also places" in unplaced[0]["reason"]
+    assert unplaced[0]["anchor"] == "the 'Picked' row"
+
+    # The rows that CAN be placed still are, and the shelf then settles — no perpetual writes.
+    moves = sum(h.moves for h in hubs)
+    _order_phase(ctx, RunReport(started_at=datetime.now(UTC), users=[]))
+    assert sum(h.moves for h in hubs) == moves
 
 
 def test_order_phase_mixes_a_top_override_with_an_anchor_override():

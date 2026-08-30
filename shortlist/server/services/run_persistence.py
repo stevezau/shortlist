@@ -1439,6 +1439,9 @@ def _emit_hub_ordering_events(session: Session, run_id: int, report) -> None:
             moved=entry.get("moved", []),
             verified=verified,
             reason=entry.get("reason"),
+            # The row that could not be placed, when the record is about one. Kept apart from
+            # `anchor`, which everywhere else names what we anchored TO (rule 10).
+            row=entry.get("row"),
         )
 
 
