@@ -1287,7 +1287,10 @@ def _anchor_group_order(
     Two things are dropped rather than guessed at: a CYCLE ("A after B, B after A", including a row
     naming itself), and anything downstream of one. Placing half a cycle would produce a shelf order
     that changes every run depending on which half won, and a co-managing tool reordering the same
-    shelf makes that indistinguishable from losing the race. Not moving them is stable and says so.
+    shelf makes that indistinguishable from losing the race.
+
+    Dropped from this ORDER only — what then happens to those rows is the caller's decision, and it
+    takes the library default when there is one rather than leaving them wherever Plex put them.
     """
     ordered: list[tuple] = []
     state: dict[tuple, str] = {}
@@ -1307,9 +1310,11 @@ def _anchor_group_order(
         # is. Only a sibling this run also places creates a dependency.
         if dependency is not None and (dependency == group or not visit(dependency)):
             state[group] = "broken"
+            # States the finding, not the outcome: this function does not know whether the library
+            # has a default for those rows to fall back to, and the caller says so straight after.
             logger.warning(
-                "hub order: row {!r} is part of a placement cycle in {} — leaving those rows where "
-                "they are rather than picking a winner",
+                "hub order: row {!r} is part of a placement cycle in {} — not placing these rows "
+                "relative to each other rather than picking a winner",
                 anchor_row,
                 section_title,
             )
@@ -1701,6 +1706,14 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
         placement_order = _anchor_group_order(groups, group_of_slug, section.title)
         for group in [g for g in groups if g not in placement_order]:
             rows_broken = sorted(names.get(s, s) for s, g in group_of_slug.items() if g == group)
+            logger.warning(
+                "hub order: {} in {} — {}",
+                ", ".join(repr(r) for r in rows_broken),
+                section.title,
+                "using this library's default placement instead"
+                if rest is not None
+                else "this library has no default placement, so they are left where they are",
+            )
             report.hub_orderings.append(
                 {
                     "library": section.title,
@@ -1708,7 +1721,10 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
                     "row": ", ".join(rows_broken),
                     "anchor": f"the {names.get(group[2], group[2])!r} row" if group[2] else "",
                     "moved": [],
-                    "reason": "part of a placement cycle — two rows cannot each sit after the other",
+                    # "or behind" because a group is dropped when it is IN a cycle or merely
+                    # downstream of one — a row pointing at a cycle member is named here too, and it
+                    # has no cycle of its own for the owner to go looking for.
+                    "reason": "part of, or behind, a placement cycle — two rows cannot each sit after the other",
                 }
             )
             del groups[group]

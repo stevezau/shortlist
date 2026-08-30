@@ -1548,6 +1548,9 @@ def test_rows_in_a_placement_cycle_fall_back_to_the_default_and_are_recorded():
     # And the owner can see why, rather than only in the container log (rule 10).
     cycles = [e for e in report.hub_orderings if "placement cycle" in (e.get("reason") or "")]
     assert cycles and cycles[0]["row"]
+    # "or behind": a group is dropped when it is IN a cycle or merely downstream of one, and the
+    # entry names both, so the reason must not assert a cycle each named row is part of.
+    assert "or behind" in cycles[0]["reason"]
 
 
 def test_a_refused_row_does_not_keep_the_top_from_a_row_that_asked_for_it():
