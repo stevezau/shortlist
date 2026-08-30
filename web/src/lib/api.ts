@@ -71,6 +71,8 @@ import type {
   WatchedPage,
 } from "./types";
 
+import { basePath } from "./base-path";
+
 /**
  * Error thrown for any failed API call, normalized so the UI can always show
  * a plain-English message. `status` is 0 when the server was unreachable.
@@ -102,7 +104,7 @@ function trimTrailingSlash(value: string): string {
 // reverse proxy). Defaults to same-origin root; override at build time with
 // VITE_API_BASE or at runtime with configureApiBase().
 let apiBase = trimTrailingSlash(
-  (import.meta.env.VITE_API_BASE as string | undefined) ?? "",
+  (import.meta.env.VITE_API_BASE as string | undefined) ?? basePath,
 );
 
 export function configureApiBase(base: string): void {

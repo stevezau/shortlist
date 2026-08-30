@@ -9,6 +9,7 @@ import { AppShell } from "@/components/layout/app-shell";
 import { EmptyState, ErrorState } from "@/components/query-boundary";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api";
+import { basePath } from "@/lib/base-path";
 import { resolveArea } from "@/lib/auth";
 import { queryKeys, useSession, useSetupState } from "@/lib/queries";
 import { DashboardPage } from "@/pages/dashboard";
@@ -110,7 +111,7 @@ function RequireApp() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
+      <BrowserRouter basename={basePath || "/"}>
         <Routes>
           <Route path="login" element={<LoginPage />} />
           <Route path="setup" element={<SetupPage />} />

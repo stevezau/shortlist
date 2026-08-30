@@ -219,6 +219,22 @@ def read_session(request: Request) -> dict | None:
         return None
 
 
+def _cookie_path(request: Request) -> str:
+    """The path to scope the session cookie to.
+
+    Starlette defaults to ``path="/"``, which hands `shortlist_session` to every other app on the
+    same hostname — and sharing a hostname with another app is the only reason to set
+    `APP_BASE_PATH` at all. Matched by the browser against the URL IT holds (`/shortlist/...`),
+    which is the same whether the proxy forwards the prefix or strips it, so this is correct in
+    both modes. Unset means `"/"`, i.e. exactly what every install does today.
+
+    This stops the neighbour's SERVER being sent the cookie. It cannot stop a script already
+    running on the same origin from using it — same-origin is one trust boundary and no cookie
+    attribute subdivides it. `getattr` because the unit-level auth tests build `app.state` by hand.
+    """
+    return getattr(request.app.state, "base_path", "") or "/"
+
+
 def _check_csrf(request: Request) -> None:
     if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get(CSRF_HEADER) != "1":
         raise HTTPException(status_code=403, detail=f"missing {CSRF_HEADER} header")
@@ -429,6 +445,7 @@ async def poll_pin(pin_id: int, request: Request, response: Response) -> dict:
         httponly=True,
         samesite="lax",
         secure=request.url.scheme == "https",
+        path=_cookie_path(request),
     )
     # The Plex token NEVER goes to the browser. During first-time setup we hold it server-side,
     # keyed to this session, so the wizard can enumerate/probe/link servers without the SPA ever
@@ -475,6 +492,7 @@ class LogoutOut(BaseModel):
 
 
 @router.post("/logout", response_model=LogoutOut)
-async def logout(response: Response) -> dict:
-    response.delete_cookie(SESSION_COOKIE)
+async def logout(request: Request, response: Response) -> dict:
+    # Same path as the one it was set with, or the browser keeps the cookie and logout does nothing.
+    response.delete_cookie(SESSION_COOKIE, path=_cookie_path(request))
     return {"ok": True}

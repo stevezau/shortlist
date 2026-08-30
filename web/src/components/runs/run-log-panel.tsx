@@ -5,6 +5,7 @@ import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { apiUrl } from "@/lib/api";
 import {
   countLabel,
   isServerStage,
@@ -162,7 +163,7 @@ export function RunLogPanel({
             Follow
           </label>
           <Button asChild variant="ghost" size="sm">
-            <a href={`/api/runs/${runId}/log?format=text`} download>
+            <a href={apiUrl(`/api/runs/${runId}/log?format=text`)} download>
               <Download className="h-3.5 w-3.5" aria-hidden />
               Download
             </a>
