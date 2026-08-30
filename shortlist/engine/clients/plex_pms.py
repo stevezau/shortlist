@@ -924,8 +924,9 @@ class PlexClient:
         owned_idents: set[str] = set()
         #: hub identifier -> ratingKey, for the rows of ours on this shelf.
         key_by_ident: dict[str, int] = {}
-        #: True once a `to_top` request has yielded to rows already holding the top — the audit must
-        #: not then claim the top for itself.
+        #: True when THIS attempt's read shows a `to_top` request yielding to rows already holding the
+        #: top — the audit must not then claim the top for itself. Decided fresh each attempt, because
+        #: the shelf is re-read each attempt and the rows it yielded to may since have gone.
         retargeted = False
         # What the audit and the logs CALL this anchor. A row anchor has no title of its own — one
         # collection per person — so without a label every ordering record for one would read
@@ -971,8 +972,13 @@ class PlexClient:
 
         def top_anchor() -> str:
             """What a `to_top` call CALLS its landing point. Not always "top": a request that yielded
-            to rows already holding the slot landed below them, and three separate returns used to
-            claim the top regardless — including the dry-run preview an owner is told to trust."""
+            to rows already holding the slot landed below them, and every return used to claim the top
+            regardless — including the dry-run preview an owner is told to trust.
+
+            One reads `False` by construction rather than by fact: every `outcome()` call site sits
+            ABOVE the retarget block in the same attempt, so a give-up that carries writes from an
+            earlier attempt reports the top even if that attempt yielded. It is already flagged
+            `verified: False`, so the record does not assert the shelf ended that way."""
             return "after the rows already at the top" if retargeted else "top"
 
         def outcome(reason: str) -> dict:

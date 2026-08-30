@@ -1667,10 +1667,16 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
             rows_refused = sorted(names.get(s, s) for s, g in group_of_slug.items() if g == group)
             logger.warning(
                 "hub order: {} cannot be placed BEFORE '{}' in {} — Shortlist positions that row too, so "
-                "the two requests cannot both hold; using this library's default placement instead",
+                "the two requests cannot both hold; {}",
                 ", ".join(repr(r) for r in rows_refused),
                 names.get(group[2], group[2]),
                 section.title,
+                # Only true when there IS a catch-all to fall into. With no default for this library
+                # the rows are moved by nothing and stay where Plex left them, which is what the
+                # `pinned_keys` comment below relies on.
+                "using this library's default placement instead"
+                if rest is not None
+                else "this library has no default placement, so they are left where they are",
             )
             report.hub_orderings.append(
                 {
@@ -1686,13 +1692,35 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
             del groups[group]
             for slug in [s for s, g in group_of_slug.items() if g == group]:
                 del group_of_slug[slug]
+        # Resolve the placement ORDER before the exclusion set, because a group `_anchor_group_order`
+        # drops — one in a placement cycle, or downstream of one — is placed by nothing. Left in
+        # `groups` its keys stayed in `excluded`, so the catch-all skipped those rows too and NOTHING
+        # moved them: a newly created hub then sat at the bottom of the shelf permanently, with only a
+        # container-log warning. That is issue #106's own complaint, and it is the third instance of
+        # this shape in this function, so it is dropped like a refused group instead.
+        placement_order = _anchor_group_order(groups, group_of_slug, section.title)
+        for group in [g for g in groups if g not in placement_order]:
+            rows_broken = sorted(names.get(s, s) for s, g in group_of_slug.items() if g == group)
+            report.hub_orderings.append(
+                {
+                    "library": section.title,
+                    "placed": False,
+                    "row": ", ".join(rows_broken),
+                    "anchor": f"the {names.get(group[2], group[2])!r} row" if group[2] else "",
+                    "moved": [],
+                    "reason": "part of a placement cycle — two rows cannot each sit after the other",
+                }
+            )
+            del groups[group]
+            for slug in [s for s, g in group_of_slug.items() if g == group]:
+                del group_of_slug[slug]
         # The catch-all: every row of ours in this library that the owner did NOT place by hand, moved
         # by exclusion. Placed FIRST, so the explicitly-placed rows anchor against a settled shelf —
         # and a row anchored to one of these follows a block that is already where it belongs.
         excluded: set[int] = {k for keys in groups.values() for k in keys}
         if rest is not None:
             _apply_order(ctx, report, section, rest, only_keys=None, exclude_keys=excluded)
-        for group in _anchor_group_order(groups, group_of_slug, section.title):
+        for group in placement_order:
             to_top, anchor_title, anchor_row, before = group
             # Anchor to the GROUP the anchor row was placed as part of, not to that row's own keys.
             # Rows sharing a slot are moved in one call and land contiguously, so a follower aimed at

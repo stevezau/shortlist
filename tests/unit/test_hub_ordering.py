@@ -1381,8 +1381,12 @@ def test_the_audit_stops_claiming_a_retarget_once_the_rows_it_yielded_to_are_gon
 
         def managedHubs(self):
             self.reads += 1
-            if self.reads == 2:  # between attempt 1 and attempt 2, their row leaves the shelf
-                self._hubs[0].promotedToSharedHome = False
+            if self.reads == 2:  # between attempt 1 and attempt 2, THEIR row leaves the shelf
+                # By title, not by position: indexing 0 only names `theirs` while the attempt-1 move
+                # is dropped, so a change there would silently demote OUR row and prove something else.
+                for hub in self._hubs:
+                    if hub.title == "Picked for You":
+                        hub.promotedToSharedHome = False
             return list(self._hubs)
 
         def apply(self, hub, after):
@@ -1502,6 +1506,48 @@ def test_two_groups_that_both_want_the_top_share_it():
     moves = sum(h.moves for h in hubs)
     _order_phase(ctx, RunReport(started_at=datetime.now(UTC), users=[]))
     assert sum(h.moves for h in hubs) == moves
+
+
+def test_rows_in_a_placement_cycle_fall_back_to_the_default_and_are_recorded():
+    """A cycle ("A after B, B after A") is dropped rather than half-placed — but dropping it left the
+    rows in `groups`, so their keys stayed in the catch-all's exclusion set and NOTHING moved them.
+
+    A newly created hub then sat at the bottom of the shelf permanently, with only a container-log
+    warning: issue #106's own complaint, and the third instance of this shape in this function. The
+    cycle is dropped from `groups` now, so its rows take the library default, and it is audited.
+    """
+    from types import SimpleNamespace
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec, RunReport
+    from shortlist.engine.pipeline import _order_phase
+
+    hubs = [FakeHub("Recently Added", "ra", collection=False), FakeHub("aay-ann", "301"), FakeHub("bee-ann", "401")]
+    colls = [FakeColl("aay-ann", ["shortlist_ann"], 301), FakeColl("bee-ann", ["shortlist_ann"], 401)]
+    section = FakeSection(hubs, title="Filme", key=1)
+    section.type = "movie"
+    cfg = EngineConfig(
+        manage_shelf_order=True,
+        hub_anchors={"1": HubAnchor(to_top=True)},
+        rows=[
+            RowSpec(slug="aay", name_template="Aay", size=10, hub_anchors={"1": HubAnchor(anchor_row="bee")}),
+            RowSpec(slug="bee", name_template="Bee", size=10, hub_anchors={"1": HubAnchor(anchor_row="aay")}),
+        ],
+    )
+    ctx = SimpleNamespace(
+        config=cfg,
+        delivery_sections=[section],
+        plex=_client(colls),
+        write_lock=threading.Lock(),
+        delivered_keys={("ann", "aay", "1"): 301, ("ann", "bee", "1"): 401},
+    )
+    report = RunReport(started_at=datetime.now(UTC), users=[])
+    _order_phase(ctx, report)
+
+    # Not stranded below the Plex hub — they take this library's default instead.
+    assert section.titles().index("Recently Added") == len(section.titles()) - 1
+    # And the owner can see why, rather than only in the container log (rule 10).
+    cycles = [e for e in report.hub_orderings if "placement cycle" in (e.get("reason") or "")]
+    assert cycles and cycles[0]["row"]
 
 
 def test_a_refused_row_does_not_keep_the_top_from_a_row_that_asked_for_it():
