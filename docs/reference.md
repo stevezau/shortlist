@@ -47,13 +47,17 @@ http:
           - url: "http://shortlist:5959/"
 ```
 
-nginx — note there is no trailing slash on either the `location` or the `proxy_pass`. On
-`proxy_pass` it is what forwards the prefix intact; on `location` it is what lets `/shortlist`
-match as well as `/shortlist/`, so the bare URL people actually type reaches the app (which
-redirects it to `/shortlist/`) instead of being 404'd by nginx:
+nginx — two blocks. `location /shortlist` on its own is a *prefix* match, so it would also
+swallow a sibling app at `/shortlistings`; `^~ /shortlist/` matches only the real subtree, and the
+exact-match block redirects the bare URL people actually type. Note there is no trailing slash on
+`proxy_pass` — that is what forwards the prefix intact:
 
 ```nginx
-location /shortlist {
+location = /shortlist {
+    return 308 /shortlist/;
+}
+
+location ^~ /shortlist/ {
     proxy_pass http://shortlist:5959;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
@@ -67,10 +71,15 @@ an unprefixed `/api/system/health` on localhost, keeps working.
 
 Leaving it unset serves the shell's bytes exactly as they shipped.
 
-If the app comes up blank behind the proxy, check the container log first: it states the base path
-it is using at startup, and warns if `APP_BASE_PATH` held something it could not use (a query, a
-fragment, a space) — in which case it ignores it and serves from the root, which on its own looks
-exactly like a proxy problem.
+Test through the proxy, at `https://host/shortlist/`. A blank page at the container's own port —
+or at any URL without the prefix — is expected, not a fault: the app still answers there (that is
+how the healthcheck works), but the SPA it serves is built for the prefix and renders nothing
+outside it.
+
+If it is blank *through the proxy*, check the container log first: it states the base path it is
+using at startup, and warns if `APP_BASE_PATH` held something it could not use (a query, a
+fragment, a space, an escaped or relative path) — in which case it ignores it and serves from the
+root, which on its own looks exactly like a proxy problem.
 
 ## Settings keys (DB-backed; Settings UI or `PUT /api/settings`)
 

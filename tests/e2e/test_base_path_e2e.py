@@ -42,15 +42,15 @@ def _watched_page(browser: Browser, url: str):
     page.set_default_timeout(60_000)
     console_errors: list[str] = []
     failed: list[str] = []
-    api_calls: list[str] = []
+    requested: list[str] = []
     page.on("console", lambda m: console_errors.append(m.text) if m.type == "error" else None)
     page.on("requestfailed", lambda r: failed.append(r.url))
-    page.on("request", lambda r: api_calls.append(r.url) if "/api/" in r.url else None)
-    return page, console_errors, failed, api_calls
+    page.on("request", lambda r: requested.append(r.url))
+    return page, console_errors, failed, requested
 
 
 def test_the_app_boots_and_talks_to_itself_under_the_prefix(browser: Browser, prefixed_url: str) -> None:
-    page, console_errors, failed, api_calls = _watched_page(browser, prefixed_url)
+    page, console_errors, failed, requested = _watched_page(browser, prefixed_url)
     page.goto(f"{prefixed_url}{BASE}/", wait_until="networkidle")
 
     # The shell alone renders an empty <div id="root">. Anything inside it means the bundle was
@@ -60,10 +60,13 @@ def test_the_app_boots_and_talks_to_itself_under_the_prefix(browser: Browser, pr
     # The prefix reached the SPA, not just the server.
     assert page.evaluate("window.__SHORTLIST_BASE_PATH__") == BASE
 
-    # Every API call carries the prefix. A single unprefixed one is the run-log Download bug.
-    assert api_calls, "the SPA made no API calls at all — it never got far enough to be a test"
-    unprefixed = [url for url in api_calls if f"{BASE}/api/" not in url]
-    assert unprefixed == [], f"API calls bypassed the base path: {unprefixed}"
+    # Asserted on the URL, not the response: the app deliberately answers unprefixed paths too,
+    # so an asset or API call that skipped the prefix would still come back 200 and leave both
+    # `failed` and `console_errors` empty. Only the URL shows it.
+    interesting = [u for u in requested if "/api/" in u or "/assets/" in u]
+    assert interesting, "the SPA fetched nothing — it never got far enough to be a test"
+    unprefixed = [u for u in interesting if f"{BASE}/" not in u]
+    assert unprefixed == [], f"requests bypassed the base path: {unprefixed}"
 
     assert failed == [], f"requests failed under the prefix: {failed}"
     assert console_errors == [], f"console errors under the prefix: {console_errors}"

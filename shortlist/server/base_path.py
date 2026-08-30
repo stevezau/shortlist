@@ -7,6 +7,7 @@ import os
 import re
 from collections.abc import Awaitable, Callable
 from typing import Any
+from urllib.parse import unquote
 
 from loguru import logger
 
@@ -48,7 +49,13 @@ def resolve_base_path(raw: str | None) -> str:
     candidate = candidate.rstrip("/")
     if not candidate:
         return ""
-    if not _VALID_BASE_PATH.match(candidate):
+    # A percent-escape or a dot segment survives the character check and then loses: the browser
+    # normalises `/a/../b` and decodes `%2f` before it asks, so what arrives never equals what was
+    # configured, and the prefix silently matches nothing.
+    decoded_or_relative = unquote(candidate) != candidate or any(
+        segment in (".", "..") for segment in candidate.split("/")
+    )
+    if decoded_or_relative or not _VALID_BASE_PATH.match(candidate):
         logger.warning(
             "{}={!r} is not a usable URL path — serving from the server root instead. "
             "Use a plain path with no query, fragment or spaces, e.g. /shortlist.",

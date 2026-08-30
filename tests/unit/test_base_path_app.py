@@ -141,6 +141,28 @@ class TestServedUnderThePrefix:
         assert SECRET.encode() not in body
 
 
+class TestTheSessionCookie:
+    """Scoped to our prefix, or a subpath install hands it to every neighbour on the hostname.
+
+    Sharing a hostname with another app is the only reason to set APP_BASE_PATH, so the default
+    `path="/"` is wrong exactly when the feature is in use.
+    """
+
+    def _logout_cookie(self, app) -> str:
+        from starlette.testclient import TestClient
+
+        prefix = getattr(app.state, "base_path", "")
+        response = TestClient(app).post(f"{prefix}/api/auth/logout", headers={"x-shortlist-csrf": "1"})
+        assert response.status_code == 200, response.text
+        return response.headers["set-cookie"]
+
+    def test_a_subpath_install_scopes_it(self, prefixed):
+        assert "; Path=/shortlist;" in self._logout_cookie(prefixed)
+
+    def test_a_root_install_is_unchanged(self, rooted):
+        assert "; Path=/;" in self._logout_cookie(rooted)
+
+
 class TestTheRestOfTheServer:
     def test_an_unprefixed_path_still_routes(self, prefixed):
         # The container HEALTHCHECK curls an unprefixed /api/system/health on localhost, so a

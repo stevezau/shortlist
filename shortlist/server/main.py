@@ -308,6 +308,8 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
 
     # Added last so it runs first, before routing.
     app_base_path = base_path_from_env()
+    # Read by `auth` to scope the session cookie; always set, so nothing has to guess.
+    app.state.base_path = app_base_path
     if app_base_path:
         # Said out loud once at startup: when a subpath install is misconfigured the symptom is a
         # blank page, and the first question is always "what does the app think its prefix is".
@@ -336,7 +338,9 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
     if WEB_DIST.exists():
         app.mount("/assets", StaticFiles(directory=WEB_DIST / "assets"), name="assets")
         web_root = WEB_DIST.resolve()
-        index = web_root / "index.html"
+        # `.resolve()`d because `target` is: the comparison below now decides whether the
+        # rewritten shell is served at all, and a symlinked index.html would fail it silently.
+        index = (web_root / "index.html").resolve()
         #: `index.html` is the only file that NAMES the hashed bundles, so it is the one file a
         #: browser must never reuse without asking. It was served with no `cache-control` at all,
         #: which leaves the browser to guess from `last-modified` — and a browser that guesses "still

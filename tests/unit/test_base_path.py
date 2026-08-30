@@ -131,6 +131,10 @@ def test_no_base_path_is_a_pass_through() -> None:
         "//evil.com",  # protocol-relative: the SPA would send every API call off-origin
         "/has space",
         "/back\\slash",
+        "/short%2flist",  # uvicorn decodes before matching, so this never equals what was configured
+        "/a%20b",
+        "/a/../b",  # the browser normalises this out of the asset URL before it asks
+        "/..",
     ],
 )
 def test_a_value_that_is_not_a_url_path_is_refused(raw: str) -> None:
