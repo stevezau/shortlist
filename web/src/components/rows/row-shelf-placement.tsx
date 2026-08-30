@@ -154,12 +154,7 @@ function LibraryAnchor({
                       {entry.anchor} (not found)
                     </option>
                   )}
-                {/* Rows are offered for "after" only. "Right before <one of our rows>" cannot be
-                    satisfied: Shortlist places that row's block at a fixed point and keeps it
-                    contiguous, so anything put ahead of it is moved back on the next run — the
-                    engine refuses it and records why, rather than writing forever. A collection is
-                    different: we do not position it, so sitting before it is stable. */}
-                {mode === "after" && candidates.length > 0 && (
+                {candidates.length > 0 && (
                   <optgroup label="Your Shortlist rows">
                     {candidates.map((row) => (
                       <option key={row.slug} value={`row:${row.slug}`}>
@@ -197,11 +192,17 @@ function LibraryAnchor({
           {mode === "before" ? "before" : "after"}, or nothing moves.
         </p>
       )}
+      {/* Narrow, because the engine's rule is narrow: it refuses this only when Shortlist ALSO
+          positions the anchor row — which it does whenever that row has its own placement or
+          Settings places every row in this library. When nobody positions it, sitting before it is
+          stable and works. The editor cannot see the other row's settings, so it states the
+          condition rather than guessing the outcome. */}
       {mode === "before" && entry?.row && (
-        <p className="text-sm text-destructive-text">
-          A row can’t sit right before another Shortlist row — Shortlist positions
-          that one too, so the two can’t both hold, and it will be left where it
-          is. Use <strong>Right after…</strong>, or pick a collection instead.
+        <p className="text-sm text-muted-foreground">
+          This only works if Shortlist isn’t also positioning that row. If it is,
+          Shortlist can’t hold both places at once, so this row falls back to the
+          library default and the run log says so. <strong>Right after…</strong>
+          always works.
         </p>
       )}
       {anchorOffShelf && (

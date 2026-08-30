@@ -1030,11 +1030,95 @@ def test_placing_a_row_before_one_we_also_place_is_refused_not_churned():
     assert len(unplaced) == 1
     assert "cannot sit before a row Shortlist also places" in unplaced[0]["reason"]
     assert unplaced[0]["anchor"] == "the 'Picked' row"
+    assert unplaced[0]["row"] == "Extra"  # the refused row is NAMED, not just the library (rule 10)
 
-    # The rows that CAN be placed still are, and the shelf then settles — no perpetual writes.
+    # Refused is not stranded. Its rows take the library default, so they are at the top with the
+    # rest — dropping them from every call instead left them under the standard Plex hubs for ever,
+    # which is the complaint this whole issue is about.
+    assert section.titles() == [
+        "picked-ann",
+        "picked-bob",
+        "gems-ann",
+        "gems-bob",
+        "extra-ann",
+        "extra-bob",
+        "Recently Added",
+    ]
+
+    # And the shelf settles — no perpetual writes.
     moves = sum(h.moves for h in hubs)
     _order_phase(ctx, RunReport(started_at=datetime.now(UTC), users=[]))
     assert sum(h.moves for h in hubs) == moves
+
+
+def test_before_is_only_refused_when_shortlist_also_places_the_anchor_row():
+    """The other two cells of the refusal, neither of which the sibling test can see.
+
+    Refused when the anchor row has its OWN placement (we position it), and NOT refused when nobody
+    positions it — a row nobody moves is already wherever it is, so sitting before it is stable and
+    must keep working. Over-refusing would take away a placement that does exactly what was asked.
+    """
+    from types import SimpleNamespace
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec, RunReport
+    from shortlist.engine.pipeline import _order_phase
+
+    def shelf(rows, hub_anchors):
+        hubs = [FakeHub("Recently Added", "ra", collection=False)]
+        colls = [FakeColl("Recently Added", [])]
+        ledger, key = {}, 100
+        for spec in rows:
+            key += 1
+            hubs.append(FakeHub(f"{spec.slug}-ann", str(key)))
+            colls.append(FakeColl(f"{spec.slug}-ann", ["shortlist_ann"], key))
+            ledger[("ann", spec.slug, "1")] = key
+        section = FakeSection(hubs, title="Filme", key=1)
+        section.type = "movie"
+        ctx = SimpleNamespace(
+            config=EngineConfig(manage_shelf_order=True, hub_anchors=hub_anchors, rows=rows),
+            delivery_sections=[section],
+            plex=_client(colls),
+            write_lock=threading.Lock(),
+            delivered_keys=ledger,
+        )
+        report = RunReport(started_at=datetime.now(UTC), users=[])
+        _order_phase(ctx, report)
+        moves = sum(h.moves for h in hubs)
+        _order_phase(ctx, RunReport(started_at=datetime.now(UTC), users=[]))
+        return report, section.titles(), sum(h.moves for h in hubs) == moves
+
+    # (a) the anchor row has its own placement -> we position it -> refused.
+    report, _, settled = shelf(
+        [
+            RowSpec(slug="picked", name_template="Picked", size=10, hub_anchors={"1": HubAnchor("Recently Added")}),
+            RowSpec(
+                slug="extra",
+                name_template="Extra",
+                size=10,
+                hub_anchors={"1": HubAnchor(anchor_row="picked", before=True)},
+            ),
+        ],
+        {"1": HubAnchor(to_top=True)},
+    )
+    assert [e["row"] for e in report.hub_orderings if e.get("placed") is False] == ["Extra"]
+    assert settled
+
+    # (b) nobody positions the anchor row (no library default, no override on it) -> it works.
+    report, titles, settled = shelf(
+        [
+            RowSpec(slug="picked", name_template="Picked", size=10),
+            RowSpec(
+                slug="extra",
+                name_template="Extra",
+                size=10,
+                hub_anchors={"1": HubAnchor(anchor_row="picked", before=True)},
+            ),
+        ],
+        {},  # Settings leaves this library's order to Plex
+    )
+    assert [e for e in report.hub_orderings if e.get("placed") is False] == []
+    assert titles.index("extra-ann") < titles.index("picked-ann")
+    assert settled
 
 
 def test_order_phase_mixes_a_top_override_with_an_anchor_override():

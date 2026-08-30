@@ -230,19 +230,18 @@ describe("RowShelfPlacement", () => {
     expect(onShelf?.disabled).toBe(false);
   });
 
-  it("won't offer another row as a 'before' anchor, and explains a saved one", async () => {
-    // Shortlist positions its own rows, so nothing can hold a slot immediately before one — the
-    // engine refuses it rather than writing moves that are undone on the next run.
+  it("keeps a saved 'before <row>' selected, and states the condition it needs", async () => {
+    // The engine refuses this only when Shortlist ALSO positions the anchor row. Suppressing the
+    // row optgroup made the <select> match no option, so the browser fell back to the first enabled
+    // one and the screen showed "New Series" — a placement the owner never chose — directly above
+    // text saying it could not work.
     renderControl({ "2": { row: "picked", anchor: "", before: true } });
     await screen.findByText("TV Shows");
 
-    const select = await screen.findByLabelText("Before");
-    const groups = Array.from(select.querySelectorAll("optgroup")).map(
-      (g) => g.label,
-    );
-    expect(groups).not.toContain("Your Shortlist rows");
+    const select = await screen.findByLabelText<HTMLSelectElement>("Before");
+    expect(select.value).toBe("row:picked");
     expect(
-      screen.getByText(/can’t sit right before another Shortlist row/),
+      screen.getByText(/only works if Shortlist isn’t also positioning that row/),
     ).toBeTruthy();
   });
 

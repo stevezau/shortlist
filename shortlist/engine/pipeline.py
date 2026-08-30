@@ -1326,6 +1326,28 @@ def _anchor_group_order(
 UNPLACEABLE = frozenset({"anchor not found", "anchor not on the shelf", "anchor row not on this shelf"})
 
 
+def _we_place(
+    anchor_row: str,
+    group_of_slug: dict[str, tuple],
+    keys_by_slug: dict[str, set[int]],
+    placed_keys: set[int],
+    rest,
+) -> bool:
+    """Whether Shortlist itself positions ``anchor_row``'s hubs in this library.
+
+    Two ways it can: the row has its own placement (it is in an enumerated group), or the catch-all
+    sweeps it (a library default exists and the row has hubs the enumerated groups do not claim).
+    Either way its block is pinned to a point and kept contiguous, so nothing can hold the slot
+    immediately before it — which is the one placement this has to be able to recognise.
+
+    A row nobody positions is a fine anchor and imposes nothing: it is already wherever it is, so
+    sitting before it is stable. That is the case this must NOT catch.
+    """
+    if anchor_row in group_of_slug:
+        return True
+    return rest is not None and bool(keys_by_slug.get(anchor_row, set()) - placed_keys)
+
+
 def _apply_order(
     ctx: EngineContext,
     report: RunReport,
@@ -1583,10 +1605,48 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
             group = (effective.to_top, effective.anchor_title, effective.anchor_row, effective.before)
             groups.setdefault(group, set()).update(keys)
             group_of_slug[slug] = group
+        rest = global_anchors.get(key)
+        # Which groups ask for something that cannot hold, decided BEFORE the catch-all's exclusion
+        # set is fixed. "Right before <a row we also place>" is unsatisfiable: we put that row's block
+        # at a point of its own and keep it contiguous, so anything inserted ahead of it is evicted on
+        # the next pass and re-inserted by this one (measured 6,6,6,6 and 4,4,4,4 moves per pass).
+        #
+        # A refused group is DROPPED rather than skipped, so its rows fall into the catch-all and get
+        # the library default. Skipping left them excluded from every call — nothing moved them, ever —
+        # and Plex appends a new hub at the BOTTOM, so a row created after this shipped would sit under
+        # every built-in hub permanently. That is issue #106's own complaint, rebuilt by its fix.
+        placed_keys = {k for keys in groups.values() for k in keys}
+        refused = {
+            group
+            for group in groups
+            if group[3] and group[2] and _we_place(group[2], group_of_slug, keys_by_slug, placed_keys, rest)
+        }
+        for group in refused:
+            rows_refused = sorted(names.get(s, s) for s, g in group_of_slug.items() if g == group)
+            logger.warning(
+                "hub order: {} cannot be placed BEFORE '{}' in {} — Shortlist positions that row too, so "
+                "the two requests cannot both hold; using this library's default placement instead",
+                ", ".join(repr(r) for r in rows_refused),
+                names.get(group[2], group[2]),
+                section.title,
+            )
+            report.hub_orderings.append(
+                {
+                    "library": section.title,
+                    "placed": False,
+                    "row": ", ".join(rows_refused),
+                    "anchor": f"the {names.get(group[2], group[2])!r} row",
+                    "moved": [],
+                    "reason": "cannot sit before a row Shortlist also places — choose 'after', or anchor "
+                    "to a collection instead",
+                }
+            )
+            del groups[group]
+            for slug in [s for s, g in group_of_slug.items() if g == group]:
+                del group_of_slug[slug]
         # The catch-all: every row of ours in this library that the owner did NOT place by hand, moved
         # by exclusion. Placed FIRST, so the explicitly-placed rows anchor against a settled shelf —
         # and a row anchored to one of these follows a block that is already where it belongs.
-        rest = global_anchors.get(key)
         excluded: set[int] = {k for keys in groups.values() for k in keys}
         if rest is not None:
             _apply_order(ctx, report, section, rest, only_keys=None, exclude_keys=excluded)
@@ -1606,41 +1666,19 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
             # fight for ever (see `order_owned_hubs`). Not `keys_by_slug` either: that is the anchor
             # row alone, which is the same mistake by another route, and it re-introduces the ledger
             # dependency this commit removed.
-            follows_default = bool(anchor_row) and anchor_row in anchors_by_slug and anchor_row not in overridden
+            # Is the anchor row's block moved by the CATCH-ALL? Asked of placement, not of config: a
+            # row retargeted away from this library (its `media` or `library_keys` narrowed) is absent
+            # from `here` and from `anchors_by_slug`, yet its old collections are still on this shelf,
+            # still in the ledger, and still swept by the catch-all every run. Reading it as "a row we
+            # do not move" aimed the follower at its own hubs and churned for ever, 4 writes a pass.
+            follows_default = (
+                bool(anchor_row) and rest is not None and bool(keys_by_slug.get(anchor_row, set()) - excluded)
+            )
             anchor_keys = None
             if anchor_group:
                 anchor_keys = groups.get(anchor_group)
             elif anchor_row and not follows_default:
                 anchor_keys = keys_by_slug.get(anchor_row)
-            if anchor_row and before and (anchor_row in group_of_slug or follows_default):
-                # "Right BEFORE row X", where X is a row we also place. Structurally unsatisfiable, and
-                # measurably so: we put X's block at a fixed point (the top, or immediately after a
-                # foreign hub) and make it contiguous, so anything inserted ahead of it is evicted on
-                # the next pass and re-inserted by this one. Measured 6, 6, 6, 6 moves per pass against
-                # a default-following anchor and 4, 4, 4, 4 against an enumerated one, for ever, both
-                # calls reporting `verified: True` throughout.
-                #
-                # Refusing costs the owner a placement that never worked. Not refusing costs a write
-                # per account per library on every run, and — because `_shelf_contention` counts a
-                # title moved three times in a day — an alert telling them Kometa or agregarr is
-                # fighting them, for churn Shortlist is generating itself. Recorded, not silent.
-                logger.warning(
-                    "hub order: rows cannot be placed BEFORE '{}' in {} — Shortlist positions that row "
-                    "too, so the two requests cannot both hold; leaving these where they are",
-                    names.get(anchor_row, anchor_row),
-                    section.title,
-                )
-                report.hub_orderings.append(
-                    {
-                        "library": section.title,
-                        "placed": False,
-                        "anchor": f"the {names.get(anchor_row, anchor_row)!r} row",
-                        "moved": [],
-                        "reason": "cannot sit before a row Shortlist also places — choose 'after', or "
-                        "anchor to a collection instead",
-                    }
-                )
-                continue
             if anchor_row and not anchor_keys and not follows_default:
                 # The row someone anchored to has nothing in this library. Left alone rather than
                 # quietly falling back to the library default: reinterpreting where a row was asked to
