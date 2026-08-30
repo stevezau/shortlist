@@ -855,6 +855,7 @@ class PlexClient:
         dry_run: bool = False,
         only_keys: set[int] | None = None,
         exclude_keys: set[int] | None = None,
+        pinned_keys: set[int] | None = None,
         to_top: bool = False,
         attempts: int = _HUB_ORDER_ATTEMPTS,
     ) -> dict:
@@ -921,6 +922,11 @@ class PlexClient:
         #: Hub identifiers of EVERY row of ours here, whether or not this call moves them — used to
         #: spot a request for a slot another of our calls already owns.
         owned_idents: set[str] = set()
+        #: hub identifier -> ratingKey, for the rows of ours on this shelf.
+        key_by_ident: dict[str, int] = {}
+        #: True once a `to_top` request has yielded to rows already holding the top — the audit must
+        #: not then claim the top for itself.
+        retargeted = False
         # What the audit and the logs CALL this anchor. A row anchor has no title of its own — one
         # collection per person — so without a label every ordering record for one would read
         # 'anchor: ""', which is not an answer to "what moved where" (rule 10).
@@ -997,6 +1003,11 @@ class PlexClient:
             # happened to sit first, and the whole library then stopped being ordered, for ever.
             owned_idents = {
                 h.identifier for h in order if (getattr(h, "title", "") or "") in owned_all and is_promoted(h)
+            }
+            key_by_ident = {
+                h.identifier: key_by_title[getattr(h, "title", "") or ""]
+                for h in order
+                if (getattr(h, "title", "") or "") in key_by_title
             }
             ours = [h for h in order if (getattr(h, "title", "") or "") in owned_titles and is_promoted(h)]
             if not ours:
@@ -1101,7 +1112,7 @@ class PlexClient:
             by_ident = {h.identifier: h for h in order}
             our_idents = [h.identifier for h in ours]
 
-            if target is None:
+            if to_top and target is None:
                 # We have been asked for the VERY TOP. If rows of ours that this call does NOT move
                 # are already pinned there, both cannot hold position 0: whoever writes second wins,
                 # the other call puts it back next pass, and neither settles — 4 moves a pass, for
@@ -1112,13 +1123,26 @@ class PlexClient:
                 # move those rows, so the setting silently did nothing and they stayed wherever Plex
                 # left them — the bottom, for anything newly created. Sharing the top is what both
                 # requests actually meant.
+                # `to_top` ONLY. `before` also resolves to None when its anchor sits at position 0 —
+                # and the anchor's own hubs are ours and not in `our_idents`, so this loop walked
+                # straight over them and landed the row AFTER the row it was asked to precede. Stable,
+                # and reported `verified: True`, so nothing ever corrected it. Requesting "the very
+                # top unconditionally" is the only request that can share the top; "before X" has an
+                # answer of its own. (For a foreign `before`, `leading` is provably empty anyway.)
+                #
+                # And only past hubs ANOTHER CALL THIS RUN is placing there. A row Shortlist positions
+                # nowhere is not contending for the slot, so yielding to it is not sharing, it is
+                # losing — `pinned_keys` is how the caller says which rows tonight actually claims.
                 leading = []
                 for ident in idents:
                     if ident in our_idents or ident not in owned_idents:
                         break
+                    if pinned_keys is not None and key_by_ident.get(ident) not in pinned_keys:
+                        break
                     leading.append(ident)
                 if leading:
                     target = by_ident[leading[-1]]
+                    retargeted = True
             start = idents.index(target.identifier) + 1 if target is not None else 0
             if idents[start : start + len(our_idents)] == our_idents:
                 if not moved:
@@ -1132,7 +1156,9 @@ class PlexClient:
                     attempt - 1,
                 )
                 return {
-                    "anchor": "top" if to_top else audit_anchor,
+                    "anchor": ("after the rows already at the top" if retargeted else "top")
+                    if to_top
+                    else audit_anchor,
                     "moved": list(moved.values()),
                     "skipped": False,
                     "verified": True,

@@ -1279,7 +1279,10 @@ def _anchor_group_order(
     A group anchored to one of OUR rows can only be placed once that row is where it belongs, so this
     is a topological sort over "group G follows the group holding row R". Groups anchored to a foreign
     collection or to the top depend on nothing and keep their input order — which is the owner's row
-    order, so a shelf stays in the order the Rows page shows.
+    order, so a shelf stays in the order the Rows page shows. With one exception: when several groups
+    resolve to the TOP, the second and later ones land after the rows already there rather than
+    displacing them (see `order_owned_hubs`), so the existing order BETWEEN those groups is preserved
+    instead of being re-imposed — two of them already at the top stay as they are.
 
     Two things are dropped rather than guessed at: a CYCLE ("A after B, B after A", including a row
     naming itself), and anything downstream of one. Placing half a cycle would produce a shelf order
@@ -1364,6 +1367,7 @@ def _apply_order(
     anchor_label: str = "",
     exclude_keys: set[int] | None = None,
     anchor_exclude_keys: set[int] | None = None,
+    pinned_keys: set[int] | None = None,
 ) -> None:
     """One best-effort, gated reorder call + its audit. A shelf reorder is cosmetic and privacy-neutral
     (hubs are already promoted and browse-hidden; only position changes), so a failure never fails the
@@ -1382,6 +1386,7 @@ def _apply_order(
                 dry_run=ctx.config.dry_run,
                 only_keys=only_keys,
                 exclude_keys=exclude_keys,
+                pinned_keys=pinned_keys,
             )
         # Recorded when anything MOVED, verified or not. An unverified pass (Plex took the moves and
         # dropped them) is exactly the case the report has to be able to show, so it is not filtered
@@ -1743,6 +1748,11 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
                 only_keys=groups[group],
                 anchor_keys=anchor_keys,
                 anchor_exclude_keys=excluded if follows_default else None,
+                # Which rows THIS RUN puts somewhere, so a `to_top` group yields the top only to rows
+                # another call is really claiming it for. `None` means "all of ours": with a catch-all
+                # every row of ours is placed by something. Without one, only the enumerated groups
+                # are — a row nobody positions is not contending, and landing behind it is losing.
+                pinned_keys=None if rest is not None else (placed_keys - groups[group]),
                 # A default-following anchor is a BLOCK, not one row — and that row may have nothing on
                 # this shelf yet while the block does. Naming the row would assert a landmark that is
                 # not there (rule 10).

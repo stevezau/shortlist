@@ -1331,6 +1331,182 @@ def test_before_lands_behind_our_own_rows_not_above_the_hub_they_follow():
     ]
 
 
+def test_before_a_row_at_the_very_top_is_not_turned_into_after_it():
+    """Driven at the client, because the pipeline refuses this combination before it gets here.
+
+    `before` resolves `target` to None when its anchor block sits at position 0 — the same value
+    `to_top` uses. The anchor's own hubs are ours and are not in this call's move-set, so an ungated
+    top-sharing loop walks straight over them and lands the row AFTER the one it was asked to
+    precede: stable, and reported `verified: True`, so nothing ever puts it right. `pinned_keys`
+    happens to block it on the pipeline's own paths; this is the guarantee that does not depend on
+    which caller is asking.
+    """
+    anchor = FakeHub("Picked for You", "11")
+    row = FakeHub("Because you watched X", "21")
+    section = FakeSection([anchor, FakeHub("Recently Added", "ra", collection=False), row])
+    client = _client(
+        [FakeColl("Picked for You", ["shortlist_ann"], 11), FakeColl("Because you watched X", ["shortlist_bob"], 21)]
+    )
+
+    result = client.order_owned_hubs(
+        section,
+        label_prefix="shortlist",
+        anchor_keys={11},
+        anchor_label="the 'Picked' row",
+        before=True,
+        only_keys={21},
+        pinned_keys=None,  # "everything of ours is pinned" — the case the gate has to survive
+    )
+
+    assert result["skipped"] is False
+    titles = section.titles()
+    assert titles.index("Because you watched X") < titles.index("Picked for You")
+
+
+def test_two_groups_that_both_want_the_top_share_it():
+    """The cell the retarget loop exists for, and which nothing reached before.
+
+    The catch-all pins the default rows at position 0, then an explicitly-Top row asks for the same
+    slot. Fighting means whoever writes second wins and the other puts it back next pass, for ever.
+    Landing right after the rows already there is what both settings meant.
+    """
+    from types import SimpleNamespace
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec, RunReport
+    from shortlist.engine.pipeline import _order_phase
+
+    hubs = [FakeHub("Recently Added", "ra", collection=False)]
+    colls = [FakeColl("Recently Added", [])]
+    ledger, key = {}, 100
+    for row in ("picked", "gems", "extra", "other"):
+        for user in ("ann", "bob"):
+            key += 1
+            hubs.append(FakeHub(f"{row}-{user}", str(key)))
+            colls.append(FakeColl(f"{row}-{user}", [f"shortlist_{user}"], key))
+            ledger[(user, row, "1")] = key
+    section = FakeSection(hubs, title="Filme", key=1)
+    section.type = "movie"
+    cfg = EngineConfig(
+        manage_shelf_order=True,
+        hub_anchors={"1": HubAnchor(to_top=True)},
+        rows=[
+            RowSpec(slug="picked", name_template="Picked", size=10),
+            RowSpec(slug="gems", name_template="Gems", size=10),
+            # Explicitly Top — the same slot the catch-all just claimed for picked/gems.
+            RowSpec(slug="extra", name_template="Extra", size=10, hub_anchors={"1": HubAnchor(to_top=True)}),
+            # A third placement, so the rows genuinely disagree and this library is partitioned. An
+            # override identical to the global default alone would agree with it and take the cheap
+            # single-call path, where no collision can arise.
+            RowSpec(slug="other", name_template="Other", size=10, hub_anchors={"1": HubAnchor("Recently Added")}),
+        ],
+    )
+    ctx = SimpleNamespace(
+        config=cfg,
+        delivery_sections=[section],
+        plex=_client(colls),
+        write_lock=threading.Lock(),
+        delivered_keys=ledger,
+    )
+    report = RunReport(started_at=datetime.now(UTC), users=[])
+    _order_phase(ctx, report)
+
+    assert section.titles() == [
+        "picked-ann",
+        "picked-bob",
+        "gems-ann",
+        "gems-bob",
+        "extra-ann",
+        "extra-bob",
+        "Recently Added",
+        "other-ann",
+        "other-bob",
+    ]
+    # The audit must not claim the top for rows that deliberately landed below it (rule 10).
+    assert "after the rows already at the top" in [e["anchor"] for e in report.hub_orderings]
+
+    moves = sum(h.moves for h in hubs)
+    _order_phase(ctx, RunReport(started_at=datetime.now(UTC), users=[]))
+    assert sum(h.moves for h in hubs) == moves
+
+
+def test_a_top_row_does_not_yield_the_top_to_rows_this_run_places_nowhere():
+    """Sharing means yielding to rows another call is really pinning there. A row Shortlist positions
+    nowhere is not contending for the slot, so landing behind it is not sharing — it is losing."""
+    from types import SimpleNamespace
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec, RunReport
+    from shortlist.engine.pipeline import _order_phase
+
+    hubs = [FakeHub("loose-ann", "301"), FakeHub("Recently Added", "ra", collection=False), FakeHub("extra-ann", "401")]
+    colls = [FakeColl("loose-ann", ["shortlist_ann"], 301), FakeColl("extra-ann", ["shortlist_ann"], 401)]
+    section = FakeSection(hubs, title="Filme", key=1)
+    section.type = "movie"
+    cfg = EngineConfig(
+        manage_shelf_order=True,
+        # Configured for ANOTHER library, so this one has no default and 'loose' is positioned by
+        # nothing at all.
+        hub_anchors={"9": HubAnchor(to_top=True)},
+        rows=[
+            RowSpec(slug="loose", name_template="Loose", size=10),
+            RowSpec(slug="extra", name_template="Extra", size=10, hub_anchors={"1": HubAnchor(to_top=True)}),
+        ],
+    )
+    ctx = SimpleNamespace(
+        config=cfg,
+        delivery_sections=[section],
+        plex=_client(colls),
+        write_lock=threading.Lock(),
+        delivered_keys={("ann", "loose", "1"): 301, ("ann", "extra", "1"): 401},
+    )
+    _order_phase(ctx, RunReport(started_at=datetime.now(UTC), users=[]))
+
+    assert section.titles()[0] == "extra-ann"  # Top means top; 'loose' was never claiming it
+
+
+def test_a_row_placed_before_another_row_is_not_dragged_below_it():
+    """The retarget must not touch a `before` request. Its `target` is also None when the anchor sits
+    at position 0 — and the anchor's own hubs are ours and not in this call's move-set, so an
+    ungated loop walked over them and placed the row AFTER the one it was asked to precede, stably,
+    reporting `verified: True`."""
+    from types import SimpleNamespace
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec, RunReport
+    from shortlist.engine.pipeline import _order_phase
+
+    hubs = [
+        FakeHub("picked-ann", "101"),
+        FakeHub("Recently Added", "ra", collection=False),
+        FakeHub("extra-ann", "201"),
+    ]
+    colls = [FakeColl("picked-ann", ["shortlist_ann"], 101), FakeColl("extra-ann", ["shortlist_ann"], 201)]
+    section = FakeSection(hubs, title="Filme", key=1)
+    section.type = "movie"
+    cfg = EngineConfig(
+        manage_shelf_order=True,
+        hub_anchors={"9": HubAnchor(to_top=True)},  # this library has no default, so nobody places 'picked'
+        rows=[
+            RowSpec(slug="picked", name_template="Picked", size=10),
+            RowSpec(
+                slug="extra",
+                name_template="Extra",
+                size=10,
+                hub_anchors={"1": HubAnchor(anchor_row="picked", before=True)},
+            ),
+        ],
+    )
+    ctx = SimpleNamespace(
+        config=cfg,
+        delivery_sections=[section],
+        plex=_client(colls),
+        write_lock=threading.Lock(),
+        delivered_keys={("ann", "picked", "1"): 101, ("ann", "extra", "1"): 201},
+    )
+    _order_phase(ctx, RunReport(started_at=datetime.now(UTC), users=[]))
+
+    titles = section.titles()
+    assert titles.index("extra-ann") < titles.index("picked-ann")
+
+
 def test_a_stale_ledger_key_is_recorded_not_silently_defaulted():
     """The ledger names a ratingKey whose collection is gone — deleted and recreated since.
 
