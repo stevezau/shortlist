@@ -1162,13 +1162,18 @@ def test_one_row_override_does_not_switch_off_ordering_in_another_library():
     assert with_override[0].kwargs["only_keys"] is None
 
 
-def test_a_row_cannot_be_placed_above_rows_already_pinned_to_the_top():
-    """ "Right before <the topmost collection>" while the library default is top of the shelf.
+def test_a_row_asked_for_the_top_shares_it_instead_of_fighting_for_it():
+    """Two placements both resolving to position 0 — here "right before <the topmost collection>"
+    while the library default is top of the shelf.
 
-    The same contradiction as the row-anchor case, reached through a COLLECTION anchor — which the
-    editor offers prominently. 'before' resolves to the very top, which the catch-all has just
-    claimed, so the two calls trade the slot for ever: measured 4 moves a pass, indefinitely, both
-    reporting `verified: True`, and `_shelf_contention` blaming Kometa for it.
+    Whoever writes second wins and the other call puts it back next pass: 4 moves a pass, for ever,
+    both reporting `verified: True`. Refusing was the first answer and was worse — the refused call is
+    the only one that would ever move those rows, so the setting did nothing and they stayed where
+    Plex left them. Landing right after the rows already pinned there is what both requests meant, and
+    it settles.
+
+    The shelf ORDER is asserted, not just the move count: the earlier version of this test checked
+    only that a second pass wrote nothing, which a shelf with the row below its own anchor satisfies.
     """
     from types import SimpleNamespace
 
@@ -1209,12 +1214,121 @@ def test_a_row_cannot_be_placed_above_rows_already_pinned_to_the_top():
     report = RunReport(started_at=datetime.now(UTC), users=[])
     _order_phase(ctx, report)
 
-    assert [e["reason"] for e in report.hub_orderings if e.get("placed") is False] == [
-        "cannot sit above rows pinned to the top"
-    ]
+    # Exactly what was configured: the default rows at the top, 'extra' immediately before its anchor.
+    assert section.titles() == ["picked-ann", "picked-bob", "extra-ann", "extra-bob", "Letzte Chance"]
+    assert [e for e in report.hub_orderings if e.get("placed") is False] == []
     moves = sum(h.moves for h in hubs)
     _order_phase(ctx, RunReport(started_at=datetime.now(UTC), users=[]))
     assert sum(h.moves for h in hubs) == moves
+
+
+def test_a_dormant_row_at_the_top_does_not_stop_the_library_being_ordered():
+    """A hub of ours promoted NOWHERE is moved by no call, so it contends for no slot.
+
+    Counting it as "pinned to the top" made the top-sharing guard fire on the plain single-call path —
+    every ordinary server — the moment a paused user's dormant row happened to sit first. The whole
+    library then stopped being ordered, and a newly delivered row sat below every Plex hub for ever.
+    """
+    from types import SimpleNamespace
+
+    from shortlist.engine.models import EngineConfig, RowSpec, RunReport
+    from shortlist.engine.pipeline import _order_phase
+
+    dormant = FakeHub("picked-ann", "201", promoted=False)  # a paused user's row, left where it sat
+    hubs = [dormant, FakeHub("picked-bob", "202"), FakeHub("Recently Added", "ra", collection=False)]
+    hubs.append(FakeHub("picked-cat", "203"))  # newly delivered, so Plex appended it at the bottom
+    colls = [
+        FakeColl("picked-ann", ["shortlist_ann"], 201),
+        FakeColl("picked-bob", ["shortlist_bob"], 202),
+        FakeColl("Recently Added", []),
+        FakeColl("picked-cat", ["shortlist_cat"], 203),
+    ]
+    section = FakeSection(hubs, title="Filme", key=1)
+    section.type = "movie"
+    ctx = SimpleNamespace(
+        config=EngineConfig(
+            manage_shelf_order=True, hub_anchors={}, rows=[RowSpec(slug="picked", name_template="Picked", size=10)]
+        ),
+        delivery_sections=[section],
+        plex=_client(colls),
+        write_lock=threading.Lock(),
+        delivered_keys={},
+    )
+    _order_phase(ctx, RunReport(started_at=datetime.now(UTC), users=[]))
+
+    # The live rows are at the top, in order, and the dormant one is left exactly where it sat —
+    # counting it as pinned put it FIRST and pushed every live row down behind it.
+    assert section.titles() == ["picked-bob", "picked-cat", "picked-ann", "Recently Added"]
+
+
+def test_before_lands_behind_our_own_rows_not_above_the_hub_they_follow():
+    """The cell that tells `owned_titles` from `owned_all` when resolving a 'before' target.
+
+    Skipping EVERY row of ours — rather than only the ones this call is about to move — walks past
+    rows that are already in place and legitimate landmarks, and lands on the foreign hub above them.
+    'extra' then jumps ABOVE the default rows instead of sitting immediately before its own anchor.
+    Only visible when our rows are not themselves at the very top, which is why the sibling test
+    (default = top of shelf) cannot see it.
+    """
+    from types import SimpleNamespace
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec, RunReport
+    from shortlist.engine.pipeline import _order_phase
+
+    hubs = [
+        FakeHub("Recently Added", "ra", collection=False),
+        FakeHub("picked-ann", "101"),
+        FakeHub("picked-bob", "102"),
+        FakeHub("Letzte Chance", "lc", collection=False),
+        FakeHub("extra-ann", "201"),
+        FakeHub("extra-bob", "202"),
+    ]
+    colls = [
+        FakeColl("Recently Added", []),
+        FakeColl("picked-ann", ["shortlist_ann"], 101),
+        FakeColl("picked-bob", ["shortlist_bob"], 102),
+        FakeColl("Letzte Chance", []),
+        FakeColl("extra-ann", ["shortlist_ann"], 201),
+        FakeColl("extra-bob", ["shortlist_bob"], 202),
+    ]
+    section = FakeSection(hubs, title="Filme", key=1)
+    section.type = "movie"
+    cfg = EngineConfig(
+        manage_shelf_order=True,
+        # The default puts our rows BELOW a foreign hub, so they are not at position 0.
+        hub_anchors={"1": HubAnchor(anchor_title="Recently Added")},
+        rows=[
+            RowSpec(slug="picked", name_template="Picked", size=10),
+            RowSpec(
+                slug="extra",
+                name_template="Extra",
+                size=10,
+                hub_anchors={"1": HubAnchor(anchor_title="Letzte Chance", before=True)},
+            ),
+        ],
+    )
+    ctx = SimpleNamespace(
+        config=cfg,
+        delivery_sections=[section],
+        plex=_client(colls),
+        write_lock=threading.Lock(),
+        delivered_keys={
+            ("ann", "picked", "1"): 101,
+            ("bob", "picked", "1"): 102,
+            ("ann", "extra", "1"): 201,
+            ("bob", "extra", "1"): 202,
+        },
+    )
+    _order_phase(ctx, RunReport(started_at=datetime.now(UTC), users=[]))
+
+    assert section.titles() == [
+        "Recently Added",
+        "picked-ann",
+        "picked-bob",
+        "extra-ann",
+        "extra-bob",
+        "Letzte Chance",
+    ]
 
 
 def test_a_stale_ledger_key_is_recorded_not_silently_defaulted():

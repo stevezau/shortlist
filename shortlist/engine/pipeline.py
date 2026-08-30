@@ -1328,7 +1328,6 @@ UNPLACEABLE = frozenset(
         "anchor not found",
         "anchor not on the shelf",
         "anchor row not on this shelf",
-        "cannot sit above rows pinned to the top",
     }
 )
 

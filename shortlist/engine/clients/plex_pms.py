@@ -991,7 +991,13 @@ class PlexClient:
             # a position nobody can see, since all three promotion flags are off. On SFLIX that was 4
             # wasted moves per library per pass, and it kept a reconciled shelf looking contested: a
             # co-managing tool (agregarr) rightly ignores those rows, so we alone kept shuffling them.
-            owned_idents = {h.identifier for h in order if (getattr(h, "title", "") or "") in owned_all}
+            # PROMOTED only. An unpromoted hub of ours is moved by no call at all (`ours` filters on
+            # exactly this), so it contends for nothing — counting it made the guard below fire on the
+            # plain single-call path of every ordinary server the moment a paused user's dormant row
+            # happened to sit first, and the whole library then stopped being ordered, for ever.
+            owned_idents = {
+                h.identifier for h in order if (getattr(h, "title", "") or "") in owned_all and is_promoted(h)
+            }
             ours = [h for h in order if (getattr(h, "title", "") or "") in owned_titles and is_promoted(h)]
             if not ours:
                 return outcome("rows not promoted yet")
@@ -1067,12 +1073,25 @@ class PlexClient:
                         f"stopping after {len(moved)} move(s)" if moved else "leaving the shelf order unchanged",
                     )
                     return outcome("anchor not on the shelf" if named else "anchor not found")
-                # 'after anchor' -> the anchor; 'before anchor' -> the hub just before it that isn't one
-                # of ours (None -> the very top of the shelf).
+                # 'after anchor' -> the anchor; 'before anchor' -> the hub just before it that this
+                # call is not about to move (None -> the very top of the shelf).
+                #
+                # `owned_titles`, not `owned_all` — the same rule the row-anchor branch states above,
+                # and for the same reason: only the hubs we are ABOUT to move are disappearing from
+                # their slots. OTHER rows of ours are already in place and are legitimate landmarks.
+                # Skipping them too turned "immediately before Letzte Chance" into "the very top" the
+                # moment any row of ours sat above the anchor — which then collides with a top-anchored
+                # default and either churns for ever or, once the guard below existed, is refused and
+                # never placed at all. Landing behind our own rows and in front of the anchor is both
+                # what was asked for and stable.
                 if before:
                     anchor_idx = order.index(anchor)
                     target = next(
-                        (h for h in reversed(order[:anchor_idx]) if (getattr(h, "title", "") or "") not in owned_all),
+                        (
+                            h
+                            for h in reversed(order[:anchor_idx])
+                            if (getattr(h, "title", "") or "") not in owned_titles
+                        ),
                         None,
                     )
                 else:
@@ -1081,18 +1100,25 @@ class PlexClient:
             idents = [h.identifier for h in order]
             by_ident = {h.identifier: h for h in order}
             our_idents = [h.identifier for h in ours]
-            if target is None and idents and idents[0] not in our_idents and idents[0] in owned_idents:
-                # We have been asked for the VERY TOP, and rows of ours that this call does not move
-                # are already pinned there. Both cannot hold: whoever writes second wins, the other
-                # call puts it back next pass, and neither ever settles — measured 4 moves a pass,
-                # for ever, with both reporting `verified: True`. Reached by "right before <the
-                # topmost collection>" while the library default is top of the shelf.
-                logger.warning(
-                    "hub order: rows cannot sit above the ones already pinned to the top of {} — "
-                    "leaving the shelf order unchanged",
-                    section.title,
-                )
-                return outcome("cannot sit above rows pinned to the top")
+
+            if target is None:
+                # We have been asked for the VERY TOP. If rows of ours that this call does NOT move
+                # are already pinned there, both cannot hold position 0: whoever writes second wins,
+                # the other call puts it back next pass, and neither settles — 4 moves a pass, for
+                # ever, both reporting `verified: True`.
+                #
+                # So land immediately after that leading run instead of fighting it. Refusing was the
+                # first answer here and it was worse: the refused call is the only one that would ever
+                # move those rows, so the setting silently did nothing and they stayed wherever Plex
+                # left them — the bottom, for anything newly created. Sharing the top is what both
+                # requests actually meant.
+                leading = []
+                for ident in idents:
+                    if ident in our_idents or ident not in owned_idents:
+                        break
+                    leading.append(ident)
+                if leading:
+                    target = by_ident[leading[-1]]
             start = idents.index(target.identifier) + 1 if target is not None else 0
             if idents[start : start + len(our_idents)] == our_idents:
                 if not moved:
