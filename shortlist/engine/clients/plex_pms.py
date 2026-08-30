@@ -918,6 +918,9 @@ class PlexClient:
             if has_shortlist_marker(c.title) or any(label.tag.lower().startswith(prefix) for label in c.labels)
         }
         owned_all = set(key_by_title)
+        #: Hub identifiers of EVERY row of ours here, whether or not this call moves them — used to
+        #: spot a request for a slot another of our calls already owns.
+        owned_idents: set[str] = set()
         # What the audit and the logs CALL this anchor. A row anchor has no title of its own — one
         # collection per person — so without a label every ordering record for one would read
         # 'anchor: ""', which is not an answer to "what moved where" (rule 10).
@@ -988,6 +991,7 @@ class PlexClient:
             # a position nobody can see, since all three promotion flags are off. On SFLIX that was 4
             # wasted moves per library per pass, and it kept a reconciled shelf looking contested: a
             # co-managing tool (agregarr) rightly ignores those rows, so we alone kept shuffling them.
+            owned_idents = {h.identifier for h in order if (getattr(h, "title", "") or "") in owned_all}
             ours = [h for h in order if (getattr(h, "title", "") or "") in owned_titles and is_promoted(h)]
             if not ours:
                 return outcome("rows not promoted yet")
@@ -1077,6 +1081,18 @@ class PlexClient:
             idents = [h.identifier for h in order]
             by_ident = {h.identifier: h for h in order}
             our_idents = [h.identifier for h in ours]
+            if target is None and idents and idents[0] not in our_idents and idents[0] in owned_idents:
+                # We have been asked for the VERY TOP, and rows of ours that this call does not move
+                # are already pinned there. Both cannot hold: whoever writes second wins, the other
+                # call puts it back next pass, and neither ever settles — measured 4 moves a pass,
+                # for ever, with both reporting `verified: True`. Reached by "right before <the
+                # topmost collection>" while the library default is top of the shelf.
+                logger.warning(
+                    "hub order: rows cannot sit above the ones already pinned to the top of {} — "
+                    "leaving the shelf order unchanged",
+                    section.title,
+                )
+                return outcome("cannot sit above rows pinned to the top")
             start = idents.index(target.identifier) + 1 if target is not None else 0
             if idents[start : start + len(our_idents)] == our_idents:
                 if not moved:

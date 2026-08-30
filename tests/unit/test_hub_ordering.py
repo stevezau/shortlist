@@ -1114,11 +1114,148 @@ def test_before_is_only_refused_when_shortlist_also_places_the_anchor_row():
                 hub_anchors={"1": HubAnchor(anchor_row="picked", before=True)},
             ),
         ],
-        {},  # Settings leaves this library's order to Plex
+        # Settings is configured for another library, and deliberately not for this one — which is
+        # how an owner says "leave library 1's order to Plex". An entirely empty map would mean the
+        # shipped default instead, and then Shortlist WOULD place 'picked' and the refusal is right.
+        {"9": HubAnchor(to_top=True)},
     )
     assert [e for e in report.hub_orderings if e.get("placed") is False] == []
     assert titles.index("extra-ann") < titles.index("picked-ann")
     assert settled
+
+
+def test_one_row_override_does_not_switch_off_ordering_in_another_library():
+    """Issue #106's OPENING sentence: "setting even a single row to a relative position breaks the
+    ordering chain and sends rows to the bottom."
+
+    With Settings never touched, Shortlist moves every row to the top of every library. That was
+    decided once for the whole server AND only while no row had an override — so giving one row its
+    own placement in one library silently switched ordering off in every OTHER library too. Their rows
+    then sank below the standard Plex hubs, with one DEBUG line and no audit record.
+
+    The default is per-library now: an empty Settings map means the shipped default everywhere,
+    whatever any row overrides. A map with entries still means "leave the libraries I left out alone",
+    because that is a choice the owner made on that screen.
+    """
+    from unittest.mock import MagicMock
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec
+    from shortlist.engine.pipeline import _order_phase
+
+    def calls_for(rows):
+        plex = MagicMock()
+        plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"]}
+        _order_phase(_order_ctx(EngineConfig(hub_anchors={}, rows=rows), plex), _report_with_titles())
+        return plex.order_owned_hubs.call_args_list
+
+    untouched = calls_for([RowSpec(slug="picked", name_template="Picked", size=10)])
+    assert len(untouched) == 1 and untouched[0].kwargs["to_top"] is True
+
+    # Now give a DIFFERENT row a placement in a DIFFERENT library. This one must not change.
+    with_override = calls_for(
+        [
+            RowSpec(slug="picked", name_template="Picked", size=10),
+            RowSpec(slug="gems", name_template="Gems", size=10, hub_anchors={"1": HubAnchor("Elsewhere")}),
+        ]
+    )
+    assert len(with_override) == 1 and with_override[0].kwargs["to_top"] is True
+    assert with_override[0].kwargs["only_keys"] is None
+
+
+def test_a_row_cannot_be_placed_above_rows_already_pinned_to_the_top():
+    """ "Right before <the topmost collection>" while the library default is top of the shelf.
+
+    The same contradiction as the row-anchor case, reached through a COLLECTION anchor — which the
+    editor offers prominently. 'before' resolves to the very top, which the catch-all has just
+    claimed, so the two calls trade the slot for ever: measured 4 moves a pass, indefinitely, both
+    reporting `verified: True`, and `_shelf_contention` blaming Kometa for it.
+    """
+    from types import SimpleNamespace
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec, RunReport
+    from shortlist.engine.pipeline import _order_phase
+
+    hubs = [FakeHub("Letzte Chance", "lc", collection=False)]
+    colls = [FakeColl("Letzte Chance", [])]
+    ledger, key = {}, 100
+    for row in ("picked", "extra"):
+        for user in ("ann", "bob"):
+            key += 1
+            hubs.append(FakeHub(f"{row}-{user}", str(key)))
+            colls.append(FakeColl(f"{row}-{user}", [f"shortlist_{user}"], key))
+            ledger[(user, row, "1")] = key
+    section = FakeSection(hubs, title="Filme", key=1)
+    section.type = "movie"
+    cfg = EngineConfig(
+        manage_shelf_order=True,
+        hub_anchors={"1": HubAnchor(to_top=True)},
+        rows=[
+            RowSpec(slug="picked", name_template="Picked", size=10),
+            RowSpec(
+                slug="extra",
+                name_template="Extra",
+                size=10,
+                hub_anchors={"1": HubAnchor(anchor_title="Letzte Chance", before=True)},
+            ),
+        ],
+    )
+    ctx = SimpleNamespace(
+        config=cfg,
+        delivery_sections=[section],
+        plex=_client(colls),
+        write_lock=threading.Lock(),
+        delivered_keys=ledger,
+    )
+    report = RunReport(started_at=datetime.now(UTC), users=[])
+    _order_phase(ctx, report)
+
+    assert [e["reason"] for e in report.hub_orderings if e.get("placed") is False] == [
+        "cannot sit above rows pinned to the top"
+    ]
+    moves = sum(h.moves for h in hubs)
+    _order_phase(ctx, RunReport(started_at=datetime.now(UTC), users=[]))
+    assert sum(h.moves for h in hubs) == moves
+
+
+def test_a_stale_ledger_key_is_recorded_not_silently_defaulted():
+    """The ledger names a ratingKey whose collection is gone — deleted and recreated since.
+
+    `keys` is non-empty, so the missing-entry branch does not fire; the stale key is what lands in
+    the catch-all's exclusion set, so the row's REAL hubs are swept to the library default instead of
+    the slot the owner chose. Placing them beats stranding them, but it silently overrides a setting,
+    so it is recorded (rule 10).
+    """
+    from types import SimpleNamespace
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec, RunReport
+    from shortlist.engine.pipeline import _order_phase
+
+    hubs = [FakeHub("Letzte Chance", "lc", collection=False), FakeHub("picked-ann", "11"), FakeHub("extra-ann", "21")]
+    colls = [FakeColl("picked-ann", ["shortlist_ann"], 11), FakeColl("extra-ann", ["shortlist_ann"], 21)]
+    section = FakeSection(hubs, title="Filme", key=1)
+    section.type = "movie"
+    cfg = EngineConfig(
+        manage_shelf_order=True,
+        hub_anchors={"1": HubAnchor(to_top=True)},
+        rows=[
+            RowSpec(slug="picked", name_template="Picked", size=10),
+            RowSpec(slug="extra", name_template="Extra", size=10, hub_anchors={"1": HubAnchor("Letzte Chance")}),
+        ],
+    )
+    ctx = SimpleNamespace(
+        config=cfg,
+        delivery_sections=[section],
+        plex=_client(colls),
+        write_lock=threading.Lock(),
+        # 'extra' really is 21 on the shelf; the ledger still points at the collection it replaced.
+        delivered_keys={("ann", "picked", "1"): 11, ("ann", "extra", "1"): 999},
+    )
+    report = RunReport(started_at=datetime.now(UTC), users=[])
+    _order_phase(ctx, report)
+
+    unplaced = [e for e in report.hub_orderings if e.get("placed") is False]
+    assert len(unplaced) == 1
+    assert "no longer exists" in unplaced[0]["reason"]
 
 
 def test_order_phase_mixes_a_top_override_with_an_anchor_override():
@@ -1130,7 +1267,7 @@ def test_order_phase_mixes_a_top_override_with_an_anchor_override():
     plex = MagicMock()
     plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"]}
     cfg = EngineConfig(
-        hub_anchors={},
+        hub_anchors={"1": HubAnchor(to_top=True)},  # configured, but not for library 2
         rows=[
             RowSpec(slug="picked", name_template="", size=10, hub_anchors={"2": HubAnchor(to_top=True)}),
             RowSpec(
@@ -1155,7 +1292,9 @@ def test_order_phase_applies_a_before_override_with_no_global_default():
     plex = MagicMock()
     plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"]}
     cfg = EngineConfig(
-        hub_anchors={},  # no global default at all
+        hub_anchors={"1": HubAnchor(to_top=True)},  # Settings configured, but NOT for library 2 (key "2") — an
+        # entirely empty map now means the shipped default (top of every shelf), so a test that
+        # wants "this library has no default" has to say which library it DID configure.
         rows=[RowSpec(slug="gems", name_template="Gems", size=10, hub_anchors={"2": HubAnchor("Gems Anchor", True)})],
     )
     _order_phase(_order_ctx(cfg, plex), _report_with_titles())
@@ -1184,7 +1323,9 @@ def test_order_phase_partitions_when_a_row_here_has_no_anchor_at_all():
     plex = MagicMock()
     plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"]}
     cfg = EngineConfig(
-        hub_anchors={},  # no global default, so 'loose' resolves to no anchor anywhere
+        hub_anchors={"1": HubAnchor(to_top=True)},  # Settings configured, but NOT for library 2 (key "2") — an
+        # entirely empty map now means the shipped default (top of every shelf), so a test that
+        # wants "this library has no default" has to say which library it DID configure.
         rows=[
             RowSpec(slug="picked", name_template="Picked", size=10, hub_anchors={"2": HubAnchor("", False, True)}),
             RowSpec(slug="loose", name_template="Loose", size=10),
@@ -1218,7 +1359,7 @@ def test_order_phase_records_a_placement_it_could_not_honour():
         "reason": "anchor not on the shelf",
     }
     cfg = EngineConfig(
-        hub_anchors={},
+        hub_anchors={"1": HubAnchor(to_top=True)},  # configured, but not for library 2
         rows=[RowSpec(slug="gems", name_template="Gems", size=10, hub_anchors={"2": HubAnchor("Archive 2019")})],
     )
     report = _report_with_titles()
@@ -1319,7 +1460,7 @@ def test_order_phase_still_orders_on_a_run_with_no_users():
     plex = MagicMock()
     plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"], "verified": True}
     cfg = EngineConfig(  # exactly SFLIX's shape: one row, a per-library override, no global default
-        hub_anchors={},
+        hub_anchors={"1": HubAnchor(to_top=True)},  # configured, but not for library 2
         rows=[
             RowSpec(
                 slug="picked",
@@ -1401,7 +1542,7 @@ def test_order_phase_leaves_a_diverging_row_alone_until_the_ledger_knows_it():
     plex = MagicMock()
     plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"], "verified": True}
     cfg = EngineConfig(
-        hub_anchors={},
+        hub_anchors={"1": HubAnchor(to_top=True)},  # configured, but not for library 2
         rows=[
             RowSpec(slug="picked", name_template="", size=10, hub_anchors={"2": HubAnchor("Anchor A", False)}),
             RowSpec(slug="ghost", name_template="Ghost", size=10, hub_anchors={"2": HubAnchor("Anchor B", False)}),
@@ -1624,9 +1765,10 @@ def test_before_a_row_lands_immediately_before_it_even_with_another_of_our_rows_
 
 
 def _anchor_cfg(rows):
-    from shortlist.engine.models import EngineConfig
+    from shortlist.engine.models import EngineConfig, HubAnchor
 
-    return EngineConfig(hub_anchors={}, rows=rows)
+    # Configured for library 1, deliberately not for library 2 (the one under test).
+    return EngineConfig(hub_anchors={"1": HubAnchor(to_top=True)}, rows=rows)
 
 
 def test_order_phase_places_the_anchor_row_before_the_row_that_follows_it():

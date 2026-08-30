@@ -1323,7 +1323,14 @@ def _anchor_group_order(
 #: Reorder outcomes that mean "the owner asked for a placement and we could not honour it", as
 #: opposed to the ordinary skips a converged server produces every night. These are the ones worth a
 #: warning in the audit: each names a setting on the Rows page that is silently doing nothing.
-UNPLACEABLE = frozenset({"anchor not found", "anchor not on the shelf", "anchor row not on this shelf"})
+UNPLACEABLE = frozenset(
+    {
+        "anchor not found",
+        "anchor not on the shelf",
+        "anchor row not on this shelf",
+        "cannot sit above rows pinned to the top",
+    }
+)
 
 
 def _we_place(
@@ -1382,6 +1389,23 @@ def _apply_order(
         # out here for looking like a failure.
         if result.get("moved") and not result.get("skipped"):
             report.hub_orderings.append({"library": section.title, **result})
+        elif result.get("reason") == "no rows in this library" and only_keys:
+            # We named ratingKeys and the shelf has none of them: the ledger entry is STALE — the
+            # collection was deleted and recreated since it was written. The catch-all has already
+            # swept this row to the library default (its real hubs are not in `exclude_keys`, because
+            # the stale key is what went in there), so the owner's chosen slot was silently overridden.
+            # Recorded for the same reason the missing-entry case is.
+            report.hub_orderings.append(
+                {
+                    "library": section.title,
+                    "placed": False,
+                    "row": anchor_label or "",
+                    "anchor": anchor.anchor_title or ("top" if anchor.to_top else ""),
+                    "moved": [],
+                    "reason": "the delivery ledger points at a collection that no longer exists — "
+                    "placed at the library default",
+                }
+            )
         elif result.get("reason") in UNPLACEABLE:
             # A placement the owner CONFIGURED that we could not honour — the anchor is gone from the
             # shelf, or is a collection that is not on it at all (issue #106). Recorded so it reaches
@@ -1482,17 +1506,32 @@ def _order_phase(ctx: EngineContext, report: RunReport) -> None:
 def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
     """The ordering itself: resolve each library's anchor and move our rows there."""
     global_anchors = ctx.config.hub_anchors
-    any_override = any(spec.hub_anchors for spec in ctx.config.rows)
-    if not global_anchors and not any_override:
-        # No explicit anchors configured — default to moving all owned rows to the top of each
-        # library's Recommended shelf. Without this, aborted runs or new promotions scatter rows to
-        # wherever Plex appends them, which looks broken (issue: some at top, some at bottom).
-        for section in ctx.delivery_sections:
-            default = HubAnchor(anchor_title="", before=False, to_top=True)
-            _apply_order(ctx, report, section, default, only_keys=None)
-        return
+
+    def library_default(section_key: str) -> HubAnchor | None:
+        """This library's default placement: what a row with no override of its own gets.
+
+        An explicit Settings entry wins. With NO entry, the answer depends on whether Settings has
+        been configured at all — and that distinction is the whole point of this function. Nothing
+        configured anywhere means the shipped default, which is "move our rows to the top of every
+        library"; without it, aborted runs and new promotions scatter rows to wherever Plex appends
+        them and the shelf looks broken. Some libraries configured but not this one is a per-library
+        choice the owner made in Settings, and it means leave this shelf alone.
+
+        This used to be decided ONCE for the whole server, and only when no row had an override
+        either — so giving a single row its own placement in one library silently switched ordering
+        off in every library the owner had never touched, with one DEBUG line and no audit. Their
+        rows then sank below the standard Plex hubs. That is issue #106's opening sentence:
+        "setting even a single row to a relative position breaks the ordering chain and sends rows to
+        the bottom."
+        """
+        entry = global_anchors.get(section_key)
+        if entry is not None:
+            return entry
+        return HubAnchor(anchor_title="", before=False, to_top=True) if not global_anchors else None
+
     for section in ctx.delivery_sections:
         key = str(section.key)
+        this_default = library_default(key)
         # Only rows that actually DELIVER here. A row's media type and `library_keys` decide which
         # libraries it builds in, and without that filter a movies-only row picked up this TV
         # library's anchor, never had a ledger entry for it, and logged "no delivered collection in
@@ -1504,7 +1543,7 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
         here = [spec for spec in ctx.config.rows if target_sections([section], spec)]
         anchors_by_slug = {}
         for spec in here:
-            effective = spec.hub_anchors.get(key) or global_anchors.get(key)
+            effective = spec.hub_anchors.get(key) or this_default
             if effective is not None:
                 anchors_by_slug[spec.slug] = effective
         if not anchors_by_slug:
@@ -1513,9 +1552,8 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
             # collections behind, and `ctx.config.rows` is then empty while `rows.hub_anchor` is not.
             # Falling through to `continue` skipped the library in silence, which is the same shape of
             # quiet nothing this whole function was just fixed for.
-            default = global_anchors.get(key)
-            if default is not None:
-                _apply_order(ctx, report, section, default, only_keys=None)
+            if this_default is not None:
+                _apply_order(ctx, report, section, this_default, only_keys=None)
             else:
                 logger.debug("hub order: no anchor configured for {} — leaving its shelf alone", section.title)
             continue
@@ -1605,7 +1643,7 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
             group = (effective.to_top, effective.anchor_title, effective.anchor_row, effective.before)
             groups.setdefault(group, set()).update(keys)
             group_of_slug[slug] = group
-        rest = global_anchors.get(key)
+        rest = this_default
         # Which groups ask for something that cannot hold, decided BEFORE the catch-all's exclusion
         # set is fixed. "Right before <a row we also place>" is unsatisfiable: we put that row's block
         # at a point of its own and keep it contiguous, so anything inserted ahead of it is evicted on
