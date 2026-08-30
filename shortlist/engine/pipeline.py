@@ -1752,7 +1752,17 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
                 # another call is really claiming it for. `None` means "all of ours": with a catch-all
                 # every row of ours is placed by something. Without one, only the enumerated groups
                 # are — a row nobody positions is not contending, and landing behind it is losing.
-                pinned_keys=None if rest is not None else (placed_keys - groups[group]),
+                # `excluded`, not `placed_keys`: the latter is snapshotted BEFORE the refusal loop
+                # deletes refused groups. Without a catch-all a refused group's rows are positioned by
+                # nothing at all, so counting them as pinned made a Top row land below rows no call
+                # was claiming the slot for — permanently, and audited as though another call held it.
+                #
+                # Two weaker instances of the same shape are left as they are: a group `continue`d
+                # because its anchor row has nothing here (self-clears next run), and one whose client
+                # call comes back skipped, e.g. "anchor not found" after a foreign collection is
+                # renamed. The latter does not self-clear, and it is the one case where "with a
+                # catch-all everything of ours is placed by something" is not quite true.
+                pinned_keys=None if rest is not None else (excluded - groups[group]),
                 # A default-following anchor is a BLOCK, not one row — and that row may have nothing on
                 # this shelf yet while the block does. Naming the row would assert a landmark that is
                 # not there (rule 10).

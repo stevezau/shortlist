@@ -1363,6 +1363,81 @@ def test_before_a_row_at_the_very_top_is_not_turned_into_after_it():
     assert titles.index("Because you watched X") < titles.index("Picked for You")
 
 
+def test_the_audit_stops_claiming_a_retarget_once_the_rows_it_yielded_to_are_gone():
+    """`retargeted` is decided per ATTEMPT, from that attempt's own read of the shelf.
+
+    Held across attempts it goes stale-True: yield to a leading run on attempt 1, have another tool
+    take that row off the shelf before attempt 2, and the call then takes the real top while the
+    audit still says it landed behind something (plex-safety rule 10). Only reachable when a
+    co-managing tool reorders between our passes — which is the case this re-read loop exists for.
+    """
+
+    class VanishingSection(FakeSection):
+        """Drops the first move, then demotes the hub we yielded to before the next read."""
+
+        def __init__(self, hubs):
+            super().__init__(hubs)
+            self.reads = 0
+
+        def managedHubs(self):
+            self.reads += 1
+            if self.reads == 2:  # between attempt 1 and attempt 2, their row leaves the shelf
+                self._hubs[0].promotedToSharedHome = False
+            return list(self._hubs)
+
+        def apply(self, hub, after):
+            if self.reads == 1:
+                return None  # Plex took the move and did nothing
+            super().apply(hub, after)
+
+    theirs = FakeHub("Picked for You", "11")
+    mine = FakeHub("Because you watched X", "21")
+    section = VanishingSection([theirs, FakeHub("Recently Added", "ra", collection=False), mine])
+    client = _client(
+        [FakeColl("Picked for You", ["shortlist_ann"], 11), FakeColl("Because you watched X", ["shortlist_bob"], 21)]
+    )
+
+    result = client.order_owned_hubs(section, label_prefix="shortlist", to_top=True, only_keys={21}, pinned_keys={11})
+
+    assert section.titles()[0] == "Because you watched X"
+    assert result["anchor"] == "top"  # not "after the rows already at the top" — they are not there
+
+
+def test_pinned_keys_decides_which_rows_the_top_is_shared_with():
+    """The `pinned_keys` filter itself, both outcomes, driven at the client.
+
+    A line trace showed this arriving as `None` 136 times and as an empty set twice across the whole
+    suite, and as a POPULATED set never — so the "this hub really is pinned, keep walking" path, and
+    `key_by_ident` with it, had nothing holding them. That gap is why a defect survived the fix that
+    introduced the parameter.
+    """
+
+    def place(pinned):
+        theirs = FakeHub("Picked for You", "11")
+        mine = FakeHub("Because you watched X", "21")
+        section = FakeSection([theirs, FakeHub("Recently Added", "ra", collection=False), mine])
+        client = _client(
+            [
+                FakeColl("Picked for You", ["shortlist_ann"], 11),
+                FakeColl("Because you watched X", ["shortlist_bob"], 21),
+            ]
+        )
+        result = client.order_owned_hubs(
+            section, label_prefix="shortlist", to_top=True, only_keys={21}, pinned_keys=pinned
+        )
+        return section.titles(), result["anchor"]
+
+    # 11 IS pinned by another call, so the top is shared: we land right after it.
+    titles, anchor = place({11})
+    assert titles[:2] == ["Picked for You", "Because you watched X"]
+    assert anchor == "after the rows already at the top"
+
+    # 11 is pinned by nobody, so it is not contending and Top means top.
+    titles, anchor = place(set())
+    assert titles[0] == "Because you watched X"
+    assert anchor == "top"
+
+
 def test_two_groups_that_both_want_the_top_share_it():
     """The cell the retarget loop exists for, and which nothing reached before.
 
@@ -1427,6 +1502,58 @@ def test_two_groups_that_both_want_the_top_share_it():
     moves = sum(h.moves for h in hubs)
     _order_phase(ctx, RunReport(started_at=datetime.now(UTC), users=[]))
     assert sum(h.moves for h in hubs) == moves
+
+
+def test_a_refused_row_does_not_keep_the_top_from_a_row_that_asked_for_it():
+    """A REFUSED group's rows are placed by nothing when the library has no default — so they cannot
+    be treated as another call's claim on the top.
+
+    `placed_keys` was snapshotted before the refusal loop deleted the group, so its rows stayed in
+    the pinned set and a Top row landed below them permanently, with the audit reporting that another
+    call held the slot. `excluded` is computed after the deletions, which is what the filter needs.
+    """
+    from types import SimpleNamespace
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec, RunReport
+    from shortlist.engine.pipeline import _order_phase
+
+    hubs = [FakeHub("bee-ann", "301"), FakeHub("gee-ann", "401"), FakeHub("Recently Added", "ra", collection=False)]
+    hubs.append(FakeHub("arr-ann", "501"))
+    colls = [
+        FakeColl("bee-ann", ["shortlist_ann"], 301),
+        FakeColl("gee-ann", ["shortlist_ann"], 401),
+        FakeColl("arr-ann", ["shortlist_ann"], 501),
+    ]
+    section = FakeSection(hubs, title="Filme", key=1)
+    section.type = "movie"
+    cfg = EngineConfig(
+        manage_shelf_order=True,
+        hub_anchors={"9": HubAnchor(to_top=True)},  # configured elsewhere, so this library has none
+        rows=[
+            # Refused: 'arr' has its own placement, so Shortlist positions it and nothing can precede it.
+            RowSpec(
+                slug="bee",
+                name_template="Bee",
+                size=10,
+                hub_anchors={"1": HubAnchor(anchor_row="arr", before=True)},
+            ),
+            RowSpec(slug="gee", name_template="Gee", size=10, hub_anchors={"1": HubAnchor(to_top=True)}),
+            RowSpec(slug="arr", name_template="Arr", size=10, hub_anchors={"1": HubAnchor("Recently Added")}),
+        ],
+    )
+    ctx = SimpleNamespace(
+        config=cfg,
+        delivery_sections=[section],
+        plex=_client(colls),
+        write_lock=threading.Lock(),
+        delivered_keys={("ann", "bee", "1"): 301, ("ann", "gee", "1"): 401, ("ann", "arr", "1"): 501},
+    )
+    report = RunReport(started_at=datetime.now(UTC), users=[])
+    _order_phase(ctx, report)
+
+    assert section.titles()[0] == "gee-ann"
+    # And the audit does not claim another call was holding the top.
+    assert "after the rows already at the top" not in [e.get("anchor") for e in report.hub_orderings]
 
 
 def test_a_top_row_does_not_yield_the_top_to_rows_this_run_places_nowhere():

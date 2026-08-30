@@ -969,6 +969,12 @@ class PlexClient:
         # attempt. Titles are unique per section (the marker), the identifier more so.
         moved: dict[str, str] = {}
 
+        def top_anchor() -> str:
+            """What a `to_top` call CALLS its landing point. Not always "top": a request that yielded
+            to rows already holding the slot landed below them, and three separate returns used to
+            claim the top regardless — including the dry-run preview an owner is told to trust."""
+            return "after the rows already at the top" if retargeted else "top"
+
         def outcome(reason: str) -> dict:
             """Give up, without discarding the record of writes already made.
 
@@ -979,7 +985,7 @@ class PlexClient:
             if not moved:
                 return {"anchor": audit_anchor, "moved": [], "skipped": True, "reason": reason}
             return {
-                "anchor": "top" if to_top else audit_anchor,
+                "anchor": top_anchor() if to_top else audit_anchor,
                 "moved": list(moved.values()),
                 "skipped": False,
                 "verified": False,
@@ -992,6 +998,7 @@ class PlexClient:
         # remove, pointed the other way.
         for attempt in range(1, attempts + 2):
             order = list(section.managedHubs())  # the live shelf order, re-read each attempt
+            retargeted = False  # decided fresh from that read, like everything else below
             # Rows promoted NOWHERE are skipped. `managedHubs()` lists every managed hub, promoted or
             # not, so a paused/disabled user's dormant row was being moved into place on every pass —
             # a position nobody can see, since all three promotion flags are off. On SFLIX that was 4
@@ -1156,9 +1163,7 @@ class PlexClient:
                     attempt - 1,
                 )
                 return {
-                    "anchor": ("after the rows already at the top" if retargeted else "top")
-                    if to_top
-                    else audit_anchor,
+                    "anchor": top_anchor() if to_top else audit_anchor,
                     "moved": list(moved.values()),
                     "skipped": False,
                     "verified": True,
@@ -1190,7 +1195,7 @@ class PlexClient:
                     section.title,
                 )
                 return {
-                    "anchor": "top" if to_top else audit_anchor,
+                    "anchor": top_anchor() if to_top else audit_anchor,
                     "moved": [by_ident[ident].title for ident, _ in planned],
                     "skipped": False,
                     "dry_run": True,
@@ -1214,7 +1219,7 @@ class PlexClient:
             len(moved),
         )
         return {
-            "anchor": "top" if to_top else audit_anchor,
+            "anchor": top_anchor() if to_top else audit_anchor,
             "moved": list(moved.values()),
             "skipped": False,
             "verified": False,
