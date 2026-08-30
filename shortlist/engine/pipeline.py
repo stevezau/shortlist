@@ -1334,6 +1334,7 @@ def _apply_order(
     only_keys: set[int] | None,
     anchor_keys: set[int] | None = None,
     anchor_label: str = "",
+    exclude_keys: set[int] | None = None,
 ) -> None:
     """One best-effort, gated reorder call + its audit. A shelf reorder is cosmetic and privacy-neutral
     (hubs are already promoted and browse-hidden; only position changes), so a failure never fails the
@@ -1350,6 +1351,7 @@ def _apply_order(
                 to_top=anchor.to_top,
                 dry_run=ctx.config.dry_run,
                 only_keys=only_keys,
+                exclude_keys=exclude_keys,
             )
         # Recorded when anything MOVED, verified or not. An unverified pass (Plex took the moves and
         # dropped them) is exactly the case the report has to be able to show, so it is not filtered
@@ -1506,10 +1508,30 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
             continue
         # Rows genuinely disagree about where they belong (or some have no anchor at all), so ours have
         # to be partitioned. The ledger is the only durable link from a collection back to its row.
+        #
+        # ENUMERATE ONLY THE ROWS THE OWNER MOVED ELSEWHERE. Everything else is placed by exclusion —
+        # "all our rows here except those" — which is what stops a gap in the ledger stranding a row.
+        # It used to enumerate every group from the ledger, so any collection of ours the ledger did
+        # not name was in no group, was never passed to the client, and stayed exactly where Plex
+        # appended it: the bottom, under the standard Plex hubs. That is issue #106's real complaint —
+        # "a few rows ended up at the top, others got pushed all the way down" — and it appeared the
+        # moment ONE row was given its own placement, because that is what switches this library off
+        # the single-call path onto this one. The ledger is now load-bearing only for the rows the
+        # owner just configured by hand, which are the ones it reliably names.
         keys_by_slug = _row_keys_by_slug(ctx, key)
+        by_slug = {spec.slug: spec for spec in here}
+        overridden = {slug for slug in anchors_by_slug if by_slug[slug].hub_anchors.get(key)}
         groups: dict[tuple[bool, str, str, bool], set[int]] = {}
         group_of_slug: dict[str, tuple[bool, str, str, bool]] = {}
         for slug, effective in anchors_by_slug.items():
+            if slug not in overridden:
+                # A row that follows the library default. It joins the catch-all below, which names no
+                # ratingKeys at all, so it needs nothing from the ledger — and it is deliberately kept
+                # OUT of `group_of_slug`: that map drives the topological sort over `groups`, and an
+                # entry pointing at a group that does not exist there would put a phantom into the
+                # placement order. A row anchored to one of these falls through to `keys_by_slug`
+                # below, which is right, because the catch-all is placed first and has settled.
+                continue
             keys = keys_by_slug.get(slug, set())
             if not keys:
                 # Nothing delivered for this row here yet (a first run, or a row that has never
@@ -1536,6 +1558,13 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
             group = (effective.to_top, effective.anchor_title, effective.anchor_row, effective.before)
             groups.setdefault(group, set()).update(keys)
             group_of_slug[slug] = group
+        # The catch-all: every row of ours in this library that the owner did NOT place by hand, moved
+        # by exclusion. Placed FIRST, so the explicitly-placed rows anchor against a settled shelf —
+        # and a row anchored to one of these follows a block that is already where it belongs.
+        rest = global_anchors.get(key)
+        excluded: set[int] = {k for keys in groups.values() for k in keys}
+        if rest is not None:
+            _apply_order(ctx, report, section, rest, only_keys=None, exclude_keys=excluded)
         # What the audit CALLS each row. The default row carries no template of its own — its title is
         # the global one — so without that fallback the most likely anchor of all audits as a bare
         # internal slug, which is not an answer to "what moved where" (rule 10).

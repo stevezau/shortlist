@@ -853,6 +853,7 @@ class PlexClient:
         before: bool = False,
         dry_run: bool = False,
         only_keys: set[int] | None = None,
+        exclude_keys: set[int] | None = None,
         to_top: bool = False,
         attempts: int = _HUB_ORDER_ATTEMPTS,
     ) -> dict:
@@ -869,6 +870,13 @@ class PlexClient:
         ``managedHubs()`` but on no shelf, so it names no position a viewer can see, and following it
         buries the row (issue #106); the row is then left where it is rather than placed somewhere
         nobody asked for. Plex's own built-in hubs are never refused — see the branch for why.
+
+        ``exclude_keys`` is the OTHER way to name a subset, and it exists because enumerating one is
+        fragile. It means "every row of ours here EXCEPT these ratingKeys" — used for the rows that
+        follow the library default, so they are defined by what they are not, and a row missing from
+        the delivery ledger lands in that set instead of being stranded wherever Plex left it. Only
+        the rows the owner explicitly placed elsewhere have to be enumerated. Ignored when
+        ``only_keys`` is given; both ``None`` means every row of ours, as before.
 
         ``anchor_keys`` anchors to one of OUR OWN rows instead of a foreign collection: the ratingKeys
         of that row's collections in this section, from the delivery ledger. The anchor hub is then the
@@ -913,8 +921,13 @@ class PlexClient:
         # collection per person — so without a label every ordering record for one would read
         # 'anchor: ""', which is not an answer to "what moved where" (rule 10).
         audit_anchor = anchor_label or anchor_title or ("another Shortlist row" if anchor_keys else "")
-        # The subset to MOVE (restricted by only_keys).
-        owned_titles = owned_all if only_keys is None else {t for t, key in key_by_title.items() if key in only_keys}
+        # The subset to MOVE: enumerated (`only_keys`), everything-but (`exclude_keys`), or all of ours.
+        if only_keys is not None:
+            owned_titles = {t for t, key in key_by_title.items() if key in only_keys}
+        elif exclude_keys:
+            owned_titles = {t for t, key in key_by_title.items() if key not in exclude_keys}
+        else:
+            owned_titles = owned_all
         if not owned_titles:
             return {"anchor": audit_anchor, "moved": [], "skipped": True, "reason": "no rows in this library"}
         # The titles a ROW anchor resolves to here — its collections, one per person. Everything else

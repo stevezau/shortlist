@@ -11,6 +11,9 @@ a shelf we do not win: a move that returns 200 and leaves the order unchanged, w
 co-managing tool (agregarr, Kometa) reordering the same shelf between our passes looks like from here.
 """
 
+import threading
+from datetime import UTC, datetime
+
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.models import HubAnchor as HubAnchorModel
 
@@ -777,10 +780,128 @@ def test_order_phase_groups_rows_by_effective_anchor_when_one_overrides():
     )
     _order_phase(_order_ctx(cfg, plex), _report_with_titles())
 
-    # Two groups: the default-anchored 'picked' rows and the overridden 'gems' rows, each its own subset,
-    # partitioned by the ledger's ratingKeys rather than by what this run happened to deliver.
-    groups = {frozenset(c.kwargs["only_keys"]): c.kwargs["anchor_title"] for c in plex.order_owned_hubs.call_args_list}
-    assert groups == {frozenset({11, 12}): "Default Anchor", frozenset({21, 22}): "Gems Anchor"}
+    # Two groups, named two DIFFERENT ways. The row the owner placed by hand is enumerated from the
+    # ledger; everything else is placed by EXCLUSION, naming no ratingKeys of its own.
+    #
+    # That asymmetry is the fix for the reporter's shelf. Enumerating both meant any collection of
+    # ours the ledger did not name belonged to no group, was never passed to the client, and stayed
+    # where Plex appended it — the bottom. Only the hand-placed rows now depend on the ledger, and
+    # those are the ones it reliably names.
+    calls = plex.order_owned_hubs.call_args_list
+    rest, gems = calls[0].kwargs, calls[1].kwargs
+    assert rest["anchor_title"] == "Default Anchor"
+    assert rest["only_keys"] is None and rest["exclude_keys"] == {21, 22}
+    assert gems["anchor_title"] == "Gems Anchor"
+    assert gems["only_keys"] == {21, 22}
+    # The catch-all goes FIRST, so the hand-placed rows anchor against a shelf that has settled.
+    assert [c.kwargs["anchor_title"] for c in calls] == ["Default Anchor", "Gems Anchor"]
+
+
+def test_a_row_the_ledger_does_not_name_is_still_placed():
+    """Issue #106 as the reporter actually hit it — a full shelf, not a mocked client.
+
+    Their setup: two rows following the Settings default (top of the shelf), one row anchored after a
+    collection. Their logs showed the DEFAULT group holding fewer hubs than the anchored one, and a
+    screenshot with rows stranded at the bottom under the standard Plex hubs.
+
+    The only thing varied here is which collections the delivery ledger names. Every group used to be
+    enumerated from it, so a collection it did not name was in no group, never reached the client, and
+    stayed where Plex appended it. Placing the default group by EXCLUSION removes the dependency for
+    exactly the rows that do not need it.
+    """
+    from types import SimpleNamespace
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec, RunReport
+    from shortlist.engine.pipeline import _order_phase
+
+    users = ("ann", "bob")
+    hubs = [FakeHub("Letzte Chance", "lc", collection=False), FakeHub("Recently Added", "ra", collection=False)]
+    colls = [FakeColl("Letzte Chance", []), FakeColl("Recently Added", [])]
+    ledger, key = {}, 100
+    for row in ("star", "crown", "bullseye"):
+        for user in users:
+            key += 1
+            hubs.append(FakeHub(f"{row}-{user}", str(key)))
+            colls.append(FakeColl(f"{row}-{user}", [f"shortlist_{user}"], key))
+            # The ledger names every hand-placed row, and only ONE of the four that follow the
+            # default — the gap that stranded the rest.
+            if row == "bullseye" or (row == "star" and user == "ann"):
+                ledger[(user, row, "1")] = key
+
+    section = FakeSection(hubs, title="Filme", key=1)
+    section.type = "movie"
+    cfg = EngineConfig(
+        manage_shelf_order=True,
+        hub_anchors={"1": HubAnchor(to_top=True)},
+        rows=[
+            RowSpec(slug="star", name_template="Star", size=10),
+            RowSpec(slug="crown", name_template="Crown", size=10),
+            RowSpec(slug="bullseye", name_template="Bullseye", size=10, hub_anchors={"1": HubAnchor("Letzte Chance")}),
+        ],
+    )
+    ctx = SimpleNamespace(
+        config=cfg,
+        delivery_sections=[section],
+        plex=_client(colls),
+        write_lock=threading.Lock(),
+        delivered_keys=ledger,
+    )
+    _order_phase(ctx, RunReport(started_at=datetime.now(UTC), users=[]))
+
+    # Every default row at the top, the hand-placed row behind its anchor, nothing left at the bottom.
+    assert section.titles() == [
+        "star-ann",
+        "star-bob",
+        "crown-ann",
+        "crown-bob",
+        "Letzte Chance",
+        "bullseye-ann",
+        "bullseye-bob",
+        "Recently Added",
+    ]
+
+    # And it CONVERGES: the reporter's other complaint was the layout jumping around, so a settled
+    # shelf must cost zero further writes.
+    moves = sum(h.moves for h in hubs)
+    _order_phase(ctx, RunReport(started_at=datetime.now(UTC), users=[]))
+    assert sum(h.moves for h in hubs) == moves
+
+
+def test_a_row_can_still_follow_a_row_that_uses_the_library_default():
+    """The cell the catch-all could have broken (issue #81 meets #106).
+
+    Rows following the default are placed by exclusion and so belong to no enumerated group. A row
+    anchored to one of them must therefore resolve the anchor from the LEDGER, not from a group — and
+    the follower must stay out of `group_of_slug` entirely, or the topological sort puts a group into
+    the placement order that `groups` has no keys for and the run dies with a KeyError.
+    """
+    from types import SimpleNamespace
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec, RunReport
+    from shortlist.engine.pipeline import _order_phase
+
+    hubs = [FakeHub("Recently Added", "ra", collection=False), FakeHub("picked-ann", "11"), FakeHub("gems-ann", "21")]
+    colls = [FakeColl("picked-ann", ["shortlist_ann"], 11), FakeColl("gems-ann", ["shortlist_ann"], 21)]
+    section = FakeSection(hubs, title="Filme", key=1)
+    section.type = "movie"
+    cfg = EngineConfig(
+        manage_shelf_order=True,
+        hub_anchors={"1": HubAnchor(to_top=True)},  # 'picked' follows this
+        rows=[
+            RowSpec(slug="picked", name_template="Picked", size=10),
+            RowSpec(slug="gems", name_template="Gems", size=10, hub_anchors={"1": HubAnchor(anchor_row="picked")}),
+        ],
+    )
+    ctx = SimpleNamespace(
+        config=cfg,
+        delivery_sections=[section],
+        plex=_client(colls),
+        write_lock=threading.Lock(),
+        delivered_keys={("ann", "picked", "1"): 11, ("ann", "gems", "1"): 21},
+    )
+    _order_phase(ctx, RunReport(started_at=datetime.now(UTC), users=[]))
+
+    assert section.titles() == ["picked-ann", "gems-ann", "Recently Added"]
 
 
 def test_order_phase_mixes_a_top_override_with_an_anchor_override():
