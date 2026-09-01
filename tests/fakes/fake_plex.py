@@ -392,6 +392,14 @@ class FakePlexState:
         plays = sum(1 for h in self.history if h.account_id == account_id and h.rating_key == rating_key)
         return plays, 0
 
+    #: Show keys a real PMS would OMIT from `?type=2&unwatched=0` despite their episodes being
+    #: watched — the issue #108 shape. Marking a series or a season watched sets the episodes without
+    #: establishing the show-level watch-state row the query filters on, and 20 of 491 shows on a real
+    #: server were in exactly this state. Without it the fake answers the show-level read from the
+    #: same set as the episode read, the two can never disagree, and the whole recovery path is dead
+    #: code in every full-stack test — the "fake must be no easier than the real server" rule.
+    invisible_to_show_read: set[int] = field(default_factory=set)
+
     def watched_now(self, account_id: int) -> set[int]:
         """Every key this account currently counts as watched, from BOTH sources.
 
@@ -739,6 +747,10 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
         if query.get("unwatched") == "0":
             account_id = state.watched_account_id(request.headers.get("X-Plex-Token", ""))
             watched = state.watched_now(account_id) if account_id is not None else set()
+            # A real PMS omits a show whose show-level watch-state row was never established, even
+            # though its episodes are watched (issue #108). Modelled so the show-level read and the
+            # episode read CAN disagree here, as they do on a real server.
+            watched -= state.invisible_to_show_read
             listing = [item for item in _sorted_items(list(items.values()), None) if item.rating_key in watched]
             # The INCREMENTAL read asks for `sort=lastViewedAt:desc` and stops client-side at the
             # first title older than its cutoff. It deliberately does NOT send a `lastViewedAt>=`

@@ -94,6 +94,49 @@ def _sections(state: FakePlexState) -> list[tuple[str, MediaType]]:
     return [(str(s.key), MediaType.MOVIE if s.type == "movie" else MediaType.SHOW) for s in state.sections.values()]
 
 
+class TestTheShowReadRecoversWhatPlexHides:
+    """Issue #108, end to end over real HTTP: a series Plex's SHOW-level read cannot see.
+
+    Marking a series or a season watched sets the EPISODES without establishing the show-level
+    watch-state row that `?type=2&unwatched=0` filters on, so the show is absent from that read while
+    every one of its episodes comes back from `?type=4&unwatched=0`. Measured on a live server: 20 of
+    491 shows with watched episodes never came back from the show-level read.
+
+    The fake models the omission (`FakePlexState.invisible_to_show_read`) because otherwise both
+    reads answer from the same set, they can never disagree, and the recovery path is dead code in
+    every full-stack test — the rule that a fake must be no easier than the real server.
+    """
+
+    def test_a_show_hidden_from_the_show_level_read_is_recovered_from_its_episodes(self, pms):
+        state, client, episodes = pms
+        for key in episodes[:4]:
+            state.leaf(1, key)[0] = 1  # the owner watched four episodes
+        section = state.section_of(SHOW_KEY)
+
+        before = client.watched_titles(str(section.key), MediaType.SHOW, OWNER_TOKEN)
+        assert SHOW_KEY in {i.rating_key for i in before.items}, "precondition: normally visible"
+
+        # Now Plex stops returning it from the show-level read, exactly as it does for a series
+        # marked watched rather than played.
+        state.invisible_to_show_read.add(SHOW_KEY)
+        after = client.watched_titles(str(section.key), MediaType.SHOW, OWNER_TOKEN)
+
+        recovered = {i.rating_key: i for i in after.items}
+        assert SHOW_KEY in recovered, "the show vanished with the show-level read that hid it"
+        assert recovered[SHOW_KEY].viewed_leaf_count == 4, "its watched episodes were not counted"
+
+    def test_a_show_with_no_watched_episodes_stays_hidden(self, pms):
+        """The recovery adds what the EPISODES justify and nothing else — it must not resurrect a
+        show on the strength of its existing."""
+        state, client, _episodes = pms
+        state.invisible_to_show_read.add(SHOW_KEY)
+        section = state.section_of(SHOW_KEY)
+
+        read = client.watched_titles(str(section.key), MediaType.SHOW, OWNER_TOKEN)
+
+        assert SHOW_KEY not in {i.rating_key for i in read.items}
+
+
 class TestTheLeafReadsOverRealHttp:
     def test_a_watched_episode_comes_back_with_its_show_key(self, pms):
         state, client, episodes = pms

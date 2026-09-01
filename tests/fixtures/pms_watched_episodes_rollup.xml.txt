@@ -1,0 +1,62 @@
+<!--
+  PMS 1.43.3 GET /library/sections/{key}/all?type=4&unwatched=0 — the EPISODE-level watched read,
+  which is the ground truth for what someone has watched in a TV library. Recorded 2026-09-01 from a
+  real server (plex-safety rule 11). Titles and ids are sanitized; attribute NAMES, the container
+  shape and the presence/absence of each attribute are verbatim.
+
+  WHY THIS FIXTURE EXISTS — issue #108.
+
+  `?type=2&unwatched=0` asks Plex about the SHOW row, and that row can disagree with its own
+  episodes. Measured on the same server, same library, same admin token, on the same day:
+
+    ?type=2&unwatched=0   ->   533 shows
+    ?type=2               ->  4880 shows, of which 491 have viewedLeafCount > 0
+    ?type=4&unwatched=0   ->  9563 episodes, rolling up to exactly those same 491 shows
+
+  and **20 of those 491 shows never came back from `?type=2&unwatched=0` at all.** Inspected
+  individually, every one of them looks like this:
+
+      eps_watched=38  viewedLeafCount=38  leafCount=38  lastViewedAt=None
+      eps_watched=6   viewedLeafCount=6   leafCount=6   lastViewedAt=None
+      eps_watched=2   viewedLeafCount=2   leafCount=20  lastViewedAt=None
+
+  So `unwatched=0` on `type=2` filters on the show's own `lastViewedAt`/watch-state row, NOT on
+  `viewedLeafCount` — and a show whose show-level row was never established is invisible to it while
+  its episode counts are perfectly correct. Marking a series or a season watched in Plex is one way
+  to end up there; the reporter of #108 found that marking a single episode BY HAND establishes the
+  row and the whole show then appears.
+
+  A TRAP, recorded because it cost a wrong diagnosis: you cannot look for these shows by asking
+  `?type=2&unwatched=0` which of its rows lack `lastViewedAt`. That query EXCLUDES them by
+  definition, so the answer is always zero and reads like proof they do not exist. Use `?type=2` with
+  no filter, or the episode read below.
+
+  `PlexClient._shows_from_episodes` rolls this up: it counts episodes per `grandparentRatingKey`,
+  raises each show's `viewed_leaf_count` to at least that, and recovers any show the show-level read
+  missed entirely (their static metadata comes from a batch `fetch_items`). Verified against the live
+  server: 533 shows before, 552 after, 0 lost, and every recovered show genuinely had watched
+  episodes.
+-->
+<MediaContainer size="2" totalSize="9563" allowSync="1" identifier="com.plexapp.plugins.library"
+                librarySectionID="2" librarySectionTitle="TV Shows" librarySectionUUID="REDACTED-UUID"
+                mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="1700000000" nocache="1"
+                offset="0" thumb="/:/resources/show.png" title1="TV Shows" title2="All Shows"
+                viewGroup="episode" viewMode="65592">
+  <!-- An episode of a show the show-level read DOES return. `grandparentRatingKey` is the show. -->
+  <Video ratingKey="7001" key="/library/metadata/7001" guid="plex://episode/REDACTED"
+         type="episode" title="Sanitised Episode A" index="1" parentIndex="1"
+         grandparentRatingKey="5001" grandparentTitle="Sanitised Show A" grandparentGuid="plex://show/REDACTED"
+         grandparentKey="/library/metadata/5001" parentRatingKey="6001" parentTitle="Season 1"
+         parentKey="/library/metadata/6001" year="2024" viewCount="1" lastViewedAt="1779572385"
+         addedAt="1700000001" updatedAt="1700000002" duration="2700000"/>
+  <!-- An episode of a show that is INVISIBLE to `?type=2&unwatched=0` — the #108 case. Nothing on
+       the episode row says so; it is only visible by comparing the two reads. Note the episode
+       carries no `tmdb://` guid of its own, which is why the recovered show's metadata has to come
+       from a batch read of the SHOW key rather than from here. -->
+  <Video ratingKey="7002" key="/library/metadata/7002" guid="plex://episode/REDACTED"
+         type="episode" title="Sanitised Episode B" index="1" parentIndex="1"
+         grandparentRatingKey="5099" grandparentTitle="Sanitised Show Z" grandparentGuid="plex://show/REDACTED"
+         grandparentKey="/library/metadata/5099" parentRatingKey="6099" parentTitle="Season 1"
+         parentKey="/library/metadata/6099" year="2019" viewCount="1" lastViewedAt="1774305861"
+         addedAt="1700000003" updatedAt="1700000004" duration="2700000"/>
+</MediaContainer>

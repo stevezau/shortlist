@@ -15,7 +15,7 @@ import tempfile
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from itertools import pairwise
 
@@ -1949,19 +1949,19 @@ class PlexClient:
             if full_read
             else (sort_honoured and ((reached_cutoff and order_observed) or read_whole_library))
         )
-        logger.debug(
-            "watched read: section {} ({}) -> {} titles{}{}{}",
-            section_key,
-            media_type.value,
-            len(items),
-            f" ({dropped} dropped — no tmdb:// guid)" if dropped else "",
-            f" since {since.isoformat()}" if since else "",
-            "" if covers_window else " (INCOMPLETE — coverage unproven)",
-        )
-        # Per instance, created lazily: `tests/conftest.py`'s `mock_plex` builds this class via
-        # `__new__` and never runs `__init__`, and a mutable CLASS attribute would leak one test's
-        # suppressions into the next. A client lives for one sync or one run, so this is the right
-        # lifetime for "already said once".
+        if media_type is MediaType.SHOW and full_read:
+            # Only on a complete read: the supplement re-reads the whole library's episodes, which
+            # has no meaning against a cutoff, and every read on the sync and run paths is complete.
+            items, unmatched = self._shows_from_episodes(section_key, token, items)
+            dropped += unmatched
+        # BEFORE the warning, never after: on a library matched with a legacy agent the show-level
+        # read returns nothing at all, so `dropped` is still 0 here until the recovery path has run —
+        # and the warning would never fire on the very case it exists for.
+        #
+        # `warned` is per instance, created lazily: `tests/conftest.py`'s `mock_plex` builds this
+        # class via `__new__` and never runs `__init__`, and a mutable CLASS attribute would leak one
+        # test's suppressions into the next. A client lives for one sync or one run, which is the
+        # right lifetime for "already said once".
         warned = self.__dict__.setdefault("_warned_unmatched", set())
         if dropped and str(section_key) not in warned:
             # ONCE per library per client, not once per person. What it reports is a property of the
@@ -1982,7 +1982,160 @@ class PlexClient:
                 dropped,
                 agent,
             )
+        # AFTER the supplement, never before: this is the line an operator reads to confirm what a
+        # library actually returned, and logging the pre-supplement count reported 533 on a read that
+        # returned 552.
+        logger.debug(
+            "watched read: section {} ({}) -> {} titles{}{}{}",
+            section_key,
+            media_type.value,
+            len(items),
+            f" ({dropped} dropped — no tmdb:// guid)" if dropped else "",
+            f" since {since.isoformat()}" if since else "",
+            "" if covers_window else " (INCOMPLETE — coverage unproven)",
+        )
         return WatchedRead(items=items, covers_window=covers_window, dropped_no_guid=dropped)
+
+    def _shows_from_episodes(
+        self, section_key: str | int, token: str, shows: list[WatchedItem]
+    ) -> tuple[list[WatchedItem], int]:
+        """Correct a show library's watched set against the EPISODES, which are the ground truth.
+
+        `?type=2&unwatched=0` asks Plex about the SHOW row, and that row can disagree with its own
+        episodes. Marking a series or a season watched in Plex sets the episodes without reliably
+        establishing the show-level state the query filters on, so a series someone has finished is
+        simply absent — while `?type=4&unwatched=0` returns every one of its episodes. Reported on
+        issue #108 ("mark one episode by hand and the whole show appears"), and measured on the
+        maintainer's server: of 491 shows with watched episodes, **20 never came back from the
+        show-level read**. The same disagreement is why the watching-account transfer only ever reads
+        and writes leaves (`read_watch_state`); the watched-history read had never been given the
+        same treatment.
+
+        Additive, never subtractive. A show the show-level read returned is kept even when no watched
+        episode backs it — Plex leaves that residue behind after an un-scrobble and it is not this
+        function's business (see `watching_account._clear_emptied_shows`).
+
+        Costs one extra library read: 9,563 episodes in 2.4s against 1.0s for the show read, on the
+        biggest account of a real server, and proportional to what each person has actually watched.
+        It runs on EVERY sync and every run's pre-fill, not once a night — `sync_section` forces a
+        complete read on every pass since #108 — so budget ~2.4s x people x show libraries per sync.
+
+        Returns:
+            `(shows, unmatched)` — the corrected set, plus how many recovered shows had no `tmdb://`
+            guid and so had to be dropped. That count joins the show read's own, because on a library
+            matched with a legacy agent the show-level read returns NOTHING and every title arrives
+            through this path: without it the drop counter reads zero on a total failure.
+        """
+        try:
+            episodes = self._episode_rows(section_key, token)
+        except Exception as e:
+            # A supplement that only ever ADDS must only ever be able to add nothing. This walk is
+            # ~20x the show read's size on a big library, so it is ~20x the chances of a transient
+            # 5xx — and raising here discards a show read already complete in hand, which
+            # `history.fetch` turns into "nothing watched in that library" and `watch_sync` counts as
+            # a failed section. Degrading to the pre-#108 answer is strictly better than losing one.
+            logger.warning(
+                "watched read: section {} — the episode read failed ({}), so shows Plex's show-level "
+                "read cannot see are missing from this pass",
+                section_key,
+                type(e).__name__,
+            )
+            return shows, 0
+
+        by_show: dict[int, tuple[int, int]] = {}  # show ratingKey -> (episodes watched, newest stamp)
+        for el in episodes:
+            raw = el.get("grandparentRatingKey")
+            if raw is None:
+                continue
+            try:
+                key = int(raw)
+            except ValueError:
+                continue
+            seen, newest = by_show.get(key, (0, 0))
+            try:
+                stamp = int(el.get("lastViewedAt") or 0)
+            except ValueError:
+                stamp = 0
+            by_show[key] = (seen + 1, max(newest, stamp))
+
+        out: list[WatchedItem] = []
+        unmatched = 0
+        known = {item.rating_key for item in shows if item.rating_key is not None}
+        for item in shows:
+            seen, newest = by_show.get(item.rating_key or -1, (0, 0))
+            stamp = datetime.fromtimestamp(newest, tz=UTC) if newest else item.watched_at
+            # The HIGHER of the two, both ways. Either side can lag: the show row can under-report a
+            # bulk mark, and an episode read cannot see a season Plex counts but no longer holds.
+            out.append(
+                replace(
+                    item,
+                    viewed_leaf_count=max(item.viewed_leaf_count or 0, seen),
+                    watch_count=max(item.watch_count, seen, 1),
+                    watched_at=max(item.watched_at, stamp),
+                )
+            )
+
+        missing = sorted(set(by_show) - known)
+        if not missing:
+            return out, unmatched
+        logger.info(
+            "watched read: section {} — {} show(s) have watched episodes but never came back from the "
+            "show-level read; recovering them from the episodes (issue #108)",
+            section_key,
+            len(missing),
+        )
+        found, _gone = self.fetch_items(missing)
+        for show in found:
+            tmdb_id = _tmdb_guid(show)
+            if tmdb_id is None:
+                # Counted, not skipped in silence. On a library matched with a legacy agent EVERY
+                # show lands here while the show-level read returned nothing at all — so without this
+                # the drop counter reads zero on a total failure, which is precisely the blind spot
+                # it was added to remove.
+                unmatched += 1
+                continue
+            seen, newest = by_show[int(show.ratingKey)]
+            leaf = getattr(show, "leafCount", None)
+            out.append(
+                WatchedItem(
+                    title=getattr(show, "title", "") or "",
+                    media_type=MediaType.SHOW,
+                    watched_at=datetime.fromtimestamp(newest, tz=UTC) if newest else datetime(1970, 1, 1, tzinfo=UTC),
+                    tmdb_id=tmdb_id,
+                    year=getattr(show, "year", None),
+                    rating_key=int(show.ratingKey),
+                    watch_count=max(1, seen),
+                    viewed_leaf_count=seen,
+                    leaf_count=int(leaf) if leaf else None,
+                )
+            )
+        return out, unmatched
+
+    def _episode_rows(self, section_key: str | int, token: str) -> list[ET.Element]:
+        """Every watched EPISODE in one show library, read as `token`. Paged like the show read."""
+        rows: list[ET.Element] = []
+        start = 0
+        while True:
+            r = http_retry.get(
+                self._server.url(f"/library/sections/{section_key}/all", includeToken=False),
+                params={"type": 4, "unwatched": 0},
+                headers={
+                    "X-Plex-Token": token,
+                    "X-Plex-Container-Start": str(start),
+                    "X-Plex-Container-Size": str(self._WATCHED_PAGE),
+                },
+                timeout=self._timeout,
+            )
+            if r.status_code == 403:
+                raise SectionNotShared(f"section {section_key} is not shared with this user")
+            r.raise_for_status()
+            root = ET.fromstring(r.text)
+            page = list(root)
+            rows.extend(page)
+            reported = root.get("totalSize")
+            start += len(page)
+            if not page or (start >= int(reported) if reported is not None else len(page) < self._WATCHED_PAGE):
+                return rows
 
     def _read_watched_page(
         self,
