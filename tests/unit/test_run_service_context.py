@@ -680,6 +680,49 @@ class TestSyncWatched:
         assert len(asked) == 2, "one read per library per sync"
         assert asked == [None, None], f"a sync asked for only what changed since {asked[-1]}"
 
+    def test_a_RUN_also_reads_the_whole_library(self, service, sessions, monkeypatch):
+        """The run's own history top-up must read complete too, not just the sync job.
+
+        `prefill_history` used to call `refresh_watched` with no `force_full`, which falls through to
+        `needs_full()` — False as soon as a section has one proven complete read on record. So from
+        the second night onward a RUN walked the library incrementally, ordering by `lastViewedAt`,
+        and went straight past a series whose show date lags its episodes. That is issue #108's own
+        mechanism, left alive on the path an owner reaches by pressing "Run now".
+        """
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from shortlist.engine.clients.plex_pms import WatchedRead
+        from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
+        from shortlist.server.db.models import User
+
+        with sessions() as s:
+            s.add(User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True))
+            s.commit()
+
+        profile = UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED, slug="sarah")
+        watch = WatchedItem(
+            title="Dune", media_type=MediaType.MOVIE, watched_at=datetime.now(UTC), tmdb_id=42, rating_key=7
+        )
+        asked: list = []
+
+        def fetch_section(_p, _section, _media, since=None):
+            asked.append(since)
+            return WatchedRead(items=[watch], covers_window=True)
+
+        ctx = SimpleNamespace(
+            plex=SimpleNamespace(sections=lambda: [SimpleNamespace(key="1", type="movie")]),
+            history_source=SimpleNamespace(fetch=lambda p, **k: [watch], fetch_section=fetch_section),
+            config=SimpleNamespace(min_completion=0.7),
+        )
+
+        # Twice: the first pre-fill is complete on any server (no cursor to resume from), so a single
+        # pass would pass without the fix.
+        service._watch.prefill_history(ctx, [profile])
+        service._watch.prefill_history(ctx, [profile])
+
+        assert asked == [None, None], f"a run asked for only what changed since {asked[-1]}"
+
     def test_credit_withdrawal_stays_on_the_periodic_cadence(self, service, sessions, monkeypatch):
         """`full_resync` decides whether the sync WITHDRAWS pick credit — the one consequence around
         here that does not self-heal on the next good read, since it edits `picks.watched_at`.

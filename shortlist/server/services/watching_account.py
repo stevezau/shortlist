@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from loguru import logger
+from sqlalchemy import false as sa_false
 from sqlalchemy.orm import Session
 
 from shortlist.engine.models import MediaType, UserType
@@ -732,33 +733,44 @@ def undo_transfer(
         snapshot.restored_at = utcnow()
         # The copied play events describe watches that are no longer represented on the account, so
         # they go with the restore. Only ours — `source='transfer'` — never Plex's own rows.
-        report.events_copied = -(
-            session.query(WatchEvent)
-            .filter(
-                WatchEvent.plex_account_id == _account_for(session, snapshot.user_id),
-                WatchEvent.source == "transfer",
-            )
-            .delete(synchronize_session=False)
+        #
+        # Their rating keys are read FIRST, because they are also the scope of the cache cleanup
+        # below: they name exactly the titles this transfer put on the account.
+        copied = session.query(WatchEvent).filter(
+            WatchEvent.plex_account_id == _account_for(session, snapshot.user_id),
+            WatchEvent.source == "transfer",
         )
-        # And the stamps beside them. `watch_cache` deliberately EXEMPTS rows carrying a
-        # `source_viewed_at` from both the full-read replace and the incremental drop — which is right
-        # while the transfer stands, and permanent once it is undone. Left stamped, those rows can
-        # never self-heal: Plex reports the account as no longer having watched the title, the cache
-        # keeps it anyway, and the engine's already-watched filter suppresses it for ever. On the one
-        # account this feature exists to set up, while the UI says "Put back exactly as it was."
+        copied_keys = {key for (key,) in copied.with_entities(WatchEvent.rating_key).all() if key is not None}
+        report.events_copied = -copied.delete(synchronize_session=False)
+        # And the cached rows beside them. `watch_cache` EXEMPTS rows carrying a `source_viewed_at`
+        # from every deletion path — right while the transfer stands, wrong the moment it is undone.
+        # Left behind, they can never self-heal: Plex reports the account as no longer having watched
+        # the title, the cache keeps it anyway, and the engine's already-watched filter suppresses it
+        # for ever. On the one account this feature exists to set up, while the UI says "Put back
+        # exactly as it was."
         #
-        # Clearing the stamp does not delete the row — it just makes it an ordinary cached watch
-        # again, which the periodic RECONCILE pass sweeps because Plex no longer reports it.
+        # DELETED here rather than merely un-stamped and left for the periodic sweep. This is the
+        # undo's own mess and it should clear it up itself: the sweep only runs on the
+        # `sync.watch_full_days` cadence, only when the read can prove it saw the whole library, and
+        # NEVER on a PMS that does not report `totalSize` — so relying on it left the rows in place
+        # indefinitely on exactly the servers least able to recover. Doing it here also frees
+        # `sync_section` to refuse an empty answer, which is the shape that erases a whole section.
         #
-        # Conditional, since issue #108 split reading from deleting: every sync reads the library
-        # complete, but only the `sync.watch_full_days` pass may drop what the read did not return,
-        # and only when that read could prove it saw the whole library. On a PMS that never reports
-        # `totalSize` it therefore never sweeps, and these rows persist. Undo should not be relying on
-        # a generic sweep for its own cleanup — see the note in `watch_cache.sync_section`.
+        # SCOPED to the rating keys this transfer actually copied, never "every stamped row".
+        # `stamp_true_dates` matches on rating key alone, so it also stamps a title the account had
+        # watched ITSELF before the transfer — and an unscoped delete took those too. The re-read
+        # that was supposed to heal them is not guaranteed: a library the account is no longer shared
+        # raises `SectionNotShared` and is deliberately skipped with its rows kept, and a managed
+        # account whose token cannot be minted is never refilled at all. On those two shapes an
+        # over-delete is permanent, not a one-cycle blip.
         report.titles_cached = -(
             session.query(WatchedTitle)
-            .filter(WatchedTitle.user_id == snapshot.user_id, WatchedTitle.source_viewed_at.isnot(None))
-            .update({"source_viewed_at": None}, synchronize_session=False)
+            .filter(
+                WatchedTitle.user_id == snapshot.user_id,
+                WatchedTitle.source_viewed_at.isnot(None),
+                WatchedTitle.rating_key.in_(copied_keys) if copied_keys else sa_false(),
+            )
+            .delete(synchronize_session=False)
         )
 
     logger.info(

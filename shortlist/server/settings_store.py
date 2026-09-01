@@ -81,21 +81,10 @@ DEFAULTS: dict[str, Any] = {
     # "what changed on whose share at 03:31" (plex-safety rule 10) is the one record an operator may
     # want long after the run detail around it is gone.
     "events.retention": 0,
-    # Whether the watch-history sync reads through the `watched_titles` CACHE. It no longer decides
-    # whether the read is incremental: every sync now reads each library in full (issue #108 — an
-    # incremental read walks by `lastViewedAt`, and Plex's own "mark as played" on a series leaves
-    # the show row without one, so a marked series was invisible for up to a week). Measured on a
-    # live 47-user, 3-library server: 27.4s complete against 27.3s incremental.
-    #
-    # Off bypasses the cache entirely and reads straight from the PMS per run — which also means
-    # nothing refreshes `watched_titles`, so the user page's watched list goes stale. Left in place
-    # as an escape hatch, not something to turn off casually.
-    "sync.watch_incremental": True,
-    # How often the DEAD-LIBRARY sweep runs, in days, and how often un-watch withdrawal reconciles.
-    # No longer gates the complete read — that happens every sync. The sweep believes a single
-    # `/library/sections` answer and applies it to every user, so it stays on a slow cadence
-    # deliberately: one short response would otherwise erase the history of a library that still
-    # exists.
+    # How often the RECONCILE pass runs, in days. Not "how often a complete read happens" — every
+    # sync reads each library in full (issue #108). This gates the three things that act on a title
+    # being ABSENT, and so believe a single response: dropping cached titles the read no longer
+    # returns, the dead-library sweep, and withdrawing pick credit.
     "sync.watch_full_days": 7,
     # (the schedulable crons are added below, derived from scheduler.DEFAULT_CRONS)
     "backup.max_keep": 10,  # how many backups to retain
@@ -275,6 +264,11 @@ PRIVATE_KEYS = {
 LEGACY_KEYS = {
     "api.token_hash",
     "api.token_hint",
+    # Dropped with issue #108: every sync reads each library in full, so there was nothing left for
+    # it to switch off. Its `false` path bypassed the cache entirely, which also stopped
+    # `watched_titles` being refreshed — the user page's watched list went stale while the setting
+    # read like it was making reads MORE thorough.
+    "sync.watch_incremental",
     "requests.omdb.apikey",
     "staleness_runs",
     "agregarr.url",

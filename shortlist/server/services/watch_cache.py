@@ -156,15 +156,21 @@ class WatchCache:
         # * `covers_window` — a PMS that omits `totalSize` and caps the container answers a short
         #   page with a 200, indistinguishable from "they un-watched all of it".
         #
-        # NEITHER catches a server that under-reports `totalSize` — the proof is derived from the same
-        # response it is meant to validate, so a consistent under-report proves itself complete, and
-        # `totalSize="0"` erases the section outright. That is a REAL hazard, reproduced in review,
-        # and it is deliberately not guarded here: refusing an empty answer would strand the watching-
-        # account undo, which relies on exactly this sweep to clear a rolled-back transfer
-        # (`watching_account.undo_transfer`). Closing it properly means giving undo its own cleanup
-        # first. Until then the exposure is what it has always been — one pass on the reconcile
-        # cadence — and confining the delete to that pass is what stops this change multiplying it.
-        if full and reconcile and covers_window:
+        # * a SECOND read agreeing, when the first would delete most of the section. `covers_window`
+        #   is derived from the same response it validates, so a server that under-reports
+        #   `totalSize` proves itself complete — and `totalSize="0"` is the extreme of that, erasing
+        #   the section outright while reporting success. One extra request, only on the rare pass
+        #   that would drop half a library, is the same shape as plex-safety rule 4's second read
+        #   before an orphan delete. A server lying CONSISTENTLY still defeats it; a transient short
+        #   answer, which is the realistic failure, does not.
+        replace = full and reconcile and covers_window
+        refused_by_confirm = False
+        if replace:
+            cached = _section_count(session, user_id, section_key)
+            if cached and len(items) * 2 < cached:
+                items, replace = _confirm_shrink(read, items, cached, user.username, section_key)
+                refused_by_confirm = not replace
+        if replace:
             # Replace, don't merge: a full read is the ONLY thing that can notice an un-watch of
             # something watched long ago, and merging would keep the very rows it exists to drop.
             #
@@ -181,7 +187,10 @@ class WatchCache:
                 WatchedTitle.source_viewed_at.is_(None),
             ).delete(synchronize_session=False)
             session.flush()
-        elif full and reconcile:
+        elif full and reconcile and not refused_by_confirm:
+            # Only for genuine unproven coverage. `_confirm_shrink` has already said its piece, and
+            # adding this line after it sent the operator hunting a `totalSize` problem that isn't
+            # there — the read DID prove coverage; a second read disagreed with it.
             logger.warning(
                 "watch cache: {} section {} — the complete read could not prove it saw the whole "
                 "library, so this reconcile tops up without deleting",
@@ -273,6 +282,70 @@ class WatchCache:
             session.flush()
             logger.info("watch cache: dropped {} cached title(s) from libraries no longer on the server", dropped)
         return dropped
+
+
+def _section_count(session: Session, user_id: int, section_key: str) -> int:
+    """How many DELETABLE titles are cached for this (person, library) right now.
+
+    Excludes transferred rows for the same reason the replace does (`source_viewed_at IS NOT NULL`):
+    they are exempt from deletion, so counting them puts the two sides of the shrink comparison on
+    different populations. On a watching account carrying a transfer that inflated the count
+    permanently — the guard fired on every reconcile pass for ever, bought a second full page-walk
+    each time, and told the operator that titles had vanished when nothing had.
+    """
+    return (
+        session.query(WatchedTitle)
+        .filter(
+            WatchedTitle.user_id == user_id,
+            WatchedTitle.section_key == section_key,
+            WatchedTitle.source_viewed_at.is_(None),
+        )
+        .count()
+    )
+
+
+def _confirm_shrink(read, items, cached: int, username: str, section_key: str) -> tuple[list[WatchedItem], bool]:
+    """Ask the server a second time before dropping most of a library.
+
+    Returns `(items, replace)` — the CONFIRMING read's items when it agrees, so the delete acts on
+    the fresher answer, and `replace=False` when it does not. A read that RAISES is a refusal: the
+    likeliest real outcome here is a second full library read failing against a PMS that just
+    answered short, and that is evidence against the first answer, not for it.
+    """
+    try:
+        second, second_covers = _read_items(read(None))
+    except Exception as e:
+        logger.warning(
+            "watch cache: {} section {} — the read returned {} of {} cached titles and the confirming "
+            "read failed ({}); keeping them rather than treating it as a mass un-watch",
+            username,
+            section_key,
+            len(items),
+            cached,
+            type(e).__name__,
+        )
+        return items, False
+    if second_covers and len(second) * 2 < cached:
+        logger.info(
+            "watch cache: {} section {} — {} of {} cached titles are gone, confirmed by a second read",
+            username,
+            section_key,
+            cached - len(second),
+            cached,
+        )
+        return second, True
+    logger.warning(
+        "watch cache: {} section {} — the read returned {} of {} cached titles but a second read "
+        "returned {}; keeping them rather than treating the first as a mass un-watch",
+        username,
+        section_key,
+        len(items),
+        cached,
+        len(second),
+    )
+    # Keep whichever answer saw MORE — nothing is being deleted either way, and the richer read is
+    # the better thing to upsert from.
+    return (second if len(second) > len(items) else items), False
 
 
 def _read_items(result) -> tuple[list[WatchedItem], bool]:

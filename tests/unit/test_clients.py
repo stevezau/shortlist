@@ -1943,6 +1943,51 @@ class TestWatchedWindowCoverage:
         assert 222 not in {i.tmdb_id for i in incremental.items}
         assert incremental.covers_window is True, "the gap must not make the walk claim a truncated read"
 
+    @respx.mock
+    def test_a_watched_title_with_no_tmdb_guid_is_COUNTED_not_silently_dropped(self, mock_plex):
+        """A title Plex returns that carries no `tmdb://` guid can never be matched, so it is skipped
+        — and until now that happened in total silence.
+
+        It is the failure mode with no symptom: the person really has watched the thing, Shortlist
+        goes on recommending it back to them, and the log reads "1 titles" rather than "1 of 2". A
+        library matched with the legacy TheTVDB agent yields `tvdb://` for EVERY title, so this is a
+        whole library disappearing, not a stray row. Reported on issue #108 by someone whose TV shows
+        never appeared while their movies did.
+        """
+        self._mock_url(mock_plex)
+        matched = (
+            f'<Directory ratingKey="1" type="show" title="Matched" year="2020" leafCount="4" '
+            f'viewedLeafCount="4" lastViewedAt="{self._NOW}"><Guid id="tmdb://111"/></Directory>'
+        )
+        tvdb_only = (
+            f'<Directory ratingKey="2" type="show" title="TVDB Only" year="2019" leafCount="6" '
+            f'viewedLeafCount="6" lastViewedAt="{self._NOW - 500}"><Guid id="tvdb://999"/></Directory>'
+        )
+        respx.get(self._URL).mock(
+            return_value=httpx.Response(
+                200, text=f'<MediaContainer size="2" totalSize="2">{matched}{tvdb_only}</MediaContainer>'
+            )
+        )
+
+        read = mock_plex.watched_titles("2", MediaType.SHOW, "TOK")
+
+        assert [i.tmdb_id for i in read.items] == [111]
+        assert read.dropped_no_guid == 1, "the unmatched title was dropped without being counted"
+
+    @respx.mock
+    def test_a_healthy_library_reports_no_drops(self, mock_plex):
+        """So the count means something when it is non-zero."""
+        self._mock_url(mock_plex)
+        row = (
+            f'<Directory ratingKey="1" type="show" title="Matched" year="2020" leafCount="4" '
+            f'viewedLeafCount="4" lastViewedAt="{self._NOW}"><Guid id="tmdb://111"/></Directory>'
+        )
+        respx.get(self._URL).mock(
+            return_value=httpx.Response(200, text=f'<MediaContainer size="1" totalSize="1">{row}</MediaContainer>')
+        )
+
+        assert mock_plex.watched_titles("2", MediaType.SHOW, "TOK").dropped_no_guid == 0
+
 
 class TestScrobbleAs:
     """Marking a title played AS another account — the write behind the watch-history transfer.

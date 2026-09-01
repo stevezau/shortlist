@@ -19,7 +19,8 @@ page could answer a whole question. `/schedule` still redirects here.
 
 Two jobs are worth knowing about there:
 
-- **Sync watch history** re-reads every watched title in every library, every time it runs. It used
+- **Sync watch history** re-reads every watched title in every library, every time it runs — and so
+  does a run's own history top-up, so pressing Run now sees the same thing. It used
   to read only what changed since the last pass, which missed a series you marked as watched by hand
   — Plex can leave a show's own date behind when its episodes move, so the series sorted out of view.
   Reading everything costs nothing measurable (27.4s against 27.3s on a 47-user server), because Plex

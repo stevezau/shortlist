@@ -1559,9 +1559,44 @@ class TestUndoLeavesNoPhantomWatchesBehind:
         session.commit()
         return plex, report
 
-    def test_the_stamp_is_cleared_so_the_next_sync_can_sweep_it(self, session):
-        plex, report = self._transferred(session)
+    def test_the_undo_deletes_its_own_cached_rows(self, session):
+        """Undo clears up after itself rather than leaving it to the periodic sweep.
+
+        The sweep only runs on the `sync.watch_full_days` cadence, only when the read can prove it
+        saw the whole library, and never at all on a PMS that does not report `totalSize` — so a row
+        left for it could sit there for ever on exactly the servers least able to recover. Deleting
+        is safe because every sync reads each library complete (issue #108): anything removed that
+        the account genuinely still watches is back within one sync.
+        """
+        plex, transfer = self._transferred(session)
         assert session.query(WatchedTitle).filter(WatchedTitle.user_id == 2).one().source_viewed_at is not None
+
+        # The UNDO's report, not the transfer's — the two are different objects and asserting on the
+        # wrong one passes whatever the undo does.
+        undone = undo_transfer(
+            session,
+            sessions=_factory_for(session),
+            snapshot_id=transfer.snapshot_id,
+            plex=plex,
+            target_token="TARGET",
+        )
+        session.commit()
+
+        assert session.query(WatchedTitle).filter(WatchedTitle.user_id == 2).count() == 0
+        assert undone.titles_cached == -1, "one row removed, reported as a removal not an addition"
+
+    def test_a_title_the_account_watched_ITSELF_survives_the_undo(self, session):
+        """The delete is scoped to the rating keys this transfer copied, never "every stamped row".
+
+        `stamp_true_dates` matches on rating key alone, so a title the watching account had already
+        watched on its own can end up stamped. An unscoped delete took those too — and the re-read
+        that is supposed to heal it is not guaranteed: a library the account is no longer shared is
+        skipped with its rows deliberately kept, and a managed account whose token cannot be minted
+        is never refilled at all. On those shapes the over-delete is permanent.
+        """
+        plex, report = self._transferred(session)
+        watched(session, 2, "Their Own Film", key=777, viewed_at=utcnow(), source=OLD)
+        session.commit()
 
         undo_transfer(
             session,
@@ -1572,11 +1607,13 @@ class TestUndoLeavesNoPhantomWatchesBehind:
         )
         session.commit()
 
-        assert session.query(WatchedTitle).filter(WatchedTitle.user_id == 2).one().source_viewed_at is None
+        left = {r.rating_key for r in session.query(WatchedTitle).filter(WatchedTitle.user_id == 2)}
+        assert left == {777}, "the undo deleted a watch it did not create"
 
-    def test_a_full_sync_then_removes_the_row_entirely(self, session):
-        """The point of clearing the stamp: the row becomes an ordinary cached watch again, and Plex
-        no longer reports it, so the periodic full read sweeps it."""
+    def test_a_later_sync_does_not_bring_the_row_back(self, session):
+        """Undo deletes the rows itself now, so the sync has nothing left to sweep — and must not
+        resurrect them either. Plex no longer reports the title for this account, so a complete read
+        returns nothing for it and the cache stays empty."""
         from shortlist.engine.models import MediaType, UserProfile
         from shortlist.server.services.watch_cache import WatchCache
 
@@ -1589,6 +1626,7 @@ class TestUndoLeavesNoPhantomWatchesBehind:
             target_token="TARGET",
         )
         session.commit()
+        assert session.query(WatchedTitle).filter(WatchedTitle.user_id == 2).count() == 0
 
         profile = UserProfile(username="steve", plex_account_id=20, user_type=UserType.MANAGED, slug="steve")
         WatchCache(lambda: session).sync_section(

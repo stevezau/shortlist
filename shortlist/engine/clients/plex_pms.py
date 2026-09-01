@@ -71,6 +71,9 @@ class WatchedRead:
 
     items: list[WatchedItem]
     covers_window: bool
+    #: Rows the server returned that carry no `tmdb://` guid, so nothing here could ever match them.
+    #: Zero on a healthy library; a whole library's worth when it is matched with a legacy agent.
+    dropped_no_guid: int = 0
 
 
 class SectionNotShared(RuntimeError):
@@ -1832,6 +1835,12 @@ class PlexClient:
         # and gave up on the sort". Only the first earns the complete-read coverage rule.
         full_read = since is None
         items: list[WatchedItem] = []
+        # Rows Plex DID return that we then threw away for want of a `tmdb://` guid. Counted because
+        # the drop is otherwise invisible: a title the person really has watched simply never reaches
+        # the cache, the log says "5 titles" rather than "5 of 8", and nothing anywhere says why. A
+        # library matched with the legacy TheTVDB agent yields `tvdb://` only, so this is a whole
+        # library's worth of silence, not a stray row.
+        dropped = 0
         start = 0
         reached_cutoff = False
         read_whole_library = False
@@ -1866,6 +1875,10 @@ class PlexClient:
             for el in entries:
                 item = self._watched_item(el, media_type)
                 if item is None:
+                    # Only on a complete read. An incremental walk stops at a cutoff, so a row it
+                    # skipped may simply be outside the window — counting it would report a match
+                    # problem that isn't one. Every sync reads complete now, so nothing is lost.
+                    dropped += full_read
                     continue
                 if since is not None and item.watched_at < since:
                     # An item with NO `lastViewedAt` is stamped 1970 by `_watched_item`, so it looks
@@ -1937,14 +1950,39 @@ class PlexClient:
             else (sort_honoured and ((reached_cutoff and order_observed) or read_whole_library))
         )
         logger.debug(
-            "watched read: section {} ({}) -> {} titles{}{}",
+            "watched read: section {} ({}) -> {} titles{}{}{}",
             section_key,
             media_type.value,
             len(items),
+            f" ({dropped} dropped — no tmdb:// guid)" if dropped else "",
             f" since {since.isoformat()}" if since else "",
             "" if covers_window else " (INCOMPLETE — coverage unproven)",
         )
-        return WatchedRead(items=items, covers_window=covers_window)
+        # Per instance, created lazily: `tests/conftest.py`'s `mock_plex` builds this class via
+        # `__new__` and never runs `__init__`, and a mutable CLASS attribute would leak one test's
+        # suppressions into the next. A client lives for one sync or one run, so this is the right
+        # lifetime for "already said once".
+        warned = self.__dict__.setdefault("_warned_unmatched", set())
+        if dropped and str(section_key) not in warned:
+            # ONCE per library per client, not once per person. What it reports is a property of the
+            # LIBRARY — its metadata agent — and it is invariant across users and across nights,
+            # while this method runs per (person, library). Unguarded it produced one identical line
+            # per user per sync: ~100 a day on a 47-user server, which is how a warning becomes
+            # wallpaper. The per-read count stays on the DEBUG line above for anyone counting.
+            #
+            # WARNING, not debug: every one of these is a title the person has watched that Shortlist
+            # will keep recommending back to them, and the only cure is fixing the match in Plex.
+            warned.add(str(section_key))
+            agent = "TheTVDB" if media_type is MediaType.SHOW else "the legacy Movie"
+            logger.warning(
+                "watched read: section {} — Plex returned {} watched title(s) with no tmdb:// guid, "
+                "so they cannot be matched and are ignored. A library matched with {} does this to "
+                "EVERY title; re-matching it against Plex's own agent fixes it.",
+                section_key,
+                dropped,
+                agent,
+            )
+        return WatchedRead(items=items, covers_window=covers_window, dropped_no_guid=dropped)
 
     def _read_watched_page(
         self,

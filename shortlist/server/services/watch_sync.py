@@ -104,25 +104,25 @@ class WatchSync:
         every = timedelta(days=days) if isinstance(days, int) and days > 0 else DEFAULT_FULL_EVERY
         return WatchCache(self._sessions, full_every=every)
 
-    def refresh_watched(
-        self, ctx, profile, *, incremental: bool = True, force_full: bool = False, sweep_dead: bool = False
-    ) -> list:
-        """This person's watched set, read as cheaply as is safe, and cached.
-
-        The complete read is the fallback, not the exception: anything that leaves the cache unable
-        to answer — incremental turned off, no cursor, a section never read, the weekly reconcile
-        falling due — takes it. Incremental is only ever an optimisation on top.
+    def refresh_watched(self, ctx, profile, *, force_full: bool = False, sweep_dead: bool = False) -> list:
+        """This person's watched set, read from the PMS and cached.
 
         Returns the full cached set (not just what this read fetched), so callers see the same thing
-        a complete read would have given them.
+        a direct complete read would have given them.
+
+        There is no longer a switch to bypass the cache. `sync.watch_incremental=false` used to send
+        this straight to the PMS instead — which also meant nothing refreshed `watched_titles`, so
+        the user page's watched list silently went stale while the setting sounded like it was making
+        reads MORE thorough. With every sync now reading each library in full (issue #108) the switch
+        had nothing left to turn off, so it is gone rather than left as a trap.
         """
         user_id = getattr(profile, "db_id", None)
         if user_id is None:
             with self._sessions() as session:
                 row = session.query(User).filter(User.slug == profile.slug).one_or_none()
                 user_id = row.id if row else None
-        if user_id is None or not incremental:
-            # Nothing to cache against (a profile with no DB row), or caching is switched off.
+        if user_id is None:
+            # A profile with no DB row — there is nothing to cache against.
             return ctx.history_source.fetch(profile, min_completion=ctx.config.min_completion)
 
         cache = self._watch_cache()
@@ -225,9 +225,6 @@ class WatchSync:
         Best-effort per person: anyone whose top-up fails is left with an empty history, and the
         engine falls back to its own complete read for them — the behaviour before the cache existed.
         """
-        with self._sessions() as session:
-            store = SettingsStore(session)
-            incremental = bool(store.get("sync.watch_incremental"))
         # Only people this run will actually build for. `_run_user` returns early — before its own
         # history read — for anyone with no row in scope, so pre-filling them is a complete per-user
         # PMS read spent on someone the run then skips.
@@ -243,7 +240,13 @@ class WatchSync:
                 except Exception:  # a broken listener must never fail the run
                     logger.exception("progress callback failed during history pre-fill")
             try:
-                profile.history = self.refresh_watched(ctx, profile, incremental=incremental)
+                # force_full, like the sync job. Without it this fell through to `needs_full()`,
+                # which is False as soon as a section has one proven complete read on record — so
+                # from the second night onward a RUN topped up incrementally and walked straight past
+                # a series whose show date lags its episodes. That is issue #108's own mechanism,
+                # left live on the path an owner reaches by pressing "Run now". The measured cost of
+                # reading complete is 27.4s against 27.3s, so there was nothing here to protect.
+                profile.history = self.refresh_watched(ctx, profile, force_full=True)
             except Exception as e:
                 logger.warning(
                     "run: could not pre-fill history for {} ({}) — the engine will read it directly",
@@ -314,7 +317,6 @@ class WatchSync:
             with self._sessions() as session:
                 profiles = enabled_profiles(session)
                 store = SettingsStore(session)
-                incremental = bool(store.get("sync.watch_incremental"))
                 # The periodic reconcile: the dead-library sweep, dropping titles Plex no longer
                 # reports, and credit withdrawal. The READ below is always complete regardless.
                 sweep_dead = self._dead_sweep_due(store)
@@ -334,9 +336,7 @@ class WatchSync:
                     # "mark as played" on a series leaves the show row with no `lastViewedAt`, which
                     # an incremental walk sorts behind its cutoff and drops, so a marked series was
                     # invisible until the weekly complete read (issue #108).
-                    profile.history = self.refresh_watched(
-                        ctx, profile, incremental=incremental, force_full=True, sweep_dead=sweep_dead
-                    )
+                    profile.history = self.refresh_watched(ctx, profile, force_full=True, sweep_dead=sweep_dead)
                 except Exception as e:
                     logger.warning("watch-sync: history fetch failed for {}: {}", profile.slug, type(e).__name__)
                 emit("sync.progress", {"done": i, "total": total})

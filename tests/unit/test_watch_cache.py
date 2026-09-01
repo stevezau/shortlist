@@ -196,29 +196,188 @@ class TestCorrectness:
         with sessions() as session:
             assert {row.title for row in session.query(WatchedTitle).all()} == {"Heat", "Dune"}
 
-    def test_an_empty_answer_still_erases_the_section_on_a_reconcile_pass(self, sessions, user_id):
-        """A KNOWN hazard, pinned so it is a decision rather than an accident.
+    def test_a_read_that_loses_most_of_a_section_is_confirmed_before_anything_is_deleted(self, sessions, user_id):
+        """`covers_window` is derived from the response it validates, so a server that under-reports
+        `totalSize` proves itself complete — and `totalSize="0"` is the extreme of that, erasing the
+        section while reporting success. Reproduced in review against the real client.
 
-        `totalSize="0"` is "proven complete" by construction, so `covers_window` cannot catch it, and
-        one such answer clears the section. Not guarded, because refusing an empty answer would
-        strand `watching_account.undo_transfer`, which relies on exactly this sweep to clear a
-        rolled-back transfer — closing it properly means giving undo its own cleanup first.
-
-        What this change DID do is confine it to the reconcile pass. Before, every complete read
-        deleted; the read is now 42x more frequent, and this is not.
+        A second read is asked for before dropping most of a library. Here it disagrees, so nothing
+        goes. One extra request, only on the rare pass that would delete half a library.
         """
+        cache = WatchCache(sessions)
+        full = [watched("Heat", tmdb_id=1), watched("Dune", tmdb_id=2), watched("Alien", tmdb_id=3)]
+        sync(cache, sessions, user_id, full)
+
+        answers = [[], full]  # the truncated answer first, the truth on the confirming read
+        with sessions() as session:
+            cache.sync_section(
+                session,
+                profile(),
+                user_id,
+                SECTION,
+                MediaType.MOVIE,
+                lambda since: WatchedRead(items=list(answers.pop(0)), covers_window=True),
+                force_full=True,
+                reconcile=True,
+            )
+            session.commit()
+
+        with sessions() as session:
+            assert {r.title for r in session.query(WatchedTitle).all()} == {"Heat", "Dune", "Alien"}
+        assert answers == [], "the confirming read was never made"
+
+    def test_a_section_that_really_did_empty_is_swept_once_a_second_read_agrees(self, sessions, user_id):
+        """The guard must not become a reason stale titles live for ever. Two reads agreeing that a
+        library is empty is the answer being consistent, not a blip — and `watching_account`'s undo
+        no longer depends on this, it deletes its own rows."""
         cache = WatchCache(sessions)
         sync(cache, sessions, user_id, [watched("Heat", tmdb_id=1), watched("Dune", tmdb_id=2)])
 
-        sync(cache, sessions, user_id, [], force_full=True)
-        with sessions() as session:
-            assert {row.title for row in session.query(WatchedTitle).all()} == {"Heat", "Dune"}, (
-                "an ordinary complete read must never delete"
-            )
-
         sync(cache, sessions, user_id, [], force_full=True, reconcile=True)
+
         with sessions() as session:
             assert session.query(WatchedTitle).count() == 0
+
+    def test_transferred_rows_do_not_make_the_shrink_guard_fire(self, sessions, user_id):
+        """The guard compares the read against the DELETABLE rows, not against every cached row.
+
+        The replace only ever touches `source_viewed_at IS NULL`, so counting transferred rows on the
+        other side of the comparison put the two on different populations. On a watching account
+        carrying a transfer that inflated the count permanently: the guard fired on every reconcile
+        for ever, bought a second full page-walk each time, and told the operator that titles had
+        vanished when nothing had.
+        """
+        from datetime import UTC, datetime
+
+        cache = WatchCache(sessions)
+        ordinary = [watched("Heat", tmdb_id=1), watched("Dune", tmdb_id=2)]
+        sync(cache, sessions, user_id, ordinary)
+        with sessions() as session:
+            for n in range(8):
+                session.add(
+                    WatchedTitle(
+                        user_id=user_id,
+                        section_key=SECTION,
+                        rating_key=900 + n,
+                        tmdb_id=900 + n,
+                        media_type="movie",
+                        title=f"Transferred {n}",
+                        viewed_at=datetime.now(UTC),
+                        source_viewed_at=datetime.now(UTC),
+                    )
+                )
+            session.commit()
+
+        reads = []
+
+        def read(since):
+            reads.append(since)
+            return WatchedRead(items=ordinary, covers_window=True)
+
+        with sessions() as session:
+            cache.sync_section(
+                session, profile(), user_id, SECTION, MediaType.MOVIE, read, force_full=True, reconcile=True
+            )
+            session.commit()
+
+        assert len(reads) == 1, "the guard fired on an account that had merely been transferred to"
+        with sessions() as session:
+            assert session.query(WatchedTitle).count() == 10, "nothing was gone, so nothing should go"
+
+    def test_a_confirming_read_that_RAISES_keeps_the_cached_titles(self, sessions, user_id):
+        """The likeliest real outcome of the second read: a full library re-read failing against a
+        PMS that just answered short. That is evidence against the first answer, not for it."""
+        cache = WatchCache(sessions)
+        full = [watched("Heat", tmdb_id=1), watched("Dune", tmdb_id=2), watched("Alien", tmdb_id=3)]
+        sync(cache, sessions, user_id, full)
+
+        calls = []
+
+        def read(since):
+            calls.append(since)
+            if len(calls) > 1:
+                raise TimeoutError("PMS went away")
+            return WatchedRead(items=[], covers_window=True)
+
+        with sessions() as session:
+            cache.sync_section(
+                session, profile(), user_id, SECTION, MediaType.MOVIE, read, force_full=True, reconcile=True
+            )
+            session.commit()
+
+        assert len(calls) == 2
+        with sessions() as session:
+            assert session.query(WatchedTitle).count() == 3
+
+    def test_a_confirming_read_with_no_coverage_claim_keeps_the_cached_titles(self, sessions, user_id):
+        """A bare list carries no coverage claim, so it cannot corroborate a mass deletion — and it
+        is what every test double and any non-`WatchedRead` reader hands back."""
+        cache = WatchCache(sessions)
+        full = [watched("Heat", tmdb_id=1), watched("Dune", tmdb_id=2), watched("Alien", tmdb_id=3)]
+        sync(cache, sessions, user_id, full)
+
+        answers = [WatchedRead(items=[], covers_window=True), []]
+
+        with sessions() as session:
+            cache.sync_section(
+                session,
+                profile(),
+                user_id,
+                SECTION,
+                MediaType.MOVIE,
+                lambda since: answers.pop(0),
+                force_full=True,
+                reconcile=True,
+            )
+            session.commit()
+
+        with sessions() as session:
+            assert session.query(WatchedTitle).count() == 3
+
+    def test_a_section_halving_exactly_is_below_the_bar(self, sessions, user_id):
+        """The boundary. `len(items) * 2 < cached` — 2 of 4 is not MORE than half gone, so it needs
+        no second read. Pinned because this is the one place an off-by-one would live."""
+        cache = WatchCache(sessions)
+        full = [watched(t, tmdb_id=i) for i, t in enumerate(["Heat", "Dune", "Alien", "Solaris"], start=1)]
+        sync(cache, sessions, user_id, full)
+
+        reads = []
+
+        def read(since):
+            reads.append(since)
+            return WatchedRead(items=full[:2], covers_window=True)
+
+        with sessions() as session:
+            cache.sync_section(
+                session, profile(), user_id, SECTION, MediaType.MOVIE, read, force_full=True, reconcile=True
+            )
+            session.commit()
+
+        assert len(reads) == 1, "an exact halving triggered a confirming read"
+        with sessions() as session:
+            assert {r.title for r in session.query(WatchedTitle).all()} == {"Heat", "Dune"}
+
+    def test_a_small_shrink_needs_no_confirmation(self, sessions, user_id):
+        """One or two un-watches is the ordinary case and must not cost a second request every time."""
+        cache = WatchCache(sessions)
+        full = [watched("Heat", tmdb_id=1), watched("Dune", tmdb_id=2), watched("Alien", tmdb_id=3)]
+        sync(cache, sessions, user_id, full)
+
+        reads = []
+
+        def read(since):
+            reads.append(since)
+            return WatchedRead(items=full[:2], covers_window=True)
+
+        with sessions() as session:
+            cache.sync_section(
+                session, profile(), user_id, SECTION, MediaType.MOVIE, read, force_full=True, reconcile=True
+            )
+            session.commit()
+
+        assert len(reads) == 1, "a routine un-watch triggered a confirming read"
+        with sessions() as session:
+            assert {r.title for r in session.query(WatchedTitle).all()} == {"Heat", "Dune"}
 
     def test_an_incremental_read_keeps_what_it_did_not_ask_about(self, sessions, user_id):
         """The opposite failure: an incremental top-up must not be mistaken for the whole truth. It
