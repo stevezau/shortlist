@@ -56,29 +56,44 @@ def watched(title: str, *, tmdb_id: int, days_ago: float = 1, rating_key=_SAME_A
     )
 
 
-def sync(cache, sessions, user_id, items, *, force_full=False, capture=None, section=SECTION, covers_window=True):
+def sync(
+    cache,
+    sessions,
+    user_id,
+    items,
+    *,
+    force_full=False,
+    reconcile=False,
+    capture=None,
+    section=SECTION,
+    covers_window=True,
+):
     """Run one section sync against a reader that returns `items` verbatim, whatever it was asked for.
 
     Use `sync_pms` unless the point of the test IS the mismatch: a real incremental read returns
     everything at or after `since`, including the deliberate overlap, so a reader that answers with
     only the newest titles is claiming every other title in the window was un-watched.
 
-    `covers_window` is the reader's claim that it returned everything at or after `since` — the only
-    thing that lets the cache delete on absence. Pass False to model a truncated walk.
+    `covers_window` is the reader's claim that it returned everything it was asked for — the only
+    thing that lets the cache delete on absence. It is the claim for BOTH read shapes: for an
+    incremental read, everything at or after `since`; for a complete one, the whole library. Pass
+    False to model a truncated walk of either.
     """
 
     def read(since):
         if capture is not None:
             capture.append(since)
-        return WatchedRead(items=list(items), covers_window=covers_window and since is not None)
+        return WatchedRead(items=list(items), covers_window=covers_window)
 
     with sessions() as session:
-        outcome = cache.sync_section(session, profile(), user_id, section, MediaType.MOVIE, read, force_full=force_full)
+        outcome = cache.sync_section(
+            session, profile(), user_id, section, MediaType.MOVIE, read, force_full=force_full, reconcile=reconcile
+        )
         session.commit()
     return outcome
 
 
-def sync_pms(cache, sessions, user_id, library, *, force_full=False, capture=None, section=SECTION):
+def sync_pms(cache, sessions, user_id, library, *, force_full=False, reconcile=False, capture=None, section=SECTION):
     """Run one section sync against a reader modelling a HEALTHY PMS: `library` is what the server
     holds NOW, the walk returns everything in it viewed at or after `since`, and it claims to have
     covered the window.
@@ -97,11 +112,13 @@ def sync_pms(cache, sessions, user_id, library, *, force_full=False, capture=Non
             capture.append(since)
         return WatchedRead(
             items=[item for item in library if since is None or item.watched_at >= since],
-            covers_window=since is not None,
+            covers_window=True,
         )
 
     with sessions() as session:
-        outcome = cache.sync_section(session, profile(), user_id, section, MediaType.MOVIE, read, force_full=force_full)
+        outcome = cache.sync_section(
+            session, profile(), user_id, section, MediaType.MOVIE, read, force_full=force_full, reconcile=reconcile
+        )
         session.commit()
     return outcome
 
@@ -154,15 +171,54 @@ class TestFullVsIncremental:
 
 
 class TestCorrectness:
-    def test_a_full_read_drops_a_title_that_was_un_watched(self, sessions, user_id):
-        """The whole reason the weekly full read exists — nothing else can notice this."""
+    def test_a_reconcile_pass_drops_a_title_that_was_un_watched(self, sessions, user_id):
+        """The whole reason the periodic reconcile exists — nothing else can notice this."""
+        cache = WatchCache(sessions)
+        sync(cache, sessions, user_id, [watched("Heat", tmdb_id=1), watched("Dune", tmdb_id=2)])
+
+        sync(cache, sessions, user_id, [watched("Heat", tmdb_id=1)], force_full=True, reconcile=True)
+
+        with sessions() as session:
+            assert [row.title for row in session.query(WatchedTitle).all()] == ["Heat"]
+
+    def test_a_complete_read_alone_does_NOT_drop_anything(self, sessions, user_id):
+        """Every sync reads the whole library now (issue #108). Only the periodic pass may DELETE.
+
+        Keeping those separate is what stopped the read getting 42x more frequent from making the
+        destructive path 42x more frequent with it — `covers_window` is derived from the same
+        response it validates, so a server that under-reports consistently proves itself complete.
+        """
         cache = WatchCache(sessions)
         sync(cache, sessions, user_id, [watched("Heat", tmdb_id=1), watched("Dune", tmdb_id=2)])
 
         sync(cache, sessions, user_id, [watched("Heat", tmdb_id=1)], force_full=True)
 
         with sessions() as session:
-            assert [row.title for row in session.query(WatchedTitle).all()] == ["Heat"]
+            assert {row.title for row in session.query(WatchedTitle).all()} == {"Heat", "Dune"}
+
+    def test_an_empty_answer_still_erases_the_section_on_a_reconcile_pass(self, sessions, user_id):
+        """A KNOWN hazard, pinned so it is a decision rather than an accident.
+
+        `totalSize="0"` is "proven complete" by construction, so `covers_window` cannot catch it, and
+        one such answer clears the section. Not guarded, because refusing an empty answer would
+        strand `watching_account.undo_transfer`, which relies on exactly this sweep to clear a
+        rolled-back transfer — closing it properly means giving undo its own cleanup first.
+
+        What this change DID do is confine it to the reconcile pass. Before, every complete read
+        deleted; the read is now 42x more frequent, and this is not.
+        """
+        cache = WatchCache(sessions)
+        sync(cache, sessions, user_id, [watched("Heat", tmdb_id=1), watched("Dune", tmdb_id=2)])
+
+        sync(cache, sessions, user_id, [], force_full=True)
+        with sessions() as session:
+            assert {row.title for row in session.query(WatchedTitle).all()} == {"Heat", "Dune"}, (
+                "an ordinary complete read must never delete"
+            )
+
+        sync(cache, sessions, user_id, [], force_full=True, reconcile=True)
+        with sessions() as session:
+            assert session.query(WatchedTitle).count() == 0
 
     def test_an_incremental_read_keeps_what_it_did_not_ask_about(self, sessions, user_id):
         """The opposite failure: an incremental top-up must not be mistaken for the whole truth. It
@@ -297,7 +353,7 @@ class TestUnwatching:
         with sessions() as session:
             assert {row.title for row in session.query(WatchedTitle).all()} == {"Heat", "Dune"}
 
-        sync_pms(cache, sessions, user_id, library, force_full=True)
+        sync_pms(cache, sessions, user_id, library, force_full=True, reconcile=True)
 
         with sessions() as session:
             assert [row.title for row in session.query(WatchedTitle).all()] == ["Dune"]

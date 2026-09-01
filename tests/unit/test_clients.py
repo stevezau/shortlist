@@ -1726,11 +1726,30 @@ class TestWatchedWindowCoverage:
         assert read.covers_window is False
 
     @respx.mock
-    def test_a_full_read_never_claims_window_coverage(self, mock_plex: PlexClient):
-        """There is no window to have covered, and the full path replaces the section outright."""
+    def test_a_complete_read_claims_coverage_when_it_reached_the_servers_own_total(self, mock_plex: PlexClient):
+        """A complete read's window is the whole library, and reaching `totalSize` proves it saw it.
+
+        This is what lets the cache replace the section. It used to be hardcoded False, so the
+        DESTRUCTIVE path — delete the section, reinsert what came back — ran on no proof at all.
+        """
         self._mock_url(mock_plex)
         respx.get(self._URL).mock(
             return_value=httpx.Response(200, text=self._page([(1, "Heat", self._NOW)], size=1, total=1))
+        )
+
+        read = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK")
+
+        assert [i.title for i in read.items] == ["Heat"]
+        assert read.covers_window is True
+
+    @respx.mock
+    def test_a_complete_read_REFUSES_coverage_when_the_server_reported_no_total(self, mock_plex: PlexClient):
+        """The dangerous shape: a server that omits `totalSize` and caps the container answers a
+        SHORT page with a 200. Indistinguishable from a small library — so the walk cannot prove it
+        saw everything, and must not let the cache delete what it did not read."""
+        self._mock_url(mock_plex)
+        respx.get(self._URL).mock(
+            return_value=httpx.Response(200, text=self._page([(1, "Heat", self._NOW)], size=1, total=None))
         )
 
         read = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK")
@@ -1802,6 +1821,127 @@ class TestWatchedWindowCoverage:
         with sessions() as session:
             titles = {r.title for r in session.query(WatchedTitle).all()}
         assert titles == {"Newest", "Older"}, "a title the walk never reached was deleted as an un-watch"
+
+    @respx.mock
+    def test_a_truncated_COMPLETE_read_does_not_wipe_the_section(self, mock_plex, tmp_path):
+        """The twin of the test above, on the more destructive path.
+
+        A complete read DELETES the section and reinserts what came back, so a short page answered
+        with a 200 — the shape a server that omits `totalSize` and caps the container produces — used
+        to erase every title behind it and stamp the sync a success. Now the delete waits for proof,
+        and an unproven read tops up instead.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        from shortlist.server.db.models import User, WatchedTitle, WatchSyncState
+        from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
+        from shortlist.server.services.watch_cache import WatchCache
+
+        run_migrations(tmp_path)
+        sessions = make_session_factory(make_engine(tmp_path))
+        with sessions() as session:
+            user = User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True)
+            session.add(user)
+            session.commit()
+            user_id = user.id
+
+        cache = WatchCache(sessions)
+        person = SimpleNamespace(username="sarah", slug="sarah")
+        everything = [(1, "Newest", self._NOW), (2, "Older", self._NOW - 100)]
+        self._mock_url(mock_plex)
+
+        def complete_read(now=None):
+            with sessions() as session:
+                cache.sync_section(
+                    session,
+                    person,
+                    user_id,
+                    "1",
+                    MediaType.MOVIE,
+                    lambda since: mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=since),
+                    force_full=True,
+                    now=now,
+                )
+                session.commit()
+
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._page(everything, size=2, total=2)))
+        complete_read()
+        with sessions() as session:
+            assert {r.title for r in session.query(WatchedTitle).all()} == {"Newest", "Older"}
+            stamped = session.query(WatchSyncState).one().last_full_at
+
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._page(everything[:1], size=1, total=None)))
+        complete_read(now=datetime.now(UTC) + timedelta(seconds=1))
+
+        with sessions() as session:
+            assert {r.title for r in session.query(WatchedTitle).all()} == {"Newest", "Older"}, (
+                "an unproven complete read wiped a title nobody un-watched"
+            )
+            assert session.query(WatchSyncState).one().last_full_at == stamped, (
+                "an unproven complete read reset the clock on the reconcile it never did"
+            )
+
+    @respx.mock
+    def test_an_incremental_read_LOSES_a_series_whose_show_date_lagged_its_episodes(self, mock_plex):
+        """Issue #108, at the seam that causes it — the reason the sync now always reads complete.
+
+        A show's own `lastViewedAt` can be OLDER than the episodes it counts (measured on a live
+        server: 2 of the 25 most recent). Marking a series watched changes every episode; if the show
+        row's date does not move with them, the row sorts behind the cursor, the walk stops at the
+        cutoff, and the finished series is never returned. It then stayed invisible until the weekly
+        complete read. Movies cannot drift this way — there is no second level — which is exactly
+        what the reporter saw.
+        """
+        self._mock_url(mock_plex)
+        # `Just Finished` is 20/20 watched but still carries last month's date, because its episodes
+        # moved and it did not. `Watched Normally` is newer, so the cursor sits past the stale row.
+        stale = (
+            f'<Directory ratingKey="5002" type="show" title="Just Finished" year="2021" '
+            f'leafCount="20" viewedLeafCount="20" lastViewedAt="{self._NOW - 2_600_000}">'
+            '<Guid id="tmdb://222"/></Directory>'
+        )
+        recent = (
+            f'<Directory ratingKey="5001" type="show" title="Watched Normally" year="2020" '
+            f'leafCount="10" viewedLeafCount="4" lastViewedAt="{self._NOW}">'
+            '<Guid id="tmdb://111"/></Directory>'
+        )
+        body = f'<MediaContainer size="2" totalSize="2">{recent}{stale}</MediaContainer>'
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=body))
+
+        complete = mock_plex.watched_titles("2", MediaType.SHOW, "TOK")
+        incremental = self._read(mock_plex, body, since_ago=1000)
+
+        assert {i.tmdb_id for i in complete.items} == {111, 222}, "a complete read sees the finished series"
+        assert 222 not in {i.tmdb_id for i in incremental.items}, "an incremental read stops short of it"
+
+    @respx.mock
+    def test_an_incremental_read_also_skips_a_show_with_no_date_at_all(self, mock_plex):
+        """The same failure from the other direction, kept because the code guards it explicitly.
+
+        A row with no `lastViewedAt` is dated 1970 by `_watched_item`, so it can never clear a cutoff
+        — and it is passed over rather than ending the walk, because a data gap must not truncate the
+        read. Not observed on a real server (0 of 534 rows), unlike the stale-date case above, but
+        the guard is cheap and its absence would silently drop everything behind the gap.
+        """
+        self._mock_url(mock_plex)
+        undated = (
+            '<Directory ratingKey="5002" type="show" title="No Date" year="2021" '
+            'leafCount="20" viewedLeafCount="20"><Guid id="tmdb://222"/></Directory>'
+        )
+        recent = (
+            f'<Directory ratingKey="5001" type="show" title="Watched Normally" year="2020" '
+            f'leafCount="10" viewedLeafCount="4" lastViewedAt="{self._NOW}">'
+            '<Guid id="tmdb://111"/></Directory>'
+        )
+        body = f'<MediaContainer size="2" totalSize="2">{recent}{undated}</MediaContainer>'
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=body))
+
+        complete = mock_plex.watched_titles("2", MediaType.SHOW, "TOK")
+        incremental = self._read(mock_plex, body, since_ago=1000)
+
+        assert {i.tmdb_id for i in complete.items} == {111, 222}
+        assert 222 not in {i.tmdb_id for i in incremental.items}
+        assert incremental.covers_window is True, "the gap must not make the walk claim a truncated read"
 
 
 class TestScrobbleAs:
@@ -1905,20 +2045,28 @@ class TestTheRecordedShowLibraryResponse:
         assert len(finished) == 5, "five of ten started shows did not count as watched"
 
     @respx.mock
-    def test_a_bulk_mark_as_played_carries_no_last_viewed_stamp(self, mock_plex: PlexClient):
-        """Recorded because it decides a real behaviour: `_watched_item` stamps a row with no
-        `lastViewedAt` as 1970, which an INCREMENTAL read then skips — so a bulk mark-as-played is
-        only ever picked up by the periodic full read."""
-        from datetime import UTC, datetime
+    def test_a_finished_show_can_carry_a_stale_date(self, mock_plex: PlexClient):
+        """Issue #108's mechanism, and the reason the sync no longer reads incrementally.
 
+        A show's own `lastViewedAt` can be OLDER than the episodes it counts — measured on a live
+        server, 2 of the 25 most recently watched shows. An incremental read orders by that stamp and
+        stops at the first title older than its cursor, so a series finished minutes ago can sort
+        behind the cutoff and be passed over entirely. A movie has no such two-level structure and
+        cannot drift, which is why movies were never affected.
+
+        This test used to assert the row carried NO `lastViewedAt` — a shape that was written to
+        illustrate a theory and that a probe of the real server found 0 times in 534 rows. See the
+        fixture's own correction note.
+        """
         mock_plex._server.url.return_value = self._URL
         respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._fixture()))
 
         items = mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items
 
-        marked = next(i for i in items if i.tmdb_id == 300006)
-        assert marked.watched_at == datetime(1970, 1, 1, tzinfo=UTC)
-        assert (marked.viewed_leaf_count, marked.leaf_count) == (100, 100)
+        finished = next(i for i in items if i.tmdb_id == 300006)
+        assert (finished.viewed_leaf_count, finished.leaf_count) == (100, 100), "the show is finished"
+        newest = max(i.watched_at for i in items)
+        assert finished.watched_at < newest, "yet it is not the most recently 'viewed' row on the page"
 
 
 class TestTheRecordedUserRatingResponse:

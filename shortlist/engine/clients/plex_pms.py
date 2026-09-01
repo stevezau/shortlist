@@ -63,8 +63,10 @@ class WatchedRead:
     was not honoured — the same absence means only "we did not read that far". Deleting on the second
     is data loss, so the flag travels with the items rather than being assumed by the caller.
 
-    Always False for a complete (`since=None`) read: there is no window, and that path replaces the
-    section outright instead of reasoning about absence.
+    For a complete (`since=None`) read the window is the WHOLE library, and the flag is earned the
+    same way: the server gave a `totalSize` and the walk reached it. The cache's periodic reconcile
+    replaces a section outright from such a read, so an unproven one is the most destructive shape
+    available — a single short page would drop every title behind it and report success.
     """
 
     items: list[WatchedItem]
@@ -1825,6 +1827,10 @@ class PlexClient:
             on absence must check it.
         """
         plex_type = 1 if media_type is MediaType.MOVIE else 2
+        # Captured BEFORE the walk: the sort fallback below sets `since = None` mid-read, so by the
+        # end `since is None` no longer distinguishes "asked for everything" from "asked for a window
+        # and gave up on the sort". Only the first earns the complete-read coverage rule.
+        full_read = since is None
         items: list[WatchedItem] = []
         start = 0
         reached_cutoff = False
@@ -1921,8 +1927,14 @@ class PlexClient:
         # `totalSize` AND caps the container below our page size ends the walk on a short page having
         # read only part of the window. `sort_honoured` gates both, because the fallback drops the
         # sort mid-walk and leaves the earlier pages in an order nothing verified.
+        #
+        # A COMPLETE read (`since is None`) has no cutoff to stop at, so `read_whole_library` is the
+        # only proof available — and it is the one the cache's reconcile pass checks before replacing
+        # a section wholesale.
         covers_window = (
-            since is not None and sort_honoured and ((reached_cutoff and order_observed) or read_whole_library)
+            read_whole_library
+            if full_read
+            else (sort_honoured and ((reached_cutoff and order_observed) or read_whole_library))
         )
         logger.debug(
             "watched read: section {} ({}) -> {} titles{}{}",
@@ -1930,7 +1942,7 @@ class PlexClient:
             media_type.value,
             len(items),
             f" since {since.isoformat()}" if since else "",
-            "" if since is None or covers_window else " (INCOMPLETE — window coverage unproven)",
+            "" if covers_window else " (INCOMPLETE — coverage unproven)",
         )
         return WatchedRead(items=items, covers_window=covers_window)
 

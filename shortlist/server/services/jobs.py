@@ -124,11 +124,13 @@ CATALOG: tuple[JobKind, ...] = (
             "every recommendation is built from, and it is also how Shortlist notices that a title it "
             "put in front of someone was actually watched — the numbers on your dashboard come from "
             "it. Reads only: nothing on Plex changes and nobody's rows move."
-            "\n\nRuns at 04:17 by default. Normally it reads only what changed since the last pass, "
-            "with one complete re-read a week. On servers that report a full result count the nightly "
-            "pass spots a title un-watched recently; "
-            "that weekly one is what notices an un-watch further back than it reaches, or a title "
-            "removed from the library."
+            "\n\nRuns at 04:17 by default, and reads every watched title each time rather than only "
+            "what changed. Measured on a 47-user server, reading everything took the same time as "
+            "reading the recent slice — Plex sends a whole page either way — and reading only the "
+            "recent slice missed a series you marked as watched by hand, because Plex leaves those "
+            "without a date. A library the read cannot see in full is topped up rather than replaced, "
+            "and un-watching is handled separately, on a slower schedule — so one thin answer from Plex "
+            "cannot be mistaken for a pile of things being un-watched."
         ),
         manual=True,
         writes_plex=False,  # "Reads only — nothing on Plex changes", as the description says

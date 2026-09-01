@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from shortlist.engine.clients.plex_pms import PlayEvent
+from shortlist.engine.clients.plex_pms import PlayEvent, WatchedRead
 from shortlist.engine.models import UserType
 from shortlist.engine.watch_replica import ItemState, OpKind, WatchState
 from shortlist.server.db.models import User, WatchedTitle, WatchEvent, WatchStateSnapshot, utcnow
@@ -151,7 +151,16 @@ class TestTransferredRowsSurviveTheSync:
         cache = WatchCache(lambda: session)
         profile = UserProfile(username="steve", plex_account_id=20, user_type=UserType.MANAGED, slug="steve")
 
-        cache.sync_section(session, profile, 2, "1", MediaType.MOVIE, lambda since: [], force_full=True)
+        cache.sync_section(
+            session,
+            profile,
+            2,
+            "1",
+            MediaType.MOVIE,
+            lambda since: WatchedRead(items=[], covers_window=True),
+            force_full=True,
+            reconcile=True,
+        )
         session.commit()
 
         assert {r.title for r in session.query(WatchedTitle).filter(WatchedTitle.user_id == 2)} == {
@@ -168,7 +177,16 @@ class TestTransferredRowsSurviveTheSync:
         cache = WatchCache(lambda: session)
         profile = UserProfile(username="steve", plex_account_id=20, user_type=UserType.MANAGED, slug="steve")
 
-        cache.sync_section(session, profile, 2, "1", MediaType.MOVIE, lambda since: [], force_full=True)
+        cache.sync_section(
+            session,
+            profile,
+            2,
+            "1",
+            MediaType.MOVIE,
+            lambda since: WatchedRead(items=[], covers_window=True),
+            force_full=True,
+            reconcile=True,
+        )
         session.commit()
 
         assert session.query(WatchedTitle).filter(WatchedTitle.user_id == 2).count() == 0
@@ -185,7 +203,16 @@ class TestTransferredRowsSurviveTheSync:
         cache = WatchCache(lambda: session)
         profile = UserProfile(username="steve", plex_account_id=20, user_type=UserType.MANAGED, slug="steve")
         # Seed a cursor so the next read is incremental, and prove the window was covered.
-        cache.sync_section(session, profile, 2, "1", MediaType.MOVIE, lambda since: [], force_full=True)
+        cache.sync_section(
+            session,
+            profile,
+            2,
+            "1",
+            MediaType.MOVIE,
+            lambda since: WatchedRead(items=[], covers_window=True),
+            force_full=True,
+            reconcile=True,
+        )
         session.commit()
 
         cache.sync_section(
@@ -1565,7 +1592,14 @@ class TestUndoLeavesNoPhantomWatchesBehind:
 
         profile = UserProfile(username="steve", plex_account_id=20, user_type=UserType.MANAGED, slug="steve")
         WatchCache(lambda: session).sync_section(
-            session, profile, 2, "1", MediaType.MOVIE, lambda since: [], force_full=True
+            session,
+            profile,
+            2,
+            "1",
+            MediaType.MOVIE,
+            lambda since: WatchedRead(items=[], covers_window=True),
+            force_full=True,
+            reconcile=True,
         )
         session.commit()
 

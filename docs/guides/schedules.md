@@ -19,11 +19,14 @@ page could answer a whole question. `/schedule` still redirects here.
 
 Two jobs are worth knowing about there:
 
-- **Sync watch history** reads only what changed since last night, then does a complete re-read
-  weekly. Un-watch something you watched recently and the nightly read notices straight away; the
-  weekly re-read is what catches an un-watch further back than that, and a title deleted from a
-  library. If a library cannot be read incrementally, that library falls back to a complete read on
-  its own rather than serving a stale watched set.
+- **Sync watch history** re-reads every watched title in every library, every time it runs. It used
+  to read only what changed since the last pass, which missed a series you marked as watched by hand
+  — Plex can leave a show's own date behind when its episodes move, so the series sorted out of view.
+  Reading everything costs nothing measurable (27.4s against 27.3s on a 47-user server), because Plex
+  sends a whole page either way. **Un-watching** is separate and still periodic: dropping a title the
+  read no longer reports, sweeping a deleted library, and withdrawing pick credit all happen on the
+  `sync.watch_full_days` cadence, because each acts on something being ABSENT and one thin answer
+  from Plex should not be enough to act on.
 - **Privacy sync** runs nightly (05:15 by default). It re-merges every account's share filter and
   builds, delivers and promotes nothing. So it can only ever make your server _more_ private. It is
   the cheapest safety net against drift.

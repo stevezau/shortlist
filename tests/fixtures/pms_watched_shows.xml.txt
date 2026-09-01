@@ -30,6 +30,27 @@
 
   Note also the mark-as-watched case (ratingKey 5006): a bulk "mark as played" sets the leaf counts
   equal with no per-episode play history, which the playback-history API would never have shown.
+
+  CORRECTION, 2026-09-01 (issue #108). This fixture's `lastViewedAt` COLUMN was never recorded. The
+  first three values are copied from `pms_watched_incremental.xml.txt` (a MOVIE library) and the rest
+  are round numbers; row 5006 was written with the attribute ABSENT to illustrate a theory about bulk
+  marking. Only the viewed/total pairs in the list above were ever measured. A test asserted the
+  invented shape as if it were real, and it sent an investigation of #108 down the wrong path twice.
+
+  What a live probe of the same server actually found (534 watched shows, section 2, admin token):
+
+    * shows with NO `lastViewedAt`          -> 0 of 534.  The absence below does not occur.
+    * shows with no `tmdb://` guid          -> 0 of 534.
+    * `sort=lastViewedAt:desc` on `type=2`  -> HONOURED (verified descending across 500 rows).
+    * show `lastViewedAt` OLDER than the
+      newest watched EPISODE of that show   -> 2 of the 25 most recent.
+
+  That last row is the real #108 mechanism, and it is why row 5006 now carries a STALE stamp rather
+  than none. A show's own date can lag its episodes, so marking a series watched can change every
+  episode while the show row keeps an old date — which sorts it behind an incremental read's cutoff,
+  where the walk stops before reaching it. A movie has no such two-level structure and cannot drift,
+  which is exactly why movies were unaffected. The sync now reads every library complete, so the
+  ordering no longer decides what is seen.
 -->
 <MediaContainer size="10" totalSize="10" allowSync="1" identifier="com.plexapp.plugins.library"
                 librarySectionID="2" librarySectionTitle="TV Shows" librarySectionUUID="REDACTED-UUID"
@@ -68,11 +89,15 @@
              childCount="7" addedAt="1700000009" updatedAt="1700000010" lastViewedAt="1755000000">
     <Guid id="tmdb://300005"/>
   </Directory>
-  <!-- A bulk mark-as-played: counts equal, and NO lastViewedAt. `_watched_item` stamps such a row
-       1970, which an incremental read then skips — only the periodic full read catches it. -->
+  <!-- Finished, but carrying a STALE date: the show's own `lastViewedAt` is older than the episodes
+       it counts (measured: 2 of the 25 most recent shows on a live server). An incremental read
+       orders by THIS stamp, so a series finished today can sort behind the cutoff and be passed over
+       — the shape behind issue #108. The drift is against its own EPISODES, which a show listing
+       never shows, so its position among its neighbours here is unremarkable: what matters is that
+       the cache's cursor can be NEWER than this stamp while the show was finished minutes ago. -->
   <Directory ratingKey="5006" key="/library/metadata/5006/children" guid="plex://show/REDACTED"
              type="show" title="Sanitised Show F" year="2011" leafCount="100" viewedLeafCount="100"
-             childCount="6" addedAt="1700000011" updatedAt="1700000012">
+             childCount="6" addedAt="1700000011" updatedAt="1700000012" lastViewedAt="1752000000">
     <Guid id="tmdb://300006"/>
   </Directory>
   <!-- 2 of 176 — 1.1%, the thinnest observed, and the single clearest proof of the point. -->

@@ -177,10 +177,10 @@ A few things worth knowing:
 
 - **A rating they haven't given changes nothing.** Only a low rating acts, so this is silent for the
   majority of people, who rate nothing at all.
-- **Rating what they just watched works straight away.** The nightly sync reads everything watched
-  since it last ran, and a rating rides along with it. Rating something from months ago is the slow
-  case: that title is behind the point the nightly read reaches back to, so it waits for the weekly
-  full re-read. Lower `sync.watch_full_days` if you'd rather not wait for those.
+- **Ratings land on the next sync, however old the title.** The sync re-reads every watched title
+  each time it runs, and a rating rides along with it. This used to be the slow case — rating
+  something from months ago sat behind the point the nightly read reached back to and waited up to a
+  week — and it no longer is.
 - **A title stops seeding only if it was going to seed.** Rows are built from someone's most recent
   watches, so disliking a film from two years ago is recorded but changes nothing — it was never
   going to be picked as a seed. The rating matters when it's something they saw lately.

@@ -122,6 +122,7 @@ class WatchCache:
         read,
         *,
         force_full: bool = False,
+        reconcile: bool = False,
         now: datetime | None = None,
     ) -> SyncOutcome:
         """Bring one (person, library) up to date. `read(since)` performs the PMS call.
@@ -131,6 +132,12 @@ class WatchCache:
 
         `read` may return a `WatchedRead` (what the PMS client gives back) or a bare list of items.
         A bare list carries no coverage claim, so it never deletes — see `_read_items`.
+
+        Args:
+            force_full: Read the whole library rather than resuming from the cursor. Every sync sets
+                this (issue #108); it says nothing about whether anything may be DELETED.
+            reconcile: May this pass drop cached titles the read did not return? Deliberately
+                separate from `force_full`, and deliberately rare — see the replace branch below.
         """
         now = now or utcnow()
         full = force_full or self.needs_full(session, user_id, section_key, now=now)
@@ -139,7 +146,25 @@ class WatchCache:
 
         items, covers_window = _read_items(read(since))
 
-        if full:
+        # THREE conditions before this section may be REPLACED — deleted, then refilled from what the
+        # read returned. It is the only path here that destroys watch history, and every one of them
+        # answers a way it has been shown to go wrong:
+        #
+        # * `reconcile` — every sync reads the whole library now (issue #108), but only the periodic
+        #   pass may delete. Deletion cadence is therefore exactly what it was before that change,
+        #   which is the point: the read got 42x more frequent, and the destructive part must not.
+        # * `covers_window` — a PMS that omits `totalSize` and caps the container answers a short
+        #   page with a 200, indistinguishable from "they un-watched all of it".
+        #
+        # NEITHER catches a server that under-reports `totalSize` — the proof is derived from the same
+        # response it is meant to validate, so a consistent under-report proves itself complete, and
+        # `totalSize="0"` erases the section outright. That is a REAL hazard, reproduced in review,
+        # and it is deliberately not guarded here: refusing an empty answer would strand the watching-
+        # account undo, which relies on exactly this sweep to clear a rolled-back transfer
+        # (`watching_account.undo_transfer`). Closing it properly means giving undo its own cleanup
+        # first. Until then the exposure is what it has always been — one pass on the reconcile
+        # cadence — and confining the delete to that pass is what stops this change multiplying it.
+        if full and reconcile and covers_window:
             # Replace, don't merge: a full read is the ONLY thing that can notice an un-watch of
             # something watched long ago, and merging would keep the very rows it exists to drop.
             #
@@ -156,6 +181,13 @@ class WatchCache:
                 WatchedTitle.source_viewed_at.is_(None),
             ).delete(synchronize_session=False)
             session.flush()
+        elif full and reconcile:
+            logger.warning(
+                "watch cache: {} section {} — the complete read could not prove it saw the whole "
+                "library, so this reconcile tops up without deleting",
+                user.username,
+                section_key,
+            )
         elif since is not None and covers_window:
             _drop_vanished_since(session, user_id, section_key, since, items, user.username)
         elif since is not None:
@@ -183,7 +215,10 @@ class WatchCache:
         if state is None:
             state = WatchSyncState(user_id=user_id, section_key=section_key)
             session.add(state)
-        if full:
+        # Only a PROVEN complete read stamps `last_full_at` — `needs_full` asks "was this library read
+        # end to end?", and an unproven walk cannot answer yes. Not gated on `reconcile`: this records
+        # the READ, not the deletion.
+        if full and covers_window:
             state.last_full_at = now
             # A full read that returned nothing still establishes a cursor — otherwise a person with
             # an empty library would be read in full for ever.

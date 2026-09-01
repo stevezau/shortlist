@@ -118,8 +118,12 @@ class RunService:
 
     # -- watch-cache orchestration (delegated to WatchSync) -------------------------------
 
-    def refresh_watched(self, ctx, profile, *, incremental: bool = True, force_full: bool = False) -> list:
-        return self._watch.refresh_watched(ctx, profile, incremental=incremental, force_full=force_full)
+    def refresh_watched(
+        self, ctx, profile, *, incremental: bool = True, force_full: bool = False, sweep_dead: bool = False
+    ) -> list:
+        return self._watch.refresh_watched(
+            ctx, profile, incremental=incremental, force_full=force_full, sweep_dead=sweep_dead
+        )
 
     def _has_a_row_in_scope(self, ctx, profile) -> bool:
         return self._watch.has_a_row_in_scope(ctx, profile)

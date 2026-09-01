@@ -71,13 +71,13 @@ class WatchSync:
         self._sessions = session_factory
         self._bus = bus
 
-    def _full_resync_due(self, store: SettingsStore) -> bool:
-        """Is tonight the weekly complete re-read?
+    def _dead_sweep_due(self, store: SettingsStore) -> bool:
+        """Is this the periodic RECONCILE pass?
 
-        An incremental read sees an un-watch only inside the window it covered — never one further
-        back, a deleted title, or one whose `lastViewedAt` never moved — so a full read has to happen
-        on a schedule regardless of how well the cursor is working. Never having done one counts as
-        due. It is also what gates the dead-library sweep in `refresh_watched`.
+        Not "is a complete read due" — every sync reads the whole library now (issue #108). This
+        gates the three things that must stay rare, because each of them acts on ABSENCE and so
+        believes a single response: dropping cached titles the read did not return, the dead-library
+        sweep, and withdrawing pick credit. Never having run counts as due.
         """
         stamp = store.get("report.watch_full_at")
         if not isinstance(stamp, str) or not stamp:
@@ -104,7 +104,9 @@ class WatchSync:
         every = timedelta(days=days) if isinstance(days, int) and days > 0 else DEFAULT_FULL_EVERY
         return WatchCache(self._sessions, full_every=every)
 
-    def refresh_watched(self, ctx, profile, *, incremental: bool = True, force_full: bool = False) -> list:
+    def refresh_watched(
+        self, ctx, profile, *, incremental: bool = True, force_full: bool = False, sweep_dead: bool = False
+    ) -> list:
         """This person's watched set, read as cheaply as is safe, and cached.
 
         The complete read is the fallback, not the exception: anything that leaves the cache unable
@@ -147,6 +149,7 @@ class WatchSync:
                             media_type,
                             read,
                             force_full=force_full,
+                            reconcile=sweep_dead,
                         )
                     )
                 except SectionNotShared:
@@ -177,7 +180,7 @@ class WatchSync:
             # would be applied to every user in the sync. A dead library lingering a few days matches
             # the latency the full read already has; running it hourly buys nothing and multiplies the
             # exposure to a bad response by ~168.
-            if force_full:
+            if sweep_dead:
                 cache.forget_dead_sections(session, user_id, {str(section.key) for section in sections})
             # A transferred account's rows are CREATED here, by reading back what the transfer wrote
             # to Plex — so the transfer itself had nothing to stamp, and every one of them arrives
@@ -312,7 +315,9 @@ class WatchSync:
                 profiles = enabled_profiles(session)
                 store = SettingsStore(session)
                 incremental = bool(store.get("sync.watch_incremental"))
-                force_full = self._full_resync_due(store)
+                # The periodic reconcile: the dead-library sweep, dropping titles Plex no longer
+                # reports, and credit withdrawal. The READ below is always complete regardless.
+                sweep_dead = self._dead_sweep_due(store)
                 # After the pause check, not before it: `enabled_profiles` returns nothing at all
                 # while "pause all" is on, and topping the owner back up would quietly make the
                 # switch stop meaning "everything".
@@ -322,7 +327,16 @@ class WatchSync:
             emit("sync.progress", {"done": 0, "total": total})
             for i, profile in enumerate(profiles, start=1):
                 try:
-                    profile.history = self.refresh_watched(ctx, profile, incremental=incremental, force_full=force_full)
+                    # ALWAYS a complete read. Measured on a live 47-user, 3-library server: 27.4s
+                    # complete against 27.3s incremental, because every read fetches a 500-row page
+                    # per library either way and only 7 of 93 (person, library) pairs hold more than
+                    # one page. The incremental path bought 0.1s and cost correctness — Plex's own
+                    # "mark as played" on a series leaves the show row with no `lastViewedAt`, which
+                    # an incremental walk sorts behind its cutoff and drops, so a marked series was
+                    # invisible until the weekly complete read (issue #108).
+                    profile.history = self.refresh_watched(
+                        ctx, profile, incremental=incremental, force_full=True, sweep_dead=sweep_dead
+                    )
                 except Exception as e:
                     logger.warning("watch-sync: history fetch failed for {}: {}", profile.slug, type(e).__name__)
                 emit("sync.progress", {"done": i, "total": total})
@@ -341,14 +355,15 @@ class WatchSync:
                 logger.warning(
                     "watch-sync: play-history read failed ({}) — watched state is still fresh", type(e).__name__
                 )
-            # `force_full` gates the un-watch withdrawal: only a COMPLETE re-read can tell a title
-            # someone un-watched from one this pass simply did not look at.
-            reconcile_watched(profiles, full_resync=force_full)
+            # Left on the weekly cadence deliberately, even though every read is now complete.
+            # Withdrawal removes pick credit, and moving it from weekly to every pass is a separate
+            # behaviour change that deserves its own review — not a side effect of this one.
+            reconcile_watched(profiles, full_resync=sweep_dead)
             with self._sessions() as session:
                 store = SettingsStore(session)
                 # Stamp the sync so the dashboard can show "watch status synced N ago".
                 store.set("report.watch_synced_at", datetime.now(UTC).isoformat())
-                if force_full:
+                if sweep_dead:
                     store.set("report.watch_full_at", datetime.now(UTC).isoformat())
             return total
 

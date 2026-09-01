@@ -629,6 +629,108 @@ class TestSyncWatched:
         with sessions() as s:
             assert s.query(PickRow).filter_by(tmdb_id=42).one().watched_at is not None
 
+    def test_every_sync_reads_the_whole_library_not_just_what_changed(self, service, sessions, monkeypatch):
+        """Issue #108. The incremental read finds new watches by ordering on `lastViewedAt`, and
+        Plex's "mark as played" on a series leaves the show row without one — so a marked series was
+        invisible to every sync until the weekly complete read, up to seven days later.
+
+        Measured on a live 47-user, 3-library server before this changed: 27.4s complete against
+        27.3s incremental. Every read fetches a 500-row page per library either way, and only 7 of 93
+        (person, library) pairs held more than one page — so the incremental path bought 0.1s.
+
+        Asserts the SECOND sync too. The first is complete on any server (there is no cursor to be
+        incremental against), so a test that ran one pass would pass without the fix.
+        """
+        import asyncio
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from shortlist.engine.clients.plex_pms import WatchedRead
+        from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
+        from shortlist.server.db.models import User
+
+        with sessions() as s:
+            s.add(User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True))
+            s.commit()
+
+        profile = UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED, slug="sarah")
+        watch = WatchedItem(
+            title="Dune", media_type=MediaType.MOVIE, watched_at=datetime.now(UTC), tmdb_id=42, rating_key=7
+        )
+        asked: list = []
+
+        def fetch_section(_p, _section, _media, since=None):
+            asked.append(since)
+            # A WatchedRead claiming coverage, not a bare list. A bare list can never prove it saw
+            # the whole library, so the cache would refuse to stamp `last_full_at` and fall back to a
+            # complete read every time — and this test would pass with the fix reverted.
+            return WatchedRead(items=[watch], covers_window=True)
+
+        fake_ctx = SimpleNamespace(
+            plex=SimpleNamespace(sections=lambda: [SimpleNamespace(key="1", type="movie")]),
+            history_source=SimpleNamespace(fetch=lambda p, **k: [watch], fetch_section=fetch_section),
+            config=SimpleNamespace(min_completion=0.7),
+        )
+        monkeypatch.setattr(service, "build_context", lambda **k: fake_ctx)
+        monkeypatch.setattr(service, "enabled_profiles", lambda session, user_ids=None: [profile])
+
+        asyncio.run(service.sync_watched())
+        asyncio.run(service.sync_watched())
+
+        assert len(asked) == 2, "one read per library per sync"
+        assert asked == [None, None], f"a sync asked for only what changed since {asked[-1]}"
+
+    def test_credit_withdrawal_stays_on_the_periodic_cadence(self, service, sessions, monkeypatch):
+        """`full_resync` decides whether the sync WITHDRAWS pick credit — the one consequence around
+        here that does not self-heal on the next good read, since it edits `picks.watched_at`.
+
+        Since issue #108 every sync reads the whole library, so it would be easy to conclude the
+        withdrawal may run every time too. It must not: withdrawal acts on ABSENCE, and absence is
+        only trustworthy at the cadence the rest of the reconcile runs at. Asserts the KWARG, not the
+        call count — the call happens either way.
+        """
+        import asyncio
+        from datetime import UTC, datetime, timedelta
+        from types import SimpleNamespace
+
+        from shortlist.engine.clients.plex_pms import WatchedRead
+        from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
+        from shortlist.server.db.models import User
+        from shortlist.server.settings_store import SettingsStore
+
+        with sessions() as s:
+            s.add(User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True))
+            s.commit()
+
+        profile = UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED, slug="sarah")
+        watch = WatchedItem(
+            title="Dune", media_type=MediaType.MOVIE, watched_at=datetime.now(UTC), tmdb_id=42, rating_key=7
+        )
+        fake_ctx = SimpleNamespace(
+            plex=SimpleNamespace(sections=lambda: [SimpleNamespace(key="1", type="movie")]),
+            history_source=SimpleNamespace(
+                fetch=lambda p, **k: [watch],
+                fetch_section=lambda p, section, media, since=None: WatchedRead(items=[watch], covers_window=True),
+            ),
+            config=SimpleNamespace(min_completion=0.7),
+        )
+        monkeypatch.setattr(service, "build_context", lambda **k: fake_ctx)
+        monkeypatch.setattr(service, "enabled_profiles", lambda session, user_ids=None: [profile])
+        seen: list = []
+        monkeypatch.setattr(service, "_reconcile_watched", lambda profiles, full_resync=False: seen.append(full_resync))
+
+        # First pass: nothing has ever reconciled, so it is due.
+        asyncio.run(service.sync_watched())
+        # Second: it just ran, so an ordinary pass must NOT withdraw.
+        asyncio.run(service.sync_watched())
+        # Third: wind the stamp back past `sync.watch_full_days` and it falls due again.
+        with sessions() as s:
+            SettingsStore(s).set("report.watch_full_at", (datetime.now(UTC) - timedelta(days=30)).isoformat())
+            s.commit()
+        asyncio.run(service.sync_watched())
+
+        assert seen == [True, False, True], f"withdrawal ran on the wrong passes: {seen}"
+
     def test_the_owner_is_synced_even_though_they_have_no_row_of_their_own(self, service, sessions, monkeypatch):
         """The owner's watched set has one consumer that has nothing to do with giving them a row.
 
@@ -918,7 +1020,9 @@ class TestSyncWatched:
         # Library 2 deleted from the server: it is simply absent from sections() now. Swept on the
         # weekly pass only — the sweep believes one cached `/library/sections` answer, so it runs at
         # the cadence of the full read rather than every sync.
-        history = service.refresh_watched(self._two_library_ctx(["1"], read_section), profile, force_full=True)
+        history = service.refresh_watched(
+            self._two_library_ctx(["1"], read_section), profile, force_full=True, sweep_dead=True
+        )
 
         assert [item.title for item in history] == ["Dune"]
         with sessions() as session:
@@ -953,8 +1057,10 @@ class TestSyncWatched:
 
         service.refresh_watched(self._two_library_ctx(["1", "2"], read_section), profile)
 
-        # A blip: sections() briefly answers with one library on an ordinary hourly sync.
-        service.refresh_watched(self._two_library_ctx(["1"], read_section), profile)
+        # A blip: sections() briefly answers with one library on an ordinary sync. `force_full` is
+        # what every sync now passes (issue #108), so the sweep can no longer ride along on it — it
+        # is gated on `sweep_dead`, which only the weekly pass sets.
+        service.refresh_watched(self._two_library_ctx(["1"], read_section), profile, force_full=True)
 
         with sessions() as session:
             assert {row.title for row in session.query(WatchedTitle).all()} == {"T1", "T2"}

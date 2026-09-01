@@ -81,15 +81,21 @@ DEFAULTS: dict[str, Any] = {
     # "what changed on whose share at 03:31" (plex-safety rule 10) is the one record an operator may
     # want long after the run detail around it is gone.
     "events.retention": 0,
-    # Read only what changed since the last sync instead of every watched title, every night, per
-    # user, per library. An incremental read notices an un-watch inside the window it covered, but
-    # nothing further back and no deletion, so a COMPLETE read still runs every `sync.watch_full_days`
-    # regardless — this switch only decides whether the nights in between are cheap. Off = always
-    # read everything.
+    # Whether the watch-history sync reads through the `watched_titles` CACHE. It no longer decides
+    # whether the read is incremental: every sync now reads each library in full (issue #108 — an
+    # incremental read walks by `lastViewedAt`, and Plex's own "mark as played" on a series leaves
+    # the show row without one, so a marked series was invisible for up to a week). Measured on a
+    # live 47-user, 3-library server: 27.4s complete against 27.3s incremental.
+    #
+    # Off bypasses the cache entirely and reads straight from the PMS per run — which also means
+    # nothing refreshes `watched_titles`, so the user page's watched list goes stale. Left in place
+    # as an escape hatch, not something to turn off casually.
     "sync.watch_incremental": True,
-    # How often the complete re-read happens, in days. It is the only thing that can notice a title
-    # un-watched or removed longer ago than the nightly read reaches back, so it is not optional —
-    # only its frequency is.
+    # How often the DEAD-LIBRARY sweep runs, in days, and how often un-watch withdrawal reconciles.
+    # No longer gates the complete read — that happens every sync. The sweep believes a single
+    # `/library/sections` answer and applies it to every user, so it stays on a slow cadence
+    # deliberately: one short response would otherwise erase the history of a library that still
+    # exists.
     "sync.watch_full_days": 7,
     # (the schedulable crons are added below, derived from scheduler.DEFAULT_CRONS)
     "backup.max_keep": 10,  # how many backups to retain

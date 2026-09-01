@@ -748,7 +748,13 @@ def undo_transfer(
         # account this feature exists to set up, while the UI says "Put back exactly as it was."
         #
         # Clearing the stamp does not delete the row — it just makes it an ordinary cached watch
-        # again, which the next full sync sweeps normally because Plex no longer reports it.
+        # again, which the periodic RECONCILE pass sweeps because Plex no longer reports it.
+        #
+        # Conditional, since issue #108 split reading from deleting: every sync reads the library
+        # complete, but only the `sync.watch_full_days` pass may drop what the read did not return,
+        # and only when that read could prove it saw the whole library. On a PMS that never reports
+        # `totalSize` it therefore never sweeps, and these rows persist. Undo should not be relying on
+        # a generic sweep for its own cleanup — see the note in `watch_cache.sync_section`.
         report.titles_cached = -(
             session.query(WatchedTitle)
             .filter(WatchedTitle.user_id == snapshot.user_id, WatchedTitle.source_viewed_at.isnot(None))
