@@ -15,7 +15,7 @@ import tempfile
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from itertools import pairwise
 
@@ -95,6 +95,11 @@ _MARKER_CHARS = ("​", "‌")
 def has_shortlist_marker(title: str) -> bool:
     suffix = title[-64:]
     return len(suffix) == 64 and all(c in _MARKER_CHARS for c in suffix)
+
+
+#: What `_watched_item` dates a row that carries no `lastViewedAt`. A show marked watched rather than
+#: played has none, so this is a real and common value, not a corrupt one — see `_dates_from_episodes`.
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 #: The identifier family Plex gives a COLLECTION's hub. Prefix only, and deliberately NOT a format.
@@ -2020,7 +2025,91 @@ class PlexClient:
             f" since {since.isoformat()}" if since else "",
             "" if covers_window else " (INCOMPLETE — coverage unproven)",
         )
+        if media_type is MediaType.SHOW and full_read:
+            items = self._dates_from_episodes(section_key, token, items)
         return WatchedRead(items=items, covers_window=covers_window, dropped_no_guid=dropped)
+
+    def _dates_from_episodes(self, section_key: str | int, token: str, shows: list[WatchedItem]) -> list[WatchedItem]:
+        """Give a show with no watch date of its own the date of its newest watched EPISODE.
+
+        Marking a series or a season watched sets the episodes and leaves the show row with no
+        `lastViewedAt` — the same omission behind issue #108. `_watched_item` has to date such a row
+        1970, which is not a small inaccuracy: `watched_at` drives seed recency (a 1970 date weighs
+        zero, so the show never seeds) and the effectiveness report, which showed a series finished
+        minutes ago as "finished 20697d ago".
+
+        Only runs when at least one show came back undated, and reads once for the whole library
+        rather than per show. On a real server 19 of 491 shows were undated, of which the episodes
+        could date 2 — the rest have no watched episodes either, so nothing anywhere knows when, and
+        they keep the epoch. That is the honest answer rather than a guess.
+        """
+        undated = [item for item in shows if item.rating_key is not None and item.watched_at <= _EPOCH]
+        if not undated:
+            return shows
+        try:
+            newest: dict[int, int] = {}
+            for el in self._episode_rows(section_key, token):
+                raw = el.get("grandparentRatingKey")
+                if raw is None:
+                    continue
+                try:
+                    key, stamp = int(raw), int(el.get("lastViewedAt") or 0)
+                except ValueError:
+                    continue
+                if stamp > newest.get(key, 0):
+                    newest[key] = stamp
+        except Exception as e:
+            # Dates only — never worth losing a good read over. Degrades to the epoch, which is what
+            # these rows carried before this existed.
+            logger.warning(
+                "watched read: section {} — could not read episodes to date {} undated show(s) ({})",
+                section_key,
+                len(undated),
+                type(e).__name__,
+            )
+            return shows
+
+        dated = 0
+        out = []
+        for item in shows:
+            stamp = newest.get(item.rating_key or -1, 0) if item.watched_at <= _EPOCH else 0
+            if stamp:
+                dated += 1
+                out.append(replace(item, watched_at=datetime.fromtimestamp(stamp, tz=UTC)))
+            else:
+                out.append(item)
+        logger.debug(
+            "watched read: section {} — dated {} of {} undated show(s) from their episodes",
+            section_key,
+            dated,
+            len(undated),
+        )
+        return out
+
+    def _episode_rows(self, section_key: str | int, token: str) -> list[ET.Element]:
+        """Every watched EPISODE in one show library, read as `token`. Paged like the show read."""
+        rows: list[ET.Element] = []
+        start = 0
+        while True:
+            r = http_retry.get(
+                f"{self._server.url(f'/library/sections/{section_key}/all', includeToken=False)}?type=4&unwatched=0",
+                headers={
+                    "X-Plex-Token": token,
+                    "X-Plex-Container-Start": str(start),
+                    "X-Plex-Container-Size": str(self._WATCHED_PAGE),
+                },
+                timeout=self._timeout,
+            )
+            if r.status_code == 403:
+                raise SectionNotShared(f"section {section_key} is not shared with this user")
+            r.raise_for_status()
+            root = ET.fromstring(r.text)
+            page = list(root)
+            rows.extend(page)
+            reported = root.get("totalSize")
+            start += len(page)
+            if not page or (start >= int(reported) if reported is not None else len(page) < self._WATCHED_PAGE):
+                return rows
 
     def _read_watched_page(
         self,

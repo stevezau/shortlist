@@ -2090,6 +2090,75 @@ class TestWatchedWindowCoverage:
         assert (item.viewed_leaf_count, item.leaf_count) == (8, 8)
         assert item.watch_count == 8
 
+    @respx.mock
+    def test_a_show_with_no_watch_date_takes_its_newest_EPISODE_date(self, mock_plex):
+        """Marking a series watched sets the episodes and leaves the show with no `lastViewedAt`, so
+        `_watched_item` has to date it 1970 — and that is not a cosmetic wrong.
+
+        `watched_at` drives seed recency (a 1970 date weighs zero, so the show never seeds again) and
+        the effectiveness report, which showed a series finished minutes ago as "finished 20697d
+        ago". Reported on #108 after the episode roll-up was removed.
+        """
+        marked = (
+            '<Directory ratingKey="5001" type="show" title="Just Marked" year="2023" '
+            'leafCount="8" viewedLeafCount="8"><Guid id="tmdb://111"/></Directory>'
+        )
+        eps = "".join(
+            f'<Video ratingKey="{900 + n}" type="episode" title="Ep{n}" viewCount="1" '
+            f'grandparentRatingKey="5001" lastViewedAt="{self._NOW - n * 60}"/>'
+            for n in range(3)
+        )
+        self._mock_url(mock_plex)
+
+        def answer(request):
+            body, size = (eps, 3) if request.url.params.get("type") == "4" else (marked, 1)
+            return httpx.Response(200, text=f'<MediaContainer size="{size}" totalSize="{size}">{body}</MediaContainer>')
+
+        respx.get(self._URL).mock(side_effect=answer)
+
+        item = mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items[0]
+
+        assert int(item.watched_at.timestamp()) == self._NOW, "the show kept the epoch instead of its episode date"
+
+    @respx.mock
+    def test_a_show_that_ALREADY_has_a_date_costs_no_episode_read(self, mock_plex):
+        """The episode read is a repair, not a routine second call. A library whose shows all carry a
+        date must not pay for it — on a real server that is 472 of 491 shows."""
+        dated = (
+            f'<Directory ratingKey="5001" type="show" title="Watched Normally" year="2020" '
+            f'leafCount="8" viewedLeafCount="8" lastViewedAt="{self._NOW}"><Guid id="tmdb://111"/></Directory>'
+        )
+        self._mock_url(mock_plex)
+        respx.get(self._URL).mock(
+            return_value=httpx.Response(200, text=f'<MediaContainer size="1" totalSize="1">{dated}</MediaContainer>')
+        )
+
+        mock_plex.watched_titles("2", MediaType.SHOW, "TOK")
+
+        types = [c.request.url.params.get("type") for c in respx.calls]
+        assert "4" not in types, f"an episode read was made for a library that needed none: {types}"
+
+    @respx.mock
+    def test_a_show_no_episode_can_date_keeps_the_epoch_rather_than_a_guess(self, mock_plex):
+        """17 of 19 undated shows on a real server had no watched episodes either — nothing anywhere
+        knows when they were watched. Saying so beats inventing a date."""
+        marked = (
+            '<Directory ratingKey="5001" type="show" title="No Date Anywhere" year="2023" '
+            'leafCount="8" viewedLeafCount="8"><Guid id="tmdb://111"/></Directory>'
+        )
+        self._mock_url(mock_plex)
+
+        def answer(request):
+            body, size = ("", 0) if request.url.params.get("type") == "4" else (marked, 1)
+            return httpx.Response(200, text=f'<MediaContainer size="{size}" totalSize="{size}">{body}</MediaContainer>')
+
+        respx.get(self._URL).mock(side_effect=answer)
+
+        from datetime import UTC, datetime
+
+        item = mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items[0]
+        assert item.watched_at == datetime(1970, 1, 1, tzinfo=UTC)
+
 
 class TestScrobbleAs:
     """Marking a title played AS another account — the write behind the watch-history transfer.
