@@ -37,20 +37,3 @@ function librariesPerType(
   }
   return perType;
 }
-
-/** The media types where naming a row's library tells the reader something.
- *
- *  The same judgement as `libraryOptions`, applied per row instead of to the toolbar. On a server
- *  with one movie library, "Movies" under every film repeats the "Movie ·" already on the right of
- *  the same line — so the line is only drawn where a library can actually distinguish two things:
- *  a type holding more than one library, or a row that is in more than one.
- */
-export function typesWorthNaming(
-  libraries: WatchedPage["libraries"],
-): Set<string> {
-  return new Set(
-    [...librariesPerType(libraries)]
-      .filter(([, names]) => names.size > 1)
-      .map(([media]) => media),
-  );
-}

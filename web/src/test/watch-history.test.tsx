@@ -316,19 +316,18 @@ describe("the library filter", () => {
     expect(screen.queryByText(/Movies ·/)).not.toBeInTheDocument();
   });
 
-  it("draws no library line where naming it would say nothing", async () => {
-    // One movie library means "Movies" under a film repeats the "Movie ·" on the right of the same
-    // row. Same judgement as the toolbar's, applied per row.
+  it("names the library on every row, even where only one library exists", async () => {
+    // The approved design: the tag says which library a title lives in, always. An earlier build
+    // hid it wherever it "added nothing", which quietly removed the feature on the commonest server.
     getUserWatched.mockResolvedValue(
       page({
         items: [title({ media_type: "movie", libraries: ["Movies"] })],
         libraries: [lib("Movies", "movie"), lib("TV Shows", "show")],
       }),
     );
-    const { container } = renderPanel();
-    await screen.findByText("Teacup");
+    renderPanel();
 
-    expect(container.querySelectorAll("li span.block")).toHaveLength(0);
+    expect(await screen.findByText("Movies")).toBeInTheDocument();
   });
 
   it("still names both libraries on a row that is genuinely in two", async () => {

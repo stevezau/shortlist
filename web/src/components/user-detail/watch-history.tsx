@@ -12,10 +12,7 @@ import { useBlockSeed, useUserWatched } from "@/lib/queries";
 import { blockedSeeds } from "@/lib/types";
 import type { User, WatchedPage, WatchedTitle } from "@/lib/types";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
-import {
-  libraryOptions,
-  typesWorthNaming,
-} from "@/lib/watched-libraries";
+import { libraryOptions } from "@/lib/watched-libraries";
 
 const PAGE = 25;
 
@@ -96,7 +93,6 @@ export function WatchHistory({
     mediaType,
     library,
   );
-  const namedTypes = typesWorthNaming(query.data?.libraries ?? []);
 
   return (
     <div className="space-y-4">
@@ -195,18 +191,16 @@ export function WatchHistory({
                           ({item.year})
                         </span>
                       ) : null}
-                      {/* Which Plex libraries hold it. Two names is a title stored twice — this row
-                          used to be two rows, each with its own Block button that did the same
-                          thing. Drawn only where it distinguishes something (`typesWorthNaming`),
-                          and never for a watch cached before the name was recorded — the next sync
-                          fills that in, and no line is better than a guessed one. */}
-                      {item.libraries.length > 0 &&
-                        (item.libraries.length > 1 ||
-                          namedTypes.has(item.media_type)) && (
-                          <span className="block text-xs text-muted-foreground/80">
-                            {item.libraries.join(" · ")}
-                          </span>
-                        )}
+                      {/* Which Plex libraries hold it — on EVERY row, not only where it
+                          disambiguates. Two names is a title stored twice: this row used to be two
+                          rows, each with its own Block button that did the same thing. Absent only
+                          for a watch cached before the name was recorded; the next sync fills that
+                          in, and no line is better than a guessed one. */}
+                      {item.libraries.length > 0 && (
+                        <span className="block text-xs text-muted-foreground/80">
+                          {item.libraries.join(" · ")}
+                        </span>
+                      )}
                     </span>
                     <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
                       {item.media_type === "show" ? "Show" : "Movie"}

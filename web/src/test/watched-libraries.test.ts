@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  libraryOptions,
-  typesWorthNaming,
-} from "@/lib/watched-libraries";
+import { libraryOptions } from "@/lib/watched-libraries";
 
 const lib = (name: string, media_type: string) => ({ name, media_type });
 
@@ -67,23 +64,5 @@ describe("libraryOptions", () => {
       "Movies",
       "TV Shows",
     ]);
-  });
-});
-
-describe("typesWorthNaming", () => {
-  it("names no type when each has one library", () => {
-    expect(typesWorthNaming(ONE_PER_TYPE)).toEqual(new Set());
-  });
-
-  it("names only the type that actually has a choice", () => {
-    // Movies gain a library line; TV rows don't, because "TV Shows" under every show says nothing
-    // the "Show ·" on the same line hasn't already said.
-    expect(
-      typesWorthNaming([...ONE_PER_TYPE, lib("4K Movies", "movie")]),
-    ).toEqual(new Set(["movie"]));
-  });
-
-  it("names both when both are split", () => {
-    expect(typesWorthNaming(SEVEN)).toEqual(new Set(["movie", "show"]));
   });
 });

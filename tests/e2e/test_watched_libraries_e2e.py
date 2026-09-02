@@ -71,10 +71,18 @@ class TestATitleInTwoLibraries:
     def test_no_library_filter_appears_on_a_one_library_per_type_server(self, page: Page, app: ShortlistApp, fake_plex):
         """`seed_state`'s default layout — one "Movies", one "TV Shows" — is the common server, and
         the one the maintainer runs. A library dropdown there offers the same two words as the
-        Movies/Shows buttons next to it, so it must not be rendered at all."""
-        _sync_and_open_history(page, app)
+        Movies/Shows buttons next to it, so it must not be rendered at all.
 
-        expect(page.get_by_text("Movie 04", exact=True)).to_be_visible(timeout=15_000)
+        The library NAME on each row stays, though. An earlier build extended the dropdown's rule to
+        the rows as well and so hid the tag on exactly this layout — which is most servers, and is
+        the feature the issue asked for. The two are pinned together here so they cannot drift apart
+        again.
+        """
+        _sync_and_open_history(page, app)
+        row = page.locator("li").filter(has_text="Movie 04")
+
+        expect(row).to_have_count(1, timeout=15_000)
+        expect(row.get_by_text("Movies", exact=True)).to_be_visible()
         expect(page.get_by_label(re.compile("filter by library", re.IGNORECASE))).to_have_count(0)
 
     def test_the_filter_offers_the_libraries_and_narrows_to_one(self, page: Page, app: ShortlistApp, fake_plex):
