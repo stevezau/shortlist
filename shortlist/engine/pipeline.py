@@ -1505,12 +1505,29 @@ def _row_keys_by_slug(ctx: EngineContext, report: RunReport, section_key: str) -
     SFLIX 2026-09-01: the run's catch-all moved 70 rows and the pass 20 seconds later moved exactly
     those 70 back.
 
-    The breakdown is the same per-(row, library) record the adapter persists the ledger FROM
-    (`run_persistence._record_deliveries`), so the overlay is that write applied early rather than a
-    second source of truth. A dry run carries `rating_key: 0` and contributes nothing, which is
-    right: it created no collection.
+    The overlay is the adapter's ledger write applied early, not a second source of truth — so it
+    replays BOTH of that write's steps, in its order: forget what the run removed
+    (`_forget_removed_deliveries`), then record what it delivered (`_record_deliveries`,
+    `run_persistence._persist_user_report`). Recording alone is not the same write. Plex ratingKeys
+    are rowids and get reused (`rows.py` guards delivery against exactly this), so an id freed by an
+    in-run removal — a muted or retired row, a cold-start skip — can be handed to a collection
+    created later in the SAME run. Keep the removed row's entry and that one collection is then
+    claimed by two groups: it gets moved twice in a single pass and audited twice, which is two
+    counts toward the contention alert this function exists to stop arming. It also re-creates the
+    exact ambiguity `context_builder._delivered_keys` drops the key for.
+
+    Shared rows come through here too: `rows.py` appends each one's report to `report.users` under
+    `shared_<row slug>`, which is the same string the ledger's `user_slug` holds for them, so the
+    overlay replaces their entry rather than adding a second. They are rebuilt by the same
+    large-turnover path and had the same bug.
+
+    A dry run carries `rating_key: 0` and contributes nothing, which is right: it created no
+    collection.
     """
     keys: dict[tuple[str, str, str], int] = dict(ctx.delivered_keys)
+    for user in report.users:
+        for entry in user.removed_deliveries or []:
+            keys.pop((user.slug, entry.get("row_slug") or "", str(entry.get("library_key") or "")), None)
     for user in report.users:
         for entry in user.breakdown or []:
             rating_key = int(entry.get("rating_key") or 0)

@@ -1736,7 +1736,13 @@ def test_a_row_rebuilt_this_run_is_placed_by_its_own_group_not_the_catch_all():
             UserRunReport(
                 username="ann",
                 slug="ann",
-                breakdown=[{"row_slug": "picked", "library_key": "1", "rating_key": 12}],
+                breakdown=[
+                    {"row_slug": "picked", "library_key": "1", "rating_key": 12},
+                    # The SAME row in another library, rebuilt in the same run. Its key must not
+                    # reach library 1's group — the overlay keys on (user, row, library), and
+                    # without the library the two entries collide and one library wins both.
+                    {"row_slug": "picked", "library_key": "2", "rating_key": 99},
+                ],
             )
         ],
     )
@@ -1747,6 +1753,108 @@ def test_a_row_rebuilt_this_run_is_placed_by_its_own_group_not_the_catch_all():
         f"ann's rebuilt row was swept to the library default instead of its own slot: {titles}"
     )
     assert abs(titles.index("picked-ann") - titles.index("picked-bob")) == 1  # the group stayed one block
+    # The dead key must LEAVE the group, not merely be joined by the live one. A union would place
+    # the row correctly and still name a collection that no longer exists, which is the audit branch
+    # `_apply_order` writes when a group's ratingKeys match nothing on the shelf.
+    assert not [e for e in report.hub_orderings if "no longer exists" in (e.get("reason") or "")]
+
+
+def test_a_ratingkey_freed_by_an_in_run_removal_is_not_left_in_its_old_row_s_group():
+    """Plex ratingKeys are rowids and get reused: a row removed at the top of a run frees an id that
+    a collection created later in the SAME run can be handed (`rows.py` guards delivery against
+    exactly this). The overlay replays the adapter's ledger write, and that write is two steps —
+    forget the removals, THEN record the deliveries.
+
+    Record-only keeps the removed row's entry, so the reused id names two rows at once: the
+    collection lands in two groups, is moved twice in one pass and audited twice. That is two counts
+    toward the very contention alert this overlay exists to stop arming.
+    """
+    from types import SimpleNamespace
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec, RunReport, UserRunReport
+    from shortlist.engine.pipeline import _order_phase
+
+    # A foreign hub between the anchor and the reused collection, so the 'after Letzte Chance' group
+    # genuinely has to move it. Without that the shelf already satisfies that group, it returns
+    # "already in place", and the double-move this pins cannot appear at all.
+    hubs = [
+        FakeHub("Letzte Chance", "lc", collection=False),
+        FakeHub("Kometa Genre", "kg", collection=False),
+        FakeHub("gone-ann", "55"),
+        FakeHub("picked-ann", "66"),
+    ]
+    colls = [
+        # 'retired' was deleted this run; Plex handed its ratingKey 55 to the row created after it.
+        FakeColl("gone-ann", ["shortlist_ann"], 55),
+        FakeColl("picked-ann", ["shortlist_ann"], 66),
+    ]
+    section = FakeSection(hubs, title="Filme", key=1)
+    section.type = "movie"
+    cfg = EngineConfig(
+        manage_shelf_order=True,
+        hub_anchors={"1": HubAnchor(to_top=True)},
+        rows=[
+            RowSpec(slug="picked", name_template="Picked", size=10, hub_anchors={"1": HubAnchor("Letzte Chance")}),
+            RowSpec(slug="retired", name_template="Retired", size=10, hub_anchors={"1": HubAnchor(to_top=True)}),
+        ],
+    )
+    ctx = SimpleNamespace(
+        config=cfg,
+        delivery_sections=[section],
+        plex=_client(colls),
+        write_lock=threading.Lock(),
+        delivered_keys={("ann", "retired", "1"): 55, ("ann", "picked", "1"): 66},
+    )
+    report = RunReport(
+        started_at=datetime.now(UTC),
+        users=[
+            UserRunReport(
+                username="ann",
+                slug="ann",
+                removed_deliveries=[{"row_slug": "retired", "library_key": "1"}],
+                breakdown=[{"row_slug": "picked", "library_key": "1", "rating_key": 55}],
+            )
+        ],
+    )
+    _order_phase(ctx, report)
+
+    moved = [title for entry in report.hub_orderings for title in (entry.get("moved") or [])]
+    assert moved.count("gone-ann") <= 1, f"one collection moved by two groups in a single pass: {moved}"
+
+
+def test_the_overlay_ignores_a_dry_run_and_covers_shared_rows():
+    """Two shapes of `report.users` the overlay has to get right, and neither has a row of its own
+    above: a DRY RUN, whose breakdown carries `rating_key: 0` because delivery returns before the
+    key is assigned — it created nothing, so it must not claim anything; and a SHARED row, whose
+    report slug is `shared_<row slug>`, the same string the ledger's `user_slug` holds for it, so
+    the overlay replaces that entry rather than adding a second one beside it.
+    """
+    from types import SimpleNamespace
+
+    from shortlist.engine.models import RunReport, UserRunReport
+    from shortlist.engine.pipeline import _row_keys_by_slug
+
+    ctx = SimpleNamespace(delivered_keys={("shared_popular", "popular", "1"): 70, ("ann", "picked", "1"): 80})
+    report = RunReport(
+        started_at=datetime.now(UTC),
+        users=[
+            UserRunReport(
+                username="popular",
+                slug="shared_popular",
+                breakdown=[{"row_slug": "popular", "library_key": "1", "rating_key": 71}],
+            ),
+            UserRunReport(
+                username="ann",
+                slug="ann",
+                breakdown=[{"row_slug": "picked", "library_key": "1", "rating_key": 0}],  # dry run
+            ),
+        ],
+    )
+
+    keys = _row_keys_by_slug(ctx, report, "1")
+
+    assert keys["popular"] == {71}, "a shared row's new key must REPLACE its ledger entry, not join it"
+    assert keys["picked"] == {80}, "a dry run created no collection, so it must claim no key"
 
 
 def test_a_stale_ledger_key_is_recorded_not_silently_defaulted():
