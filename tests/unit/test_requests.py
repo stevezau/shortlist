@@ -1720,9 +1720,11 @@ class FakeSeerr:
         self,
         *,
         state: dict[tuple[str, int], str] | None = None,
+        blocked: set[tuple[str, int]] | None = None,
         raise_on_state: Exception | None = None,
         target: SeerrTarget = OVERSEERR,
     ):
+        self.blocked = blocked or set()
         # The real client exposes this so `_send_claims` can key its client cache by it. A fake
         # without it made the send path AttributeError the moment that cache was introduced — which
         # is the fake being easier than the server, the one thing the testing rules forbid.
@@ -1731,6 +1733,9 @@ class FakeSeerr:
         self.raise_on_state = raise_on_state
         self.state_calls = 0
         self.requests: list[tuple[int, MediaType, bool]] = []
+
+    def blocklisted(self) -> set[tuple[str, int]]:
+        return self.blocked
 
     def media_state(self) -> dict[tuple[str, int], str]:
         self.state_calls += 1
@@ -1858,3 +1863,24 @@ class TestOverseerrTarget:
         `overseerr` target the route ignores is only ever a way to send to the wrong app."""
         cfg = RequestConfig(enabled=True, overseerr=OVERSEERR)
         assert cfg.target == "overseerr"
+
+    def test_a_blocklisted_title_is_flagged_rather_than_asked_for_again(self, monkeypatch):
+        """The gap this closes. This route was documented as having no "never fetch this" list — it
+        has one, spelled `/blocklist`, and ignoring it meant re-asking every night for exactly the
+        titles the owner had gone out of their way to refuse."""
+        fake = FakeSeerr(blocked={("movie", 603)})
+        demand = self._demand(
+            MissingTitle(603, "blocklisted", MediaType.MOVIE, 1999, rating=8.7, vote_count=900, demand=3),
+            MissingTitle(604, "fine", MediaType.MOVIE, 1999, rating=8.6, vote_count=900, demand=3),
+        )
+        _, report = self._run(monkeypatch, fake, demand)
+        # Kept, flagged, and held OUT of auto-send — the existing `excluded` machinery already does
+        # the right thing once the flag is set, so the blocklisted title lands in the inbox with its
+        # reason on it instead of being asked for again or silently vanishing.
+        assert [t for t, _, _ in fake.requests] == [604]
+        assert [m.tmdb_id for m in report.sent] == [604]
+        queued = {m.tmdb_id: m for m in report.queued}
+        assert queued[603].excluded is True
+        # The reason travels ON the title, which is what the inbox renders — and it names the
+        # BLOCKLIST, not "an Arr exclusion list", so the owner is sent to the app that holds it.
+        assert queued[603].detail == "on the blocklist"

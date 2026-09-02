@@ -1,7 +1,20 @@
 {
-  "_provenance": "NOT recorded from a live server — built from Overseerr's published OpenAPI spec (overseerr-api.yml, User schema + GET /user) on 2026-09-02. Re-record against a real instance when one is available.",
-  "_caveat": "`displayName` is what the Overseerr UI shows and what the live API returns, but it is NOT in the published User schema — which documents `username`, `plexUsername` and `email`. The client falls through all four in that order, so a fork returning only the documented fields still names every account.",
-  "pageInfo": { "pages": 1, "pageSize": 100, "results": 3, "page": 1 },
+  "_provenance": "Shape RECORDED from a live Seerr 3.4.1 on 2026-09-02 (GET /api/v1/user, 62 accounts); the identities here are FABRICATED. The key set, the null pattern and pageInfo are verbatim from that response \u2014 the names, emails and ids are not, because the real ones are 62 real people.",
+  "_what_the_live_response_settled": {
+    "username_was_null_on_all_62": "Every account on a Plex-backed instance names itself with displayName + plexUsername; `username` \u2014 the field the published User schema documents \u2014 was null throughout. So displayName is not a nicety, it is the field that does the work, and it is the one the published schema omits. The client's fallback order (displayName -> username -> plexUsername -> email) is what makes both shapes work.",
+    "displayName_present": 62,
+    "plexUsername_present": 62,
+    "username_present": 0,
+    "userTypes_seen": [
+      1
+    ]
+  },
+  "pageInfo": {
+    "pages": 1,
+    "pageSize": 100,
+    "results": 3,
+    "page": 1
+  },
   "results": [
     {
       "id": 1,
@@ -9,9 +22,17 @@
       "username": null,
       "plexUsername": "serverowner",
       "displayName": "serverowner",
+      "plexId": 111111,
       "userType": 1,
       "permissions": 2,
-      "requestCount": 42
+      "requestCount": 42,
+      "avatar": "https://plex.tv/users/0000000000000000/avatar?c=0",
+      "movieQuotaLimit": null,
+      "movieQuotaDays": null,
+      "tvQuotaLimit": null,
+      "tvQuotaDays": null,
+      "createdAt": "2026-01-02T10:00:27.000Z",
+      "updatedAt": "2026-08-30T10:00:27.000Z"
     },
     {
       "id": 4,
@@ -19,9 +40,17 @@
       "username": "Shortlist",
       "plexUsername": null,
       "displayName": "Shortlist",
+      "plexId": null,
       "userType": 2,
       "permissions": 32,
-      "requestCount": 0
+      "requestCount": 0,
+      "avatar": "/os_logo_square.png",
+      "movieQuotaLimit": null,
+      "movieQuotaDays": null,
+      "tvQuotaLimit": null,
+      "tvQuotaDays": null,
+      "createdAt": "2026-08-01T10:00:27.000Z",
+      "updatedAt": "2026-08-01T10:00:27.000Z"
     },
     {
       "id": 7,
@@ -29,9 +58,17 @@
       "username": null,
       "plexUsername": "moohouse",
       "displayName": "MooHouse",
+      "plexId": 222222,
       "userType": 1,
       "permissions": 32,
-      "requestCount": 8
+      "requestCount": 8,
+      "avatar": "https://plex.tv/users/0000000000000000/avatar?c=0",
+      "movieQuotaLimit": null,
+      "movieQuotaDays": null,
+      "tvQuotaLimit": null,
+      "tvQuotaDays": null,
+      "createdAt": "2026-02-11T10:00:27.000Z",
+      "updatedAt": "2026-08-29T10:00:27.000Z"
     }
   ]
 }

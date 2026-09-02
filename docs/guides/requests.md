@@ -98,9 +98,11 @@ no part in.
 - **Tags don't travel.** Overseerr's request API has no tags field, so the global **Tag added
   items** setting and the per-person tags have nothing to attach to — those controls disappear from
   the screen when you switch. The "Request as" account is the attribution instead.
-- **There's no blocklist.** Radarr and Sonarr keep an import-exclusion list ("never fetch this");
-  Overseerr has no equivalent, so a title you don't want has to be turned down in Shortlist's own
-  Requests inbox. A rejected title is never asked for again, so one **No** is enough.
+- **The blocklist is read, but only on the newer builds.** Overseerr, Jellyseerr and Seerr keep a
+  blocklist ("never fetch this"), and Shortlist reads it: a blocklisted title is never sent on its
+  own, and lands in your Requests inbox flagged with why. Older builds serve no blocklist endpoint,
+  and there Shortlist simply applies none — so turn those titles down in the Requests inbox instead.
+  Either way a rejected title is never asked for again, so one **No** is enough.
 
 Everything else is unchanged: the same guardrails, the same auto-send bar, the same inbox. The only
 difference is who does the fetching.

@@ -33,6 +33,26 @@ def _media_page() -> dict:
     return json.loads((FIXTURES / "overseerr_media_page.json").read_text())
 
 
+def _fixture_ids() -> dict[int, tuple[str, int]]:
+    """``{status: (media_type, tmdb_id)}`` from the recorded page — one row per status.
+
+    Derived, never hard-coded: this fixture holds REAL ids from a real server, and re-recording it
+    changes every one of them. A test that pins the numbers would have to be rewritten each time,
+    which is how a fixture quietly stops being re-recorded.
+    """
+    return {r["status"]: (r["mediaType"], r["tmdbId"]) for r in _media_page()["results"]}
+
+
+def _fixture_id(status: int, kind: str) -> int:
+    """The recorded tmdb id for one (status, mediaType) pair.
+
+    Keyed on BOTH, because several statuses appear as a movie AND a tv row and a status-only lookup
+    silently returns whichever came last — which is how this helper first handed a `tv` id to a
+    `MediaType.MOVIE` call and made a "skipped" test assert "requested" instead.
+    """
+    return next(r["tmdbId"] for r in _media_page()["results"] if r["status"] == status and r["mediaType"] == kind)
+
+
 def _users_page() -> dict:
     return json.loads((FIXTURES / "overseerr_users_page.json").read_text())
 
@@ -99,22 +119,55 @@ class TestMediaState:
         with respx.mock:
             respx.get(f"{BASE}/media").mock(return_value=httpx.Response(200, json=_media_page()))
             state = _client().media_state()
-        assert state[("movie", 273481)] == "downloaded"  # 5 AVAILABLE
-        assert state[("movie", 496243)] == "downloading"  # 3 PROCESSING
-        assert state[("movie", 12345)] == "queued"  # 2 PENDING
-        assert state[("show", 1399)] == "downloading"  # 4 PARTIALLY_AVAILABLE
-        assert state[("show", 82856)] == "downloaded"
+        ids = _fixture_ids()
 
-    def test_a_deleted_row_is_not_known_so_the_title_stays_requestable(self):
-        """Status 6 (DELETED) and 1 (UNKNOWN) say nothing is on its way.
+        def status_of(code: int) -> str | None:
+            kind, tmdb_id = ids[code]
+            return state[("movie" if kind == "movie" else "show", tmdb_id)]
 
-        Treating them as "present" would make a title Overseerr once held, and no longer has,
-        permanently unrequestable — the library would have a hole nothing could ever fill.
+        assert status_of(5) == "downloaded"  # AVAILABLE
+        assert status_of(2) == "queued"  # PENDING — awaiting approval
+        # PROCESSING and PARTIALLY_AVAILABLE are NOT "downloading". Measured on the server this
+        # fixture came from: 76 rows were PROCESSING and exactly ONE was moving — the rest are
+        # approved-but-unreleased films and airing series, resting there indefinitely.
+        assert status_of(3) == "queued"  # PROCESSING, nothing in the download client
+        assert status_of(4) == "queued"  # PARTIALLY_AVAILABLE
+
+    def test_downloadstatus_is_what_makes_a_title_downloading(self):
+        """The only honest "moving right now" signal the API offers — it carries the download
+        client's own sizeLeft/timeLeft, so a non-empty one is a fact rather than an inference."""
+        rows = {
+            "pageInfo": {"pages": 1},
+            "results": [
+                {"mediaType": "movie", "tmdbId": 1, "status": 3, "downloadStatus": []},
+                {"mediaType": "movie", "tmdbId": 2, "status": 3, "downloadStatus": [{"sizeLeft": 42}]},
+            ],
+        }
+        with respx.mock:
+            respx.get(f"{BASE}/media").mock(return_value=httpx.Response(200, json=rows))
+            state = _client().media_state()
+        assert state[("movie", 1)] == "queued"
+        assert state[("movie", 2)] == "downloading"
+
+    def test_a_deleted_or_unknown_row_is_not_known_so_the_title_stays_requestable(self):
+        """DELETED and UNKNOWN say nothing is on its way.
+
+        Treating them as "present" would make a title the server once held, and no longer has,
+        permanently unrequestable — a hole in the library that nothing could ever fill. Between them
+        these were 1,828 of the 5,000 sampled rows, so this is the common case, not an edge.
+
+        DELETED is 7 here, which is documented NOWHERE — not in Overseerr's spec and not in the
+        server's own shipped seerr-api.yml, both of which say 6 and stop. Only the running code says
+        otherwise. Which is why the mapping is an allow-list: an unrecognised code means "unknown",
+        and unknown means requestable.
         """
+        ids = _fixture_ids()
         with respx.mock:
             respx.get(f"{BASE}/media").mock(return_value=httpx.Response(200, json=_media_page()))
             state = _client().media_state()
-        assert ("movie", 999999) not in state
+        for code in (1, 7):
+            kind, tmdb_id = ids[code]
+            assert ("movie" if kind == "movie" else "show", tmdb_id) not in state
 
     def test_show_ids_are_keyed_by_tmdb_not_tvdb(self):
         """The reason this target needs no TVDB crossing at all.
@@ -125,23 +178,27 @@ class TestMediaState:
         with respx.mock:
             respx.get(f"{BASE}/media").mock(return_value=httpx.Response(200, json=_media_page()))
             state = _client().media_state()
-        assert ("show", 1399) in state
-        assert ("show", 121361) not in state
+        row = next(r for r in _media_page()["results"] if r["mediaType"] == "tv" and r.get("tvdbId"))
+        assert ("show", row["tmdbId"]) in state
+        assert ("show", row["tvdbId"]) not in state
 
     def test_pages_until_a_short_page(self):
+        size = SeerrClient._PAGE_SIZE
         page_one = {
             "pageInfo": {"pages": 2},
-            "results": [{"mediaType": "movie", "tmdbId": i, "status": 5} for i in range(100)],
+            "results": [{"mediaType": "movie", "tmdbId": i, "status": 5} for i in range(size)],
         }
-        page_two = {"pageInfo": {"pages": 2}, "results": [{"mediaType": "movie", "tmdbId": 500, "status": 5}]}
+        page_two = {"pageInfo": {"pages": 2}, "results": [{"mediaType": "movie", "tmdbId": 999_999, "status": 5}]}
         with respx.mock:
             route = respx.get(f"{BASE}/media").mock(
                 side_effect=[httpx.Response(200, json=page_one), httpx.Response(200, json=page_two)]
             )
             state = _client().media_state()
-        assert len(state) == 101
-        assert ("movie", 500) in state
-        assert route.calls[1].request.url.params["skip"] == "100"
+        assert len(state) == size + 1
+        assert ("movie", 999_999) in state
+        # Derived from the constant, not hard-coded: the page size is a measured value that has
+        # already changed once (100 -> 1000 after walking a real 26,941-row library).
+        assert route.calls[1].request.url.params["skip"] == str(size)
 
     def test_a_page_with_no_usable_mediatype_warns_rather_than_reading_as_an_empty_library(self):
         """The one shape that would fail silently.
@@ -248,7 +305,8 @@ class TestRequestTitle:
         with respx.mock:
             self._mock_media()
             post = respx.post(f"{BASE}/request")
-            status, detail, _ = _client().request_title(273481, MediaType.MOVIE, dry_run=False)
+            tmdb_id = _fixture_id(5, "movie")  # an AVAILABLE film from the recorded page
+            status, detail, _ = _client().request_title(tmdb_id, MediaType.MOVIE, dry_run=False)
         assert status == "skipped_present"
         assert "downloaded" in detail
         assert not post.called
@@ -349,6 +407,11 @@ class TestTheEngineDrivesTheRealClient:
             auto_min_rating=0.0,
         )
 
+    def _mock_blocklist(self, rows=None):
+        return respx.get(f"{BASE}/blocklist").mock(
+            return_value=httpx.Response(200, json={"pageInfo": {"pages": 1}, "results": rows or []})
+        )
+
     def _run(self, demand, *, dry_run=False):
         cfg = self._cfg()
         return requests_mod.request_missing(
@@ -365,6 +428,7 @@ class TestTheEngineDrivesTheRealClient:
             MissingTitle(94997, "a show", MediaType.SHOW, 2022, rating=8.8, vote_count=900, demand=3),
         )
         with respx.mock:
+            self._mock_blocklist()
             respx.get(f"{BASE}/media").mock(
                 return_value=httpx.Response(200, json={"pageInfo": {"pages": 1}, "results": []})
             )
@@ -387,6 +451,7 @@ class TestTheEngineDrivesTheRealClient:
             )
         )
         with respx.mock:
+            self._mock_blocklist()
             media = respx.get(f"{BASE}/media").mock(
                 return_value=httpx.Response(200, json={"pageInfo": {"pages": 1}, "results": []})
             )
@@ -396,10 +461,12 @@ class TestTheEngineDrivesTheRealClient:
         assert media.call_count == 1
 
     def test_a_title_overseerr_already_has_never_reaches_the_wire(self):
+        present_id = _fixture_id(5, "movie")  # an AVAILABLE film from the recorded page
         demand = self._demand(
-            MissingTitle(273481, "already there", MediaType.MOVIE, 2015, rating=8.7, vote_count=900, demand=3),
+            MissingTitle(present_id, "already there", MediaType.MOVIE, 2015, rating=8.7, vote_count=900, demand=3),
         )
         with respx.mock:
+            self._mock_blocklist()
             respx.get(f"{BASE}/media").mock(return_value=httpx.Response(200, json=_media_page()))
             post = respx.post(f"{BASE}/request")
             report = self._run(demand)
@@ -412,6 +479,7 @@ class TestTheEngineDrivesTheRealClient:
             MissingTitle(603, "a movie", MediaType.MOVIE, 1999, rating=8.7, vote_count=900, demand=3),
         )
         with respx.mock:
+            self._mock_blocklist()
             respx.get(f"{BASE}/media").mock(side_effect=httpx.ConnectError("down"))
             post = respx.post(f"{BASE}/request").mock(return_value=httpx.Response(201, json={"id": 1}))
             report = self._run(demand)
@@ -423,6 +491,7 @@ class TestTheEngineDrivesTheRealClient:
             MissingTitle(603, "a movie", MediaType.MOVIE, 1999, rating=8.7, vote_count=900, demand=3),
         )
         with respx.mock:
+            self._mock_blocklist()
             respx.get(f"{BASE}/media").mock(
                 return_value=httpx.Response(200, json={"pageInfo": {"pages": 1}, "results": []})
             )

@@ -22,15 +22,36 @@ from loguru import logger
 from shortlist.engine.clients import http_retry
 from shortlist.engine.models import MediaType, SeerrTarget
 
-#: Overseerr's ``MediaInfo.status`` enum, mapped to the vocabulary the request inbox already speaks
-#: (the same four words ``clients/arr.py`` produces). 1 = UNKNOWN and 6 = DELETED are deliberately
-#: absent: neither says the title is on its way, so a title in those states stays requestable.
+#: ``MediaInfo.status``, mapped to the vocabulary the request inbox already speaks (the same four
+#: words ``clients/arr.py`` produces).
+#:
+#: Only the codes that mean the same thing across the whole family are mapped, and that restraint is
+#: load-bearing, because **the number 6 does not**. Overseerr's published spec calls it DELETED;
+#: Seerr's own shipped `seerr-api.yml` says DELETED too — and its running code
+#: (`/app/dist/constants/media.js`, read off a live 3.4.1) says:
+#:
+#:     UNKNOWN=1 PENDING=2 PROCESSING=3 PARTIALLY_AVAILABLE=4 AVAILABLE=5 BLOCKLISTED=6 DELETED=7
+#:
+#: So 6 is "the owner said never" on one product and "it was removed" on another — opposite meanings
+#: for the same number, and the vendor's own spec is wrong about its own code. 7 is undocumented
+#: everywhere yet accounted for 821 of 5,000 sampled rows on a real server.
+#:
+#: Everything unmapped therefore falls through to "not known", i.e. requestable, which is the safe
+#: direction for a DELETED title. The blocklist is read from ``/blocklist`` instead of inferred from
+#: a number that cannot be trusted — see ``blocklisted()``.
 _STATUS_BY_CODE = {
     2: "queued",  # PENDING — requested, awaiting approval
-    3: "downloading",  # PROCESSING — approved and handed to the Arr
-    4: "downloading",  # PARTIALLY_AVAILABLE — some of a show has landed
+    3: "queued",  # PROCESSING — approved and handed to the download app, which may not have it yet
+    4: "queued",  # PARTIALLY_AVAILABLE — some of a show has landed; the rest is still wanted
     5: "downloaded",  # AVAILABLE
 }
+
+#: What "downloading" is actually decided by. ``PROCESSING`` is not it: on a real server 76 rows were
+#: PROCESSING and exactly ONE was downloading — the rest are approved-but-unreleased films and airing
+#: series, resting there indefinitely. ``downloadStatus`` is the download client's own live view
+#: (it carries sizeLeft/timeLeft/estimatedCompletionTime), so a non-empty one is the only honest
+#: "moving right now" signal the API offers.
+_DOWNLOADING = "downloading"
 
 #: ``mediaType`` as Overseerr spells it, per Shortlist ``MediaType``.
 _MEDIA_TYPE = {MediaType.MOVIE: "movie", MediaType.SHOW: "tv"}
@@ -60,10 +81,14 @@ class SeerrClient:
 
     app_name = "Overseerr"
 
-    #: ``/media`` and ``/user`` are paged. 100 is Overseerr's own UI page size; the cap is a hard stop
-    #: for a server that ignores ``skip`` and answers with a full page forever — 50k media rows is far
-    #: past any real library, so reaching it means paging is broken, not that the library is that big.
-    _PAGE_SIZE = 100
+    #: ``/media``, ``/user`` and ``/blocklist`` are paged. Sized from a measurement, not a guess: a
+    #: real server holds 26,941 media rows, and walking it at Overseerr's own UI page size of 100 took
+    #: 270 requests and 5.0s against 27 requests and 1.5s at 1000. The endpoint honours far larger
+    #: values still (5,000 in 0.19s), but 1000 is where the request count stops being the cost.
+    #:
+    #: The cap is a hard stop for a server that ignores ``skip`` and answers with a full page for
+    #: ever — 500k rows is far past any real library, so reaching it means paging is broken.
+    _PAGE_SIZE = 1000
     _MAX_PAGES = 500
 
     def __init__(
@@ -195,6 +220,9 @@ class SeerrClient:
             if kind is None or tmdb_id is None:
                 continue
             typed += 1
+            if row.get("downloadStatus"):
+                state[(kind, tmdb_id)] = _DOWNLOADING
+                continue
             status = _STATUS_BY_CODE.get(_int_or_none(row.get("status")) or 0)
             if status is not None:
                 state[(kind, tmdb_id)] = status
@@ -237,6 +265,42 @@ class SeerrClient:
             "{}: {} paging hit the {}-page safety cap — reporting a partial list", self.app_name, path, self._MAX_PAGES
         )
         return out
+
+    def blocklisted(self) -> set[tuple[str, int]]:
+        """Titles the owner has told this instance never to fetch, as ``{(media_type, tmdb_id)}``.
+
+        The *seerr equivalent of an Arr import-exclusion list, which this route was documented as
+        lacking — it does not lack it, it spells it differently. Read from the endpoint rather than
+        inferred from ``MediaInfo.status``: BLOCKLISTED is 6 on Seerr/Jellyseerr and 6 is DELETED on
+        Overseerr, so the number cannot tell the two apart while the endpoint always can.
+
+        ``/blocklist`` is the current name and ``/blacklist`` the deprecated alias; older builds and
+        classic Overseerr serve neither. Any failure yields an empty set — no exclusions, which is
+        this whole module's fail-open direction: a redundant request, never a suppressed title.
+        """
+        for path in ("/blocklist", "/blacklist"):
+            try:
+                rows = self._paged(path)
+            except SeerrError as e:
+                logger.debug("{}: {} unavailable ({}) — no blocklist applied", self.app_name, path, e)
+                continue
+            out: set[tuple[str, int]] = set()
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                tmdb_id = _int_or_none(row.get("tmdbId"))
+                if tmdb_id is None:
+                    continue
+                # `media` is a nested MediaInfo and carries the type. A row without one still counts
+                # against BOTH types: half-knowing that the owner said never is not a reason to ask.
+                media = row.get("media")
+                kind = _media_type_of(media) if isinstance(media, dict) else None
+                if kind is None:
+                    out.update({(MediaType.MOVIE.value, tmdb_id), (MediaType.SHOW.value, tmdb_id)})
+                else:
+                    out.add((kind, tmdb_id))
+            return out
+        return set()
 
     def request_title(self, tmdb_id: int, media_type: MediaType, *, dry_run: bool) -> tuple[str, str, str | None]:
         """File one request. Returns ``(status, detail, slug)``; never raises for a normal skip.

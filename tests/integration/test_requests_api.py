@@ -639,9 +639,9 @@ class TestTheOverseerrRoute:
             body = client.get("/api/requests/status").json()
 
         assert body["statuses"]["1"] == "downloaded"  # the movie row (AVAILABLE)
-        # PROCESSING — approved and handed to the Arr. Kept as "downloading" because that is what it
-        # honestly means; what changed for it is the POLL, not the label (see `arrStatusInterval`).
-        assert body["statuses"]["2"] == "downloading"
+        # PROCESSING is "queued", not "downloading": on a real server 76 rows were PROCESSING and
+        # exactly one was moving. Only a non-empty `downloadStatus` earns the word "downloading".
+        assert body["statuses"]["2"] == "queued"
         assert body["overseerr"] == "ok"
         assert body["radarr"] == "off" and body["sonarr"] == "off"
 

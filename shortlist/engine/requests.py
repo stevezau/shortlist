@@ -200,6 +200,7 @@ QUEUE_REASON_PREFIXES = (
     "auto-send is off",
     "this row's own limit",
     "on an Arr exclusion list",
+    "on the blocklist",  # the same fact, on the *seerr route
     "demand below",
     "rating below",
     "max_per_run",
@@ -410,7 +411,20 @@ def _auto_eligible(
         if not cfg.auto_send:
             reason = "auto-send is off"
         elif m.excluded:
-            reason = "on an Arr exclusion list"
+            # Named for the route: the Arrs call it an import-exclusion list and a *seerr calls it a
+            # blocklist, and a reason line that names the wrong one sends the owner to the wrong app
+            # to undo it. Both spellings are in QUEUE_REASON_PREFIXES.
+            #
+            # Written as a plain if/else with a literal in each arm, NOT a conditional expression:
+            # `test_every_queue_reason_the_gate_can_emit_classifies_as_a_threshold` walks this
+            # function's AST and refuses any reason it cannot read as a literal, precisely so a
+            # reason built by a lookup or a helper cannot slip past the classifier unchecked. Ruff's
+            # SIM108 asks for the ternary that test rejects, so it is silenced rather than obeyed —
+            # the linter is arguing about shape, the test is protecting a contract.
+            if cfg.target == "overseerr":  # noqa: SIM108 — see above; a ternary fails that test
+                reason = "on the blocklist"
+            else:
+                reason = "on an Arr exclusion list"
         elif m.demand < cfg.auto_min_demand:
             reason = f"demand below auto_min_demand ({cfg.auto_min_demand})"
         elif m.rating < cfg.auto_min_rating:
@@ -916,7 +930,14 @@ def _apply_seerr_state(
     # while `arr_present` is (tmdb_id, media_type). Getting it round the wrong way costs nothing
     # loudly: every lookup simply misses, so the run silently re-requests the whole library.
     known = {(tmdb_id, kind) for (kind, tmdb_id) in state}
-    kept = [m for m in pool if (m.tmdb_id, m.media_type.value) not in known]
+    blocked = seerr.blocklisted()
+    kept: list[MissingTitle] = []
+    for m in pool:
+        if (m.tmdb_id, m.media_type.value) in known:
+            continue
+        if (m.media_type.value, m.tmdb_id) in blocked:
+            m.excluded = True
+        kept.append(m)
     return kept, len(pool) - len(kept), known
 
 
