@@ -6,6 +6,23 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+
+- **A row can now take days off.** Rows were permanent fixtures: once built, one sat on everybody's
+  Home until you switched it off or deleted it. Open a row and set **When it appears → Only on these
+  days**, and it shows on the days you pick and is hidden the rest of the time.
+
+  Two rows can cover a week between them — one on Monday, Wednesday and Friday, another filling the
+  rest — so the Home screen is not the same every night. On its off days a row is hidden, not
+  deleted: it keeps its titles and comes straight back on its next day without being rebuilt, so this
+  costs a few milliseconds rather than the minutes a rebuild takes on a large TV library.
+
+  Days turn over at midnight, on the server's clock. Changing them takes effect immediately rather
+  than waiting for the night. The Rows page shows **Showing today** or **Hidden today** against any
+  row that has a schedule, because a row that is simply missing is indistinguishable from a broken
+  one — and some Plex apps only notice the change once you leave the Home screen and come back. A
+  Roku re-reads it on its own; a Shield needs the nudge. (#102)
+
 ### Fixed
 
 - **"Something else is reordering your shelf" no longer fires when nothing else is.** A row rebuilt
