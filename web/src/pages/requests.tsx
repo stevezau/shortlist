@@ -369,6 +369,13 @@ const ARR_STATUS_LABELS: Record<
   downloaded: { label: "Downloaded", variant: "success" },
   downloading: { label: "Downloading", variant: "default" },
   queued: { label: "Searching", variant: "secondary" },
+  // Overseerr-route only — no Arr ever reports it. Amber like `unmonitored` and for the same reason:
+  // nothing is coming until a person acts, and that person is the one reading this.
+  awaiting_approval: {
+    label: "Waiting for approval",
+    variant: "warning",
+    hint: "Shortlist filed this request and Overseerr is holding it for someone to approve. Approve it there and it will go to Radarr or Sonarr — or change who requests go out as, in Settings › Requests, if you would rather they were approved automatically.",
+  },
   // Amber, because nothing is coming and only a person can change that. It used to have exactly one
   // cause — somebody unmonitored it by hand — so the colour was the whole message. "How much of a
   // show to grab" set to None now produces the same state on purpose, so the badge has to say which

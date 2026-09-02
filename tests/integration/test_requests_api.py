@@ -631,7 +631,7 @@ class TestTheOverseerrRoute:
             "pageInfo": {"pages": 1},
             "results": [
                 {"mediaType": "movie", "tmdbId": 10, "status": 5},
-                {"mediaType": "tv", "tmdbId": 20, "status": 3},
+                {"mediaType": "tv", "tmdbId": 20, "status": 2},
             ],
         }
         with respx.mock:
@@ -639,9 +639,10 @@ class TestTheOverseerrRoute:
             body = client.get("/api/requests/status").json()
 
         assert body["statuses"]["1"] == "downloaded"  # the movie row (AVAILABLE)
-        # PROCESSING is "queued", not "downloading": on a real server 76 rows were PROCESSING and
-        # exactly one was moving. Only a non-empty `downloadStatus` earns the word "downloading".
-        assert body["statuses"]["2"] == "queued"
+        # PENDING is its own word, so the inbox can say "waiting for approval" rather than dressing
+        # it up as "Searching". (PROCESSING is "queued" and only `downloadStatus` earns
+        # "downloading" — on a real server 76 rows were PROCESSING and exactly one was moving.)
+        assert body["statuses"]["2"] == "awaiting_approval"
         assert body["overseerr"] == "ok"
         assert body["radarr"] == "off" and body["sonarr"] == "off"
 

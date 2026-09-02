@@ -1460,6 +1460,28 @@ describe("RequestsPage — what Sonarr/Radarr has", () => {
     expect(screen.getByText("Downloading")).toBeInTheDocument();
   });
 
+  it("says a pending request is waiting for a person, not searching", async () => {
+    // "Searching" is right for an Arr that is monitoring and hunting. On this route PENDING means
+    // the request is sitting in Overseerr waiting for someone to approve it — the one state here
+    // the owner can actually act on, so it must not read as the machine already working.
+    listRequests.mockResolvedValue([candidate({ id: 1, title: "Dune" })]);
+    getArrStatus.mockResolvedValue({
+      statuses: { "1": "awaiting_approval" },
+      radarr: "off",
+      sonarr: "off",
+      overseerr: "ok",
+    });
+    getSettings.mockResolvedValue({
+      "requests.enabled": true,
+      "requests.target": "overseerr",
+      "requests.overseerr.url": "http://overseerr.test",
+    });
+    renderPage();
+
+    expect(await screen.findByText("Waiting for approval")).toBeInTheDocument();
+    expect(screen.queryByText("Searching")).toBeNull();
+  });
+
   it("names Overseerr, never the Arrs, everywhere on that route", async () => {
     // Found by looking at the running app, not by reading the diff: ten review rounds and an
     // architecture review all missed four strings on this page — the header, the bulk button, the

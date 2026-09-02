@@ -40,7 +40,11 @@ from shortlist.engine.models import MediaType, SeerrTarget
 #: direction for a DELETED title. The blocklist is read from ``/blocklist`` instead of inferred from
 #: a number that cannot be trusted — see ``blocklisted()``.
 _STATUS_BY_CODE = {
-    2: "queued",  # PENDING — requested, awaiting approval
+    # Its own word, not "queued". The inbox renders "queued" as **Searching**, which is exactly right
+    # for an Arr that is monitoring and hunting — and wrong here, where PENDING means the request is
+    # sitting in the *seerr waiting for a person. That is the one state on this route the owner can
+    # actually do something about, so it must not be dressed up as the machine working.
+    2: "awaiting_approval",  # PENDING
     3: "queued",  # PROCESSING — approved and handed to the download app, which may not have it yet
     4: "queued",  # PARTIALLY_AVAILABLE — some of a show has landed; the rest is still wanted
     5: "downloaded",  # AVAILABLE
@@ -111,6 +115,7 @@ class SeerrClient:
         # to send, and every one of those walks fails for the same reason.
         self._media_state: dict[tuple[str, int], str] | None = None
         self._media_error: SeerrError | None = None
+        self._blocklist: set[tuple[str, int]] | None = None
 
     @property
     def target(self) -> SeerrTarget:
@@ -278,6 +283,12 @@ class SeerrClient:
         classic Overseerr serve neither. Any failure yields an empty set — no exclusions, which is
         this whole module's fail-open direction: a redundant request, never a suppressed title.
         """
+        if self._blocklist is not None:
+            return self._blocklist
+        self._blocklist = self._fetch_blocklist()
+        return self._blocklist
+
+    def _fetch_blocklist(self) -> set[tuple[str, int]]:
         for path in ("/blocklist", "/blacklist"):
             try:
                 rows = self._paged(path)

@@ -923,6 +923,11 @@ def _apply_seerr_state(
         return pool, 0, set()
     try:
         state = seerr.media_state()
+        # Inside the same guard, not after it. `blocklisted()` swallows its own transport errors, but
+        # a shape it cannot parse must not be the one thing in this function that fails the request
+        # pass — the whole point here is that a reconcile problem costs a redundant request, never a
+        # run.
+        blocked = seerr.blocklisted()
     except SeerrError as e:
         logger.warning("Overseerr state fetch failed, skipping that check this run: {}", e)
         return pool, 0, set()
@@ -930,7 +935,6 @@ def _apply_seerr_state(
     # while `arr_present` is (tmdb_id, media_type). Getting it round the wrong way costs nothing
     # loudly: every lookup simply misses, so the run silently re-requests the whole library.
     known = {(tmdb_id, kind) for (kind, tmdb_id) in state}
-    blocked = seerr.blocklisted()
     kept: list[MissingTitle] = []
     for m in pool:
         if (m.tmdb_id, m.media_type.value) in known:

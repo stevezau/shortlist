@@ -126,7 +126,9 @@ class TestMediaState:
             return state[("movie" if kind == "movie" else "show", tmdb_id)]
 
         assert status_of(5) == "downloaded"  # AVAILABLE
-        assert status_of(2) == "queued"  # PENDING — awaiting approval
+        # PENDING gets its OWN word: the inbox renders "queued" as "Searching", which would dress up
+        # "a person has not approved this yet" as the machine already working on it.
+        assert status_of(2) == "awaiting_approval"
         # PROCESSING and PARTIALLY_AVAILABLE are NOT "downloading". Measured on the server this
         # fixture came from: 76 rows were PROCESSING and exactly ONE was moving — the rest are
         # approved-but-unreleased films and airing series, resting there indefinitely.
@@ -516,3 +518,81 @@ class _EngineTmdb:
 
     def overview(self, tmdb_id: int, media_type) -> str:
         return ""
+
+
+class TestTheBlocklist:
+    """The exclusion list this route was wrongly documented as lacking."""
+
+    def test_blocklisted_titles_come_back_keyed_by_type_and_id(self):
+        rows = {
+            "pageInfo": {"pages": 1},
+            "results": [
+                {"tmdbId": 603, "title": "x", "media": {"mediaType": "movie", "tmdbId": 603}},
+                {"tmdbId": 1399, "title": "y", "media": {"mediaType": "tv", "tmdbId": 1399}},
+            ],
+        }
+        with respx.mock:
+            respx.get(f"{BASE}/blocklist").mock(return_value=httpx.Response(200, json=rows))
+            assert _client().blocklisted() == {("movie", 603), ("show", 1399)}
+
+    def test_a_row_with_no_media_object_blocks_both_types(self):
+        """Half-knowing that the owner said never is not a reason to ask."""
+        rows = {"pageInfo": {"pages": 1}, "results": [{"tmdbId": 603, "title": "x"}]}
+        with respx.mock:
+            respx.get(f"{BASE}/blocklist").mock(return_value=httpx.Response(200, json=rows))
+            assert _client().blocklisted() == {("movie", 603), ("show", 603)}
+
+    def test_it_falls_back_to_the_deprecated_alias(self):
+        with respx.mock:
+            respx.get(f"{BASE}/blocklist").mock(return_value=httpx.Response(404))
+            respx.get(f"{BASE}/blacklist").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={"pageInfo": {"pages": 1}, "results": [{"tmdbId": 7, "media": {"mediaType": "movie"}}]},
+                )
+            )
+            assert _client().blocklisted() == {("movie", 7)}
+
+    def test_an_instance_serving_neither_simply_has_no_blocklist(self):
+        """Classic Overseerr. Fails OPEN — a redundant request, never a suppressed title."""
+        with respx.mock:
+            respx.get(f"{BASE}/blocklist").mock(return_value=httpx.Response(404))
+            respx.get(f"{BASE}/blacklist").mock(return_value=httpx.Response(404))
+            assert _client().blocklisted() == set()
+
+    def test_a_successful_empty_read_is_authoritative_and_does_not_try_the_alias(self):
+        """An empty blocklist is an answer, not a failure — the real server this was built against
+        has exactly that, and re-asking the deprecated alias would be a wasted round trip."""
+        with respx.mock:
+            respx.get(f"{BASE}/blocklist").mock(
+                return_value=httpx.Response(200, json={"pageInfo": {"pages": 1}, "results": []})
+            )
+            alias = respx.get(f"{BASE}/blacklist")
+            assert _client().blocklisted() == set()
+        assert not alias.called
+
+    def test_it_is_read_once_per_client(self):
+        with respx.mock:
+            route = respx.get(f"{BASE}/blocklist").mock(
+                return_value=httpx.Response(200, json={"pageInfo": {"pages": 1}, "results": []})
+            )
+            client = _client()
+            client.blocklisted()
+            client.blocklisted()
+        assert route.call_count == 1
+
+    def test_a_broken_blocklist_never_fails_the_reconcile(self):
+        """It sits inside the same guard as the media walk: a reconcile problem must cost a redundant
+        request, never the whole request pass."""
+        from shortlist.engine.requests import _apply_seerr_state
+
+        class Boom(SeerrClient):
+            def media_state(self):
+                return {}
+
+            def blocklisted(self):
+                raise SeerrError("Overseerr unreachable (ConnectError)")
+
+        pool = [MissingTitle(603, "a movie", MediaType.MOVIE, 1999, rating=8.7, vote_count=900, demand=3)]
+        kept, dropped, present = _apply_seerr_state(pool, Boom(TARGET))
+        assert kept == pool and dropped == 0 and present == set()
