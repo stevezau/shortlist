@@ -47,9 +47,7 @@ Two columns on `collections`, plus Alembic migration `0088`.
 # Which weekdays this row is SHOWN, as ISO weekday numbers (1=Mon .. 7=Sun).
 # [] -> every day, which is what every existing row gets on upgrade: nothing changes.
 show_days: Mapped[list] = mapped_column(JSON, default=list)
-# What the midnight job last applied, so a tick with nothing to do makes no Plex calls.
-# NULL -> never evaluated (a row that predates this, or one never delivered).
-shown_state: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
+# All seven days selected is normalised to [] by the API, so there is one stored form per meaning.
 ```
 
 `show_days` is a JSON list rather than a 7-bit integer or seven booleans: it round-trips to the API
@@ -90,8 +88,17 @@ late.
 
 So: one cron at `0 0 * * *`, `rows.visibility`, on the durable queue like every other scheduled task.
 
-`shown_state` is what makes the steady state free: a tick where nothing changed costs one query and
-not a single Plex or plex.tv call.
+The job holds NO state. Today's answer is `row_is_shown(show_days, now)` — schedule plus calendar —
+so there is nothing to cache and nothing to keep in sync. A draft carried a `shown_state` column to
+skip work on quiet nights; it caused two bugs by itself (it recorded rows as converged under
+`paused_all`, and again for a collection the pass had SKIPPED — that second one left a row visible on
+every off day, permanently, with the database and the badge both saying otherwise) and was removed
+before release. Migration `0089` drops it.
+
+The gate is "does any row narrow its days at all", answered from one query before any client is built.
+A server that has never used the feature does nothing at midnight. One that has costs a nightly
+share-filter merge plus the ~5ms flips, and is idempotent — whatever one pass cannot do, the next
+does. It sets `manage_shelf_order = False`: position belongs to the nightly run.
 
 ### One converge job, not a hide and a show
 
@@ -100,11 +107,10 @@ schedule into its placement for today, so the handler's whole job is to notice t
 CHANGED and converge Plex onto it:
 
 ```
-desired[slug] = the spec claims any surface today
-changed       = rows where desired != collections.shown_state
-if not changed: return            # no Plex calls, no plex.tv calls
+scheduled = {slug: row_is_shown(show_days, now) for every enabled row that carries days}
+if nothing scheduled and no row named in the payload: return   # no clients built, no calls
+if paused_all: return                                          # recorded nowhere, recomputed next tick
 merge every account's filters and CHECK it, then promote every enabled, unpaused user's rows
-record shown_state, only after the converge landed
 ```
 
 Two handlers (`row.hide` / `row.show`) were the first design and were dropped: with the schedule
@@ -220,7 +226,7 @@ Per `.claude/rules/testing.md`, and the matrix that matters here is **which reas
   assert not on Home. (This is the probe that shaped the design — a run _does_ put back a row demoted
   behind the engine's back.)
 - **A paused user's row is not restored by the visibility tick.** The §12 mutation class; its own test.
-- **`rows.visibility` promotes nothing when the filter merge fails**, and leaves `shown_state` alone so the retry still has work to do. Assert no promote call after a plex.tv 503.
+- **`rows.visibility` promotes nothing when the filter merge fails.** Assert no promote call after a plex.tv 503; the pass is recomputed in full on the retry.
 - **A ledger key never authorises a write on its own.** Promotion walks the user's own label; the
   ledger only says which row an already-owned collection belongs to.
 - Property test: `show_days` round-trips API → DB → `RowSpec` → placement.
@@ -229,7 +235,7 @@ Per `.claude/rules/testing.md`, and the matrix that matters here is **which reas
 
 ## Build order
 
-1. `show_days` + `shown_state` + migration `0088`; `row_is_shown`; `_build_rows` resolves placement.
+1. `show_days` + migration `0088` (and `0089`, which drops the `shown_state` draft); `row_is_shown`; `_build_rows` resolves placement and sets `hidden_by_schedule`.
 2. The `rows.visibility` cron and its single converge handler, with an audit event per pass (rule 10).
 3. Runs agree with it — `_build_rows` already does this, so this step is the full-stack test proving
    03:30 does not undo midnight.

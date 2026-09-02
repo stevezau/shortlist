@@ -265,11 +265,11 @@ def _register_row_visibility(scheduler: AsyncIOScheduler, app) -> None:
     stay up until 03:30 Tuesday, and a row that rebuilds weekly for days. This tick is therefore the
     mechanism, not a tidy-up behind one.
 
-    Cheap by construction. The handler compares each row's resolved placement against the state it
-    last applied and returns without touching Plex when nothing moved, so the ordinary night costs one
-    query. When something has moved, a hub visibility write measures ~5ms on every library — including
-    a 120k-episode TV library, where changing what is IN a collection costs up to 26s — so even a
-    server-wide converge is seconds.
+    Free on a server where no row narrows its days, which is every server until somebody uses the
+    feature: the handler answers that from one query and returns before building a Plex client. Where
+    a row IS scheduled, the pass costs a privacy sync (`engine_run` with no users) plus one ~5ms hub
+    visibility write per collection — it holds no state, so it simply reapplies today's answer every
+    night, and anything it cannot do is done by the next one.
     """
     cron = _resolve_cron(app, "rows.visibility_cron", DEFAULT_CRONS["rows.visibility_cron"])
 

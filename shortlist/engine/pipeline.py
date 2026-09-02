@@ -19,6 +19,7 @@ from loguru import logger
 import shortlist.engine.rows as rows
 from shortlist.engine import requests as requests_mod
 from shortlist.engine.clients.http_retry import redact
+from shortlist.engine.clients.plex_pms import log_title
 from shortlist.engine.clients.plextv import FilterWriteRefused
 from shortlist.engine.context import EngineContext, _emit
 from shortlist.engine.delivery import (
@@ -936,13 +937,16 @@ def identity_map(keys: dict[tuple[str, str, str], int]) -> dict[str, dict[int, s
     Keyed per user because the map is only ever consulted for collections already found under that
     user's own label, so two people cannot collide.
     """
-    claims: dict[tuple[str, int], int] = {}
-    for (user_slug, _row, _lib), rating_key in keys.items():
+    # ROWS, not entries: one row legitimately holds the same ratingKey in two ledger rows only if the
+    # data is odd, but counting entries would ALSO drop a key a single row claims twice — narrowing the
+    # map for no safety gain. The rule is "two rows disagree", so count distinct rows.
+    claims: dict[tuple[str, int], set[str]] = {}
+    for (user_slug, row_slug, _lib), rating_key in keys.items():
         if rating_key:
-            claims[(user_slug, rating_key)] = claims.get((user_slug, rating_key), 0) + 1
+            claims.setdefault((user_slug, rating_key), set()).add(row_slug)
     out: dict[str, dict[int, str]] = {}
     for (user_slug, row_slug, _lib), rating_key in keys.items():
-        if rating_key and claims[(user_slug, rating_key)] == 1:
+        if rating_key and len(claims[(user_slug, rating_key)]) == 1:
             out.setdefault(user_slug, {})[rating_key] = row_slug
     return out
 
@@ -966,6 +970,13 @@ def _promote_phase(
     A collection skipped by an exception mid-loop is correctly absent, so converge picks it up."""
     promoted: set[int] = set()
     ledger = identity_map(live_delivered_keys(ctx, report))
+    # When SOME row is hidden today, an unidentifiable collection might BE that row — and promotion's
+    # no-spec fallback shows what it cannot identify, which would undo the midnight schedule for the
+    # rest of the day. So the run stops guessing exactly when guessing could over-show, and keeps the
+    # fallback on every server that schedules nothing (where guessing is what stops rows vanishing).
+    any_row_hidden_today = any(
+        spec.placement == "off" or spec._effective_friends_placement == "off" for spec in ctx.config.per_person_rows()
+    )
     for position, user in enumerate(to_promote, start=1):
         _emit(ctx, "Shortlist", "promoting", {"done": position, "total": len(to_promote)})
         user_report = next((r for r in report.users if r.slug == user.slug), None)
@@ -997,6 +1008,7 @@ def _promote_phase(
                 user_report.placement_titles if user_report else {},
                 placement_keys=ledger.get(user.slug, {}),
                 into=promoted,
+                skip_unmatched=any_row_hidden_today,
             )
         except Exception as e:
             if user_report is not None:
@@ -1018,7 +1030,7 @@ def _promote_phase(
     return promoted
 
 
-def promote_shared_row(ctx: EngineContext, spec: RowSpec, *, into: set[int] | None = None) -> set[int]:
+def promote_shared_row(ctx: EngineContext, spec: RowSpec, *, into: set[int]) -> None:
     """Put a SHARED row's one public collection on the surfaces its placement asks for.
 
     Every library, not just the first: a shared row whose ``library_keys`` narrowed leaves its
@@ -1028,15 +1040,11 @@ def promote_shared_row(ctx: EngineContext, spec: RowSpec, *, into: set[int] | No
     the identical code path a run uses — a second implementation of "where does this row go" is how
     the two drift apart.
 
-    Writes into ``into`` as it goes when given one, for the same reason ``promote_user_rows`` does: a
-    PMS failure part-way through must still leave behind the ratingKeys already promoted, or converge
-    sees them as untouched and demotes rows this pass had just correctly set. A local set unioned on
-    return would discard exactly those.
-
-    Returns:
-        The ratingKeys touched.
+    Writes into ``into`` as it goes rather than returning a set, for the same reason
+    ``promote_user_rows`` takes one: a PMS failure part-way through must still leave behind the
+    ratingKeys already promoted, or converge sees them as untouched and demotes rows this pass had just
+    correctly set. A local set unioned on return would discard exactly those.
     """
-    promoted = into if into is not None else set()
     for section in ctx.plex.sections():
         for collection in ctx.plex.find_owned_collections(section, spec.label):
             if ctx.config.dry_run:
@@ -1047,8 +1055,7 @@ def promote_shared_row(ctx: EngineContext, spec: RowSpec, *, into: set[int] | No
                 logger.info("[dry-run] {}: would promote shared row '{}'", collection.title, spec.slug)
                 continue
             _promote_one(ctx, collection, spec)
-            promoted.add(int(collection.ratingKey))
-    return promoted
+            into.add(int(collection.ratingKey))
 
 
 def promote_user_rows(
@@ -1118,7 +1125,21 @@ def promote_user_rows(
                 # empty is a template that renders to nothing — and mapping the bare marker would
                 # claim every unnamed collection of this person's for this one spec.
                 if name:
-                    placements.setdefault(name + marker, spec)
+                    key = name + marker
+                    held = placements.get(key)
+                    if held is not None and held.slug != spec.slug:
+                        # First in Rows-page order wins, which is arbitrary from the owner's side and
+                        # means one row's schedule silently governs the other's collection. Delivery
+                        # already warns on its own side of this; promotion was silent.
+                        logger.warning(
+                            "rows '{}' and '{}' both render '{}' in {} — the first decides that "
+                            "collection's placement, so their day schedules cannot differ there",
+                            held.slug,
+                            spec.slug,
+                            name,
+                            getattr(section, "title", "") or "this library",
+                        )
+                    placements.setdefault(key, spec)
 
     promoted = into if into is not None else set()
     # Every row the user has, in every library — they can have several rows (all sharing their label),
@@ -1155,7 +1176,17 @@ def promote_user_rows(
                 # SCHEDULE it is the opposite: a `{top_seed}` row whose ledger key is missing matches
                 # nothing, and promoting it would put a row scheduled OFF onto Home — the exact
                 # inverse of what was asked. Leaving it exactly as it is cannot do that.
-                logger.debug("{}: no row matched, leaving its surfaces alone", collection.title)
+                # WARNING, not debug: for the schedule pass this means a row will silently never
+                # hide, every night, until somebody notices. Naming the collection is what makes it
+                # findable — the usual cause is a delivery-ledger entry that went missing.
+                # `log_title`, not the raw title: every delivered collection carries ~64 zero-width
+                # marker characters, and a warning meant to make a collection FINDABLE cannot be a
+                # line nobody can match by eye.
+                logger.warning(
+                    "{}: no row matched it, so its surfaces are left as they are — a day schedule "
+                    "cannot be applied to it until its delivery record is rebuilt",
+                    log_title(collection.title),
+                )
                 continue
             _promote_one(ctx, collection, spec, user.user_type)
             promoted.add(int(collection.ratingKey))
@@ -1595,36 +1626,9 @@ def _row_keys_by_slug(ctx: EngineContext, report: RunReport, section_key: str) -
     issuing not one move (2026-08-12). The ledger is written by past runs, so it answers the same
     question for a run with no users at all.
 
-    But `ctx.delivered_keys` is a SNAPSHOT, read when the context was built — i.e. before this run
-    delivered anything — and this function runs at the END of that same run. A row rebuilt tonight
-    (delete + create, which is how a changed pick list lands) has a ratingKey the snapshot cannot
-    know, so without the overlay its real hub is in NO enumerated group: the catch-all's exclusion
-    set misses it and sweeps it to the library default, while its own group names the dead key and
-    never moves it to the slot the owner chose. The next pass, holding a fresh snapshot, puts it
-    back. Both passes read the shelf correctly and both report `verified: True`, so the row simply
-    moves twice per cycle for ever — which `notifications._shelf_contention` counts as another tool
-    fighting us and reports as "something else is reordering your shelf" (issue #106). Measured on
-    SFLIX 2026-09-01: the run's catch-all moved 70 rows and the pass 20 seconds later moved exactly
-    those 70 back.
-
-    The overlay is the adapter's ledger write applied early, not a second source of truth — so it
-    replays BOTH of that write's steps, in its order: forget what the run removed
-    (`_forget_removed_deliveries`), then record what it delivered (`_record_deliveries`,
-    `run_persistence._persist_user_report`). Recording alone is not the same write. Plex ratingKeys
-    are rowids and get reused (`rows.py` guards delivery against exactly this), so an id freed by an
-    in-run removal — a muted or retired row, a cold-start skip — can be handed to a collection
-    created later in the SAME run. Keep the removed row's entry and that one collection is then
-    claimed by two groups: it gets moved twice in a single pass and audited twice, which is two
-    counts toward the contention alert this function exists to stop arming. It also re-creates the
-    exact ambiguity `context_builder._delivered_keys` drops the key for.
-
-    Shared rows come through here too: `rows.py` appends each one's report to `report.users` under
-    `shared_<row slug>`, which is the same string the ledger's `user_slug` holds for them, so the
-    overlay replaces their entry rather than adding a second. They are rebuilt by the same
-    large-turnover path and had the same bug.
-
-    A dry run carries `rating_key: 0` and contributes nothing, which is right: it created no
-    collection.
+    The overlay of this run's own deliveries, and why it replays both the forget and the record steps
+    in that order, lives in `live_delivered_keys` — this function is only about grouping the result
+    per library.
     """
     keys = live_delivered_keys(ctx, report)
     out: dict[str, set[int]] = {}

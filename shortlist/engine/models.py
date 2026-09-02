@@ -460,6 +460,12 @@ class RowSpec:
     # The same, for each FRIEND's (shared user's) own collection — "home" means Friends' Home there.
     # None = inherit from `placement` (backward compat); set explicitly to diverge.
     placement_friends: str | None = None
+    # This row is hidden TODAY by its day schedule (issue #102), as opposed to being switched off
+    # permanently. Both resolve `placement` to "off", so the placement alone cannot tell them apart —
+    # and promotion needs to, because it stops guessing about unidentifiable collections only when a
+    # schedule could be hiding one. Set by the server when it resolves the schedule; the engine never
+    # reads a clock.
+    hidden_by_schedule: bool = False
     # Pin the row to the TOP of its library's Recommended shelf (ManagedHub.move). This is a
     # server-wide managed-recommendations order, NOT per-viewing-user — Plex exposes no per-user order.
     pin_top: bool = False

@@ -1598,7 +1598,7 @@ class TestScheduledRowVisibility:
     def _freeze_today(self, monkeypatch):
         import shortlist.server.services.context_builder as cb
 
-        monkeypatch.setattr(cb, "_local_now", lambda: self.MONDAY)
+        monkeypatch.setattr(cb, "local_now", lambda: self.MONDAY)
 
     def _state(
         self,
@@ -1686,7 +1686,7 @@ class TestScheduledRowVisibility:
                     prefs={"paused": True} if paused else {},
                 )
             )
-            for slug, (show_days, shown_state) in rows.items():
+            for slug, show_days in rows.items():
                 session.add(
                     Collection(
                         slug=slug,
@@ -1694,7 +1694,6 @@ class TestScheduledRowVisibility:
                         build="shared" if slug == "crowd" else "per_person",
                         enabled=True,
                         show_days=show_days,
-                        shown_state=shown_state,
                     )
                 )
             for slug, key in deliveries:
@@ -1703,22 +1702,17 @@ class TestScheduledRowVisibility:
                 )
             session.commit()
 
-    def _shown_state(self, sessions) -> dict:
-        from shortlist.server.db.models import Collection
-
-        with sessions() as session:
-            return {c.slug: c.shown_state for c in session.query(Collection)}
-
     def _promotes(self, calls):
         return [c for c in calls if c[0] == "promote"]
 
     # ---- the cheap night ------------------------------------------------------------------
 
-    def test_a_day_where_nothing_changed_touches_nothing_at_all(self, sessions):
-        """The gate that makes a nightly tick free. It must sit before the Plex client is even built,
-        or the "no Plex calls" claim in the docs and the job description is false."""
+    def test_a_server_that_schedules_nothing_touches_nothing_at_all(self, sessions):
+        """The gate that keeps this free for everybody who does not use the feature — which is every
+        server until somebody picks days. It has to sit before the Plex client is even built, or the
+        "costs nothing" claim in the docs and the job description is false on every night."""
         calls: list = []
-        self._seed(sessions, rows={"picked": ([1], True), "gems": ([2], False)})
+        self._seed(sessions, rows={"picked": [], "gems": []})
         built: list = []
         state = self._state(sessions, calls=calls, rows=[self.ON, self.OFF])
         state.run_service.build_context = lambda dry_run, plex_only=False: (
@@ -1730,13 +1724,14 @@ class TestScheduledRowVisibility:
 
         assert result["changed"] == []
         assert built == [], "the Plex/plex.tv/TMDB clients must not be constructed for a no-op tick"
+        assert calls == []
 
     def test_a_row_with_no_schedule_never_makes_work(self, sessions):
-        """Every row carries `show_days=[]` and `shown_state=NULL` straight after migration 0088. If
-        those counted as a change, the first midnight after upgrade would converge every server that
-        has never touched this feature."""
+        """Every row carries `show_days=[]` straight after migration 0088, and a server where nobody
+        has scheduled anything must do nothing at midnight — not build a Plex client, not merge a
+        filter, nothing."""
         calls: list = []
-        self._seed(sessions, rows={"picked": ([], None)})
+        self._seed(sessions, rows={"picked": []})
         state = self._state(sessions, calls=calls, rows=[self.ON])
         state.run_service.build_context = lambda dry_run, plex_only=False: (_ for _ in ()).throw(
             AssertionError("an unscheduled row must not converge anything")
@@ -1756,7 +1751,7 @@ class TestScheduledRowVisibility:
         # today is its transition to hidden.
         self._seed(
             sessions,
-            rows={"picked": ([1], False), "gems": ([2], True)},
+            rows={"picked": [1], "gems": [2]},
             deliveries=(("picked", 42), ("gems", 43)),
         )
         # `gems` is scheduled off today: its spec placement is already `off`.
@@ -1785,7 +1780,7 @@ class TestScheduledRowVisibility:
         direction for this job, unlike a run."""
         calls: list = []
         marker = row_marker(self.ACCOUNT)
-        self._seed(sessions, rows={"seeded": ([2], True)}, deliveries=())  # no ledger key
+        self._seed(sessions, rows={"seeded": [2]}, deliveries=())  # no ledger key
         state = self._state(
             sessions,
             calls=calls,
@@ -1800,7 +1795,7 @@ class TestScheduledRowVisibility:
     def test_the_share_filters_are_merged_before_anything_is_promoted(self, sessions):
         """plex-safety rule 1, asserted as ORDER rather than as "both happened"."""
         calls: list = []
-        self._seed(sessions, rows={"picked": ([1], False)}, deliveries=(("picked", 42),))
+        self._seed(sessions, rows={"picked": [1]}, deliveries=(("picked", 42),))
         state = self._state(sessions, calls=calls, rows=[self.ON])
 
         jobs._HANDLERS["rows.visibility"](state, {})
@@ -1811,14 +1806,13 @@ class TestScheduledRowVisibility:
 
     def test_a_failed_filter_merge_promotes_nothing_at_all(self, sessions):
         calls: list = []
-        self._seed(sessions, rows={"picked": ([1], False)}, deliveries=(("picked", 42),))
+        self._seed(sessions, rows={"picked": [1]}, deliveries=(("picked", 42),))
         state = self._state(sessions, calls=calls, rows=[self.ON], merge_fails=True)
 
         with pytest.raises(RuntimeError, match="503"):
             jobs._HANDLERS["rows.visibility"](state, {})
 
         assert self._promotes(calls) == []
-        assert self._shown_state(sessions) == {"picked": False}, "the retry must still see work to do"
 
     # ---- the exclusions -------------------------------------------------------------------
 
@@ -1827,7 +1821,7 @@ class TestScheduledRowVisibility:
         this job must go through it rather than hand-rolling the roster — it is the first scheduled
         task that writes to people's shelves, so a kill switch it ignores is the whole point."""
         calls: list = []
-        self._seed(sessions, rows={"picked": ([1], False)}, deliveries=(("picked", 42),))
+        self._seed(sessions, rows={"picked": [1]}, deliveries=(("picked", 42),))
         state = self._state(sessions, calls=calls, rows=[self.ON], paused_all=True)
 
         jobs._HANDLERS["rows.visibility"](state, {})
@@ -1837,7 +1831,7 @@ class TestScheduledRowVisibility:
     def test_a_paused_persons_rows_are_not_put_back_by_a_schedule(self, sessions):
         """Two independent reasons a row is hidden, and only one of them is lifting."""
         calls: list = []
-        self._seed(sessions, rows={"picked": ([1], False)}, paused=True, deliveries=(("picked", 42),))
+        self._seed(sessions, rows={"picked": [1]}, paused=True, deliveries=(("picked", 42),))
         state = self._state(sessions, calls=calls, rows=[self.ON])
 
         jobs._HANDLERS["rows.visibility"](state, {})
@@ -1850,7 +1844,7 @@ class TestScheduledRowVisibility:
         from shortlist.server.db.models import Collection, User
 
         calls: list = []
-        self._seed(sessions, rows={"picked": ([1], False)}, deliveries=(("picked", 42),))
+        self._seed(sessions, rows={"picked": [1]}, deliveries=(("picked", 42),))
         with sessions() as session:
             session.query(User).filter_by(slug="sarah").update(
                 {"user_type": "managed", "restricted": True, "restriction_profile": "little_kid"}
@@ -1869,7 +1863,7 @@ class TestScheduledRowVisibility:
         """A shared row is ONE public collection under its own label, so it goes through a different
         promote path than a per-person row — and nothing exercised it."""
         calls: list = []
-        self._seed(sessions, rows={"crowd": ([2], True)})
+        self._seed(sessions, rows={"crowd": [2]})
         state = self._state(
             sessions,
             calls=calls,
@@ -1887,7 +1881,7 @@ class TestScheduledRowVisibility:
         """Rule 8 for the preview, rule 10 for the audit — a dry run that leaves no event is a
         visibility change nobody can account for."""
         calls: list = []
-        self._seed(sessions, rows={"picked": ([1], False)}, deliveries=(("picked", 42),))
+        self._seed(sessions, rows={"picked": [1]}, deliveries=(("picked", 42),))
         state = self._state(sessions, calls=calls, rows=[self.ON])
 
         result = jobs._HANDLERS["rows.visibility"](state, {"dry_run": True})
@@ -1898,37 +1892,42 @@ class TestScheduledRowVisibility:
         with sessions() as session:
             audited = [e.message.get("dry_run") for e in session.query(Event).filter_by(scope="rows.visibility")]
         assert audited == [True]
-        assert self._shown_state(sessions) == {"picked": False}, "a preview must not record state either"
 
-    def test_the_applied_state_is_recorded_so_the_next_tick_is_free(self, sessions):
+    def test_every_scheduled_row_is_converged_on_the_same_pass(self, sessions):
+        """One pass settles every scheduled row, each with its OWN placement — the case that only
+        exists once a server has more than one schedule."""
         calls: list = []
-        self._seed(
+        marker = row_marker(self.ACCOUNT)
+        self._seed(sessions, rows={"picked": [1], "gems": [2]}, deliveries=(("picked", 42), ("gems", 43)))
+        state = self._state(
             sessions,
-            rows={"picked": ([1], False), "gems": ([2], True)},
-            deliveries=(("picked", 42),),
+            calls=calls,
+            rows=[self.ON, self.OFF],
+            collections=[
+                ("✨ Picked for You" + marker, 42, "shortlist_sarah"),
+                ("✨ Hidden Gems" + marker, 43, "shortlist_sarah"),
+            ],
         )
-        state = self._state(sessions, calls=calls, rows=[self.ON, self.OFF])
 
-        jobs._HANDLERS["rows.visibility"](state, {})
+        result = jobs._HANDLERS["rows.visibility"](state, {})
 
-        assert self._shown_state(sessions) == {"picked": True, "gems": False}
+        assert result["changed"] == ["gems", "picked"]
+        on = next(c for c in self._promotes(calls) if "Picked for You" in c[1])[2]
+        off = next(c for c in self._promotes(calls) if "Hidden Gems" in c[1])[2]
+        assert on["shared"] is True, "the row on today"
+        assert (off["shared"], off["home"], off["recommended"]) == (False, False, False), "the row off today"
 
     def test_pause_all_leaves_the_work_owed_rather_than_recording_it_as_done(self, sessions):
-        """Found by live testing, not by the suite that shipped with the pause-all fix.
-
-        `enabled_profiles` returns [] under `paused_all`, so the converge loop promotes nothing — but
-        the handler still recorded `shown_state` as though it had. Clearing the pause then produced
-        "every row is already on the surfaces today asks for" and the row stayed visible on a day its
-        schedule says to hide it, until the owner happened to edit the days again.
-        """
+        """Found by live testing. The pass must stop BEFORE the filter merge and record nothing, so
+        lifting the pause simply recomputes and applies it. An earlier version cached the answer here
+        and left the row visible on its off day for good."""
         calls: list = []
-        self._seed(sessions, rows={"picked": ([2], True)}, deliveries=(("picked", 42),))
+        self._seed(sessions, rows={"picked": [2]}, deliveries=(("picked", 42),))
         state = self._state(sessions, calls=calls, rows=[self.OFF], paused_all=True)
 
         result = jobs._HANDLERS["rows.visibility"](state, {})
 
         assert calls == [], "pause all must stop the merge too, not just the promote"
-        assert self._shown_state(sessions) == {"picked": True}, "the transition must still be owed"
         assert "paused" in result["detail"].lower()
 
     def test_the_owners_own_row_uses_the_owner_flags_not_the_friends_ones(self, sessions):
@@ -1939,7 +1938,7 @@ class TestScheduledRowVisibility:
         """
         calls: list = []
         marker = row_marker(self.ACCOUNT)
-        self._seed(sessions, rows={"picked": ([1], False)}, user_type="owner", deliveries=(("picked", 42),))
+        self._seed(sessions, rows={"picked": [1]}, user_type="owner", deliveries=(("picked", 42),))
         state = self._state(
             sessions, calls=calls, rows=[self.ON], collections=[("✨ Picked for You" + marker, 42, "shortlist_sarah")]
         )
@@ -1956,7 +1955,7 @@ class TestScheduledRowVisibility:
         it through the owner flag would hide its row from the person it belongs to."""
         calls: list = []
         marker = row_marker(self.ACCOUNT)
-        self._seed(sessions, rows={"picked": ([1], False)}, user_type="managed", deliveries=(("picked", 42),))
+        self._seed(sessions, rows={"picked": [1]}, user_type="managed", deliveries=(("picked", 42),))
         state = self._state(
             sessions, calls=calls, rows=[self.ON], collections=[("✨ Picked for You" + marker, 42, "shortlist_sarah")]
         )
@@ -1978,7 +1977,7 @@ class TestScheduledRowVisibility:
         marker = row_marker(self.ACCOUNT)
         self._seed(
             sessions,
-            rows={"picked": ([1], False), "gems": ([2], True)},
+            rows={"picked": [1], "gems": [2]},
             # Both rows name the SAME collection: a stale entry that survived an out-of-band delete,
             # plus Plex handing the freed rowid to a new collection.
             deliveries=(("picked", 42), ("gems", 42)),
@@ -1993,3 +1992,48 @@ class TestScheduledRowVisibility:
         jobs._HANDLERS["rows.visibility"](state, {})
 
         assert self._promotes(calls) == [], "an ambiguous key must not decide a row's surfaces"
+
+    def test_clearing_the_last_schedule_on_the_server_still_puts_that_row_back(self, sessions):
+        """The gate asks "does any row narrow its days" — and after a clear, none does. Without the
+        row named in the payload the pass would skip, and the row it was meant to restore would stay
+        hidden until 03:30. This is the ONLY path that covers it.
+        """
+        calls: list = []
+        marker = row_marker(self.ACCOUNT)
+        self._seed(sessions, rows={"picked": []}, deliveries=(("picked", 42),))
+        state = self._state(
+            sessions, calls=calls, rows=[self.ON], collections=[("✨ Picked for You" + marker, 42, "shortlist_sarah")]
+        )
+
+        result = jobs._HANDLERS["rows.visibility"](state, {"row": "picked"})
+
+        assert self._promotes(calls), "the row whose schedule was just cleared was never put back"
+        assert result["collections"] == 1
+
+    def test_without_the_row_in_the_payload_an_unscheduled_server_does_nothing(self, sessions):
+        """The other half of the pair: the midnight cron passes no row, so a server that schedules
+        nothing must still cost one query."""
+        calls: list = []
+        self._seed(sessions, rows={"picked": []}, deliveries=(("picked", 42),))
+        state = self._state(sessions, calls=calls, rows=[self.ON])
+
+        assert jobs._HANDLERS["rows.visibility"](state, {})["changed"] == []
+        assert calls == []
+
+    def test_the_shelf_order_is_left_to_the_nightly_run(self, sessions):
+        """`engine_run` would otherwise run its ordering phase here EVERY night, writing the
+        `shelf.order` events that the "something else is reordering your shelf" notification counts
+        (3 in a day trips it) — and ordering before promoting, so a row shown today moves again at
+        03:30. Position is the run's job; this pass only decides visibility."""
+        calls: list = []
+        seen: list = []
+        self._seed(sessions, rows={"picked": [1]}, deliveries=(("picked", 42),))
+        state = self._state(sessions, calls=calls, rows=[self.ON])
+        inner = state.run_service.build_context
+        state.run_service.build_context = lambda dry_run, plex_only=False: (
+            seen.append(inner(dry_run=dry_run)) or seen[-1]
+        )
+
+        jobs._HANDLERS["rows.visibility"](state, {})
+
+        assert seen[0].config.manage_shelf_order is False

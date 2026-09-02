@@ -10,13 +10,10 @@ every existing row gets here — so an upgrade changes nothing until somebody pi
 deliberately no way to spell "never": that is what switching the row off already means, and a second
 spelling of it would be two controls for one outcome.
 
-`shown_state` records what the midnight `rows.visibility` job last applied, so a tick with nothing to
-do makes no Plex calls at all. NULL means "never evaluated" — every row starts
-there, and a row with no schedule STAYS there: the tick considers only rows that carry days (or that
-still hold a state from days they used to carry), so the first midnight after an upgrade converges
-nothing on a server that has not used the feature. It is a CACHE of a decision, never the decision itself: the schedule
-plus the clock is always the source of truth, so a wrong or stale value costs one redundant write and
-cannot make a row visible on a day it should not be.
+The job that applies this keeps NO state of its own — today's answer is the schedule plus the
+calendar, so there is nothing to cache. An earlier draft carried a `shown_state` column to skip work
+on quiet nights; it produced two bugs by itself and was removed before release. Migration 0089 drops
+it for anyone who ran that draft from a host build.
 
 Revision ID: 0088
 Revises: 0087
@@ -44,14 +41,10 @@ def upgrade() -> None:
         # server_default rather than a backfill UPDATE: rows written by an older build that is still
         # running mid-upgrade get the same "every day" answer as the ones already here.
         op.add_column("collections", sa.Column("show_days", sa.JSON(), nullable=False, server_default="[]"))
-    if "shown_state" not in existing:
-        op.add_column("collections", sa.Column("shown_state", sa.Boolean(), nullable=True))
 
 
 def downgrade() -> None:
     bind = op.get_bind()
     existing = _columns(bind, "collections")
-    if "shown_state" in existing:
-        op.drop_column("collections", "shown_state")
     if "show_days" in existing:
         op.drop_column("collections", "show_days")

@@ -125,7 +125,7 @@ def make_search_client(get: Callable[[str], object]) -> WebSearchProvider | None
     return None  # native: the provider searches for itself, so there is no external client
 
 
-def _local_now() -> datetime:
+def local_now() -> datetime:
     """The wall clock a row's day schedule is judged against (issue #102).
 
     Naive local time on purpose — the container's zone is what every other Shortlist schedule already
@@ -1059,7 +1059,7 @@ class ContextBuilder:
         )
         # ONE clock read for the whole context, not one per row: built a millisecond either side of
         # midnight, two rows would otherwise disagree about what day it is.
-        now = _local_now()
+        now = local_now()
         for collection in collections:
             shared = collection.build == "shared"
             audience = self._subset_audience(collection, account_by_user, audience_by_collection)
@@ -1100,6 +1100,7 @@ class ContextBuilder:
                     pick_order=collection.pick_order or "best",
                     placement=(collection.placement or "both") if shown else "off",
                     placement_friends=(collection.placement_friends or "both") if shown else "off",
+                    hidden_by_schedule=not shown,
                     pin_top=bool(collection.pin_top),
                     hub_anchors=self._row_hub_anchors(collection),
                     library_keys=[str(k) for k in (collection.library_keys or [])],

@@ -1265,7 +1265,7 @@ def _user_restore(state, payload: dict) -> dict:
     report and raises. The whole job is then retried, and nothing is promoted meanwhile.
     """
     from shortlist.engine.models import UserProfile, UserType
-    from shortlist.engine.pipeline import promote_user_rows
+    from shortlist.engine.pipeline import identity_map, promote_user_rows
     from shortlist.engine.pipeline import run as engine_run
     from shortlist.server.db.models import Delivery, Run, RunUser, User
 
@@ -1309,13 +1309,13 @@ def _user_restore(state, payload: dict) -> dict:
         # renderable title at all, so without this it lands on `_promote_one`'s no-spec branch and gets
         # its audience's Home rather than the placement the row actually asks for.
         ledger = [d for d in session.query(Delivery).filter_by(user_slug=slug) if d.rating_key]
-        # An AMBIGUOUS ratingKey — two rows claiming the same collection — falls through to the title
-        # map rather than letting whichever row the query returned last win arbitrarily. Reachable if a
-        # run crashed between the delete and the persist on delivery's rebuild path.
-        claims: dict[int, int] = {}
-        for d in ledger:
-            claims[d.rating_key] = claims.get(d.rating_key, 0) + 1
-        keys = {d.rating_key: d.collection_slug for d in ledger if claims[d.rating_key] == 1}
+        # Through the engine's shared rule rather than a second copy of it: a ratingKey two rows claim
+        # is DROPPED and falls back to the title map, instead of whichever row the query returned last
+        # winning arbitrarily. Reachable if a run crashed between the delete and the persist on
+        # delivery's rebuild path.
+        keys = identity_map({(d.user_slug, d.collection_slug, d.library_key): d.rating_key for d in ledger}).get(
+            slug, {}
+        )
         if len(keys) != len(ledger):
             logger.warning(
                 "{}: {} ledger key(s) claimed by more than one row — placing those by title",
@@ -1540,25 +1540,27 @@ def _rows_visibility(state, payload: dict) -> dict:
     Home until 03:30 Tuesday, and a weekly-rebuilding row for days. This is what makes a day schedule
     mean anything, and it is why the schedule is a MIDNIGHT job rather than a flag a run reads.
 
+    **This handler keeps no state of its own.** Today's answer is ``row_is_shown(show_days, now)`` —
+    schedule plus calendar, nothing else — so there is nothing to cache, nothing to keep in sync, and
+    no ordering rule about when to record it. An earlier version cached the last-applied answer per
+    row to skip work, and that cache produced two bugs by itself: it recorded rows as converged under
+    ``paused_all``, and again for a collection the pass had SKIPPED. Both left a row visible on a day
+    its schedule said to hide it, permanently, because the cache then agreed that there was nothing to
+    do. Recomputing is simpler AND self-healing — whatever one pass cannot do, the next one does.
+
     **The gate comes first, before anything is built.** ``build_context`` constructs a PMS client (an
     HTTP fetch), plex.tv, TMDB and the curator, so deciding whether there is work AFTER it would make
-    the advertised "a quiet night costs nothing" false on every night of the year. So the decision is
-    taken straight from the database.
+    the advertised "a quiet night costs nothing" false on every night of the year. A server where no
+    row narrows its days — every server, until somebody uses this — does one query and stops.
 
-    Only rows that actually carry a schedule are considered. Every row has ``show_days=[]`` and
-    ``shown_state=NULL`` immediately after migration 0088, and counting those as a change would make
-    the first midnight after upgrade converge every server that has never touched this feature. A row
-    whose days were just CLEARED is still settled once, because it has a non-NULL ``shown_state``; it
-    then drops out of tracking on the next tick that has any work at all — the final loop records
-    every slug it considered, not just the ones that moved. So a clear that does not flip today's
-    answer settles as soon as some other row turns over, which is the state we want anyway; it is
-    never worth a write on a quiet tick purely to tidy up.
+    The converging night is NOT free, and the docs say so: it runs ``engine_run(ctx, [])``, which is
+    the nightly privacy sync in full, then re-promotes every row. That is the price of holding no
+    state, and it is paid only by servers that actually schedule a row.
 
     plex-safety rule 1: this can make a row MORE visible, so every account's excludes are merged and
     CHECKED first, exactly as ``user.restore`` does. Someone may have joined the server while a row was
-    hidden, and their share carries no `label!=` exclude for it yet. A failed merge raises so the whole
-    job retries, and ``shown_state`` is written only after the converge lands, so a retry still sees
-    work to do rather than "nothing changed".
+    hidden, and their share carries no `label!=` exclude for it yet. A failed merge raises, and the
+    durable queue retries the whole pass.
 
     The roster comes from ``enabled_profiles``, NOT a query written here: that is the one place the
     three exclusions live — the Danger Zone's ``paused_all`` kill switch, an account with a parental
@@ -1570,51 +1572,46 @@ def _rows_visibility(state, payload: dict) -> dict:
     from shortlist.engine.pipeline import run as engine_run
     from shortlist.engine.rows import row_is_shown
     from shortlist.server.db.models import Collection, Delivery
-    from shortlist.server.services.context_builder import _local_now
+    from shortlist.server.services.context_builder import local_now
 
     requested = bool(payload.get("dry_run", False))
-    now = _local_now()
+    now = local_now()
 
     # --- the gate: pure DB, no clients, no network -----------------------------------------
     with state.sessions() as session:
-        rows = session.query(Collection).filter_by(enabled=True).all()
-        # A row is tracked if it HAS a schedule, or if it had one recently enough that we recorded a
-        # state for it (so clearing the days converges once, then stops being asked about).
-        desired = {
+        scheduled = {
             row.slug: row_is_shown(row.show_days, now)
-            for row in rows
-            if (row.show_days or []) or row.shown_state is not None
+            for row in session.query(Collection).filter_by(enabled=True)
+            if row.show_days
         }
-        tracked = {row.slug: bool(row.show_days) for row in rows if row.slug in desired}
-        changed = sorted(row.slug for row in rows if row.slug in desired and row.shown_state != desired[row.slug])
+        paused_all = bool(SettingsStore(session, state.secrets).get("paused_all"))
 
-    if not changed:
-        return {"changed": [], "dry_run": requested, "detail": "Every row is already on the surfaces today asks for"}
+    # `payload["row"]` is set when the ROW EDITOR queued this because a row's days changed. It is what
+    # puts a row back when its LAST schedule is cleared: `scheduled` no longer holds it, so the gate
+    # alone would skip the very pass that shows it again.
+    if not scheduled and not payload.get("row"):
+        return {"changed": [], "dry_run": requested, "detail": "No row narrows the days it appears on"}
 
-    # The Danger Zone kill switch stops this like every other scheduled task — and CRUCIALLY without
-    # recording `shown_state`, so the transition is still owed when the pause is lifted.
-    #
-    # Found live: `enabled_profiles` already returns [] under `paused_all`, so the converge loop
-    # promoted nothing, but the handler still wrote the state as though it had. Clearing the pause
-    # then reported "every row is already on the surfaces today asks for" and the row stayed up on a
-    # day its schedule said to hide it — permanently, until the owner next edited the days.
-    with state.sessions() as session:
-        if SettingsStore(session, state.secrets).get("paused_all"):
-            logger.info("all runs are paused (Settings → Danger Zone) — leaving today's row schedule unapplied")
-            return {
-                "changed": [],
-                "dry_run": requested,
-                "detail": f"{len(changed)} row(s) are waiting for today's schedule — everything is paused",
-            }
+    if paused_all:
+        # The Danger Zone kill switch, honoured like every other scheduled task. Nothing is recorded
+        # anywhere, so the pass is simply recomputed on the next tick — which is the whole reason this
+        # handler keeps no state of its own.
+        logger.info("all runs are paused (Settings → Danger Zone) — leaving today's row schedule unapplied")
+        return {
+            "changed": [],
+            "dry_run": requested,
+            "detail": f"{len(scheduled)} row(s) are waiting for today's schedule — everything is paused",
+        }
 
-    shown = [slug for slug in changed if desired.get(slug)]
-    hidden = [slug for slug in changed if not desired.get(slug)]
+    changed = sorted(scheduled)
+    shown = [slug for slug in changed if scheduled[slug]]
+    hidden = [slug for slug in changed if not scheduled[slug]]
     parts = []
     if shown:
         parts.append(f"showing {', '.join(shown)}")
     if hidden:
         parts.append(f"hiding {', '.join(hidden)}")
-    summary = f"Today's schedule: {' and '.join(parts)}"
+    summary = f"Today's schedule: {' and '.join(parts)}" if parts else "Applying today's row schedule"
 
     ctx = state.run_service.build_context(dry_run=requested)
     dry_run = ctx.config.dry_run or requested
@@ -1622,13 +1619,29 @@ def _rows_visibility(state, payload: dict) -> dict:
     if dry_run:
         # Audited like every other preview (rule 10): a visibility change nobody can account for is
         # the thing the events feed exists to prevent, and `user.hide`/`user.restore` both record one.
-        write_audit(state, "rows.visibility", "info", changed=changed, collections=0, dry_run=True)
+        write_audit(
+            state,
+            "rows.visibility",
+            "info",
+            scheduled=changed,
+            row=payload.get("row") or None,
+            collections=0,
+            dry_run=True,
+        )
         logger.info("[dry-run] rows.visibility: would converge {}", ", ".join(changed))
         return {"changed": changed, "dry_run": True, "detail": f"Would update {len(changed)} row(s) for today"}
 
     # Rule 1's ordering, in straight-line code — see the docstring. `engine_run(ctx, [])` merges every
     # account's filter and creates/promotes nothing; it reports failure by RETURN VALUE, so it is
     # checked rather than assumed.
+    # The shelf ORDER is not this job's business — the 03:30 run owns it. Left on, `engine_run` would
+    # run `_order_phase` here every night, writing the `shelf.order` events that
+    # `notifications._shelf_contention` counts (3 in 24h reads as another tool fighting us, issue
+    # #106). It would also order BEFORE promoting, the inverse of a run, so a row being shown today is
+    # not yet on the shelf when the ordering happens and moves again at 03:30 — a second recorded move
+    # for one turnover. Rows shown at midnight therefore sit in their library's default slot until the
+    # run places them, which is a position, never a visibility.
+    ctx.config.manage_shelf_order = False
     report = engine_run(ctx, [])
     _require_filters_merged(report, "applying today's row schedule")
 
@@ -1647,9 +1660,8 @@ def _rows_visibility(state, payload: dict) -> dict:
         )
 
     for profile in profiles:
-        # All-or-nothing on purpose: `shown_state` is recorded only after every profile is through, so
-        # raising here leaves the whole pass owed and the durable queue retries it with backoff. The
-        # alternative — carrying on and recording success — would mark rows converged that are not.
+        # All-or-nothing on purpose: raising leaves the whole pass owed, and the durable queue retries
+        # it with backoff. Carrying on would report a converge that only partly happened.
         promote_user_rows(
             ctx,
             profile,
@@ -1665,14 +1677,16 @@ def _rows_visibility(state, payload: dict) -> dict:
     for spec in ctx.config.shared_rows():
         promote_shared_row(ctx, spec, into=touched)
 
-    # Only AFTER the converge landed: writing this first would make a failed retry see "nothing
-    # changed" and leave the row wrong until the schedule next moved — a day, or a week. A row whose
-    # days were cleared goes back to NULL so it stops being tracked at all.
-    with state.sessions() as session:
-        for row in session.query(Collection).filter_by(enabled=True):
-            if row.slug in desired:
-                row.shown_state = desired[row.slug] if tracked.get(row.slug) else None
-        session.commit()
-
-    write_audit(state, "rows.visibility", "info", changed=changed, collections=len(touched), dry_run=False)
+    # `scheduled`, not "changed": this pass applies today's answer for every scheduled row rather than
+    # tracking which ones moved, so calling it "changed" would overstate what the event records
+    # (rule 10 — the feed has to be readable as what happened).
+    write_audit(
+        state,
+        "rows.visibility",
+        "info",
+        scheduled=changed,
+        row=payload.get("row") or None,
+        collections=len(touched),
+        dry_run=False,
+    )
     return {"changed": changed, "collections": len(touched), "dry_run": False, "detail": summary}

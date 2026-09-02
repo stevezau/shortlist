@@ -2876,10 +2876,15 @@ class TestRowShowDaysApi:
 
         assert created.json()["show_days"] == [1, 3, 5]
 
-    def test_every_day_selected_is_accepted_and_means_the_same_as_none(self, client: TestClient):
+    def test_every_day_selected_is_stored_as_no_schedule_at_all(self, client: TestClient):
+        """One stored form per meaning. Left as [1..7] the row reads as "scheduled" to the midnight
+        job — which would then converge the whole server every night for a row that is never hidden —
+        and the Rows page would badge the default back as an override."""
         created = client.post("/api/collections", json={"name": "All Week", "show_days": [1, 2, 3, 4, 5, 6, 7]})
 
         assert created.status_code == 201
+        assert created.json()["show_days"] == []
+        assert created.json()["shown_today"] is True
         assert self._spec(client, "all_week").placement == "both"
 
     def test_changing_the_days_is_applied_now_rather_than_at_the_next_midnight(self, client: TestClient, monkeypatch):
@@ -2924,14 +2929,14 @@ class TestShownTodayComesFromTheServer:
         import shortlist.server.services.context_builder as cb
 
         monday = datetime(2026, 8, 31, 12, 0)
-        original = cb._local_now
-        cb._local_now = lambda: monday
+        original = cb.local_now
+        cb.local_now = lambda: monday
         try:
             on = client.post("/api/collections", json={"name": "Mondays", "show_days": [1]}).json()
             off = client.post("/api/collections", json={"name": "Tuesdays", "show_days": [2]}).json()
             always = client.post("/api/collections", json={"name": "Whenever"}).json()
         finally:
-            cb._local_now = original
+            cb.local_now = original
 
         assert on["shown_today"] is True
         assert off["shown_today"] is False

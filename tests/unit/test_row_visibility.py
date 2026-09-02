@@ -87,6 +87,18 @@ class TestIdentityMap:
 
         assert identity_map(keys) == {"sarah": {9001: "picked"}, "mike": {9001: "picked"}}
 
+    def test_one_row_claiming_a_key_in_two_libraries_is_kept(self):
+        """Counting ENTRIES rather than distinct rows would drop this, narrowing the map for no safety
+        gain — the rule is "two rows disagree about one collection", and here only one row is involved.
+
+        Barely reachable: `Delivery`'s primary key is (row, user, library), so one row can only repeat
+        a ratingKey across libraries, and Plex ids are unique per server. Pinned anyway, because the
+        counter-vs-set distinction is invisible until it silently changes behaviour.
+        """
+        keys = {("sarah", "picked", "1"): 9001, ("sarah", "picked", "2"): 9001}
+
+        assert identity_map(keys) == {"sarah": {9001: "picked"}}
+
     def test_a_dry_runs_placeholder_key_contributes_nothing(self):
         """Delivery records `rating_key: 0` for a preview — it created no collection."""
         assert identity_map({("sarah", "picked", "1"): 0}) == {}

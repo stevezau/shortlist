@@ -304,9 +304,11 @@ export function rowOverrides(
     parts.push(`Cycles ${collection.seed_window} recent watches`);
   }
 
-  // [] is every day (the default), so only a row that actually narrows its days is worth a badge.
-  if ((collection.show_days ?? []).length > 0) {
-    parts.push(showDaysSummary(collection.show_days ?? []));
+  // Only a row that actually NARROWS its days is worth a badge. The API collapses all seven to [],
+  // so a non-empty list always means a real restriction.
+  const days = collection.show_days ?? [];
+  if (days.length > 0) {
+    parts.push(showDaysSummary(days));
   }
 
   // Only badge when placement differs from the "both" default.

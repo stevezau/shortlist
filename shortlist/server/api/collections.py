@@ -399,7 +399,11 @@ def _normalise_show_days(days: list[int]) -> list[int]:
     bad = sorted({d for d in days if d < 1 or d > 7})
     if bad:
         raise ValueError(f"show_days must be ISO weekdays 1 (Monday) to 7 (Sunday); got {bad}")
-    return sorted(set(days))
+    chosen = sorted(set(days))
+    # ALL SEVEN collapses to "every day", so there is ONE stored form for one meaning. Otherwise the
+    # midnight job treats the row as scheduled and converges the whole server nightly for a row that is
+    # never hidden, and the Rows page badges it as an override of the default it actually is.
+    return [] if len(chosen) == 7 else chosen
 
 
 def _validate(body: CollectionIn) -> None:
@@ -680,7 +684,7 @@ def _serialize(session, collection: Collection, now: datetime | None = None) -> 
         # Resolved HERE, on the server's clock — the same one the midnight job and Plex follow. A
         # badge computed in the browser reads the admin's timezone, which can disagree with what
         # Plex is actually showing for as long as the offset lasts.
-        "shown_today": row_is_shown(collection.show_days, now or context_builder._local_now()),
+        "shown_today": row_is_shown(collection.show_days, now or context_builder.local_now()),
         "placement_friends": collection.placement_friends or "both",
         "pin_top": bool(collection.pin_top),
         "hub_anchor": collection.hub_anchor or {},
@@ -762,7 +766,7 @@ async def list_collections(request: Request) -> list[dict]:
         # ONE clock read for the whole response, the same rule `_build_rows` follows: served a
         # millisecond either side of midnight, two rows in one list would otherwise report different
         # days.
-        now = context_builder._local_now()
+        now = context_builder.local_now()
         return [_serialize(session, c, now) for c in collections]
 
 
@@ -1169,7 +1173,10 @@ async def _apply_plan(state, plan: list[PlannedWork], *, slug: str, build: str) 
             # resolved placement against the state it last applied, so it settles this row AND any
             # other whose day turned over while Plex was unreachable. Durable, so an outage right now
             # is retried rather than lost.
-            jobs.enqueue(state.sessions, "rows.visibility", {})
+            # Names the row: when its days are CLEARED and no other row on the server carries a
+            # schedule, the job's gate would otherwise see nothing to do and skip the very pass that
+            # puts this row back.
+            jobs.enqueue(state.sessions, "rows.visibility", {"row": slug})
     # Anything queued above happens NOW when Plex is reachable; when it isn't, the worker retries it.
     # AWAITED, unlike the delete below. An edit's Plex work IS the request: narrowing a row's
     # libraries means "take it off those libraries", so returning 200 before that happened would
