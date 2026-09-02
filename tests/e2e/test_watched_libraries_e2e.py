@@ -137,3 +137,97 @@ class TestBlockingAMergedRow:
         sarah = next(u for u in app.api("GET", "/api/users").json() if u["username"] == "sarah")
         blocked = sarah["prefs"]["blocked_seeds"]
         assert [(entry["tmdb_id"], entry["title"]) for entry in blocked] == [(MOVIE_03_TMDB_ID, DUPLICATED_TITLE)]
+
+
+def _wait_for_sync(app: ShortlistApp) -> None:
+    """Kick the watch sync and wait until the library names are actually recorded.
+
+    `POST /api/report/sync` returns 202 — it queues. Measuring before it lands gives a panel with no
+    tags on it, which passes every overflow assertion for the wrong reason.
+    """
+    import time
+
+    assert app.api("POST", "/api/report/sync").status_code in (200, 202)
+    users = app.api("GET", "/api/users").json()
+    sarah = next(u for u in users if u["username"] == "sarah")
+    for _ in range(60):
+        page = app.api("GET", f"/api/users/{sarah['id']}/watched?limit=1").json()
+        if len(page.get("libraries") or []) >= 4:
+            return
+        time.sleep(0.5)
+    raise AssertionError("the watch sync never recorded the library names")
+
+
+class TestTheTagsOnAPhone:
+    """Library tags must not make the Watched page scroll sideways.
+
+    The mobile audit already holds every ROUTE at 390px, but it opens a user on their Rows tab and
+    so has never seen this panel. The tags are the new thing here and they are unbounded in count and
+    in length — a title can sit in several libraries, and a Plex library can be called anything — so
+    the case has to be measured rather than reasoned about. Reasoning about it is exactly what went
+    wrong: the dropdown was declared fine at seven libraries because only the COUNT had been varied.
+    """
+
+    #: A name long enough to blow out any fixed-width container, in the shape people really use.
+    LONG_LIBRARY = "4K HDR Remux Collection — Director's Cuts and Extended Editions"
+
+    @staticmethod
+    def _busy_libraries(state: FakePlexState) -> None:
+        """Movie 03 in four movie libraries, one of them punishingly named."""
+        for key, name in enumerate((TestTheTagsOnAPhone.LONG_LIBRARY, "4K Movies", "Kids Movies"), start=3):
+            section = state.add_section(key=key, kind="movie", title=name)
+            copy_key = key * 100_000
+            section.items[copy_key] = replace(state.movies[ORIGINAL_KEY], rating_key=copy_key)
+            state.history.append(FakeHistoryEntry(account_id=201, rating_key=copy_key, viewed_at=1_700_000_000 + key))
+
+    def _measure(self, browser, app: ShortlistApp, width: int) -> dict:
+        from tests.e2e.test_mobile_audit import FIND_OVERFLOW, PAGE_SCROLLS, _phone
+
+        sarah = next(u for u in app.api("GET", "/api/users").json() if u["username"] == "sarah")
+        context = _phone(browser, app, width=width)
+        try:
+            page = context.new_page()
+            page.goto(f"/users/{sarah['id']}?tab=history")
+            page.get_by_text(DUPLICATED_TITLE, exact=True).first.wait_for(timeout=20_000)
+            # The tags must actually BE on screen, or this measures a panel without the thing under
+            # test and passes for the wrong reason — the sync is queued, so without waiting for the
+            # long name to appear the page can render before any library is recorded.
+            page.get_by_title(self.LONG_LIBRARY).first.wait_for(timeout=20_000)
+            page.wait_for_timeout(500)
+            tags = page.locator("li span[title]").count()
+            assert tags >= 4, f"only {tags} library tags rendered — nothing to measure"
+            return {
+                "scroll": page.evaluate(PAGE_SCROLLS),
+                "offenders": page.evaluate(FIND_OVERFLOW),
+                "tags": tags,
+            }
+        finally:
+            context.close()
+
+    def test_the_page_does_not_scroll_sideways_at_390(self, browser, app: ShortlistApp, fake_plex):
+        """390 is the floor the mobile audit enforces for every other route; this panel holds it too."""
+        _, _, state = fake_plex
+        self._busy_libraries(state)
+        _wait_for_sync(app)
+
+        result = self._measure(browser, app, 390)
+
+        assert result["scroll"]["overflowBy"] <= 2, (
+            f"the Watched panel scrolls sideways at 390px by {result['scroll']['overflowBy']}px; "
+            f"widest offenders: {result['offenders']}"
+        )
+
+    def test_320_is_measured_and_reported(self, browser, app: ShortlistApp, fake_plex, capsys):
+        """320 (iPhone SE 1st gen) is measured, not enforced — the same policy the mobile audit
+        applies, where two other pages already exceed it and the fix is a layout decision."""
+        _, _, state = fake_plex
+        self._busy_libraries(state)
+        _wait_for_sync(app)
+
+        result = self._measure(browser, app, 320)
+
+        with capsys.disabled():
+            over = result["scroll"]["overflowBy"]
+            print(f"\n  Watched panel at 320px: overflow {over}px")
+            for offender in result["offenders"]:
+                print(f"    {offender['tag']}.{offender['cls'][:60]} w={offender['width']} {offender['text'][:40]!r}")
