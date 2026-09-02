@@ -383,7 +383,13 @@ function OverseerrCard({
     (u) => u.id !== options.data?.default_user_id,
   );
   const serviceAccounts = others.filter((u) => !u.is_plex_user);
-  const people = others.filter((u) => u.is_plex_user);
+  // Real people are NOT offered, and that is a decision rather than an omission. A title here is
+  // wanted by several people at once — that is the whole demand model — while an Overseerr request
+  // has exactly one requester. Choosing a person does not file each title under whoever wanted it;
+  // it files EVERY title under that one person for ever, including ones they had nothing to do
+  // with. The job people might reach for it to do — holding requests for approval — is what a local
+  // account does properly, which is what the help text recommends.
+  const peopleHidden = others.length - serviceAccounts.length;
 
   return (
     <Card>
@@ -449,30 +455,13 @@ function OverseerrCard({
                     ? `Server default (${defaultAccount.name}) — ${accountEffect(defaultAccount)}`
                     : "Server default (whoever owns the API key)"}
               </option>
-              {/* The default account is ALREADY the option above, so listing it again just invites
-                  "which of these two identical lines do I want?". */}
-              {serviceAccounts.length > 0 && (
-                <optgroup label="Accounts made for this">
-                  {serviceAccounts.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name} &mdash; {accountEffect(u)}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-              {/* Kept apart, and second, because picking one files every Shortlist request under a
-                  real person: it spends THEIR request quota and notifies them about titles they
-                  never asked for. Still offered — it is their server — but never mistakable for a
-                  service account. */}
-              {people.length > 0 && (
-                <optgroup label="People on your server">
-                  {people.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name} &mdash; {accountEffect(u)}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
+              {/* Only accounts made FOR this. The default is already the option above, and real
+                  people are deliberately absent — see `peopleHidden` below. */}
+              {serviceAccounts.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name} &mdash; {accountEffect(u)}
+                </option>
+              ))}
               {/* A saved account the list does not contain — because the fetch failed, or because
                   it was since deleted in Overseerr. Without it the select falls back to its first
                   option and the screen silently misreports the saved value as "Server default",
@@ -482,6 +471,17 @@ function OverseerrCard({
                 <option value={userId}>Account #{userId}</option>
               )}
             </select>
+            {/* Says why the list is short, so it does not read as a failed load. */}
+            {peopleHidden > 0 && (
+              <p className="text-sm text-muted-foreground">
+                {peopleHidden} {peopleHidden === 1 ? "account" : "accounts"}{" "}
+                belonging to people on your server{" "}
+                {peopleHidden === 1 ? "isn't" : "aren't"} listed. A title here is
+                usually wanted by several people at once, so filing under any one
+                of them would put their name on everything &mdash; including
+                titles they had nothing to do with.
+              </p>
+            )}
             <p className="text-sm text-muted-foreground">
               {userId === 0 ? (
                 <>
@@ -501,15 +501,6 @@ function OverseerrCard({
                       — a condition the screen can now simply answer, and leaving it as a maybe
                       makes the reader do the work anyway. */}
                   {chosen ? ` and ${accountOutcome(chosen)}.` : "."}
-                  {chosen?.is_plex_user && (
-                    <>
-                      {" "}
-                      That&rsquo;s a real person: every request Shortlist makes
-                      will look like theirs, count against their request quota,
-                      and notify them about titles they never asked for. A local
-                      account in Overseerr avoids all three.
-                    </>
-                  )}
                 </>
               )}
             </p>

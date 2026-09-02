@@ -622,11 +622,6 @@ describe("RequestsSettings", () => {
           name: /Shortlist — requests wait for approval/,
         }),
       ).toBeTruthy();
-      expect(
-        screen.getByRole("option", {
-          name: /MooHouse — films approve automatically, shows wait/,
-        }),
-      ).toBeTruthy();
       // The default account is already the first option; listing it AGAIN just asks "which of
       // these two identical lines did I want?".
       expect(
@@ -713,47 +708,27 @@ describe("RequestsSettings", () => {
       "requests.overseerr.apikey": "\u2022\u2022\u2022\u2022\u2022",
     };
 
-    it("keeps real people apart from accounts made for this", async () => {
+    it("does not offer real people at all", async () => {
+      // A title here is wanted by SEVERAL people; an Overseerr request has exactly one requester.
+      // Picking a person does not attribute each title to whoever wanted it — it puts one name on
+      // everything, for ever, including titles they had nothing to do with. MooHouse is a person.
       renderPanel(VIA_SEERR);
-      await screen.findByRole("option", { name: /Shortlist — requests wait/ });
-      const groups = [...document.querySelectorAll("optgroup")].map(
-        (g) => g.label,
-      );
-      expect(groups).toEqual(["Accounts made for this", "People on your server"]);
+      expect(
+        await screen.findByRole("option", { name: /Shortlist — requests wait/ }),
+      ).toBeTruthy();
+      expect(screen.queryByRole("option", { name: /MooHouse/ })).toBeNull();
     });
 
-    it("finishes the sentence properly for a part-approving account", async () => {
-      // The dropdown's wording is a LABEL; this is the tail of a sentence. Reusing one for both
-      // produced "as MooHouse and — films approve automatically, shows wait".
-      renderPanel({ ...VIA_SEERR, "requests.overseerr.request_as_user_id": 7 });
+    it("says why the list is short, so it doesn't read as a failed load", async () => {
+      renderPanel(VIA_SEERR);
       expect(
-        await screen.findByText(
-          /films will be approved automatically, while shows wait there for your yes/,
-        ),
+        await screen.findByText(/belonging to people on your server/),
       ).toBeTruthy();
     });
 
-    it("says what picking a real person costs THEM", async () => {
-      // Their quota, their notifications, their name on titles they never asked for. Offered — it
-      // is their server — but never silently.
-      renderPanel({
-        ...VIA_SEERR,
-        "requests.overseerr.request_as_user_id": 7,
-      });
-      expect(
-        await screen.findByText(/count against their request quota/),
-      ).toBeTruthy();
-    });
-
-    it("says nothing of the sort for an account made for this", async () => {
-      renderPanel({
-        ...VIA_SEERR,
-        "requests.overseerr.request_as_user_id": 4,
-      });
-      expect(
-        await screen.findByText(/wait there for your yes/),
-      ).toBeTruthy();
-      expect(screen.queryByText(/count against their request quota/)).toBeNull();
+    it("still describes the account that IS chosen", async () => {
+      renderPanel({ ...VIA_SEERR, "requests.overseerr.request_as_user_id": 4 });
+      expect(await screen.findByText(/wait there for your yes/)).toBeTruthy();
     });
   });
 });
