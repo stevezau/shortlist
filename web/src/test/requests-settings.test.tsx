@@ -506,18 +506,22 @@ describe("RequestsSettings", () => {
       expect(await screen.findByText("Guardrails")).toBeTruthy();
     });
 
-    it("warns that the default account auto-approves, and names the chosen one otherwise", async () => {
+    it("offers the way to a review queue, without restating what the dropdown said", async () => {
       renderPanel(VIA_SEERR);
       const picker = (await screen.findByLabelText(
         "Request as",
       )) as HTMLSelectElement;
-      expect(screen.getByText(/straight to Radarr\/Sonarr/i)).toBeTruthy();
-
-      // The account list is fetched, so the option does not exist on first paint. Selecting before
-      // it lands fails loudly here, but the same race makes an ABSENCE assertion pass against
-      // broken code — which is why every check below waits for something positive first.
-      // The label now carries what the account DOES, which is the point of it.
+      // Wait for the fetched list FIRST. The label exists on first paint, so asserting off
+      // `findByLabelText` alone reads the screen before it knows which account it is describing —
+      // the same early-read trap in its presence form.
       await screen.findByRole("option", { name: /Shortlist — requests wait/ });
+
+      expect(
+        screen.getByText(/Want to check them in Overseerr/),
+      ).toBeTruthy();
+      // NOT "they'll go straight to Radarr/Sonarr" — whether an approved request reaches a
+      // download app is Overseerr's own setup, not something this screen can promise.
+      expect(screen.queryByText(/straight to Radarr\/Sonarr/i)).toBeNull();
       await userEvent.selectOptions(picker, "4");
       await waitFor(() => {
         const saved = putSettings.mock.calls.at(-1)![0];
@@ -722,16 +726,21 @@ describe("RequestsSettings", () => {
 
     it("says why the list is short, so it doesn't read as a failed load", async () => {
       renderPanel(VIA_SEERR);
+      // No apostrophe in the matcher — the copy uses a curly one (&rsquo;).
       expect(
-        await screen.findByText(/belonging to people on your server/),
+        await screen.findByText(/People on your server .* listed/),
       ).toBeTruthy();
     });
 
     it("points at an existing holding account instead of telling you to make one", async () => {
       // "Make a user called Shortlist" is unhelpful advice when the list already contains one.
       renderPanel(VIA_SEERR);
-      expect(await screen.findByText(/To check them in Overseerr first, pick/)).toBeTruthy();
-      expect(screen.queryByText(/make a user there called/)).toBeNull();
+      const line = await screen.findByText(/Want to check them in Overseerr/);
+      // Scoped to that sentence: "Shortlist" is also an option in the dropdown above.
+      expect(line.textContent).toMatch(/Pick\s+Shortlist\s+above/);
+      expect(
+        screen.queryByText(/Make a user there without auto-approve/),
+      ).toBeNull();
     });
 
     it("does tell you to make one when there is none", async () => {
@@ -748,12 +757,21 @@ describe("RequestsSettings", () => {
         default_user_id: 1,
       });
       renderPanel(VIA_SEERR);
-      expect(await screen.findByText(/make a user there called/)).toBeTruthy();
+      expect(
+        await screen.findByText(/Make a user there without auto-approve/),
+      ).toBeTruthy();
     });
 
-    it("still describes the account that IS chosen", async () => {
+    it("says nothing extra for an account that already holds requests", async () => {
+      // The dropdown says "requests wait for approval" and the summary says what that means for a
+      // title. A third sentence repeating it is what made this card three paragraphs long.
       renderPanel({ ...VIA_SEERR, "requests.overseerr.request_as_user_id": 4 });
-      expect(await screen.findByText(/wait there for your yes/)).toBeTruthy();
+      expect(
+        await screen.findByRole("option", { name: /Shortlist — requests wait/ }),
+      ).toBeTruthy();
+      expect(
+        screen.queryByText(/Want to check them in Overseerr first\?/),
+      ).toBeNull();
     });
   });
 });

@@ -341,25 +341,6 @@ function accountEffect(u: {
     : "shows approve automatically, films wait";
 }
 
-/** The same fact as `accountEffect`, phrased to finish "Requests will show in Overseerr as X …".
- *
- *  A separate function rather than the dropdown's wording reused, because that wording is a LABEL
- *  ("films approve automatically, shows wait") and this is the tail of a sentence. Splicing the
- *  label in produced "as MooHouse and — films approve automatically, shows wait", which is the sort
- *  of seam that makes a screen read as assembled rather than written. */
-function accountOutcome(u: {
-  auto_approve_movies?: boolean;
-  auto_approve_tv?: boolean;
-}): string {
-  const films = u.auto_approve_movies ?? false;
-  const shows = u.auto_approve_tv ?? false;
-  if (films && shows) return "be approved there automatically";
-  if (!films && !shows) return "wait there for your yes";
-  return films
-    ? "films will be approved automatically, while shows wait there for your yes"
-    : "shows will be approved automatically, while films wait there for your yes";
-}
-
 function OverseerrCard({
   userId,
   onUserChange,
@@ -375,10 +356,16 @@ function OverseerrCard({
   const userSelectId = useId();
   // Undefined while the list is still loading as well as when it genuinely lacks the account —
   // both mean "cannot name it yet", which is exactly when the fallback option below is needed.
-  const chosen = options.data?.users.find((u) => u.id === userId);
   const defaultAccount = options.data?.users.find(
     (u) => u.id === options.data?.default_user_id,
   );
+  // Resolve 0 ("Server default") to the account the API key actually is, the same way the panel
+  // does. Looking up the raw 0 finds nothing, so everything keyed on `chosen` silently vanished on
+  // the one setting almost everybody leaves alone.
+  const chosen =
+    options.data?.users.find(
+      (u) => u.id === (userId || options.data?.default_user_id),
+    ) ?? undefined;
   const others = (options.data?.users ?? []).filter(
     (u) => u.id !== options.data?.default_user_id,
   );
@@ -428,64 +415,73 @@ function OverseerrCard({
           </div>
         ) : (
           <div className="space-y-2">
-            <Label htmlFor={userSelectId}>Request as</Label>
-            {/* The error is shown ABOVE the control, never instead of it. An unreachable Overseerr
+            {/* Label and control on one line. A single short choice in a full-width box reads as an
+                empty text field waiting to be typed into — the two Arr cards get away with w-full
+                because they sit two-up in a grid, and this one does not. Stacks under `sm`. */}
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <Label htmlFor={userSelectId} className="shrink-0">
+                Request as
+              </Label>
+              {/* The error is shown ABOVE the control, never instead of it. An unreachable Overseerr
                 cannot name its accounts, but the choice already saved is still the owner's to see
                 and to undo — hiding the select left someone whose instance was briefly down unable
                 to put it back to Server default. Same reasoning as the Sonarr monitor select. */}
-            {options.isError && (
-              <p className="text-sm text-destructive-text">
-                Couldn&rsquo;t reach Overseerr to load its accounts. Check its
-                address and API key on the Overseerr card in Connections, and
-                press Test there. You can still change this back to the server
-                default in the meantime.
-              </p>
-            )}
-            <select
-              id={userSelectId}
-              className={selectClass}
-              disabled={options.isPending}
-              value={userId}
-              onChange={(e) => onUserChange(Number(e.target.value))}
-            >
-              {/* The default carries its effect too, and it is the one that matters most — it is
+              {options.isError && (
+                <p className="text-sm text-destructive-text">
+                  Couldn&rsquo;t reach Overseerr to load its accounts. Check its
+                  address and API key on the Overseerr card in Connections, and
+                  press Test there. You can still change this back to the server
+                  default in the meantime.
+                </p>
+              )}
+              <select
+                id={userSelectId}
+                className={`${selectBase} w-full sm:w-auto sm:min-w-[24rem] sm:max-w-full`}
+                disabled={options.isPending}
+                value={userId}
+                onChange={(e) => onUserChange(Number(e.target.value))}
+              >
+                {/* The default carries its effect too, and it is the one that matters most — it is
                   what nearly everyone will leave selected. `default_user_id` is what makes it
                   nameable at all; without it this said "whoever owns the API key", which is a
                   shrug where the consequence should be. */}
-              <option value={0}>
-                {options.isPending
-                  ? "Loading…"
-                  : defaultAccount
-                    ? `Server default (${defaultAccount.name}) — ${accountEffect(defaultAccount)}`
-                    : "Server default (whoever owns the API key)"}
-              </option>
-              {/* Only accounts made FOR this. The default is already the option above, and real
-                  people are deliberately absent — see `peopleHidden` below. */}
-              {serviceAccounts.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name} &mdash; {accountEffect(u)}
+                <option value={0}>
+                  {options.isPending
+                    ? "Loading…"
+                    : defaultAccount
+                      ? `Server default (${defaultAccount.name}) — ${accountEffect(defaultAccount)}`
+                      : "Server default (whoever owns the API key)"}
                 </option>
-              ))}
-              {/* A saved account the list does not contain — because the fetch failed, or because
+                {/* Only accounts made FOR this. The default is already the option above, and real
+                  people are deliberately absent — see `peopleHidden` below. */}
+                {serviceAccounts.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name} &mdash; {accountEffect(u)}
+                  </option>
+                ))}
+                {/* A saved account the list does not contain — because the fetch failed, or because
                   it was since deleted in Overseerr. Without it the select falls back to its first
                   option and the screen silently misreports the saved value as "Server default",
                   which the next autosave would then WRITE. Keyed on the LIST, not on isError, so
                   the deleted-account case is covered by the same three lines. */}
-              {userId !== 0 && !chosen && (
-                <option value={userId}>Account #{userId}</option>
-              )}
-            </select>
-            <p className="text-sm text-muted-foreground">
-              {userId === 0 ? (
-                <>
-                  Requests will come from the account your API key belongs to.
-                  That&rsquo;s usually an admin, so they&rsquo;ll be approved
-                  automatically and go straight to Radarr/Sonarr.{" "}
-                  {/* Don't tell someone to make an account they already have — when a suitable one
-                      is in the list, point at it instead. */}
+                {userId !== 0 && !chosen && (
+                  <option value={userId}>Account #{userId}</option>
+                )}
+              </select>
+            </div>
+            {/* Only the ACTION. The dropdown above already states whether this account approves,
+                and the summary below states what that means for a title — saying it a third time
+                here meant hedging ("usually an admin, so they'll be approved") what the dropdown
+                states as fact, and promising "go straight to Radarr/Sonarr", which is Overseerr's
+                own setup to decide, not ours. An account that already holds requests needs no line
+                at all: the other two have said it. */}
+            {chosen &&
+              (chosen.auto_approve_movies || chosen.auto_approve_tv) && (
+                <p className="text-sm text-muted-foreground">
+                  Want to check them in Overseerr first?{" "}
                   {holdingAccount ? (
                     <>
-                      To check them in Overseerr first, pick{" "}
+                      Pick{" "}
                       <strong className="font-medium text-foreground">
                         {holdingAccount.name}
                       </strong>{" "}
@@ -493,34 +489,16 @@ function OverseerrCard({
                     </>
                   ) : (
                     <>
-                      To check them in Overseerr first, make a user there called
-                      &ldquo;Shortlist&rdquo; without auto-approve and pick it
-                      here.
+                      Make a user there without auto-approve, and pick it here.
                     </>
                   )}
-                </>
-              ) : (
-                <>
-                  Requests will show in Overseerr as{" "}
-                  <strong className="font-medium text-foreground">
-                    {chosen?.name ?? "the account you picked"}
-                  </strong>
-                  {/* Definite, not hedged. The old line said "if that account can't auto-approve"
-                      — a condition the screen can now simply answer, and leaving it as a maybe
-                      makes the reader do the work anyway. */}
-                  {chosen ? ` and ${accountOutcome(chosen)}.` : "."}
-                </>
+                </p>
               )}
-            </p>
-            {/* Says why the list is short, so it does not read as a failed load. */}
             {peopleHidden > 0 && (
               <p className="text-sm text-muted-foreground">
-                {peopleHidden} {peopleHidden === 1 ? "account" : "accounts"}{" "}
-                belonging to people on your server{" "}
-                {peopleHidden === 1 ? "isn't" : "aren't"} listed. A title here is
-                usually wanted by several people at once, so filing under any one
-                of them would put their name on everything &mdash; including
-                titles they had nothing to do with.
+                People on your server aren&rsquo;t listed &mdash; a title is
+                usually wanted by several at once, so one name would end up on
+                everything.
               </p>
             )}
           </div>
@@ -650,10 +628,10 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
           <div className="space-y-1">
             <p className="font-medium">Fill in the gaps automatically</p>
             <p className="text-sm text-muted-foreground">
-              Ask for titles that would have been good picks but
-              aren&rsquo;t in your library &mdash; straight from Radarr and
-              Sonarr, or as a request in Overseerr. You choose which go out on
-              their own and which wait in{" "}
+              Ask for titles that would have been good picks but aren&rsquo;t in
+              your library &mdash; straight from Radarr and Sonarr, or as a
+              request in Overseerr. You choose which go out on their own and
+              which wait in{" "}
               <strong className="font-medium text-foreground">Requests</strong>{" "}
               for a yes or no.
             </p>
@@ -761,42 +739,42 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                 the card above is the attribution that replaces them. */}
             {!viaSeerr && (
               <>
-            <div className="space-y-2">
-              <Label htmlFor={tagId}>Tag added items</Label>
-              <Input
-                id={tagId}
-                value={form.tag}
-                onChange={(e) => set({ tag: e.target.value })}
-                placeholder="shortlist"
-                className="max-w-xs"
-              />
-              <p className="text-sm text-muted-foreground">
-                Every film or show Shortlist asks for gets this label in
-                Radarr/Sonarr &mdash; a &ldquo;tag&rdquo;, in their words, which
-                Shortlist creates there if it doesn&rsquo;t already exist. It
-                lets you spot or filter what Shortlist added. Leave blank for no
-                tag.
-              </p>
-            </div>
+                <div className="space-y-2">
+                  <Label htmlFor={tagId}>Tag added items</Label>
+                  <Input
+                    id={tagId}
+                    value={form.tag}
+                    onChange={(e) => set({ tag: e.target.value })}
+                    placeholder="shortlist"
+                    className="max-w-xs"
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    Every film or show Shortlist asks for gets this label in
+                    Radarr/Sonarr &mdash; a &ldquo;tag&rdquo;, in their words,
+                    which Shortlist creates there if it doesn&rsquo;t already
+                    exist. It lets you spot or filter what Shortlist added.
+                    Leave blank for no tag.
+                  </p>
+                </div>
 
-            <div className="flex items-start justify-between gap-4">
-              <div className="space-y-1">
-                <Label htmlFor={autoUserTagId}>Also tag by person</Label>
-                <p className="text-sm text-muted-foreground">
-                  Adds the name of whoever a title was picked for as a second
-                  tag, so you can tell in Radarr/Sonarr who it was added for
-                  &mdash; without setting a tag on every user by hand. Someone
-                  with their own tag keeps it. Individual rows can opt in or out
-                  in the row editor.
-                </p>
-              </div>
-              <Switch
-                id={autoUserTagId}
-                checked={form.autoUserTag}
-                onCheckedChange={(on) => set({ autoUserTag: on })}
-                aria-label="Also tag requests with the name of the person they're for"
-              />
-            </div>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <Label htmlFor={autoUserTagId}>Also tag by person</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Adds the name of whoever a title was picked for as a
+                      second tag, so you can tell in Radarr/Sonarr who it was
+                      added for &mdash; without setting a tag on every user by
+                      hand. Someone with their own tag keeps it. Individual rows
+                      can opt in or out in the row editor.
+                    </p>
+                  </div>
+                  <Switch
+                    id={autoUserTagId}
+                    checked={form.autoUserTag}
+                    onCheckedChange={(on) => set({ autoUserTag: on })}
+                    aria-label="Also tag requests with the name of the person they're for"
+                  />
+                </div>
               </>
             )}
 
@@ -815,7 +793,9 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                   </p>
                   {/* The live answer to "what happens tonight?", instead of three settings the
                       reader has to combine in their head — see lib/request-flow.ts. */}
-                  <p className="text-sm text-muted-foreground">{flow.summary}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {flow.summary}
+                  </p>
                 </div>
                 <Switch
                   checked={form.autoSend}
@@ -851,7 +831,10 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                           value={form.autoMinDemand}
                           onChange={(e) =>
                             set({
-                              autoMinDemand: Math.max(1, Number(e.target.value)),
+                              autoMinDemand: Math.max(
+                                1,
+                                Number(e.target.value),
+                              ),
                             })
                           }
                           className="w-24"
@@ -1071,10 +1054,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                       </select>
                     </div>
                     {form.preferredLanguages.length === 0 && (
-                      <p
-                        role="alert"
-                        className="text-sm text-destructive-text"
-                      >
+                      <p role="alert" className="text-sm text-destructive-text">
                         {form.languageMode === "only"
                           ? "With no languages listed, Shortlist will never ask for anything. Add at least one."
                           : "With no languages listed, every title Shortlist can identify a language for counts as another language and has to clear the higher bar."}
@@ -1112,7 +1092,10 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                       min={0}
                       max={10}
                       step={0.1}
-                      value={otherLanguageBar(form.minRating, form.minRatingOther)}
+                      value={otherLanguageBar(
+                        form.minRating,
+                        form.minRatingOther,
+                      )}
                       onChange={(e) =>
                         // "" must become null, not 0. `Number("") === 0`, and 0 is a REAL bar here
                         // (nothing can fail it) — so clearing the box would silently turn "Prefer
@@ -1120,7 +1103,9 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                         // of the hint's "Type a number to set it yourself", so it has to mean un-pin.
                         set({
                           minRatingOther:
-                            e.target.value === "" ? null : Number(e.target.value),
+                            e.target.value === ""
+                              ? null
+                              : Number(e.target.value),
                         })
                       }
                       className="w-28"
@@ -1143,10 +1128,13 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                     )}
                     {form.minRatingOther !== null &&
                       form.minRatingOther < form.minRating && (
-                        <p role="alert" className="text-sm text-destructive-text">
+                        <p
+                          role="alert"
+                          className="text-sm text-destructive-text"
+                        >
                           This is below your minimum rating of {form.minRating},
-                          so it never applies — a title under {form.minRating} is
-                          already out.
+                          so it never applies — a title under {form.minRating}{" "}
+                          is already out.
                         </p>
                       )}
                   </div>
