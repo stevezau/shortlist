@@ -775,12 +775,14 @@ export interface TraceSelection {
   library: string;
   /** `rebuilt` (built fresh) · `carried_forward` (redelivered untouched — not its refresh night) ·
    *  `refreshed` (kept the strongest two-thirds, swapped the rest) · `settings_changed` (rebuilt
-   *  early because a setting that decides contents was edited) · `cold_start`. */
+   *  early because a setting that decides contents was edited) · `held_idle` (it WAS its refresh
+   *  night, but the person has watched nothing since the row was built) · `cold_start`. */
   decision:
     | "rebuilt"
     | "carried_forward"
     | "refreshed"
     | "settings_changed"
+    | "held_idle"
     | "cold_start";
   size: number;
   delivered: number;
@@ -788,8 +790,11 @@ export interface TraceSelection {
   cut_cap?: number;
   carried?: number;
   new?: number;
+  /** What the CADENCE said, not what happened — a `held_idle` row is `true` here. */
   refresh_night?: boolean;
   rebuild_every_days?: number | null;
+  /** This row's idle ceiling in days; null when the hold is off for it. */
+  idle_hold_days?: number | null;
   recency?: number;
   watched_pct?: number;
   pick_order?: string;
@@ -950,6 +955,11 @@ export interface SupportRowSetting {
   watched_pct_source: string;
   refresh_days: number;
   refresh_days_source: string;
+  /** The ceiling as the ENGINE applies it, so `0` here can mean "off", "forced off for a cycling
+   *  row" or "shared row" — `idle_hold_source` says which. */
+  idle_hold_days: number;
+  /** `row` · `global` · `forced` (cycling row, engine ignores the value) · `n/a` (shared row). */
+  idle_hold_source: string;
   rewatch: boolean;
   unstarted_only: boolean;
 }

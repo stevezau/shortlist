@@ -539,6 +539,19 @@
             "title": "Hub Anchor",
             "type": "object"
           },
+          "idle_hold_days": {
+            "anyOf": [
+              {
+                "maximum": 365.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idle Hold Days"
+          },
           "library_keys": {
             "items": {
               "type": "string"
@@ -1042,6 +1055,17 @@
             "title": "Id",
             "type": "integer"
           },
+          "idle_hold_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idle Hold Days"
+          },
           "last_run_id": {
             "anyOf": [
               {
@@ -1454,6 +1478,7 @@
           "rewatch",
           "unstarted_only",
           "refresh_days",
+          "idle_hold_days",
           "recency",
           "recent_count",
           "max_seeds",

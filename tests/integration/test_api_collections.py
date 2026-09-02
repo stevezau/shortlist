@@ -42,6 +42,7 @@ COLLECTION_KEYS = {
     "rewatch",
     "unstarted_only",
     "refresh_days",
+    "idle_hold_days",
     "recency",
     "recent_count",
     "max_seeds",
@@ -320,6 +321,28 @@ class TestCollectionsSeed:
         with client.app.state.sessions() as session:
             specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
         assert next(s for s in specs if s.slug == "fresh_row").refresh_days == 3
+
+    def test_per_row_idle_hold_round_trips_and_reaches_the_spec(self, client: TestClient):
+        """The other half of the cadence: how long a row waits when its owner watched nothing."""
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        created = client.post("/api/collections", json={"name": "Patient Row", "idle_hold_days": 28})
+        assert created.status_code == 201 and created.json()["idle_hold_days"] == 28
+        assert client.post("/api/collections", json={"name": "X", "idle_hold_days": -1}).status_code == 422
+        assert client.post("/api/collections", json={"name": "X", "idle_hold_days": 400}).status_code == 422
+        assert client.put("/api/settings", json={"values": {"recommendations.idle_hold_days": 400}}).status_code == 422
+        assert client.put("/api/settings", json={"values": {"recommendations.idle_hold_days": 28}}).status_code == 200
+        # 0 is a CHOICE ("never hold this row"), and it is also the shipped default — a bounds check
+        # that rejected it would make the feature impossible to turn back off.
+        assert client.put("/api/settings", json={"values": {"recommendations.idle_hold_days": 0}}).status_code == 200
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+        assert next(s for s in specs if s.slug == "patient_row").idle_hold_days == 28
+        # An untouched row still inherits, so one row's ceiling reaches no other.
+        assert next(s for s in specs if s.slug == "picked").idle_hold_days is None
 
     def test_per_row_recency_round_trips_and_reaches_the_spec(self, client: TestClient):
         from shortlist.server.services.context_builder import ContextBuilder

@@ -124,6 +124,17 @@ DEFAULTS: dict[str, Any] = {
     # 8 rather than 7 because 8 is exactly what the old `recommendations.freshness` default of 0.5
     # resolved to, and migration 0065 must not shift the cadence of a server that never set it.
     "recommendations.refresh_days": 8,
+    # The other half of the cadence: how long a row may wait when the person it belongs to has
+    # watched NOTHING since it was last built. 0 (the default, and every existing install) = off, so
+    # a row rebuilds on its cadence whatever they have been doing. Set to N and a row due tonight is
+    # held instead — no re-pick, no Plex write — until either they watch something or the row turns
+    # N days old, whichever comes first. Per-row overridable.
+    #
+    # The ceiling is what makes this a hold rather than a freeze, and it is not optional: the row
+    # nobody watches is the one that most needs to look different next time they open Plex, so
+    # "inactive" must never mean "frozen for ever" (issue #109). It saves Plex writes, not AI tokens
+    # — the candidate gather runs above the refresh decision on every path, at every cadence.
+    "recommendations.idle_hold_days": 0,
     # How much a title's RELEASE DATE counts when ranking it: 0.0 = ignore age, 1.0 = every ~8 years
     # of age halves a title's weight. A weight, never a filter — an old title is only asked to be a
     # better match. Distinct from the cadence above, which is HOW OFTEN a row rebuilds, not which

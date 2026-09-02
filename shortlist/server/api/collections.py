@@ -172,6 +172,9 @@ class CollectionIn(BaseModel):
     # Shows only: exclude every series this person has started, not just the ones they finished.
     unstarted_only: bool = False
     refresh_days: int | None = Field(default=None, ge=0, le=MAX_REFRESH_DAYS)  # None -> inherit the global cadence
+    # How long this row waits when its owner has watched nothing since it was built. 0 = never wait;
+    # None -> inherit the global recommendations.idle_hold_days.
+    idle_hold_days: int | None = Field(default=None, ge=0, le=MAX_REFRESH_DAYS)
     # How much this row weights a title's release date. None -> inherit recommendations.recency.
     recency: float | None = Field(default=None, ge=0.0, le=1.0)
     recent_count: int | None = Field(default=None, ge=1, le=25)  # None -> inherit global recent_count
@@ -282,6 +285,7 @@ class CollectionOut(PassthroughModel):
     rewatch: bool
     unstarted_only: bool
     refresh_days: int | None
+    idle_hold_days: int | None
     recency: float | None
     recent_count: int | None
     max_seeds: int | None
@@ -606,6 +610,7 @@ def _serialize(session, collection: Collection) -> dict:
         "rewatch": bool(collection.rewatch),
         "unstarted_only": bool(collection.unstarted_only),
         "refresh_days": collection.refresh_days,
+        "idle_hold_days": collection.idle_hold_days,
         "recency": collection.recency,
         "recent_count": collection.recent_count,
         "max_seeds": collection.max_seeds,
@@ -752,6 +757,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             rewatch=body.rewatch,
             unstarted_only=body.unstarted_only,
             refresh_days=body.refresh_days,
+            idle_hold_days=body.idle_hold_days,
             recency=body.recency,
             recent_count=body.recent_count,
             max_seeds=body.max_seeds,
@@ -793,6 +799,7 @@ _PATCHABLE_COLUMNS = (
     "rewatch",
     "unstarted_only",
     "refresh_days",
+    "idle_hold_days",
     "recency",
     "recent_count",
     "max_seeds",

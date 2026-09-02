@@ -10,6 +10,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from loguru import logger
 
@@ -149,6 +150,11 @@ class EngineContext:
     # Day number of this run (date.toordinal()), the phase for refresh rotation so a row shifts
     # day to day but is reproducible within a day. Set at the start of run(); 0 disables rotation.
     run_day: int = 0
+    # When this run started, the clock the idle hold measures against (`rows._held_for_idle`): is
+    # this row older than its ceiling, and has its owner watched anything since it was built. Set at
+    # the start of run() beside `run_day`; None on direct engine calls, which — exactly like
+    # `run_day = 0` — means "never hold", so a library caller keeps the plain cadence.
+    run_at: datetime | None = None
     # How many users to process concurrently. 1 = fully sequential (the safe engine/test default).
     # The server sets this from `run.concurrency`. Only the READ + LLM work overlaps; every Plex and
     # plex.tv write is serialized by ``write_lock``, so the leak-safe ordering is preserved exactly.

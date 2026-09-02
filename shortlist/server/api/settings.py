@@ -300,6 +300,7 @@ VALIDATORS = {
     # the old 0..1 fraction could not express anything slower than a fortnight, and a monthly or
     # quarterly row is a legitimate thing to want.
     "recommendations.refresh_days": _bounded_int(0, MAX_REFRESH_DAYS),
+    "recommendations.idle_hold_days": _bounded_int(0, MAX_REFRESH_DAYS),
     "recommendations.recency": _bounded_float(0.0, 1.0),
     "recommendations.recent_count": _bounded_int(1, 25),
     "recommendations.max_seeds": _bounded_int(5, 100),

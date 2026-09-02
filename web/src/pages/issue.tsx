@@ -844,6 +844,8 @@ function verdictFor(
         enabled?: boolean;
         due?: boolean;
         never_built?: boolean;
+        idle_hold_days?: number;
+        rebuild_every_days?: number;
       }[];
       const live = rows.filter((row) => row.enabled);
       const never = live.filter((row) => row.never_built).map((r) => r.slug);
@@ -856,14 +858,27 @@ function verdictFor(
           text: `${never.join(", ")} ${never.length === 1 ? "has" : "have"} never been built, so nothing you set on ${never.length === 1 ? "it" : "them"} has reached Plex yet. Run it from Rows.`,
         };
       }
+      // "Due" stops meaning "will rebuild" once a hold is set: a due row belonging to someone who
+      // has watched nothing waits anyway. Promising the change has landed would send the operator
+      // away from the one thing actually holding their row.
+      // The server's own `live_hold` predicate. `idle_hold_days > 0` alone is not enough: a hold at
+      // or below the cadence, or on a frozen row, can never fire — and the block rendered directly
+      // below this line says so, so claiming a row "may still be held" contradicts it on screen.
+      const held = live.some(
+        (row) =>
+          (row.idle_hold_days ?? 0) > (row.rebuild_every_days ?? 0) &&
+          (row.rebuild_every_days ?? 0) > 0,
+      )
+        ? " A row whose owner has watched nothing since it was built may still be held — the hold column says which."
+        : "";
       return waiting.length
         ? {
             bad: false,
-            text: `${waiting.length} ${waiting.length === 1 ? "row is" : "rows are"} not due to rebuild yet — a setting you changed does not reach a row until it does. The table below says when.`,
+            text: `${waiting.length} ${waiting.length === 1 ? "row is" : "rows are"} not due to rebuild yet — a setting you changed does not reach a row until it does. The table below says when.${held}`,
           }
         : {
             bad: false,
-            text: "Every row is due to rebuild, so the next run will pick up anything you have changed.",
+            text: `Every row is due to rebuild, so the next run will pick up anything you have changed.${held}`,
           };
     }
     case "funnel": {

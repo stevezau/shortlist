@@ -35,7 +35,7 @@ the libraries you pick.
 
 ### How often rows rebuild, already-watched, and cost
 
-Settings → Finding titles has four more dials, each of which a row can override:
+Settings → Finding titles has five more dials, each of which a row can override:
 
 - **How often it changes**, called **How often rows rebuild** in Settings where the global lives.
   A number of days, so it says what it does: `1` rebuilds every night, `7` weekly, `30` monthly, and
@@ -50,6 +50,43 @@ Settings → Finding titles has four more dials, each of which a row can overrid
   This used to be a 0–1 "Freshness" percentage that a curve turned into days behind the scenes, so
   `0.55` meant "every 7 days" and there was no way to ask for anything slower than a fortnight.
   Upgrading converts every value to the day count it already meant, so no row changes pace.
+
+- **Hold rows for inactive viewers**, called **Hold when they aren't watching** in the row editor.
+  A number of days; `0` (the default) turns it off, and nothing changes from how Shortlist has always
+  worked.
+
+  **Set it higher than the rebuild cadence, or it does nothing.** A row is rebuilt on its due night,
+  so by its next due night it is exactly one cadence old — and the hold releases at that age. A row
+  rebuilding every 30 days with a 30-day hold therefore never holds at all. Settings and the row
+  editor warn you when the two cancel, and `/api/support/row-schedule` names any row where the hold
+  has no effect.
+
+  The exception is a row **named after a watch** (`{top_seed}`), which Shortlist rebuilds nightly
+  whatever its cadence says — so any hold above one day works there, and that is the row the wizard
+  creates. A **frozen** row (cadence `0`) never rebuilds at all, so a hold does nothing on it.
+
+  Turn it on and a row that is due to rebuild is left alone while the person it belongs to has not
+  watched anything since that row was last built — there is nothing new to base a rebuild on, and
+  skipping it saves a write to Plex for every row held. The number is a **ceiling**, not a freeze:
+  once the row is that many days old it rebuilds anyway, however quiet the person has been. That
+  matters, because the row nobody watches is exactly the one that most needs to look different next
+  time they open Plex.
+
+  Two rows never hold. A **shared** row has no single owner whose watching could be idle. A row that
+  **cycles its seed** (Seed window above 1) advances one watch per rebuild by design, so holding it
+  would stop the rotation rather than delay it. The row editor hides the control for both.
+
+  Two things also override a hold in progress, so neither waits for the ceiling: changing a setting
+  that decides the row's titles (including blocking a seed), and a row named after a watch whose seed
+  has moved — which is what happens if someone marks their most recent title unwatched.
+
+  When a row is held you can see it: open that run, pick the person, and the row's line in
+  **Delivered** says it was its night to rebuild and why it was left alone. `/api/support/row-schedule`
+  reports the ceiling beside the cadence for every row.
+
+  It saves **Plex writes**, not AI cost. Finding candidate titles happens before the rebuild decision
+  on every path, at every cadence, so a held row costs the same to think about as a rebuilt one — it
+  just doesn't get written.
 
 - **Recent releases.** How much a title's **release date** counts when Shortlist ranks it. At
   `0.0` release date is ignored entirely: a well-rated 1996 film and a well-rated 2024 one are
@@ -109,6 +146,7 @@ Settings → Finding titles sets what a row uses **unless the row says otherwise
 | **Recommendation sources**                           | Switch to "Choose for this row" and tick its own sources                                  |
 | **Libraries**                                        | Which Plex libraries it builds in, which also sets what it recommends                     |
 | **How often it changes**, **Already-watched titles** | How often it refreshes, and how much already-watched it allows                            |
+| **Hold when they aren't watching**                  | How long it waits when its owner has watched nothing since it was built                  |
 | **Recent releases**                                  | How much release date counts for this row — a “new and notable” shelf, or one that digs up older films |
 | **Row size**, **Audience**                           | How many titles, and who gets it                                                          |
 | **Watches the AI web search looks up**               | How many recent watches AI web search looks up for this row (shown only on rows using it) |

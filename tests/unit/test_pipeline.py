@@ -6,7 +6,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import ClassVar
 from unittest.mock import MagicMock
 
@@ -34,7 +34,7 @@ from shortlist.engine.models import (
     UserRunReport,
     UserType,
 )
-from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
+from tests.conftest import NOW, MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
 
 def _ranked(items: list[dict], affinity: float = 1.0) -> list[tuple[dict, float]]:
@@ -5039,6 +5039,335 @@ class TestTheTraceExplainsWhatHappenedToTheRow:
         assert entry["size"] == 3
         assert entry["candidates"] >= entry["delivered"] > 0
         assert entry["cut_cap"] == ctx.config.candidates_pre_rank
+
+
+class TestIdleHoldInARun:
+    """A row whose owner has watched nothing since it was last built waits out its refresh night.
+
+    The cadence asks "is it this row's night?"; the hold asks "is there anything new to say?".
+    Only when both agree does the row re-pick — and the hold has a ceiling, so an inactive person
+    never ends up with a permanently frozen row (issue #109).
+    """
+
+    RUN_DAY = date(2026, 6, 15).toordinal()
+    KEY = ("sarah", "picked", "1")
+
+    def _ctx(self, ctx: EngineContext, *, hold_days: int, built_days_ago: int, watched_days_ago: int) -> None:
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, **{i: 2000 + i for i in range(10, 20)}}
+        pool = [{"id": i, "title": f"T{i}", "genre_ids": [], "vote_average": 8.0} for i in range(10, 20)]
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=watched_days_ago, rating_key=999)]
+        # refresh_days=1 so it is ALWAYS the row's refresh night — every difference below is the hold.
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=3, media="movie", refresh_days=1)]
+        ctx.config.min_history = 1
+        ctx.config.idle_hold_days = hold_days
+        ctx.run_day = self.RUN_DAY
+        # The clock `make_watched(days_ago=…)` counts back from, so "watched 30 days ago" and "built
+        # 5 days ago" are on one timeline. Real `now` would put every fixture watch decades in the past.
+        ctx.run_at = NOW
+        ctx.previous_picks = {self.KEY: self._prior(NOW - timedelta(days=built_days_ago))}
+        ctx.previous_recipes = {}  # unknown recipe never forces a rebuild
+
+    def _prior(self, built_at):
+        return [
+            Pick(
+                tmdb_id=t,
+                rating_key=2000 + t,
+                title=f"T{t}",
+                rank=i + 1,
+                reason="kept",
+                media_type=MediaType.MOVIE,
+                collection_slug="picked",
+                section_key="1",
+                library="Movies",
+                built_at=built_at,
+            )
+            for i, t in enumerate([17, 18, 19])
+        ]
+
+    def _run(self, ctx, mock_plextv):
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        entries = report.users[0].trace.get("selection") or []
+        assert entries, "the trace recorded no selection at all"
+        return report, entries[0]
+
+    def test_an_idle_person_holds_the_row_on_its_refresh_night(self, ctx: EngineContext, mock_plextv):
+        self._ctx(ctx, hold_days=28, built_days_ago=5, watched_days_ago=30)
+
+        report, entry = self._run(ctx, mock_plextv)
+
+        assert entry["decision"] == "held_idle"
+        picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+        assert [p["tmdb_id"] for p in picks] == [17, 18, 19], "the row is redelivered exactly as it was"
+
+    def test_a_held_row_is_never_re_picked(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        """The saving this feature exists for: no re-selection, so delivery's unchanged-skip then
+        avoids the Plex membership write too."""
+        self._ctx(ctx, hold_days=28, built_days_ago=5, watched_days_ago=30)
+        built = spy_build_picks(monkeypatch)
+
+        self._run(ctx, mock_plextv)
+
+        assert built == []
+
+    def test_the_trace_says_it_was_due_and_was_held_anyway(self, ctx: EngineContext, mock_plextv):
+        """`refresh_night` records the CADENCE's answer, not the hold's. "It was due tonight and we
+        held it" is the fact the owner needs; collapsing it to False would be indistinguishable from
+        a row that simply was not due."""
+        self._ctx(ctx, hold_days=28, built_days_ago=5, watched_days_ago=30)
+
+        _, entry = self._run(ctx, mock_plextv)
+
+        assert entry["refresh_night"] is True
+        assert entry["idle_hold_days"] == 28
+
+    def test_a_watch_since_the_build_refreshes_as_normal(self, ctx: EngineContext, mock_plextv):
+        """The whole point: they watched something, so there IS something new to say."""
+        self._ctx(ctx, hold_days=28, built_days_ago=5, watched_days_ago=1)
+
+        _, entry = self._run(ctx, mock_plextv)
+
+        assert entry["decision"] == "refreshed"
+
+    def test_the_hold_expires_at_the_ceiling(self, ctx: EngineContext, mock_plextv):
+        """A hold, not a freeze. Past the ceiling the row rebuilds however idle they are — the row
+        nobody watches is the one that most needs to look different next time they open Plex."""
+        self._ctx(ctx, hold_days=28, built_days_ago=40, watched_days_ago=90)
+
+        _, entry = self._run(ctx, mock_plextv)
+
+        assert entry["decision"] == "refreshed"
+
+    def test_off_by_default(self, ctx: EngineContext, mock_plextv):
+        """Every existing install: the setting is 0, so an idle person refreshes exactly as before."""
+        self._ctx(ctx, hold_days=0, built_days_ago=5, watched_days_ago=30)
+
+        _, entry = self._run(ctx, mock_plextv)
+
+        assert entry["decision"] == "refreshed"
+
+    def test_blocking_a_seed_still_rebuilds_a_held_row(self, ctx: EngineContext, mock_plextv):
+        """A blocked seed is an owner edit like any other, and today it lands on the very next run —
+        a `{top_seed}` row is forced to a nightly cadence. With a hold on, the row would go on being
+        built from (and named after) the blocked watch until the person watched something or the
+        ceiling expired, which on a 60-day ceiling is two months of a row they explicitly rejected.
+
+        `blocked_seeds` lives on the user, not in the row's settings, so `row_recipe` did not cover
+        it — the clause that lets a deliberate edit outrank the hold never fired.
+        """
+        self._ctx(ctx, hold_days=28, built_days_ago=5, watched_days_ago=30)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        # Night one: the row is built, and stamps the recipe it was built under — exactly what the
+        # adapter reads back into `previous_recipes` on the next run.
+        first = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        ctx.previous_recipes = {self.KEY: first.users[0].picks[0].recipe}
+
+        # Night two: same idle person, but the owner has blocked the seed in between.
+        blocked = make_profile("sarah", account_id=100)
+        blocked.blocked_seeds = {999}
+        second = pipeline_mod.run(ctx, [blocked])
+        entry = (second.users[0].trace.get("selection") or [{}])[0]
+
+        assert entry.get("decision") == "settings_changed"
+
+    def test_the_recipe_stays_inside_its_column_however_many_seeds_are_blocked(self, ctx: EngineContext, mock_plextv):
+        """`picks.recipe` is `String(128)`. Listing blocked seeds inline blows through that at about
+        nine of them (30 blocked seeds measured 279 chars). SQLite does not truncate, so this is
+        harmless today — but a truncating backend would collide two different block sets into one
+        fingerprint, which is a settings change that silently never rebuilds. Hashing keeps the
+        component fixed-width whatever is in the set."""
+        from shortlist.server.db.models import PickRow
+
+        limit = PickRow.__table__.c.recipe.type.length
+        self._ctx(ctx, hold_days=0, built_days_ago=5, watched_days_ago=1)
+        heavy = make_profile("sarah", account_id=100)
+        heavy.blocked_seeds = set(range(900000, 900060))
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [heavy])
+
+        recipe = report.users[0].picks[0].recipe
+        assert len(recipe) <= limit, f"recipe is {len(recipe)} chars, column holds {limit}"
+
+    def test_a_row_whose_seed_moved_is_never_held(self, ctx: EngineContext, mock_plextv):
+        """The one thing that CAN move a `{top_seed}` row's seed while nobody is watching: an
+        un-watch. `last_watch_at` then moves BACKWARDS onto an older watch, which is `<=` the build,
+        so the hold engages — and `_seed_moved`, which would have caught the stale title, is only
+        consulted on the refresh branch. The row goes on claiming "Because you watched X" about a
+        title the owner has un-watched, for up to the ceiling. Without the hold this is impossible,
+        because a `{top_seed}` row is forced to a nightly cadence.
+        """
+        self._ctx(ctx, hold_days=28, built_days_ago=5, watched_days_ago=30)
+        ctx.config.rows = [
+            RowSpec(slug="picked", name_template="Because you watched {top_seed}", size=3, media="movie")
+        ]
+        # Last run's picks were built from a seed that is no longer what the pool leads with.
+        ctx.previous_picks = {
+            self.KEY: [
+                Pick(
+                    tmdb_id=t,
+                    rating_key=2000 + t,
+                    title=f"T{t}",
+                    rank=i + 1,
+                    reason="kept",
+                    media_type=MediaType.MOVIE,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="Movies",
+                    built_at=NOW - timedelta(days=5),
+                    seed_tmdb_id=424242,
+                    seed_title="A Film They Un-watched",
+                )
+                for i, t in enumerate([17, 18, 19])
+            ]
+        }
+
+        _, entry = self._run(ctx, mock_plextv)
+
+        assert entry["decision"] != "held_idle", "a row whose title no longer matches its seed must rebuild"
+
+    def test_a_settings_change_still_rebuilds_a_held_row(self, ctx: EngineContext, mock_plextv):
+        """The owner's deliberate edit outranks the hold. Making them wait up to the ceiling for an
+        edit to show reads as the setting being broken — the same reason `recipe_changed` already
+        beats the cadence."""
+        self._ctx(ctx, hold_days=28, built_days_ago=5, watched_days_ago=30)
+        ctx.previous_recipes = {self.KEY: "a-different-recipe"}
+
+        _, entry = self._run(ctx, mock_plextv)
+
+        assert entry["decision"] == "settings_changed"
+
+
+class TestBuiltAtStamping:
+    """`built_at` says when a row's CONTENTS were last chosen — the clock the idle hold measures.
+
+    Deliberately not "when were these picks last written": a carried-forward row is re-persisted
+    under every run, so a stamp that moved with delivery would report every row as newly built, the
+    ceiling would never expire, and "watched since it was built" would be false for everyone.
+    """
+
+    KEY = ("sarah", "picked", "1")
+
+    def _ctx(self, ctx: EngineContext, *, refresh_days: int) -> None:
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, **{i: 2000 + i for i in range(10, 20)}}
+        pool = [{"id": i, "title": f"T{i}", "genre_ids": [], "vote_average": 8.0} for i in range(10, 20)]
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=3, media="movie", refresh_days=refresh_days)]
+        ctx.config.min_history = 1
+        ctx.run_day = date(2026, 6, 15).toordinal()
+        ctx.run_at = NOW
+
+    def _run(self, ctx, mock_plextv):
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        picks = report.users[0].picks
+        assert picks, "the run delivered no picks"
+        return picks
+
+    def test_a_rebuild_stamps_this_runs_time(self, ctx: EngineContext, mock_plextv):
+        """Deliberately does NOT set `ctx.run_at` — `pipeline.run` deriving it from the report's own
+        start is what has to make this pass. Every other test here assigns it, so without this one
+        that assignment could be deleted and the whole feature would go inert (no clock = never held,
+        every pick stamped None) with the suite still green."""
+        self._ctx(ctx, refresh_days=1)
+        ctx.run_at = None
+
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        assert report.users[0].picks
+        assert {p.built_at for p in report.users[0].picks} == {report.started_at}
+
+    def test_a_carried_forward_row_keeps_the_original_stamp(self, ctx: EngineContext, mock_plextv):
+        """The load-bearing half. Re-stamping here would make every row permanently "just built":
+        the ceiling could never expire and nothing would ever look watched-since."""
+        built = NOW - timedelta(days=9)
+        self._ctx(ctx, refresh_days=0)  # frozen: always a reuse night
+        ctx.previous_picks = {
+            self.KEY: [
+                Pick(
+                    tmdb_id=t,
+                    rating_key=2000 + t,
+                    title=f"T{t}",
+                    rank=i + 1,
+                    reason="kept",
+                    media_type=MediaType.MOVIE,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="Movies",
+                    built_at=built,
+                )
+                for i, t in enumerate([17, 18, 19])
+            ]
+        }
+        ctx.previous_recipes = {}
+
+        assert {p.built_at for p in self._run(ctx, mock_plextv)} == {built}
+
+    def test_a_carry_forward_of_unstamped_picks_stays_unstamped(self, ctx: EngineContext, mock_plextv):
+        """Unknown must stay unknown until something is actually re-picked.
+
+        Stamping `now` here says "the contents were decided tonight" about a night on which nothing
+        was decided. That stamp is then newer than a watch that really did happen after the true
+        build, so the next due night holds a row that has new watches to answer to — for every row on
+        the server the night after 0086 lands, and for everyone who has just graduated from cold
+        start (the cold branch stamps nothing either).
+        """
+        self._ctx(ctx, refresh_days=0)  # frozen: always a reuse night
+        ctx.previous_picks = {
+            self.KEY: [
+                Pick(
+                    tmdb_id=t,
+                    rating_key=2000 + t,
+                    title=f"T{t}",
+                    rank=i + 1,
+                    reason="kept",
+                    media_type=MediaType.MOVIE,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="Movies",
+                )  # no built_at — a pre-0086 or cold-start row
+                for i, t in enumerate([17, 18, 19])
+            ]
+        }
+        ctx.previous_recipes = {}
+
+        assert {p.built_at for p in self._run(ctx, mock_plextv)} == {None}
+
+    def test_a_refresh_night_re_stamps_every_pick_including_the_survivors(self, ctx: EngineContext, mock_plextv):
+        """A refresh re-decides the whole row — the two-thirds that survived were re-ranked against
+        tonight's pool and kept on purpose. Leaving their old stamps would make the row read as
+        older than its contents and expire the ceiling early."""
+        self._ctx(ctx, refresh_days=1)
+        ctx.previous_picks = {
+            self.KEY: [
+                Pick(
+                    tmdb_id=t,
+                    rating_key=2000 + t,
+                    title=f"T{t}",
+                    rank=i + 1,
+                    reason="kept",
+                    media_type=MediaType.MOVIE,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="Movies",
+                    built_at=NOW - timedelta(days=9),
+                )
+                for i, t in enumerate([10, 11, 12])
+            ]
+        }
+        ctx.previous_recipes = {}
+
+        assert {p.built_at for p in self._run(ctx, mock_plextv)} == {NOW}
 
 
 class TestTheTraceShowsWhyATitleWonOrLost:

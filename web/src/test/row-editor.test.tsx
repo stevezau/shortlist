@@ -57,6 +57,7 @@ function row(patch: Partial<Collection> = {}): Collection {
     rewatch: false,
     unstarted_only: false,
     refresh_days: null,
+    idle_hold_days: null,
     recency: null,
     recent_count: null,
     max_seeds: null,
@@ -740,6 +741,106 @@ describe("RowEditor — rebuild cadence", () => {
     expect(
       (updateCollection.mock.calls.at(0)?.[1] as Collection).refresh_days,
     ).toBe(8);
+  });
+});
+
+describe("RowEditor — idle hold", () => {
+  beforeEach(() => {
+    updateCollection.mockClear();
+  });
+
+  it("shows the row's own ceiling when it overrides the global", () => {
+    renderEditor(row({ idle_hold_days: 21 }));
+    expect(
+      screen.getByRole("spinbutton", {
+        name: /hold a row for an inactive viewer/i,
+      }),
+    ).toHaveValue(21);
+    expect(
+      screen.getByRole("switch", { name: /global hold/i }),
+    ).not.toBeChecked();
+  });
+
+  it("still offers the hold on a row that names its seed", async () => {
+    // The engine DOES hold a `{top_seed}` row: its cadence is forced nightly so it keeps answering
+    // to the watch it names, but the seed is drawn from history, so nobody who watched nothing can
+    // have moved it. Hiding the control here would repeat, in mirror image, the exact bug the
+    // cadence field shipped once — an editor promising one thing while the engine does another
+    // (issue #57). It is also the row the wizard creates, so hiding it guts the feature.
+    renderEditor(row({ name_template: "Because you watched {top_seed}" }));
+    expect(
+      screen.getByRole("switch", { name: /global hold/i }),
+    ).toBeInTheDocument();
+    // ...while the CADENCE control stays hidden for it, which is a different question.
+    expect(
+      screen.queryByRole("switch", { name: /global rebuild cadence/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not call the hold a no-op on a row the engine rebuilds nightly", async () => {
+    // The row the hold exists for, and the cell the warning got wrong. `effective_refresh_days`
+    // FORCES a `{top_seed}` row to nightly whatever its stored cadence says — which is exactly why
+    // an 8-day hold on it is a real 7-night hold. Judging it against the stored 8 called it a no-op
+    // and told the owner to raise a setting that was already working, quoting back a cadence the
+    // engine documents as ignored (and whose control is hidden on this very row).
+    settingsData.current = {
+      "recommendations.refresh_days": 8,
+      "recommendations.recency": 0.5,
+    };
+    renderEditor(
+      row({
+        name_template: "Because you watched {top_seed}",
+        idle_hold_days: 8,
+      }),
+    );
+
+    // Wait for something ONLY rendered once the settings query resolves — an inherited field's
+    // "global is …" hint. Awaiting the spinbutton is not enough: it renders from `input` regardless,
+    // so the absence assertion below would pass simply because no cadence had loaded yet, which is
+    // exactly how this test first went green against unfixed code.
+    expect(
+      await screen.findByText(/leans towards recent releases/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("spinbutton", {
+        name: /hold a row for an inactive viewer/i,
+      }),
+    ).toHaveValue(8);
+    expect(screen.queryByText(/no effect/i)).not.toBeInTheDocument();
+  });
+
+  it("does call it a no-op on an ordinary row the cadence already beats", async () => {
+    // The control cell: same numbers, but a row whose stored cadence is the one the engine uses.
+    settingsData.current = { "recommendations.refresh_days": 8 };
+    renderEditor(row({ idle_hold_days: 8 }));
+    expect(await screen.findByText(/no effect/i)).toBeInTheDocument();
+  });
+
+  it("hides the hold on a row that cycles its seed", async () => {
+    // That rotation advances one watch per rebuild by design, driven by the cadence and not by new
+    // watches, so `effective_idle_hold_days` forces it off however it is set. A control the engine
+    // overrides must not be on screen.
+    renderEditor(row({ seed_window: 3 }));
+    expect(
+      screen.queryByRole("switch", { name: /global hold/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("stops inheriting at the global's own value, not at zero", async () => {
+    // Same trap as the cadence switch beside it: snapping to 0 would silently turn the hold OFF for
+    // this row, which reads as the switch doing something it did not say it would.
+    settingsData.current = { "recommendations.idle_hold_days": 30 };
+    renderEditor(row({ idle_hold_days: null }));
+
+    await userEvent.click(screen.getByRole("switch", { name: /global hold/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save changes/i }),
+    );
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    expect(
+      (updateCollection.mock.calls.at(0)?.[1] as Collection).idle_hold_days,
+    ).toBe(30);
   });
 });
 

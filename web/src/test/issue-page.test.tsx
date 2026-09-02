@@ -715,6 +715,63 @@ describe("IssuePage — a problem runs every check it promises", () => {
     }
   });
 
+  it("does not promise a due row will rebuild when a hold could stop it", async () => {
+    // With a hold set, "due" stops meaning "will rebuild": a due row whose owner has watched nothing
+    // is held, so the flat promise sends the operator away believing their setting has landed.
+    supportRowSchedule.mockResolvedValue({
+      rows: [
+        {
+          slug: "picked",
+          enabled: true,
+          due: true,
+          never_built: false,
+          rebuild_every_days: 8,
+          idle_hold_days: 30,
+        },
+      ],
+      text: "s",
+    });
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /rows aren't updating at all/i,
+      }),
+    );
+
+    expect(
+      await screen.findByText(/watched nothing since it was built may still be held/i),
+    ).toBeTruthy();
+  });
+
+  it("does not mention the hold when it cannot fire", async () => {
+    // A hold at or below the cadence never fires, and the support block rendered directly below this
+    // verdict says so. Warning about a hold there contradicts the page's own output.
+    supportRowSchedule.mockResolvedValue({
+      rows: [
+        {
+          slug: "picked",
+          enabled: true,
+          due: true,
+          never_built: false,
+          rebuild_every_days: 30,
+          idle_hold_days: 30,
+        },
+      ],
+      text: "s",
+    });
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /rows aren't updating at all/i,
+      }),
+    );
+
+    expect(
+      await screen.findByText(/next run will pick up anything you have changed/i),
+    ).toBeTruthy();
+    expect(screen.queryByText(/may still be held/i)).not.toBeInTheDocument();
+  });
+
   it("reaches the owner's own Home screen for a row-visibility question", async () => {
     // `sharing` reads the share filters that hide a row from other people. The OWNER has no share
     // filter (plex-safety rule 5), so nothing but the row's own promotion flag keeps someone

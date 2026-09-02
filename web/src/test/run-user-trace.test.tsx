@@ -688,6 +688,25 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
     ).toBeInTheDocument();
   });
 
+  it("says a row was held because nobody watched anything, and until when", () => {
+    // The other half of "nothing moved": not "it wasn't due" but "it WAS due and we held it". Without
+    // naming the reason this is indistinguishable from the cadence line above, and the owner goes
+    // looking for a rebuild setting that is not the one holding their row.
+    render(
+      <TraceView
+        data={withSelection({
+          decision: "held_idle",
+          refresh_night: true,
+          idle_hold_days: 28,
+        })}
+      />,
+    );
+    expect(
+      screen.getByText(/haven't watched anything since it was built/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/28 days/i)).toBeInTheDocument();
+  });
+
   it("names a settings change as the reason a row rebuilt early", () => {
     render(
       <TraceView data={withSelection({ decision: "settings_changed" })} />,

@@ -93,6 +93,10 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     # disables rotation) so a caller/test can pin a specific day.
     if not ctx.run_day:
         ctx.run_day = report.started_at.toordinal()
+    if ctx.run_at is None:
+        # The same instant `run_day` is derived from, so the cadence and the idle hold cannot
+        # disagree about which night this is.
+        ctx.run_at = report.started_at
 
     # Tell the UI the full queue up front — cards can say "queued (3rd in line)"
     # instead of a bare "waiting…" while the indexes build.

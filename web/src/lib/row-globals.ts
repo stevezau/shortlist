@@ -1,5 +1,6 @@
 import { asColdStart, COLD_START_LABELS } from "@/lib/cold-start";
 import {
+  IDLE_HOLD_DAYS_DEFAULT,
   REFRESH_DAYS_DEFAULT,
   RECENCY_DEFAULT,
   WATCHED_PCT_DEFAULT,
@@ -73,6 +74,14 @@ export function refreshDaysGlobal(
   return `every ${days} days`;
 }
 
+/** Day count → "held up to 30 days". Off reads as off, because off is the default. */
+export function idleHoldGlobal(settings: Settings | undefined): string | null {
+  const days = num(settings, "recommendations.idle_hold_days");
+  if (days === null) return null;
+  if (days <= 0) return "off — rebuild whatever they watched";
+  return `held up to ${days} days`;
+}
+
 export function recencyGlobalValue(
   settings: Settings | undefined,
 ): number | null {
@@ -123,6 +132,10 @@ export function watchedPctSeed(settings: Settings | undefined): number {
 
 export function refreshDaysSeed(settings: Settings | undefined): number {
   return num(settings, "recommendations.refresh_days") ?? REFRESH_DAYS_DEFAULT;
+}
+
+export function idleHoldSeed(settings: Settings | undefined): number {
+  return num(settings, "recommendations.idle_hold_days") ?? IDLE_HOLD_DAYS_DEFAULT;
 }
 
 export function recencySeed(settings: Settings | undefined): number {

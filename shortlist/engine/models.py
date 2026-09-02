@@ -251,6 +251,12 @@ class Pick:
     # mismatch means the owner changed a setting that decides row contents, so the row rebuilds
     # instead of waiting for its refresh cadence.
     recipe: str = ""
+    # When this row's CONTENTS were last chosen — stamped on a rebuild/refresh and carried through
+    # untouched on every reuse night. Deliberately not `PickRow.created_at`, which is re-stamped
+    # every run because a carried-forward row is re-persisted under the new run: that says "last
+    # delivered", and the idle hold needs "last decided". None on picks written before this existed,
+    # which reads as "unknown" and falls back to the plain cadence (`_held_for_idle`).
+    built_at: datetime | None = None
 
 
 @dataclass
@@ -373,6 +379,11 @@ class RowSpec:
     # How often this row re-picks its titles, in DAYS: 0 = never once built (frozen), 1 = nightly,
     # N = every N days. None -> inherit EngineConfig.refresh_days.
     refresh_days: int | None = None
+    # How long this row may wait when its owner has watched nothing since it was last built, in DAYS.
+    # 0 = never wait (rebuild on the cadence whatever they did); None -> inherit
+    # EngineConfig.idle_hold_days. An explicit 0 is a real choice, not an absent one — it is how a
+    # single row stays lively on a server that holds everything else.
+    idle_hold_days: int | None = None
     # How much a title's RELEASE DATE counts when ranking it: 0.0 = ignore age, 1.0 = strongly prefer
     # new. None -> inherit EngineConfig.recency.
     #
@@ -1029,6 +1040,14 @@ class EngineConfig:
     # a magnitude nothing implements — and folding turnover in here would tie more variety to worse
     # picks, since the only way to swap more of a row is to reach further down the ranked list.
     refresh_days: int = 0
+    # The IDLE CEILING in days: how long a row may wait when the person it belongs to has watched
+    # nothing since it was last built. 0 (the default, and every existing install) = off, so a row
+    # always rebuilds on its `refresh_days` cadence whatever they have been doing.
+    #
+    # The pair is deliberately two numbers, not one: `refresh_days` is "is it this row's night?",
+    # this is "is there anything new to say?". Only when BOTH allow it does a row re-pick. See
+    # `rows._held_for_idle` for why the ceiling is a ceiling and not a freeze.
+    idle_hold_days: int = 0
     # How much a title's release date counts when ranking it: 0.0 (default) = ignore age entirely,
     # which is how this ranked before the setting existed; 1.0 = every ~8 years of age halves a
     # title's weight. A WEIGHT, never a filter — an old title is only ever asked to be a better

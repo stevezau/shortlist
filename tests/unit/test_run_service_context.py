@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -412,6 +413,47 @@ class TestBuildContext:
         # "not recorded" — provenance would survive exactly one run.
         assert got[0].sources == ["tmdb_similar"]
         assert got[0].affinity == 0.42
+
+    def test_the_global_idle_hold_reaches_the_engine_config(self, service, sessions, tmp_path, configured):
+        """The per-row override has its own round-trip test, and it passes with this line missing —
+        so without this the global setting could silently become a no-op while the row override
+        kept working, which is the harder half to notice."""
+        with sessions() as session:
+            SettingsStore(session, SecretBox(tmp_path)).set("recommendations.idle_hold_days", 21)
+
+        assert service.build_context(dry_run=True).config.idle_hold_days == 21
+
+    def test_previous_picks_carries_the_built_at_stamp(self, service, sessions, configured):
+        """The idle hold reads this and nothing else. Drop it here and the engine sees every carried
+        row as unstamped, which reads as "unknown" and quietly falls back to the plain cadence — the
+        feature would be inert on a live server with a green suite."""
+        from shortlist.server.db.models import Run
+
+        built = datetime(2026, 8, 20, 3, 30, tzinfo=UTC)
+        with sessions() as session:
+            session.add(User(plex_account_id=1, username="sarah", slug="sarah", enabled=True))
+            run = Run(trigger="manual", status="ok", dry_run=False, stats={})
+            session.add(run)
+            session.commit()
+            session.add(
+                PickRow(
+                    run_id=run.id,
+                    user_id=session.query(User).one().id,
+                    tmdb_id=100,
+                    media_type="movie",
+                    rating_key=100,
+                    rank=1,
+                    collection_slug="picked",
+                    section_key="movies-1",
+                    title="t100",
+                    built_at=built,
+                )
+            )
+            session.commit()
+
+        ctx = service.build_context(dry_run=True)
+
+        assert ctx.previous_picks[("sarah", "picked", "movies-1")][0].built_at == built
 
 
 class TestBuildRequests:

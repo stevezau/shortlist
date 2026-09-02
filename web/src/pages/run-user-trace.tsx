@@ -378,7 +378,8 @@ function deliveryNote(entries: TraceSelection[]): ReactNode {
           <span className="font-medium">{entry.row}</span>{" "}
           <span
             className={
-              entry.decision === "carried_forward"
+              entry.decision === "carried_forward" ||
+              entry.decision === "held_idle"
                 ? "text-muted-foreground"
                 : "text-foreground"
             }
@@ -398,6 +399,12 @@ function decisionLine(entry: TraceSelection): string {
       return `— not re-picked tonight; last run's titles were redelivered unchanged${
         every ? `. This row rebuilds every ${every} days` : ""
       }. Lower “How often rows rebuild”, or change a setting that decides its titles, to rebuild it sooner.`;
+    case "held_idle":
+      return `— it was this row's night to rebuild, but they haven't watched anything since it was built, so it was left alone${
+        entry.idle_hold_days
+          ? `. It rebuilds anyway once it is ${entry.idle_hold_days} days old`
+          : ""
+      }. Turn down “Hold rows for inactive viewers” to rebuild it regardless.`;
     case "settings_changed":
       return "— rebuilt now because a setting that decides its titles changed.";
     case "refreshed":

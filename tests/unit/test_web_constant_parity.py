@@ -51,6 +51,11 @@ def ts_source() -> str:
             DEFAULTS["recommendations.refresh_days"],
             'settings_store.DEFAULTS["recommendations.refresh_days"]',
         ),
+        (
+            "IDLE_HOLD_DAYS_DEFAULT",
+            DEFAULTS["recommendations.idle_hold_days"],
+            'settings_store.DEFAULTS["recommendations.idle_hold_days"]',
+        ),
     ],
 )
 def test_the_spa_mirrors_the_engine(ts_source: str, ts_name: str, python_value: float, owner: str) -> None:

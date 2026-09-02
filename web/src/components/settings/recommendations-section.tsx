@@ -6,6 +6,7 @@ import { RECENT_COUNT_LABEL } from "@/components/recent-count-field";
 import { SaveStatus } from "@/components/save-status";
 import { AiWebSearchCard } from "@/components/settings/ai-web-search-card";
 import { RefreshDaysField } from "@/components/settings/refresh-days-field";
+import { IdleHoldField } from "@/components/settings/idle-hold-field";
 import { InlineKeyField } from "@/components/settings/inline-key-field";
 import { RecencySlider } from "@/components/settings/recency-slider";
 import { WatchedSlider } from "@/components/settings/watched-slider";
@@ -28,6 +29,7 @@ import {
 } from "@/lib/rating-sources";
 import { useAutosavedSettings } from "@/lib/autosave";
 import {
+  IDLE_HOLD_DAYS_DEFAULT,
   REFRESH_DAYS_DEFAULT,
   RECENCY_DEFAULT,
   WATCHED_PCT_DEFAULT,
@@ -103,6 +105,13 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
       REFRESH_DAYS_DEFAULT,
     ),
   );
+  const [idleHoldDays, setIdleHoldDays] = useState<number>(() =>
+    readWholeNumber(
+      settings,
+      "recommendations.idle_hold_days",
+      IDLE_HOLD_DAYS_DEFAULT,
+    ),
+  );
   const [recency, setRecency] = useState<number>(() =>
     readPercent(settings, "recommendations.recency", RECENCY_DEFAULT),
   );
@@ -144,6 +153,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
       enabled,
       watchedPct,
       refreshDays,
+      idleHoldDays,
       recency,
       recentCount,
       maxSeeds,
@@ -161,6 +171,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
       "recommendations.dislike_threshold": dislikeThreshold,
       "recommendations.watched_pct": watchedPct / 100,
       "recommendations.refresh_days": refreshDays,
+      "recommendations.idle_hold_days": idleHoldDays,
       "recommendations.recency": recency / 100,
       "recommendations.recent_count": recentCount,
       "recommendations.max_seeds": maxSeeds,
@@ -282,6 +293,24 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 id="refresh-days"
                 value={refreshDays}
                 onChange={setRefreshDays}
+              />
+            </div>
+            <div className="space-y-2 border-t pt-4">
+              <Label htmlFor="idle-hold-days">
+                Hold rows for inactive viewers
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                Someone who hasn&rsquo;t watched anything since their row was
+                built has nothing new to base a rebuild on, so the row can wait
+                — which also saves a write to Plex for every row held. Off by
+                default.
+              </p>
+              <IdleHoldField
+                id="idle-hold-days"
+                value={idleHoldDays}
+                cadence={refreshDays}
+                scope="global"
+                onChange={setIdleHoldDays}
               />
             </div>
             <div className="space-y-2 border-t pt-4">

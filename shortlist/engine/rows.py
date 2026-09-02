@@ -13,7 +13,7 @@ import zlib
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import date
+from datetime import UTC, date, datetime
 from functools import cached_property
 
 from loguru import logger
@@ -92,6 +92,36 @@ def effective_seed_window(spec: RowSpec) -> int:
     No global to inherit, unlike `max_seeds`: whether a row rotates is part of what that row is.
     """
     return max(1, spec.seed_window or 1)
+
+
+def effective_idle_hold_days(spec: RowSpec, cfg: EngineConfig) -> int:
+    """How long this row may wait out an idle owner, in days: its own ceiling, else the run's.
+
+    Forced to 0 — never held — for a row that CYCLES its seed (``seed_window > 1``). That rotation
+    advances one step per refresh night by design and is driven by the cadence, not by new watches,
+    so holding it does not delay a rebuild, it stops the feature. ``effective_refresh_days`` forces
+    the same row to nightly for the mirror-image reason.
+
+    A ``{top_seed}`` row is deliberately NOT forced off, though it is forced to a nightly cadence.
+    That forcing exists so the row keeps answering to the watch its title names — and ADDING a watch
+    is the only way to move the seed forward, so someone who has watched nothing cannot have done it.
+    This is also the row the wizard creates on every install, so excluding it would leave the setting
+    with almost nothing to act on.
+
+    An UN-watch is the exception, and it is handled where the hold is decided rather than here: it
+    moves ``last_watch_at`` backwards, which reads as idle, so ``_seed_moved`` is checked alongside
+    ``recipe_changed`` and outranks the hold.
+
+    ``is not None``, not truthiness: a stored 0 means "always rebuild this row on cadence", which a
+    truthiness test would silently replace with a high global.
+
+    Shared rows need no guard here: ``_shared_row`` is a separate builder that never reaches this
+    function, and "has their owner watched anything" is not a question a row with no single owner can
+    answer. The row editor hides the control for them to match, not to enforce.
+    """
+    if effective_seed_window(spec) > 1:
+        return 0
+    return spec.idle_hold_days if spec.idle_hold_days is not None else cfg.idle_hold_days
 
 
 def _run_year(run_day: int) -> int:
@@ -348,6 +378,78 @@ def _is_refresh_night(row_slug: str, owner_slug: str, run_day: int, refresh_days
     return run_day % refresh_days == phase
 
 
+def _utc(value: datetime | None) -> datetime | None:
+    """Read a naive datetime as UTC, which is what it is.
+
+    SQLite hands a ``DateTime(timezone=True)`` column back NAIVE, so ``built_at`` arrives naive from
+    a real server while ``run_at`` is aware — and mixing the two raises ``TypeError``, which fails
+    the whole user's run rather than just the hold. The sibling `_aware` in
+    ``server/services/watch_cache.py`` exists for the same reason; this is the engine's copy,
+    because the engine may not import from the server.
+    """
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def _held_for_idle(
+    prior: list[Pick],
+    last_watch: datetime | None,
+    run_at: datetime | None,
+    hold_days: int,
+) -> bool:
+    """Whether to skip this row's refresh night because its owner has watched nothing since it was
+    last built — the per-person half of the cadence (issue #109).
+
+    ``refresh_days`` asks "is it this row's night?"; this asks "is there anything new to say?". A
+    row rebuilt against an unchanged watch set spends a real Plex membership write (16.5s per
+    collection on a large TV library) to swap its weakest third for titles chosen from the same
+    taste, on behalf of someone who has not watched anything since.
+
+    A HOLD, never a freeze. ``hold_days`` is the CEILING: past it the row rebuilds however idle the
+    person is. Without that bound this would do the opposite of what it is for — the row nobody
+    watches is the one that most needs to look different when they next open Plex, and freezing it
+    is how it stays unclicked for ever.
+
+    Four things read as "not held", all of them falling back to the plain cadence rather than
+    inventing behaviour:
+
+    * ``hold_days <= 0`` — the setting is off, which is the default on every install.
+    * no ``prior`` — a first build has nothing to hold, and holding would deliver an empty row.
+    * no ``run_at`` — direct engine calls and tests pass none, exactly as they pass no ``run_day``,
+      and ``_is_refresh_night`` treats that as "always refresh". The two have to agree.
+    * no ``built_at`` on any prior pick — picks written before the stamp existed. Same convention as
+      ``recipe``: unknown never forces a decision. Holding on unknown would silently freeze every
+      row on every server for the ceiling's length the moment this shipped.
+
+    The row is as old as its NEWEST stamp. A row's picks normally share one, but a carry-forward
+    night can pad in a title that left the library and a half-written run can mix two — taking the
+    oldest would rebuild a row that was in fact just built.
+
+    Args:
+        prior: last run's still-valid picks for this row+library, carrying their ``built_at`` stamps.
+        last_watch: the most recent thing this person watched, or None if they have watched nothing.
+        run_at: when this run started; None on direct engine calls.
+        hold_days: the ceiling in days, 0 = off.
+
+    Returns:
+        True to skip tonight's refresh and redeliver the row unchanged.
+    """
+    if hold_days <= 0 or run_at is None or not prior:
+        return False
+    built = max((_utc(p.built_at) for p in prior if p.built_at is not None), default=None)
+    if built is None:
+        return False
+    # CALENDAR days, the unit `_is_refresh_night` counts in (`date.toordinal()`). An exact 24-hour
+    # multiple would make the two halves of one decision disagree about what a day is: a run starting
+    # even two minutes earlier in UTC than the one that stamped the row would not expire the ceiling
+    # that night, and a local-time cron springing forward does that to every row at once, once a year.
+    if (_utc(run_at).date() - built.date()).days >= hold_days:
+        return False
+    watched = _utc(last_watch)
+    return watched is None or watched <= built
+
+
 def _reusable_prior(
     prior: list[Pick],
     kind: MediaType,
@@ -591,7 +693,29 @@ def row_recipe(policy: RowPolicy, spec: RowSpec) -> str:
     likewise excluded — they change what a row looks like, never which titles are in it.
 
     EFFECTIVE values, not stored ones, so raising a global invalidates every row that inherits it.
+
+    Includes this person's BLOCKED SEEDS, which are a fact about them rather than about the row — but
+    they decide contents just as squarely as the row's own dials, and the idle hold made that matter:
+    a blocked seed used to land on the very next run (a `{top_seed}` row is forced nightly), and a
+    held row would otherwise go on being built from, and named after, the watch they explicitly
+    rejected until they watched something or the ceiling expired.
+
+    Appended only when the set is NON-EMPTY, so the fingerprint of the 99% of people who have blocked
+    nothing is byte-identical to what it was before this clause existed. Adding an unconditional
+    component would mismatch every stored recipe on every server and rebuild every row at once on the
+    night it shipped — the exact churn the cadence exists to prevent.
+
+    The people who HAVE blocked a seed do pay that cost once: every one of their rows mismatches on
+    the first run after this ships and is fully rebuilt, including rows set to `refresh_days=0`, since
+    `recipe_changed` deliberately bypasses a frozen row's cadence. Bounded, one-off, and arguably the
+    right outcome — but recorded here so it isn't diagnosed as a regression on the night it lands.
+
+    HASHED, not listed: `picks.recipe` is `String(128)` and a bare list passes that at about nine
+    blocked seeds (60 of them measured 472 chars). SQLite doesn't truncate, so a list is harmless
+    today — but on a backend that does, two different block sets would collide into one fingerprint,
+    which is a settings change that silently never rebuilds. A fixed-width digest cannot.
     """
+    blocked = policy.user.blocked_seeds
     return "|".join(
         str(part)
         for part in (
@@ -605,6 +729,7 @@ def row_recipe(policy: RowPolicy, spec: RowSpec) -> str:
             effective_max_seeds(spec, policy.cfg),
             effective_seed_window(spec),
             effective_cold_start(spec, policy.cfg),
+            *((hashlib.blake2b(repr(sorted(blocked)).encode(), digest_size=8).hexdigest(),) if blocked else ()),
         )
     )
 
@@ -1422,6 +1547,26 @@ class RowPolicy:
             rule = True
         return excluded if rule else None
 
+    @cached_property
+    def last_watch_at(self) -> datetime | None:
+        """The most recent thing this person watched, or None if they have watched nothing.
+
+        The whole signal behind the idle hold, and it costs no extra reads: `user.history` is already
+        loaded for every user on every run. Per person rather than per row — the answer is a fact
+        about them, identical across all their rows.
+
+        `watched_at` is Plex's own `lastViewedAt`. A title Plex dates not at all arrives as the 1970
+        epoch (`plex_pms` substitutes it, and `watch_cache` carries it through), so it never wins this
+        `max()` and can never read as recent activity.
+
+        Both directions of being wrong matter, and they cost differently. Reading too NEW costs one
+        unnecessary rebuild. Reading too OLD — a watch the incremental read missed (the bug class of
+        #108), or a library that failed to read for this person — holds a row that should have
+        rebuilt, for up to the ceiling. That is the direction to worry about, and the ceiling is what
+        bounds it.
+        """
+        return max((w.watched_at for w in self.user.history if w.watched_at), default=None)
+
     def effective_refresh_days(self, spec: RowSpec) -> int:
         """How often this row re-selects its titles, in days — forced to nightly for a row that
         follows a watch.
@@ -1819,6 +1964,7 @@ def _build_section_picks(
     ctx, user = policy.ctx, policy.user
     section_picks: dict[str, list[Pick]] = {}
     refresh_days = policy.effective_refresh_days(spec)
+    hold_days = effective_idle_hold_days(spec, policy.cfg)
     for section in targets:
         kind = section_kind(section)
         # tmdb_id -> ratingKey for THIS library only; a candidate not in this library isn't a
@@ -1897,7 +2043,24 @@ def _build_section_picks(
         recipe = row_recipe(policy, spec)
         was = ctx.previous_recipes.get((user.slug, spec.slug, str(section.key)), "")
         recipe_changed = bool(was) and was != recipe
-        refresh = _is_refresh_night(spec.slug, user.slug, ctx.run_day, refresh_days)
+        # `due` is what the CADENCE says; `refresh` is what we actually do. They differ only when the
+        # idle hold intervenes, and both are reported — the trace has to be able to say "it was due
+        # tonight and we held it", which a single flag cannot distinguish from "it was not due".
+        due = _is_refresh_night(spec.slug, user.slug, ctx.run_day, refresh_days)
+        # Two things outrank the hold, both for the reason they outrank the cadence. A deliberate
+        # settings edit: making the owner wait out the ceiling to see it reads as the setting being
+        # broken. And a MOVED SEED: an un-watch is the one thing that can change what a `{top_seed}`
+        # row should be named while nobody is watching anything — `last_watch_at` then moves
+        # BACKWARDS onto an older watch, which reads as idle — and `_seed_moved` is otherwise only
+        # consulted on the refresh branch, so the row would keep claiming "Because you watched X"
+        # about a title the owner un-watched, for up to the ceiling.
+        held = (
+            due
+            and not recipe_changed
+            and not _seed_moved(spec, prior_valid, sub, policy.user, policy.cfg)
+            and _held_for_idle(prior_valid, policy.last_watch_at, ctx.run_at, hold_days)
+        )
+        refresh = due and not held
         # Hoisted out of the refresh branch because the `new_first` order needs it on every path: a
         # pick is "new" if this row was not already carrying it, whichever branch produced it.
         prior_ids = {(p.tmdb_id, p.media_type) for p in prior_valid}
@@ -1908,10 +2071,20 @@ def _build_section_picks(
             decision = "rebuilt"
         elif recipe_changed:
             decision = "settings_changed"
+        elif held:
+            decision = "held_idle"
         elif not refresh:
             decision = "carried_forward"
         else:
             decision = "refreshed"
+        if held:
+            logger.info(
+                "{}: '{}' in '{}' due tonight but held — nothing watched since it was built ({}-day ceiling)",
+                user.username,
+                spec.slug,
+                getattr(section, "title", section.key),
+                hold_days,
+            )
 
         if prior_valid and recipe_changed:
             # The owner changed a setting that decides this row's CONTENTS, so rebuild it now
@@ -2007,7 +2180,25 @@ def _build_section_picks(
         # Ordering last WITHOUT this made both of those answer "whichever pick sorted first tonight":
         # a `{top_seed}` row ordered by rating renamed itself after a different seed, and a shuffled
         # one re-derived `_seed_moved` off an arbitrary pick and rebuilt itself every refresh night.
-        ranked = [replace(p, rank=i + 1, recipe=recipe) for i, p in enumerate(sec_picks[:k])]
+        # When this row's CONTENTS were decided — `now` whenever we re-picked, otherwise the stamp the
+        # row already carried. NOT `PickRow.created_at`: a reused row is re-persisted under every run,
+        # so a stamp that moved with delivery would report every row as freshly built, the idle
+        # ceiling would never expire, and nothing would ever read as watched-since (`_held_for_idle`).
+        # A refresh re-stamps the SURVIVORS too: they were re-ranked against tonight's pool and kept
+        # on purpose, so the whole row is as new as this decision.
+        #
+        # `default=None`, never `run_at`: reusing an UNSTAMPED row (pre-0086 picks, or a row still
+        # carrying cold-start picks — that branch stamps nothing) decides nothing, so claiming
+        # tonight would make the stamp newer than a watch that really did happen after the true
+        # build, and the next due night would hold a row with new watches to answer to. Unknown stays
+        # unknown until something is actually re-picked, which is the convention `recipe` uses and
+        # what `_held_for_idle` reads as "fall back to the plain cadence".
+        built_at = (
+            ctx.run_at
+            if refresh or not prior_valid
+            else max((p.built_at for p in prior_valid if p.built_at is not None), default=None)
+        )
+        ranked = [replace(p, rank=i + 1, recipe=recipe, built_at=built_at) for i, p in enumerate(sec_picks[:k])]
         # Only a row actually sorting on rating pays for the lookups, and only for its own k picks.
         ratings = _rated_by_source(ranked, ctx) if spec.pick_order == "rating" else None
         # Derived from the FINAL list rather than from the refresh branch's `new_picks`, because the
@@ -2031,8 +2222,9 @@ def _build_section_picks(
                 "cut_cap": ctx.config.candidates_pre_rank,
                 "carried": len(prior_valid),
                 "new": len(new_keys),
-                "refresh_night": refresh,
+                "refresh_night": due,  # the CADENCE's answer; `decision` says whether we acted on it
                 "rebuild_every_days": refresh_days or None,  # 0 = frozen, never rebuilt
+                "idle_hold_days": hold_days or None,  # 0/None = the hold is off for this row
                 "recency": policy.effective_recency(spec),
                 "watched_pct": pct,
                 "pick_order": spec.pick_order,

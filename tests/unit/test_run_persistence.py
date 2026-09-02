@@ -1,5 +1,19 @@
+from datetime import UTC, datetime
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
 from shortlist.engine.models import UserRunReport
+from shortlist.server.db.models import Base
 from shortlist.server.services.run_persistence import _cost_blob
+
+
+@pytest.fixture
+def sessions():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    return sessionmaker(engine)
 
 
 class TestCostBlob:
@@ -116,3 +130,46 @@ class TestTheShelfEventsANightlyRunEmits:
         )
 
         assert [(a[0], a[1]) for a in seen] == [("run.hub_unplaced", "info"), ("run.hub_order", "info")]
+
+
+class TestPicksCarryTheBuiltAtStamp:
+    """`built_at` has to survive the write as well as the read.
+
+    The read back has a test (`test_previous_picks_carries_the_built_at_stamp`), but nothing
+    exercised the WRITE: drop `built_at=pick.built_at` from `_persist_user_report` and every stamp is
+    silently NULL, every carried row reads as "unknown", and the idle hold is inert on a real server
+    with the whole suite green.
+    """
+
+    def test_a_persisted_pick_keeps_the_stamp_the_engine_put_on_it(self, sessions):
+        from shortlist.engine.models import MediaType, Pick, UserRunReport
+        from shortlist.server.db.models import PickRow, Run, User
+        from shortlist.server.services.run_persistence import _persist_user_report
+
+        built = datetime(2026, 8, 20, 3, 30, tzinfo=UTC)
+        with sessions() as session:
+            user = User(plex_account_id=1, username="sarah", slug="sarah", enabled=True)
+            run = Run(trigger="manual", status="ok", dry_run=False, stats={})
+            session.add_all([user, run])
+            session.commit()
+            report = UserRunReport(username="sarah", slug="sarah", status="ok")
+            report.picks = [
+                Pick(
+                    tmdb_id=100,
+                    rating_key=1,
+                    title="T100",
+                    rank=1,
+                    reason="",
+                    media_type=MediaType.MOVIE,
+                    collection_slug="picked",
+                    section_key="1",
+                    built_at=built,
+                )
+            ]
+
+            _persist_user_report(session, run.id, user, report, dry_run=False)
+            session.commit()
+
+            stored = session.query(PickRow).one()
+            assert stored.built_at is not None, "the stamp was dropped on the way into the database"
+            assert stored.built_at.replace(tzinfo=stored.built_at.tzinfo or UTC) == built

@@ -601,6 +601,162 @@ class TestRowSchedule:
         assert row["days_since_built"] == 30
         assert row["due"] is True
 
+    def test_a_row_redelivered_last_night_still_reads_as_built_a_month_ago(self, client):
+        """The production shape, and the one this endpoint got wrong.
+
+        A carried-forward row is RE-PERSISTED under every run, so `picks.created_at` says "last
+        delivered", not "last built" — on any server that runs nightly it is always today. Reading it
+        made every row report `days_since_built: 0, due: false`, which is precisely the answer this
+        endpoint exists to stop somebody from having to guess at. `built_at` (0086) is the stamp that
+        survives a reuse night.
+        """
+        built = datetime.now(UTC) - timedelta(days=30)
+        with client.app.state.sessions() as session:
+            user_id = session.query(User).first().id
+            session.add(
+                PickRow(
+                    user_id=user_id,
+                    tmdb_id=1,
+                    media_type="movie",
+                    rating_key=1,
+                    rank=1,
+                    collection_slug="picked",
+                    title="Carried Pick",
+                    created_at=datetime.now(UTC),  # redelivered last night...
+                    built_at=built,  # ...but chosen a month ago
+                )
+            )
+            session.commit()
+        _enable(client)
+
+        row = next(r for r in client.get("/api/support/row-schedule").json()["rows"] if r["slug"] == "picked")
+
+        assert row["days_since_built"] == 30
+        assert row["due"] is True
+
+    def test_a_cycling_row_is_not_reported_as_holding(self, client):
+        """`effective_idle_hold_days` forces 0 for a row that cycles its seed, and the row editor
+        hides the control to match. An endpoint whose whole job is answering "why did nothing
+        happen" must not point the operator at a setting the engine ignores."""
+        with client.app.state.sessions() as session:
+            session.query(Collection).filter(Collection.slug == "picked").one().seed_window = 3
+            session.commit()
+        client.put("/api/settings", json={"values": {"recommendations.idle_hold_days": 60}})
+        _enable(client)
+
+        row = next(r for r in client.get("/api/support/row-schedule").json()["rows"] if r["slug"] == "picked")
+
+        assert row["idle_hold_days"] == 0
+        assert row["idle_hold_source"] == "forced"
+
+    def test_a_shared_row_is_not_reported_as_holding(self, client):
+        """`_shared_row` is a separate builder the hold never reaches, and a row with no single owner
+        has nobody whose watching could be idle."""
+        with client.app.state.sessions() as session:
+            session.add(Collection(slug="popular", name="Popular here", build="shared", enabled=True))
+            session.commit()
+        client.put("/api/settings", json={"values": {"recommendations.idle_hold_days": 60}})
+        _enable(client)
+
+        row = next(r for r in client.get("/api/support/row-schedule").json()["rows"] if r["slug"] == "popular")
+
+        assert row["idle_hold_days"] == 0
+        assert row["idle_hold_source"] == "n/a"
+
+    def test_the_row_schedule_text_carries_the_hold_an_operator_pastes(self, client):
+        """The JSON is not the artefact — the text block is what `bundle.txt` ships and what gets
+        pasted into an issue. A field only in JSON is not "reported" to anybody.
+
+        Asserts the rendered CELL (`30d`), not the bare number: `30` alone is satisfied by the
+        block's own `generated` timestamp whenever the minute or second contains 30, and `hold` alone
+        by the static column header even if every cell is a dash.
+        """
+        client.put("/api/settings", json={"values": {"recommendations.idle_hold_days": 30}})
+        _enable(client)
+
+        text = client.get("/api/support/row-schedule").json()["text"]
+
+        assert "30d" in text
+
+    def test_a_hold_that_cannot_fire_says_so_rather_than_claiming_it_holds(self, client):
+        """A row is rebuilt on its due night, so at its next due night its age is exactly its
+        cadence — a hold only bites when it is strictly GREATER. Printing `rebuilds every 30d`
+        beside `hold 30d` with a note saying the row "stays put even on a night it is due" is a
+        confidently-wrong explanation, which is the one thing this endpoint exists to prevent."""
+        client.put(
+            "/api/settings",
+            json={"values": {"recommendations.refresh_days": 30, "recommendations.idle_hold_days": 30}},
+        )
+        _enable(client)
+
+        text = client.get("/api/support/row-schedule").json()["text"]
+
+        assert "no effect" in text.lower()
+        assert "stays put" not in text.lower(), "must not claim a hold applies when it cannot fire"
+
+    def test_a_top_seed_rows_hold_is_not_called_a_no_op(self, client):
+        """The row the hold was designed around, and the cell my own warning got wrong.
+
+        `effective_refresh_days` FORCES a `{top_seed}` row to rebuild nightly whatever its stored
+        cadence says, so an 8-day hold on it is a real 7-night hold. Comparing the hold against the
+        STORED cadence classified it as a no-op and told the owner to raise a setting that was
+        already working — while the `rebuilds` column beside it printed `every 8d` for a row that
+        runs every night. Both halves of that comparison have to come from the engine.
+        """
+        # The SHAPE the Rows UI actually writes: the typed title lands in `name`, and `name_template`
+        # stays empty (`blankInput()`). The engine reads `name_template or name`, so a support helper
+        # that only looks at `name_template` sees a plain row and gives exactly the wrong advice —
+        # which is what this test caught when it was first written against `name_template` alone.
+        with client.app.state.sessions() as session:
+            session.add(
+                Collection(slug="named_row", name="Because you watched {top_seed}", name_template="", enabled=True)
+            )
+            session.commit()
+        client.put(
+            "/api/settings",
+            json={"values": {"recommendations.refresh_days": 8, "recommendations.idle_hold_days": 8}},
+        )
+        _enable(client)
+
+        payload = client.get("/api/support/row-schedule").json()
+        row = next(r for r in payload["rows"] if r["slug"] == "named_row")
+
+        assert row["rebuild_every_days"] == 1, "a row named after a watch rebuilds nightly"
+        assert "named_row hold" not in payload["text"], "must not call a working hold a no-op"
+
+    def test_the_default_rows_stale_template_column_is_ignored_as_the_engine_ignores_it(self, client):
+        """The DEFAULT row renders from the GLOBAL `row.name_template`, not its own column — which
+        `collections.py` notes "still carries a stale value" on older databases. Trusting that column
+        reports a nightly cadence for a row the engine rebuilds every 8 days, and `due` then reads
+        YES for ever."""
+        with client.app.state.sessions() as session:
+            session.query(Collection).filter(
+                Collection.slug == "picked"
+            ).one().name_template = "Because you watched {top_seed}"
+            session.commit()
+        client.put("/api/settings", json={"values": {"recommendations.refresh_days": 8}})
+        _enable(client)
+
+        row = next(r for r in client.get("/api/support/row-schedule").json()["rows"] if r["slug"] == "picked")
+
+        assert row["rebuild_every_days"] == 8, "the default row follows the GLOBAL template, not its own column"
+
+    def test_a_frozen_row_hold_is_reported_as_doing_nothing(self, client):
+        """`refresh_days=0` never comes due, so the hold cannot fire — and it fell between both
+        branches, so the block said nothing at all about it."""
+        with client.app.state.sessions() as session:
+            session.query(Collection).filter(Collection.slug == "picked").one().refresh_days = 0
+            session.commit()
+        client.put("/api/settings", json={"values": {"recommendations.idle_hold_days": 30}})
+        _enable(client)
+
+        text = client.get("/api/support/row-schedule").json()["text"]
+
+        # The BRANCH-SPECIFIC wording, not just "no effect" — the other dead-hold branch says that
+        # too, and it renders "the row already rebuilds every 0d … Raise the hold above 0d to use it",
+        # which is nonsense advice this test would have passed straight over.
+        assert "never rebuilds (frozen)" in text.lower()
+
     def test_a_frozen_row_reads_as_frozen_not_as_broken(self, client):
         """0 means "never refresh once built" — a deliberate pinned row. Reporting it as overdue for
         ever would send someone hunting a bug that is a setting."""

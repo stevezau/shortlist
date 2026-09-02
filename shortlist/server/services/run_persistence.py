@@ -1354,6 +1354,7 @@ def _persist_user_report(session: Session, run_id: int, user: User, user_report,
                     rating=pick.rating,
                     year=pick.year,
                     recipe=pick.recipe,
+                    built_at=pick.built_at,
                 )
             )
     _add_event(

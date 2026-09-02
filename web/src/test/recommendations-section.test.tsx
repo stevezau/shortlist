@@ -162,6 +162,57 @@ describe("RecommendationsSection", () => {
     ).toBeInTheDocument();
   });
 
+  it("saves the idle hold, and says what turning it off means", async () => {
+    renderSection({ "recommendations.idle_hold_days": 0 });
+    // Off is the shipped default, so the control has to explain the DEFAULT, not just the feature.
+    expect(screen.getByText(/rebuild on schedule whatever/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^a month$/i }));
+
+    await waitFor(() => expect(putSettings).toHaveBeenCalled());
+    expect(
+      putSettings.mock.calls.at(-1)?.[0]?.["recommendations.idle_hold_days"],
+    ).toBe(30);
+  });
+
+  it("says the hold has a ceiling, not that it freezes the row", async () => {
+    // The one thing an owner must not misread. A row that stopped for ever would be the opposite of
+    // what this is for, and the number is the only thing on screen that says otherwise.
+    renderSection({ "recommendations.idle_hold_days": 30 });
+    expect(screen.getByText(/rebuilds anyway after 30 days/i)).toBeInTheDocument();
+  });
+
+  it("warns when the hold can never fire because the cadence already beats it", async () => {
+    // A row is rebuilt on its due night, so at its next due night its age is exactly the cadence —
+    // the hold only bites when it is strictly greater. Both controls offer 14 and 30 as presets, so
+    // this is a plausible thing to set and a complete no-op, with nothing on screen saying so.
+    renderSection({
+      "recommendations.refresh_days": 30,
+      "recommendations.idle_hold_days": 30,
+    });
+    expect(screen.getByText(/no effect/i)).toBeInTheDocument();
+  });
+
+  it("warns that a hold does nothing on rows that never rebuild", () => {
+    // Cadence 0 is "Never" — a one-click preset. `_is_refresh_night` returns False at 0, so the row
+    // never comes due and the hold can never fire. The field said only "rebuilds anyway after 30
+    // days, so a row never goes stale", which is false for a row that never rebuilds — and the docs
+    // promised all three surfaces warn while only the support endpoint did.
+    renderSection({
+      "recommendations.refresh_days": 0,
+      "recommendations.idle_hold_days": 30,
+    });
+    expect(screen.getByText(/never rebuild/i)).toBeInTheDocument();
+  });
+
+  it("does not warn when the hold is above the cadence", () => {
+    renderSection({
+      "recommendations.refresh_days": 8,
+      "recommendations.idle_hold_days": 30,
+    });
+    expect(screen.queryByText(/no effect/i)).not.toBeInTheDocument();
+  });
+
   it("saves the cold-start choice, and says what it will actually do", async () => {
     renderSection({ "recommendations.cold_start": "popular" });
     const select = screen.getByLabelText(/hasn’t watched enough/i);

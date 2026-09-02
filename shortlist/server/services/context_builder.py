@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 from loguru import logger
 from sqlalchemy import and_, func
@@ -203,6 +204,16 @@ def row_request_overrides(collection: Collection) -> RequestOverrides | None:
         min_rating_other=collection.req_min_rating_other,
     )
     return overrides if overrides != RequestOverrides() else None
+
+
+def _utc(value: datetime | None) -> datetime | None:
+    """SQLite hands a ``DateTime(timezone=True)`` column back naive; the engine compares it against
+    the run's own aware clock, and mixing the two raises. Normalised here, at the boundary, for the
+    same reason `watch_cache._aware` normalises the watched-title columns. The DB stores UTC.
+    """
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 class ContextBuilder:
@@ -675,6 +686,11 @@ class ContextBuilder:
                     # tell "the owner changed the recipe" from "nothing changed" and rebuild rather
                     # than wait out the refresh cadence.
                     recipe=r.recipe or "",
+                    # When the row's contents were last DECIDED — the only input the idle hold has.
+                    # Dropped here and the engine sees every carried row as unstamped, which reads as
+                    # "unknown" and silently falls back to the plain cadence: the feature goes inert
+                    # on a live server with nothing failing.
+                    built_at=_utc(r.built_at),
                     collection_slug=r.collection_slug,
                     section_key=r.section_key,
                     library=r.library,
@@ -829,6 +845,7 @@ class ContextBuilder:
             # default instead of as the zero the owner chose.
             watched_pct=float(store.get("recommendations.watched_pct") or 0.0),
             refresh_days=int(store.get("recommendations.refresh_days") or 0),
+            idle_hold_days=int(store.get("recommendations.idle_hold_days") or 0),
             recency=float(store.get("recommendations.recency") or 0.0),
             recent_count=int(store.get("recommendations.recent_count") or 10),
             max_seeds=int(store.get("recommendations.max_seeds") or 30),
@@ -897,6 +914,7 @@ class ContextBuilder:
                     rewatch=bool(collection.rewatch),
                     unstarted_only=bool(collection.unstarted_only),
                     refresh_days=collection.refresh_days,  # None -> inherit the global cadence
+                    idle_hold_days=collection.idle_hold_days,  # None -> inherit the global idle ceiling
                     recency=collection.recency,  # None -> inherit the global recency
                     recent_count=collection.recent_count,  # None -> inherit the global recent_count
                     max_seeds=collection.max_seeds,  # None -> inherit the global recommendations.max_seeds

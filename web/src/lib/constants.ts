@@ -74,6 +74,17 @@ export function watchedBadgeLabel(pct: number): string {
 export const REFRESH_DAYS_DEFAULT = 8;
 
 /**
+ * The IDLE CEILING, in days — how long a row may wait when the person it belongs to has watched
+ * nothing since it was last built. 0 = off, which is what every install ships with and what an owner
+ * comes back to set it to. Shares `MAX_REFRESH_DAYS` and `clampRefreshDays` with the cadence above:
+ * same units, same bounds, same server-side validator.
+ *
+ * MUST equal `recommendations.idle_hold_days` in settings_store.py — pinned by
+ * test_web_constant_parity.py.
+ */
+export const IDLE_HOLD_DAYS_DEFAULT = 0;
+
+/**
  * Slowest cadence the form accepts. A validation bound, not a behaviour cap — MUST equal
  * `MAX_REFRESH_DAYS` in shortlist/engine/models.py. The old percent could not express anything
  * slower than a fortnight; a monthly row is now simply "30".

@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import ClassVar
 
@@ -900,3 +901,209 @@ class TestRankAgainstPoolOrdersOnly:
         picks = [self._pick(999, 9, 1), self._pick(100, 1, 2), self._pick(200, 2, 3)]
 
         assert _rank_against_pool(picks, sub)[-1].tmdb_id == 999
+
+
+class TestIdleHold:
+    """The idle hold: a row whose owner has watched nothing since it was last built waits, rather
+    than spending its refresh night re-picking (and re-writing to Plex) against an unchanged taste.
+
+    A HOLD, not a freeze — `hold_days` is the ceiling, past which the row rebuilds whatever the
+    person has been doing. A row nobody watches is the one that most needs to look different when
+    they next open Plex, so "inactive" must never mean "frozen for ever" (issue #109).
+    """
+
+    BUILT: ClassVar[datetime] = datetime(2026, 9, 1, 3, 30, tzinfo=UTC)
+
+    def _prior(self, built_at: datetime | None = BUILT) -> list[Pick]:
+        return [
+            Pick(
+                tmdb_id=n, rating_key=0, title=f"t{n}", rank=n, reason="", media_type=MediaType.MOVIE, built_at=built_at
+            )
+            for n in (1, 2, 3)
+        ]
+
+    def test_holds_when_nothing_was_watched_since_the_row_was_built(self):
+        from shortlist.engine.rows import _held_for_idle
+
+        assert _held_for_idle(
+            self._prior(),
+            last_watch=self.BUILT - timedelta(days=3),
+            run_at=self.BUILT + timedelta(days=8),
+            hold_days=28,
+        )
+
+    def test_does_not_hold_when_they_watched_something_since(self):
+        from shortlist.engine.rows import _held_for_idle
+
+        assert not _held_for_idle(
+            self._prior(),
+            last_watch=self.BUILT + timedelta(hours=2),
+            run_at=self.BUILT + timedelta(days=8),
+            hold_days=28,
+        )
+
+    def test_holds_for_someone_with_no_watch_history_at_all(self):
+        from shortlist.engine.rows import _held_for_idle
+
+        assert _held_for_idle(self._prior(), last_watch=None, run_at=self.BUILT + timedelta(days=8), hold_days=28)
+
+    def test_rebuilds_once_past_the_ceiling_however_idle_they_are(self):
+        from shortlist.engine.rows import _held_for_idle
+
+        assert not _held_for_idle(self._prior(), last_watch=None, run_at=self.BUILT + timedelta(days=28), hold_days=28)
+
+    def test_the_ceiling_day_itself_rebuilds(self):
+        """`>=` on CALENDAR days, so "hold for up to 28 days" means the row is never older than 28.
+
+        Counted the way `_is_refresh_night` counts, so the day the ceiling lands on is a rebuild
+        whatever time of day either run started.
+        """
+        from shortlist.engine.rows import _held_for_idle
+
+        assert _held_for_idle(self._prior(), last_watch=None, run_at=self.BUILT + timedelta(days=27), hold_days=28)
+        assert not _held_for_idle(self._prior(), last_watch=None, run_at=self.BUILT + timedelta(days=28), hold_days=28)
+
+    def test_zero_is_off(self):
+        """The default. An install that never touches the setting behaves exactly as it does today."""
+        from shortlist.engine.rows import _held_for_idle
+
+        assert not _held_for_idle(self._prior(), last_watch=None, run_at=self.BUILT + timedelta(days=8), hold_days=0)
+
+    def test_a_row_with_no_prior_picks_is_never_held(self):
+        """First build: there is nothing to hold, and holding would deliver an empty row."""
+        from shortlist.engine.rows import _held_for_idle
+
+        assert not _held_for_idle([], last_watch=None, run_at=self.BUILT + timedelta(days=8), hold_days=28)
+
+    def test_an_unstamped_prior_is_never_held(self):
+        """Picks written before `built_at` existed read as "unknown", which must fall back to the
+        normal cadence — the same convention `recipe` uses. Holding on unknown would freeze every
+        row on every server for the ceiling's length at upgrade."""
+        from shortlist.engine.rows import _held_for_idle
+
+        assert not _held_for_idle(
+            self._prior(built_at=None), last_watch=None, run_at=self.BUILT + timedelta(days=8), hold_days=28
+        )
+
+    def test_a_run_with_no_timestamp_is_never_held(self):
+        """Direct engine calls and tests pass no run time, exactly as they pass no `run_day` — and
+        `_is_refresh_night` treats that as "always refresh". This has to agree with it."""
+        from shortlist.engine.rows import _held_for_idle
+
+        assert not _held_for_idle(self._prior(), last_watch=None, run_at=None, hold_days=28)
+
+    def test_the_newest_stamp_in_the_row_decides(self):
+        """A row whose picks disagree (a half-written run, or picks padded on a carry-forward night)
+        is as old as its NEWEST stamp — taking the oldest would rebuild a row that was just built."""
+        from shortlist.engine.rows import _held_for_idle
+
+        mixed = self._prior(built_at=self.BUILT - timedelta(days=40)) + self._prior(built_at=self.BUILT)
+        assert _held_for_idle(mixed, last_watch=None, run_at=self.BUILT + timedelta(days=8), hold_days=28)
+
+    def test_the_ceiling_counts_CALENDAR_days_like_the_cadence_does(self):
+        """`_is_refresh_night` counts `date.toordinal()`; measuring an exact 24-hour multiple here
+        would make the two halves of one decision disagree about what a day is. A run that starts
+        two minutes earlier in UTC than the one that stamped the row would not expire the ceiling
+        that night — and a local-time cron springing forward does exactly that to every row on the
+        server at once, once a year."""
+        from shortlist.engine.rows import _held_for_idle
+
+        assert not _held_for_idle(
+            self._prior(),
+            last_watch=None,
+            run_at=self.BUILT + timedelta(days=28) - timedelta(minutes=2),
+            hold_days=28,
+        )
+
+    def test_a_ceiling_at_or_below_the_cadence_can_never_fire(self):
+        """The interaction that makes a hold silently do nothing, pinned so nobody has to rediscover
+        it from a 400-night simulation.
+
+        A row is rebuilt on its due night, so at its NEXT due night its age is exactly its cadence.
+        The ceiling releases at `>=`, so a hold only ever bites when it is strictly greater than the
+        cadence. `hold == cadence` is the trap — both controls offer 14/30 as presets, so a monthly
+        row with a monthly hold is a plausible thing to configure and a complete no-op.
+        """
+        from shortlist.engine.rows import _held_for_idle
+
+        for cadence in (8, 14, 30):
+            aged = self._prior()  # built `cadence` days before tonight, i.e. due again tonight
+            assert not _held_for_idle(
+                aged, last_watch=None, run_at=self.BUILT + timedelta(days=cadence), hold_days=cadence
+            ), f"a {cadence}-day hold on a {cadence}-day row cannot hold"
+            assert _held_for_idle(
+                aged, last_watch=None, run_at=self.BUILT + timedelta(days=cadence), hold_days=cadence + 1
+            ), f"one day more than the cadence is the smallest hold that does anything at {cadence}"
+
+    def test_a_naive_stamp_from_sqlite_is_read_as_utc(self):
+        """SQLite hands a `DateTime(timezone=True)` column back NAIVE, so this is what a real server
+        passes in — and naive-vs-aware arithmetic raises `TypeError`, which would fail the whole
+        user's run, not just the hold. The DB stores UTC, so that is what a naive stamp means.
+        """
+        from shortlist.engine.rows import _held_for_idle
+
+        naive = self.BUILT.replace(tzinfo=None)
+        assert _held_for_idle(
+            self._prior(built_at=naive),
+            last_watch=self.BUILT - timedelta(days=3),
+            run_at=self.BUILT + timedelta(days=8),
+            hold_days=28,
+        )
+
+    def test_a_naive_last_watch_is_read_as_utc_too(self):
+        from shortlist.engine.rows import _held_for_idle
+
+        assert not _held_for_idle(
+            self._prior(),
+            last_watch=(self.BUILT + timedelta(hours=2)).replace(tzinfo=None),
+            run_at=self.BUILT + timedelta(days=8),
+            hold_days=28,
+        )
+
+
+class TestEffectiveIdleHoldDays:
+    """Where a row's idle ceiling comes from: its own value, else the server's."""
+
+    def _cfg(self, days: int):
+        from shortlist.engine.models import EngineConfig
+
+        return EngineConfig(idle_hold_days=days)
+
+    def test_inherits_the_global_when_the_row_has_none(self):
+        from shortlist.engine.rows import effective_idle_hold_days
+
+        assert effective_idle_hold_days(RowSpec(slug="r", name_template="R", size=10), self._cfg(28)) == 28
+
+    def test_the_rows_own_value_wins(self):
+        from shortlist.engine.rows import effective_idle_hold_days
+
+        spec = RowSpec(slug="r", name_template="R", size=10, idle_hold_days=7)
+        assert effective_idle_hold_days(spec, self._cfg(28)) == 7
+
+    def test_an_explicit_zero_opts_one_row_out_of_a_server_wide_hold(self):
+        """`is not None`, not truthiness — a stored 0 is "always rebuild THIS row on cadence", which
+        is the only way to keep one row lively on a server that holds everything else."""
+        from shortlist.engine.rows import effective_idle_hold_days
+
+        spec = RowSpec(slug="r", name_template="R", size=10, idle_hold_days=0)
+        assert effective_idle_hold_days(spec, self._cfg(28)) == 0
+
+    def test_a_cycling_row_is_never_held(self):
+        """A `seed_window > 1` row advances one seed a night BY DESIGN — that rotation is the row,
+        and it is driven by the cadence, not by new watches. Holding it freezes the feature, so the
+        ceiling is forced off however the owner set it (the same shape as `effective_refresh_days`
+        forcing such a row to nightly)."""
+        from shortlist.engine.rows import effective_idle_hold_days
+
+        spec = RowSpec(slug="r", name_template="R", size=10, seed_window=3, idle_hold_days=28)
+        assert effective_idle_hold_days(spec, self._cfg(28)) == 0
+
+    def test_a_top_seed_row_may_still_be_held(self):
+        """Unlike a cycling row. `{top_seed}` is forced to a nightly CADENCE so it keeps answering to
+        the watch it names — but the seed can only move when they watch something, so a person who
+        watched nothing cannot have stranded the title. Holding it is the whole point on a default
+        install, where this is the row the wizard creates."""
+        from shortlist.engine.rows import effective_idle_hold_days
+
+        spec = RowSpec(slug="r", name_template="Because you watched {top_seed}", size=10)
+        assert effective_idle_hold_days(spec, self._cfg(28)) == 28

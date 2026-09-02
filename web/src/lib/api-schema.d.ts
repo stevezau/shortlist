@@ -2837,6 +2837,8 @@ export interface components {
             hub_anchor?: {
                 [key: string]: components["schemas"]["HubAnchorIn"];
             };
+            /** Idle Hold Days */
+            idle_hold_days?: number | null;
             /** Library Keys */
             library_keys?: string[];
             /** Max Seeds */
@@ -3010,6 +3012,8 @@ export interface components {
             };
             /** Id */
             id: number;
+            /** Idle Hold Days */
+            idle_hold_days: number | null;
             /** Last Run Id */
             last_run_id: number | null;
             /** Library Keys */

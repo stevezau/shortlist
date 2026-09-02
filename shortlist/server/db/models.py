@@ -196,6 +196,12 @@ class Collection(Base):
     # inherit the global recommendations.refresh_days. Was `freshness`, a 0..1 fraction a curve
     # stretched onto 1..14 days; migration 0065 converted every value through that same curve.
     refresh_days: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # How long this row may wait when the person it belongs to has watched nothing since it was last
+    # built, in days. None -> inherit the global `recommendations.idle_hold_days`; an explicit 0 means
+    # "always rebuild this row on cadence", which is how one row stays lively on a server that holds
+    # the rest. Same inheritance shape as `refresh_days` above, because it is the other half of the
+    # same decision.
+    idle_hold_days: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     # Per-row weight on a title's RELEASE DATE when ranking it (0.0 ignore age .. 1.0 strongly prefer
     # new). NULL -> inherit the global recommendations.recency. Nullable rather than defaulting to
     # 0.0 because "never touched" and "deliberately off" must stay distinguishable: every row that
@@ -513,6 +519,13 @@ class PickRow(Base):
     # The row_recipe (settings fingerprint) this pick was built under; NULL on picks written
     # before recipes existed, which reads as "unknown" and does not force a rebuild.
     recipe: Mapped[str | None] = mapped_column(String(128), nullable=True, default=None)
+    # When this row's CONTENTS were last chosen. Distinct from `created_at` below, which is stamped on
+    # every run because a carried-forward row is re-persisted each time: that one says "last
+    # delivered", this one says "last decided". The idle hold (`rows._held_for_idle`) measures both
+    # the row's age and "have they watched anything since" against it, so a stamp that moved with
+    # delivery would make the ceiling unreachable. NULL on picks written before 0086 — read as
+    # "unknown", which falls back to the plain refresh cadence.
+    built_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
     # Both indexed: the effectiveness report is windowed, so every aggregate on it filters by one of
     # these two, over the largest table in this schema (retention prunes it, but only by whole runs).
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)

@@ -24,6 +24,7 @@ import {
 import { TemplateVarsHint } from "@/components/rows/template-vars-hint";
 import { Segmented } from "@/components/segmented";
 import { RefreshDaysField } from "@/components/settings/refresh-days-field";
+import { IdleHoldField } from "@/components/settings/idle-hold-field";
 import { RecencySlider } from "@/components/settings/recency-slider";
 import { WatchedSlider } from "@/components/settings/watched-slider";
 import { Button } from "@/components/ui/button";
@@ -55,6 +56,8 @@ import {
 import type { RowTemplate } from "@/lib/row-templates";
 import {
   coldStartGlobal,
+  idleHoldGlobal,
+  idleHoldSeed,
   refreshDaysGlobal,
   refreshDaysGlobalValue,
   refreshDaysSeed,
@@ -862,6 +865,56 @@ export function RowEditor({
                   id="row-refresh-days"
                   value={input.refresh_days ?? 0}
                   onChange={(days) => set({ refresh_days: days })}
+                />
+              </InheritableField>
+            )}
+
+            {/* A NARROWER guard than the cadence above, and deliberately so. `followsAWatch` covers
+                two rows the engine treats oppositely here: it refuses to hold one that CYCLES its
+                seed (the rotation is driven by the cadence, not by watches, so holding stops the
+                feature rather than delaying it), but it does hold a `{top_seed}` row — that one's
+                cadence is forced nightly so it keeps answering to the watch it names, and only
+                ADDING a watch moves the seed forward, which an idle person by definition has not
+                done (an un-watch can move it backwards, and the engine's `_seed_moved` check
+                outranks the hold for exactly that). It is
+                also the row the wizard creates, so hiding the control there would leave the setting
+                with almost nothing to act on. Matching `effective_idle_hold_days` exactly is the
+                point: an editor that hides a control the engine is still applying is the bug the
+                cadence field shipped once already (issue #57), and this is its mirror image.
+
+                A shared row is excluded for a reason that needs no engine guard at all — it has no
+                single owner whose watching could be idle, and `_shared_row` is a separate builder
+                that never reaches this code. */}
+            {input.seed_window <= 1 && !isSharedRow && (
+              <InheritableField
+                label="Hold when they aren't watching"
+                labelFor="row-idle-hold-days"
+                description="How long this row waits when the person it belongs to hasn't watched anything since it was built."
+                ariaLabel="Use the global hold for inactive viewers"
+                inheriting={input.idle_hold_days === null}
+                globalValue={idleHoldGlobal(settings.data)}
+                onToggle={(on) =>
+                  set({
+                    idle_hold_days: on ? null : idleHoldSeed(settings.data),
+                  })
+                }
+              >
+                <IdleHoldField
+                  id="row-idle-hold-days"
+                  value={input.idle_hold_days ?? 0}
+                  // The EFFECTIVE cadence, not the stored one. `effective_refresh_days` forces 1
+                  // for a row that follows a watch, and this row is one — that forcing is exactly
+                  // why a hold works here: an 8-day hold on a nightly row is a real 7-night hold.
+                  // Judged against the stored 8 it reads as a no-op, and the warning quotes back a
+                  // number the engine documents as ignored and whose control is hidden right here.
+                  cadence={
+                    followsAWatch
+                      ? 1
+                      : (input.refresh_days ??
+                        refreshDaysGlobalValue(settings.data) ??
+                        undefined)
+                  }
+                  onChange={(days) => set({ idle_hold_days: days })}
                 />
               </InheritableField>
             )}
