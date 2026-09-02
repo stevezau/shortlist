@@ -351,17 +351,18 @@ describe("the library filter", () => {
     ).toEqual(["4K Movies", "Movies"]);
   });
 
-  it("renders no library line at all for a watch cached before the name was recorded", async () => {
-    // Its name arrives on that person's next sync. Asserting on the ELEMENT, not on its text: an
-    // empty `libraries` renders an empty string either way, so a text assertion here passes just as
-    // happily against a component that emits a blank line taking up space under every title.
+  it("renders no tag at all for a watch cached before the name was recorded", async () => {
+    // Its name arrives on that person's next sync. Asserting on the ELEMENT rather than its text:
+    // an empty `libraries` renders an empty string either way, so a text assertion passes just as
+    // happily against a component that emits a blank tag beside every title. `span[title]` is what
+    // every other test in this block counts, so it cannot silently stop matching the markup.
     getUserWatched.mockResolvedValue(
       page({ items: [title({ libraries: [] })], libraries: [] }),
     );
     const { container } = renderPanel();
     await screen.findByText("Teacup");
 
-    expect(container.querySelectorAll("li span.block")).toHaveLength(0);
+    expect(container.querySelectorAll("li span[title]")).toHaveLength(0);
   });
 
   it("sends the chosen library to the server", async () => {

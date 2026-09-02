@@ -200,19 +200,15 @@ export function WatchHistory({
                           `flex-wrap` because a title can sit in many libraries (nine, on a server
                           built to test it) and the tags must wrap inside the row rather than push
                           the page sideways. */}
-                      {item.libraries.length > 0 && (
-                        <span className="mt-1 flex min-w-0 flex-wrap gap-1">
-                          {item.libraries.map((name) => (
-                            <span
-                              key={name}
-                              className="inline-flex max-w-full truncate rounded border border-border bg-elevated px-1.5 py-px text-[0.7rem] leading-4 text-muted-foreground"
-                              title={name}
-                            >
-                              {name}
-                            </span>
-                          ))}
+                      {item.libraries.map((name) => (
+                        <span
+                          key={name}
+                          className="ml-1.5 inline-block max-w-full truncate rounded border border-border bg-elevated px-1.5 py-px align-[0.1em] text-[0.7rem] leading-4 text-muted-foreground"
+                          title={name}
+                        >
+                          {name}
                         </span>
-                      )}
+                      ))}
                     </span>
                     <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
                       {item.media_type === "show" ? "Show" : "Movie"}
