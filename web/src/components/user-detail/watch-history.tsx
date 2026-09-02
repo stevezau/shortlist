@@ -192,13 +192,25 @@ export function WatchHistory({
                         </span>
                       ) : null}
                       {/* Which Plex libraries hold it — on EVERY row, not only where it
-                          disambiguates. Two names is a title stored twice: this row used to be two
+                          disambiguates. Two tags is a title stored twice: this row used to be two
                           rows, each with its own Block button that did the same thing. Absent only
                           for a watch cached before the name was recorded; the next sync fills that
-                          in, and no line is better than a guessed one. */}
+                          in, and no tag is better than a guessed one.
+
+                          `flex-wrap` because a title can sit in many libraries (nine, on a server
+                          built to test it) and the tags must wrap inside the row rather than push
+                          the page sideways. */}
                       {item.libraries.length > 0 && (
-                        <span className="block text-xs text-muted-foreground/80">
-                          {item.libraries.join(" · ")}
+                        <span className="mt-1 flex min-w-0 flex-wrap gap-1">
+                          {item.libraries.map((name) => (
+                            <span
+                              key={name}
+                              className="inline-flex max-w-full truncate rounded border border-border bg-elevated px-1.5 py-px text-[0.7rem] leading-4 text-muted-foreground"
+                              title={name}
+                            >
+                              {name}
+                            </span>
+                          ))}
                         </span>
                       )}
                     </span>

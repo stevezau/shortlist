@@ -298,7 +298,10 @@ describe("the library filter", () => {
     getUserWatched.mockResolvedValue(twoLibraries());
     renderPanel();
 
-    expect(await screen.findByText("4K TV · TV Shows")).toBeInTheDocument();
+    const row = (await screen.findByText("Teacup")).closest("li");
+    expect(
+      Array.from(row!.querySelectorAll("span[title]")).map((t) => t.textContent),
+    ).toEqual(["4K TV", "TV Shows"]);
   });
 
   it("shows one name, with no trailing separator, for a title in one library", async () => {
@@ -342,7 +345,10 @@ describe("the library filter", () => {
     );
     renderPanel();
 
-    expect(await screen.findByText("4K Movies · Movies")).toBeInTheDocument();
+    const row = (await screen.findByText("Teacup")).closest("li");
+    expect(
+      Array.from(row!.querySelectorAll("span[title]")).map((t) => t.textContent),
+    ).toEqual(["4K Movies", "Movies"]);
   });
 
   it("renders no library line at all for a watch cached before the name was recorded", async () => {

@@ -49,7 +49,10 @@ class TestATitleInTwoLibraries:
         _sync_and_open_history(page, app)
 
         expect(page.get_by_text(DUPLICATED_TITLE, exact=True)).to_have_count(1, timeout=15_000)
-        expect(page.get_by_text("4K Movies · Movies")).to_be_visible()
+        # Scoped to the row: every other film on this server also carries a "Movies" tag.
+        row = page.locator("li").filter(has_text=DUPLICATED_TITLE)
+        expect(row.get_by_title("4K Movies")).to_be_visible()
+        expect(row.get_by_title("Movies", exact=True)).to_be_visible()
 
     def test_a_title_in_one_library_still_names_it(self, page: Page, app: ShortlistApp, fake_plex):
         """The library line is on every row, not only the duplicated ones — otherwise the column
@@ -66,7 +69,7 @@ class TestATitleInTwoLibraries:
         row = page.locator("li").filter(has_text="Movie 04")
 
         expect(row).to_have_count(1, timeout=15_000)
-        expect(row.get_by_text("Movies", exact=True)).to_be_visible()
+        expect(row.get_by_title("Movies", exact=True)).to_be_visible()
 
     def test_no_library_filter_appears_on_a_one_library_per_type_server(self, page: Page, app: ShortlistApp, fake_plex):
         """`seed_state`'s default layout — one "Movies", one "TV Shows" — is the common server, and
@@ -82,7 +85,7 @@ class TestATitleInTwoLibraries:
         row = page.locator("li").filter(has_text="Movie 04")
 
         expect(row).to_have_count(1, timeout=15_000)
-        expect(row.get_by_text("Movies", exact=True)).to_be_visible()
+        expect(row.get_by_title("Movies", exact=True)).to_be_visible()
         expect(page.get_by_label(re.compile("filter by library", re.IGNORECASE))).to_have_count(0)
 
     def test_the_filter_offers_the_libraries_and_narrows_to_one(self, page: Page, app: ShortlistApp, fake_plex):
@@ -99,7 +102,8 @@ class TestATitleInTwoLibraries:
         page.wait_for_timeout(1500)
 
         expect(page.get_by_text(DUPLICATED_TITLE, exact=True)).to_have_count(1)
-        expect(page.get_by_text("4K Movies · Movies")).to_be_visible()
+        expect(page.get_by_title("4K Movies")).to_be_visible()
+        expect(page.get_by_title("Movies", exact=True)).to_be_visible()
         # Every other title sarah watched lives only in "Movies" or "TV Shows", so the filter left
         # exactly one row — proof it narrowed rather than merely reordering.
         expect(page.get_by_text("Movie 04", exact=True)).to_have_count(0)
@@ -120,7 +124,7 @@ class TestBlockingAMergedRow:
         _sync_and_open_history(page, app)
         row = page.locator("li").filter(has_text=DUPLICATED_TITLE)
         expect(row).to_have_count(1, timeout=15_000)
-        expect(row.get_by_text("4K Movies · Movies")).to_be_visible()
+        expect(row.get_by_title("4K Movies")).to_be_visible()
 
         row.get_by_role("button", name=re.compile(f"Block {DUPLICATED_TITLE}", re.IGNORECASE)).click()
 
