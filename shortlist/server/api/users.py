@@ -200,6 +200,18 @@ class WatchedTitleOut(PassthroughModel):
     user_rating: float | None
 
 
+class WatchedLibraryOut(PassthroughModel):
+    """One Plex library this person has a cached watch in.
+
+    The `media_type` is what lets the page decide whether a library filter is worth showing: one
+    library per type means the Movies/Shows buttons already draw every distinction a library choice
+    could, and a second control offering the same two words is noise (#111).
+    """
+
+    name: str
+    media_type: str  # movie | show
+
+
 class WatchedPageOut(PassthroughModel):
     """A page of the watched set, plus how complete the set behind it is.
 
@@ -214,7 +226,7 @@ class WatchedPageOut(PassthroughModel):
     total: int
     # Every library this person has a cached watch in, sorted, for the page's library filter. Never
     # narrowed by the `library` parameter, or picking one would empty the control that picked it.
-    libraries: list[str]
+    libraries: list[WatchedLibraryOut]
     # None when any library has never had a full read — see `user_watched`.
     last_full_sync_at: str | None
     # Rows in the cache: one per library COPY, summed across this person's libraries. Deliberately

@@ -685,9 +685,15 @@ class ContextBuilder:
                 # filtered by `library`, or choosing one would empty the control that chose it.
                 # Blank names (rows written before 0087, or by a sync that didn't know) are dropped
                 # rather than offered as an unnamed option.
+                #
+                # The media type travels with each name because the page needs it to decide whether
+                # to offer the filter AT ALL. On a server with one Movies library and one TV Shows
+                # library, a library dropdown says exactly what the Movies/Shows buttons beside it
+                # already say — the control only earns its place when one TYPE holds more than one
+                # library ("Movies" + "4K Movies"), which is the shape issue #111 is about.
                 "libraries": [
-                    name
-                    for (name,) in session.query(WatchedTitle.library)
+                    {"name": name, "media_type": media}
+                    for (name, media) in session.query(WatchedTitle.library, WatchedTitle.media_type)
                     .filter(WatchedTitle.user_id == user_id, WatchedTitle.library != "")
                     .distinct()
                     .order_by(WatchedTitle.library)

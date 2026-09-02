@@ -7059,6 +7059,26 @@
         "title": "WatchSyncOut",
         "type": "object"
       },
+      "WatchedLibraryOut": {
+        "additionalProperties": true,
+        "description": "One Plex library this person has a cached watch in.\n\nThe `media_type` is what lets the page decide whether a library filter is worth showing: one\nlibrary per type means the Movies/Shows buttons already draw every distinction a library choice\ncould, and a second control offering the same two words is noise (#111).",
+        "properties": {
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "media_type"
+        ],
+        "title": "WatchedLibraryOut",
+        "type": "object"
+      },
       "WatchedPageOut": {
         "additionalProperties": true,
         "description": "A page of the watched set, plus how complete the set behind it is.\n\nThe staleness fields travel WITH the page on purpose: this list is a cache, and a page that\ndoesn't say when it was last filled invites \"I watched that, why is it recommended?\" \u2014 the exact\nquestion this endpoint exists to answer.",
@@ -7094,7 +7114,7 @@
           },
           "libraries": {
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/WatchedLibraryOut"
             },
             "title": "Libraries",
             "type": "array"

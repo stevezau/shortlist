@@ -68,6 +68,15 @@ class TestATitleInTwoLibraries:
         expect(row).to_have_count(1, timeout=15_000)
         expect(row.get_by_text("Movies", exact=True)).to_be_visible()
 
+    def test_no_library_filter_appears_on_a_one_library_per_type_server(self, page: Page, app: ShortlistApp, fake_plex):
+        """`seed_state`'s default layout — one "Movies", one "TV Shows" — is the common server, and
+        the one the maintainer runs. A library dropdown there offers the same two words as the
+        Movies/Shows buttons next to it, so it must not be rendered at all."""
+        _sync_and_open_history(page, app)
+
+        expect(page.get_by_text("Movie 04", exact=True)).to_be_visible(timeout=15_000)
+        expect(page.get_by_label(re.compile("filter by library", re.IGNORECASE))).to_have_count(0)
+
     def test_the_filter_offers_the_libraries_and_narrows_to_one(self, page: Page, app: ShortlistApp, fake_plex):
         """And the surviving row still names BOTH libraries — filtering selects titles, it does not
         relabel them, so "4K Movies · Movies" under a 4K-only filter is the duplicate you went

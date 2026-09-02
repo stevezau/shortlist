@@ -5479,6 +5479,22 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * WatchedLibraryOut
+         * @description One Plex library this person has a cached watch in.
+         *
+         *     The `media_type` is what lets the page decide whether a library filter is worth showing: one
+         *     library per type means the Movies/Shows buttons already draw every distinction a library choice
+         *     could, and a second control offering the same two words is noise (#111).
+         */
+        WatchedLibraryOut: {
+            /** Media Type */
+            media_type: string;
+            /** Name */
+            name: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * WatchedPageOut
          * @description A page of the watched set, plus how complete the set behind it is.
          *
@@ -5494,7 +5510,7 @@ export interface components {
             /** Last Full Sync At */
             last_full_sync_at: string | null;
             /** Libraries */
-            libraries: string[];
+            libraries: components["schemas"]["WatchedLibraryOut"][];
             /** Rated Count */
             rated_count: number;
             /** Ratings Trusted */

@@ -27,6 +27,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
+function lib(name: string, media_type: string) {
+  return { name, media_type };
+}
+
 function title(over: Partial<WatchedTitle>): WatchedTitle {
   return {
     title: "Teacup",
@@ -47,7 +51,7 @@ function page(over: Partial<WatchedPage>): WatchedPage {
   return {
     items: [title({})],
     total: 1,
-    libraries: ["TV Shows"],
+    libraries: [lib("TV Shows", "show")],
     last_full_sync_at: "2026-08-05T00:00:00+00:00",
     synced_titles: 1284,
     // Ratings on, nobody has rated anything — the default state for nearly every real person, and
@@ -280,7 +284,12 @@ describe("the library filter", () => {
   const twoLibraries = () =>
     page({
       items: [title({ libraries: ["4K TV", "TV Shows"] })],
-      libraries: ["4K Movies", "4K TV", "Movies", "TV Shows"],
+      libraries: [
+        lib("4K Movies", "movie"),
+        lib("4K TV", "show"),
+        lib("Movies", "movie"),
+        lib("TV Shows", "show"),
+      ],
     });
 
   it("names the libraries a title was found in, under its name", async () => {
@@ -293,10 +302,48 @@ describe("the library filter", () => {
   });
 
   it("shows one name, with no trailing separator, for a title in one library", async () => {
+    // On a server where the type HAS two libraries, a title in only one of them still names it —
+    // that is how you tell it apart from the duplicated rows around it.
+    getUserWatched.mockResolvedValue(
+      page({
+        items: [title({ media_type: "movie", libraries: ["Movies"] })],
+        libraries: [lib("4K Movies", "movie"), lib("Movies", "movie")],
+      }),
+    );
     renderPanel();
 
-    expect(await screen.findByText("TV Shows")).toBeInTheDocument();
-    expect(screen.queryByText(/TV Shows ·/)).not.toBeInTheDocument();
+    expect(await screen.findByText("Movies")).toBeInTheDocument();
+    expect(screen.queryByText(/Movies ·/)).not.toBeInTheDocument();
+  });
+
+  it("draws no library line where naming it would say nothing", async () => {
+    // One movie library means "Movies" under a film repeats the "Movie ·" on the right of the same
+    // row. Same judgement as the toolbar's, applied per row.
+    getUserWatched.mockResolvedValue(
+      page({
+        items: [title({ media_type: "movie", libraries: ["Movies"] })],
+        libraries: [lib("Movies", "movie"), lib("TV Shows", "show")],
+      }),
+    );
+    const { container } = renderPanel();
+    await screen.findByText("Teacup");
+
+    expect(container.querySelectorAll("li span.block")).toHaveLength(0);
+  });
+
+  it("still names both libraries on a row that is genuinely in two", async () => {
+    // Even if nothing else on the server is duplicated, THIS row is — and that is the whole point.
+    getUserWatched.mockResolvedValue(
+      page({
+        items: [
+          title({ media_type: "movie", libraries: ["4K Movies", "Movies"] }),
+        ],
+        libraries: [lib("4K Movies", "movie"), lib("Movies", "movie")],
+      }),
+    );
+    renderPanel();
+
+    expect(await screen.findByText("4K Movies · Movies")).toBeInTheDocument();
   });
 
   it("renders no library line at all for a watch cached before the name was recorded", async () => {
@@ -346,11 +393,68 @@ describe("the library filter", () => {
 
   it("hides the filter on a server with one library", async () => {
     // It could only ever say "All libraries".
-    getUserWatched.mockResolvedValue(page({ libraries: ["TV Shows"] }));
+    getUserWatched.mockResolvedValue(
+      page({ libraries: [lib("TV Shows", "show")] }),
+    );
     renderPanel();
     await screen.findByText("Teacup");
 
     expect(screen.queryByLabelText(/filter by library/i)).not.toBeInTheDocument();
+  });
+
+  it("hides the filter when every type has exactly one library", async () => {
+    // The common server, and the regression this rule exists for: libraries named "Movies" and
+    // "TV Shows" beside buttons named "Movies" and "Shows" is the same choice offered twice.
+    getUserWatched.mockResolvedValue(
+      page({ libraries: [lib("Movies", "movie"), lib("TV Shows", "show")] }),
+    );
+    renderPanel();
+    await screen.findByText("Teacup");
+
+    expect(screen.queryByLabelText(/filter by library/i)).not.toBeInTheDocument();
+  });
+
+  it("shows the filter as soon as one type holds two libraries", async () => {
+    getUserWatched.mockResolvedValue(
+      page({
+        libraries: [
+          lib("4K Movies", "movie"),
+          lib("Movies", "movie"),
+          lib("TV Shows", "show"),
+        ],
+      }),
+    );
+    renderPanel();
+
+    const select = await screen.findByLabelText(/filter by library/i);
+    expect(
+      Array.from(select.querySelectorAll("option")).map((o) => o.textContent),
+    ).toEqual(["All libraries", "4K Movies", "Movies", "TV Shows"]);
+  });
+
+  it("offers only the selected type's libraries", async () => {
+    // "4K Movies" under a Shows filter can only ever return nothing.
+    getUserWatched.mockResolvedValue(
+      page({
+        libraries: [
+          lib("4K Movies", "movie"),
+          lib("Movies", "movie"),
+          lib("Anime", "show"),
+          lib("TV Shows", "show"),
+        ],
+      }),
+    );
+    renderPanel();
+    await screen.findByText("Teacup");
+
+    await userEvent.click(screen.getByRole("button", { name: "Shows" }));
+
+    const select = await screen.findByLabelText(/filter by library/i);
+    await waitFor(() =>
+      expect(
+        Array.from(select.querySelectorAll("option")).map((o) => o.textContent),
+      ).toEqual(["All libraries", "Anime", "TV Shows"]),
+    );
   });
 
   it("resets paging when the library changes", async () => {
@@ -377,7 +481,11 @@ describe("the library filter", () => {
 
   it("explains an impossible type-and-library combination rather than looking broken", async () => {
     getUserWatched.mockResolvedValue(
-      page({ items: [], total: 0, libraries: ["4K Movies", "TV Shows"] }),
+      page({
+        items: [],
+        total: 0,
+        libraries: [lib("4K Movies", "movie"), lib("Movies", "movie")],
+      }),
     );
     renderPanel();
     await userEvent.selectOptions(

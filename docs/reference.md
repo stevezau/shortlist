@@ -257,8 +257,11 @@ GET  /api/users/{id}/watched?q=&media_type=movie|show&library=&limit=&offset= ->
      `library` filters to titles held in that library, by its Plex display name. It SELECTS which
      titles appear — each one still names every library it lives in, so filtering to "4K Movies" can
      return a row marked "Movies · 4K Movies", which is the duplicate you were looking for. The
-     page-level `libraries` lists every library this person has a watch in, never narrowed by the
-     filter (narrowing it would empty the control that did the narrowing).
+     page-level `libraries` lists every library this person has a watch in as `{name, media_type}`,
+     never narrowed by the filter (narrowing it would empty the control that did the narrowing).
+     The media type is there so the UI can decide whether to offer the filter at all: on a server
+     with one movie library and one TV library, a library dropdown repeats the Movies/Shows buttons
+     beside it, so it is only shown once one TYPE holds more than one library.
      `last_full_sync_at` is null while ANY library has never had a full read — the set is incomplete.
      Each item also carries `user_rating` — what THIS person rated it in Plex, 0–10, or null if they
      never did (nearly always). The three page-level rating fields say whether that rating is acting:

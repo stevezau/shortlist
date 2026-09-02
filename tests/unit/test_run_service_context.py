@@ -1873,9 +1873,25 @@ class TestUserWatchedMergesLibraryCopies:
         never another person's."""
         self._seed(sessions)
 
-        assert service.user_watched(1)["libraries"] == ["4K Movies", "4K TV", "Movies", "TV Shows"]
-        assert service.user_watched(1, library="Movies")["libraries"] == ["4K Movies", "4K TV", "Movies", "TV Shows"]
-        assert service.user_watched(2)["libraries"] == ["Mike Only"]
+        def names(page):
+            return [entry["name"] for entry in page["libraries"]]
+
+        assert names(service.user_watched(1)) == ["4K Movies", "4K TV", "Movies", "TV Shows"]
+        assert names(service.user_watched(1, library="Movies")) == ["4K Movies", "4K TV", "Movies", "TV Shows"]
+        assert names(service.user_watched(2)) == ["Mike Only"]
+
+    def test_each_library_carries_its_media_type(self, service, sessions):
+        """The page decides whether to OFFER a library filter from these: one library per type means
+        a library dropdown would repeat the Movies/Shows buttons beside it, so it isn't shown. Without
+        the type here that decision cannot be made client-side at all."""
+        self._seed(sessions)
+
+        assert service.user_watched(1)["libraries"] == [
+            {"name": "4K Movies", "media_type": "movie"},
+            {"name": "4K TV", "media_type": "show"},
+            {"name": "Movies", "media_type": "movie"},
+            {"name": "TV Shows", "media_type": "show"},
+        ]
 
     def test_a_row_cached_before_0087_merges_without_a_blank_library(self, service, sessions):
         """Its library name is unknown until the next sync. The page must show one name, not one name

@@ -12,6 +12,10 @@ import { useBlockSeed, useUserWatched } from "@/lib/queries";
 import { blockedSeeds } from "@/lib/types";
 import type { User, WatchedPage, WatchedTitle } from "@/lib/types";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
+import {
+  libraryOptions,
+  typesWorthNaming,
+} from "@/lib/watched-libraries";
 
 const PAGE = 25;
 
@@ -86,12 +90,13 @@ export function WatchHistory({
   };
 
   // Read off the last page rather than a second request: the response carries every library this
-  // person has watched in, unnarrowed by the current filter. The selected one is unioned in so a
-  // library renamed in Plex between requests can still be seen and cleared, rather than leaving a
-  // blank control with a filter silently applied.
-  const libraries = Array.from(
-    new Set([...(query.data?.libraries ?? []), ...(library ? [library] : [])]),
-  ).sort();
+  // person has watched in, unnarrowed by the current filter.
+  const libraries = libraryOptions(
+    query.data?.libraries ?? [],
+    mediaType,
+    library,
+  );
+  const namedTypes = typesWorthNaming(query.data?.libraries ?? []);
 
   return (
     <div className="space-y-4">
@@ -110,7 +115,10 @@ export function WatchHistory({
             onChange={(e) => reset(() => setSearch(e.target.value))}
           />
         </div>
-        <div className="flex items-center gap-2">
+        {/* Wraps rather than overflows: a phone at 320px cannot hold the type buttons and the
+            library dropdown on one line, and a toolbar that scrolls sideways is worse than one that
+            takes two rows. */}
+        <div className="flex flex-wrap items-center gap-2">
           <Segmented<"" | "movie" | "show">
             value={mediaType}
             ariaLabel="Filter by type"
@@ -122,8 +130,8 @@ export function WatchHistory({
             onChange={(value) => reset(() => setMediaType(value))}
           />
           {/* A dropdown rather than more buttons: library counts vary from two to a dozen between
-              servers, and a segmented row of a dozen wrecks the toolbar. Hidden entirely when there
-              is only one — the control could then only ever say "All libraries". */}
+              servers, and a segmented row of a dozen wrecks the toolbar. Absent entirely on a server
+              where it would only repeat the Movies/Shows buttons — see `libraryOptions`. */}
           {libraries.length > 1 && (
             <select
               value={library}
@@ -184,13 +192,16 @@ export function WatchHistory({
                       ) : null}
                       {/* Which Plex libraries hold it. Two names is a title stored twice — this row
                           used to be two rows, each with its own Block button that did the same
-                          thing. Empty for a watch cached before the name was recorded; the next sync
-                          fills it in, and no line is better than a guessed one. */}
-                      {item.libraries.length > 0 && (
-                        <span className="block text-xs text-muted-foreground/80">
-                          {item.libraries.join(" · ")}
-                        </span>
-                      )}
+                          thing. Drawn only where it distinguishes something (`typesWorthNaming`),
+                          and never for a watch cached before the name was recorded — the next sync
+                          fills that in, and no line is better than a guessed one. */}
+                      {item.libraries.length > 0 &&
+                        (item.libraries.length > 1 ||
+                          namedTypes.has(item.media_type)) && (
+                          <span className="block text-xs text-muted-foreground/80">
+                            {item.libraries.join(" · ")}
+                          </span>
+                        )}
                     </span>
                     <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
                       {item.media_type === "show" ? "Show" : "Movie"}
