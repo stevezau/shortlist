@@ -87,11 +87,15 @@ if you want Shortlist's own guardrails and inbox to be the only gate.
 If you'd rather see them first, make a user in Overseerr called **Shortlist** with auto-approve
 turned off, and pick it here. Its requests then wait in Overseerr for your yes, clearly labelled as
 coming from Shortlist rather than from a person. Shortlist never creates that account for you — it
-only lists the accounts already there.
+only lists the accounts already there. On many servers every existing account can already
+auto-approve, in which case making one is the only way to get a queue in Overseerr at all.
 
-Attributing requests to the person whose taste surfaced a title is deliberately not offered. They
-never asked for it, so it would spend their request quota and notify them about something they had
-no part in.
+**People on your server are not offered here, on purpose.** A title Shortlist wants is usually wanted
+by several people at once, while an Overseerr request has exactly one requester — so choosing a
+person would not file each title under whoever wanted it. It would put that one name on *everything*,
+for ever, including titles they had nothing to do with, spending their request quota and notifying
+them each time. The picker lists only your API key's own account and accounts made for this, and says
+how many it left out.
 
 **Two things work differently on this route:**
 
