@@ -200,10 +200,15 @@ export function WatchHistory({
                           `flex-wrap` because a title can sit in many libraries (nine, on a server
                           built to test it) and the tags must wrap inside the row rather than push
                           the page sideways. */}
+                      {/* `align-middle`, not a length: the tag is bigger than the text beside it, so
+                          aligning their BASELINES leaves it floating ~5px high (measured). Centring
+                          the box lands within 1.5px of the title's optical centre and stays right if
+                          the tag's padding or font size ever change — a tuned `align-[-0.4em]` hits
+                          0.3px today and drifts the moment either does. */}
                       {item.libraries.map((name) => (
                         <span
                           key={name}
-                          className="ml-1.5 inline-block max-w-full truncate rounded border border-border bg-elevated px-1.5 py-px align-[0.1em] text-[0.7rem] leading-4 text-muted-foreground"
+                          className="ml-1.5 inline-block max-w-full truncate rounded border border-border bg-elevated px-1.5 py-px align-middle text-[0.7rem] leading-4 text-muted-foreground"
                           title={name}
                         >
                           {name}
