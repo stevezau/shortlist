@@ -6,6 +6,21 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **"Something else is reordering your shelf" no longer fires when nothing else is.** A row rebuilt
+  during a run got a new Plex id, and the shelf-ordering pass at the end of that same run was still
+  working from the delivery record read before the run started. So it did not recognise the row as
+  one you had placed by hand: it swept it to the library default instead, and the next pass — the
+  privacy sync minutes later, or the next run — put it back where you asked. Every rebuilt row moved
+  twice per cycle, for ever, and moving the same row over and over is exactly what Shortlist treats
+  as proof that another tool (Kometa, Agregarr) is fighting it for the shelf.
+
+  Rows now land in their configured slot in the run that rebuilds them. On the maintainer's server
+  one run moved 70 rows and the pass twenty seconds later moved the same 70 straight back; that is
+  now zero. If you still see the alert after this, something really is reordering your shelf.
+  (#106)
+
 ## [1.8.0] - 2026-08-26
 
 ### Added

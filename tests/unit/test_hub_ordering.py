@@ -1683,6 +1683,72 @@ def test_a_row_placed_before_another_row_is_not_dragged_below_it():
     assert titles.index("extra-ann") < titles.index("picked-ann")
 
 
+def test_a_row_rebuilt_this_run_is_placed_by_its_own_group_not_the_catch_all():
+    """The ledger snapshot is taken BEFORE the run, so a collection rebuilt tonight has a ratingKey
+    it cannot know — and the ordering phase runs at the END of that same run.
+
+    Its old key still sits in the enumerated group, so the catch-all's exclusion set misses the REAL
+    hub, sweeps it to the library default, and the group (naming the dead key) never moves it to the
+    slot the owner chose. The next pass, with a fresh snapshot, puts it back. Neither pass is wrong
+    about the shelf it read, so both report `verified: True` — and the row moves twice per cycle for
+    ever, which is what `notifications._shelf_contention` counts as another tool fighting us.
+    Measured on SFLIX 2026-09-01: the catch-all moved 70 rows, and the pass 20 seconds later moved
+    exactly those 70 back (26 + 44, matching the two groups).
+    """
+    from types import SimpleNamespace
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec, RunReport, UserRunReport
+    from shortlist.engine.pipeline import _order_phase
+
+    hubs = [
+        FakeHub("Letzte Chance", "lc", collection=False),
+        FakeHub("extra-ann", "31"),
+        FakeHub("picked-bob", "21"),
+        FakeHub("picked-ann", "12"),
+    ]
+    colls = [
+        FakeColl("extra-ann", ["shortlist_ann"], 31),
+        FakeColl("picked-bob", ["shortlist_bob"], 21),
+        # Ann's row was deleted and recreated during this very run, so it is 12 on the server now.
+        FakeColl("picked-ann", ["shortlist_ann"], 12),
+    ]
+    section = FakeSection(hubs, title="Filme", key=1)
+    section.type = "movie"
+    cfg = EngineConfig(
+        manage_shelf_order=True,
+        hub_anchors={"1": HubAnchor(to_top=True)},  # the library default: everything else to the top
+        rows=[
+            RowSpec(slug="picked", name_template="Picked", size=10, hub_anchors={"1": HubAnchor("Letzte Chance")}),
+            RowSpec(slug="extra", name_template="Extra", size=10),
+        ],
+    )
+    ctx = SimpleNamespace(
+        config=cfg,
+        delivery_sections=[section],
+        plex=_client(colls),
+        write_lock=threading.Lock(),
+        # The snapshot as it was when the context was built: ann's 'picked' was 11 back then.
+        delivered_keys={("ann", "picked", "1"): 11, ("bob", "picked", "1"): 21, ("ann", "extra", "1"): 31},
+    )
+    report = RunReport(
+        started_at=datetime.now(UTC),
+        users=[
+            UserRunReport(
+                username="ann",
+                slug="ann",
+                breakdown=[{"row_slug": "picked", "library_key": "1", "rating_key": 12}],
+            )
+        ],
+    )
+    _order_phase(ctx, report)
+
+    titles = section.titles()
+    assert titles.index("picked-ann") > titles.index("Letzte Chance"), (
+        f"ann's rebuilt row was swept to the library default instead of its own slot: {titles}"
+    )
+    assert abs(titles.index("picked-ann") - titles.index("picked-bob")) == 1  # the group stayed one block
+
+
 def test_a_stale_ledger_key_is_recorded_not_silently_defaulted():
     """The ledger names a ratingKey whose collection is gone — deleted and recreated since.
 

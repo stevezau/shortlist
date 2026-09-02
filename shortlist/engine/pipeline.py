@@ -1481,19 +1481,44 @@ def _collection_order_phase(ctx: EngineContext, order_work: list[tuple]) -> None
     logger.info("ordered {} collection(s), {} move(s) total", len(deduped), total)
 
 
-def _row_keys_by_slug(ctx: EngineContext, section_key: str) -> dict[str, set[int]]:
-    """row slug -> the Plex ratingKeys that row's collections have in this library, from the DURABLE
-    delivery ledger.
+def _row_keys_by_slug(ctx: EngineContext, report: RunReport, section_key: str) -> dict[str, set[int]]:
+    """row slug -> the Plex ratingKeys that row's collections have in this library: the DURABLE
+    delivery ledger, with THIS run's own deliveries laid over the top.
 
-    The ledger, not this run's report, on purpose. This used to read `report.users[].placement_titles`,
-    which only ever holds rows delivered by THE RUN IN PROGRESS — so a `privacy.sync`
-    (`engine_run(ctx, [])`, which is what the nightly privacy-sync job and the "Fix privacy" button both
-    run) had an empty map, every group came out empty, and the whole ordering pass silently did nothing.
-    On SFLIX that was 31 runs in one day reaching this code and issuing not one move (2026-08-12).
-    The ledger is written by past runs, so it answers the same question for a run with no users at all.
+    The ledger is the base, not this run's report, on purpose. This used to read
+    `report.users[].placement_titles`, which only ever holds rows delivered by THE RUN IN PROGRESS —
+    so a `privacy.sync` (`engine_run(ctx, [])`, which is what the nightly privacy-sync job and the
+    "Fix privacy" button both run) had an empty map, every group came out empty, and the whole
+    ordering pass silently did nothing. On SFLIX that was 31 runs in one day reaching this code and
+    issuing not one move (2026-08-12). The ledger is written by past runs, so it answers the same
+    question for a run with no users at all.
+
+    But `ctx.delivered_keys` is a SNAPSHOT, read when the context was built — i.e. before this run
+    delivered anything — and this function runs at the END of that same run. A row rebuilt tonight
+    (delete + create, which is how a changed pick list lands) has a ratingKey the snapshot cannot
+    know, so without the overlay its real hub is in NO enumerated group: the catch-all's exclusion
+    set misses it and sweeps it to the library default, while its own group names the dead key and
+    never moves it to the slot the owner chose. The next pass, holding a fresh snapshot, puts it
+    back. Both passes read the shelf correctly and both report `verified: True`, so the row simply
+    moves twice per cycle for ever — which `notifications._shelf_contention` counts as another tool
+    fighting us and reports as "something else is reordering your shelf" (issue #106). Measured on
+    SFLIX 2026-09-01: the run's catch-all moved 70 rows and the pass 20 seconds later moved exactly
+    those 70 back.
+
+    The breakdown is the same per-(row, library) record the adapter persists the ledger FROM
+    (`run_persistence._record_deliveries`), so the overlay is that write applied early rather than a
+    second source of truth. A dry run carries `rating_key: 0` and contributes nothing, which is
+    right: it created no collection.
     """
+    keys: dict[tuple[str, str, str], int] = dict(ctx.delivered_keys)
+    for user in report.users:
+        for entry in user.breakdown or []:
+            rating_key = int(entry.get("rating_key") or 0)
+            row_slug, library_key = entry.get("row_slug") or "", str(entry.get("library_key") or "")
+            if rating_key and row_slug and library_key:
+                keys[(user.slug, row_slug, library_key)] = rating_key
     out: dict[str, set[int]] = {}
-    for (_user_slug, row_slug, key), rating_key in ctx.delivered_keys.items():
+    for (_user_slug, row_slug, key), rating_key in keys.items():
         if key == section_key and rating_key:
             out.setdefault(row_slug, set()).add(rating_key)
     return out
@@ -1593,7 +1618,7 @@ def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
         # moment ONE row was given its own placement, because that is what switches this library off
         # the single-call path onto this one. The ledger is now load-bearing only for the rows the
         # owner just configured by hand, which are the ones it reliably names.
-        keys_by_slug = _row_keys_by_slug(ctx, key)
+        keys_by_slug = _row_keys_by_slug(ctx, report, key)
         by_slug = {spec.slug: spec for spec in here}
         # What the audit CALLS each row. The default row carries no template of its own — its title is
         # the global one — so without that fallback the most likely anchor of all audits as a bare
