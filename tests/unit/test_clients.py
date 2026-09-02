@@ -1249,10 +1249,11 @@ class TestWatchedTitles:
         assert (item.title, item.tmdb_id, item.media_type) == ("Suits", 37680, MediaType.SHOW)
         assert (item.viewed_leaf_count, item.leaf_count) == (30, 134)
         assert item.watch_count == 30  # episodes watched drives a show's frequency weight
-        # The FIRST call is the show read; a second, episode-level read (type=4) follows it to
-        # recover series Plex's show-level query cannot see (issue #108).
-        assert respx.calls[0].request.url.params["type"] == "2"  # show
-        assert respx.calls.last.request.url.params["type"] == "4"  # episodes
+        params = respx.calls.last.request.url.params
+        assert params["type"] == "2"  # show
+        # `viewedLeafCount!=0`, never `unwatched=0` — see issue #108.
+        assert params["viewedLeafCount!"] == "0"
+        assert "unwatched" not in params
 
     @respx.mock
     def test_a_title_with_no_tmdb_guid_is_dropped(self, mock_plex: PlexClient):
@@ -1992,193 +1993,102 @@ class TestWatchedWindowCoverage:
         assert mock_plex.watched_titles("2", MediaType.SHOW, "TOK").dropped_no_guid == 0
 
     @respx.mock
-    def test_a_series_MISSING_from_the_show_level_read_is_recovered_from_its_episodes(self, mock_plex):
-        """Issue #108's real cause, reported by a user and then measured on a live server.
+    def test_the_show_read_asks_for_viewedLeafCount_not_unwatched(self, mock_plex):
+        """Issue #108, at the seam that causes it.
 
-        Marking a series or a season watched sets the EPISODES without establishing the show-level
-        watch-state row that `?type=2&unwatched=0` filters on, so a series someone has finished is
-        simply absent from that read — while `?type=4&unwatched=0` returns every one of its episodes.
-        On the maintainer's server, 20 of 491 shows with watched episodes never came back from the
-        show-level read.
+        `unwatched=0` filters on the SHOW's own watch-state row, which marking a series or a season
+        never establishes — so a series someone has finished is absent from that read while its
+        episode counts are perfectly correct. Measured on two independent servers: `unwatched=0`
+        returned 533 shows where `viewedLeafCount!=0` returned 491, matching the episode-level truth
+        exactly in both directions, with 20 shows missing from `unwatched=0` altogether.
+
+        A MOVIE library still uses `unwatched=0` — a film has no episodes beneath it, so there is no
+        second record to go missing, which is exactly why movies were never affected.
         """
-        shows = (
-            f'<Directory ratingKey="5001" type="show" title="Visible" year="2020" leafCount="4" '
-            f'viewedLeafCount="4" lastViewedAt="{self._NOW}"><Guid id="tmdb://111"/></Directory>'
-        )
-        watched_eps = "".join(
-            f'<Video ratingKey="{900 + n}" type="episode" title="Ep{n}" viewCount="1" '
-            f'grandparentRatingKey="5002" grandparentTitle="Invisible" lastViewedAt="{self._NOW - n}"/>'
-            for n in range(3)
-        )
-        # An UNWATCHED episode of the visible show. It must never be counted — the read is supposed
-        # to send `unwatched=0`, and if that filter is ever dropped this row is what catches it.
-        unwatched_ep = (
-            '<Video ratingKey="950" type="episode" title="Not seen" '
-            'grandparentRatingKey="5001" grandparentTitle="Visible"/>'
-        )
         self._mock_url(mock_plex)
-        seen_params: list = []
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._page([], size=0, total=0)))
 
-        def answer(request):
-            seen_params.append(dict(request.url.params))
-            if request.url.params.get("type") == "4":
-                # A server honouring `unwatched=0` returns only the three watched rows; the fourth is
-                # here to prove the SUT asked for the filter rather than relying on the mock.
-                body = watched_eps if request.url.params.get("unwatched") == "0" else watched_eps + unwatched_ep
-                size = 3 if request.url.params.get("unwatched") == "0" else 4
-            else:
-                body, size = shows, 1
-            return httpx.Response(200, text=f'<MediaContainer size="{size}" totalSize="{size}">{body}</MediaContainer>')
+        mock_plex.watched_titles("2", MediaType.SHOW, "TOK")
+        show_params = respx.calls.last.request.url.params
+        mock_plex.watched_titles("1", MediaType.MOVIE, "TOK")
+        movie_params = respx.calls.last.request.url.params
 
-        respx.get(self._URL).mock(side_effect=answer)
-        # The plexapi boundary, not our own `fetch_items` — mocking the helper would pass even if its
-        # `NotFound` handling or the `missing` computation regressed.
-        mock_plex._server.fetchItems.return_value = [
-            SimpleNamespace(
-                ratingKey="5002",
-                title="Invisible",
-                year=2019,
-                leafCount=10,
-                guids=[SimpleNamespace(id="tmdb://222")],
-            )
-        ]
-
-        items = {i.tmdb_id: i for i in mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items}
-
-        assert set(items) == {111, 222}, "the series only its episodes can see was not recovered"
-        recovered = items[222]
-        assert (recovered.title, recovered.viewed_leaf_count, recovered.leaf_count) == ("Invisible", 3, 10)
-        assert recovered.watch_count == 3
-        # It asked for the SHOW key, not an episode key.
-        assert mock_plex._server.fetchItems.call_args.args[0] == [5002]
-        episode_call = next(p for p in seen_params if p.get("type") == "4")
-        assert episode_call["unwatched"] == "0", "the episode read must ask only for WATCHED episodes"
-        assert items[111].viewed_leaf_count == 4, "an unwatched episode was counted as watched"
+        assert show_params["viewedLeafCount!"] == "0" and "unwatched" not in show_params
+        assert movie_params["unwatched"] == "0" and "viewedLeafCount!" not in movie_params
 
     @respx.mock
-    def test_the_episode_count_RAISES_a_show_the_show_level_read_under_reports(self, mock_plex):
-        """The other half of the roll-up, and the half that touches every show rather than the few
-        that are missing: the show row's own `viewedLeafCount` can lag its episodes."""
-        shows = (
-            f'<Directory ratingKey="5001" type="show" title="Lagging" year="2020" leafCount="10" '
-            f'viewedLeafCount="2" lastViewedAt="{self._NOW - 90_000}"><Guid id="tmdb://111"/></Directory>'
+    def test_the_show_filter_reaches_the_wire_UNENCODED(self, mock_plex):
+        """Plex's filter OPERATOR lives in the key, and httpx percent-encodes keys.
+
+        `params={"viewedLeafCount!": 0}` goes out as `viewedLeafCount%21=0`. The maintainer's server
+        decodes that and answers identically (measured, 491 either way), but plexapi's own `joinArgs`
+        encodes only the VALUE for exactly this reason, and a server that did not decode it would
+        ignore the filter and return the WHOLE library — 4,880 rows against 491, per person, per
+        library, per sync, silently.
+
+        Asserts the RAW query, not `url.params`: that view percent-DECODES, so it reports
+        `viewedLeafCount%21=0` as `{"viewedLeafCount!": "0"}` and cannot tell the two apart. Every
+        other test here, and the fake, are blind to this for the same reason.
+        """
+        self._mock_url(mock_plex)
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._page([], size=0, total=0)))
+
+        mock_plex.watched_titles("2", MediaType.SHOW, "TOK")
+
+        raw = respx.calls.last.request.url.query.decode()
+        assert "viewedLeafCount!=0" in raw, f"the filter was mangled on the wire: {raw}"
+        assert "%21" not in raw
+
+    @respx.mock
+    def test_a_server_that_IGNORES_the_filter_still_gives_the_right_answer(self, mock_plex):
+        """The hazard this endpoint is known for: a query param silently ignored, answered with a 200
+        carrying the FULL library. Here that is the worst failure available — every show in the
+        library would read as watched and nothing would ever be recommended again.
+
+        So the filter is applied client-side as well. An honoured filter just means fewer rows crossed
+        the wire; an ignored one costs bandwidth and nothing else.
+        """
+        watched = (
+            f'<Directory ratingKey="5001" type="show" title="Watched" year="2020" leafCount="10" '
+            f'viewedLeafCount="4" lastViewedAt="{self._NOW}"><Guid id="tmdb://111"/></Directory>'
         )
-        eps = "".join(
-            f'<Video ratingKey="{900 + n}" type="episode" title="Ep{n}" viewCount="1" '
-            f'grandparentRatingKey="5001" lastViewedAt="{self._NOW}"/>'
-            for n in range(6)
+        never_touched = (
+            '<Directory ratingKey="5002" type="show" title="Never Touched" year="2019" '
+            'leafCount="8" viewedLeafCount="0"><Guid id="tmdb://222"/></Directory>'
+        )
+        no_attribute_at_all = (
+            '<Directory ratingKey="5003" type="show" title="No Counts" year="2018" leafCount="6">'
+            '<Guid id="tmdb://333"/></Directory>'
         )
         self._mock_url(mock_plex)
+        body = watched + never_touched + no_attribute_at_all
+        respx.get(self._URL).mock(
+            return_value=httpx.Response(200, text=f'<MediaContainer size="3" totalSize="3">{body}</MediaContainer>')
+        )
 
-        def answer(request):
-            body, size = (eps, 6) if request.url.params.get("type") == "4" else (shows, 1)
-            return httpx.Response(200, text=f'<MediaContainer size="{size}" totalSize="{size}">{body}</MediaContainer>')
+        items = mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items
 
-        respx.get(self._URL).mock(side_effect=answer)
+        assert [i.tmdb_id for i in items] == [111], "a show with no watched episodes was counted as watched"
+
+    @respx.mock
+    def test_a_series_marked_watched_comes_back_even_with_no_show_level_stamp(self, mock_plex):
+        """The reporter's exact case, as the server actually reports it: episode counts complete,
+        no `lastViewedAt` on the show at all. Verified live — MooHouse/Rabbit Hole read
+        `viewedLeafCount=8 leafCount=8 lastViewedAt=None` and was absent from `unwatched=0`."""
+        marked = (
+            '<Directory ratingKey="5001" type="show" title="Rabbit Hole" year="2023" '
+            'leafCount="8" viewedLeafCount="8"><Guid id="tmdb://156819"/></Directory>'
+        )
+        self._mock_url(mock_plex)
+        respx.get(self._URL).mock(
+            return_value=httpx.Response(200, text=f'<MediaContainer size="1" totalSize="1">{marked}</MediaContainer>')
+        )
 
         item = mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items[0]
 
-        assert item.viewed_leaf_count == 6, "the show row under-reported and was not raised"
-        assert item.watch_count == 6
-        assert int(item.watched_at.timestamp()) == self._NOW, "the newer episode stamp did not win"
-
-    @respx.mock
-    def test_the_show_row_WINS_when_it_reports_more_than_the_episodes(self, mock_plex):
-        """Both directions. An episode read cannot see a season Plex still counts but no longer
-        holds, so the higher of the two is taken rather than the episode count alone."""
-        shows = (
-            f'<Directory ratingKey="5001" type="show" title="Ahead" year="2020" leafCount="10" '
-            f'viewedLeafCount="9" lastViewedAt="{self._NOW}"><Guid id="tmdb://111"/></Directory>'
-        )
-        eps = (
-            f'<Video ratingKey="900" type="episode" title="Ep0" viewCount="1" '
-            f'grandparentRatingKey="5001" lastViewedAt="{self._NOW - 90_000}"/>'
-        )
-        self._mock_url(mock_plex)
-
-        def answer(request):
-            body, size = (eps, 1) if request.url.params.get("type") == "4" else (shows, 1)
-            return httpx.Response(200, text=f'<MediaContainer size="{size}" totalSize="{size}">{body}</MediaContainer>')
-
-        respx.get(self._URL).mock(side_effect=answer)
-
-        item = mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items[0]
-
-        assert item.viewed_leaf_count == 9, "the episode read lowered a count it cannot see all of"
-        assert int(item.watched_at.timestamp()) == self._NOW
-
-    @respx.mock
-    def test_a_recovered_show_with_no_tmdb_guid_is_COUNTED(self, mock_plex):
-        """The blind spot the counter exists to remove, in its worst form: on a library matched with
-        a legacy agent the show-level read returns NOTHING, so every title arrives through the
-        recovery path — and each one dropped there used to leave the counter reading zero."""
-        eps = (
-            f'<Video ratingKey="900" type="episode" title="Ep0" viewCount="1" '
-            f'grandparentRatingKey="5002" lastViewedAt="{self._NOW}"/>'
-        )
-        self._mock_url(mock_plex)
-
-        def answer(request):
-            body, size = (eps, 1) if request.url.params.get("type") == "4" else ("", 0)
-            return httpx.Response(200, text=f'<MediaContainer size="{size}" totalSize="{size}">{body}</MediaContainer>')
-
-        respx.get(self._URL).mock(side_effect=answer)
-        mock_plex._server.fetchItems.return_value = [
-            SimpleNamespace(
-                ratingKey="5002", title="TVDB Only", year=2019, leafCount=8, guids=[SimpleNamespace(id="tvdb://9")]
-            )
-        ]
-
-        read = mock_plex.watched_titles("2", MediaType.SHOW, "TOK")
-
-        assert read.items == []
-        assert read.dropped_no_guid == 1, "a recovered show with no guid vanished uncounted"
-
-    @respx.mock
-    def test_a_failing_episode_read_keeps_the_show_read_it_already_has(self, mock_plex):
-        """The supplement may only ever ADD. It walks ~20x the show read's rows on a big library, so
-        it is ~20x the chances of a transient failure — and raising would discard a complete show
-        read already in hand, which the caller turns into "nothing watched in that library"."""
-        shows = (
-            f'<Directory ratingKey="5001" type="show" title="Visible" year="2020" leafCount="4" '
-            f'viewedLeafCount="4" lastViewedAt="{self._NOW}"><Guid id="tmdb://111"/></Directory>'
-        )
-        self._mock_url(mock_plex)
-
-        def answer(request):
-            if request.url.params.get("type") == "4":
-                return httpx.Response(503, text="upstream is having a moment")
-            return httpx.Response(200, text=f'<MediaContainer size="1" totalSize="1">{shows}</MediaContainer>')
-
-        respx.get(self._URL).mock(side_effect=answer)
-
-        read = mock_plex.watched_titles("2", MediaType.SHOW, "TOK")
-
-        assert [i.tmdb_id for i in read.items] == [111], "a failed supplement threw away a good read"
-
-    @respx.mock
-    def test_the_episode_read_only_ever_ADDS(self, mock_plex):
-        """A show the show-level read returned is kept even when no watched episode backs it.
-
-        Additive-only, and deliberately not conditional on knowing WHY the episodes are missing:
-        nothing here can tell a genuine un-watch from a truncated or filtered episode read, so
-        subtracting would turn a correction into a second way to lose watch history. Clearing real
-        residue is `watching_account._clear_emptied_shows`' job, where the reason is known.
-        """
-        shows = (
-            f'<Directory ratingKey="5001" type="show" title="Residue" year="2020" leafCount="9" '
-            f'viewedLeafCount="0" lastViewedAt="{self._NOW}"><Guid id="tmdb://111"/></Directory>'
-        )
-        self._mock_url(mock_plex)
-
-        def answer(request):
-            body = "" if request.url.params.get("type") == "4" else shows
-            size = 0 if request.url.params.get("type") == "4" else 1
-            return httpx.Response(200, text=f'<MediaContainer size="{size}" totalSize="{size}">{body}</MediaContainer>')
-
-        respx.get(self._URL).mock(side_effect=answer)
-
-        assert [i.tmdb_id for i in mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items] == [111]
+        assert (item.title, item.tmdb_id) == ("Rabbit Hole", 156819)
+        assert (item.viewed_leaf_count, item.leaf_count) == (8, 8)
+        assert item.watch_count == 8
 
 
 class TestScrobbleAs:

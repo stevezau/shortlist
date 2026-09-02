@@ -1,7 +1,14 @@
 <!--
-  PMS 1.43.3 GET /library/sections/{key}/all?type=2&unwatched=0 — the watched read against a SHOW
-  library. Recorded 2026-08-05 from a real server (plex-safety rule 11). Titles and ids are
-  sanitized; attribute NAMES, ordering and the container shape are verbatim.
+  PMS 1.43.3 GET /library/sections/{key}/all?type=2&unwatched=0 against a SHOW library. Recorded
+  2026-08-05 from a real server (plex-safety rule 11). Titles and ids are sanitized; attribute NAMES,
+  ordering and the container shape are verbatim.
+
+  NOTE THE QUERY. This is NO LONGER the read Shortlist makes: the show read now sends
+  `?type=2&viewedLeafCount!=0`, because `unwatched=0` omits a series whose show-level watch-state row
+  was never established (issue #108 — see the correction below and
+  `pms_watched_episodes_rollup.xml.txt`). The recording is kept because it is the evidence for that
+  change, and because the ROW shapes it captures — viewed/total pairs, a missing `lastViewedAt` — are
+  what `_watched_item` must parse either way.
 
   WHY THIS FIXTURE EXISTS.
 

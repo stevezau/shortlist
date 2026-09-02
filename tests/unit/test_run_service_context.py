@@ -765,6 +765,172 @@ class TestSyncWatched:
 
         assert asked == [None, None], f"a run asked for only what changed since {asked[-1]}"
 
+    def test_an_ordinary_sync_drops_a_title_the_person_un_watched(self, service, sessions, monkeypatch):
+        """Un-watching must show up on the next sync, not up to a week later.
+
+        Before #108 the nightly incremental read dropped a title un-watched inside its window.
+        Removing incremental reads moved every deletion to the `sync.watch_full_days` pass, which
+        made un-watching take up to seven days — reported by a user the day the fix shipped.
+
+        Safe at this cadence because the guards that made weekly deletion tolerable are what make
+        frequent deletion safe: the read must PROVE it saw the whole library, and a pass that would
+        drop more than half of one asks the server again first. A one-title drop is exactly what an
+        un-watch looks like, and it self-heals on the next sync if it was wrong.
+        """
+        import asyncio
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from shortlist.engine.clients.plex_pms import WatchedRead
+        from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
+        from shortlist.server.db.models import User, WatchedTitle
+
+        with sessions() as s:
+            s.add(User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True))
+            s.commit()
+
+        profile = UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED, slug="sarah")
+
+        def watch(title, tmdb):
+            return WatchedItem(
+                title=title, media_type=MediaType.MOVIE, watched_at=datetime.now(UTC), tmdb_id=tmdb, rating_key=tmdb
+            )
+
+        library = [watch("Heat", 1), watch("Dune", 2)]
+
+        def fetch_section(_p, _section, _media, since=None):
+            return WatchedRead(items=list(library), covers_window=True)
+
+        ctx = SimpleNamespace(
+            plex=SimpleNamespace(sections=lambda: [SimpleNamespace(key="1", type="movie")]),
+            history_source=SimpleNamespace(fetch=lambda p, **k: list(library), fetch_section=fetch_section),
+            config=SimpleNamespace(min_completion=0.7),
+        )
+        monkeypatch.setattr(service, "build_context", lambda **k: ctx)
+        monkeypatch.setattr(service, "enabled_profiles", lambda session, user_ids=None: [profile])
+
+        asyncio.run(service.sync_watched())
+        with sessions() as s:
+            assert {t.title for t in s.query(WatchedTitle)} == {"Heat", "Dune"}
+
+        library.pop()  # they un-watched Dune in Plex
+        asyncio.run(service.sync_watched())
+
+        with sessions() as s:
+            assert {t.title for t in s.query(WatchedTitle)} == {"Heat"}, "an un-watch waited for the weekly pass"
+
+    def test_the_first_sync_after_the_upgrade_drops_the_residue_without_a_second_read(
+        self, service, sessions, monkeypatch
+    ):
+        """The two #108 changes interact on the FIRST sync after upgrading, and this is that cell.
+
+        The show read moved from `unwatched=0` to `viewedLeafCount!=0`, which stops returning shows
+        Plex flags but that have no episode watched — 62 of 533 on the maintainer's server. Deletion
+        also moved to every sync. So the first pass drops ~12% of a show library in one go.
+
+        That is correct (they have nothing watched, and nothing downstream counted them), and it must
+        NOT trip the shrink guard: 491*2 > 533, so no confirming re-read. A test rather than
+        arithmetic in a comment, because the threshold and the residue share no code.
+        """
+        import asyncio
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from shortlist.engine.clients.plex_pms import WatchedRead
+        from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
+        from shortlist.server.db.models import User, WatchedTitle
+
+        with sessions() as s:
+            s.add(User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True))
+            s.commit()
+
+        profile = UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED, slug="sarah")
+
+        def show(tmdb, viewed):
+            return WatchedItem(
+                title=f"Show {tmdb}",
+                media_type=MediaType.SHOW,
+                watched_at=datetime.now(UTC),
+                tmdb_id=tmdb,
+                rating_key=tmdb,
+                viewed_leaf_count=viewed,
+                leaf_count=10,
+            )
+
+        # What the OLD query returned: 100 shows, 12 of them with nothing actually watched.
+        old_answer = [show(n, 0 if n <= 12 else 3) for n in range(1, 101)]
+        # What the NEW query returns: the 88 with episodes watched.
+        new_answer = [s for s in old_answer if s.viewed_leaf_count]
+        answers = [old_answer, new_answer]
+        reads = []
+
+        def fetch_section(_p, _section, _media, since=None):
+            reads.append(since)
+            return WatchedRead(items=list(answers[min(len(reads) - 1, 1)]), covers_window=True)
+
+        ctx = SimpleNamespace(
+            plex=SimpleNamespace(sections=lambda: [SimpleNamespace(key="2", type="show")]),
+            history_source=SimpleNamespace(fetch=lambda p, **k: [], fetch_section=fetch_section),
+            config=SimpleNamespace(min_completion=0.7),
+        )
+        monkeypatch.setattr(service, "build_context", lambda **k: ctx)
+        monkeypatch.setattr(service, "enabled_profiles", lambda session, user_ids=None: [profile])
+
+        asyncio.run(service.sync_watched())
+        with sessions() as s:
+            assert s.query(WatchedTitle).count() == 100
+
+        asyncio.run(service.sync_watched())
+
+        with sessions() as s:
+            assert s.query(WatchedTitle).count() == 88, "the residue was not swept"
+            assert s.query(WatchedTitle).filter(WatchedTitle.viewed_leaf_count == 0).count() == 0
+        assert len(reads) == 2, f"a 12% shrink triggered a confirming re-read ({len(reads)} reads)"
+
+    def test_a_sync_that_would_lose_MOST_of_a_library_confirms_before_deleting(self, service, sessions, monkeypatch):
+        """The shrink guard, exercised through the real sync rather than `sync_section` directly —
+        the layer that now sets `reconcile` on every pass."""
+        import asyncio
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from shortlist.engine.clients.plex_pms import WatchedRead
+        from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
+        from shortlist.server.db.models import User, WatchedTitle
+
+        with sessions() as s:
+            s.add(User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True))
+            s.commit()
+
+        profile = UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED, slug="sarah")
+        full = [
+            WatchedItem(
+                title=f"Film {n}", media_type=MediaType.MOVIE, watched_at=datetime.now(UTC), tmdb_id=n, rating_key=n
+            )
+            for n in range(1, 11)
+        ]
+        answers = [full, [], full]  # seed, a truncated answer, then the truth on the confirming read
+        reads = []
+
+        def fetch_section(_p, _section, _media, since=None):
+            reads.append(since)
+            return WatchedRead(items=list(answers[min(len(reads) - 1, 2)]), covers_window=True)
+
+        ctx = SimpleNamespace(
+            plex=SimpleNamespace(sections=lambda: [SimpleNamespace(key="1", type="movie")]),
+            history_source=SimpleNamespace(fetch=lambda p, **k: [], fetch_section=fetch_section),
+            config=SimpleNamespace(min_completion=0.7),
+        )
+        monkeypatch.setattr(service, "build_context", lambda **k: ctx)
+        monkeypatch.setattr(service, "enabled_profiles", lambda session, user_ids=None: [profile])
+
+        asyncio.run(service.sync_watched())
+        asyncio.run(service.sync_watched())
+
+        with sessions() as s:
+            assert s.query(WatchedTitle).count() == 10, "a thin answer wiped the library"
+        assert len(reads) == 3, "the confirming re-read never happened"
+
     def test_credit_withdrawal_stays_on_the_periodic_cadence(self, service, sessions, monkeypatch):
         """`full_resync` decides whether the sync WITHDRAWS pick credit — the one consequence around
         here that does not self-heal on the next good read, since it edits `picks.watched_at`.

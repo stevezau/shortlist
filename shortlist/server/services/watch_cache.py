@@ -136,8 +136,10 @@ class WatchCache:
         Args:
             force_full: Read the whole library rather than resuming from the cursor. Every sync sets
                 this (issue #108); it says nothing about whether anything may be DELETED.
-            reconcile: May this pass drop cached titles the read did not return? Deliberately
-                separate from `force_full`, and deliberately rare — see the replace branch below.
+            reconcile: May this pass drop cached titles the read did not return? Separate from
+                `force_full` because reading completely and deleting are different risks; the sync
+                sets both, `prefill_history` sets both, and the guards on the replace branch below
+                are what make deleting at that cadence safe.
         """
         now = now or utcnow()
         full = force_full or self.needs_full(session, user_id, section_key, now=now)
@@ -150,9 +152,10 @@ class WatchCache:
         # read returned. It is the only path here that destroys watch history, and every one of them
         # answers a way it has been shown to go wrong:
         #
-        # * `reconcile` — every sync reads the whole library now (issue #108), but only the periodic
-        #   pass may delete. Deletion cadence is therefore exactly what it was before that change,
-        #   which is the point: the read got 42x more frequent, and the destructive part must not.
+        # * `reconcile` — every sync sets this now. It was confined to the periodic pass while a
+        #   complete read could delete on no proof at all; that made UN-WATCHING take up to a week,
+        #   reported by a user the day the #108 fix shipped. The two conditions below are therefore
+        #   the whole guarantee, not a second line behind a rare cadence.
         # * `covers_window` — a PMS that omits `totalSize` and caps the container answers a short
         #   page with a 200, indistinguishable from "they un-watched all of it".
         #

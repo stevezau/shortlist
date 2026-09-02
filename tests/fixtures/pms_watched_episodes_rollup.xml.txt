@@ -4,17 +4,19 @@
   real server (plex-safety rule 11). Titles and ids are sanitized; attribute NAMES, the container
   shape and the presence/absence of each attribute are verbatim.
 
-  WHY THIS FIXTURE EXISTS — issue #108.
+  WHY THIS FIXTURE EXISTS — issue #108. NOTHING READS IT ANY MORE; it is the EVIDENCE for the query
+  the show read now sends, kept because that reasoning is not reconstructable from the code.
 
   `?type=2&unwatched=0` asks Plex about the SHOW row, and that row can disagree with its own
-  episodes. Measured on the same server, same library, same admin token, on the same day:
+  episodes. Measured on a real server, same library, same admin token, on the same day:
 
-    ?type=2&unwatched=0   ->   533 shows
-    ?type=2               ->  4880 shows, of which 491 have viewedLeafCount > 0
-    ?type=4&unwatched=0   ->  9563 episodes, rolling up to exactly those same 491 shows
+    ?type=2&unwatched=0        ->   533 shows
+    ?type=2                    ->  4880 shows, of which 491 have viewedLeafCount > 0
+    ?type=2&viewedLeafCount!=0 ->   491 shows
+    ?type=4&unwatched=0        ->  9563 episodes, rolling up to exactly those same 491 shows
 
-  and **20 of those 491 shows never came back from `?type=2&unwatched=0` at all.** Inspected
-  individually, every one of them looks like this:
+  and **20 of those 491 never came back from `?type=2&unwatched=0` at all.** Inspected individually,
+  every one of them looks like this:
 
       eps_watched=38  viewedLeafCount=38  leafCount=38  lastViewedAt=None
       eps_watched=6   viewedLeafCount=6   leafCount=6   lastViewedAt=None
@@ -22,20 +24,19 @@
 
   So `unwatched=0` on `type=2` filters on the show's own `lastViewedAt`/watch-state row, NOT on
   `viewedLeafCount` — and a show whose show-level row was never established is invisible to it while
-  its episode counts are perfectly correct. Marking a series or a season watched in Plex is one way
-  to end up there; the reporter of #108 found that marking a single episode BY HAND establishes the
-  row and the whole show then appears.
+  its episode counts are perfectly correct. Marking a series or a season watched is one way to end up
+  there; the reporter of #108 found that marking a single episode BY HAND establishes the row and the
+  whole show then appears.
+
+  The episode roll-up below was the FIRST fix: walk the episodes and rebuild the shows from them. It
+  worked (533 -> 552 on the live server, 0 lost) and was then replaced by `viewedLeafCount!=0`, which
+  the reporter suggested and which returns the identical 491 in one read at half the cost — 0
+  missing and 0 extra against this episode-derived truth, in both directions. The rows below record
+  the shape that measurement was taken from.
 
   A TRAP, recorded because it cost a wrong diagnosis: you cannot look for these shows by asking
   `?type=2&unwatched=0` which of its rows lack `lastViewedAt`. That query EXCLUDES them by
-  definition, so the answer is always zero and reads like proof they do not exist. Use `?type=2` with
-  no filter, or the episode read below.
-
-  `PlexClient._shows_from_episodes` rolls this up: it counts episodes per `grandparentRatingKey`,
-  raises each show's `viewed_leaf_count` to at least that, and recovers any show the show-level read
-  missed entirely (their static metadata comes from a batch `fetch_items`). Verified against the live
-  server: 533 shows before, 552 after, 0 lost, and every recovered show genuinely had watched
-  episodes.
+  definition, so the answer is always zero and reads like proof they do not exist.
 -->
 <MediaContainer size="2" totalSize="9563" allowSync="1" identifier="com.plexapp.plugins.library"
                 librarySectionID="2" librarySectionTitle="TV Shows" librarySectionUUID="REDACTED-UUID"

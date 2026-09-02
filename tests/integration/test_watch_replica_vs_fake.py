@@ -25,7 +25,7 @@ import uvicorn
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.models import MediaType
 from shortlist.engine.watch_replica import build_plan
-from tests.fakes.fake_plex import FakeMovie, FakePlexState, make_fake_plex, seed_state
+from tests.fakes.fake_plex import FakeHistoryEntry, FakeMovie, FakePlexState, make_fake_plex, seed_state
 
 OWNER_TOKEN = "owner-token"
 TARGET_TOKEN = "server-203"  # the Home canary; `watched_account_id` maps it to account 203
@@ -94,42 +94,43 @@ def _sections(state: FakePlexState) -> list[tuple[str, MediaType]]:
     return [(str(s.key), MediaType.MOVIE if s.type == "movie" else MediaType.SHOW) for s in state.sections.values()]
 
 
-class TestTheShowReadRecoversWhatPlexHides:
-    """Issue #108, end to end over real HTTP: a series Plex's SHOW-level read cannot see.
+class TestTheShowReadSeesWhatUnwatchedZeroHides:
+    """Issue #108, end to end over real HTTP: a series `?type=2&unwatched=0` cannot see.
 
-    Marking a series or a season watched sets the EPISODES without establishing the show-level
-    watch-state row that `?type=2&unwatched=0` filters on, so the show is absent from that read while
-    every one of its episodes comes back from `?type=4&unwatched=0`. Measured on a live server: 20 of
-    491 shows with watched episodes never came back from the show-level read.
+    That query filters on the show's own watch-state row, which marking a series or a season never
+    establishes — so a finished series is absent from it while its episode counts are correct.
+    `viewedLeafCount!=0` filters on the counts and returns it. Measured on two independent servers:
+    533 shows against 491, with 20 shows missing from `unwatched=0` entirely.
 
-    The fake models the omission (`FakePlexState.invisible_to_show_read`) because otherwise both
-    reads answer from the same set, they can never disagree, and the recovery path is dead code in
-    every full-stack test — the rule that a fake must be no easier than the real server.
+    The fake makes the two queries DISAGREE (`FakePlexState.invisible_to_show_read`) because
+    otherwise they answer from the same set, the distinction is unrepresentable, and this test would
+    pass against either query — the rule that a fake must be no easier than the real server.
     """
 
-    def test_a_show_hidden_from_the_show_level_read_is_recovered_from_its_episodes(self, pms):
-        state, client, episodes = pms
-        for key in episodes[:4]:
-            state.leaf(1, key)[0] = 1  # the owner watched four episodes
+    def test_a_show_hidden_from_unwatched_0_still_comes_back(self, pms):
+        state, client, _episodes = pms
+        state.history.append(FakeHistoryEntry(account_id=1, rating_key=SHOW_KEY, viewed_at=1_700_000_000))
+        state.watch_episodes(1, SHOW_KEY, 4)  # four episodes in
         section = state.section_of(SHOW_KEY)
 
         before = client.watched_titles(str(section.key), MediaType.SHOW, OWNER_TOKEN)
         assert SHOW_KEY in {i.rating_key for i in before.items}, "precondition: normally visible"
 
-        # Now Plex stops returning it from the show-level read, exactly as it does for a series
-        # marked watched rather than played.
+        # Now Plex stops returning it from `unwatched=0`, exactly as it does for a series marked
+        # watched rather than played. The read asks `viewedLeafCount!=0` instead, so it still lands.
         state.invisible_to_show_read.add(SHOW_KEY)
         after = client.watched_titles(str(section.key), MediaType.SHOW, OWNER_TOKEN)
 
-        recovered = {i.rating_key: i for i in after.items}
-        assert SHOW_KEY in recovered, "the show vanished with the show-level read that hid it"
-        assert recovered[SHOW_KEY].viewed_leaf_count == 4, "its watched episodes were not counted"
+        still_there = {i.rating_key: i for i in after.items}
+        assert SHOW_KEY in still_there, "the show vanished with the query that hides it"
+        assert still_there[SHOW_KEY].viewed_leaf_count == 4, "its watched episode count was lost"
 
-    def test_a_show_with_no_watched_episodes_stays_hidden(self, pms):
-        """The recovery adds what the EPISODES justify and nothing else — it must not resurrect a
-        show on the strength of its existing."""
+    def test_a_show_with_nothing_watched_is_not_returned(self, pms):
+        """`viewedLeafCount!=0` means what it says — and it is applied client-side too, so a server
+        that ignores the filter and answers with the whole library still yields the same set."""
         state, client, _episodes = pms
-        state.invisible_to_show_read.add(SHOW_KEY)
+        state.history.append(FakeHistoryEntry(account_id=1, rating_key=SHOW_KEY, viewed_at=1_700_000_000))
+        state.watch_episodes(1, SHOW_KEY, 0)  # watched nothing of it
         section = state.section_of(SHOW_KEY)
 
         read = client.watched_titles(str(section.key), MediaType.SHOW, OWNER_TOKEN)

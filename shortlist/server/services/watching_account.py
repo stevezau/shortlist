@@ -370,11 +370,16 @@ def _clear_emptied_shows(
     """Un-scrobble the SHOW key of any show whose episodes we just emptied.
 
     Un-scrobbling an episode does not clear its show: the show row keeps its own `viewCount` and
-    `lastViewedAt`, so it still comes back from `?type=2&unwatched=0` — the read `watched_titles` is
-    built from — now reading 0/N. The target then looks to Shortlist like someone who has watched a
-    show with none of it watched, and the engine stops offering it. It is the same residue that
-    explains the 63 zero-episode shows found on a real account, and §2 of the design records the
-    behaviour that causes it.
+    `lastViewedAt`, so the account is left flagged as having watched a show it has none of. It is the
+    same residue that explains the 63 zero-episode shows found on a real account, and §2 of the
+    design records the behaviour that causes it.
+
+    The reason is now the TARGET'S OWN PLEX, not Shortlist's cache. This used to argue that the row
+    "still comes back from `?type=2&unwatched=0` — the read `watched_titles` is built from"; both
+    halves stopped being true with issue #108, which moved the show read to `viewedLeafCount!=0` and
+    filters a 0/N row out client-side as well. Undoing a transfer still has to leave the person's own
+    library looking untouched, which is reason enough on its own — 62 phantom shows in their
+    Recently Watched is exactly what "Put back exactly as it was" promises not to leave behind.
 
     Only shows we actually emptied, and only when the SOURCE has nothing left in them — never a show
     the target still has episodes of, and never one the source watches.

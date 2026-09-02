@@ -72,12 +72,18 @@ class WatchSync:
         self._bus = bus
 
     def _dead_sweep_due(self, store: SettingsStore) -> bool:
-        """Is this the periodic RECONCILE pass?
+        """Is this the periodic pass?
 
-        Not "is a complete read due" — every sync reads the whole library now (issue #108). This
-        gates the three things that must stay rare, because each of them acts on ABSENCE and so
-        believes a single response: dropping cached titles the read did not return, the dead-library
-        sweep, and withdrawing pick credit. Never having run counts as due.
+        Not "is a complete read due" — every sync reads the whole library now (issue #108). Gates the
+        TWO things that must stay rare, because each acts on ABSENCE from a single response and
+        neither self-heals: the dead-library sweep, which believes one `/library/sections` answer for
+        every user, and withdrawing pick credit, which edits `picks.watched_at`. Never having run
+        counts as due.
+
+        Dropping cached titles the read did not return used to be gated here too. It no longer is —
+        that made un-watching take up to a week — and it does not need to be: it is guarded by proof
+        the read saw the whole library, plus a confirming re-read before any large deletion, and a
+        wrong drop of a single title comes back on the next sync.
         """
         stamp = store.get("report.watch_full_at")
         if not isinstance(stamp, str) or not stamp:
@@ -149,7 +155,20 @@ class WatchSync:
                             media_type,
                             read,
                             force_full=force_full,
-                            reconcile=sweep_dead,
+                            # EVERY sync, not just the periodic pass. Confining deletion to that pass
+                            # was right when a complete read could delete on no proof at all; it is
+                            # wrong now that it cannot. The cost was un-watching: before #108 the
+                            # nightly incremental read dropped a title someone un-watched inside its
+                            # window, and moving deletion to the weekly pass made that take up to
+                            # seven days — reported straight after the fix shipped.
+                            #
+                            # Safe because the two guards that made weekly deletion tolerable are
+                            # what make frequent deletion safe: the read must PROVE it saw the whole
+                            # library, and a pass that would drop more than half a library asks the
+                            # server a second time first. What is left unguarded is the small
+                            # deletion — one or two titles — which is exactly what an un-watch looks
+                            # like, and which self-heals on the next sync if it was wrong.
+                            reconcile=True,
                         )
                     )
                 except SectionNotShared:

@@ -559,6 +559,13 @@ def _movie_xml(parent: Element, state: FakePlexState, movie: FakeMovie, *, watch
             # series IN PROGRESS, which is what `unwatched=0` mostly returns on a real server and the
             # only shape that tells `watched` and `finished` apart.
             viewed = state.partial_shows.get((watched_by, movie.rating_key), movie.leaf_count)
+            # `FakeMovie.leaf_count` defaults to 0, and the show read now filters on
+            # `viewedLeafCount != 0` — so a show seeded without an explicit leaf_count is invisible to
+            # it and the failure reads as a mystery. Loud here rather than puzzling three files away.
+            assert movie.leaf_count, (
+                f"show {movie.rating_key} ({movie.title!r}) was seeded with leaf_count=0, so it can "
+                "never appear in a watched read — give it a real episode count"
+            )
             element.set("viewedLeafCount", str(min(viewed, movie.leaf_count)))
             element.set("leafCount", str(movie.leaf_count))
         else:
@@ -744,13 +751,19 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
         # The share-token watched read (ShareTokenWatchSource): `unwatched=0` filters to what the
         # REQUESTING account has watched, served AS them with their own per-user viewCount/leaf counts.
         # The token is in the X-Plex-Token header (includeToken=False keeps the owner's out of the URL).
-        if query.get("unwatched") == "0":
+        if query.get("unwatched") == "0" or query.get("viewedLeafCount!") is not None:
             account_id = state.watched_account_id(request.headers.get("X-Plex-Token", ""))
             watched = state.watched_now(account_id) if account_id is not None else set()
-            # A real PMS omits a show whose show-level watch-state row was never established, even
-            # though its episodes are watched (issue #108). Modelled so the show-level read and the
-            # episode read CAN disagree here, as they do on a real server.
-            watched -= state.invisible_to_show_read
+            # The two queries DISAGREE, exactly as they do on a real server (issue #108).
+            # `unwatched=0` filters on the show's own watch-state row, which marking a series or a
+            # season never establishes — so a finished series is missing from it while its episode
+            # counts are correct. `viewedLeafCount!=0` filters on the counts and returns it.
+            #
+            # Modelled because otherwise both answer from the same set, they can never disagree, and
+            # the whole reason the read changed is unrepresentable here — the rule that a fake must
+            # be no easier than the real server.
+            if query.get("viewedLeafCount!") is None:
+                watched -= state.invisible_to_show_read
             listing = [item for item in _sorted_items(list(items.values()), None) if item.rating_key in watched]
             # The INCREMENTAL read asks for `sort=lastViewedAt:desc` and stops client-side at the
             # first title older than its cutoff. It deliberately does NOT send a `lastViewedAt>=`
