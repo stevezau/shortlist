@@ -906,9 +906,10 @@ def _apply_seerr_state(
     ``present`` needs no separate exclusion set: a title the instance knows about in any actionable
     state is one Shortlist must not ask for again.
 
-    ``m.excluded`` is never set. Overseerr has no equivalent of an Arr import-exclusion list, so
-    there is no "never fetch this" fact to surface — the inbox's own ``rejected`` status is what
-    stops a declined title nagging every night.
+    ``m.excluded`` is set from the instance's BLOCKLIST, which is the *seerr's own spelling of an Arr
+    import-exclusion list. Flagged and KEPT rather than dropped — the same choice the Arr twin makes
+    — so the inbox can say why approving it would not help, and `_auto_eligible` holds it back from
+    auto-send. An instance too old to serve `/blocklist` simply contributes no exclusions.
 
     Fails OPEN, exactly like its Arr twin: a fetch error skips the check entirely, because a
     redundant request is a far smaller sin than silently dropping a title the owner wanted.

@@ -67,10 +67,22 @@ _MEDIA_TYPE = {MediaType.MOVIE: "movie", MediaType.SHOW: "tv"}
 #: ADMIN is special. That file's own comment: "If the user has the admin permission, true will always
 #: be returned from this check" — so an admin auto-approves everything without carrying any of the
 #: AUTO_APPROVE bits, which is exactly the account most owners' API keys belong to.
-#: `userType` on a Seerr account: 1 is a Plex user, 2 a local account created in Overseerr itself.
-_USER_TYPE_PLEX = 1
+#: `userType` on a Seerr account: 2 is a local account created in Overseerr itself; 1 is a Plex user,
+#: and the live instance this was built against had nothing else. Only LOCAL is named, because the
+#: classification defaults to "person" for anything it cannot read — see `is_plex_user`.
+_USER_TYPE_LOCAL = 2
 
 _PERM_ADMIN = 2
+#: Not an auto-approve bit by name, but Overseerr's own approval rule treats it as one. Read from
+#: where the rule lives (`/app/dist/entity/MediaRequest.js` on a live 3.4.1), not from the enum file:
+#:
+#:     status: user.hasPermission([AUTO_APPROVE, AUTO_APPROVE_MOVIE, MANAGE_REQUESTS], {type:'or'})
+#:               ? MediaRequestStatus.APPROVED : PENDING
+#:
+#: Omitting it labelled such an account "requests wait for approval" on the settings screen while its
+#: titles in fact went straight through to Radarr unreviewed — the exact inversion that screen exists
+#: to prevent.
+_PERM_MANAGE_REQUESTS = 16
 _PERM_AUTO_APPROVE = 128
 _PERM_AUTO_APPROVE_MOVIE = 256
 _PERM_AUTO_APPROVE_TV = 512
@@ -85,6 +97,7 @@ _PERM_AUTO_APPROVE_TV = 512
 _FORBIDDEN = "{app} accepted the API key but refused this — its account needs the {permission} permission"
 _MANAGE_REQUESTS = "Manage Requests"
 _MANAGE_USERS = "Manage Users"
+_VIEW_BLOCKLIST = "View Blocklist"
 
 
 class SeerrError(RuntimeError):
@@ -229,7 +242,11 @@ class SeerrClient:
                     # The screen keeps the two apart because filing Shortlist's requests under a
                     # PERSON spends their request quota and notifies them about titles they never
                     # asked for — a consequence worth seeing before the choice, not after.
-                    "is_plex_user": _int_or_none(row.get("userType")) == _USER_TYPE_PLEX,
+                    # `!= LOCAL`, not `== PLEX`: an absent or unrecognised userType must land on
+                    # "person", because that is the cautious side. The picker offers only NON-people,
+                    # so defaulting the unknown to "not a person" would put every real account on the
+                    # server back in the dropdown and take the explanation away with them.
+                    "is_plex_user": _int_or_none(row.get("userType")) != _USER_TYPE_LOCAL,
                 }
             )
         return out
@@ -298,22 +315,48 @@ class SeerrClient:
         return state
 
     def _paged(self, path: str, *, permission: str = _MANAGE_REQUESTS) -> list[object]:
-        """Walk a ``{pageInfo, results}`` endpoint to the end, honouring ``pageInfo.pages``."""
+        """Walk a ``{pageInfo, results}`` endpoint to the end.
+
+        ``pageInfo`` is believed over the size of the batch, because a server or proxy that CAPS
+        ``take`` answers the whole question with page one: a short batch then looks exactly like the
+        end of the list, and the walk returns 100 of 26,941 rows with every row perfectly usable, so
+        nothing downstream can tell. `pageInfo` is in the same payload saying otherwise.
+        """
         out: list[object] = []
-        for page in range(self._MAX_PAGES):
-            payload = self._get(path, permission=permission, take=self._PAGE_SIZE, skip=page * self._PAGE_SIZE)
+        expected: int | None = None
+        for _page in range(self._MAX_PAGES):
+            payload = self._get(path, permission=permission, take=self._PAGE_SIZE, skip=len(out))
             results = payload.get("results") if isinstance(payload, dict) else None
             batch = results if isinstance(results, list) else []
+            info = payload.get("pageInfo") if isinstance(payload, dict) else None
+            if isinstance(info, dict) and expected is None:
+                expected = _int_or_none(info.get("results"))
             out.extend(batch)
+            if not batch:
+                break
+            if expected is not None:
+                if len(out) >= expected:
+                    return out
+                continue  # more to come, whatever the batch size said
             if len(batch) < self._PAGE_SIZE:
                 return out
-            info = payload.get("pageInfo") if isinstance(payload, dict) else None
-            pages = _int_or_none(info.get("pages")) if isinstance(info, dict) else None
-            if pages is not None and page + 1 >= pages:
-                return out
-        logger.warning(
-            "{}: {} paging hit the {}-page safety cap — reporting a partial list", self.app_name, path, self._MAX_PAGES
-        )
+        else:
+            logger.warning(
+                "{}: {} paging hit the {}-page safety cap — reporting a partial list",
+                self.app_name,
+                path,
+                self._MAX_PAGES,
+            )
+        if expected is not None and len(out) < expected:
+            # The server said how many there were and we did not get them. Silence here is what a
+            # take-capping proxy looks like, and it is indistinguishable from a small library.
+            logger.warning(
+                "{}: read {} of the {} rows {} says it has — the rest are invisible to this run",
+                self.app_name,
+                len(out),
+                expected,
+                path,
+            )
         return out
 
     def blocklisted(self) -> set[tuple[str, int]]:
@@ -336,7 +379,7 @@ class SeerrClient:
     def _fetch_blocklist(self) -> set[tuple[str, int]]:
         for path in ("/blocklist", "/blacklist"):
             try:
-                rows = self._paged(path)
+                rows = self._paged(path, permission=_VIEW_BLOCKLIST)
             except SeerrError as e:
                 logger.debug("{}: {} unavailable ({}) — no blocklist applied", self.app_name, path, e)
                 continue
@@ -347,10 +390,15 @@ class SeerrClient:
                 tmdb_id = _int_or_none(row.get("tmdbId"))
                 if tmdb_id is None:
                     continue
-                # `media` is a nested MediaInfo and carries the type. A row without one still counts
-                # against BOTH types: half-knowing that the owner said never is not a reason to ask.
+                # The row names its own type; the nested MediaInfo is the fallback. Reading ONLY the
+                # nested object meant a row shaped {tmdbId, mediaType, title} fell through to the
+                # both-types branch — so blocklisting a FILM also held back the unrelated series
+                # sharing that TMDB id, flagged "on the blocklist". TMDB's two id spaces overlap,
+                # which is the whole reason `_media_type_of` exists.
                 media = row.get("media")
-                kind = _media_type_of(media) if isinstance(media, dict) else None
+                kind = _media_type_of(row)
+                if kind is None and isinstance(media, dict):
+                    kind = _media_type_of(media)
                 if kind is None:
                     out.update({(MediaType.MOVIE.value, tmdb_id), (MediaType.SHOW.value, tmdb_id)})
                 else:
@@ -405,10 +453,11 @@ class SeerrClient:
 def _approves(permissions: int, specific: int) -> bool:
     """Does this permission value auto-approve that media type?
 
-    Three ways to hold it, and missing any one of them would mislabel a real account: ADMIN (which
-    Overseerr treats as holding every permission), the blanket AUTO_APPROVE, or the per-type bit.
+    Four ways to hold it, and missing any one mislabels a real account: ADMIN (which Overseerr
+    treats as holding every permission), MANAGE_REQUESTS (see `_PERM_MANAGE_REQUESTS` — it is in the
+    approval rule despite not being named for it), the blanket AUTO_APPROVE, or the per-type bit.
     """
-    return bool(permissions & (_PERM_ADMIN | _PERM_AUTO_APPROVE | specific))
+    return bool(permissions & (_PERM_ADMIN | _PERM_MANAGE_REQUESTS | _PERM_AUTO_APPROVE | specific))
 
 
 def _name_of(row: dict) -> str:

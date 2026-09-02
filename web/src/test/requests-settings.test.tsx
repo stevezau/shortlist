@@ -686,7 +686,8 @@ describe("RequestsSettings", () => {
         "requests.auto_min_demand": 2,
         "requests.auto_min_rating": 7,
       });
-      expect(await screen.findByText(/Nothing waits here/)).toBeTruthy();
+      // Not "Nothing waits here" — max_per_run still queues the overflow, whatever the bars say.
+      expect(await screen.findByText(/up to 5 a night/)).toBeTruthy();
     });
 
     it("still describes the Arr route in its own terms", async () => {
@@ -724,6 +725,30 @@ describe("RequestsSettings", () => {
       expect(
         await screen.findByText(/belonging to people on your server/),
       ).toBeTruthy();
+    });
+
+    it("points at an existing holding account instead of telling you to make one", async () => {
+      // "Make a user called Shortlist" is unhelpful advice when the list already contains one.
+      renderPanel(VIA_SEERR);
+      expect(await screen.findByText(/To check them in Overseerr first, pick/)).toBeTruthy();
+      expect(screen.queryByText(/make a user there called/)).toBeNull();
+    });
+
+    it("does tell you to make one when there is none", async () => {
+      getSeerrOptions.mockResolvedValue({
+        users: [
+          {
+            id: 1,
+            name: "serverowner",
+            auto_approve_movies: true,
+            auto_approve_tv: true,
+            is_plex_user: true,
+          },
+        ],
+        default_user_id: 1,
+      });
+      renderPanel(VIA_SEERR);
+      expect(await screen.findByText(/make a user there called/)).toBeTruthy();
     });
 
     it("still describes the account that IS chosen", async () => {

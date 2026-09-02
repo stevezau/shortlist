@@ -846,8 +846,9 @@ class RequestCandidate(Base):
     # None on the Overseerr route, which addresses both media types by TMDB id and needs no slug.
     arr_slug: Mapped[str | None] = mapped_column(String(256), nullable=True)
     # On Sonarr/Radarr's import-exclusion list (usually from a past delete): surfaced in the inbox so
-    # the owner knows approving it is a no-op until they remove the exclusion in the Arr. Never set
-    # on the Overseerr route — it has no equivalent list, so there is no such fact to surface.
+    # the owner knows approving it is a no-op until they remove the exclusion in the Arr. On the
+    # Overseerr route it carries the same fact from that instance's BLOCKLIST, which is what it calls
+    # the same list — so the flag means "the app was told never to fetch this" on both routes.
     excluded: Mapped[bool] = mapped_column(Boolean, default=False)
     # Owner cleared this from the Sent log. The row STAYS `status="sent"` — a load-bearing tombstone
     # that stops a still-downloading title being re-requested (see delete_requests / _persist_request_queue)

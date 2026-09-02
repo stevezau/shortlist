@@ -663,7 +663,8 @@ export function arrStatusInterval(
   // PARTIALLY_AVAILABLE is the resting state of every currently-airing series. Both read as
   // `downloading` here — permanently — so this would poll for ever. And one poll costs far more
   // than on the Arr route: `RadarrClient.status_by_tmdb` is a single request, while Overseerr has
-  // no bulk lookup and must be walked 100 rows at a time across the whole library. An unreachable
+  // no bulk lookup and must be walked a page at a time across the whole library — 27 requests on a
+  // real 26,941-row instance, against Radarr's one. An unreachable
   // instance still earns the recovery timer below, because that is the state that cannot clear
   // itself.
   // Tested against the live values, never `!== "off"`: the field is absent from a response

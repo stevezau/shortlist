@@ -194,7 +194,8 @@ describe("RequestsPage", () => {
     renderPage();
     expect(await screen.findByText("Amazing Digital Circus")).toBeTruthy();
     expect(
-      screen.getByText(/Sonarr was told never to add this again/i),
+      // "fetch", not "add": Radarr adds, Overseerr fetches, and the sentence is shared.
+      screen.getByText(/Sonarr was told never to fetch this again/i),
     ).toBeTruthy();
     // The Arr's own word for it stays, so the owner can find the setting there.
     expect(screen.getByText(/import exclusion/i)).toBeTruthy();
@@ -1458,6 +1459,50 @@ describe("RequestsPage — what Sonarr/Radarr has", () => {
     expect(await screen.findByText(/Can.t reach Radarr/i)).toBeInTheDocument();
     expect(screen.queryByText(/Can.t reach Sonarr/i)).toBeNull();
     expect(screen.getByText("Downloading")).toBeInTheDocument();
+  });
+
+  it("calls the exclusion a blocklist on the Overseerr route", async () => {
+    // The app NAME was made route-aware; the concept was not. Naming Overseerr and then calling its
+    // blocklist an "import exclusion" sends the owner looking for a screen it does not have — and
+    // the whole-page Radarr/Sonarr assertion cannot catch it, because the sentence contains neither
+    // word and nothing else renders an excluded row on this route.
+    listRequests.mockResolvedValue([
+      candidate({ id: 1, title: "Dune", excluded: true }),
+    ]);
+    getArrStatus.mockResolvedValue({
+      statuses: {},
+      radarr: "off",
+      sonarr: "off",
+      overseerr: "ok",
+    });
+    getSettings.mockResolvedValue({
+      "requests.enabled": true,
+      "requests.target": "overseerr",
+      "requests.overseerr.url": "http://overseerr.test",
+    });
+    renderPage();
+
+    expect(await screen.findByText(/calls it a blocklist/)).toBeTruthy();
+    expect(screen.queryByText(/import exclusion/)).toBeNull();
+  });
+
+  it("still calls it an import exclusion on the Arr route", async () => {
+    listRequests.mockResolvedValue([
+      candidate({ id: 1, title: "Dune", excluded: true }),
+    ]);
+    getArrStatus.mockResolvedValue({
+      statuses: {},
+      radarr: "ok",
+      sonarr: "ok",
+      overseerr: "off",
+    });
+    getSettings.mockResolvedValue({
+      "requests.enabled": true,
+      "requests.radarr.url": "http://radarr.test",
+    });
+    renderPage();
+
+    expect(await screen.findByText(/calls it an import exclusion/)).toBeTruthy();
   });
 
   it("says a pending request is waiting for a person, not searching", async () => {

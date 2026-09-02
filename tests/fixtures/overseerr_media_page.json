@@ -14,9 +14,9 @@
   },
   "_mediaType_is_real": "Present on every one of the 5,000 sampled rows (0 missing), and absent from the published MediaInfo schema. It is load-bearing: TMDB's movie and tv id spaces overlap.",
   "pageInfo": {
-    "pages": 27,
-    "pageSize": 1000,
-    "results": 26941,
+    "pages": 1,
+    "pageSize": 10,
+    "results": 10,
     "page": 1
   },
   "results": [
@@ -344,5 +344,6 @@
       "jellyfinMediaId4k": null,
       "seasons": []
     }
-  ]
+  ],
+  "_pageinfo_note": "The live response reported pages=27, pageSize=1000, results=26941 (see _live_histogram). This file keeps ONE row per (mediaType, status) instead, so its pageInfo describes THIS file \u2014 a single complete page of n rows. Leaving the live numbers here made the pager keep walking for 26,941 rows it would never be handed, which is the pager working correctly against a fixture that was lying about its own size."
 }

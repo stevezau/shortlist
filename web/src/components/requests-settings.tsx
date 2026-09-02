@@ -390,6 +390,10 @@ function OverseerrCard({
   // with. The job people might reach for it to do — holding requests for approval — is what a local
   // account does properly, which is what the help text recommends.
   const peopleHidden = others.length - serviceAccounts.length;
+  // An account already able to hold requests for review, if there is one.
+  const holdingAccount = serviceAccounts.find(
+    (u) => !u.auto_approve_movies && !u.auto_approve_tv,
+  );
 
   return (
     <Card>
@@ -471,25 +475,29 @@ function OverseerrCard({
                 <option value={userId}>Account #{userId}</option>
               )}
             </select>
-            {/* Says why the list is short, so it does not read as a failed load. */}
-            {peopleHidden > 0 && (
-              <p className="text-sm text-muted-foreground">
-                {peopleHidden} {peopleHidden === 1 ? "account" : "accounts"}{" "}
-                belonging to people on your server{" "}
-                {peopleHidden === 1 ? "isn't" : "aren't"} listed. A title here is
-                usually wanted by several people at once, so filing under any one
-                of them would put their name on everything &mdash; including
-                titles they had nothing to do with.
-              </p>
-            )}
             <p className="text-sm text-muted-foreground">
               {userId === 0 ? (
                 <>
                   Requests will come from the account your API key belongs to.
                   That&rsquo;s usually an admin, so they&rsquo;ll be approved
-                  automatically and go straight to Radarr/Sonarr. To check them
-                  in Overseerr first, make a user there called
-                  &ldquo;Shortlist&rdquo; without auto-approve and pick it here.
+                  automatically and go straight to Radarr/Sonarr.{" "}
+                  {/* Don't tell someone to make an account they already have — when a suitable one
+                      is in the list, point at it instead. */}
+                  {holdingAccount ? (
+                    <>
+                      To check them in Overseerr first, pick{" "}
+                      <strong className="font-medium text-foreground">
+                        {holdingAccount.name}
+                      </strong>{" "}
+                      above.
+                    </>
+                  ) : (
+                    <>
+                      To check them in Overseerr first, make a user there called
+                      &ldquo;Shortlist&rdquo; without auto-approve and pick it
+                      here.
+                    </>
+                  )}
                 </>
               ) : (
                 <>
@@ -504,6 +512,17 @@ function OverseerrCard({
                 </>
               )}
             </p>
+            {/* Says why the list is short, so it does not read as a failed load. */}
+            {peopleHidden > 0 && (
+              <p className="text-sm text-muted-foreground">
+                {peopleHidden} {peopleHidden === 1 ? "account" : "accounts"}{" "}
+                belonging to people on your server{" "}
+                {peopleHidden === 1 ? "isn't" : "aren't"} listed. A title here is
+                usually wanted by several people at once, so filing under any one
+                of them would put their name on everything &mdash; including
+                titles they had nothing to do with.
+              </p>
+            )}
           </div>
         )}
       </CardContent>
@@ -563,11 +582,16 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
   // `null` = not knowable yet (list still loading, instance unreachable, or an account it will not
   // name). The summary then states what is certain and says nothing about approval, rather than
   // guessing at the one fact on this screen that is expensive to get wrong.
-  const seerrApproves =
+  // Three-valued, matching `accountEffect` — an account can auto-approve films and not shows, and
+  // flattening that to a boolean made this summary contradict the card right above it.
+  const seerrApproves: "all" | "none" | "partial" | null =
     !viaSeerr || !chosenAccount
       ? null
-      : Boolean(chosenAccount.auto_approve_movies) &&
-        Boolean(chosenAccount.auto_approve_tv);
+      : chosenAccount.auto_approve_movies && chosenAccount.auto_approve_tv
+        ? "all"
+        : !chosenAccount.auto_approve_movies && !chosenAccount.auto_approve_tv
+          ? "none"
+          : "partial";
   const flow = describeRequestFlow({
     viaSeerr,
     autoSend: form.autoSend,
@@ -578,6 +602,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
       minRating: form.minRating,
     }),
     seerrApproves,
+    maxPerRun: form.maxPerRun,
   });
 
   const goToConnections = () =>

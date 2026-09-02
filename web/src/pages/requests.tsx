@@ -548,9 +548,13 @@ function PendingRow({
             add, only that `request_missing` never auto-sends an excluded title. */}
         {item.excluded ? (
           <p className="text-xs text-warning">
-            {app} was told never to add this again &mdash; usually left behind
-            by deleting it there ({app} calls it an import exclusion). Shortlist
-            never sends it for you; clear it in {app} if you want it back.
+            {app} was told never to fetch this again &mdash; usually left behind
+            by deleting it there ({app} calls it {viaSeerr ? "a" : "an"}{" "}
+            {/* The CONCEPT is route-aware too, not just the app's name. Naming Overseerr and then
+                calling its blocklist an "import exclusion" sends the owner looking for a screen it
+                does not have — the same failure the app-name fix was made for, one word deeper. */}
+            {viaSeerr ? "blocklist" : "import exclusion"}). Shortlist never sends
+            it for you; clear it in {app} if you want it back.
           </p>
         ) : null}
         {item.detail ? (

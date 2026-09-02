@@ -415,7 +415,10 @@ async def send_requests(body: RequestAction, request: Request) -> dict:
     def _send() -> dict:
         cfg, tmdb = svc.build_requests_context()
         if cfg is None:
-            raise HTTPException(status_code=409, detail="Turn on Sonarr/Radarr requests in Settings first.")
+            # Names no app: `cfg` is None precisely because requests are off, so which route the
+            # owner would have used is not knowable here — and guessing named the wrong one half
+            # the time.
+            raise HTTPException(status_code=409, detail="Turn on requests in Settings first.")
         with state.sessions() as session:
             rows = (
                 session.query(RequestCandidate)

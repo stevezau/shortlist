@@ -1,9 +1,9 @@
 """Overseerr/Jellyseerr client tests.
 
-Response bodies come from `tests/fixtures/overseerr_*.json`, which are **spec-derived, not
-recorded** — see that directory's README. Per the testing rules we assert the REQUEST payloads (the
-body fields the client is responsible for: mediaType, mediaId, seasons, userId), not merely that a
-call happened.
+Response bodies come from `tests/fixtures/overseerr_*.json`, which are **recorded from a live Seerr
+3.4.1** — each file's `_provenance` says exactly what was captured and what was sanitised. Per the
+testing rules we assert the REQUEST payloads (the body fields the client is responsible for:
+mediaType, mediaId, seasons, userId), not merely that a call happened.
 """
 
 from __future__ import annotations
@@ -655,3 +655,87 @@ class TestWhoAutoApproves:
         """32 = REQUEST, which is what every ordinary Plex user on a real instance carries."""
         [u] = self._users(32)
         assert not u["auto_approve_movies"] and not u["auto_approve_tv"]
+
+
+class TestWhatTheReviewCaught:
+    """Cases from the full-feature architecture review, each pinning a proved defect."""
+
+    def _users(self, *rows: dict) -> list[dict]:
+        with respx.mock:
+            respx.get(f"{BASE}/user").mock(
+                return_value=httpx.Response(
+                    200, json={"pageInfo": {"pages": 1, "results": len(rows)}, "results": list(rows)}
+                )
+            )
+            return _client().users()
+
+    def test_manage_requests_auto_approves_even_without_an_auto_approve_bit(self):
+        """Read from Overseerr's approval RULE, not its permission enum. `MediaRequest.js` on a live
+        3.4.1: `hasPermission([AUTO_APPROVE, AUTO_APPROVE_MOVIE, MANAGE_REQUESTS], {or})` decides
+        APPROVED vs PENDING. Omitting it told the owner such an account would hold their titles for
+        review while it in fact sent them straight to Radarr."""
+        [u] = self._users({"id": 1, "displayName": "mod", "permissions": 16 | 32})
+        assert u["auto_approve_movies"] and u["auto_approve_tv"]
+
+    def test_an_account_of_unknown_type_counts_as_a_person_and_is_hidden(self):
+        """The picker offers only NON-people. Defaulting an unreadable `userType` to "not a person"
+        would put every real account on the server back in the dropdown, and take the paragraph
+        explaining their absence away with them."""
+        rows = self._users(
+            {"id": 1, "displayName": "no type at all", "permissions": 32},
+            {"id": 2, "displayName": "odd type", "permissions": 32, "userType": 9},
+            {"id": 3, "displayName": "local", "permissions": 32, "userType": 2},
+        )
+        assert [u["is_plex_user"] for u in rows] == [True, True, False]
+
+    def test_a_blocklist_row_naming_its_own_type_does_not_block_the_other_one(self):
+        """TMDB's movie and tv id spaces overlap. Reading the type only from the nested `media`
+        object sent a row shaped {tmdbId, mediaType, title} down the both-types fallback — so
+        blocklisting a FILM also held back the unrelated series sharing that id."""
+        rows = {
+            "pageInfo": {"pages": 1, "results": 1},
+            "results": [{"id": 1, "tmdbId": 438631, "mediaType": "movie", "title": "a film"}],
+        }
+        with respx.mock:
+            respx.get(f"{BASE}/blocklist").mock(return_value=httpx.Response(200, json=rows))
+            assert _client().blocklisted() == {("movie", 438631)}
+
+    def test_a_server_that_caps_take_is_reported_rather_than_believed(self):
+        """A capped page looks exactly like the end of the list — every row usable, nothing missing
+        as far as anything downstream can tell — while `pageInfo` in the same payload says
+        otherwise. 100 rows of 26,941, silently, was the failure."""
+        page = {
+            "pageInfo": {"pages": 27, "pageSize": 1000, "results": 3},
+            "results": [{"mediaType": "movie", "tmdbId": 1, "status": 5}],
+        }
+        empty = {"pageInfo": {"pages": 27, "pageSize": 1000, "results": 3}, "results": []}
+        lines: list[str] = []
+        sink = seerr_mod.logger.add(lines.append, level="WARNING", format="{message}")
+        try:
+            with respx.mock:
+                # One capped page, then nothing — while pageInfo in the same payload says 3.
+                respx.get(f"{BASE}/media").mock(
+                    side_effect=[httpx.Response(200, json=page), httpx.Response(200, json=empty)]
+                )
+                state = _client().media_state()
+        finally:
+            seerr_mod.logger.remove(sink)
+        assert len(state) == 1
+        assert any("of the 3 rows" in line for line in lines)
+
+    def test_a_page_shorter_than_the_page_size_is_not_the_end_when_pageinfo_disagrees(self):
+        """The bug in one line: the walk returned on a short batch BEFORE consulting pageInfo."""
+        first = {
+            "pageInfo": {"pages": 2, "results": 2},
+            "results": [{"mediaType": "movie", "tmdbId": 1, "status": 5}],
+        }
+        second = {
+            "pageInfo": {"pages": 2, "results": 2},
+            "results": [{"mediaType": "movie", "tmdbId": 2, "status": 5}],
+        }
+        with respx.mock:
+            respx.get(f"{BASE}/media").mock(
+                side_effect=[httpx.Response(200, json=first), httpx.Response(200, json=second)]
+            )
+            state = _client().media_state()
+        assert state == {("movie", 1): "downloaded", ("movie", 2): "downloaded"}

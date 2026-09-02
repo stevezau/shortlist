@@ -10,7 +10,8 @@ const seerr = (over: Partial<Parameters<typeof describeRequestFlow>[0]> = {}) =>
     viaSeerr: true,
     autoSend: true,
     everythingAutoSends: false,
-    seerrApproves: true,
+    seerrApproves: "all",
+    maxPerRun: 5,
     ...over,
   });
 
@@ -22,6 +23,7 @@ describe("describeRequestFlow", () => {
         autoSend: true,
         everythingAutoSends: false,
         seerrApproves: null,
+            maxPerRun: 5,
       });
       expect(on.summary).toMatch(/Radarr or Sonarr/);
       expect(on.doubleApproval).toBeUndefined();
@@ -31,6 +33,7 @@ describe("describeRequestFlow", () => {
         autoSend: false,
         everythingAutoSends: false,
         seerrApproves: null,
+            maxPerRun: 5,
       });
       expect(off.summary).toMatch(/nothing is sent to Radarr or Sonarr/i);
       expect(off.doubleApproval).toBeUndefined();
@@ -39,13 +42,13 @@ describe("describeRequestFlow", () => {
 
   describe("the Overseerr route", () => {
     it("says a title starts downloading when the account approves automatically", () => {
-      expect(seerr({ seerrApproves: true }).summary).toMatch(
+      expect(seerr({ seerrApproves: "all" }).summary).toMatch(
         /approved there automatically, so they start downloading/,
       );
     });
 
     it("says a title is filed for approval when the account cannot approve", () => {
-      expect(seerr({ seerrApproves: false }).summary).toMatch(
+      expect(seerr({ seerrApproves: "none" }).summary).toMatch(
         /filed in Overseerr for you to approve there/,
       );
     });
@@ -60,15 +63,37 @@ describe("describeRequestFlow", () => {
     });
 
     it("spells out the undiscoverable setup when the bars match the guardrails", () => {
-      const flow = seerr({ everythingAutoSends: true });
-      expect(flow.summary).toMatch(/Nothing waits here/);
+      const flow = seerr({ everythingAutoSends: true, maxPerRun: 5 });
+      // "…up to 5 a night", NOT "nothing waits here": `max_per_run` queues the overflow whatever
+      // the bars say. Measured against the real engine, 12 qualifying titles at the default cap of
+      // 5 left seven waiting, under a sentence promising the inbox would be empty.
+      expect(flow.summary).toMatch(/up to 5 a night/);
+      expect(flow.summary).toMatch(/Anything past that waits here/);
+      expect(flow.summary).not.toMatch(/Nothing waits here/);
+      expect(flow.doubleApproval).toBeUndefined();
+    });
+
+    it("carries the owner's own cap into that sentence", () => {
+      expect(seerr({ everythingAutoSends: true, maxPerRun: 3 }).summary).toMatch(
+        /up to 3 a night/,
+      );
+    });
+
+    it("describes a part-approving account without contradicting the card", () => {
+      // The card says "films will be approved automatically, while shows wait". Collapsing that to
+      // a boolean made this sentence say everything was filed for review — one screen disagreeing
+      // with itself, and the double-approval warning firing for films that never wait.
+      const flow = seerr({ seerrApproves: "partial" });
+      expect(flow.summary).toMatch(
+        /films are approved automatically and shows wait for your yes/,
+      );
       expect(flow.doubleApproval).toBeUndefined();
     });
   });
 
   describe("approving the same title twice", () => {
     it("names it when auto-send is off and the account cannot approve", () => {
-      const flow = seerr({ autoSend: false, seerrApproves: false });
+      const flow = seerr({ autoSend: false, seerrApproves: "none" });
       expect(flow.doubleApproval).toMatch(/twice/);
       expect(flow.doubleApproval).toMatch(
         /match the bars|approves automatically/,
@@ -76,18 +101,18 @@ describe("describeRequestFlow", () => {
     });
 
     it("names it for the lower tier when only the strongest are sent", () => {
-      const flow = seerr({ autoSend: true, seerrApproves: false });
+      const flow = seerr({ autoSend: true, seerrApproves: "none" });
       expect(flow.doubleApproval).toMatch(/approving again in Overseerr/);
     });
 
     it("stays quiet when there is genuinely only one gate", () => {
       // Every combination that does NOT make you approve twice.
-      expect(seerr({ seerrApproves: true }).doubleApproval).toBeUndefined();
+      expect(seerr({ seerrApproves: "all" }).doubleApproval).toBeUndefined();
       expect(
-        seerr({ autoSend: false, seerrApproves: true }).doubleApproval,
+        seerr({ autoSend: false, seerrApproves: "all" }).doubleApproval,
       ).toBeUndefined();
       expect(
-        seerr({ everythingAutoSends: true, seerrApproves: false })
+        seerr({ everythingAutoSends: true, seerrApproves: "none" })
           .doubleApproval,
       ).toBeUndefined();
     });
@@ -99,7 +124,8 @@ describe("describeRequestFlow", () => {
             viaSeerr: false,
             autoSend,
             everythingAutoSends: false,
-            seerrApproves: false,
+            seerrApproves: "none",
+            maxPerRun: 5,
           }).doubleApproval,
         ).toBeUndefined();
       }
@@ -109,11 +135,11 @@ describe("describeRequestFlow", () => {
   it("agrees in number with the subject it is completing", () => {
     // "Titles that clear the higher bars below GOES to Overseerr and IS approved" — one shared
     // phrase used after both a plural and a singular subject. Wrong in the commonest setup there is.
-    const plural = seerr({ seerrApproves: true }).summary;
+    const plural = seerr({ seerrApproves: "all" }).summary;
     expect(plural).toMatch(/Titles that clear the higher bars below go to/);
     expect(plural).not.toMatch(/below goes|and is approved|so it starts/);
 
-    const singular = seerr({ autoSend: false, seerrApproves: true }).summary;
+    const singular = seerr({ autoSend: false, seerrApproves: "all" }).summary;
     expect(singular).toMatch(/it goes to Overseerr and is approved/);
     expect(singular).not.toMatch(/it go to|are approved/);
   });
@@ -123,12 +149,18 @@ describe("describeRequestFlow", () => {
     for (const viaSeerr of [true, false])
       for (const autoSend of [true, false])
         for (const everythingAutoSends of [true, false])
-          for (const seerrApproves of [true, false, null]) {
+          for (const seerrApproves of [
+            "all",
+            "none",
+            "partial",
+            null,
+          ] as const) {
             const flow = describeRequestFlow({
               viaSeerr,
               autoSend,
               everythingAutoSends,
               seerrApproves,
+              maxPerRun: 5,
             });
             expect(flow.summary.length).toBeGreaterThan(20);
             expect(flow.summary).toMatch(/\.$/);
