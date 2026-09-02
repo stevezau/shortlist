@@ -4,6 +4,7 @@ import {
   watchedBadgeLabel,
 } from "@/lib/constants";
 import { placementLabel } from "@/lib/placement";
+import { showDaysSummary } from "@/lib/show-days";
 import { SOURCES, sourceBlockedReason, sourceShortLabel } from "@/lib/sources";
 import type {
   Collection,
@@ -66,6 +67,7 @@ export function blankInput(): CollectionInput {
     pick_order: "best",
     placement: "both",
     placement_friends: "both",
+    show_days: [],
     pin_top: false,
     hub_anchor: {},
     poster: { mode: "", title: "", subtitle: "", style: "" },
@@ -124,6 +126,7 @@ export function toInput(collection: Collection): CollectionInput {
     pick_order: collection.pick_order ?? "best",
     placement: collection.placement ?? "both",
     placement_friends: collection.placement_friends ?? "both",
+    show_days: collection.show_days ?? [],
     pin_top: collection.pin_top ?? false,
     hub_anchor: collection.hub_anchor ?? {},
     poster: {
@@ -299,6 +302,11 @@ export function rowOverrides(
   // otherwise the setting is invisible on the rows page and nobody discovers they turned it on.
   if ((collection.seed_window ?? 1) > 1) {
     parts.push(`Cycles ${collection.seed_window} recent watches`);
+  }
+
+  // [] is every day (the default), so only a row that actually narrows its days is worth a badge.
+  if ((collection.show_days ?? []).length > 0) {
+    parts.push(showDaysSummary(collection.show_days ?? []));
   }
 
   // Only badge when placement differs from the "both" default.

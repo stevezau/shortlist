@@ -2989,6 +2989,11 @@ export interface components {
              */
             seed_window: number;
             /**
+             * Show Days
+             * @description Days this row appears, as ISO weekdays (1=Monday .. 7=Sunday). Empty means every day.
+             */
+            show_days?: number[];
+            /**
              * Size
              * @default 15
              */
@@ -3151,6 +3156,16 @@ export interface components {
             schedule: string;
             /** Seed Window */
             seed_window: number;
+            /**
+             * Show Days
+             * @description Days this row appears, as ISO weekdays (1=Monday .. 7=Sunday). Empty means every day.
+             */
+            show_days: number[];
+            /**
+             * Shown Today
+             * @description Whether this row is on its surfaces today, judged on the SERVER's clock — which is the clock the midnight schedule and Plex follow, not the viewer's.
+             */
+            shown_today: boolean;
             /** Size */
             size: number;
             /** Slug */

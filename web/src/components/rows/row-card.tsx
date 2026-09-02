@@ -139,6 +139,16 @@ export function RowCard({
               {collection.build === "shared" ? "Shared" : "Per person"}
             </Badge>
             {isDefault && <Badge variant="outline">default</Badge>}
+            {/* The one thing this feature owes the Rows page. A scheduled row that is simply absent
+                from Plex today is indistinguishable from a broken one — and "my row disappeared" is
+                the support question the schedule creates. Only rendered for a row that HAS a
+                schedule, so the ordinary row is unchanged. */}
+            {(collection.show_days ?? []).length > 0 &&
+              (collection.shown_today ? (
+                <Badge variant="secondary">Showing today</Badge>
+              ) : (
+                <Badge variant="outline">Hidden today</Badge>
+              ))}
           </div>
           <p className="text-sm text-muted-foreground">
             {audienceSummary(collection, users)} · {effectiveSize} titles ·{" "}

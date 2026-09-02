@@ -10,6 +10,8 @@ import { LibraryPicker } from "@/components/rows/library-picker";
 import { PlacementToggles } from "@/components/rows/placement-toggles";
 import { PosterField } from "@/components/rows/poster-field";
 import { RowScheduleField } from "@/components/rows/row-schedule-field";
+import { RowShowDaysField } from "@/components/rows/row-show-days-field";
+import { showDaysSummary } from "@/lib/show-days";
 import { RowDestructiveActions } from "@/components/rows/row-destructive-actions";
 import { RowEnableToggle } from "@/components/rows/row-enable-toggle";
 import { RowEffectivenessPanel } from "@/components/rows/row-effectiveness";
@@ -1221,6 +1223,17 @@ export function RowEditor({
                 />
               </div>
             </div>
+          </SettingsGroup>
+
+          <SettingsGroup
+            title="When it appears"
+            description="Which days this row shows on people's Home. It keeps its titles on the days it is off."
+            summary={showDaysSummary(input.show_days)}
+          >
+            <RowShowDaysField
+              value={input.show_days}
+              onChange={(show_days) => set({ show_days })}
+            />
           </SettingsGroup>
 
           <SettingsGroup

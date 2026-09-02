@@ -75,6 +75,8 @@ const SUBSET_ROW: Collection = {
   pick_order: "best",
   placement: "both",
   placement_friends: "both",
+  show_days: [],
+  shown_today: true,
   pin_top: false,
   hub_anchor: {},
   poster: { mode: "", title: "", subtitle: "", style: "", has_image: false },
@@ -133,5 +135,44 @@ describe("RowsPage", () => {
     renderPage();
 
     expect(await screen.findByText(/sarah · 15 titles/i)).toBeTruthy();
+  });
+});
+
+describe("RowsPage — the day-schedule badge", () => {
+  beforeEach(() => {
+    getUsers.mockReset();
+    listCollections.mockReset();
+    getUsers.mockResolvedValue([]);
+  });
+
+  it("says nothing for a row that appears every day", async () => {
+    // The ordinary row must be untouched: a badge on every row would make the schedule look like
+    // something every row has.
+    listCollections.mockResolvedValue([{ ...SUBSET_ROW, show_days: [], shown_today: true }]);
+    renderPage();
+
+    expect(await screen.findByText("Hidden Gems")).toBeInTheDocument();
+    expect(screen.queryByText(/today/i)).toBeNull();
+  });
+
+  it("says Showing today for a scheduled row that is on", async () => {
+    listCollections.mockResolvedValue([
+      { ...SUBSET_ROW, show_days: [1, 3, 5], shown_today: true },
+    ]);
+    renderPage();
+
+    expect(await screen.findByText("Showing today")).toBeInTheDocument();
+  });
+
+  it("says Hidden today for a scheduled row that is off", async () => {
+    // The whole reason this badge exists: a scheduled row that is simply absent from Plex is
+    // indistinguishable from a broken one, and "my row disappeared" is the question the feature
+    // creates. `shown_today` comes from the server, so this never disagrees with Plex.
+    listCollections.mockResolvedValue([
+      { ...SUBSET_ROW, show_days: [1, 3, 5], shown_today: false },
+    ]);
+    renderPage();
+
+    expect(await screen.findByText("Hidden today")).toBeInTheDocument();
   });
 });

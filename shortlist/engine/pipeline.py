@@ -894,6 +894,59 @@ def _privacy_sync_phase(
     return not sync_failed
 
 
+def live_delivered_keys(ctx: EngineContext, report: RunReport) -> dict[tuple[str, str, str], int]:
+    """The delivery ledger with THIS run's own deliveries laid over the top.
+
+    ``(user_slug, row_slug, library_key) -> ratingKey``. ``ctx.delivered_keys`` is a SNAPSHOT taken
+    when the context was built — before this run delivered anything — so a row rebuilt tonight
+    (delete + create, which is how a changed pick list lands) has a ratingKey the snapshot cannot
+    know. The overlay replays the adapter's ledger write in ITS order: forget what the run removed,
+    then record what it delivered. Recording alone is not the same write — Plex ratingKeys are rowids
+    and get reused, so an id freed by an in-run removal can be handed to a collection created later in
+    the same run, and keeping the dead entry claims one collection for two rows.
+
+    Shared rows come through here too: their report is filed under `shared_<row slug>`, the same
+    string the ledger's `user_slug` holds for them, so the overlay replaces rather than duplicates.
+
+    A dry run carries ``rating_key: 0`` and contributes nothing, which is right — it created no
+    collection.
+    """
+    keys: dict[tuple[str, str, str], int] = dict(ctx.delivered_keys)
+    for user in report.users:
+        for entry in user.removed_deliveries or []:
+            keys.pop((user.slug, entry.get("row_slug") or "", str(entry.get("library_key") or "")), None)
+    for user in report.users:
+        for entry in user.breakdown or []:
+            rating_key = int(entry.get("rating_key") or 0)
+            row_slug, library_key = entry.get("row_slug") or "", str(entry.get("library_key") or "")
+            if rating_key and row_slug and library_key:
+                keys[(user.slug, row_slug, library_key)] = rating_key
+    return keys
+
+
+def identity_map(keys: dict[tuple[str, str, str], int]) -> dict[str, dict[int, str]]:
+    """Ledger tuples -> ``{user_slug: {ratingKey: row_slug}}``, dropping anything ambiguous.
+
+    A ratingKey claimed by TWO rows is left OUT rather than arbitrated to whichever entry the dict
+    happened to hold last. `Delivery`'s primary key is (row, user, library), so a ratingKey is not
+    unique across rows, and a stale entry surviving an out-of-band delete plus Plex's rowid reuse
+    produces exactly this. A dropped key falls through to the title map, which is what
+    ``user.restore`` does for the same reason.
+
+    Keyed per user because the map is only ever consulted for collections already found under that
+    user's own label, so two people cannot collide.
+    """
+    claims: dict[tuple[str, int], int] = {}
+    for (user_slug, _row, _lib), rating_key in keys.items():
+        if rating_key:
+            claims[(user_slug, rating_key)] = claims.get((user_slug, rating_key), 0) + 1
+    out: dict[str, dict[int, str]] = {}
+    for (user_slug, row_slug, _lib), rating_key in keys.items():
+        if rating_key and claims[(user_slug, rating_key)] == 1:
+            out.setdefault(user_slug, {})[rating_key] = row_slug
+    return out
+
+
 def _promote_phase(
     ctx: EngineContext,
     to_promote: list[UserProfile],
@@ -912,6 +965,7 @@ def _promote_phase(
     correctly tonight" from "nothing has touched this row in weeks" and only walk the remainder.
     A collection skipped by an exception mid-loop is correctly absent, so converge picks it up."""
     promoted: set[int] = set()
+    ledger = identity_map(live_delivered_keys(ctx, report))
     for position, user in enumerate(to_promote, start=1):
         _emit(ctx, "Shortlist", "promoting", {"done": position, "total": len(to_promote)})
         user_report = next((r for r in report.users if r.slug == user.slug), None)
@@ -933,7 +987,17 @@ def _promote_phase(
             # `into=promoted`, not `promoted |= ...`: a PMS failure part-way through this user must
             # still leave behind the ratingKeys already promoted, or converge would see them as
             # untouched and demote rows this run had just correctly set.
-            promote_user_rows(ctx, user, user_report.placement_titles if user_report else {}, into=promoted)
+            # `placement_keys` as well as titles: a `{top_seed}` title cannot be re-rendered without
+            # picks, so a row this run did not REBUILD (a scoped run, a row with no picks) stamps no
+            # title and would fall to `_promote_one`'s no-spec branch — which SHOWS it. That is how a
+            # 03:30 run put a row the midnight schedule had just hidden back onto Friends' Home.
+            promote_user_rows(
+                ctx,
+                user,
+                user_report.placement_titles if user_report else {},
+                placement_keys=ledger.get(user.slug, {}),
+                into=promoted,
+            )
         except Exception as e:
             if user_report is not None:
                 user_report.status = "error"
@@ -944,18 +1008,46 @@ def _promote_phase(
     for spec, agg in shared_to_promote if not ctx.config.dry_run and filters_ok else []:
         shared_report = next((r for r in report.users if r.slug == agg.slug), None)
         try:
-            # Every library, same reason as the per-user loop above: a shared row whose library_keys
-            # narrowed leaves its collection in the dropped library, otherwise never revisited.
-            for section in ctx.plex.sections():
-                for collection in ctx.plex.find_owned_collections(section, spec.label):
-                    _promote_one(ctx, collection, spec)
-                    promoted.add(int(collection.ratingKey))
+            promote_shared_row(ctx, spec, into=promoted)
         except Exception as e:
             if shared_report is not None:
                 shared_report.status = "error"
                 shared_report.error = (shared_report.error or "") + f" | promote: {type(e).__name__}: {e}"
             logger.exception("shared row '{}': promote failed", spec.slug)
 
+    return promoted
+
+
+def promote_shared_row(ctx: EngineContext, spec: RowSpec, *, into: set[int] | None = None) -> set[int]:
+    """Put a SHARED row's one public collection on the surfaces its placement asks for.
+
+    Every library, not just the first: a shared row whose ``library_keys`` narrowed leaves its
+    collection in the library it walked away from, which promotion would otherwise never revisit.
+
+    Split out of ``_promote_phase`` so the scheduled-visibility tick converges shared rows through
+    the identical code path a run uses — a second implementation of "where does this row go" is how
+    the two drift apart.
+
+    Writes into ``into`` as it goes when given one, for the same reason ``promote_user_rows`` does: a
+    PMS failure part-way through must still leave behind the ratingKeys already promoted, or converge
+    sees them as untouched and demotes rows this pass had just correctly set. A local set unioned on
+    return would discard exactly those.
+
+    Returns:
+        The ratingKeys touched.
+    """
+    promoted = into if into is not None else set()
+    for section in ctx.plex.sections():
+        for collection in ctx.plex.find_owned_collections(section, spec.label):
+            if ctx.config.dry_run:
+                # HERE, not in the callers (plex-safety rule 8). `PlexClient.promote` has no dry-run
+                # branch of its own, and an outside-only guard is exactly what let a `SHORTLIST_DRY_RUN`
+                # un-pause preview the hiding and perform the showing once `user.restore` became a
+                # second caller of `promote_user_rows`. This function is written to be reused.
+                logger.info("[dry-run] {}: would promote shared row '{}'", collection.title, spec.slug)
+                continue
+            _promote_one(ctx, collection, spec)
+            promoted.add(int(collection.ratingKey))
     return promoted
 
 
@@ -966,6 +1058,7 @@ def promote_user_rows(
     *,
     placement_keys: dict[int, str] | None = None,
     into: set[int] | None = None,
+    skip_unmatched: bool = False,
 ) -> set[int]:
     """Put every collection under one user's label onto the surfaces its row asks for.
 
@@ -1056,6 +1149,14 @@ def promote_user_rows(
                 continue
             # Identity first: a ratingKey cannot be wrong, a title can be stale or unrenderable.
             spec = by_key.get(int(collection.ratingKey)) or placements.get(collection.title)
+            if spec is None and skip_unmatched:
+                # For a RUN, `_promote_one`'s no-spec branch showing the row is the safe direction —
+                # under-showing makes people's rows silently disappear. For a caller converging a
+                # SCHEDULE it is the opposite: a `{top_seed}` row whose ledger key is missing matches
+                # nothing, and promoting it would put a row scheduled OFF onto Home — the exact
+                # inverse of what was asked. Leaving it exactly as it is cannot do that.
+                logger.debug("{}: no row matched, leaving its surfaces alone", collection.title)
+                continue
             _promote_one(ctx, collection, spec, user.user_type)
             promoted.add(int(collection.ratingKey))
     return promoted
@@ -1260,7 +1361,8 @@ def _promote_one(ctx: EngineContext, collection, spec: RowSpec | None, user_type
         shared = spec.show_friends_home
         recommended = spec.show_library
     else:
-        # The owner's (or a managed user's) own collection — only the owner side of the placement.
+        # The OWNER's own collection — only the owner side of the placement. A managed user went
+        # with SHARED above, which is what Plex's own docs say and what this diff's test pins.
         home = spec.show_home
         shared = False
         recommended = spec.show_owner_library
@@ -1524,16 +1626,7 @@ def _row_keys_by_slug(ctx: EngineContext, report: RunReport, section_key: str) -
     A dry run carries `rating_key: 0` and contributes nothing, which is right: it created no
     collection.
     """
-    keys: dict[tuple[str, str, str], int] = dict(ctx.delivered_keys)
-    for user in report.users:
-        for entry in user.removed_deliveries or []:
-            keys.pop((user.slug, entry.get("row_slug") or "", str(entry.get("library_key") or "")), None)
-    for user in report.users:
-        for entry in user.breakdown or []:
-            rating_key = int(entry.get("rating_key") or 0)
-            row_slug, library_key = entry.get("row_slug") or "", str(entry.get("library_key") or "")
-            if rating_key and row_slug and library_key:
-                keys[(user.slug, row_slug, library_key)] = rating_key
+    keys = live_delivered_keys(ctx, report)
     out: dict[str, set[int]] = {}
     for (_user_slug, row_slug, key), rating_key in keys.items():
         if key == section_key and rating_key:

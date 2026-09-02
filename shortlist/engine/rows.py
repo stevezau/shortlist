@@ -86,6 +86,29 @@ def effective_cold_start(spec: RowSpec, cfg: EngineConfig) -> str:
     return "skip" if value == "skip" else "popular"
 
 
+def row_is_shown(show_days: list[int] | None, now: datetime) -> bool:
+    """Is a row carrying this day schedule shown on ``now``'s date? (issue #102)
+
+    The whole of "When it appears" reduces to this one answer, and it is deliberately the ONLY place
+    a weekday is interpreted. Takes ``now`` rather than reading the clock so it stays pure — the
+    engine never looks at a clock, and the server evaluates this once when it builds each row's spec.
+
+    Args:
+        show_days: ISO weekdays (1=Monday .. 7=Sunday) the row is shown on. Empty/None -> every day,
+            which is what every row carries after the upgrade migration, so an upgrade changes
+            nothing.
+        now: The moment to judge, in the server's local time — the same clock every other Shortlist
+            schedule runs on.
+
+    Returns:
+        True if the row should be on its configured surfaces today.
+    """
+    # `not show_days` rather than `is None`: an empty list and a missing value mean the same thing,
+    # and the safe reading of "no schedule" is the one that SHOWS the row. There is deliberately no
+    # way to spell "never" here — that is what switching the row off is for.
+    return not show_days or now.isoweekday() in show_days
+
+
 def effective_seed_window(spec: RowSpec) -> int:
     """How many recent watches this row may cycle between. 1 = always the most recent.
 

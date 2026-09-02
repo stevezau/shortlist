@@ -380,3 +380,27 @@ class TestCronResolverEdges:
             SettingsStore(session).set("backup.cron", "not a cron")
 
         assert build_scheduler(app).get_job(BACKUP_JOB_ID) is not None
+
+
+class TestRowVisibilitySchedule:
+    """The midnight tick behind "When it appears" (issue #102).
+
+    Rows build at 03:30. If a run were the only thing that turned a row over, a Monday row would sit
+    on people's Home until 03:30 Tuesday — and a row rebuilding weekly would be days late. So this
+    schedule is not a convenience; without it a day schedule does not mean what the screen says.
+    """
+
+    def test_it_is_registered_with_a_trigger_by_default(self, app):
+        from shortlist.server.scheduler import ROW_VISIBILITY_JOB_ID, build_scheduler
+
+        job = build_scheduler(app).get_job(ROW_VISIBILITY_JOB_ID)
+
+        assert job is not None, "nothing would ever apply a row's day schedule"
+        assert job.trigger is not None
+
+    def test_it_fires_at_midnight(self, app):
+        """Not 03:30 with the runs, and not an arbitrary quiet minute: a day schedule that turned over
+        at 04:17 would show a Monday row for four hours of Tuesday."""
+        from shortlist.server.scheduler import DEFAULT_CRONS
+
+        assert DEFAULT_CRONS["rows.visibility_cron"] == "0 0 * * *"

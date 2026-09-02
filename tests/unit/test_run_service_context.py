@@ -2140,3 +2140,83 @@ class TestPlexRatingsReachTheEngineConfig:
         )
 
         assert threshold is None, "off must erase the threshold, not leave a number nobody applies"
+
+
+class TestRowVisibilitySchedule:
+    """A row's day schedule is resolved HERE, once, into the placement the engine already understands
+    (issue #102). The engine never sees a weekday, so this wiring is the whole integration.
+    """
+
+    MONDAY: ClassVar[datetime] = datetime(2026, 8, 31, 12, 0)  # a Monday
+    TUESDAY: ClassVar[datetime] = datetime(2026, 9, 1, 12, 0)
+
+    def _row(self, sessions, *, placement="both", placement_friends="both", **kwargs):
+        from shortlist.server.db.models import Collection
+
+        with sessions() as session:
+            session.query(Collection).delete()
+            session.add(
+                Collection(
+                    slug="picked",
+                    name="Picked for You",
+                    build="per_person",
+                    enabled=True,
+                    placement=placement,
+                    placement_friends=placement_friends,
+                    **kwargs,
+                )
+            )
+            session.commit()
+
+    def _spec(self, service, monkeypatch, now):
+        monkeypatch.setattr(context_builder_mod, "_local_now", lambda: now)
+        ctx = service.build_context(dry_run=True)
+        return next(spec for spec in ctx.config.rows if spec.slug == "picked")
+
+    def test_a_row_scheduled_off_today_reaches_the_engine_with_placement_off(
+        self, service, sessions, configured, monkeypatch
+    ):
+        """`off` is the placement Shortlist already has for "show this row nowhere" — so a scheduled
+        row rides an existing, tested promote path instead of a new hiding mechanism."""
+        self._row(sessions, show_days=[1, 3, 5])  # Mon/Wed/Fri
+
+        spec = self._spec(service, monkeypatch, self.TUESDAY)
+
+        assert spec.placement == "off"
+        assert spec.placement_friends == "off"
+        assert spec.show_home is False
+        assert spec.show_friends_home is False
+        assert spec.show_library is False
+
+    def test_a_row_scheduled_on_today_keeps_the_placement_the_owner_chose(
+        self, service, sessions, configured, monkeypatch
+    ):
+        self._row(sessions, show_days=[1, 3, 5])
+
+        spec = self._spec(service, monkeypatch, self.MONDAY)
+
+        assert spec.placement == "both"
+        assert spec.placement_friends == "both"
+
+    def test_a_row_with_no_schedule_is_untouched(self, service, sessions, configured, monkeypatch):
+        """Every row carries [] after the migration. If this ever resolves to anything but the
+        owner's own placement, upgrading silently changes what people see."""
+        self._row(sessions, show_days=[])
+
+        spec = self._spec(service, monkeypatch, self.TUESDAY)
+
+        assert spec.placement == "both"
+        assert spec.placement_friends == "both"
+
+    def test_an_off_day_does_not_disturb_a_row_whose_placement_was_already_narrowed(
+        self, service, sessions, configured, monkeypatch
+    ):
+        """A library-only row that is ON today must stay library-only — the schedule decides
+        WHETHER, never WHERE."""
+        self._row(sessions, show_days=[1], placement="library", placement_friends="library")
+
+        spec = self._spec(service, monkeypatch, self.MONDAY)
+
+        assert spec.placement == "library"
+        assert spec.show_home is False
+        assert spec.show_owner_library is True

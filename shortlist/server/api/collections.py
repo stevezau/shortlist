@@ -17,6 +17,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
 
+import shortlist.server.services.context_builder as context_builder
 from shortlist.engine.candidates import KNOWN_SOURCES
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.delivery import target_sections
@@ -34,11 +35,13 @@ from shortlist.engine.models import (
     row_monitor_or_inherit,
     slugify,
 )
+from shortlist.engine.rows import row_is_shown
 from shortlist.server.api.row_changes import (
     POSTER_RESET,
     PRIVACY_SYNC,
     RECONCILE,
     RENAME,
+    VISIBILITY,
     PlannedWork,
     RowChange,
     plan_row_changes,
@@ -232,11 +235,22 @@ class CollectionIn(BaseModel):
     library_keys: list[str] = Field(default_factory=list)  # [] -> every library of the row's media type
     placement: str = _closed_set(PLACEMENTS, "both", "Where the OWNER's own collection appears.")
     placement_friends: str = _closed_set(PLACEMENTS, "both", "Where each FRIEND's own collection appears.")
+    # WHICH DAYS the row appears, as ISO weekdays (1=Mon .. 7=Sun). [] -> every day. The pair with
+    # `placement` is the whole of "When it appears" (issue #102): placement is WHERE, this is WHEN.
+    show_days: list[int] = Field(
+        default_factory=list,
+        description="Days this row appears, as ISO weekdays (1=Monday .. 7=Sunday). Empty means every day.",
+    )
     pin_top: bool = False  # pin to top of the library's Recommended shelf
     # Per-library Recommended-shelf override for this row, keyed by section key. {} -> inherit the
     # global default (settings `rows.hub_anchor`).
     hub_anchor: dict[str, HubAnchorIn] = Field(default_factory=dict)
     poster: PosterIn = Field(default_factory=PosterIn)
+
+    @field_validator("show_days")
+    @classmethod
+    def _check_show_days(cls, days: list[int]) -> list[int]:
+        return _normalise_show_days(days)
 
 
 class HubAnchorOut(PassthroughModel):
@@ -347,6 +361,15 @@ class CollectionOut(PassthroughModel):
     pick_order: str = _closed_set_out(ORDERS, "How the delivered collection is ordered.")
     placement: str = _closed_set_out(PLACEMENTS, "Where the OWNER's own collection appears.")
     placement_friends: str = _closed_set_out(PLACEMENTS, "Where each FRIEND's own collection appears.")
+    show_days: list[int] = Field(
+        description="Days this row appears, as ISO weekdays (1=Monday .. 7=Sunday). Empty means every day."
+    )
+    shown_today: bool = Field(
+        description=(
+            "Whether this row is on its surfaces today, judged on the SERVER's clock — which is the "
+            "clock the midnight schedule and Plex follow, not the viewer's."
+        )
+    )
     pin_top: bool
     hub_anchor: dict[str, HubAnchorOut]  # keyed by Plex section key, so the KEYS vary by library
     library_keys: list[str]
@@ -364,6 +387,19 @@ class CleanupOut(PassthroughModel):
 class PosterUploadOut(PassthroughModel):
     ok: bool
     mode: str
+
+
+def _normalise_show_days(days: list[int]) -> list[int]:
+    """Sorted, de-duplicated ISO weekdays. Raises ValueError for anything outside 1..7.
+
+    0 is the one to care about: JavaScript's `Date.getDay()` calls Sunday 0, so an untyped client
+    would send it and the row would silently never appear on a Sunday — a bug with no error message
+    and no visible cause.
+    """
+    bad = sorted({d for d in days if d < 1 or d > 7})
+    if bad:
+        raise ValueError(f"show_days must be ISO weekdays 1 (Monday) to 7 (Sunday); got {bad}")
+    return sorted(set(days))
 
 
 def _validate(body: CollectionIn) -> None:
@@ -568,7 +604,7 @@ def _poster_view(session, collection: Collection) -> dict:
     }
 
 
-def _serialize(session, collection: Collection) -> dict:
+def _serialize(session, collection: Collection, now: datetime | None = None) -> dict:
     audience_ids = [
         row.user_id for row in session.query(CollectionAudience).filter_by(collection_id=collection.id).all()
     ]
@@ -640,6 +676,11 @@ def _serialize(session, collection: Collection) -> dict:
         "req_auto_user_tag": collection.req_auto_user_tag,
         "pick_order": collection.pick_order or "best",
         "placement": collection.placement or "both",
+        "show_days": list(collection.show_days or []),
+        # Resolved HERE, on the server's clock — the same one the midnight job and Plex follow. A
+        # badge computed in the browser reads the admin's timezone, which can disagree with what
+        # Plex is actually showing for as long as the offset lasts.
+        "shown_today": row_is_shown(collection.show_days, now or context_builder._local_now()),
         "placement_friends": collection.placement_friends or "both",
         "pin_top": bool(collection.pin_top),
         "hub_anchor": collection.hub_anchor or {},
@@ -718,7 +759,11 @@ def _set_audience(session, collection: Collection, body: CollectionIn) -> None:
 async def list_collections(request: Request) -> list[dict]:
     with request.app.state.sessions() as session:
         collections = session.query(Collection).order_by(Collection.sort_order, Collection.id).all()
-        return [_serialize(session, c) for c in collections]
+        # ONE clock read for the whole response, the same rule `_build_rows` follows: served a
+        # millisecond either side of midnight, two rows in one list would otherwise report different
+        # days.
+        now = context_builder._local_now()
+        return [_serialize(session, c, now) for c in collections]
 
 
 @router.post("", status_code=201, response_model=CollectionOut)
@@ -765,6 +810,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             seed_window=body.seed_window,
             pick_order=body.pick_order,
             placement=body.placement,
+            show_days=body.show_days,
             placement_friends=body.placement_friends,
             pin_top=body.pin_top,
             hub_anchor={k: v.model_dump() for k, v in body.hub_anchor.items()},
@@ -827,6 +873,7 @@ _PATCHABLE_COLUMNS = (
     "pick_order",
     "placement",
     "placement_friends",
+    "show_days",
     "pin_top",
     "library_keys",
 )
@@ -1034,6 +1081,8 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
         template_after=template_after,
         poster_mode_before=before["poster_mode"],
         poster_mode_after=after["poster_mode"],
+        days_before=before["show_days"],
+        days_after=after["show_days"],
         defer_rename=body.defer_rename,
     )
 
@@ -1078,6 +1127,7 @@ def _snapshot(session, collection: Collection) -> dict:
         "libraries": tuple(str(k) for k in (collection.library_keys or [])),
         "audience": audience,
         "poster_mode": (collection.poster or {}).get("mode") or "",
+        "show_days": tuple(collection.show_days or []),
     }
 
 
@@ -1114,6 +1164,12 @@ async def _apply_plan(state, plan: list[PlannedWork], *, slug: str, build: str) 
             )
         elif work.kind == POSTER_RESET:
             await reconcile.run_poster_reset(state, slug=slug, build=build, scope=work.scope)
+        elif work.kind == VISIBILITY:
+            # Server-wide converge rather than a targeted write: the handler compares every row's
+            # resolved placement against the state it last applied, so it settles this row AND any
+            # other whose day turned over while Plex was unreachable. Durable, so an outage right now
+            # is retried rather than lost.
+            jobs.enqueue(state.sessions, "rows.visibility", {})
     # Anything queued above happens NOW when Plex is reachable; when it isn't, the worker retries it.
     # AWAITED, unlike the delete below. An edit's Plex work IS the request: narrowing a row's
     # libraries means "take it off those libraries", so returning 200 before that happened would

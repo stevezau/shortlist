@@ -70,6 +70,8 @@ COLLECTION_KEYS = {
     "pick_order",
     "placement",
     "placement_friends",
+    "show_days",
+    "shown_today",
     "pin_top",
     "hub_anchor",
     "library_keys",
@@ -2827,3 +2829,110 @@ class TestPerRowRequestSettingsApi:
             client.patch(f"/api/collections/{created['id']}", json={"name": "Bad", "req_min_rating": 11.0}).status_code
             == 422
         )
+
+
+class TestRowShowDaysApi:
+    """The API half of "When it appears" (issue #102): which days a row is on people's Home.
+
+    `show_days` is ISO weekdays (1=Mon .. 7=Sun) and an EMPTY list means every day — the value every
+    existing row carries after migration 0088, so the upgrade changes nothing. There is deliberately
+    no way to spell "never": switching the row off already means that.
+    """
+
+    def _spec(self, client: TestClient, slug: str):
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+        return next(s for s in specs if s.slug == slug)
+
+    def test_show_days_round_trips(self, client: TestClient):
+        created = client.post("/api/collections", json={"name": "Date Night", "show_days": [5, 6]})
+
+        assert created.status_code == 201
+        assert created.json()["show_days"] == [5, 6]
+
+    def test_a_row_with_no_days_is_shown_every_day(self, client: TestClient):
+        """The upgrade default. If this ever resolves to anything but the owner's own placement,
+        upgrading silently changes what every existing row does."""
+        created = client.post("/api/collections", json={"name": "Always On", "placement": "home"})
+
+        assert created.json()["show_days"] == []
+        assert self._spec(client, "always_on").placement == "home"
+
+    @pytest.mark.parametrize("bad", [[0], [8], [1, 9], [-1], ["mon"]])
+    def test_a_weekday_outside_one_to_seven_is_rejected(self, bad, client: TestClient):
+        """0 is the trap: JavaScript's `Date.getDay()` calls Sunday 0, so an untyped UI would send it
+        and the row would quietly never appear on a Sunday."""
+        r = client.post("/api/collections", json={"name": "Bad Days", "show_days": bad})
+
+        assert r.status_code == 422, f"{bad} should be refused"
+
+    def test_days_are_stored_sorted_and_deduplicated(self, client: TestClient):
+        """So two rows meaning the same thing compare equal, and the summary line reads in order."""
+        created = client.post("/api/collections", json={"name": "Messy", "show_days": [5, 1, 5, 3]})
+
+        assert created.json()["show_days"] == [1, 3, 5]
+
+    def test_every_day_selected_is_accepted_and_means_the_same_as_none(self, client: TestClient):
+        created = client.post("/api/collections", json={"name": "All Week", "show_days": [1, 2, 3, 4, 5, 6, 7]})
+
+        assert created.status_code == 201
+        assert self._spec(client, "all_week").placement == "both"
+
+    def test_changing_the_days_is_applied_now_rather_than_at_the_next_midnight(self, client: TestClient, monkeypatch):
+        """Set "weekdays only" on a Saturday and the row has to go NOW. Waiting for midnight is the
+        exact bug the `collection.disable` rule was added to fix: you save, nothing happens, and it
+        reads as broken."""
+        queued: list[str] = []
+        from shortlist.server.services import jobs as jobs_mod
+
+        monkeypatch.setattr(jobs_mod, "enqueue", lambda sessions, kind, payload=None, **kw: queued.append(kind) or 1)
+        cid = client.post("/api/collections", json={"name": "Weekdays"}).json()["id"]
+
+        r = client.patch(f"/api/collections/{cid}", json={"name": "Weekdays", "show_days": [1, 2, 3, 4, 5]})
+
+        assert r.status_code == 200
+        assert "rows.visibility" in queued, "the row's new schedule never reached Plex"
+
+    def test_an_edit_that_leaves_the_days_alone_queues_no_visibility_work(self, client: TestClient, monkeypatch):
+        """Renaming a row must not fire a server-wide converge."""
+        queued: list[str] = []
+        from shortlist.server.services import jobs as jobs_mod
+
+        cid = client.post("/api/collections", json={"name": "Weekdays", "show_days": [1]}).json()["id"]
+        monkeypatch.setattr(jobs_mod, "enqueue", lambda sessions, kind, payload=None, **kw: queued.append(kind) or 1)
+
+        client.patch(f"/api/collections/{cid}", json={"name": "Weekdays Renamed"})
+
+        assert "rows.visibility" not in queued
+
+
+class TestShownTodayComesFromTheServer:
+    """The Rows page badge must not be computed in the browser (issue #102).
+
+    Days turn over on the SERVER's clock — that is the clock the midnight job and Plex follow. A badge
+    derived from `new Date()` in the admin's browser can read "Hidden today" for a row Plex is
+    showing, for as long as the two timezones differ.
+    """
+
+    def test_a_row_carries_whether_it_is_shown_today(self, client: TestClient):
+        from datetime import datetime
+
+        import shortlist.server.services.context_builder as cb
+
+        monday = datetime(2026, 8, 31, 12, 0)
+        original = cb._local_now
+        cb._local_now = lambda: monday
+        try:
+            on = client.post("/api/collections", json={"name": "Mondays", "show_days": [1]}).json()
+            off = client.post("/api/collections", json={"name": "Tuesdays", "show_days": [2]}).json()
+            always = client.post("/api/collections", json={"name": "Whenever"}).json()
+        finally:
+            cb._local_now = original
+
+        assert on["shown_today"] is True
+        assert off["shown_today"] is False
+        assert always["shown_today"] is True, "a row with no schedule is shown every day"

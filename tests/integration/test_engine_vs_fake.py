@@ -2725,3 +2725,115 @@ def test_a_server_that_enforces_its_filters_reports_nothing(fakes, tmp_path):
     report = engine_run(ctx, [sarah, mike])
 
     assert report.filters_not_enforced == {}
+
+
+def test_a_run_leaves_a_scheduled_off_row_hidden_and_intact(fakes, tmp_path):
+    """A row on a day off must survive a full run: hidden, but not rebuilt and not deleted.
+
+    This is the probe that shaped "When it appears" (issue #102). A row demoted BEHIND the engine's
+    back is put straight back by the next run — promotion is computed from the row's placement, not
+    from what is currently on the server. So the schedule cannot be a sweep bolted on the side; it
+    has to resolve into the placement itself, which is what `context_builder._build_rows` does.
+
+    The three things asserted here are the three ways this could go wrong on a real server: the row
+    comes back anyway, the row gets deleted, or the row gets rebuilt (paying up to 26s per
+    membership write on a large TV library, nightly, for a row nobody can see).
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    rows = [RowSpec(slug="picked", name_template="Picked for You", size=8)]
+    ctx, users, report = _run(plex, plextv, tmp_path, rows, state.owner_token)
+    assert report.ok
+
+    target = next(u for u in users if any(r.slug == u.slug and r.status == "ok" and r.picks for r in report.users))
+    label = f"Shortlist_{target.slug}"
+    keys = {c.rating_key for c in state.collections.values() if any(t.lower() == label.lower() for t in c.labels)}
+    assert keys, "nothing was delivered, so this proves nothing"
+    token = f"server-{target.plex_account_id}"
+    titles_before = {k: list(state.collections[k].item_keys) for k in keys}
+
+    def on_home() -> set[int]:
+        return {collection_id_from_hub(h) for h in plex.user_hubs(token)}
+
+    assert keys <= on_home(), "the row should be up before its day off"
+
+    # The day turns over: the server resolves this row's schedule to `off` and runs as normal.
+    ctx.config.rows = [replace(rows[0], placement="off", placement_friends="off")]
+    off_report = engine_run(ctx, users)
+
+    assert off_report.ok
+    assert not (keys & on_home()), "a scheduled-off row must not be on anyone's Home"
+    for key in keys:
+        assert key in state.collections, "hidden is not deleted — the row must survive its day off"
+        assert state.collections[key].item_keys == titles_before[key], "a hidden row must not be rebuilt"
+
+    # ...and the following day it comes back, still without a rebuild.
+    ctx.config.rows = rows
+    back_report = engine_run(ctx, users)
+
+    assert back_report.ok
+    assert keys <= on_home(), "the row must return on its next day"
+    for key in keys:
+        assert state.collections[key].item_keys == titles_before[key], "coming back must not rebuild it either"
+
+
+def test_a_scoped_run_does_not_resurrect_a_scheduled_off_seeded_row(fakes, tmp_path):
+    """The `{top_seed}` cell of "a run must not undo the midnight schedule" (issue #102).
+
+    A `{top_seed}` title is different every run, so it cannot be re-rendered without picks — and a run
+    that does not REBUILD a row stamps no title for it. The collection then matches no spec, and
+    promotion's no-spec fallback SHOWS it. So the midnight job hides the row at 00:00 and the 03:30
+    run puts it straight back on Friends' Home for the rest of its off day.
+
+    The static-titled sibling of this test passes either way, because a static title can always be
+    re-rendered — which is exactly why that test did not catch this.
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    rows = [
+        RowSpec(slug="picked", name_template="Picked for You", size=6),
+        RowSpec(slug="seeded", name_template="Because you watched {top_seed}", size=6),
+    ]
+    ctx, users, report = _run(plex, plextv, tmp_path, rows, state.owner_token)
+    assert report.ok
+
+    target = next(u for u in users if any(r.slug == u.slug and r.status == "ok" and r.picks for r in report.users))
+    label = f"Shortlist_{target.slug}"
+    seeded = {
+        c.rating_key
+        for c in state.collections.values()
+        if any(t.lower() == label.lower() for t in c.labels) and c.title.startswith("Because you watched")
+    }
+    assert seeded, "the {top_seed} row was never delivered, so this proves nothing"
+    token = f"server-{target.plex_account_id}"
+
+    def on_home() -> set[int]:
+        return {collection_id_from_hub(h) for h in plex.user_hubs(token)}
+
+    assert seeded <= on_home()
+
+    # The server persists what a run delivered and hands the next context that ledger back
+    # (`context_builder._delivered_keys`). The fake context is built fresh, so model it here — without
+    # it this test proves nothing about production, where the ledger is exactly what identifies a row
+    # whose title cannot be re-rendered.
+    from shortlist.engine.pipeline import live_delivered_keys
+
+    ctx.delivered_keys = live_delivered_keys(ctx, report)
+    assert any(row_slug == "seeded" for (_u, row_slug, _l) in ctx.delivered_keys), "ledger did not record it"
+
+    # Midnight: the schedule resolves this row to `off` and takes it down.
+    ctx.config.rows = [rows[0], replace(rows[1], placement="off", placement_friends="off")]
+    for section in plex.sections():
+        for collection in plex.find_owned_collections(section, label):
+            if collection.title.startswith("Because you watched"):
+                plex.demote_all(collection, reason="scheduled off")
+    assert not (seeded & on_home())
+
+    # 03:30: a run scoped to the OTHER row — so nothing re-stamps the seeded row's title.
+    ctx.config.build_only = ["picked"]
+    later = engine_run(ctx, users)
+
+    assert later.ok
+    assert not (seeded & on_home()), "the 03:30 run put a scheduled-off {top_seed} row back on Home"

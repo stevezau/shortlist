@@ -23,6 +23,7 @@ WATCH_SYNC_JOB_ID = "watch-sync"
 USER_SYNC_JOB_ID = "user-sync"
 BACKUP_JOB_ID = "db-backup"
 PRIVACY_SYNC_JOB_ID = "privacy-sync"
+ROW_VISIBILITY_JOB_ID = "rows-visibility"
 SYNC_CHECK_JOB_ID = "sync-check"
 MAINTENANCE_PRUNE_JOB_ID = "maintenance-prune"
 
@@ -45,6 +46,11 @@ DEFAULT_CRONS: dict[str, str] = {
     # 05:15 — after the watch (04:17) and user (04:47) syncs, so it merges filters for a roster that
     # has already been refreshed. Only ever makes the server MORE private, so a daily pass costs nothing.
     "privacy.sync_cron": "15 5 * * *",
+    # 00:00 exactly, and deliberately NOT offset off the hour like the others: this is the one
+    # schedule whose whole meaning is "the day changed" (issue #102). A row set to Mondays that
+    # turned over at 00:17 would be wrong for the first seventeen minutes of every day it owns, and
+    # a Sunday row would linger into Monday — the thing the screen promises is the calendar day.
+    "rows.visibility_cron": "0 0 * * *",
     # 05:45 — after the rows build (03:30), the syncs, and the privacy pass (05:15), so it checks the
     # state those actually left behind. Still turn-off-able: clearing the box stores "" and
     # `blank_means_off` keeps it off rather than falling back to this.
@@ -252,6 +258,27 @@ def _register_privacy_sync(scheduler: AsyncIOScheduler, app) -> None:
     scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=PRIVACY_SYNC_JOB_ID, replace_existing=True)
 
 
+def _register_row_visibility(scheduler: AsyncIOScheduler, app) -> None:
+    """Apply each row's day schedule when the day turns over ("When it appears", issue #102).
+
+    Rows build at 03:30, so a run is far too late to be what shows and hides them: a Monday row would
+    stay up until 03:30 Tuesday, and a row that rebuilds weekly for days. This tick is therefore the
+    mechanism, not a tidy-up behind one.
+
+    Cheap by construction. The handler compares each row's resolved placement against the state it
+    last applied and returns without touching Plex when nothing moved, so the ordinary night costs one
+    query. When something has moved, a hub visibility write measures ~5ms on every library — including
+    a 120k-episode TV library, where changing what is IN a collection costs up to 26s — so even a
+    server-wide converge is seconds.
+    """
+    cron = _resolve_cron(app, "rows.visibility_cron", DEFAULT_CRONS["rows.visibility_cron"])
+
+    async def fire() -> None:
+        await _queue_and_drain(app, "rows.visibility")
+
+    scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=ROW_VISIBILITY_JOB_ID, replace_existing=True)
+
+
 def _register_sync_check(scheduler: AsyncIOScheduler, app) -> None:
     """The drift check — nightly at 05:45 by default; clearing the cron turns it off entirely.
 
@@ -329,11 +356,13 @@ def build_scheduler(app) -> AsyncIOScheduler:
     _register_user_sync(scheduler, app)
     _register_backup(scheduler, app)
     _register_privacy_sync(scheduler, app)
+    _register_row_visibility(scheduler, app)
     _register_sync_check(scheduler, app)
     _register_maintenance_prune(scheduler, app)
     _register_jobs_worker(scheduler, app)
     logger.info(
-        "scheduled {} row cron group(s) + watch-sync + user-sync + backup + privacy-sync + prune{} + job worker",
+        "scheduled {} row cron group(s) + watch-sync + user-sync + backup + privacy-sync + row-visibility "
+        "+ prune{} + job worker",
         len(groups),
         " + sync-check" if scheduler.get_job(SYNC_CHECK_JOB_ID) else "",
     )
@@ -354,10 +383,12 @@ def rebuild_schedule(app) -> None:
     _register_user_sync(scheduler, app)
     _register_backup(scheduler, app)
     _register_privacy_sync(scheduler, app)
+    _register_row_visibility(scheduler, app)
     _register_sync_check(scheduler, app)
     _register_maintenance_prune(scheduler, app)
     logger.info(
-        "rebuilt schedule: {} row cron group(s) + watch-sync + user-sync + backup + privacy-sync + prune{}",
+        "rebuilt schedule: {} row cron group(s) + watch-sync + user-sync + backup + privacy-sync "
+        "+ row-visibility + prune{}",
         len(groups),
         " + sync-check" if scheduler.get_job(SYNC_CHECK_JOB_ID) else "",
     )

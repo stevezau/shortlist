@@ -45,6 +45,7 @@ from shortlist.engine.models import (
     row_languages_or_inherit,
     row_monitor_or_inherit,
 )
+from shortlist.engine.rows import row_is_shown
 from shortlist.server.db.adapters import DbCache, DbSnapshotStore
 from shortlist.server.db.models import (
     DEFAULT_SLUG,
@@ -122,6 +123,18 @@ def make_search_client(get: Callable[[str], object]) -> WebSearchProvider | None
             password=str(get("searxng.password") or ""),
         )
     return None  # native: the provider searches for itself, so there is no external client
+
+
+def _local_now() -> datetime:
+    """The wall clock a row's day schedule is judged against (issue #102).
+
+    Naive local time on purpose — the container's zone is what every other Shortlist schedule already
+    runs on (APScheduler resolves an unset timezone to the local one), so "Fridays" means the same
+    thing here as it does in a row's rebuild cron.
+
+    Indirected through a function so a test can freeze it; nothing else reads the clock for this.
+    """
+    return datetime.now()
 
 
 def _dislike_threshold(store: SettingsStore) -> float:
@@ -1044,10 +1057,18 @@ class ContextBuilder:
         collections = (
             session.query(Collection).filter_by(enabled=True).order_by(Collection.sort_order, Collection.id).all()
         )
+        # ONE clock read for the whole context, not one per row: built a millisecond either side of
+        # midnight, two rows would otherwise disagree about what day it is.
+        now = _local_now()
         for collection in collections:
             shared = collection.build == "shared"
             audience = self._subset_audience(collection, account_by_user, audience_by_collection)
             is_default = collection.slug == DEFAULT_SLUG
+            # "When it appears" (issue #102) resolved into the placement the engine already
+            # understands. `off` is Shortlist's existing "show this row nowhere" state, so a
+            # scheduled row rides the tested promote path instead of a hiding mechanism of its own —
+            # and the engine never has to look at a clock.
+            shown = row_is_shown(collection.show_days, now)
             specs.append(
                 RowSpec(
                     slug=collection.slug,
@@ -1077,8 +1098,8 @@ class ContextBuilder:
                     fallback_name=collection.fallback_name or "",
                     seed_window=int(collection.seed_window or 1),  # 1 -> always their most recent watch
                     pick_order=collection.pick_order or "best",
-                    placement=collection.placement or "both",
-                    placement_friends=collection.placement_friends or "both",
+                    placement=(collection.placement or "both") if shown else "off",
+                    placement_friends=(collection.placement_friends or "both") if shown else "off",
                     pin_top=bool(collection.pin_top),
                     hub_anchors=self._row_hub_anchors(collection),
                     library_keys=[str(k) for k in (collection.library_keys or [])],

@@ -42,6 +42,30 @@ Eight short pages instead of one long one. If you know what you want to do, star
 New here? [Getting started](getting-started.md) covers the install and the setup wizard first.
 Looking for a specific setting or API endpoint? That's [Reference](reference.md).
 
+## A row disappeared, or you want rows to take turns
+
+A row can be given its own days: **Rows → the row → When it appears → Only on these days.** On the
+days it is off, the row is hidden rather than deleted — it keeps its titles, so it comes straight
+back on its next day without being built again.
+
+Two rows can cover a week between them: set one to Mon/Wed/Fri and another to the remaining days, and
+the Home screen alternates.
+
+**If a row is missing and you did not expect it**, check the Rows page first — a row with a schedule
+carries a **Hidden today** or **Showing today** badge, which answers it without opening anything.
+There are three other reasons a row can be absent: it is switched off, the person is paused, or they
+have too little watch history and the row's cold-start setting is **skip**.
+
+Two things worth knowing:
+
+- Days turn over at **midnight on the server**, on the server's clock. Somebody watching from another
+  timezone sees the change at your midnight, not theirs.
+- Some Plex apps cache the Home screen. A Roku re-reads it on its own; a Shield needs you to leave
+  the Home screen and come back before the change shows.
+
+Changing the days takes effect immediately — you do not have to wait for midnight or for the next
+nightly run.
+
 ## Your rows sit at the bottom of the shelf
 
 Check what the row is anchored to. **Rows → the row → Placement**, or **Settings → Row placement**

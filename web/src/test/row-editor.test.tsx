@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -83,6 +89,8 @@ function row(patch: Partial<Collection> = {}): Collection {
     pick_order: "best",
     placement: "both",
     placement_friends: "both",
+    show_days: [],
+    shown_today: true,
     pin_top: false,
     hub_anchor: {},
     poster: { mode: "", title: "", subtitle: "", style: "", has_image: false },
@@ -1729,5 +1737,88 @@ describe("RowPreview — what a shared row says it will do", () => {
     expect(
       screen.queryByText("What people here have watched most"),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("RowEditor — which days a row appears", () => {
+  beforeEach(() => {
+    updateCollection.mockClear();
+  });
+
+  it("shows every day by default and says so", () => {
+    renderEditor(row({ show_days: [] }));
+
+    expect(
+      screen.getByRole("button", { name: "Every day" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.getByText(/This row appears every day/i),
+    ).toBeInTheDocument();
+  });
+
+  it("names the days it is hidden, which is the question people actually have", () => {
+    renderEditor(row({ show_days: [1, 3, 5] }));
+
+    expect(
+      screen.getByText(/Hidden on Tuesday, Thursday, Saturday and Sunday/i),
+    ).toBeInTheDocument();
+  });
+
+  it("round-trips chosen days into the PATCH body as ISO weekdays", async () => {
+    renderEditor(row({ show_days: [1] }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Wed" }));
+    await userEvent.click(screen.getByRole("button", { name: /Save changes/i }));
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    const body = updateCollection.mock.calls.at(0)?.[1] as Collection;
+    expect(body.show_days).toEqual([1, 3]);
+  });
+
+  it("clears the schedule back to every day", async () => {
+    renderEditor(row({ show_days: [1, 3] }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Every day" }));
+    await userEvent.click(screen.getByRole("button", { name: /Save changes/i }));
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    const body = updateCollection.mock.calls.at(0)?.[1] as Collection;
+    expect(body.show_days).toEqual([]);
+  });
+
+  it("refuses to deselect the last remaining day", async () => {
+    // [] means EVERY day to the API, so letting the last chip off would turn "only Mondays" into
+    // "always on" — the exact opposite of the click. Clearing is what "Every day" is for.
+    renderEditor(row({ show_days: [1] }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Mon" }));
+
+    expect(screen.getByRole("button", { name: "Mon" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+});
+
+describe("RowPreview — a row that only appears on some days says so", () => {
+  it("adds an Only on line naming the days", () => {
+    renderEditor(row({ show_days: [1, 3, 5] }));
+
+    // Scoped to the preview panel: the group's own collapsed summary says "Mon, Wed, Fri" too, and
+    // an unscoped query matches both — which would pass even if the panel line were missing.
+    const panel = document.querySelector("dl");
+    expect(panel).not.toBeNull();
+    const preview = within(panel as HTMLElement);
+    expect(preview.getByText("Only on")).toBeInTheDocument();
+    expect(preview.getByText("Mon, Wed, Fri")).toBeInTheDocument();
+  });
+
+  it("leaves the panel alone for a row that appears every day", () => {
+    // The panel claims to summarise the WHOLE row, so an always-on row must not grow a line that
+    // implies a restriction it does not have.
+    renderEditor(row({ show_days: [] }));
+
+    const panel = document.querySelector("dl");
+    expect(within(panel as HTMLElement).queryByText("Only on")).toBeNull();
   });
 });

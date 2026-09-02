@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { effectiveSources } from "@/components/rows/row-sources-field";
+import { showDaysSummary } from "@/lib/show-days";
 import { renderRowName } from "@/lib/format";
 import { sourceShortLabel } from "@/lib/sources";
 import type { CollectionInput, PlexLibrary, Settings, User } from "@/lib/types";
@@ -262,6 +263,12 @@ export function RowPreview({
           value={updateFrequency(input, followsAWatch, globalRefreshDays)}
         />
         <Fact label="Appears on" value={whereItShows(input)} />
+        {/* Only for a row that actually narrows its days. Without this the panel says "Home and the
+            library" and stops, which is true but not the whole answer for a row people only see on
+            Fridays — and this panel is the one place that claims to summarise the whole row. */}
+        {input.show_days.length > 0 && (
+          <Fact label="Only on" value={showDaysSummary(input.show_days)} />
+        )}
         {input.request_tag.trim() && (
           <Fact
             label="Request tag"

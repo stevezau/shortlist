@@ -25,6 +25,8 @@ PRIVACY_SYNC = "privacy_sync"
 RENAME = "rename"
 #: Put the artwork on Plex back to the default, because the row dropped its custom poster.
 POSTER_RESET = "poster_reset"
+#: Apply this row's day schedule to Plex now, because which days it appears on changed (issue #102).
+VISIBILITY = "visibility"
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,8 @@ class RowChange:
         template_after: ...and after, "" under the same conditions.
         poster_mode_before: The custom-poster mode, before ("" = Plex's own artwork).
         poster_mode_after: ...and after.
+        days_before: The ISO weekdays the row appeared on, before (() = every day).
+        days_after: ...and after.
         defer_rename: The caller is going to stream the rename itself, so plan no rename here.
     """
 
@@ -70,6 +74,8 @@ class RowChange:
     template_after: str
     poster_mode_before: str
     poster_mode_after: str
+    days_before: tuple[int, ...] = ()
+    days_after: tuple[int, ...] = ()
     defer_rename: bool = False
 
 
@@ -169,5 +175,15 @@ def plan_row_changes(change: RowChange, stranded_sections: Callable[[], set[str]
     # config. Cosmetic + privacy-neutral, so gate-exempt.
     if change.poster_mode_before and not change.poster_mode_after:
         plan.append(PlannedWork(kind=POSTER_RESET, scope="collection.poster"))
+
+    # Which DAYS the row appears on changed, so Plex is now wrong until midnight — set "weekdays only"
+    # on a Saturday and the row has to come down NOW. Skipped for a row being switched OFF: that
+    # already deletes its collections above, so there would be nothing left to show or hide.
+    #
+    # LAST in the plan deliberately. The handler for this merges every account's excludes itself
+    # before promoting anything (rule 1), so it must run after the removals above have actually
+    # happened — excludes are computed from what is really left on the server.
+    if change.enabled_after and tuple(change.days_before) != tuple(change.days_after):
+        plan.append(PlannedWork(kind=VISIBILITY, scope=f"the days row '{change.slug}' appears on changed"))
 
     return plan

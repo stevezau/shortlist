@@ -956,6 +956,14 @@
             "title": "Seed Window",
             "type": "integer"
           },
+          "show_days": {
+            "description": "Days this row appears, as ISO weekdays (1=Monday .. 7=Sunday). Empty means every day.",
+            "items": {
+              "type": "integer"
+            },
+            "title": "Show Days",
+            "type": "array"
+          },
           "size": {
             "default": 15,
             "maximum": 40.0,
@@ -1438,6 +1446,19 @@
             "title": "Seed Window",
             "type": "integer"
           },
+          "show_days": {
+            "description": "Days this row appears, as ISO weekdays (1=Monday .. 7=Sunday). Empty means every day.",
+            "items": {
+              "type": "integer"
+            },
+            "title": "Show Days",
+            "type": "array"
+          },
+          "shown_today": {
+            "description": "Whether this row is on its surfaces today, judged on the SERVER's clock \u2014 which is the clock the midnight schedule and Plex follow, not the viewer's.",
+            "title": "Shown Today",
+            "type": "boolean"
+          },
           "size": {
             "title": "Size",
             "type": "integer"
@@ -1514,6 +1535,8 @@
           "pick_order",
           "placement",
           "placement_friends",
+          "show_days",
+          "shown_today",
           "pin_top",
           "hub_anchor",
           "library_keys",

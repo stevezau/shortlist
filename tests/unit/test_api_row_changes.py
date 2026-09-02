@@ -14,6 +14,7 @@ from shortlist.server.api.row_changes import (
     PRIVACY_SYNC,
     RECONCILE,
     RENAME,
+    VISIBILITY,
     RowChange,
     plan_row_changes,
 )
@@ -37,6 +38,8 @@ def make_change(**overrides) -> RowChange:
         template_after="",
         poster_mode_before="",
         poster_mode_after="",
+        days_before=(),
+        days_after=(),
     )
     return RowChange(**{**base, **overrides})
 
@@ -210,3 +213,38 @@ class TestOrdering:
         assert kinds.index(PRIVACY_SYNC) > max(i for i, k in enumerate(kinds) if k == RECONCILE)
         # …and the cosmetic work trails it, so nothing is retitled on a collection being removed.
         assert kinds == [RECONCILE, RECONCILE, PRIVACY_SYNC, RENAME, POSTER_RESET]
+
+
+class TestShowDaysChange:
+    """Changing which days a row appears is a Plex write, not a config change (issue #102).
+
+    Set "weekdays only" on a Saturday and the row has to go NOW. Leaving it to the midnight tick is
+    the same bug the `collection.disable` rule was added to fix: you save, nothing visibly happens,
+    and it reads as broken.
+    """
+
+    def test_changing_the_days_owes_plex_a_visibility_pass(self):
+        plan = plan_row_changes(make_change(days_before=(), days_after=(1, 2, 3, 4, 5)), never_called)
+
+        assert [w.kind for w in plan] == [VISIBILITY]
+
+    def test_clearing_the_days_owes_one_too(self):
+        """Back to "every day" has to put the row back, not just stop hiding it in future."""
+        plan = plan_row_changes(make_change(days_before=(1,), days_after=()), never_called)
+
+        assert [w.kind for w in plan] == [VISIBILITY]
+
+    def test_leaving_the_days_alone_owes_nothing(self):
+        """A rename must not fire a server-wide converge."""
+        plan = plan_row_changes(make_change(days_before=(1, 3), days_after=(1, 3)), never_called)
+
+        assert [w.kind for w in plan] == []
+
+    def test_a_disabled_row_owes_a_removal_rather_than_a_visibility_pass(self):
+        """Switching a row off DELETES its collections, so there is nothing left to show or hide —
+        queuing a converge as well would be a pass over rows that no longer exist."""
+        plan = plan_row_changes(
+            make_change(enabled_before=True, enabled_after=False, days_before=(), days_after=(1,)), never_called
+        )
+
+        assert VISIBILITY not in [w.kind for w in plan]

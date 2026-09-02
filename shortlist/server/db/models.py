@@ -234,6 +234,19 @@ class Collection(Base):
     placement: Mapped[str] = mapped_column(String(16), default="both")
     # Where the row shows for friends (shared users): "both" (Friends Home + Library), "home", or "library".
     placement_friends: Mapped[str] = mapped_column(String(16), default="both")
+    # Which weekdays this row is SHOWN, as ISO weekday numbers (1=Mon .. 7=Sun). [] -> every day,
+    # which is what every row carries after migration 0088, so an upgrade changes nothing.
+    #
+    # Distinct from `schedule`, and the pair is the whole feature: `schedule` is when this row
+    # REBUILDS, this is when people can SEE it. A row can rebuild nightly and show on Fridays.
+    # There is no way to spell "never" — `enabled` already means that.
+    show_days: Mapped[list] = mapped_column(JSON, default=list, nullable=False, server_default="[]")
+    # What the midnight `rows.visibility` job last applied, so a tick with nothing to do makes no Plex
+    # calls. NULL = never evaluated. A CACHE of the decision, never the decision: `show_days` + the
+    # clock is always the source of truth, so a stale value costs one redundant write and can never
+    # make a row visible on a day it should not be. Goes back to NULL once a row stops carrying days,
+    # on the next tick that has any work to do.
+    shown_state: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
     # Pin the row to the TOP of its library's Recommended shelf (server-wide order, not per-user).
     pin_top: Mapped[bool] = mapped_column(Boolean, default=False)
     # Per-library override of where THIS row sits in the Recommended shelf: {sectionKey: {anchor, before}}.
