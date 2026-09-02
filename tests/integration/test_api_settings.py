@@ -555,12 +555,16 @@ class TestSettingsApi:
             "/api/settings",
             json={"values": {"requests.overseerr.url": "http://overseerr:5055", "requests.overseerr.apikey": "ok-123"}},
         )
-        monkeypatch.setattr(
-            "shortlist.engine.clients.seerr.SeerrClient.users",
-            lambda self: [{"id": 1, "name": "serverowner"}, {"id": 4, "name": "Shortlist"}],
-        )
+        users = [
+            {"id": 1, "name": "serverowner", "auto_approve_movies": True, "auto_approve_tv": True},
+            {"id": 4, "name": "Shortlist", "auto_approve_movies": False, "auto_approve_tv": False},
+        ]
+        monkeypatch.setattr("shortlist.engine.clients.seerr.SeerrClient.users", lambda self: users)
+        monkeypatch.setattr("shortlist.engine.clients.seerr.SeerrClient.whoami", lambda self: 1)
         body = client.get("/api/settings/overseerr/options").json()
-        assert body == {"users": [{"id": 1, "name": "serverowner"}, {"id": 4, "name": "Shortlist"}]}
+        # `default_user_id` is what lets the screen resolve "Server default" to a real account and
+        # say whether it approves — without it the commonest setting is an unknown.
+        assert body == {"users": users, "default_user_id": 1}
 
         def boom(self):
             raise RuntimeError("Overseerr unreachable (ConnectError)")

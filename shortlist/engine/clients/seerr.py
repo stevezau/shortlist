@@ -60,6 +60,18 @@ _DOWNLOADING = "downloading"
 #: ``mediaType`` as Overseerr spells it, per Shortlist ``MediaType``.
 _MEDIA_TYPE = {MediaType.MOVIE: "movie", MediaType.SHOW: "tv"}
 
+#: Overseerr's permission bits, read off a live Seerr 3.4.1 (`/app/dist/lib/permissions.js`) rather
+#: than guessed — the same source that settled the status enum, and for the same reason: the
+#: published spec documents `permissions` only as "a number".
+#:
+#: ADMIN is special. That file's own comment: "If the user has the admin permission, true will always
+#: be returned from this check" — so an admin auto-approves everything without carrying any of the
+#: AUTO_APPROVE bits, which is exactly the account most owners' API keys belong to.
+_PERM_ADMIN = 2
+_PERM_AUTO_APPROVE = 128
+_PERM_AUTO_APPROVE_MOVIE = 256
+_PERM_AUTO_APPROVE_TV = 512
+
 #: 403 is a WORKING key whose account lacks a permission — not a bad key, which is what a shared
 #: "rejected the API key" message said, sending owners off to regenerate a key that was fine.
 #:
@@ -170,6 +182,20 @@ class SeerrClient:
         """At most one write per ``min_write_interval`` seconds — be a polite client (rule 6 spirit)."""
         self._write_clock[0] = http_retry.throttle(self._write_clock[0], self._min_write_interval)
 
+    def whoami(self) -> int | None:
+        """The id of the account this API key acts as, or None if it cannot be read.
+
+        Needed because "Server default" in the UI means *this* account, and what it does — approve
+        instantly or file for review — is the single most consequential thing on that screen. Without
+        the id there is no way to look it up in the user list and say so.
+        """
+        try:
+            me = self._get("/auth/me")
+        except SeerrError as e:
+            logger.debug("{}: could not identify the API key's own account ({})", self.app_name, e)
+            return None
+        return _int_or_none(me.get("id")) if isinstance(me, dict) else None
+
     def ping(self) -> str:
         """A tiny AUTHENTICATED call for the settings 'Test' button; returns a friendly line.
 
@@ -186,7 +212,18 @@ class SeerrClient:
         for row in self._paged("/user", permission=_MANAGE_USERS):
             if not isinstance(row, dict) or row.get("id") is None:
                 continue
-            out.append({"id": int(row["id"]), "name": _name_of(row) or f"User {row['id']}"})
+            perms = _int_or_none(row.get("permissions")) or 0
+            out.append(
+                {
+                    "id": int(row["id"]),
+                    "name": _name_of(row) or f"User {row['id']}",
+                    # Whether THIS account's requests skip Overseerr's approval queue. Surfaced so the
+                    # owner can see it when picking, instead of discovering it from where their
+                    # titles ended up — the difference between "filed" and "already downloading".
+                    "auto_approve_movies": _approves(perms, _PERM_AUTO_APPROVE_MOVIE),
+                    "auto_approve_tv": _approves(perms, _PERM_AUTO_APPROVE_TV),
+                }
+            )
         return out
 
     def media_state(self) -> dict[tuple[str, int], str]:
@@ -355,6 +392,15 @@ class SeerrClient:
         # Whether it lands as pending or auto-approved is the chosen account's permission, not ours —
         # so the detail says what happened here and lets the *seerr own the rest.
         return "requested", f"requested from {self.app_name}", None
+
+
+def _approves(permissions: int, specific: int) -> bool:
+    """Does this permission value auto-approve that media type?
+
+    Three ways to hold it, and missing any one of them would mislabel a real account: ADMIN (which
+    Overseerr treats as holding every permission), the blanket AUTO_APPROVE, or the per-type bit.
+    """
+    return bool(permissions & (_PERM_ADMIN | _PERM_AUTO_APPROVE | specific))
 
 
 def _name_of(row: dict) -> str:

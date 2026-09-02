@@ -25,6 +25,10 @@ import {
 import { useAutosavedSettings } from "@/lib/autosave";
 import { settingBool, settingNumber, settingString } from "@/lib/format";
 import { useArrOptions, useSeerrOptions } from "@/lib/queries";
+import {
+  autoSendBarsMatchGuardrails,
+  describeRequestFlow,
+} from "@/lib/request-flow";
 import type { SonarrMonitor } from "@/lib/sonarr-monitor";
 import {
   asSonarrMonitor,
@@ -318,6 +322,25 @@ function ArrCard({
 /** Where requests go when Overseerr/Jellyseerr is the target. Deliberately much smaller than
  *  `ArrCard`: quality profile, root folder and 4K routing are the *seerr's own rules, which is the
  *  whole reason to route through it. The only choice left is whose name the request goes out under. */
+/** What picking this account will DO, in the dropdown itself.
+ *
+ *  The difference between "filed for you to look at" and "already downloading" is the single most
+ *  consequential thing on this screen, and it is a property of the ACCOUNT, not of anything Shortlist
+ *  sends. Leaving it to be discovered from where the titles ended up is how someone finds out the
+ *  hard way. Partial is real and worth naming: an account can auto-approve films but not shows. */
+function accountEffect(u: {
+  auto_approve_movies?: boolean;
+  auto_approve_tv?: boolean;
+}): string {
+  const films = u.auto_approve_movies ?? false;
+  const shows = u.auto_approve_tv ?? false;
+  if (films && shows) return "approves automatically";
+  if (!films && !shows) return "requests wait for approval";
+  return films
+    ? "films approve automatically, shows wait"
+    : "shows approve automatically, films wait";
+}
+
 function OverseerrCard({
   userId,
   onUserChange,
@@ -334,6 +357,9 @@ function OverseerrCard({
   // Undefined while the list is still loading as well as when it genuinely lacks the account —
   // both mean "cannot name it yet", which is exactly when the fallback option below is needed.
   const chosen = options.data?.users.find((u) => u.id === userId);
+  const defaultAccount = options.data?.users.find(
+    (u) => u.id === options.data?.default_user_id,
+  );
 
   return (
     <Card>
@@ -388,14 +414,20 @@ function OverseerrCard({
               value={userId}
               onChange={(e) => onUserChange(Number(e.target.value))}
             >
+              {/* The default carries its effect too, and it is the one that matters most — it is
+                  what nearly everyone will leave selected. `default_user_id` is what makes it
+                  nameable at all; without it this said "whoever owns the API key", which is a
+                  shrug where the consequence should be. */}
               <option value={0}>
                 {options.isPending
                   ? "Loading…"
-                  : "Server default (whoever owns the API key)"}
+                  : defaultAccount
+                    ? `Server default (${defaultAccount.name}) — ${accountEffect(defaultAccount)}`
+                    : "Server default (whoever owns the API key)"}
               </option>
               {options.data?.users.map((u) => (
                 <option key={u.id} value={u.id}>
-                  {u.name}
+                  {u.name} &mdash; {accountEffect(u)}
                 </option>
               ))}
               {/* A saved account the list does not contain — because the fetch failed, or because
@@ -422,9 +454,12 @@ function OverseerrCard({
                   <strong className="font-medium text-foreground">
                     {chosen?.name ?? "the account you picked"}
                   </strong>
-                  . If that account can&rsquo;t auto-approve, they&rsquo;ll wait
-                  there for your yes &mdash; after they&rsquo;ve already cleared
-                  the guardrails below.
+                  {/* Definite, not hedged. The old line said "if that account can't auto-approve"
+                      — a condition the screen can now simply answer, and leaving it as a maybe
+                      makes the reader do the work anyway. */}
+                  {chosen
+                    ? ` and ${accountEffect(chosen) === "approves automatically" ? "be approved there automatically" : accountEffect(chosen) === "requests wait for approval" ? "wait there for your yes" : `— ${accountEffect(chosen)}`}.`
+                    : "."}
                 </>
               )}
             </p>
@@ -473,6 +508,36 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
   const overseerrConnected =
     Boolean(settingString(settings, "requests.overseerr.url")) &&
     settingString(settings, "requests.overseerr.apikey") === REDACTED;
+
+  // Shared with OverseerrCard's own call — TanStack dedupes on the key, so asking twice costs
+  // nothing and neither component has to thread the list through the other.
+  const seerrUsers = useSeerrOptions(viaSeerr && overseerrConnected);
+  // "Server default" (0) means the account the API key itself is, which the options endpoint names —
+  // so the commonest setting resolves to a real row rather than an unknown.
+  const effectiveUserId =
+    form.overseerrUserId || (seerrUsers.data?.default_user_id ?? -1);
+  const chosenAccount = seerrUsers.data?.users.find(
+    (u) => u.id === effectiveUserId,
+  );
+  // `null` = not knowable yet (list still loading, instance unreachable, or an account it will not
+  // name). The summary then states what is certain and says nothing about approval, rather than
+  // guessing at the one fact on this screen that is expensive to get wrong.
+  const seerrApproves =
+    !viaSeerr || !chosenAccount
+      ? null
+      : Boolean(chosenAccount.auto_approve_movies) &&
+        Boolean(chosenAccount.auto_approve_tv);
+  const flow = describeRequestFlow({
+    viaSeerr,
+    autoSend: form.autoSend,
+    everythingAutoSends: autoSendBarsMatchGuardrails({
+      autoMinDemand: form.autoMinDemand,
+      autoMinRating: form.autoMinRating,
+      minDemand: form.minDemand,
+      minRating: form.minRating,
+    }),
+    seerrApproves,
+  });
 
   const goToConnections = () =>
     document
@@ -682,12 +747,9 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                   <p className="text-sm font-medium">
                     Send the strongest titles without asking
                   </p>
-                  <p className="text-sm text-muted-foreground">
-                    Titles that clear the higher bars here go out as soon as a
-                    run finds them. Everything else that clears your guardrails
-                    waits in your Requests inbox. Turn this off to look at every
-                    title yourself.
-                  </p>
+                  {/* The live answer to "what happens tonight?", instead of three settings the
+                      reader has to combine in their head — see lib/request-flow.ts. */}
+                  <p className="text-sm text-muted-foreground">{flow.summary}</p>
                 </div>
                 <Switch
                   checked={form.autoSend}
@@ -695,6 +757,14 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                   aria-label="Send the strongest titles without asking"
                 />
               </div>
+
+              {/* Named, never blocked: approving twice is a legitimate choice, just almost never a
+                  deliberate one. Says how to get to a single gate rather than only that there are two. */}
+              {flow.doubleApproval && (
+                <p className="rounded-md border border-primary/40 bg-primary/5 p-3 text-sm text-muted-foreground">
+                  {flow.doubleApproval}
+                </p>
+              )}
 
               {form.autoSend && (
                 <>

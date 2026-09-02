@@ -237,10 +237,13 @@ class TestUsers:
         with respx.mock:
             respx.get(f"{BASE}/user").mock(return_value=httpx.Response(200, json=_users_page()))
             users = _client().users()
+        # `permissions` comes straight from the recorded fixture; the two auto-approve flags are
+        # derived from it with the bits read off a live Seerr (ADMIN=2 implies every permission,
+        # which is why the owner row approves without carrying an AUTO_APPROVE bit at all).
         assert users == [
-            {"id": 1, "name": "serverowner"},
-            {"id": 4, "name": "Shortlist"},
-            {"id": 7, "name": "MooHouse"},
+            {"id": 1, "name": "serverowner", "auto_approve_movies": True, "auto_approve_tv": True},
+            {"id": 4, "name": "Shortlist", "auto_approve_movies": False, "auto_approve_tv": False},
+            {"id": 7, "name": "MooHouse", "auto_approve_movies": False, "auto_approve_tv": False},
         ]
 
     def test_falls_back_through_the_documented_name_fields(self):
@@ -258,6 +261,9 @@ class TestUsers:
             respx.get(f"{BASE}/user").mock(return_value=httpx.Response(200, json=payload))
             users = _client().users()
         assert [u["name"] for u in users] == ["local-user", "plex-user", "only@example.test", "User 6"]
+        # No `permissions` at all reads as no auto-approval — the cautious direction, since the
+        # screen uses it to promise whether a title starts downloading.
+        assert all(not u["auto_approve_movies"] and not u["auto_approve_tv"] for u in users)
 
 
 class TestRequestTitle:
@@ -596,3 +602,37 @@ class TestTheBlocklist:
         pool = [MissingTitle(603, "a movie", MediaType.MOVIE, 1999, rating=8.7, vote_count=900, demand=3)]
         kept, dropped, present = _apply_seerr_state(pool, Boom(TARGET))
         assert kept == pool and dropped == 0 and present == set()
+
+
+class TestWhoAutoApproves:
+    """Which accounts skip Overseerr's approval queue — bits read off a live Seerr 3.4.1."""
+
+    def _users(self, *perms: int) -> list[dict]:
+        rows = [{"id": i, "displayName": f"u{i}", "permissions": p} for i, p in enumerate(perms)]
+        with respx.mock:
+            respx.get(f"{BASE}/user").mock(
+                return_value=httpx.Response(200, json={"pageInfo": {"pages": 1}, "results": rows})
+            )
+            return _client().users()
+
+    def test_admin_approves_everything_without_any_auto_approve_bit(self):
+        """The case that matters most: an owner's API key is an admin, and Overseerr's own permission
+        check short-circuits on ADMIN — so it approves instantly while carrying none of the
+        AUTO_APPROVE bits. Reading only those bits would label it "requests wait", which is the exact
+        opposite of what it does."""
+        [admin] = self._users(2)
+        assert admin["auto_approve_movies"] and admin["auto_approve_tv"]
+
+    def test_the_blanket_bit_covers_both_types(self):
+        [u] = self._users(128 | 32)
+        assert u["auto_approve_movies"] and u["auto_approve_tv"]
+
+    def test_per_type_bits_are_read_separately(self):
+        films, shows = self._users(256 | 32, 512 | 32)
+        assert films["auto_approve_movies"] and not films["auto_approve_tv"]
+        assert shows["auto_approve_tv"] and not shows["auto_approve_movies"]
+
+    def test_a_plain_requester_approves_nothing(self):
+        """32 = REQUEST, which is what every ordinary Plex user on a real instance carries."""
+        [u] = self._users(32)
+        assert not u["auto_approve_movies"] and not u["auto_approve_tv"]

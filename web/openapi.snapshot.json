@@ -5241,6 +5241,17 @@
       "SeerrOptionsOut": {
         "additionalProperties": true,
         "properties": {
+          "default_user_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default User Id"
+          },
           "users": {
             "items": {
               "$ref": "#/components/schemas/SeerrUserOut"
@@ -5258,6 +5269,16 @@
       "SeerrUserOut": {
         "additionalProperties": true,
         "properties": {
+          "auto_approve_movies": {
+            "default": false,
+            "title": "Auto Approve Movies",
+            "type": "boolean"
+          },
+          "auto_approve_tv": {
+            "default": false,
+            "title": "Auto Approve Tv",
+            "type": "boolean"
+          },
           "id": {
             "title": "Id",
             "type": "integer"

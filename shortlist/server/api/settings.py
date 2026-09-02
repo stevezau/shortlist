@@ -779,10 +779,17 @@ async def arr_options(service: str, request: Request) -> dict:
 class SeerrUserOut(PassthroughModel):
     id: int
     name: str
+    # Whether this account's requests skip Overseerr's own approval queue. The screen needs it to say
+    # what picking the account will actually DO, rather than leaving the owner to find out later.
+    auto_approve_movies: bool = False
+    auto_approve_tv: bool = False
 
 
 class SeerrOptionsOut(PassthroughModel):
     users: list[SeerrUserOut]
+    # Which of those accounts the API key itself is, so the UI can resolve "Server default" to a real
+    # row and say whether it approves. None when the instance would not say.
+    default_user_id: int | None = None
 
 
 @router.get("/overseerr/options", response_model=SeerrOptionsOut)
@@ -805,7 +812,8 @@ async def overseerr_options(request: Request) -> dict:
         from shortlist.engine.clients.seerr import SeerrClient
         from shortlist.engine.models import SeerrTarget
 
-        return {"users": SeerrClient(SeerrTarget(url=url, api_key=api_key)).users()}
+        client = SeerrClient(SeerrTarget(url=url, api_key=api_key))
+        return {"users": client.users(), "default_user_id": client.whoami()}
 
     try:
         return await asyncio.get_running_loop().run_in_executor(None, fetch)

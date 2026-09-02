@@ -4777,6 +4777,8 @@ export interface components {
         };
         /** SeerrOptionsOut */
         SeerrOptionsOut: {
+            /** Default User Id */
+            default_user_id?: number | null;
             /** Users */
             users: components["schemas"]["SeerrUserOut"][];
         } & {
@@ -4784,6 +4786,16 @@ export interface components {
         };
         /** SeerrUserOut */
         SeerrUserOut: {
+            /**
+             * Auto Approve Movies
+             * @default false
+             */
+            auto_approve_movies: boolean;
+            /**
+             * Auto Approve Tv
+             * @default false
+             */
+            auto_approve_tv: boolean;
             /** Id */
             id: number;
             /** Name */
