@@ -556,8 +556,20 @@ class TestSettingsApi:
             json={"values": {"requests.overseerr.url": "http://overseerr:5055", "requests.overseerr.apikey": "ok-123"}},
         )
         users = [
-            {"id": 1, "name": "serverowner", "auto_approve_movies": True, "auto_approve_tv": True},
-            {"id": 4, "name": "Shortlist", "auto_approve_movies": False, "auto_approve_tv": False},
+            {
+                "id": 1,
+                "name": "serverowner",
+                "auto_approve_movies": True,
+                "auto_approve_tv": True,
+                "is_plex_user": True,
+            },
+            {
+                "id": 4,
+                "name": "Shortlist",
+                "auto_approve_movies": False,
+                "auto_approve_tv": False,
+                "is_plex_user": False,
+            },
         ]
         monkeypatch.setattr("shortlist.engine.clients.seerr.SeerrClient.users", lambda self: users)
         monkeypatch.setattr("shortlist.engine.clients.seerr.SeerrClient.whoami", lambda self: 1)

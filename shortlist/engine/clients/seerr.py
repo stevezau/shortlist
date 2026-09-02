@@ -67,6 +67,9 @@ _MEDIA_TYPE = {MediaType.MOVIE: "movie", MediaType.SHOW: "tv"}
 #: ADMIN is special. That file's own comment: "If the user has the admin permission, true will always
 #: be returned from this check" — so an admin auto-approves everything without carrying any of the
 #: AUTO_APPROVE bits, which is exactly the account most owners' API keys belong to.
+#: `userType` on a Seerr account: 1 is a Plex user, 2 a local account created in Overseerr itself.
+_USER_TYPE_PLEX = 1
+
 _PERM_ADMIN = 2
 _PERM_AUTO_APPROVE = 128
 _PERM_AUTO_APPROVE_MOVIE = 256
@@ -222,6 +225,11 @@ class SeerrClient:
                     # titles ended up — the difference between "filed" and "already downloading".
                     "auto_approve_movies": _approves(perms, _PERM_AUTO_APPROVE_MOVIE),
                     "auto_approve_tv": _approves(perms, _PERM_AUTO_APPROVE_TV),
+                    # A real person who uses the server, rather than a local account the owner made.
+                    # The screen keeps the two apart because filing Shortlist's requests under a
+                    # PERSON spends their request quota and notifies them about titles they never
+                    # asked for — a consequence worth seeing before the choice, not after.
+                    "is_plex_user": _int_or_none(row.get("userType")) == _USER_TYPE_PLEX,
                 }
             )
         return out

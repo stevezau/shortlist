@@ -5283,6 +5283,11 @@
             "title": "Id",
             "type": "integer"
           },
+          "is_plex_user": {
+            "default": false,
+            "title": "Is Plex User",
+            "type": "boolean"
+          },
           "name": {
             "title": "Name",
             "type": "string"

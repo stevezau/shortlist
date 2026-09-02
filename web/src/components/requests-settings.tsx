@@ -341,6 +341,25 @@ function accountEffect(u: {
     : "shows approve automatically, films wait";
 }
 
+/** The same fact as `accountEffect`, phrased to finish "Requests will show in Overseerr as X …".
+ *
+ *  A separate function rather than the dropdown's wording reused, because that wording is a LABEL
+ *  ("films approve automatically, shows wait") and this is the tail of a sentence. Splicing the
+ *  label in produced "as MooHouse and — films approve automatically, shows wait", which is the sort
+ *  of seam that makes a screen read as assembled rather than written. */
+function accountOutcome(u: {
+  auto_approve_movies?: boolean;
+  auto_approve_tv?: boolean;
+}): string {
+  const films = u.auto_approve_movies ?? false;
+  const shows = u.auto_approve_tv ?? false;
+  if (films && shows) return "be approved there automatically";
+  if (!films && !shows) return "wait there for your yes";
+  return films
+    ? "films will be approved automatically, while shows wait there for your yes"
+    : "shows will be approved automatically, while films wait there for your yes";
+}
+
 function OverseerrCard({
   userId,
   onUserChange,
@@ -360,6 +379,11 @@ function OverseerrCard({
   const defaultAccount = options.data?.users.find(
     (u) => u.id === options.data?.default_user_id,
   );
+  const others = (options.data?.users ?? []).filter(
+    (u) => u.id !== options.data?.default_user_id,
+  );
+  const serviceAccounts = others.filter((u) => !u.is_plex_user);
+  const people = others.filter((u) => u.is_plex_user);
 
   return (
     <Card>
@@ -425,11 +449,30 @@ function OverseerrCard({
                     ? `Server default (${defaultAccount.name}) — ${accountEffect(defaultAccount)}`
                     : "Server default (whoever owns the API key)"}
               </option>
-              {options.data?.users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name} &mdash; {accountEffect(u)}
-                </option>
-              ))}
+              {/* The default account is ALREADY the option above, so listing it again just invites
+                  "which of these two identical lines do I want?". */}
+              {serviceAccounts.length > 0 && (
+                <optgroup label="Accounts made for this">
+                  {serviceAccounts.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name} &mdash; {accountEffect(u)}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {/* Kept apart, and second, because picking one files every Shortlist request under a
+                  real person: it spends THEIR request quota and notifies them about titles they
+                  never asked for. Still offered — it is their server — but never mistakable for a
+                  service account. */}
+              {people.length > 0 && (
+                <optgroup label="People on your server">
+                  {people.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name} &mdash; {accountEffect(u)}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
               {/* A saved account the list does not contain — because the fetch failed, or because
                   it was since deleted in Overseerr. Without it the select falls back to its first
                   option and the screen silently misreports the saved value as "Server default",
@@ -457,9 +500,16 @@ function OverseerrCard({
                   {/* Definite, not hedged. The old line said "if that account can't auto-approve"
                       — a condition the screen can now simply answer, and leaving it as a maybe
                       makes the reader do the work anyway. */}
-                  {chosen
-                    ? ` and ${accountEffect(chosen) === "approves automatically" ? "be approved there automatically" : accountEffect(chosen) === "requests wait for approval" ? "wait there for your yes" : `— ${accountEffect(chosen)}`}.`
-                    : "."}
+                  {chosen ? ` and ${accountOutcome(chosen)}.` : "."}
+                  {chosen?.is_plex_user && (
+                    <>
+                      {" "}
+                      That&rsquo;s a real person: every request Shortlist makes
+                      will look like theirs, count against their request quota,
+                      and notify them about titles they never asked for. A local
+                      account in Overseerr avoids all three.
+                    </>
+                  )}
                 </>
               )}
             </p>
@@ -773,43 +823,56 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                       <Label htmlFor={autoDemandId}>
                         Send without asking when wanted by
                       </Label>
-                      <Input
-                        id={autoDemandId}
-                        type="number"
-                        min={1}
-                        step={1}
-                        value={form.autoMinDemand}
-                        onChange={(e) =>
-                          set({
-                            autoMinDemand: Math.max(1, Number(e.target.value)),
-                          })
-                        }
-                        className="w-28"
-                      />
+                      {/* The unit sits beside the box, so the control reads as the sentence its
+                          label starts: "wanted by [4] people". Without it the label is a fragment
+                          and the number could be anything. */}
+                      <div className="flex items-center gap-2">
+                        <Input
+                          id={autoDemandId}
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={form.autoMinDemand}
+                          onChange={(e) =>
+                            set({
+                              autoMinDemand: Math.max(1, Number(e.target.value)),
+                            })
+                          }
+                          className="w-24"
+                        />
+                        <span className="text-sm text-muted-foreground">
+                          {form.autoMinDemand === 1 ? "person" : "people"}
+                        </span>
+                      </div>
                       <p className="text-sm text-muted-foreground">
-                        At least this many people. Wanted by fewer than this? It
-                        waits in the inbox.
+                        Wanted by fewer than this? It waits in the inbox.
                       </p>
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor={autoRatingId}>
                         Send without asking when rated
                       </Label>
-                      <Input
-                        id={autoRatingId}
-                        type="number"
-                        min={0}
-                        max={10}
-                        step={0.1}
-                        value={form.autoMinRating}
-                        onChange={(e) =>
-                          set({ autoMinRating: Number(e.target.value) })
-                        }
-                        className="w-28"
-                      />
+                      {/* Names the source the number is measured on — it follows the rating source
+                          above, so this reads "or higher on IMDb" when that is what is judging. */}
+                      <div className="flex items-center gap-2">
+                        <Input
+                          id={autoRatingId}
+                          type="number"
+                          min={0}
+                          max={10}
+                          step={0.1}
+                          value={form.autoMinRating}
+                          onChange={(e) =>
+                            set({ autoMinRating: Number(e.target.value) })
+                          }
+                          className="w-24"
+                        />
+                        <span className="text-sm text-muted-foreground">
+                          or higher on {ratingLabel}
+                        </span>
+                      </div>
                       <p className="text-sm text-muted-foreground">
-                        At least this {ratingLabel} score. Anything lower waits
-                        for your OK.
+                        Anything lower waits for your OK.
                       </p>
                     </div>
                     {/* Weaker than "everything will be sent", on purpose: this fires when EITHER bar

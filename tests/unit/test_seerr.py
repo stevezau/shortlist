@@ -241,9 +241,28 @@ class TestUsers:
         # derived from it with the bits read off a live Seerr (ADMIN=2 implies every permission,
         # which is why the owner row approves without carrying an AUTO_APPROVE bit at all).
         assert users == [
-            {"id": 1, "name": "serverowner", "auto_approve_movies": True, "auto_approve_tv": True},
-            {"id": 4, "name": "Shortlist", "auto_approve_movies": False, "auto_approve_tv": False},
-            {"id": 7, "name": "MooHouse", "auto_approve_movies": False, "auto_approve_tv": False},
+            {
+                "id": 1,
+                "name": "serverowner",
+                "auto_approve_movies": True,
+                "auto_approve_tv": True,
+                "is_plex_user": True,
+            },
+            {
+                "id": 4,
+                "name": "Shortlist",
+                "auto_approve_movies": False,
+                "auto_approve_tv": False,
+                # userType 2 — a local account made inside Overseerr, not a person on the server.
+                "is_plex_user": False,
+            },
+            {
+                "id": 7,
+                "name": "MooHouse",
+                "auto_approve_movies": False,
+                "auto_approve_tv": False,
+                "is_plex_user": True,
+            },
         ]
 
     def test_falls_back_through_the_documented_name_fields(self):

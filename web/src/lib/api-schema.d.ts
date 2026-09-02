@@ -4798,6 +4798,11 @@ export interface components {
             auto_approve_tv: boolean;
             /** Id */
             id: number;
+            /**
+             * Is Plex User
+             * @default false
+             */
+            is_plex_user: boolean;
             /** Name */
             name: string;
         } & {

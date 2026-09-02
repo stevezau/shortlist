@@ -783,6 +783,9 @@ class SeerrUserOut(PassthroughModel):
     # what picking the account will actually DO, rather than leaving the owner to find out later.
     auto_approve_movies: bool = False
     auto_approve_tv: bool = False
+    # True for a real person on the server, false for a local account made inside Overseerr. Drives
+    # the grouping in the picker — see the note on `is_plex_user` in the client.
+    is_plex_user: bool = False
 
 
 class SeerrOptionsOut(PassthroughModel):
