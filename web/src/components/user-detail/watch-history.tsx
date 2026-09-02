@@ -137,7 +137,12 @@ export function WatchHistory({
               value={library}
               onChange={(e) => reset(() => setLibrary(e.target.value))}
               aria-label="Filter by library"
-              className="h-9 rounded-md border bg-background px-2 text-sm"
+              /* A native select sizes itself to its WIDEST option, and a Plex library can be called
+                 anything — "4K HDR Remux Collection — Director's Cuts and Extended Editions"
+                 measured 470px, which ran 212px off a 320px phone. Capped and truncated instead;
+                 the open dropdown is drawn by the browser outside the page box, so full names stay
+                 readable while choosing. `min-w-0` is what lets it shrink inside the flex row. */
+              className="h-9 min-w-0 max-w-[11rem] truncate rounded-md border bg-background px-2 text-sm"
             >
               <option value="">All libraries</option>
               {libraries.map((name) => (

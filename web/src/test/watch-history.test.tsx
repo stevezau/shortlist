@@ -457,6 +457,27 @@ describe("the library filter", () => {
     );
   });
 
+  it("caps the dropdown width, whatever a library is called", async () => {
+    // A native <select> sizes to its WIDEST option, so one long library name blows out the toolbar:
+    // "4K HDR Remux Collection — Director's Cuts and Extended Editions" measured 470px and ran
+    // 212px off a 320px phone. jsdom does no layout, so this asserts the CAP is still declared —
+    // the measurement itself lives in the commit that added it.
+    getUserWatched.mockResolvedValue(
+      page({
+        libraries: [
+          lib("Movies", "movie"),
+          lib("4K HDR Remux Collection — Director's Cuts and Extended Editions", "movie"),
+        ],
+      }),
+    );
+    renderPanel();
+
+    const select = await screen.findByLabelText(/filter by library/i);
+    expect(select.className).toMatch(/max-w-/);
+    expect(select.className).toMatch(/truncate/);
+    expect(select.className).toMatch(/min-w-0/);
+  });
+
   it("resets paging when the library changes", async () => {
     getUserWatched.mockResolvedValue(page({ ...twoLibraries(), total: 100 }));
     renderPanel();
