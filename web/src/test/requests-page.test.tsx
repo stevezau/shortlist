@@ -1460,6 +1460,76 @@ describe("RequestsPage — what Sonarr/Radarr has", () => {
     expect(screen.getByText("Downloading")).toBeInTheDocument();
   });
 
+  it("names Overseerr, never the Arrs, everywhere on that route", async () => {
+    // Found by looking at the running app, not by reading the diff: ten review rounds and an
+    // architecture review all missed four strings on this page — the header, the bulk button, the
+    // "already in {app}" line and the sent-section heading — because a diff shows what changed and
+    // this page's Arr names had not. The assertion is deliberately the whole page, not four
+    // separate lookups, so a fifth string cannot be added without it failing.
+    listRequests.mockResolvedValue([
+      candidate({ id: 1, title: "Dune", media_type: "movie" }),
+      candidate({
+        id: 2,
+        tmdb_id: 200,
+        title: "Shogun",
+        media_type: "show",
+        status: "sent",
+      }),
+    ]);
+    getArrStatus.mockResolvedValue({
+      statuses: { "1": "downloaded" },
+      radarr: "off",
+      sonarr: "off",
+      overseerr: "ok",
+    });
+    getSettings.mockResolvedValue({
+      "requests.enabled": true,
+      "requests.target": "overseerr",
+      "requests.overseerr.url": "http://overseerr.test",
+    });
+    renderPage();
+
+    // BOTH tabs. The first version of this checked only the default one and passed against a
+    // deliberately re-broken "Sent to Radarr & Sonarr" heading, because that heading lives on the
+    // Sent tab — an absence assertion is worthless over a region the test never renders.
+    expect(await screen.findByText("Dune")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/Radarr|Sonarr/);
+    expect(document.body.textContent).toMatch(/Overseerr/);
+
+    await userEvent.click(screen.getByRole("button", { name: /^Sent/ }));
+    expect(await screen.findByText("Shogun")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/Radarr|Sonarr/);
+    expect(document.body.textContent).toMatch(/Sent to Overseerr/);
+  });
+
+  it("still names the Arrs on the default route", async () => {
+    // The control. Switching the route back must restore every one of those strings.
+    listRequests.mockResolvedValue([
+      candidate({ id: 1, title: "Dune" }),
+      candidate({ id: 2, tmdb_id: 200, title: "Shogun", status: "sent" }),
+    ]);
+    getArrStatus.mockResolvedValue({
+      statuses: {},
+      radarr: "ok",
+      sonarr: "ok",
+      overseerr: "off",
+    });
+    getSettings.mockResolvedValue({
+      "requests.enabled": true,
+      "requests.radarr.url": "http://radarr.test",
+    });
+    renderPage();
+
+    expect(await screen.findByText("Dune")).toBeInTheDocument();
+    expect(document.body.textContent).toMatch(/Radarr/);
+    expect(document.body.textContent).not.toMatch(/Overseerr/);
+
+    await userEvent.click(screen.getByRole("button", { name: /^Sent/ }));
+    expect(await screen.findByText("Shogun")).toBeInTheDocument();
+    expect(document.body.textContent).toMatch(/Sent to Radarr/);
+    expect(document.body.textContent).not.toMatch(/Overseerr/);
+  });
+
   it("blames Overseerr, not Radarr, when that is the route", async () => {
     listRequests.mockResolvedValue([
       candidate({ id: 1, title: "Dune", media_type: "movie" }),

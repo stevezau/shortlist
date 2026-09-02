@@ -68,10 +68,10 @@ like the global one.
 
 ### Requesting through Overseerr
 
-If you already run **Overseerr** or **Jellyseerr**, pointing Shortlist at it instead of at Radarr and
-Sonarr means what Shortlist asks for shows up alongside everything your users request, and gets the
-quality profile, folder and 4K routing you already configured there. Both products share one API, so
-one setting covers both.
+If you already run **Overseerr**, **Jellyseerr** or **Seerr**, pointing Shortlist at it instead of at
+Radarr and Sonarr means what Shortlist asks for shows up alongside everything your users request, and
+gets the quality profile, folder and 4K routing you already configured there. All three share one
+API (`/api/v1`), so one setting covers them all — verified against Seerr 3.4.1.
 
 1. In Settings → **Connections**, fill in the **Overseerr / Jellyseerr** card with its address (e.g.
    `http://localhost:5055`) and an **API key** (in Overseerr under _Settings → General_), and press

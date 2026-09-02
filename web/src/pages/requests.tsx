@@ -345,7 +345,7 @@ function RequestsOffBanner() {
       <p className="text-sm font-medium">Requests are off</p>
       <p className="text-sm text-muted-foreground">
         These titles were found before you turned requests off. Nothing new is
-        added while it stays off, Shortlist isn&rsquo;t asking Radarr or Sonarr
+        added while it stays off, Shortlist isn&rsquo;t asking your download apps
         for anything, and nothing here can be sent or rejected until you turn it
         back on.
       </p>
@@ -432,6 +432,7 @@ function ArrStatusBadge({ view }: { view: ArrView }) {
 
 function PendingRow({
   item,
+  viaSeerr,
   checked,
   onToggle,
   globalTag,
@@ -447,6 +448,8 @@ function PendingRow({
   sending,
 }: {
   item: RequestCandidate;
+  /** True when requests route through Overseerr, which answers for films and shows alike. */
+  viaSeerr: boolean;
   checked: boolean;
   onToggle: (id: number) => void;
   globalTag: string;
@@ -466,7 +469,14 @@ function PendingRow({
    *  on the toolbar's, which may be scrolled off the top of a long queue. */
   sending: boolean;
 }) {
-  const app = item.media_type === "movie" ? "Radarr" : "Sonarr";
+  // Named from the ROUTE, not from the media type: the "already in {app}" line below is an
+  // explanation of a live status reading, and on the Overseerr route it was explaining a title's
+  // presence in an app nothing had asked.
+  const app = viaSeerr
+    ? "Overseerr"
+    : item.media_type === "movie"
+      ? "Radarr"
+      : "Sonarr";
   return (
     // A div, not the <label> this used to be: a <button> is a labelable element, so a label may not
     // contain one — the row now has three.
@@ -1298,7 +1308,10 @@ export function RequestsPage() {
       <PageHeader
         icon={Inbox}
         title="Requests"
-        subtitle="Titles your people wanted that aren’t in your library yet. Send the ones you want to Radarr or Sonarr."
+        // Names no app: this renders OUTSIDE the settings boundary, so the route is not known yet and
+        // naming one would flash the wrong answer on every load. The Send button below, which is
+        // inside the boundary, says where they are actually going.
+        subtitle="Titles your people wanted that aren’t in your library yet. Send the ones you want, reject the rest."
       />
 
       {/* Whether requests are ON is a fact about the SETTING, never about whether the inbox happens
@@ -1578,14 +1591,14 @@ export function RequestsPage() {
                                     send.mutate({ ids: selectedPending }),
                                   )
                                 }
-                                title="Add the selected titles to Radarr or Sonarr and start searching for them now."
+                                title={`Ask ${viaSeerr ? "Overseerr" : "Radarr or Sonarr"} for the selected titles now.`}
                               >
                                 {!send.isPending && <Send aria-hidden="true" />}
                                 Send{" "}
                                 {selectedPending.length > 0
                                   ? selectedPending.length
                                   : ""}{" "}
-                                to Radarr/Sonarr
+                                to {viaSeerr ? "Overseerr" : "Radarr/Sonarr"}
                               </Button>
                               <span
                                 aria-hidden="true"
@@ -1658,6 +1671,7 @@ export function RequestsPage() {
                                 <PendingRow
                                   key={item.id}
                                   item={item}
+                                  viaSeerr={viaSeerr}
                                   checked={selected.has(item.id)}
                                   onToggle={toggle}
                                   globalTag={globalTag}
@@ -1703,7 +1717,7 @@ export function RequestsPage() {
                       <section className="space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <h2 className="text-sm font-medium text-muted-foreground">
-                            Sent to Radarr &amp; Sonarr
+                            Sent to {viaSeerr ? "Overseerr" : "Radarr & Sonarr"}
                           </h2>
                           {sentShown.length > 0 && (
                             <Button

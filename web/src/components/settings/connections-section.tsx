@@ -237,7 +237,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="overseerr"
           title="Overseerr / Jellyseerr"
-          purpose="An alternative to connecting Radarr and Sonarr directly: Shortlist files a request here and Overseerr fetches it, using its own quality settings and approval rules."
+          purpose="An alternative to connecting Radarr and Sonarr directly: Shortlist files a request here and it fetches the title, using its own quality settings and approval rules. Works with Overseerr, Jellyseerr and Seerr — they share one API."
           settings={settings}
           summary={settingString(settings, "requests.overseerr.url")}
           glyph={<Inbox aria-hidden className="text-primary" />}

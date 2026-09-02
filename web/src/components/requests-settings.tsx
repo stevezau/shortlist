@@ -345,8 +345,9 @@ function OverseerrCard({
           <div>
             <p className="font-medium">Overseerr / Jellyseerr</p>
             <p className="text-sm text-muted-foreground">
-              Files a request for films and shows alike. Overseerr decides the
-              quality, the folder and who approves it.
+              Files a request for films and shows alike, and it decides the
+              quality, the folder and who approves it. Overseerr, Jellyseerr and
+              Seerr all speak the same API, so any of them works here.
             </p>
           </div>
         </div>
