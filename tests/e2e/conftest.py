@@ -265,6 +265,11 @@ def reset_fake_plex(fake_plex) -> Iterator[FakePlexState]:
     _, _, state = fake_plex
     fresh = seed_state()
     state.collections.clear()
+    # A library a test ADDED, dropped before the next one runs. Only the extras: sections 1 and 2 are
+    # the objects `state.movies`/`state.shows` resolve through, so replacing them wholesale here
+    # would make the two lines below clear and then re-fill the same dict from itself.
+    for key in [key for key in state.sections if key not in fresh.sections]:
+        del state.sections[key]
     state.movies.clear()
     state.movies.update(fresh.movies)
     state.shows.clear()
@@ -280,6 +285,9 @@ def reset_fake_plex(fake_plex) -> Iterator[FakePlexState]:
     # has rated anything" failed depending purely on execution order. It passed locally and failed in
     # CI. If you add a field to FakePlexState that a test can write, add its reset here.
     state.user_ratings.clear()
+    # The same omission `user_ratings` was fixed for: a test calling `watch_episodes` left a show
+    # part-watched for whatever ran next, which is an order-dependent failure that passes locally.
+    state.partial_shows.clear()
     for account_id, keys in (
         (201, SARAH_WATCHED),
         (202, MIKE_WATCHED),

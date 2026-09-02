@@ -1483,7 +1483,16 @@ class RowPolicy:
             if item.media_type is MediaType.MOVIE:
                 self.watched_movies.add(tid)
             else:
-                self.watched_shows[tid] = (item.viewed_leaf_count or item.watch_count, item.leaf_count)
+                # KEEP THE FURTHEST-WATCHED COPY, never simply the last one seen. A show held in two
+                # Plex libraries arrives here as two items with the same tmdb_id, and history is
+                # newest-first, so a plain assignment let the OLDER copy overwrite the newer: someone
+                # who finished all 28 episodes in one library but sampled three in another landed in
+                # the engine as 3 of 28, stayed under `watched_show_pct`, and got recommended a show
+                # they had finished (issue #111). Movies are unaffected — that side is a set.
+                progress = item.viewed_leaf_count or item.watch_count
+                seen = self.watched_shows.get(tid, (-1, None))[0]
+                if progress > seen:
+                    self.watched_shows[tid] = (progress, item.leaf_count)
 
     def mark_finished_titles(self) -> None:
         """Derive the finished-title set from the breakdown, once. Must run before any pool is built."""

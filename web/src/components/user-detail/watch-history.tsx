@@ -31,6 +31,18 @@ export function watchDepth(item: WatchedTitle): string | null {
   return item.watch_count > 1 ? `watched ${item.watch_count}×` : null;
 }
 
+/** Why an active filter found nothing, in the words of the filters that are on.
+ *
+ *  The combination worth naming is a type and a library that can't both be true — a TV library holds
+ *  no movies — which otherwise looks like a broken page rather than an impossible question.
+ */
+function emptyFilterHint(mediaType: string, library: string): string {
+  const type = mediaType === "movie" ? "movies" : "shows";
+  if (mediaType && library) return `No ${type} watched in ${library}.`;
+  if (library) return `Nothing watched in ${library} yet.`;
+  return "No watched title of that type yet.";
+}
+
 /** A user's watched set, searchable — read from Shortlist's cache rather than live from Plex.
  *
  *  That choice is the point: this is the SAME set every recommendation is filtered against, so the
@@ -52,9 +64,15 @@ export function WatchHistory({
 }) {
   const [search, setSearch] = useState("");
   const [mediaType, setMediaType] = useState<"" | "movie" | "show">("");
+  const [library, setLibrary] = useState("");
   const [limit, setLimit] = useState(PAGE);
   const debounced = useDebouncedValue(search, 250);
-  const query = useUserWatched(userId, { q: debounced, mediaType, limit });
+  const query = useUserWatched(userId, {
+    q: debounced,
+    mediaType,
+    library,
+    limit,
+  });
   const block = useBlockSeed(userId);
   const alreadyBlocked = new Set(
     blockedSeeds(user?.prefs).map((seed) => seed.tmdb_id),
@@ -66,6 +84,14 @@ export function WatchHistory({
     setLimit(PAGE);
     next();
   };
+
+  // Read off the last page rather than a second request: the response carries every library this
+  // person has watched in, unnarrowed by the current filter. The selected one is unioned in so a
+  // library renamed in Plex between requests can still be seen and cleared, rather than leaving a
+  // blank control with a filter silently applied.
+  const libraries = Array.from(
+    new Set([...(query.data?.libraries ?? []), ...(library ? [library] : [])]),
+  ).sort();
 
   return (
     <div className="space-y-4">
@@ -84,16 +110,36 @@ export function WatchHistory({
             onChange={(e) => reset(() => setSearch(e.target.value))}
           />
         </div>
-        <Segmented<"" | "movie" | "show">
-          value={mediaType}
-          ariaLabel="Filter by type"
-          options={[
-            { value: "", label: "All" },
-            { value: "movie", label: "Movies" },
-            { value: "show", label: "Shows" },
-          ]}
-          onChange={(value) => reset(() => setMediaType(value))}
-        />
+        <div className="flex items-center gap-2">
+          <Segmented<"" | "movie" | "show">
+            value={mediaType}
+            ariaLabel="Filter by type"
+            options={[
+              { value: "", label: "All" },
+              { value: "movie", label: "Movies" },
+              { value: "show", label: "Shows" },
+            ]}
+            onChange={(value) => reset(() => setMediaType(value))}
+          />
+          {/* A dropdown rather than more buttons: library counts vary from two to a dozen between
+              servers, and a segmented row of a dozen wrecks the toolbar. Hidden entirely when there
+              is only one — the control could then only ever say "All libraries". */}
+          {libraries.length > 1 && (
+            <select
+              value={library}
+              onChange={(e) => reset(() => setLibrary(e.target.value))}
+              aria-label="Filter by library"
+              className="h-9 rounded-md border bg-background px-2 text-sm"
+            >
+              <option value="">All libraries</option>
+              {libraries.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
       </div>
 
       <QueryBoundary
@@ -101,13 +147,13 @@ export function WatchHistory({
         skeleton={<Skeleton className="h-40 w-full" />}
         isEmpty={(page) => page.items.length === 0}
         empty={
-          debounced || mediaType ? (
+          debounced || mediaType || library ? (
             <EmptyState
               title="Nothing matches that"
               hint={
                 debounced
                   ? `No watched title contains “${debounced}”. Their history may not have synced yet — check the count below the list.`
-                  : "No watched title of that type yet."
+                  : emptyFilterHint(mediaType, library)
               }
             />
           ) : (
@@ -136,6 +182,15 @@ export function WatchHistory({
                           ({item.year})
                         </span>
                       ) : null}
+                      {/* Which Plex libraries hold it. Two names is a title stored twice — this row
+                          used to be two rows, each with its own Block button that did the same
+                          thing. Empty for a watch cached before the name was recorded; the next sync
+                          fills it in, and no line is better than a guessed one. */}
+                      {item.libraries.length > 0 && (
+                        <span className="block text-xs text-muted-foreground/80">
+                          {item.libraries.join(" · ")}
+                        </span>
+                      )}
                     </span>
                     <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
                       {item.media_type === "show" ? "Show" : "Movie"}
@@ -205,10 +260,14 @@ function SyncFooter({ page, shown }: { page: WatchedPage; shown: number }) {
   return (
     <div className="space-y-1.5 border-t pt-3 text-xs text-muted-foreground">
       <p>
-        Showing {shown} of {page.total}
+        Showing {shown} of {page.total} titles
+        {/* "library copies", not "titles": this is a sum of per-library row counts, so a server
+            holding anything twice makes it larger than the total above. Two numbers that look like
+            the same number and disagree read as a bug. */}
         {page.synced_titles
-          ? ` · ${page.synced_titles} titles synced`
-          : ""} ·{" "}
+          ? ` · ${page.synced_titles} library copies synced`
+          : ""}{" "}
+        ·{" "}
         {page.last_full_sync_at ? (
           <>last full sync {timeAgo(page.last_full_sync_at)}</>
         ) : (

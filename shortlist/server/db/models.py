@@ -668,6 +668,12 @@ class WatchedTitle(Base):
     # CASCADE: this is a cache of what the PMS already knows. See User's cascade policy.
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     section_key: Mapped[str] = mapped_column(String(64))
+    # The library's DISPLAY name ("4K Movies"), beside the stable key — the same pair `Pick` carries.
+    # Stored rather than resolved on read because the name lives on the PMS, and the watched page is
+    # deliberately a pure DB read: looking it up would make the page fail whenever Plex is down.
+    # "" on rows written before 0087 and on any row whose sync did not know the name; the page shows
+    # no library for those rather than a guess, and the next sync fills them in.
+    library: Mapped[str] = mapped_column(String(255), default="", server_default="")
     # Plex's own id for the item in this library — the stable key within a section, and what an
     # incremental upsert matches on.
     rating_key: Mapped[int] = mapped_column(Integer)

@@ -192,10 +192,13 @@ export type TransferResult = Schemas["TransferOut"];
 /** A transfer that can still be undone (GET /api/watching-account/snapshots). */
 export type WatchSnapshot = Schemas["SnapshotOut"];
 
-/** What the watch-history panel is filtering by. "" = every type. */
+/** What the watch-history panel is filtering by. "" = every type, and every library. */
 export type WatchedFilters = {
   q: string;
   mediaType: "" | "movie" | "show";
+  /** A Plex library's display name. Selects which titles show; a shown row still names every
+   *  library it lives in, so filtering to "4K Movies" can return a row marked "Movies · 4K Movies". */
+  library: string;
   limit: number;
 };
 

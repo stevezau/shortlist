@@ -173,7 +173,12 @@ class WatchItemOut(PassthroughModel):
 
 
 class WatchedTitleOut(PassthroughModel):
-    """One title from the cached watched set — the set recommendations are actually filtered against."""
+    """One TITLE from the cached watched set — the set recommendations are actually filtered against.
+
+    One title, not one stored row: a title held in two Plex libraries is cached once per library, and
+    those copies are merged here (issue #111). `libraries` names the ones it was found in, and every
+    other field is merged to the claim the engine acts on — see `_merge_watched_copies`.
+    """
 
     title: str
     tmdb_id: int | None
@@ -181,6 +186,10 @@ class WatchedTitleOut(PassthroughModel):
     watched_at: str
     year: int | None
     watch_count: int
+    # Display names of the Plex libraries holding this title, sorted. Usually one; two or more is the
+    # duplicate this page used to render as separate rows. Empty for rows cached before 0087, whose
+    # library name is filled in by that person's next sync.
+    libraries: list[str]
     # A show's progress straight from Plex. Both None for movies and for anything reporting no
     # episode totals — which is NOT the same claim as "none of it watched", so the UI must not
     # render 0 of 0 for it.
@@ -200,9 +209,17 @@ class WatchedPageOut(PassthroughModel):
     """
 
     items: list[WatchedTitleOut]
+    # How many TITLES match the filters — the same thing `items` counts. Smaller than `synced_titles`
+    # on a server that holds anything in two libraries.
     total: int
+    # Every library this person has a cached watch in, sorted, for the page's library filter. Never
+    # narrowed by the `library` parameter, or picking one would empty the control that picked it.
+    libraries: list[str]
     # None when any library has never had a full read — see `user_watched`.
     last_full_sync_at: str | None
+    # Rows in the cache: one per library COPY, summed across this person's libraries. Deliberately
+    # not the same number as `total` — the UI says "library copies" so the two can't read as a
+    # contradiction.
     synced_titles: int
     # At or below this 0..10 rating, a title stops seeding this person's rows. None = Plex ratings
     # are switched off server-wide, so no rating is acting on anything.
@@ -674,6 +691,7 @@ async def user_watched(
     request: Request,
     q: str = Query("", max_length=200, description="Case-insensitive substring of the title."),
     media_type: str = Query("", pattern="^(movie|show)?$"),
+    library: str = Query("", max_length=255, description="Display name of a Plex library; empty for all."),
     limit: int = Query(25, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> dict:
@@ -681,9 +699,12 @@ async def user_watched(
 
     Reads the local `watched_titles` cache, so unlike `/history` it never touches Plex: it is a DB
     query, it can search the WHOLE set rather than the page on screen, and it shows the same titles
-    the recommender excludes from.
+    the recommender excludes from. One row per TITLE — a title held in two libraries is merged, and
+    names both.
     """
-    page = request.app.state.run_service.user_watched(user_id, q=q, media_type=media_type, limit=limit, offset=offset)
+    page = request.app.state.run_service.user_watched(
+        user_id, q=q, media_type=media_type, library=library, limit=limit, offset=offset
+    )
     if page is None:
         raise HTTPException(status_code=404, detail="user not found")
     return page

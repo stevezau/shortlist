@@ -2453,7 +2453,8 @@ export interface paths {
          *
          *     Reads the local `watched_titles` cache, so unlike `/history` it never touches Plex: it is a DB
          *     query, it can search the WHOLE set rather than the page on screen, and it shows the same titles
-         *     the recommender excludes from.
+         *     the recommender excludes from. One row per TITLE — a title held in two libraries is merged, and
+         *     names both.
          */
         get: operations["user_watched_api_users__user_id__watched_get"];
         put?: never;
@@ -5492,6 +5493,8 @@ export interface components {
             items: components["schemas"]["WatchedTitleOut"][];
             /** Last Full Sync At */
             last_full_sync_at: string | null;
+            /** Libraries */
+            libraries: string[];
             /** Rated Count */
             rated_count: number;
             /** Ratings Trusted */
@@ -5505,11 +5508,17 @@ export interface components {
         };
         /**
          * WatchedTitleOut
-         * @description One title from the cached watched set — the set recommendations are actually filtered against.
+         * @description One TITLE from the cached watched set — the set recommendations are actually filtered against.
+         *
+         *     One title, not one stored row: a title held in two Plex libraries is cached once per library, and
+         *     those copies are merged here (issue #111). `libraries` names the ones it was found in, and every
+         *     other field is merged to the claim the engine acts on — see `_merge_watched_copies`.
          */
         WatchedTitleOut: {
             /** Leaf Count */
             leaf_count: number | null;
+            /** Libraries */
+            libraries: string[];
             /** Media Type */
             media_type: string;
             /** Title */
@@ -8692,6 +8701,8 @@ export interface operations {
                 /** @description Case-insensitive substring of the title. */
                 q?: string;
                 media_type?: string;
+                /** @description Display name of a Plex library; empty for all. */
+                library?: string;
                 limit?: number;
                 offset?: number;
             };

@@ -4,8 +4,11 @@ not be recommended back to a user (issue #12: in-progress shows were being recom
 The counts are Plex's OWN per-user ``viewedLeafCount`` / ``leafCount`` (marks included), passed to
 ``_watched_titles`` as ``{tmdb_id: (viewed_episodes, total_episodes)}``."""
 
-from shortlist.engine.models import MediaType
-from shortlist.engine.rows import _engaged_floor, _watched_titles
+from datetime import UTC, datetime
+from unittest.mock import MagicMock
+
+from shortlist.engine.models import MediaType, WatchedItem
+from shortlist.engine.rows import RowPolicy, _engaged_floor, _watched_titles
 
 
 class TestWatchedShowFilter:
@@ -149,3 +152,81 @@ class TestWhatAZeroPctRowExcludes:
         """
         assert (100, MediaType.SHOW) in self._excluded(set(), {100: (0, None)})
         assert (101, MediaType.SHOW) in self._excluded(set(), {101: (0, 0)})
+
+
+class TestBreakdownAcrossLibraryCopies:
+    """A show held in two Plex libraries arrives as TWO history items with the same tmdb_id.
+
+    `load_watched_breakdown` keys `watched_shows` on the tmdb_id, so before issue #111 the last item
+    written won — and history is newest-first, which made that the OLDEST, least-watched copy.
+    Someone who finished all 28 episodes in one library but sampled three in another landed in the
+    engine as 3 of 28, fell under the finished bar, and got recommended a show they had finished.
+    """
+
+    @staticmethod
+    def _policy(history: list[WatchedItem]) -> RowPolicy:
+        """A RowPolicy with only what `load_watched_breakdown` and `mark_finished_titles` read."""
+        return RowPolicy(
+            ctx=MagicMock(),
+            user=MagicMock(history=history),
+            cfg=MagicMock(watched_show_pct=0.8),
+            specs=[],
+            library_index={},
+            report=MagicMock(),
+            resolve=lambda item: None,
+        )
+
+    @staticmethod
+    def _copy(viewed: int, total: int, *, watched_at: datetime) -> WatchedItem:
+        return WatchedItem(
+            title="The Bear",
+            media_type=MediaType.SHOW,
+            watched_at=watched_at,
+            tmdb_id=500,
+            viewed_leaf_count=viewed,
+            leaf_count=total,
+            watch_count=viewed,
+        )
+
+    def test_the_furthest_watched_copy_wins_whatever_order_history_arrives_in(self):
+        finished = self._copy(28, 28, watched_at=datetime(2026, 8, 20, tzinfo=UTC))
+        sampled = self._copy(3, 28, watched_at=datetime(2026, 1, 5, tzinfo=UTC))
+
+        newest_first = self._policy([finished, sampled])
+        newest_first.load_watched_breakdown()
+        oldest_first = self._policy([sampled, finished])
+        oldest_first.load_watched_breakdown()
+
+        assert newest_first.watched_shows[500] == (28, 28)
+        assert oldest_first.watched_shows[500] == (28, 28)
+
+    def test_a_show_finished_in_one_library_is_not_recommended_back(self):
+        """The symptom the merge exists to stop: real history order (newest first), and the sampled
+        copy is the older one — exactly what a last-write-wins assignment would keep."""
+        policy = self._policy(
+            [
+                self._copy(28, 28, watched_at=datetime(2026, 8, 20, tzinfo=UTC)),
+                self._copy(3, 28, watched_at=datetime(2026, 1, 5, tzinfo=UTC)),
+            ]
+        )
+
+        policy.load_watched_breakdown()
+        policy.mark_finished_titles()
+
+        assert (500, MediaType.SHOW) in policy.watched_titles
+
+    def test_a_show_genuinely_only_sampled_in_both_libraries_stays_eligible(self):
+        """The other half of the matrix — keeping the deepest copy must not mark a show finished that
+        nobody got far into. 3 of 28 is under the 15%-scaled engaged floor."""
+        policy = self._policy(
+            [
+                self._copy(3, 28, watched_at=datetime(2026, 8, 20, tzinfo=UTC)),
+                self._copy(2, 28, watched_at=datetime(2026, 1, 5, tzinfo=UTC)),
+            ]
+        )
+
+        policy.load_watched_breakdown()
+        policy.mark_finished_titles()
+
+        assert policy.watched_shows[500] == (3, 28)
+        assert (500, MediaType.SHOW) not in policy.watched_titles

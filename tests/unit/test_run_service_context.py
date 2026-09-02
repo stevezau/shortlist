@@ -1646,6 +1646,361 @@ class TestUserWatched:
         assert page["items"][0]["watched_at"].startswith("2026-08-09")
 
 
+class TestUserWatchedMergesLibraryCopies:
+    """One row per TITLE, not per stored row (issue #111).
+
+    `watched_titles` is unique on `(user, section_key, rating_key)`, so a title held in two Plex
+    libraries is two rows and the page listed it twice — with two Block buttons that both send the
+    same TMDB id. These cover the merge, the paging honesty that depends on grouping happening in
+    SQL, and the library filter.
+    """
+
+    @staticmethod
+    def _copy(**kwargs):
+        from datetime import UTC, datetime
+
+        from shortlist.server.db.models import WatchedTitle
+
+        defaults = {
+            "user_id": 1,
+            "media_type": "show",
+            "watch_count": 1,
+            "viewed_at": datetime(2026, 8, 1, tzinfo=UTC),
+        }
+        return WatchedTitle(**{**defaults, **kwargs})
+
+    def _seed(self, sessions):
+        """Sarah watched The Bear in two libraries and Dune in two; Teacup lives in one."""
+        from datetime import UTC, datetime
+
+        with sessions() as session:
+            session.add(User(id=1, plex_account_id=1, username="sarah", slug="sarah"))
+            session.add(User(id=2, plex_account_id=2, username="mike", slug="mike"))
+            session.add_all(
+                [
+                    # The Bear: finished in TV Shows recently, sampled in 4K TV long ago. The older,
+                    # shallower copy is the one a last-write-wins merge would keep.
+                    self._copy(
+                        section_key="1",
+                        library="TV Shows",
+                        rating_key=100,
+                        tmdb_id=500,
+                        title="The Bear",
+                        year=2022,
+                        viewed_leaf_count=28,
+                        leaf_count=28,
+                        user_rating=9.0,
+                        viewed_at=datetime(2026, 8, 20, tzinfo=UTC),
+                    ),
+                    self._copy(
+                        section_key="2",
+                        library="4K TV",
+                        rating_key=200,
+                        tmdb_id=500,
+                        title="The Bear",
+                        year=2022,
+                        viewed_leaf_count=3,
+                        leaf_count=28,
+                        user_rating=4.0,
+                        viewed_at=datetime(2026, 1, 5, tzinfo=UTC),
+                    ),
+                    self._copy(
+                        section_key="3",
+                        library="Movies",
+                        rating_key=300,
+                        tmdb_id=600,
+                        media_type="movie",
+                        title="Dune: Part Two",
+                        year=2024,
+                        watch_count=2,
+                        viewed_at=datetime(2026, 8, 10, tzinfo=UTC),
+                    ),
+                    self._copy(
+                        section_key="4",
+                        library="4K Movies",
+                        rating_key=400,
+                        tmdb_id=600,
+                        media_type="movie",
+                        title="Dune: Part Two",
+                        year=2024,
+                        watch_count=1,
+                        viewed_at=datetime(2026, 8, 9, tzinfo=UTC),
+                    ),
+                    self._copy(
+                        section_key="1",
+                        library="TV Shows",
+                        rating_key=500,
+                        tmdb_id=700,
+                        title="Teacup",
+                        year=2024,
+                        viewed_leaf_count=3,
+                        leaf_count=8,
+                        viewed_at=datetime(2026, 8, 15, tzinfo=UTC),
+                    ),
+                    # Mike's rows deliberately COLLIDE with sarah's on both group keys — the same
+                    # tmdb_id, and the same GUID-less title — so a member read that forgot to scope
+                    # by user would merge his library into her row rather than failing quietly.
+                    self._copy(user_id=2, section_key="9", library="Mike Only", rating_key=900, tmdb_id=800, title="X"),
+                    self._copy(
+                        user_id=2,
+                        section_key="9",
+                        library="Mike Only",
+                        rating_key=901,
+                        tmdb_id=None,
+                        title="No GUID One",
+                    ),
+                ]
+            )
+            session.commit()
+
+    def test_a_title_in_two_libraries_is_one_row_naming_both(self, service, sessions):
+        self._seed(sessions)
+
+        items = service.user_watched(1)["items"]
+
+        assert [i["title"] for i in items] == ["The Bear", "Teacup", "Dune: Part Two"]
+        by_title = {i["title"]: i for i in items}
+        assert by_title["The Bear"]["libraries"] == ["4K TV", "TV Shows"]
+        assert by_title["Teacup"]["libraries"] == ["TV Shows"]
+
+    def test_total_counts_titles_not_stored_copies(self, service, sessions):
+        """The footer and the "Show 50 more" button read this. Counting copies while the list counts
+        titles is how a total starts disagreeing with the rows under it."""
+        self._seed(sessions)
+
+        page = service.user_watched(1)
+
+        assert page["total"] == 3
+        assert page["synced_titles"] == 0  # no sync state seeded; copies, not titles, when there is
+
+    def test_a_page_is_not_short_when_it_contains_duplicates(self, service, sessions):
+        """The reason grouping happens in SQL rather than over the fetched rows: merging after the
+        LIMIT would turn a page of 2 into a page of 1."""
+        self._seed(sessions)
+
+        first = service.user_watched(1, limit=2)
+        second = service.user_watched(1, limit=2, offset=2)
+
+        assert [i["title"] for i in first["items"]] == ["The Bear", "Teacup"]
+        assert [i["title"] for i in second["items"]] == ["Dune: Part Two"]
+
+    def test_the_merged_row_reports_the_newest_watch_and_the_deepest_progress(self, service, sessions):
+        self._seed(sessions)
+
+        bear = next(i for i in service.user_watched(1)["items"] if i["title"] == "The Bear")
+
+        assert bear["watched_at"].startswith("2026-08-20")
+        assert (bear["viewed_leaf_count"], bear["leaf_count"]) == (28, 28)
+
+    def test_progress_is_taken_as_a_pair_from_one_copy(self, service, sessions):
+        """Both numbers come from the SAME copy — the one furthest through.
+
+        Deliberately built so independent maxima give a different answer: the copy they got furthest
+        through is the SHORTER one, so `max(viewed)=10` beside `max(total)=28` renders "10 of 28",
+        a claim neither copy on the server supports and one that disagrees with the finished-show
+        rule the engine applies to the same pair.
+        """
+        self._seed(sessions)
+        with sessions() as session:
+            session.add_all(
+                [
+                    self._copy(
+                        section_key="5",
+                        library="Season One Only",
+                        rating_key=101,
+                        tmdb_id=800,
+                        title="Cut Short",
+                        viewed_leaf_count=10,
+                        leaf_count=10,
+                    ),
+                    self._copy(
+                        section_key="1",
+                        library="TV Shows",
+                        rating_key=102,
+                        tmdb_id=800,
+                        title="Cut Short",
+                        viewed_leaf_count=3,
+                        leaf_count=28,
+                    ),
+                ]
+            )
+            session.commit()
+
+        item = next(i for i in service.user_watched(1)["items"] if i["title"] == "Cut Short")
+
+        assert (item["viewed_leaf_count"], item["leaf_count"]) == (10, 10)
+        # Mike holds tmdb_id 800 too. His copy carries no episode counts, so it could never win
+        # `deepest` — only the library list can show whether the member read reached across users.
+        assert item["libraries"] == ["Season One Only", "TV Shows"]
+
+    def test_watch_counts_are_summed_across_copies(self, service, sessions):
+        """Two plays of the HD file and one of the 4K file is three plays of the film — the same sum
+        `derive_seeds` makes, so the page and the seed weighting agree."""
+        self._seed(sessions)
+
+        dune = next(i for i in service.user_watched(1)["items"] if i["title"] == "Dune: Part Two")
+
+        assert dune["watch_count"] == 3
+
+    def test_the_lowest_rating_wins_because_that_is_the_one_the_engine_acts_on(self, service, sessions):
+        """`disliked_seed_keys` drops a title when ANY of its rows is at or below the threshold. Show
+        the 9 and the page would hide the 4 that is the reason it stopped seeding."""
+        self._seed(sessions)
+
+        bear = next(i for i in service.user_watched(1)["items"] if i["title"] == "The Bear")
+
+        assert bear["user_rating"] == 4.0
+
+    def test_the_library_filter_selects_titles_but_the_row_still_names_every_library(self, service, sessions):
+        """Filtering to 4K TV and seeing "4K TV · TV Shows" is the duplicate you went looking for."""
+        self._seed(sessions)
+
+        page = service.user_watched(1, library="4K TV")
+
+        assert [i["title"] for i in page["items"]] == ["The Bear"]
+        assert page["items"][0]["libraries"] == ["4K TV", "TV Shows"]
+        assert page["total"] == 1
+
+    def test_the_library_filter_composes_with_search_and_media_type(self, service, sessions):
+        self._seed(sessions)
+
+        assert service.user_watched(1, library="Movies", media_type="movie")["total"] == 1
+        assert service.user_watched(1, library="Movies", media_type="show")["total"] == 0
+        assert service.user_watched(1, library="TV Shows", q="bear")["total"] == 1
+
+    def test_the_library_list_is_every_library_this_person_watched_in(self, service, sessions):
+        """Never narrowed by the filter — picking one would empty the control that picked it — and
+        never another person's."""
+        self._seed(sessions)
+
+        assert service.user_watched(1)["libraries"] == ["4K Movies", "4K TV", "Movies", "TV Shows"]
+        assert service.user_watched(1, library="Movies")["libraries"] == ["4K Movies", "4K TV", "Movies", "TV Shows"]
+        assert service.user_watched(2)["libraries"] == ["Mike Only"]
+
+    def test_a_row_cached_before_0087_merges_without_a_blank_library(self, service, sessions):
+        """Its library name is unknown until the next sync. The page must show one name, not one name
+        and a stray separator."""
+        self._seed(sessions)
+        with sessions() as session:
+            session.add(self._copy(section_key="6", library="", rating_key=102, tmdb_id=700, title="Teacup"))
+            session.commit()
+
+        page = service.user_watched(1)
+
+        assert next(i for i in page["items"] if i["title"] == "Teacup")["libraries"] == ["TV Shows"]
+        assert "" not in page["libraries"]
+
+    def test_titles_with_no_tmdb_id_group_by_title_not_all_together(self, service, sessions):
+        """SQL's GROUP BY treats every NULL as equal, so grouping on the id alone would collapse every
+        title Plex gave no `tmdb://` GUID into a single line."""
+        self._seed(sessions)
+        with sessions() as session:
+            session.add_all(
+                [
+                    self._copy(section_key="1", library="TV Shows", rating_key=111, tmdb_id=None, title="No GUID One"),
+                    self._copy(section_key="1", library="TV Shows", rating_key=112, tmdb_id=None, title="No GUID Two"),
+                    self._copy(section_key="2", library="4K TV", rating_key=113, tmdb_id=None, title="No GUID One"),
+                ]
+            )
+            session.commit()
+
+        page = service.user_watched(1)
+        titles = [i["title"] for i in page["items"]]
+
+        assert titles.count("No GUID One") == 1
+        assert titles.count("No GUID Two") == 1
+        assert page["total"] == 5
+        # Not "Mike Only": with no tmdb_id the copies are matched on TITLE, and mike has a row under
+        # this exact title. Scoping is the only thing keeping his library off her row.
+        assert next(i for i in page["items"] if i["title"] == "No GUID One")["libraries"] == ["4K TV", "TV Shows"]
+
+    def test_an_accented_title_with_no_tmdb_id_still_reaches_the_page(self, service, sessions):
+        """SQLite's `lower()` is ASCII-only; Python's is not.
+
+        Building the group key in SQL and rebuilding it in Python gave "Élite" one side and "élite"
+        the other, so a GUID-less title with any uppercase non-ASCII letter matched no key: it was
+        counted in `total` and dropped from `items`, with nothing logged. The page silently came back
+        short. Both sides now take the key from SQL.
+        """
+        self._seed(sessions)
+        with sessions() as session:
+            session.add_all(
+                [
+                    self._copy(section_key="1", library="TV Shows", rating_key=121, tmdb_id=None, title="ÉLITE"),
+                    self._copy(section_key="2", library="4K TV", rating_key=122, tmdb_id=None, title="ÉLITE"),
+                    self._copy(section_key="1", library="TV Shows", rating_key=123, tmdb_id=None, title="Plain ASCII"),
+                ]
+            )
+            session.commit()
+
+        page = service.user_watched(1)
+
+        assert len(page["items"]) == page["total"]
+        titles = [i["title"] for i in page["items"]]
+        assert titles.count("ÉLITE") == 1
+        assert next(i for i in page["items"] if i["title"] == "ÉLITE")["libraries"] == ["4K TV", "TV Shows"]
+
+    def test_a_tool_written_rating_does_not_displace_the_one_a_person_typed(self, service, sessions):
+        """`disliked_seed_keys` ignores fractional ratings — Kometa writes IMDb scores into the same
+        field. Showing the lowest value of ANY kind would render a merged row as "not a rating anyone
+        typed" while the engine was blocking the title on the other copy's typed 2."""
+        from shortlist.server.db.models import WatchedTitle
+
+        self._seed(sessions)
+        with sessions() as session:
+            session.query(WatchedTitle).filter(WatchedTitle.rating_key == 200).one().user_rating = 4.7
+            session.commit()
+
+        bear = next(i for i in service.user_watched(1)["items"] if i["title"] == "The Bear")
+
+        assert bear["user_rating"] == 9.0  # the typed one, not the tool's lower 4.7
+
+    def test_a_fractional_rating_still_shows_when_no_copy_carries_a_typed_one(self, service, sessions):
+        """Otherwise the account-level "another tool is writing your ratings" warning points at a row
+        showing no stars at all."""
+        from shortlist.server.db.models import WatchedTitle
+
+        self._seed(sessions)
+        with sessions() as session:
+            for key, value in ((100, 6.2), (200, 4.7)):
+                session.query(WatchedTitle).filter(WatchedTitle.rating_key == key).one().user_rating = value
+            session.commit()
+
+        bear = next(i for i in service.user_watched(1)["items"] if i["title"] == "The Bear")
+
+        assert bear["user_rating"] == 4.7
+
+    def test_rated_count_counts_titles_because_that_is_what_the_page_calls_them(self, service, sessions):
+        """It is rendered as "they've rated N titles", one line under a footer that now distinguishes
+        titles from library copies. The Bear is rated on both of its copies; counting rows would say
+        2, and the population that hits it is exactly the one the distrust warning is about — a tool
+        syncing scores across a Movies/4K Movies pair."""
+        self._seed(sessions)
+
+        assert service.user_watched(1)["rated_count"] == 1
+
+    def test_a_movie_and_a_show_sharing_a_tmdb_number_stay_apart(self, service, sessions):
+        """TMDB numbers movies and shows in separate namespaces — 1399 is both a film and Game of
+        Thrones. Grouping on the id alone would merge two titles nobody would call the same."""
+        self._seed(sessions)
+        with sessions() as session:
+            session.add(
+                self._copy(
+                    section_key="3",
+                    library="Movies",
+                    rating_key=114,
+                    media_type="movie",
+                    tmdb_id=700,
+                    title="Teacup the Film",
+                )
+            )
+            session.commit()
+
+        titles = [i["title"] for i in service.user_watched(1)["items"]]
+
+        assert "Teacup" in titles and "Teacup the Film" in titles
+
+
 class TestPlexRatingsReachTheEngineConfig:
     """The two settings collapse into one engine field, and "off" has to arrive as None.
 

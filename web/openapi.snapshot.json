@@ -7092,6 +7092,13 @@
             ],
             "title": "Last Full Sync At"
           },
+          "libraries": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Libraries",
+            "type": "array"
+          },
           "rated_count": {
             "title": "Rated Count",
             "type": "integer"
@@ -7112,6 +7119,7 @@
         "required": [
           "items",
           "total",
+          "libraries",
           "last_full_sync_at",
           "synced_titles",
           "dislike_threshold",
@@ -7123,7 +7131,7 @@
       },
       "WatchedTitleOut": {
         "additionalProperties": true,
-        "description": "One title from the cached watched set \u2014 the set recommendations are actually filtered against.",
+        "description": "One TITLE from the cached watched set \u2014 the set recommendations are actually filtered against.\n\nOne title, not one stored row: a title held in two Plex libraries is cached once per library, and\nthose copies are merged here (issue #111). `libraries` names the ones it was found in, and every\nother field is merged to the claim the engine acts on \u2014 see `_merge_watched_copies`.",
         "properties": {
           "leaf_count": {
             "anyOf": [
@@ -7135,6 +7143,13 @@
               }
             ],
             "title": "Leaf Count"
+          },
+          "libraries": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Libraries",
+            "type": "array"
           },
           "media_type": {
             "title": "Media Type",
@@ -7204,6 +7219,7 @@
           "watched_at",
           "year",
           "watch_count",
+          "libraries",
           "viewed_leaf_count",
           "leaf_count",
           "user_rating"
@@ -11566,7 +11582,7 @@
     },
     "/api/users/{user_id}/watched": {
       "get": {
-        "description": "Search one person's watched set.\n\nReads the local `watched_titles` cache, so unlike `/history` it never touches Plex: it is a DB\nquery, it can search the WHOLE set rather than the page on screen, and it shows the same titles\nthe recommender excludes from.",
+        "description": "Search one person's watched set.\n\nReads the local `watched_titles` cache, so unlike `/history` it never touches Plex: it is a DB\nquery, it can search the WHOLE set rather than the page on screen, and it shows the same titles\nthe recommender excludes from. One row per TITLE \u2014 a title held in two libraries is merged, and\nnames both.",
         "operationId": "user_watched_api_users__user_id__watched_get",
         "parameters": [
           {
@@ -11599,6 +11615,19 @@
               "default": "",
               "pattern": "^(movie|show)?$",
               "title": "Media Type",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Display name of a Plex library; empty for all.",
+            "in": "query",
+            "name": "library",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "Display name of a Plex library; empty for all.",
+              "maxLength": 255,
+              "title": "Library",
               "type": "string"
             }
           },

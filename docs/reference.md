@@ -239,11 +239,26 @@ POST /api/users/{id}/blocked-seeds {tmdb_id, title?, media_type?, year?} · DELE
      Titles that must never SEED this person's recommendations. The watch stays in their history, it just stops shaping their picks.
      Stored on `users.prefs`; an install that predates the richer shape holds bare TMDB ids and keeps working unchanged.
 GET  /api/users/{id}/history (recent watches read LIVE from Plex; each item carries `title`, `media_type`, `year`, plus `season`/`episode`/`episode_title` for TV)
-GET  /api/users/{id}/watched?q=&media_type=movie|show&limit=&offset= -> {items, total, last_full_sync_at, synced_titles, dislike_threshold, ratings_trusted, rated_count}
+GET  /api/users/{id}/watched?q=&media_type=movie|show&library=&limit=&offset= -> {items, total, libraries, last_full_sync_at, synced_titles, dislike_threshold, ratings_trusted, rated_count}
      Search this person's CACHED watched set — the same set recommendations are filtered against, so
      it can answer "I watched that, why was it recommended?". Unlike `/history` it never touches Plex,
      so it searches the whole set rather than the newest page, and each item carries `watch_count`
      plus `viewed_leaf_count`/`leaf_count` (null for movies) for the "3 of 8 episodes" progress.
+     ONE ITEM PER TITLE. A film or show held in more than one Plex library is cached once per library
+     and used to be listed once per library too; those copies are merged, and `libraries` on the item
+     names the ones it was found in (empty for a watch cached before v1.x, until that person's next
+     sync records it). The merge takes the newest watch date, the SUMMED play count, the progress of
+     whichever copy they got furthest through — as a pair, so both numbers come from one real copy —
+     and the lowest rating any copy carries THAT A PERSON COULD HAVE TYPED (a whole number), because
+     a single low rating is what stops a title seeding and `disliked_seed_keys` ignores fractional,
+     tool-written values. A fractional one is shown only when no copy carries a typed rating.
+     `total` counts titles; `synced_titles` counts stored library copies, so on a server
+     holding anything twice they differ on purpose.
+     `library` filters to titles held in that library, by its Plex display name. It SELECTS which
+     titles appear — each one still names every library it lives in, so filtering to "4K Movies" can
+     return a row marked "Movies · 4K Movies", which is the duplicate you were looking for. The
+     page-level `libraries` lists every library this person has a watch in, never narrowed by the
+     filter (narrowing it would empty the control that did the narrowing).
      `last_full_sync_at` is null while ANY library has never had a full read — the set is incomplete.
      Each item also carries `user_rating` — what THIS person rated it in Plex, 0–10, or null if they
      never did (nearly always). The three page-level rating fields say whether that rating is acting:

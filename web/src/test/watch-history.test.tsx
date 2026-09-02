@@ -38,6 +38,7 @@ function title(over: Partial<WatchedTitle>): WatchedTitle {
     viewed_leaf_count: 3,
     leaf_count: 8,
     user_rating: null,
+    libraries: ["TV Shows"],
     ...over,
   };
 }
@@ -46,6 +47,7 @@ function page(over: Partial<WatchedPage>): WatchedPage {
   return {
     items: [title({})],
     total: 1,
+    libraries: ["TV Shows"],
     last_full_sync_at: "2026-08-05T00:00:00+00:00",
     synced_titles: 1284,
     // Ratings on, nobody has rated anything — the default state for nearly every real person, and
@@ -121,6 +123,7 @@ describe("WatchHistory", () => {
       expect(getUserWatched).toHaveBeenCalledWith(7, {
         q: "bear",
         mediaType: "",
+        library: "",
         limit: 25,
       }),
     );
@@ -136,6 +139,7 @@ describe("WatchHistory", () => {
       expect(getUserWatched).toHaveBeenCalledWith(7, {
         q: "",
         mediaType: "movie",
+        library: "",
         limit: 25,
       }),
     );
@@ -151,6 +155,7 @@ describe("WatchHistory", () => {
       expect(getUserWatched).toHaveBeenCalledWith(7, {
         q: "",
         mediaType: "",
+        library: "",
         limit: 75,
       }),
     );
@@ -163,6 +168,7 @@ describe("WatchHistory", () => {
       expect(getUserWatched).toHaveBeenCalledWith(7, {
         q: "",
         mediaType: "show",
+        library: "",
         limit: 25,
       }),
     );
@@ -177,7 +183,9 @@ describe("WatchHistory", () => {
   it("says how complete the cached set is", async () => {
     renderPanel();
 
-    expect(await screen.findByText(/1284 titles synced/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/1284 library copies synced/),
+    ).toBeInTheDocument();
     expect(screen.getByText(/last full sync/)).toBeInTheDocument();
   });
 
@@ -265,5 +273,121 @@ describe("WatchHistory", () => {
       await screen.findByText(/another tool is writing plex ratings/i),
     ).toBeInTheDocument();
     expect(screen.getByText(/ignores all 1455 of them/i)).toBeInTheDocument();
+  });
+});
+
+describe("the library filter", () => {
+  const twoLibraries = () =>
+    page({
+      items: [title({ libraries: ["4K TV", "TV Shows"] })],
+      libraries: ["4K Movies", "4K TV", "Movies", "TV Shows"],
+    });
+
+  it("names the libraries a title was found in, under its name", async () => {
+    // Two names is a title stored twice — the row this page used to render as two rows, each with
+    // its own Block button doing the same global thing.
+    getUserWatched.mockResolvedValue(twoLibraries());
+    renderPanel();
+
+    expect(await screen.findByText("4K TV · TV Shows")).toBeInTheDocument();
+  });
+
+  it("shows one name, with no trailing separator, for a title in one library", async () => {
+    renderPanel();
+
+    expect(await screen.findByText("TV Shows")).toBeInTheDocument();
+    expect(screen.queryByText(/TV Shows ·/)).not.toBeInTheDocument();
+  });
+
+  it("renders no library line at all for a watch cached before the name was recorded", async () => {
+    // Its name arrives on that person's next sync. Asserting on the ELEMENT, not on its text: an
+    // empty `libraries` renders an empty string either way, so a text assertion here passes just as
+    // happily against a component that emits a blank line taking up space under every title.
+    getUserWatched.mockResolvedValue(
+      page({ items: [title({ libraries: [] })], libraries: [] }),
+    );
+    const { container } = renderPanel();
+    await screen.findByText("Teacup");
+
+    expect(container.querySelectorAll("li span.block")).toHaveLength(0);
+  });
+
+  it("sends the chosen library to the server", async () => {
+    getUserWatched.mockResolvedValue(twoLibraries());
+    renderPanel();
+    await screen.findByText("Teacup");
+
+    await userEvent.selectOptions(
+      screen.getByLabelText(/filter by library/i),
+      "4K Movies",
+    );
+
+    await waitFor(() =>
+      expect(getUserWatched).toHaveBeenCalledWith(7, {
+        q: "",
+        mediaType: "",
+        library: "4K Movies",
+        limit: 25,
+      }),
+    );
+  });
+
+  it("offers every library the person watched in, not just the ones on screen", async () => {
+    // The list is unnarrowed by the current filter on purpose — narrowing it would empty the control
+    // that did the narrowing, stranding the person on one library.
+    getUserWatched.mockResolvedValue(twoLibraries());
+    renderPanel();
+
+    const select = await screen.findByLabelText(/filter by library/i);
+    expect(
+      Array.from(select.querySelectorAll("option")).map((o) => o.textContent),
+    ).toEqual(["All libraries", "4K Movies", "4K TV", "Movies", "TV Shows"]);
+  });
+
+  it("hides the filter on a server with one library", async () => {
+    // It could only ever say "All libraries".
+    getUserWatched.mockResolvedValue(page({ libraries: ["TV Shows"] }));
+    renderPanel();
+    await screen.findByText("Teacup");
+
+    expect(screen.queryByLabelText(/filter by library/i)).not.toBeInTheDocument();
+  });
+
+  it("resets paging when the library changes", async () => {
+    getUserWatched.mockResolvedValue(page({ ...twoLibraries(), total: 100 }));
+    renderPanel();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /show 50 more/i }),
+    );
+
+    await userEvent.selectOptions(
+      screen.getByLabelText(/filter by library/i),
+      "Movies",
+    );
+
+    await waitFor(() =>
+      expect(getUserWatched).toHaveBeenCalledWith(7, {
+        q: "",
+        mediaType: "",
+        library: "Movies",
+        limit: 25,
+      }),
+    );
+  });
+
+  it("explains an impossible type-and-library combination rather than looking broken", async () => {
+    getUserWatched.mockResolvedValue(
+      page({ items: [], total: 0, libraries: ["4K Movies", "TV Shows"] }),
+    );
+    renderPanel();
+    await userEvent.selectOptions(
+      await screen.findByLabelText(/filter by library/i),
+      "4K Movies",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Shows" }));
+
+    expect(
+      await screen.findByText("No shows watched in 4K Movies."),
+    ).toBeInTheDocument();
   });
 });

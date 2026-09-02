@@ -67,6 +67,7 @@ def sync(
     capture=None,
     section=SECTION,
     covers_window=True,
+    library="",
 ):
     """Run one section sync against a reader that returns `items` verbatim, whatever it was asked for.
 
@@ -87,13 +88,23 @@ def sync(
 
     with sessions() as session:
         outcome = cache.sync_section(
-            session, profile(), user_id, section, MediaType.MOVIE, read, force_full=force_full, reconcile=reconcile
+            session,
+            profile(),
+            user_id,
+            section,
+            MediaType.MOVIE,
+            read,
+            library=library,
+            force_full=force_full,
+            reconcile=reconcile,
         )
         session.commit()
     return outcome
 
 
-def sync_pms(cache, sessions, user_id, library, *, force_full=False, reconcile=False, capture=None, section=SECTION):
+def sync_pms(
+    cache, sessions, user_id, library, *, force_full=False, reconcile=False, capture=None, section=SECTION, name=""
+):
     """Run one section sync against a reader modelling a HEALTHY PMS: `library` is what the server
     holds NOW, the walk returns everything in it viewed at or after `since`, and it claims to have
     covered the window.
@@ -117,7 +128,15 @@ def sync_pms(cache, sessions, user_id, library, *, force_full=False, reconcile=F
 
     with sessions() as session:
         outcome = cache.sync_section(
-            session, profile(), user_id, section, MediaType.MOVIE, read, force_full=force_full, reconcile=reconcile
+            session,
+            profile(),
+            user_id,
+            section,
+            MediaType.MOVIE,
+            read,
+            library=name,
+            force_full=force_full,
+            reconcile=reconcile,
         )
         session.commit()
     return outcome
@@ -709,3 +728,75 @@ class TestUserRatingSurvivesTheCache:
         with sessions() as session:
             (item,) = cache.watched_set(session, user_id)
         assert item.user_rating is None, "an un-rating must clear the column, not be skipped"
+
+
+class TestLibraryNameIsCached:
+    """The library's DISPLAY name is cached beside its key, because nothing else can supply it later.
+
+    The watched page groups a title's library copies into one row and names the libraries on it
+    (issue #111), and that page is deliberately a pure DB read — it never talks to Plex. So if the
+    sync doesn't record the name, no later read can recover it.
+    """
+
+    def _names(self, sessions, user_id) -> list[str]:
+        with sessions() as session:
+            return [row.library for row in session.query(WatchedTitle).filter(WatchedTitle.user_id == user_id)]
+
+    def test_the_name_the_sync_was_given_lands_on_the_row(self, sessions, user_id):
+        cache = WatchCache(sessions)
+
+        sync_pms(cache, sessions, user_id, [watched("Dune", tmdb_id=1)], name="4K Movies")
+
+        assert self._names(sessions, user_id) == ["4K Movies"]
+
+    def test_renaming_the_library_in_plex_updates_the_cached_name(self, sessions, user_id):
+        """The name is Plex's to change, and a stale one would mislabel every row from that library."""
+        cache = WatchCache(sessions)
+        sync_pms(cache, sessions, user_id, [watched("Dune", tmdb_id=1)], name="4K Movies")
+
+        sync_pms(cache, sessions, user_id, [watched("Dune", tmdb_id=1)], name="Movies (4K)", force_full=True)
+
+        assert self._names(sessions, user_id) == ["Movies (4K)"]
+
+    def test_a_sync_that_does_not_know_the_name_leaves_the_recorded_one_alone(self, sessions, user_id):
+        """Writing "" unconditionally would let any caller without a name blank one already on record,
+        and the page would lose the library line until the next sync put it back."""
+        cache = WatchCache(sessions)
+        sync_pms(cache, sessions, user_id, [watched("Dune", tmdb_id=1)], name="4K Movies")
+
+        sync_pms(cache, sessions, user_id, [watched("Dune", tmdb_id=1)], force_full=True)
+
+        assert self._names(sessions, user_id) == ["4K Movies"]
+
+    def test_an_incremental_read_renames_only_the_rows_it_returned(self, sessions, user_id):
+        """The other half of the rename matrix, stated rather than implied away.
+
+        `_upsert` only rewrites rows the read RETURNED, and an incremental read stops at the cursor —
+        so a title watched before it keeps the old library name while a recent one gets the new one,
+        and the same library briefly appears under two names in the filter. It has a one-sync ceiling
+        in production, because every real sync reads FULL (issue #108: `watch_sync.refresh_watched`
+        and `prefill_history` both pass `force_full=True`), which is the case the test above covers.
+        Pinned so nobody reads that test as a promise this path does not make.
+        """
+        cache = WatchCache(sessions)
+        old_watch = watched("Watched Last Month", tmdb_id=1, days_ago=30)
+        recent = watched("Watched Yesterday", tmdb_id=2, days_ago=1)
+        sync_pms(cache, sessions, user_id, [old_watch, recent], name="4K Movies")
+
+        sync_pms(cache, sessions, user_id, [old_watch, recent], name="Movies (4K)")
+
+        with sessions() as session:
+            names = {
+                row.title: row.library for row in session.query(WatchedTitle).filter(WatchedTitle.user_id == user_id)
+            }
+        assert names == {"Watched Last Month": "4K Movies", "Watched Yesterday": "Movies (4K)"}
+
+    def test_a_row_cached_before_the_name_existed_gets_one_on_the_next_sync(self, sessions, user_id):
+        """The upgrade path: 0087 backfills nothing, because the name lives on the PMS."""
+        cache = WatchCache(sessions)
+        sync_pms(cache, sessions, user_id, [watched("Dune", tmdb_id=1)])
+        assert self._names(sessions, user_id) == [""]
+
+        sync_pms(cache, sessions, user_id, [watched("Dune", tmdb_id=1)], name="Movies", force_full=True)
+
+        assert self._names(sessions, user_id) == ["Movies"]

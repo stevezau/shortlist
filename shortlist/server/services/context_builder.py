@@ -12,7 +12,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from loguru import logger
-from sqlalchemy import and_, func
+from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import Session, sessionmaker
 
 from shortlist.engine.clients.mdblist import MdbListClient
@@ -38,6 +38,7 @@ from shortlist.engine.models import (
     RowSpec,
     UserProfile,
     UserType,
+    is_human_rating,
     normalise_languages,
     row_language_mode_or_inherit,
     row_languages_or_inherit,
@@ -214,6 +215,123 @@ def _utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+#: How the watched page identifies ONE TITLE across the library copies of it (issue #111).
+#:
+#: ``(tmdb_id, media_type)`` is the identity every other module uses — never the id alone, because
+#: TMDB numbers movies and shows in separate namespaces (see `history.disliked_seed_keys`). A row
+#: with no ``tmdb://`` GUID has no id to group on, so it falls back to its own lowercased title;
+#: without that fallback SQL would group every unidentified title in the set into a single line,
+#: since `GROUP BY` treats all NULLs as equal.
+_WatchedKey = tuple[int | None, str, str]
+
+
+def _watched_group_columns() -> tuple:
+    """The GROUP BY columns behind `_WatchedKey`, in the order the key tuple carries them."""
+    no_id_title = case((WatchedTitle.tmdb_id.is_(None), func.lower(WatchedTitle.title)), else_="")
+    return (WatchedTitle.tmdb_id, no_id_title, WatchedTitle.media_type)
+
+
+def _watched_page_keys(query, true_date, *, limit: int, offset: int) -> tuple[list[_WatchedKey], int]:
+    """One page of watched TITLES, newest first, and how many titles the filters match in total.
+
+    Both come off a grouped query rather than the row list, so "Showing 25 of 412" counts the same
+    things the list does. Ordered by the group's most recent watch — a title watched last night in
+    one library and two years ago in another belongs at the top.
+    """
+    tmdb_id, no_id_title, media = _watched_group_columns()
+    last_watched = func.max(true_date).label("last_watched")
+    grouped = query.with_entities(tmdb_id, no_id_title.label("no_id_title"), media, last_watched).group_by(
+        tmdb_id, no_id_title, media
+    )
+    total = grouped.count()  # wraps the grouped SELECT, so this counts GROUPS, not rows
+    page = grouped.order_by(last_watched.desc()).limit(limit).offset(offset).all()
+    return [(row[0], row[1], row[2]) for row in page], total
+
+
+def _watched_copies(session: Session, user_id: int, keys: list[_WatchedKey]) -> dict[_WatchedKey, list[WatchedTitle]]:
+    """Every stored copy of the titles on this page, bucketed by key.
+
+    Deliberately NOT expressed as a row-value ``IN`` over the key tuples: a NULL `tmdb_id` compared
+    inside a tuple yields NULL, never true, so every title with no GUID would silently vanish from
+    the page. Matched on the two halves separately instead, then bucketed here.
+
+    The bucketing key is SELECTED from SQL rather than rebuilt in Python, because the two disagree.
+    SQLite's `lower()` is ASCII-only, so it leaves "ÉLITE" as "Élite" where `str.lower()` gives
+    "élite" — a GUID-less title with any uppercase non-ASCII letter would then never match the key
+    the page was built from, and would be dropped from `items` while still being counted in `total`.
+    One implementation of `lower()` decides both sides.
+
+    `q` is not re-applied here either. Two copies of one title can carry slightly different names, and
+    re-filtering would drop the copy that does not contain the search term — losing its library from
+    the row that the search DID match.
+    """
+    ids = {key[0] for key in keys if key[0] is not None}
+    titles = {key[1] for key in keys if key[0] is None}
+    if not ids and not titles:
+        return {}
+    rows = (
+        session.query(WatchedTitle, *_watched_group_columns())
+        .filter(
+            WatchedTitle.user_id == user_id,
+            or_(
+                WatchedTitle.tmdb_id.in_(ids),
+                and_(WatchedTitle.tmdb_id.is_(None), func.lower(WatchedTitle.title).in_(titles)),
+            ),
+        )
+        .all()
+    )
+    wanted = set(keys)
+    out: dict[_WatchedKey, list[WatchedTitle]] = {}
+    for row, tmdb_id, no_id_title, media in rows:
+        key = (tmdb_id, no_id_title, media)
+        if key in wanted:
+            out.setdefault(key, []).append(row)
+    return out
+
+
+def _merge_watched_copies(rows: list[WatchedTitle]) -> dict:
+    """Collapse one title's library copies into the single row the page renders.
+
+    Every field is merged to the claim the ENGINE would act on, so the page can never disagree with
+    the recommender about a title it is explaining:
+
+    * date, title, year — from the most recent copy; that is the watch the person remembers.
+    * `watch_count` — SUMMED: two plays of the HD file and one of the 4K file is three plays of the
+      film. The same sum `history.derive_seeds` makes for copies sharing a title, which is the normal
+      case — it groups on the title where this groups on the TMDB id, so two copies whose titles have
+      drifted are one row here and two seeds there.
+    * progress — taken as a PAIR from the copy furthest through, never as two independent maxima:
+      `max(viewed)` from a 10-episode copy beside `max(total)` from a 28-episode one would render
+      a "10 of 28" that no copy on the server supports.
+    * `user_rating` — the LOWEST any copy carries, preferring one a PERSON could have typed.
+      `disliked_seed_keys` drops a title when any of its rows is at or below the threshold, so
+      showing the highest would hide the two stars that are the reason it stopped seeding. It also
+      ignores fractional values (Kometa writes IMDb scores into the same field), so a tool-written
+      4.7 beside a typed 9 must not be shown as the acting rating either — the page would say the
+      rating is being disbelieved while the engine was blocking on the 9's copy. A fractional value
+      is still shown when NO copy carries a typed one, so the account-level warning has something
+      to point at.
+    """
+    newest = max(rows, key=lambda row: row.source_viewed_at or row.viewed_at)
+    deepest = max(rows, key=lambda row: row.viewed_leaf_count if row.viewed_leaf_count is not None else -1)
+    rated = [row.user_rating for row in rows if row.user_rating is not None]
+    ratings = [value for value in rated if is_human_rating(value)] or rated
+    return {
+        "title": newest.title,
+        "tmdb_id": newest.tmdb_id,
+        "media_type": newest.media_type,
+        "watched_at": (newest.source_viewed_at or newest.viewed_at).isoformat(),
+        "year": newest.year,
+        "watch_count": sum(row.watch_count or 0 for row in rows),
+        "viewed_leaf_count": deepest.viewed_leaf_count,
+        "leaf_count": deepest.leaf_count,
+        "user_rating": min(ratings) if ratings else None,
+        # Sorted so the line is stable between renders whatever order the rows came back in. Blanks
+        # dropped: a row from before 0087 knows no name, and "" would render as a stray separator.
+        "libraries": sorted({row.library for row in rows if row.library}),
+    }
 
 
 class ContextBuilder:
@@ -499,6 +617,7 @@ class ContextBuilder:
         *,
         q: str = "",
         media_type: str = "",
+        library: str = "",
         limit: int = 25,
         offset: int = 0,
     ) -> dict | None:
@@ -510,15 +629,26 @@ class ContextBuilder:
         list. The cost is honesty about staleness, which is why `last_full_sync_at` and
         `synced_titles` come back with the page and the UI states them.
 
+        ONE ROW PER TITLE, not per stored row (issue #111). `watched_titles` is unique on
+        `(user, section_key, rating_key)` — one row per library COPY — so a title held in two
+        libraries was listed twice, with two Block buttons that both send the same TMDB id. The
+        grouping happens in SQL rather than over the fetched page: merging after `LIMIT` would make
+        `total` count copies while the list counted titles, and a page of 25 rows would render as 23.
+
         Args:
             user_id: The person to read.
             q: Case-insensitive substring of the title. Empty matches everything.
             media_type: "movie" or "show" to filter; empty for both.
-            limit: Page size.
-            offset: Rows to skip, for paging.
+            library: Display name of a Plex library; only titles held there. Empty for all. It
+                SELECTS which titles appear — each one still names every library it lives in, so
+                filtering to "4K Movies" and seeing "Movies · 4K Movies" is the duplicate you were
+                looking for, not a bug.
+            limit: Page size, in titles.
+            offset: Titles to skip, for paging.
 
         Returns:
-            ``{items, total, last_full_sync_at, synced_titles}``, or None if the user doesn't exist.
+            ``{items, total, libraries, last_full_sync_at, synced_titles, ...}``, or None if the user
+            doesn't exist.
         """
         with self._sessions() as session:
             if session.get(User, user_id) is None:
@@ -532,11 +662,16 @@ class ContextBuilder:
                 query = query.filter(WatchedTitle.title.ilike(f"%{pattern}%", escape="\\"))
             if media_type in ("movie", "show"):
                 query = query.filter(WatchedTitle.media_type == media_type)
-            total = query.count()
+            if library:
+                query = query.filter(WatchedTitle.library == library)
             # The TRUE watch date, same as `WatchCache.watched_set` — a transferred history is dated
             # by when the person actually watched, not by the day the scrobbles were written.
             true_date = func.coalesce(WatchedTitle.source_viewed_at, WatchedTitle.viewed_at)
-            rows = query.order_by(true_date.desc()).limit(limit).offset(offset).all()
+            keys, total = _watched_page_keys(query, true_date, limit=limit, offset=offset)
+            # Read the copies back WITHOUT the library filter: the filter chose which titles are on
+            # the page, but a row that names only the library you filtered to would hide the very
+            # duplication this page exists to show.
+            rows = _watched_copies(session, user_id, keys)
             # Across ALL libraries: `watch_sync_state` is per (person, library), and the page's claim
             # is "your history is complete as of X". The OLDEST full read is the only honest X — one
             # library synced an hour ago says nothing about the one that hasn't synced since Tuesday.
@@ -544,21 +679,19 @@ class ContextBuilder:
             fulls = [s.last_full_at for s in states if s.last_full_at is not None]
             oldest_full = min(fulls) if fulls and len(fulls) == len(states) else None
             return {
-                "items": [
-                    {
-                        "title": row.title,
-                        "tmdb_id": row.tmdb_id,
-                        "media_type": row.media_type,
-                        "watched_at": (row.source_viewed_at or row.viewed_at).isoformat(),
-                        "year": row.year,
-                        "watch_count": row.watch_count,
-                        "viewed_leaf_count": row.viewed_leaf_count,
-                        "leaf_count": row.leaf_count,
-                        "user_rating": row.user_rating,
-                    }
-                    for row in rows
-                ],
+                "items": [_merge_watched_copies(rows[key]) for key in keys if key in rows],
                 "total": total,
+                # Every library this person has a cached watch in, for the page's filter — NOT
+                # filtered by `library`, or choosing one would empty the control that chose it.
+                # Blank names (rows written before 0087, or by a sync that didn't know) are dropped
+                # rather than offered as an unnamed option.
+                "libraries": [
+                    name
+                    for (name,) in session.query(WatchedTitle.library)
+                    .filter(WatchedTitle.user_id == user_id, WatchedTitle.library != "")
+                    .distinct()
+                    .order_by(WatchedTitle.library)
+                ],
                 # None when ANY library has never had a full read — "synced 4h ago" would be a false
                 # claim of completeness while a whole library is still missing from the set.
                 "last_full_sync_at": oldest_full.isoformat() if oldest_full else None,
@@ -590,8 +723,21 @@ class ContextBuilder:
         ]
         return {
             "dislike_threshold": threshold if enabled else None,
+            # Judged over the raw per-copy values, deliberately: that is the same multiset
+            # `ratings_are_trustworthy` sees inside a run, so the page and the engine reach the same
+            # verdict about the account.
             "ratings_trusted": ratings_are_trustworthy(ratings),
-            "rated_count": len(ratings),
+            # Counted over TITLES, though — it is rendered as "they've rated N titles", one line under
+            # a footer that now says "N titles · M library copies". A title rated on both its copies
+            # would otherwise be counted twice by the sentence claiming to count titles, and the
+            # population that hits it is exactly the one the distrust warning is about: a tool
+            # syncing scores across a Movies/4K Movies pair.
+            "rated_count": (
+                session.query(*_watched_group_columns())
+                .filter(WatchedTitle.user_id == user_id, WatchedTitle.user_rating.isnot(None))
+                .distinct()
+                .count()
+            ),
         }
 
     def _delivered_keys(self, session: Session) -> dict[tuple[str, str, str], int]:

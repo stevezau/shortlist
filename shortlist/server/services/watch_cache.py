@@ -122,6 +122,7 @@ class WatchCache:
         media_type: MediaType,
         read,
         *,
+        library: str = "",
         force_full: bool = False,
         reconcile: bool = False,
         now: datetime | None = None,
@@ -135,6 +136,9 @@ class WatchCache:
         A bare list carries no coverage claim, so it never deletes — see `_read_items`.
 
         Args:
+            library: The library's display name, for the watched page to group and filter on. Blank
+                from a caller that doesn't know it, which never CLEARS a name already on record —
+                see `_upsert`.
             force_full: Read the whole library rather than resuming from the cursor. Every sync sets
                 this (issue #108); it says nothing about whether anything may be DELETED.
             reconcile: May this pass drop cached titles the read did not return? Separate from
@@ -225,7 +229,7 @@ class WatchCache:
             )
 
         for item in items:
-            _upsert(session, user_id, section_key, media_type, item)
+            _upsert(session, user_id, section_key, media_type, item, library)
         session.flush()
 
         total = (
@@ -475,7 +479,14 @@ def _cache_key(item: WatchedItem) -> int | None:
     return -item.tmdb_id if item.tmdb_id else None
 
 
-def _upsert(session: Session, user_id: int, section_key: str, media_type: MediaType, item: WatchedItem) -> None:
+def _upsert(
+    session: Session,
+    user_id: int,
+    section_key: str,
+    media_type: MediaType,
+    item: WatchedItem,
+    library: str = "",
+) -> None:
     """Insert or refresh one title. Keyed on `rating_key`, which is Plex's own stable id within a
     section — so an overlap re-read updates a row rather than duplicating it."""
     rating_key = _cache_key(item)
@@ -497,6 +508,11 @@ def _upsert(session: Session, user_id: int, section_key: str, media_type: MediaT
         session.add(row)
     row.tmdb_id = item.tmdb_id
     row.media_type = media_type.value
+    # Only when the caller knows it. Writing "" unconditionally would let any caller that doesn't
+    # pass a name (an older test, a future one-off backfill) silently blank a name already on record,
+    # and the page would lose the library line until the next sync put it back.
+    if library:
+        row.library = library
     row.title = item.title or ""
     row.year = item.year
     row.watch_count = item.watch_count or 1

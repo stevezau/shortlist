@@ -345,11 +345,12 @@ export const api = {
 
   getUserWatched: (
     id: number,
-    { q, mediaType, limit }: WatchedFilters,
+    { q, mediaType, library, limit }: WatchedFilters,
   ): Promise<WatchedPage> => {
     const params = new URLSearchParams({ limit: String(limit) });
     if (q) params.set("q", q);
     if (mediaType) params.set("media_type", mediaType);
+    if (library) params.set("library", library);
     return request(`/api/users/${id}/watched?${params}`);
   },
 
