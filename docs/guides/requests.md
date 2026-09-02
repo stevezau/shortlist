@@ -5,11 +5,19 @@ heading: Requests (Radarr and Sonarr)
 nav_order: 6
 ---
 
-## Requests (Radarr / Sonarr)
+## Requests (Radarr / Sonarr, or Overseerr)
 
 Off by default. When on, Shortlist notices the titles your people's taste surfaced that your library
 doesn't have yet. That means everything the recommendation sources turned up, not just what made it
-into a row. It then asks Radarr (movies) or Sonarr (shows) to grab a few of the best ones on each run.
+into a row. It then asks for a few of the best ones on each run.
+
+You choose **where requests go**, under Settings → Requests:
+
+- **Radarr & Sonarr** (the default) — Shortlist adds the title itself, using a quality profile and
+  folder you pick here.
+- **Overseerr / Jellyseerr** — Shortlist files a request instead, and Overseerr fetches it using its
+  own quality settings, folder rules and approvals. See
+  [Requesting through Overseerr](#requesting-through-overseerr) below.
 
 Set it up under **Settings → Requests**:
 
@@ -57,6 +65,45 @@ Tags come in three layers, and a requested title carries the union of all that a
 A title three people want ends up with the global tag plus each of those people's tags and the tags
 of every per-person row they're in. Missing tags are created in Radarr/Sonarr on first use, exactly
 like the global one.
+
+### Requesting through Overseerr
+
+If you already run **Overseerr** or **Jellyseerr**, pointing Shortlist at it instead of at Radarr and
+Sonarr means what Shortlist asks for shows up alongside everything your users request, and gets the
+quality profile, folder and 4K routing you already configured there. Both products share one API, so
+one setting covers both.
+
+1. In Settings → **Connections**, fill in the **Overseerr / Jellyseerr** card with its address (e.g.
+   `http://localhost:5055`) and an **API key** (in Overseerr under _Settings → General_), and press
+   **Test**.
+2. In Settings → **Requests**, set **Where requests go** to **Overseerr / Jellyseerr**.
+3. Pick **Request as**.
+
+That third choice is the one worth thinking about. Your API key belongs to an admin, and admins
+normally auto-approve their own requests — so leaving it on **Server default** means Shortlist's
+picks go straight through to Radarr/Sonarr without anyone looking at them in Overseerr. That is fine
+if you want Shortlist's own guardrails and inbox to be the only gate.
+
+If you'd rather see them first, make a user in Overseerr called **Shortlist** with auto-approve
+turned off, and pick it here. Its requests then wait in Overseerr for your yes, clearly labelled as
+coming from Shortlist rather than from a person. Shortlist never creates that account for you — it
+only lists the accounts already there.
+
+Attributing requests to the person whose taste surfaced a title is deliberately not offered. They
+never asked for it, so it would spend their request quota and notify them about something they had
+no part in.
+
+**Two things work differently on this route:**
+
+- **Tags don't travel.** Overseerr's request API has no tags field, so the global **Tag added
+  items** setting and the per-person tags have nothing to attach to — those controls disappear from
+  the screen when you switch. The "Request as" account is the attribution instead.
+- **There's no blocklist.** Radarr and Sonarr keep an import-exclusion list ("never fetch this");
+  Overseerr has no equivalent, so a title you don't want has to be turned down in Shortlist's own
+  Requests inbox. A rejected title is never asked for again, so one **No** is enough.
+
+Everything else is unchanged: the same guardrails, the same auto-send bar, the same inbox. The only
+difference is who does the fetching.
 
 ### The Requests inbox
 

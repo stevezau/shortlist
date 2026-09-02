@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from shortlist.server.api.settings import _FETCHED_URL_KEYS
 from shortlist.server.net_guard import BlockedUrl, check_url, safe_backup_name
 
 
@@ -132,13 +133,20 @@ class TestTheGuardsAreWired:
         client.headers[CSRF_HEADER] = "1"
         return client
 
-    def test_saving_a_metadata_url_through_the_api_is_refused(self, tmp_path):
+    @pytest.mark.parametrize("key", _FETCHED_URL_KEYS)
+    def test_saving_a_metadata_url_through_the_api_is_refused(self, tmp_path, key):
+        """Parameterised over the tuple itself, not over one hand-picked key.
+
+        `_FETCHED_URL_KEYS` is the whole list of settings the SERVER later fetches, and it grows —
+        it just gained `requests.overseerr.url`. Testing one member proves the guard runs for that
+        member; testing the tuple proves a new door cannot be added without one.
+        """
         client = self._client(tmp_path)
 
-        r = client.put("/api/settings", json={"values": {"requests.radarr.url": "http://169.254.169.254"}})
+        r = client.put("/api/settings", json={"values": {key: "http://169.254.169.254"}})
 
         assert r.status_code == 422
-        assert client.get("/api/settings").json()["requests.radarr.url"] != "http://169.254.169.254"
+        assert client.get("/api/settings").json().get(key) != "http://169.254.169.254"
 
     def test_saving_normal_self_hosted_urls_through_the_api_works(self, tmp_path):
         """The half that matters more: this app is useless if a LAN address is refused."""

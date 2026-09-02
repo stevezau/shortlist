@@ -69,7 +69,9 @@ describe("the REQUESTED tile", () => {
       requests_pool: 40,
       requests_examined: 40,
     });
-    expect(screen.getByText(/to Sonarr \/ Radarr/)).toBeInTheDocument();
+    // App-neutral wording: the same run can route to Radarr/Sonarr or to Overseerr, and this tile
+    // has no access to which — naming one of them was wrong half the time.
+    expect(screen.getByText(/sent to be downloaded/)).toBeInTheDocument();
   });
 
   it("still prefers a real config warning over the explanation", () => {

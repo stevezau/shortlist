@@ -102,6 +102,16 @@
         "additionalProperties": true,
         "description": "Per-row download status, plus whether each app actually answered.\n\n``reach`` is the half this used to omit. A failed Arr lookup is swallowed on purpose (one app\nbeing down must not blank the other), so an unreachable Radarr produced an all-``null`` map \u2014\nbyte-identical to \"Radarr is fine and tracks none of these\". The inbox therefore showed no\nbadges, for ever, with nothing anywhere saying why.",
         "properties": {
+          "overseerr": {
+            "default": "off",
+            "enum": [
+              "ok",
+              "unreachable",
+              "off"
+            ],
+            "title": "Overseerr",
+            "type": "string"
+          },
           "radarr": {
             "enum": [
               "ok",
@@ -5228,6 +5238,42 @@
         "title": "ScheduleRowsOut",
         "type": "object"
       },
+      "SeerrOptionsOut": {
+        "additionalProperties": true,
+        "properties": {
+          "users": {
+            "items": {
+              "$ref": "#/components/schemas/SeerrUserOut"
+            },
+            "title": "Users",
+            "type": "array"
+          }
+        },
+        "required": [
+          "users"
+        ],
+        "title": "SeerrOptionsOut",
+        "type": "object"
+      },
+      "SeerrUserOut": {
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "SeerrUserOut",
+        "type": "object"
+      },
       "SendOut": {
         "additionalProperties": true,
         "properties": {
@@ -9169,6 +9215,28 @@
           }
         },
         "summary": "Curator Models",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/overseerr/options": {
+      "get": {
+        "description": "The instance's accounts, so the UI can offer a \"request as\" dropdown.\n\nThe *seerr equivalent of ``arr_options``, and deliberately much smaller: quality profiles and\nroot folders are Overseerr's business on this route, so the only choice left to Shortlist is\nwhose name the request goes out under.",
+        "operationId": "overseerr_options_api_settings_overseerr_options_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeerrOptionsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Overseerr Options",
         "tags": [
           "settings"
         ]

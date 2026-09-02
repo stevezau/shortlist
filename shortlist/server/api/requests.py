@@ -286,6 +286,9 @@ class ArrStatusOut(PassthroughModel):
     statuses: dict[int, str | None]
     radarr: ArrReach
     sonarr: ArrReach
+    # "off" whenever requests route to Radarr/Sonarr, and vice versa — the two targets are
+    # exclusive, so at most one of these three is ever anything but "off".
+    overseerr: ArrReach = "off"
 
 
 @router.get("/status", response_model=ArrStatusOut)
@@ -309,14 +312,32 @@ async def get_arr_status(request: Request) -> dict:
         if cfg is None:
             return {"statuses": {}, "radarr": "off", "sonarr": "off"}
 
-        from shortlist.engine.clients.arr import RadarrClient, SonarrClient
-
         with state.sessions() as session:
             rows = session.query(RequestCandidate).filter(RequestCandidate.status.in_(("pending", "sent"))).all()
+
+        if cfg.overseerr:
+            # One walk of Overseerr's media table answers every row at once, movies and shows alike,
+            # because it keys both by TMDB id — so none of the Sonarr v3 TVDB fallback below applies.
+            from shortlist.engine.clients.seerr import SeerrClient
+
+            try:
+                state_by_key = SeerrClient(cfg.overseerr).media_state()
+                reach: ArrReach = "ok"
+            except Exception as e:
+                state_by_key, reach = {}, "unreachable"
+                logger.warning("request status: Overseerr lookup failed ({})", e)
+            return {
+                "statuses": {r.id: state_by_key.get((r.media_type, r.tmdb_id)) for r in rows},
+                "radarr": "off",
+                "sonarr": "off",
+                "overseerr": reach,
+            }
 
         # One fetch per app up front. A failure here is not fatal: the inbox simply shows no status
         # rather than erroring, which is what it did before this endpoint existed — but it is now
         # REPORTED, so "no badges" can be told apart from "nothing to badge".
+        from shortlist.engine.clients.arr import RadarrClient, SonarrClient
+
         movies: dict[int, str] = {}
         shows_by_tvdb: dict[int, str] = {}
         shows_by_tmdb: dict[int, str] = {}

@@ -6,8 +6,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RequestsSettings } from "@/components/requests-settings";
 import type { Settings } from "@/lib/types";
 
-const { putSettings } = vi.hoisted(() => ({
+const { putSettings, getSeerrOptions } = vi.hoisted(() => ({
   putSettings: vi.fn((values: Settings) => Promise.resolve(values)),
+  getSeerrOptions: vi.fn(() =>
+    Promise.resolve({
+      users: [
+        { id: 1, name: "serverowner" },
+        { id: 4, name: "Shortlist" },
+      ],
+    }),
+  ),
 }));
 
 vi.mock("@/lib/api", () => {
@@ -27,6 +35,7 @@ vi.mock("@/lib/api", () => {
       testConnection: () => Promise.resolve({ ok: true, message: "Connected" }),
       getArrOptions: () =>
         Promise.resolve({ quality_profiles: [], root_folders: [] }),
+      getSeerrOptions: () => getSeerrOptions(),
     },
   };
 });
@@ -50,7 +59,18 @@ function renderPanel(settings: Settings = {}) {
 }
 
 describe("RequestsSettings", () => {
-  beforeEach(() => putSettings.mockClear());
+  beforeEach(() => {
+    putSettings.mockClear();
+    // Reset per test: one describe below points this at a rejection, and a leaked failure would
+    // make every later account-list assertion pass for the wrong reason.
+    getSeerrOptions.mockReset();
+    getSeerrOptions.mockResolvedValue({
+      users: [
+        { id: 1, name: "serverowner" },
+        { id: 4, name: "Shortlist" },
+      ],
+    });
+  });
 
   it("keeps the config hidden until requests are turned on", async () => {
     renderPanel();
@@ -404,6 +424,132 @@ describe("RequestsSettings", () => {
       expect(
         await screen.findByText(/it never applies/i),
       ).toBeTruthy();
+    });
+  });
+
+  describe("choosing where requests go", () => {
+    /** Requests on, routed through a CONNECTED Overseerr (a saved key reads back redacted). */
+    const VIA_SEERR: Settings = {
+      "requests.enabled": true,
+      "requests.target": "overseerr",
+      "requests.overseerr.url": "http://overseerr.test",
+      "requests.overseerr.apikey": "•••••",
+    };
+
+    it("shows Radarr and Sonarr by default", async () => {
+      renderPanel({ "requests.enabled": true });
+      expect(await screen.findByText("Radarr")).toBeTruthy();
+      expect(screen.getByText("Sonarr")).toBeTruthy();
+      expect(screen.queryByLabelText("Request as")).toBeNull();
+    });
+
+    it("swaps the two Arr cards for one Overseerr card", async () => {
+      renderPanel(VIA_SEERR);
+      expect(await screen.findByLabelText("Request as")).toBeTruthy();
+      expect(screen.queryByText("Radarr")).toBeNull();
+      expect(screen.queryByText("Sonarr")).toBeNull();
+    });
+
+    it("hides both tag controls, which Overseerr's API cannot carry", async () => {
+      // POST /request has no tags field at all, so leaving these on screen would offer a setting
+      // that silently does nothing.
+      renderPanel(VIA_SEERR);
+      expect(await screen.findByLabelText("Request as")).toBeTruthy();
+      expect(screen.queryByLabelText("Tag added items")).toBeNull();
+      expect(screen.queryByLabelText("Also tag by person")).toBeNull();
+    });
+
+    it("keeps the guardrails on both routes — they are Shortlist's, not the app's", async () => {
+      renderPanel(VIA_SEERR);
+      expect(await screen.findByText("Guardrails")).toBeTruthy();
+    });
+
+    it("warns that the default account auto-approves, and names the chosen one otherwise", async () => {
+      renderPanel(VIA_SEERR);
+      const picker = (await screen.findByLabelText(
+        "Request as",
+      )) as HTMLSelectElement;
+      expect(screen.getByText(/straight to Radarr\/Sonarr/i)).toBeTruthy();
+
+      // The account list is fetched, so the option does not exist on first paint. Selecting before
+      // it lands fails loudly here, but the same race makes an ABSENCE assertion pass against
+      // broken code — which is why every check below waits for something positive first.
+      await screen.findByRole("option", { name: "Shortlist" });
+      await userEvent.selectOptions(picker, "4");
+      await waitFor(() => {
+        const saved = putSettings.mock.calls.at(-1)![0];
+        expect(saved["requests.overseerr.request_as_user_id"]).toBe(4);
+      });
+    });
+
+    it("saves the target when it is switched", async () => {
+      renderPanel({ "requests.enabled": true });
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Overseerr / Jellyseerr" }),
+      );
+      await waitFor(() => {
+        const saved = putSettings.mock.calls.at(-1)![0];
+        expect(saved["requests.target"]).toBe("overseerr");
+      });
+    });
+
+    it("nudges to Connections when Overseerr is chosen but not connected", async () => {
+      renderPanel({ "requests.enabled": true, "requests.target": "overseerr" });
+      expect(
+        await screen.findByText("Connect Overseerr to start requesting"),
+      ).toBeTruthy();
+    });
+  });
+
+  describe("when the saved account cannot be listed", () => {
+    const VIA_BROKEN_SEERR: Settings = {
+      "requests.enabled": true,
+      "requests.target": "overseerr",
+      "requests.overseerr.url": "http://overseerr.test",
+      "requests.overseerr.apikey": "•••••",
+      "requests.overseerr.request_as_user_id": 4,
+    };
+
+    beforeEach(() => {
+      getSeerrOptions.mockRejectedValue(new Error("unreachable"));
+    });
+
+    it("keeps the picker usable rather than hiding it behind the error", async () => {
+      // Hiding it left an owner whose instance was briefly down unable to change the setting at
+      // all — including putting it back to the server default.
+      renderPanel(VIA_BROKEN_SEERR);
+      expect(await screen.findByText(/Couldn.t reach Overseerr/i)).toBeTruthy();
+      expect(screen.getByLabelText("Request as")).toBeTruthy();
+    });
+
+    it("names a saved account that Overseerr no longer lists", async () => {
+      // Same trap as the unreachable case, reached a different way: the account was deleted in
+      // Overseerr, so the list loads FINE and simply lacks it. Keying the fallback on the error
+      // flag would have covered only half of this.
+      getSeerrOptions.mockResolvedValue({
+        users: [{ id: 1, name: "serverowner" }],
+      });
+      renderPanel(VIA_BROKEN_SEERR);
+      expect(
+        await screen.findByRole("option", { name: "Account #4" }),
+      ).toBeTruthy();
+      expect(
+        (screen.getByLabelText("Request as") as HTMLSelectElement).value,
+      ).toBe("4");
+    });
+
+    it("still shows the saved account rather than silently reading as the default", async () => {
+      // The select would otherwise fall back to its first option, misreport the saved value, and
+      // then have autosave WRITE that back.
+      renderPanel(VIA_BROKEN_SEERR);
+      // Wait for the FAILURE to land, not merely for the label: while the fetch is still pending
+      // the fallback option does not exist yet and the select genuinely does read "0". Asserting
+      // before then measures the loading state and calls it the bug.
+      expect(
+        await screen.findByRole("option", { name: "Account #4" }),
+      ).toBeTruthy();
+      const picker = screen.getByLabelText("Request as") as HTMLSelectElement;
+      expect(picker.value).toBe("4");
     });
   });
 });

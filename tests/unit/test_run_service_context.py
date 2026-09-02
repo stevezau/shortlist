@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import MagicMock
 
 import pytest
@@ -472,6 +473,92 @@ class TestBuildRequests:
     def test_off_by_default_returns_none(self, sessions, tmp_path):
         store = self._store(sessions, tmp_path, {})
         assert ContextBuilder._build_requests(store) is None
+
+    _SEERR: ClassVar[dict[str, object]] = {
+        "requests.enabled": True,
+        "requests.target": "overseerr",
+        "requests.overseerr.url": "http://overseerr:5055",
+        "requests.overseerr.apikey": "ok",
+    }
+
+    def test_the_overseerr_target_replaces_the_arrs_rather_than_joining_them(self, sessions, tmp_path):
+        """The two routes are exclusive. Leaving the Arr targets live alongside a *seerr would file
+        every title twice — once directly and once through Overseerr's own Radarr."""
+        store = self._store(
+            sessions,
+            tmp_path,
+            self._SEERR
+            | {
+                "requests.overseerr.request_as_user_id": 4,
+                "requests.radarr.url": "http://radarr:7878",
+                "requests.radarr.apikey": "rk",
+                "requests.radarr.quality_profile_id": 4,
+                "requests.radarr.root_folder": "/movies",
+            },
+        )
+        cfg = ContextBuilder._build_requests(store)
+        assert cfg.overseerr.url == "http://overseerr:5055" and cfg.overseerr.api_key == "ok"
+        assert cfg.overseerr.request_as_user_id == 4
+        assert cfg.radarr is None and cfg.sonarr is None
+
+    def test_a_half_connected_arr_raises_no_complaint_when_overseerr_is_the_route(self, sessions, tmp_path):
+        """`incomplete_targets` drives an owner-facing warning about an unselected quality profile.
+        On this route there is no profile to select, so the warning would name a setting the screen
+        no longer even shows."""
+        store = self._store(
+            sessions,
+            tmp_path,
+            self._SEERR | {"requests.radarr.url": "http://radarr:7878", "requests.radarr.apikey": "rk"},
+        )
+        assert ContextBuilder._build_requests(store).incomplete_targets == []
+
+    def test_overseerr_chosen_but_not_connected_falls_back_to_no_target(self, sessions, tmp_path):
+        """Not to the Arrs. Silently routing to a different app than the owner picked is worse than
+        sending nothing, which the run report already explains."""
+        store = self._store(sessions, tmp_path, {"requests.enabled": True, "requests.target": "overseerr"})
+        cfg = ContextBuilder._build_requests(store)
+        assert cfg.overseerr is None and cfg.radarr is None and cfg.sonarr is None
+        assert cfg.incomplete_targets == ["Overseerr is the chosen request target but has no address or API key"]
+
+    def test_a_half_configured_overseerr_does_not_fall_through_to_a_leftover_radarr(self, sessions, tmp_path):
+        """The bug this pins. Branching on "did Overseerr resolve?" rather than on what the owner
+        CHOSE sent every title to the Radarr they had just switched away from — fully configured
+        from before, so nothing looked wrong anywhere."""
+        store = self._store(
+            sessions,
+            tmp_path,
+            {
+                "requests.enabled": True,
+                "requests.target": "overseerr",  # chosen, but no URL/key saved yet
+                "requests.radarr.url": "http://radarr:7878",
+                "requests.radarr.apikey": "rk",
+                "requests.radarr.quality_profile_id": 4,
+                "requests.radarr.root_folder": "/movies",
+            },
+        )
+        cfg = ContextBuilder._build_requests(store)
+        assert cfg.radarr is None and cfg.sonarr is None and cfg.overseerr is None
+        # And the run says why, rather than reporting "Radarr not fully configured" per title. The
+        # route is what carries that: without it the config is byte-identical to an unconfigured Arr
+        # install, and the per-title outcome is worded for the wrong app (test_requests.py pins the
+        # outcome itself — this pins the field it depends on).
+        assert cfg.target == "overseerr"
+        assert "Overseerr" in cfg.incomplete_targets[0]
+
+    def test_the_default_target_still_builds_the_arrs(self, sessions, tmp_path):
+        store = self._store(
+            sessions,
+            tmp_path,
+            {
+                "requests.enabled": True,
+                "requests.radarr.url": "http://radarr:7878",
+                "requests.radarr.apikey": "rk",
+                "requests.radarr.quality_profile_id": 4,
+                "requests.radarr.root_folder": "/movies",
+            },
+        )
+        cfg = ContextBuilder._build_requests(store)
+        assert cfg.overseerr is None and cfg.radarr is not None
 
     def test_enabled_with_both_apps_builds_both_targets(self, sessions, tmp_path):
         store = self._store(

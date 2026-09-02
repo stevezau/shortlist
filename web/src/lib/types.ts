@@ -66,6 +66,7 @@ export type ConnectionTestResult = Schemas["ConnectionTestOut"];
 
 /** GET /api/settings/arr/{service}/options — dropdown data for a connected Sonarr/Radarr. */
 export type ArrOptions = Schemas["ArrOptionsOut"];
+export type SeerrOptions = Schemas["SeerrOptionsOut"];
 
 // --- Rows / collections ---
 
@@ -838,6 +839,7 @@ export type TestableService =
   | "llm"
   | "radarr"
   | "sonarr"
+  | "overseerr"
   | "mdblist"
   | "trakt"
   | "exa"

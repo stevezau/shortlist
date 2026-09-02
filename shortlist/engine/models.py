@@ -642,6 +642,27 @@ class ArrTarget:
     tag: str = ""  # if set, tag every title Shortlist adds (created in the app if it doesn't exist)
 
 
+@dataclass(frozen=True)
+class SeerrTarget:
+    """Which Overseerr/Jellyseerr instance to file requests with, and as whom.
+
+    No quality profile, root folder or tag — that is the whole reason to route here rather than at
+    Radarr/Sonarr. The *seerr applies its own rules; Shortlist only says which title it wants.
+    """
+
+    url: str
+    api_key: str
+    #: The instance's user id to file as. 0/None -> omit ``userId`` and let the api key's own account
+    #: own the request, which normally means auto-approved (that account is an admin). Pointing this
+    #: at a non-auto-approve account is how the owner gets a second approval gate in the *seerr.
+    request_as_user_id: int = 0
+
+
+#: The two places a request can be filed. ``arr`` posts to Radarr/Sonarr directly (the original, and
+#: still the default); ``overseerr`` hands the title to Overseerr/Jellyseerr and lets it drive them.
+REQUEST_TARGETS = ("arr", "overseerr")
+
+
 @dataclass
 class RequestConfig:
     """Whether — and how conservatively — to ask Sonarr/Radarr for picks the library lacks.
@@ -654,8 +675,20 @@ class RequestConfig:
     """
 
     enabled: bool = False
+    # Which route the owner CHOSE, independent of whether its target resolved. Carried separately
+    # because "no target" and "no target on the route you picked" need different explanations: with
+    # only the targets to go on, a half-configured Overseerr was indistinguishable from an
+    # unconfigured Radarr, and every title came back "Radarr not fully configured (check quality
+    # profile and root folder)" — naming an app the owner had deliberately stopped using and two
+    # settings that do not exist on their route.
+    target: str = "arr"  # one of REQUEST_TARGETS
     radarr: ArrTarget | None = None  # None -> movie requests are skipped
     sonarr: ArrTarget | None = None  # None -> show requests are skipped
+    # Set INSTEAD of radarr/sonarr, never alongside: the context builder reads `requests.target` and
+    # populates one side or the other. When this is set the Arr targets are ignored entirely, so the
+    # per-row quality-profile/root-folder/monitor overrides have nothing to act on — the *seerr owns
+    # those choices, which is the point of routing through it.
+    overseerr: SeerrTarget | None = None
     # Which score gates a title. TMDB is always available (no setup); imdb/trakt/tomatoes/metacritic
     # come from MDBList (needs a key). The min_rating/min_votes floors read from whichever is chosen;
     # every non-TMDB score is normalised to 0..10 so one floor works across sources.
@@ -721,6 +754,12 @@ class RequestConfig:
     def __post_init__(self) -> None:
         if self.max_per_row is None:
             self.max_per_row = self.max_per_run
+        # A resolved *seerr target settles the route on its own. The reverse is a real state and must
+        # stay expressible — `target="overseerr"` with no target means "chosen, not connected yet",
+        # which is exactly what lets the run explain itself in the right app's words — but an
+        # `overseerr` target the route ignores is nothing but a way to send to the wrong app.
+        if self.overseerr is not None:
+            self.target = "overseerr"
 
 
 @dataclass(frozen=True)

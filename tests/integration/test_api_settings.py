@@ -528,6 +528,55 @@ class TestSettingsApi:
         # Both branches build their own dict, so both are checked against the response model.
         assert set(no_key) == {"ok", "message"} and set(ok) == {"ok", "message"}
 
+    def test_overseerr_test_connection_needs_both_halves_then_pings(self, client: TestClient, monkeypatch):
+        half = client.post("/api/settings/test/overseerr").json()
+        assert half["ok"] is False and "Overseerr" in half["message"]
+
+        client.put(
+            "/api/settings",
+            json={"values": {"requests.overseerr.url": "http://overseerr:5055", "requests.overseerr.apikey": "ok-123"}},
+        )
+        # The key is a secret like any other: encrypted at rest, redacted on read (rule 9).
+        assert client.get("/api/settings").json()["requests.overseerr.apikey"] == "•••••"
+
+        monkeypatch.setattr(
+            "shortlist.engine.clients.seerr.SeerrClient.ping", lambda self: "Connected to Overseerr as serverowner"
+        )
+        ok = client.post("/api/settings/test/overseerr").json()
+        assert ok["ok"] is True and "serverowner" in ok["message"]
+        assert set(half) == {"ok", "message"} and set(ok) == {"ok", "message"}
+
+    def test_overseerr_options_lists_the_accounts_and_says_when_it_cannot(self, client: TestClient, monkeypatch):
+        """The "Request as" dropdown's source. 409 before it is connected — the UI shows its own
+        "connect it first" panel on that, rather than an error it cannot act on."""
+        assert client.get("/api/settings/overseerr/options").status_code == 409
+
+        client.put(
+            "/api/settings",
+            json={"values": {"requests.overseerr.url": "http://overseerr:5055", "requests.overseerr.apikey": "ok-123"}},
+        )
+        monkeypatch.setattr(
+            "shortlist.engine.clients.seerr.SeerrClient.users",
+            lambda self: [{"id": 1, "name": "serverowner"}, {"id": 4, "name": "Shortlist"}],
+        )
+        body = client.get("/api/settings/overseerr/options").json()
+        assert body == {"users": [{"id": 1, "name": "serverowner"}, {"id": 4, "name": "Shortlist"}]}
+
+        def boom(self):
+            raise RuntimeError("Overseerr unreachable (ConnectError)")
+
+        monkeypatch.setattr("shortlist.engine.clients.seerr.SeerrClient.users", boom)
+        down = client.get("/api/settings/overseerr/options")
+        assert down.status_code == 502
+        # The card keeps its picker usable on this, so the message has to say what to do.
+        assert "Overseerr" in down.json()["detail"]
+
+    def test_the_request_target_only_accepts_a_known_route(self, client: TestClient):
+        """A typo here would silently route every request to the wrong app, or to none."""
+        assert client.put("/api/settings", json={"values": {"requests.target": "radarr"}}).status_code == 422
+        assert client.put("/api/settings", json={"values": {"requests.target": "overseerr"}}).status_code == 200
+        assert client.get("/api/settings").json()["requests.target"] == "overseerr"
+
     def test_the_removed_agregarr_connection_is_gone_from_every_surface(self, client: TestClient):
         """The Agregarr connection was removed. Three surfaces had to stop knowing about it, and a
         miss on any one leaves a half-removed feature that looks configurable and does nothing.

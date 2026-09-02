@@ -20,7 +20,7 @@ Eight short pages instead of one long one. If you know what you want to do, star
 | Stop one film skewing someone's picks            | [Blocking a seed](guides/picks.md#blocking-a-seed)                      |
 | Change how often a row refreshes                 | [Schedules and runs](guides/schedules.md)                               |
 | Use AI, or keep it cheap                         | [AI and cost](guides/ai.md)                                             |
-| Send missing films and shows to Radarr or Sonarr | [Requests](guides/requests.md)                                          |
+| Send missing films and shows to Radarr, Sonarr or Overseerr | [Requests](guides/requests.md)                               |
 | Find out why a row didn't turn up                | [Troubleshooting](guides/troubleshooting.md)                            |
 | Work out what's wrong, or file a bug report      | [Have an issue?](guides/troubleshooting.md#start-here-have-an-issue)    |
 | Know what's in a backup                          | [Backups](guides/troubleshooting.md#backups)                            |
@@ -35,7 +35,7 @@ Eight short pages instead of one long one. If you know what you want to do, star
 | [What goes in a row](guides/picks.md)                    | Recommendation sources, rebuild cadence, per-row and per-person overrides   |
 | [Schedules and runs](guides/schedules.md)                | Each row's own schedule, custom schedules, the jobs worth knowing about     |
 | [AI and cost](guides/ai.md)                              | What AI does, which search backend to pick, how to keep the bill down       |
-| [Requests (Radarr and Sonarr)](guides/requests.md)       | Setting it up, the approval inbox, guardrails, why a title is still waiting |
+| [Requests (Radarr, Sonarr, Overseerr)](guides/requests.md) | Setting it up, the approval inbox, guardrails, why a title is still waiting |
 | [Troubleshooting and backups](guides/troubleshooting.md) | The common failures, and what a backup does and doesn't hold                |
 | [Putting it on the internet](guides/security.md)         | TLS, proxies, the API token, and what's in `/config/backups`                |
 

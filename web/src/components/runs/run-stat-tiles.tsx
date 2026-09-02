@@ -23,7 +23,9 @@ import type { RunDetail } from "@/lib/types";
  */
 function requestHint(s: RunDetail["stats"]): string {
   const requested = s.titles_requested ?? 0;
-  if (requested > 0) return "to Sonarr / Radarr";
+  // Deliberately names no app: the same run can route to Radarr/Sonarr or to Overseerr, and this
+  // tile has no access to which. "Sent to be downloaded" is true either way.
+  if (requested > 0) return "sent to be downloaded";
   // Queued FIRST, and before any talk of the floors: a run that put five titles in the inbox worked
   // exactly as configured, and "none good enough" would send the owner hunting a rating problem that
   // does not exist. Caught on a real run whose auto_min_demand had just been raised (2026-08-18).

@@ -68,4 +68,42 @@ describe("arr status polling", () => {
     // real gap rather than a saving.
     expect(queryKeys.arrStatus).toEqual(["arrStatus"]);
   });
+
+  describe("on the Overseerr route", () => {
+    it("never takes the fast pace, however many titles read as downloading", () => {
+      // Overseerr's enum has no "downloading right now": PROCESSING is the resting state of an
+      // approved-but-unreleased film and PARTIALLY_AVAILABLE that of every airing series, so this
+      // would poll every 10s for ever — and one poll walks the whole library, not one endpoint.
+      expect(
+        arrStatusInterval({
+          statuses: { "1": "downloading", "2": "downloading" },
+          radarr: "off",
+          sonarr: "off",
+          overseerr: "ok",
+        }),
+      ).toBe(false);
+    });
+
+    it("still earns the recovery timer when it cannot be reached", () => {
+      // The one state that cannot clear itself: a failed lookup returns no statuses at all.
+      expect(
+        arrStatusInterval({
+          statuses: {},
+          radarr: "off",
+          sonarr: "off",
+          overseerr: "unreachable",
+        }),
+      ).toBe(30_000);
+    });
+
+    it("leaves the Arr route's fast pace alone when the field is absent", () => {
+      // Cast deliberately: the generated type makes `overseerr` required, so this shape cannot come
+      // from the current API — but a browser holding a cached response from before the field
+      // existed still produces it at runtime. Reading "is Overseerr in use?" as `!== "off"` made
+      // `undefined` mean YES, which would silently stop the fast poll on every Arr install. The
+      // same misreading shipped once already in requests.tsx, where it blanked the badges.
+      const legacy = { statuses: { "1": "downloading" }, radarr: "ok", sonarr: "ok" };
+      expect(arrStatusInterval(legacy as unknown as ArrStatus)).toBe(10_000);
+    });
+  });
 });

@@ -31,6 +31,16 @@ DEFAULTS: dict[str, Any] = {
     # gated so it can never balloon a library — a title must clear BOTH thresholds, and only the
     # top N per run are ever requested. API keys live in SECRET_KEYS below (encrypted at rest).
     "requests.enabled": False,
+    # WHERE a request is filed. "arr" posts to Radarr/Sonarr directly (the original route, and still
+    # the default so no existing install changes behaviour). "overseerr" hands the title to
+    # Overseerr/Jellyseerr and lets IT drive the download apps — its quality profile, its root
+    # folder, its approval. The two are exclusive; see `_build_requests`.
+    "requests.target": "arr",
+    "requests.overseerr.url": "",
+    # Which Overseerr account the request is filed as. 0 = the API key's own (admin) account, which
+    # normally auto-approves. Point it at an account without auto-approve to get a second approval
+    # gate inside Overseerr. Shortlist never creates the account — it is chosen from the ones there.
+    "requests.overseerr.request_as_user_id": 0,
     "requests.radarr.url": "",
     "requests.radarr.quality_profile_id": 0,
     "requests.radarr.root_folder": "",
@@ -232,6 +242,7 @@ SECRET_KEYS = {
     "tautulli.apikey",
     "tmdb.apikey",  # was the ONE api key stored in the clear — and returned unredacted by all_public()
     "curator.api_key",
+    "requests.overseerr.apikey",
     "requests.radarr.apikey",
     "requests.sonarr.apikey",
     "requests.mdblist.apikey",  # MDBList key for IMDb/Trakt/RT/Metacritic rating gating

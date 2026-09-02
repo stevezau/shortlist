@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import httpx
 import pytest
+import respx
 from fastapi.testclient import TestClient
 
 from shortlist.engine import requests as requests_mod
-from shortlist.engine.models import ArrTarget, MediaType, RequestConfig
+from shortlist.engine.models import ArrTarget, MediaType, RequestConfig, SeerrTarget
 from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
 from shortlist.server.db.models import Collection, RequestCandidate, Server
 from shortlist.server.main import create_app
@@ -399,7 +402,12 @@ class TestArrStatusEndpoint:
 
     def test_requests_not_configured_returns_empty(self, client: TestClient, monkeypatch):
         monkeypatch.setattr(client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(None))
-        assert client.get("/api/requests/status").json() == {"statuses": {}, "radarr": "off", "sonarr": "off"}
+        assert client.get("/api/requests/status").json() == {
+            "statuses": {},
+            "radarr": "off",
+            "sonarr": "off",
+            "overseerr": "off",
+        }
 
 
 class TestApprovalUsesTheClaimingRowsTarget:
@@ -551,3 +559,102 @@ class TestTheInboxNamesTheRowThatClaimedIt:
         row = next(r for r in client.get("/api/requests").json() if r["id"] == 2)
 
         assert row["row_slug"] is None
+
+
+class TestTheOverseerrRoute:
+    """The three server doors the Overseerr route adds, at the HTTP boundary.
+
+    Faked with respx at the WIRE, not with a stand-in client: the approval path is the one place
+    `_send_claims` runs with no run behind it and builds its own client through `_cached_client`, and
+    a stand-in there has already drifted from the real interface once.
+    """
+
+    _TARGET = SeerrTarget(url="http://overseerr.test", api_key="ok")
+    _BASE = "http://overseerr.test/api/v1"
+
+    def _cfg(self, **kw) -> RequestConfig:
+        return RequestConfig(enabled=True, overseerr=self._TARGET, **kw)
+
+    def _empty_media(self):
+        return respx.get(f"{self._BASE}/media").mock(
+            return_value=httpx.Response(200, json={"pageInfo": {"pages": 1}, "results": []})
+        )
+
+    def test_approving_a_title_files_it_with_overseerr(self, client: TestClient, monkeypatch):
+        monkeypatch.setattr(
+            client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(self._cfg())
+        )
+        with respx.mock:
+            self._empty_media()
+            post = respx.post(f"{self._BASE}/request").mock(return_value=httpx.Response(201, json={"id": 9}))
+            body = client.post("/api/requests/send", json={"ids": [1]}).json()
+
+        assert body["sent"] == 1
+        # The body the SUT is responsible for — not merely that a call happened.
+        assert json.loads(post.calls[0].request.content) == {"mediaType": "movie", "mediaId": 10}
+        rows = {r["tmdb_id"]: r for r in client.get("/api/requests").json()}
+        assert rows[10]["status"] == "sent"
+        # No slug on this route: Overseerr addresses both media types by TMDB id, so none is captured.
+        assert rows[10]["arr_slug"] is None
+
+    def test_approving_a_show_asks_for_every_season(self, client: TestClient, monkeypatch):
+        monkeypatch.setattr(
+            client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(self._cfg())
+        )
+        with respx.mock:
+            self._empty_media()
+            post = respx.post(f"{self._BASE}/request").mock(return_value=httpx.Response(201, json={"id": 9}))
+            client.post("/api/requests/send", json={"ids": [2]})
+
+        # tmdbId, never the TVDB id the Sonarr path would have crossed to — and `seasons`, without
+        # which Overseerr accepts the request and then never hands it to Sonarr.
+        assert json.loads(post.calls[0].request.content) == {"mediaType": "tv", "mediaId": 20, "seasons": "all"}
+
+    def test_a_dry_run_approval_writes_nothing(self, client: TestClient, monkeypatch):
+        monkeypatch.setattr(
+            client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(self._cfg())
+        )
+        with respx.mock:
+            self._empty_media()
+            post = respx.post(f"{self._BASE}/request")
+            body = client.post("/api/requests/send", json={"ids": [1], "dry_run": True}).json()
+        assert not post.called and body["dry_run"] is True
+        rows = {r["tmdb_id"]: r for r in client.get("/api/requests").json()}
+        assert rows[10]["status"] == "pending"  # a preview never moves the row
+
+    def test_the_status_endpoint_answers_both_media_types_from_one_walk(self, client: TestClient, monkeypatch):
+        """The branch that keys Overseerr's `(media_type, tmdb_id)` against the DB's own strings."""
+        monkeypatch.setattr(
+            client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(self._cfg())
+        )
+        media = {
+            "pageInfo": {"pages": 1},
+            "results": [
+                {"mediaType": "movie", "tmdbId": 10, "status": 5},
+                {"mediaType": "tv", "tmdbId": 20, "status": 3},
+            ],
+        }
+        with respx.mock:
+            respx.get(f"{self._BASE}/media").mock(return_value=httpx.Response(200, json=media))
+            body = client.get("/api/requests/status").json()
+
+        assert body["statuses"]["1"] == "downloaded"  # the movie row (AVAILABLE)
+        # PROCESSING — approved and handed to the Arr. Kept as "downloading" because that is what it
+        # honestly means; what changed for it is the POLL, not the label (see `arrStatusInterval`).
+        assert body["statuses"]["2"] == "downloading"
+        assert body["overseerr"] == "ok"
+        assert body["radarr"] == "off" and body["sonarr"] == "off"
+
+    def test_an_unreachable_overseerr_is_reported_not_swallowed(self, client: TestClient, monkeypatch):
+        """Otherwise an all-null map is byte-identical to "Overseerr tracks none of these"."""
+        monkeypatch.setattr(
+            client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(self._cfg())
+        )
+        with respx.mock:
+            respx.get(f"{self._BASE}/media").mock(side_effect=httpx.ConnectError("down"))
+            body = client.get("/api/requests/status").json()
+        assert body["overseerr"] == "unreachable"
+        # Every row the inbox shows, pending AND already-sent — a null each, which is precisely why
+        # the reach field has to exist: without it this is identical to a healthy empty answer.
+        assert set(body["statuses"].values()) == {None}
+        assert set(body["statuses"]) == {"1", "2", "3"}

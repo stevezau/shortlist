@@ -1,10 +1,14 @@
-"""Request missing picks: ask Sonarr/Radarr for titles the curator wanted that the library lacks.
+"""Request missing picks: ask for titles the curator wanted that the library lacks.
 
 The engine already drops every candidate that isn't in a delivery library (``filter_candidates``);
 this module keeps a record of those drops instead, ranks them by how many people wanted them and how
-well-regarded they are, and — only when the owner has turned requests on — asks Sonarr/Radarr for the
-top few. It never touches Plex, so it lives entirely outside the privacy machinery: a request pass
-can fail without affecting a single row's visibility.
+well-regarded they are, and — only when the owner has turned requests on — asks for the top few. It
+never touches Plex, so it lives entirely outside the privacy machinery: a request pass can fail
+without affecting a single row's visibility.
+
+Two routes, chosen by ``RequestConfig`` and never both at once: straight to Radarr/Sonarr
+(``clients/arr.py``), or as a request in Overseerr/Jellyseerr (``clients/seerr.py``), which then
+drives those apps under its own rules. Each seam below branches once, at the top.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ from shortlist.engine.clients.mdblist import (
     MdbListClient,
     MdbListRateLimitError,
 )
+from shortlist.engine.clients.seerr import SeerrClient, SeerrError
 from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.models import (
     OTHER_LANGUAGE_BAR_GAP,
@@ -33,6 +38,7 @@ from shortlist.engine.models import (
     RequestOutcome,
     RequestReport,
     RequestWhy,
+    SeerrTarget,
 )
 from shortlist.engine.request_alloc import allocate
 
@@ -471,19 +477,28 @@ def request_missing(
 
     gated = _gate_rows(rows, handled, report, mdblist=mdblist, budget=budget)
 
-    # 1. One Arr reconcile for the whole run: what Radarr/Sonarr already hold is a fact about the
-    #    server, not about a row, and the per-row targets differ only in profile and root folder.
-    #    Built from `base_cfg` for the same reason. Fails OPEN — see `_apply_arr_state`.
+    # 1. One reconcile for the whole run against whichever app is the route: what it already holds
+    #    is a fact about the server, not about a row, and the per-row targets differ only in profile
+    #    and root folder (and not at all on the *seerr route, which has neither). Built from
+    #    `base_cfg` for the same reason. Fails OPEN — see `_apply_arr_state` / `_apply_seerr_state`.
+    seerr = SeerrClient(base_cfg.overseerr, min_write_interval=min_write_interval) if base_cfg.overseerr else None
     radarr = RadarrClient(base_cfg.radarr, min_write_interval=min_write_interval) if base_cfg.radarr else None
     sonarr = SonarrClient(base_cfg.sonarr, min_write_interval=min_write_interval) if base_cfg.sonarr else None
     flat = [m for _, _, qualifying in gated for m in qualifying]
-    kept, in_arr, report.arr_present = _apply_arr_state(tmdb, flat, radarr, sonarr)
+    if seerr is not None:
+        kept, in_arr, report.arr_present = _apply_seerr_state(flat, seerr)
+    else:
+        kept, in_arr, report.arr_present = _apply_arr_state(tmdb, flat, radarr, sonarr)
     kept_keys = {(m.tmdb_id, m.media_type) for m in kept}
     # Fold every row's evidence about a title into every copy of it, BEFORE one of them is claimed
     # and sent — the claimed copy has to carry all of it (see _merge_across_rows).
     _merge_across_rows(gated)
     if in_arr:
-        logger.info("requests: {} qualifying already in Sonarr/Radarr — dropped", in_arr)
+        # Names the app actually asked. It read "already in Sonarr/Radarr" on the Overseerr route,
+        # which is the sort of log line that sends someone to check the wrong server.
+        logger.info(
+            "requests: {} qualifying already in {} — dropped", in_arr, "Overseerr" if seerr else "Sonarr/Radarr"
+        )
 
     # 2. Per row: keep what survived the Arr drop, enrich it, and split auto-eligible from queued on
     #    THIS row's auto-send bar. The run cap is deliberately NOT applied here — allocation below
@@ -584,7 +599,9 @@ def request_missing(
         return report
 
     # 5. Send, each title under the target of the row that claimed it.
-    report.outcomes = _send_claims(claims, cfg_by_row, tmdb, dry_run=dry_run, min_write_interval=min_write_interval)
+    report.outcomes = _send_claims(
+        claims, cfg_by_row, tmdb, dry_run=dry_run, min_write_interval=min_write_interval, seerr=seerr
+    )
     # Only the ones the Arr actually accepted. A send that failed, or was skipped for want of a TVDB
     # id, must stay requestable — suppressing it would lose the title silently.
     landed = {(o.tmdb_id, o.media_type) for o in report.outcomes if o.status in ("requested", "would_request")}
@@ -730,6 +747,7 @@ def _send_claims(
     *,
     dry_run: bool,
     min_write_interval: float,
+    seerr: SeerrClient | None = None,
 ) -> list[RequestOutcome]:
     """Send each claimed title under the target of the row that claimed it.
 
@@ -737,11 +755,23 @@ def _send_claims(
     and its rate limiter — the plex-safety throttle is per client, and one per row would multiply the
     write rate by the number of rows.
     """
-    clients: dict[ArrTarget, RadarrClient | SonarrClient] = {}
+    clients: dict[ArrTarget | SeerrTarget, RadarrClient | SonarrClient | SeerrClient] = {}
     clocks: dict[str, list[float]] = {}
+    # Seed the run's own reconcile client, so the send reuses its memoised media state instead of
+    # walking /media a second time. Seeded into the SAME cache rather than special-cased in the loop
+    # below: keyed by its target, it is reused only for rows that actually point at that instance,
+    # and the loop keeps one code path. The inbox-approval path passes none and builds its own.
+    if seerr is not None:
+        clients[seerr.target] = seerr
     outcomes: list[RequestOutcome] = []
     for slug, title in claims:
         cfg = cfg_by_row[slug]
+        if cfg.target == "overseerr":
+            # On the ROUTE, not on the target: a chosen-but-unconnected Overseerr must not fall
+            # through to the Arr branch below and be explained in that branch's words.
+            target = _cached_client(clients, clocks, cfg.overseerr, SeerrClient, min_write_interval)
+            outcomes.append(_request_one_seerr(title, target, dry_run=dry_run))
+            continue
         radarr = _cached_client(clients, clocks, cfg.radarr, RadarrClient, min_write_interval)
         sonarr = _cached_client(clients, clocks, cfg.sonarr, SonarrClient, min_write_interval)
         outcomes.append(_request_one(title, radarr, sonarr, tmdb, dry_run=dry_run, sonarr_monitor=cfg.sonarr_monitor))
@@ -749,7 +779,11 @@ def _send_claims(
 
 
 def _cached_client(
-    clients: dict, clocks: dict[str, list[float]], target: ArrTarget | None, factory, min_write_interval: float
+    clients: dict,
+    clocks: dict[str, list[float]],
+    target: ArrTarget | SeerrTarget | None,
+    factory,
+    min_write_interval: float,
 ):
     """One client per distinct target, but one write clock per SERVER.
 
@@ -845,6 +879,45 @@ def _apply_arr_state(
             m.excluded = True  # surfaced as its own inbox flag; the app is inferred from media_type
         kept.append(m)
     return kept, dropped, arr_present
+
+
+def _apply_seerr_state(
+    pool: list[MissingTitle],
+    seerr: SeerrClient,
+) -> tuple[list[MissingTitle], int, set[tuple[int, str]]]:
+    """``_apply_arr_state`` for an Overseerr/Jellyseerr target — one fetch instead of four.
+
+    Overseerr's media table already IS the union of "in the Plex library" and "requested and on its
+    way", both keyed by TMDB id for movies AND shows. So there is no TVDB crossing to do here, and
+    ``present`` needs no separate exclusion set: a title the instance knows about in any actionable
+    state is one Shortlist must not ask for again.
+
+    ``m.excluded`` is never set. Overseerr has no equivalent of an Arr import-exclusion list, so
+    there is no "never fetch this" fact to surface — the inbox's own ``rejected`` status is what
+    stops a declined title nagging every night.
+
+    Fails OPEN, exactly like its Arr twin: a fetch error skips the check entirely, because a
+    redundant request is a far smaller sin than silently dropping a title the owner wanted.
+
+    ``SeerrError`` only, where ``_safe_ids`` casts a deliberately wide net. The client funnels every
+    transport and body problem into that one type — including the non-JSON reply that made the Arr
+    version broad — so anything else reaching here is a bug in our own code, and this file already
+    records what swallowing one of those costs: the ``MediaType.TV`` AttributeError in
+    ``api/requests.py`` that made a fallback silently no-op for every show, for ever.
+    """
+    if not pool:
+        return pool, 0, set()
+    try:
+        state = seerr.media_state()
+    except SeerrError as e:
+        logger.warning("Overseerr state fetch failed, skipping that check this run: {}", e)
+        return pool, 0, set()
+    # Note the flip: `media_state` keys (media_type, tmdb_id) — the shape the inbox reads it in —
+    # while `arr_present` is (tmdb_id, media_type). Getting it round the wrong way costs nothing
+    # loudly: every lookup simply misses, so the run silently re-requests the whole library.
+    known = {(tmdb_id, kind) for (kind, tmdb_id) in state}
+    kept = [m for m in pool if (m.tmdb_id, m.media_type.value) not in known]
+    return kept, len(pool) - len(kept), known
 
 
 def _safe_ids(fetch) -> set[int]:
@@ -975,6 +1048,42 @@ def _gate_by_source(
     report.lookups_spent += spent()
     scored.sort(key=lambda row: (row[0].demand, row[1], row[2]), reverse=True)
     return [title for title, _, _ in scored]
+
+
+def _request_one_seerr(title: MissingTitle, seerr: SeerrClient | None, *, dry_run: bool) -> RequestOutcome:
+    """``_request_one`` for an Overseerr/Jellyseerr target.
+
+    Much shorter than its Arr twin because the *seerr takes movies and shows through one endpoint,
+    both keyed by TMDB id — so there is no app to choose, no TVDB id to resolve, and therefore no
+    ``skipped_no_tvdb`` outcome to explain.
+
+    ``seerr`` is None when the route is chosen but the instance is not connected — the same shape as
+    ``_request_one``'s missing Arr, and it earns the same kind of skip rather than being explained in
+    the other route's words.
+    """
+    if seerr is None:
+        return RequestOutcome(
+            tmdb_id=title.tmdb_id,
+            title=title.title,
+            media_type=title.media_type,
+            status="skipped_no_target",
+            detail="Overseerr is the chosen request target but has no address or API key",
+            arr_slug=None,
+        )
+    try:
+        status, detail, slug = seerr.request_title(title.tmdb_id, title.media_type, dry_run=dry_run)
+    except SeerrError as e:
+        # A request failing is a footnote, never a run failure — the *seerr is optional plumbing.
+        logger.warning("request for {!r} failed: {}", title.title, e)
+        status, detail, slug = "error", str(e), None
+    return RequestOutcome(
+        tmdb_id=title.tmdb_id,
+        title=title.title,
+        media_type=title.media_type,
+        status=status,
+        detail=detail,
+        arr_slug=slug,
+    )
 
 
 def _request_one(

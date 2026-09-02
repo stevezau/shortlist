@@ -43,6 +43,7 @@ export const queryKeys = {
   requests: ["requests"] as const,
   arrOptions: (service: "radarr" | "sonarr") =>
     ["arr-options", service] as const,
+  seerrOptions: ["seerr-options"] as const,
   arrStatus: ["arrStatus"] as const,
   curatorModels: (provider: string, credential: string) =>
     ["curator-models", provider, credential] as const,
@@ -392,6 +393,16 @@ export function useDeleteCollection() {
 }
 
 /** Quality profiles + root folders for a Sonarr/Radarr — only fetched once it's connected. */
+export function useSeerrOptions(enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.seerrOptions,
+    queryFn: () => api.getSeerrOptions(),
+    enabled,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
 export function useArrOptions(service: "radarr" | "sonarr", enabled: boolean) {
   return useQuery({
     queryKey: queryKeys.arrOptions(service),
@@ -644,14 +655,32 @@ export function arrStatusInterval(
   status: ArrStatus | undefined,
 ): number | false {
   if (!status) return false;
+  // The fast pace is for a title that will change within seconds. On the Overseerr route nothing
+  // reports that, so it never earns one — the same reasoning that already excludes `queued`.
+  //
+  // Overseerr's status enum has no "downloading right now": PROCESSING means "approved and handed
+  // to the Arr", which is the resting state of an approved-but-unreleased film, and
+  // PARTIALLY_AVAILABLE is the resting state of every currently-airing series. Both read as
+  // `downloading` here — permanently — so this would poll for ever. And one poll costs far more
+  // than on the Arr route: `RadarrClient.status_by_tmdb` is a single request, while Overseerr has
+  // no bulk lookup and must be walked 100 rows at a time across the whole library. An unreachable
+  // instance still earns the recovery timer below, because that is the state that cannot clear
+  // itself.
+  // Tested against the live values, never `!== "off"`: the field is absent from a response
+  // predating it, and `undefined !== "off"` would silently stop the fast poll on every Arr install.
+  const viaSeerr =
+    status.overseerr === "ok" || status.overseerr === "unreachable";
   if (
+    !viaSeerr &&
     Object.values(status.statuses ?? {}).some(
       (title) => title === ARR_DOWNLOADING,
     )
   ) {
     return ARR_FAST_MS;
   }
-  return status.radarr === ARR_UNREACHABLE || status.sonarr === ARR_UNREACHABLE
+  return status.radarr === ARR_UNREACHABLE ||
+    status.sonarr === ARR_UNREACHABLE ||
+    status.overseerr === ARR_UNREACHABLE
     ? ARR_RECOVER_MS
     : false;
 }

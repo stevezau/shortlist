@@ -18,6 +18,7 @@ from shortlist.engine.models import (
     MAX_REFRESH_DAYS,
     MAX_ROW_SIZE,
     MIN_ROW_SIZE,
+    REQUEST_TARGETS,
     SONARR_MONITOR_MODES,
 )
 from shortlist.server.api.schemas import PassthroughModel
@@ -290,6 +291,7 @@ VALIDATORS = {
     "run.concurrency": _bounded_int(1, 16),  # 1 = sequential; writes stay serial regardless
     "paused_all": _is_bool,
     "requests.enabled": _is_bool,
+    "requests.target": _one_of(*REQUEST_TARGETS),
     "requests.auto_send": _is_bool,
     "candidates.sources": _known_sources,
     "rows.hub_anchor": _hub_anchors,
@@ -333,6 +335,7 @@ VALIDATORS = {
     "requests.min_year": _bounded_int(0, 2100),
     "requests.max_year": _bounded_int(0, 2100),
     "requests.max_per_run": _bounded_int(0, 100),
+    "requests.overseerr.request_as_user_id": _bounded_int(0, 1_000_000),
     "requests.radarr.quality_profile_id": _bounded_int(0, 1_000_000),
     "requests.sonarr.quality_profile_id": _bounded_int(0, 1_000_000),
     # Sonarr 400s the whole add on a value outside its enum, so the typo is refused here rather than
@@ -358,6 +361,7 @@ def _check(key: str, value: object) -> str | None:
 _FETCHED_URL_KEYS = (
     "plex.url",
     "tautulli.url",
+    "requests.overseerr.url",
     "requests.radarr.url",
     "requests.sonarr.url",
     "curator.ollama_url",
@@ -583,6 +587,7 @@ _TESTABLE_SERVICES = frozenset(
         "tmdb",
         "radarr",
         "sonarr",
+        "overseerr",
         "mdblist",
         "trakt",
         "exa",
@@ -639,6 +644,15 @@ async def test_connection(service: str, request: Request) -> dict:
                     raise RuntimeError(f"{service.title()} URL and API key are both required")
                 target = ArrTarget(url=url, api_key=api_key, quality_profile_id=0, root_folder="")
                 return make_arr_client(service, target).ping()
+            if service == "overseerr":
+                from shortlist.engine.clients.seerr import SeerrClient
+                from shortlist.engine.models import SeerrTarget
+
+                url = (get("requests.overseerr.url") or "").strip()
+                api_key = get("requests.overseerr.apikey") or ""
+                if not url or not api_key:
+                    raise RuntimeError("Overseerr URL and API key are both required")
+                return SeerrClient(SeerrTarget(url=url, api_key=api_key)).ping()
             if service == "mdblist":
                 from shortlist.engine.clients.mdblist import MdbListClient
 
@@ -755,6 +769,43 @@ async def arr_options(service: str, request: Request) -> dict:
         target = ArrTarget(url=url, api_key=api_key, quality_profile_id=0, root_folder="")
         client = make_arr_client(service, target)
         return {"quality_profiles": client.quality_profiles(), "root_folders": client.root_folders()}
+
+    try:
+        return await asyncio.get_running_loop().run_in_executor(None, fetch)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=redact(f"{type(e).__name__}: {e}")) from e
+
+
+class SeerrUserOut(PassthroughModel):
+    id: int
+    name: str
+
+
+class SeerrOptionsOut(PassthroughModel):
+    users: list[SeerrUserOut]
+
+
+@router.get("/overseerr/options", response_model=SeerrOptionsOut)
+async def overseerr_options(request: Request) -> dict:
+    """The instance's accounts, so the UI can offer a "request as" dropdown.
+
+    The *seerr equivalent of ``arr_options``, and deliberately much smaller: quality profiles and
+    root folders are Overseerr's business on this route, so the only choice left to Shortlist is
+    whose name the request goes out under.
+    """
+    state = request.app.state
+    with state.sessions() as session:
+        store = SettingsStore(session, state.secrets)
+        url = (store.get("requests.overseerr.url") or "").strip()
+        api_key = store.get("requests.overseerr.apikey") or ""
+    if not url or not api_key:
+        raise HTTPException(status_code=409, detail="Overseerr isn't connected yet")
+
+    def fetch() -> dict:
+        from shortlist.engine.clients.seerr import SeerrClient
+        from shortlist.engine.models import SeerrTarget
+
+        return {"users": SeerrClient(SeerrTarget(url=url, api_key=api_key)).users()}
 
     try:
         return await asyncio.get_running_loop().run_in_executor(None, fetch)

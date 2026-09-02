@@ -1,4 +1,4 @@
-import { Film, Tv } from "lucide-react";
+import { Film, Inbox, Tv } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 
 import { SaveStatus } from "@/components/save-status";
@@ -24,7 +24,7 @@ import {
 } from "@/lib/request-language";
 import { useAutosavedSettings } from "@/lib/autosave";
 import { settingBool, settingNumber, settingString } from "@/lib/format";
-import { useArrOptions } from "@/lib/queries";
+import { useArrOptions, useSeerrOptions } from "@/lib/queries";
 import type { SonarrMonitor } from "@/lib/sonarr-monitor";
 import {
   asSonarrMonitor,
@@ -44,9 +44,16 @@ type ArrForm = {
   rootFolder: string;
 };
 
+/** Where a request is filed. "arr" posts to Radarr/Sonarr; "overseerr" hands the title to
+ *  Overseerr/Jellyseerr and lets IT drive them. Exclusive — never both. */
+type RequestTarget = "arr" | "overseerr";
+
 /** Every editable requests setting in one object, so the panel updates it with a single patcher. */
 interface RequestsForm {
   enabled: boolean;
+  target: RequestTarget;
+  /** Which Overseerr account requests go out as. 0 = the API key's own (usually auto-approving). */
+  overseerrUserId: number;
   radarr: ArrForm;
   sonarr: ArrForm;
   /** How much of a show Sonarr monitors when a request goes out. Sonarr's own Add Series choice. */
@@ -103,6 +110,15 @@ function readArr(settings: Settings, prefix: string): ArrForm {
 function readForm(settings: Settings): RequestsForm {
   return {
     enabled: settingBool(settings, "requests.enabled"),
+    target:
+      settingString(settings, "requests.target", "arr") === "overseerr"
+        ? "overseerr"
+        : "arr",
+    overseerrUserId: settingNumber(
+      settings,
+      "requests.overseerr.request_as_user_id",
+      0,
+    ),
     radarr: readArr(settings, "requests.radarr"),
     sonarr: readArr(settings, "requests.sonarr"),
     sonarrMonitor: asSonarrMonitor(settings["requests.sonarr.monitor"]),
@@ -299,8 +315,128 @@ function ArrCard({
   );
 }
 
+/** Where requests go when Overseerr/Jellyseerr is the target. Deliberately much smaller than
+ *  `ArrCard`: quality profile, root folder and 4K routing are the *seerr's own rules, which is the
+ *  whole reason to route through it. The only choice left is whose name the request goes out under. */
+function OverseerrCard({
+  userId,
+  onUserChange,
+  connected,
+  onGoToConnections,
+}: {
+  userId: number;
+  onUserChange: (next: number) => void;
+  connected: boolean;
+  onGoToConnections: () => void;
+}) {
+  const options = useSeerrOptions(connected);
+  const userSelectId = useId();
+  // Undefined while the list is still loading as well as when it genuinely lacks the account —
+  // both mean "cannot name it yet", which is exactly when the fallback option below is needed.
+  const chosen = options.data?.users.find((u) => u.id === userId);
+
+  return (
+    <Card>
+      <CardContent className="space-y-4 pt-6">
+        <div className="flex items-center gap-2.5">
+          <span className="grid h-9 w-9 place-items-center rounded-lg border bg-elevated text-primary [&>svg]:h-5 [&>svg]:w-5">
+            <Inbox aria-hidden="true" />
+          </span>
+          <div>
+            <p className="font-medium">Overseerr / Jellyseerr</p>
+            <p className="text-sm text-muted-foreground">
+              Files a request for films and shows alike. Overseerr decides the
+              quality, the folder and who approves it.
+            </p>
+          </div>
+        </div>
+
+        {!connected ? (
+          <div className="space-y-2 rounded-md border border-dashed bg-muted/30 p-3">
+            <p className="text-sm text-muted-foreground">
+              Overseerr isn&rsquo;t connected yet. Add its address and API key
+              on the Overseerr card in{" "}
+              <strong className="font-medium text-foreground">
+                Connections
+              </strong>
+              , then come back and choose who requests go out as.
+            </p>
+            <Button variant="outline" size="sm" onClick={onGoToConnections}>
+              Go to Connections
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <Label htmlFor={userSelectId}>Request as</Label>
+            {/* The error is shown ABOVE the control, never instead of it. An unreachable Overseerr
+                cannot name its accounts, but the choice already saved is still the owner's to see
+                and to undo — hiding the select left someone whose instance was briefly down unable
+                to put it back to Server default. Same reasoning as the Sonarr monitor select. */}
+            {options.isError && (
+              <p className="text-sm text-destructive-text">
+                Couldn&rsquo;t reach Overseerr to load its accounts. Check its
+                address and API key on the Overseerr card in Connections, and
+                press Test there. You can still change this back to the server
+                default in the meantime.
+              </p>
+            )}
+            <select
+              id={userSelectId}
+              className={selectClass}
+              disabled={options.isPending}
+              value={userId}
+              onChange={(e) => onUserChange(Number(e.target.value))}
+            >
+              <option value={0}>
+                {options.isPending
+                  ? "Loading…"
+                  : "Server default (whoever owns the API key)"}
+              </option>
+              {options.data?.users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
+                </option>
+              ))}
+              {/* A saved account the list does not contain — because the fetch failed, or because
+                  it was since deleted in Overseerr. Without it the select falls back to its first
+                  option and the screen silently misreports the saved value as "Server default",
+                  which the next autosave would then WRITE. Keyed on the LIST, not on isError, so
+                  the deleted-account case is covered by the same three lines. */}
+              {userId !== 0 && !chosen && (
+                <option value={userId}>Account #{userId}</option>
+              )}
+            </select>
+            <p className="text-sm text-muted-foreground">
+              {userId === 0 ? (
+                <>
+                  Requests will come from the account your API key belongs to.
+                  That&rsquo;s usually an admin, so they&rsquo;ll be approved
+                  automatically and go straight to Radarr/Sonarr. To check them
+                  in Overseerr first, make a user there called
+                  &ldquo;Shortlist&rdquo; without auto-approve and pick it here.
+                </>
+              ) : (
+                <>
+                  Requests will show in Overseerr as{" "}
+                  <strong className="font-medium text-foreground">
+                    {chosen?.name ?? "the account you picked"}
+                  </strong>
+                  . If that account can&rsquo;t auto-approve, they&rsquo;ll wait
+                  there for your yes &mdash; after they&rsquo;ve already cleared
+                  the guardrails below.
+                </>
+              )}
+            </p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function RequestsSettings({ settings }: { settings: Settings }) {
   const [form, setForm] = useState<RequestsForm>(() => readForm(settings));
+  const viaSeerr = form.target === "overseerr";
   const set = (patch: Partial<RequestsForm>) =>
     setForm((prev) => ({ ...prev, ...patch }));
 
@@ -333,6 +469,9 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
   const sonarrConnected =
     Boolean(settingString(settings, "requests.sonarr.url")) &&
     settingString(settings, "requests.sonarr.apikey") === REDACTED;
+  const overseerrConnected =
+    Boolean(settingString(settings, "requests.overseerr.url")) &&
+    settingString(settings, "requests.overseerr.apikey") === REDACTED;
 
   const goToConnections = () =>
     document
@@ -344,6 +483,8 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
   const save = useAutosavedSettings(form, () => {
     const values: Settings = {
       "requests.enabled": form.enabled,
+      "requests.target": form.target,
+      "requests.overseerr.request_as_user_id": form.overseerrUserId,
       // Address + API key are owned by Settings → Connections now; this form only saves the
       // request-filing choices (quality profile + folder) and the policy below.
       "requests.radarr.quality_profile_id": form.radarr.qualityProfileId,
@@ -377,9 +518,10 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
           <div className="space-y-1">
             <p className="font-medium">Fill in the gaps automatically</p>
             <p className="text-sm text-muted-foreground">
-              Ask Radarr or Sonarr for titles that would have been good picks
-              but aren&rsquo;t in your library. You choose which go out on their
-              own and which wait in{" "}
+              Ask for titles that would have been good picks but
+              aren&rsquo;t in your library &mdash; straight from Radarr and
+              Sonarr, or as a request in Overseerr. You choose which go out on
+              their own and which wait in{" "}
               <strong className="font-medium text-foreground">Requests</strong>{" "}
               for a yes or no.
             </p>
@@ -393,15 +535,47 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
 
         {!form.enabled && (
           <p className="text-sm text-muted-foreground">
-            Off &mdash; runs won&rsquo;t ask Radarr or Sonarr for anything, and
-            nothing new reaches your Requests inbox. Turn it on to connect the
-            apps and set the rules.
+            Off &mdash; runs won&rsquo;t ask for anything, and nothing new
+            reaches your Requests inbox. Turn it on to connect an app and set
+            the rules.
           </p>
         )}
 
         {form.enabled && (
           <div className="space-y-5 border-t pt-5">
-            {!radarrConnected && !sonarrConnected && (
+            <div className="space-y-2">
+              <Segmented<RequestTarget>
+                legend="Where requests go"
+                value={form.target}
+                onChange={(target) => set({ target })}
+                options={[
+                  { value: "arr", label: "Radarr & Sonarr" },
+                  { value: "overseerr", label: "Overseerr / Jellyseerr" },
+                ]}
+              />
+              <p className="text-sm text-muted-foreground">
+                {viaSeerr
+                  ? "Shortlist files a request in Overseerr instead of adding the title itself. Overseerr picks the quality and folder, and handles approval — so what Shortlist asks for shows up alongside everything your users request."
+                  : "Shortlist adds the title to Radarr or Sonarr itself, using the quality and folder you pick below."}
+              </p>
+            </div>
+
+            {viaSeerr && !overseerrConnected && (
+              <div className="space-y-2 rounded-lg border border-primary/40 bg-primary/5 p-4">
+                <p className="text-sm font-medium">
+                  Connect Overseerr to start requesting
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Add its address and API key in the Connections section, then
+                  come back here to set the rules. Jellyseerr works the same
+                  way.
+                </p>
+                <Button variant="outline" size="sm" onClick={goToConnections}>
+                  Go to Connections
+                </Button>
+              </div>
+            )}
+            {!viaSeerr && !radarrConnected && !sonarrConnected && (
               <div className="space-y-2 rounded-lg border border-primary/40 bg-primary/5 p-4">
                 <p className="text-sm font-medium">
                   Connect Radarr or Sonarr to start requesting
@@ -416,29 +590,45 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                 </Button>
               </div>
             )}
-            <div className="grid gap-4 lg:grid-cols-2">
-              <ArrCard
-                service="radarr"
-                title="Radarr"
-                icon={<Film aria-hidden="true" />}
-                form={form.radarr}
-                onChange={(radarr) => set({ radarr })}
-                connected={radarrConnected}
-                onGoToConnections={goToConnections}
-              />
-              <ArrCard
-                service="sonarr"
-                title="Sonarr"
-                icon={<Tv aria-hidden="true" />}
-                form={form.sonarr}
-                onChange={(sonarr) => set({ sonarr })}
-                connected={sonarrConnected}
-                onGoToConnections={goToConnections}
-                monitor={form.sonarrMonitor}
-                onMonitorChange={(sonarrMonitor) => set({ sonarrMonitor })}
-              />
-            </div>
 
+            {viaSeerr ? (
+              <OverseerrCard
+                userId={form.overseerrUserId}
+                onUserChange={(overseerrUserId) => set({ overseerrUserId })}
+                connected={overseerrConnected}
+                onGoToConnections={goToConnections}
+              />
+            ) : (
+              <div className="grid gap-4 lg:grid-cols-2">
+                <ArrCard
+                  service="radarr"
+                  title="Radarr"
+                  icon={<Film aria-hidden="true" />}
+                  form={form.radarr}
+                  onChange={(radarr) => set({ radarr })}
+                  connected={radarrConnected}
+                  onGoToConnections={goToConnections}
+                />
+                <ArrCard
+                  service="sonarr"
+                  title="Sonarr"
+                  icon={<Tv aria-hidden="true" />}
+                  form={form.sonarr}
+                  onChange={(sonarr) => set({ sonarr })}
+                  connected={sonarrConnected}
+                  onGoToConnections={goToConnections}
+                  monitor={form.sonarrMonitor}
+                  onMonitorChange={(sonarrMonitor) => set({ sonarrMonitor })}
+                />
+              </div>
+            )}
+
+            {/* Both tag controls are Arr-only, and hidden rather than disabled on the *seerr route.
+                Overseerr's POST /request body carries no tags field at all, so leaving them on
+                screen would offer a setting that silently does nothing. The "request as" account on
+                the card above is the attribution that replaces them. */}
+            {!viaSeerr && (
+              <>
             <div className="space-y-2">
               <Label htmlFor={tagId}>Tag added items</Label>
               <Input
@@ -475,6 +665,8 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                 aria-label="Also tag requests with the name of the person they're for"
               />
             </div>
+              </>
+            )}
 
             {/* Deliberately BEFORE Guardrails. Read the other way round, "Minimum rating 7" looked
                 like the bar for requesting at all, and the owner only met the second, higher bar two

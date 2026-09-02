@@ -1460,6 +1460,38 @@ describe("RequestsPage — what Sonarr/Radarr has", () => {
     expect(screen.getByText("Downloading")).toBeInTheDocument();
   });
 
+  it("blames Overseerr, not Radarr, when that is the route", async () => {
+    listRequests.mockResolvedValue([
+      candidate({ id: 1, title: "Dune", media_type: "movie" }),
+      candidate({ id: 2, tmdb_id: 200, title: "Shogun", media_type: "show" }),
+    ]);
+    // On this route both Arr fields are always "off" — one app answers for films and shows alike.
+    getArrStatus.mockResolvedValue({
+      statuses: {},
+      radarr: "off",
+      sonarr: "off",
+      overseerr: "unreachable",
+    });
+    renderPage();
+
+    expect(
+      (await screen.findAllByText(/Can.t reach Overseerr/i)).length,
+    ).toBe(2);
+    expect(screen.queryByText(/Can.t reach Radarr/i)).toBeNull();
+  });
+
+  it("treats a response with no overseerr field as the Arr route", async () => {
+    // The field is absent from any response predating it. Reading "is Overseerr in use?" as
+    // `!== "off"` made `undefined` mean YES, which sent every existing install down the Overseerr
+    // branch and blanked its badges — caught by the two Arr tests above, pinned here on purpose.
+    listRequests.mockResolvedValue([candidate({ id: 1, title: "Dune" })]);
+    getArrStatus.mockResolvedValue({ statuses: {}, radarr: "unreachable", sonarr: "ok" });
+    renderPage();
+
+    expect(await screen.findByText(/Can.t reach Radarr/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Can.t reach Overseerr/i)).toBeNull();
+  });
+
   it("re-asks the Arrs the moment something is sent to them", async () => {
     // Nothing invalidated this key at all, so a title you had just sent carried no badge until the
     // next poll — or, before there was a poll, until you reloaded the page.

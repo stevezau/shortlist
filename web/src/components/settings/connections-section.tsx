@@ -2,6 +2,7 @@ import {
   Compass,
   Film,
   Globe,
+  Inbox,
   Sparkles,
   TriangleAlert,
   Tv,
@@ -230,6 +231,27 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
                 ["openai_compatible", "ollama"].includes(
                   v["curator.provider"] ?? "",
                 ),
+            },
+          ]}
+        />
+        <ConnectionCard
+          service="overseerr"
+          title="Overseerr / Jellyseerr"
+          purpose="An alternative to connecting Radarr and Sonarr directly: Shortlist files a request here and Overseerr fetches it, using its own quality settings and approval rules."
+          settings={settings}
+          summary={settingString(settings, "requests.overseerr.url")}
+          glyph={<Inbox aria-hidden className="text-primary" />}
+          fields={[
+            {
+              key: "requests.overseerr.url",
+              label: "Address",
+              kind: "text",
+              placeholder: "http://your-host:5055",
+            },
+            {
+              key: "requests.overseerr.apikey",
+              label: "API key",
+              kind: "password",
             },
           ]}
         />

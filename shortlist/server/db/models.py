@@ -835,10 +835,12 @@ class RequestCandidate(Base):
     detail: Mapped[str] = mapped_column(String(512), default="")  # send outcome, or why it's queued
     # The arr's titleSlug, captured when the title is sent, so the inbox deep-links straight to its
     # Sonarr/Radarr page (Sonarr has only `/series/<slug>`, no id URL). None for titles queued/sent
-    # before this was recorded — the inbox falls back to the arr's home page for those.
+    # before this was recorded — the inbox falls back to the arr's home page for those — and always
+    # None on the Overseerr route, which addresses both media types by TMDB id and needs no slug.
     arr_slug: Mapped[str | None] = mapped_column(String(256), nullable=True)
     # On Sonarr/Radarr's import-exclusion list (usually from a past delete): surfaced in the inbox so
-    # the owner knows approving it is a no-op until they remove the exclusion in the Arr.
+    # the owner knows approving it is a no-op until they remove the exclusion in the Arr. Never set
+    # on the Overseerr route — it has no equivalent list, so there is no such fact to surface.
     excluded: Mapped[bool] = mapped_column(Boolean, default=False)
     # Owner cleared this from the Sent log. The row STAYS `status="sent"` — a load-bearing tombstone
     # that stops a still-downloading title being re-requested (see delete_requests / _persist_request_queue)

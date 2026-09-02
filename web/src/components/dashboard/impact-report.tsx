@@ -1079,7 +1079,8 @@ function ReportBody({
         {requests.sent > 0 && (
           <Section
             title="Requests"
-            hint={`Sent to Sonarr/Radarr in ${WINDOW_PHRASE[reportWindow]}.`}
+            // App-neutral on purpose — see run-stat-tiles: the route is a setting this card cannot see.
+            hint={`Sent to be downloaded in ${WINDOW_PHRASE[reportWindow]}.`}
           >
             <div className="flex items-center gap-2 text-sm">
               <Send className="h-4 w-4 text-muted-foreground" aria-hidden />

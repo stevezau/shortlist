@@ -937,6 +937,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/overseerr/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Overseerr Options
+         * @description The instance's accounts, so the UI can offer a "request as" dropdown.
+         *
+         *     The *seerr equivalent of ``arr_options``, and deliberately much smaller: quality profiles and
+         *     root folders are Overseerr's business on this route, so the only choice left to Shortlist is
+         *     whose name the request goes out under.
+         */
+        get: operations["overseerr_options_api_settings_overseerr_options_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/test/{service}": {
         parameters: {
             query?: never;
@@ -2620,6 +2644,12 @@ export interface components {
          *     badges, for ever, with nothing anywhere saying why.
          */
         ArrStatusOut: {
+            /**
+             * Overseerr
+             * @default off
+             * @enum {string}
+             */
+            overseerr: "ok" | "unreachable" | "off";
             /**
              * Radarr
              * @enum {string}
@@ -4742,6 +4772,22 @@ export interface components {
             rows: components["schemas"]["ScheduleRowOut"][];
             /** Type */
             type: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** SeerrOptionsOut */
+        SeerrOptionsOut: {
+            /** Users */
+            users: components["schemas"]["SeerrUserOut"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /** SeerrUserOut */
+        SeerrUserOut: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
         } & {
             [key: string]: unknown;
         };
@@ -6907,6 +6953,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    overseerr_options_api_settings_overseerr_options_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeerrOptionsOut"];
                 };
             };
         };

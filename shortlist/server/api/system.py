@@ -337,6 +337,8 @@ async def debug_bundle(request: Request) -> str:
             "tmdb": bool(store.get("tmdb.apikey")),
             "curator": store.get("curator.provider"),
             "requests": bool(store.get("requests.enabled")),
+            "request_target": store.get("requests.target"),
+            "overseerr": bool(store.get("requests.overseerr.url")),
             "radarr": bool(store.get("requests.radarr.url")),
             "sonarr": bool(store.get("requests.sonarr.url")),
         }

@@ -9,6 +9,7 @@ import type {
   ApiTokenStatus,
   NotificationsPage,
   ArrOptions,
+  SeerrOptions,
   Backup,
   BlockedSeed,
   DeletedRowHistory,
@@ -475,6 +476,11 @@ export const api = {
   /** Quality profiles + root folders for a connected Sonarr/Radarr (for the request-setup dropdowns). */
   getArrOptions: (service: "radarr" | "sonarr"): Promise<ArrOptions> =>
     request(`/api/settings/arr/${service}/options`),
+
+  /** Overseerr/Jellyseerr accounts, for the "request as" dropdown. No quality profiles or root
+   *  folders here — those are the *seerr's own business on that route. */
+  getSeerrOptions: (): Promise<SeerrOptions> =>
+    request("/api/settings/overseerr/options"),
 
   /** Model ids a provider offers, for the model picker. The body carries the (possibly unsaved)
    *  provider + key/URL being edited so the list reflects the current form; blank fields fall back to

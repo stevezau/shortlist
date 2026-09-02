@@ -36,6 +36,7 @@ from shortlist.engine.models import (
     RequestOverrides,
     RowOverride,
     RowSpec,
+    SeerrTarget,
     UserProfile,
     UserType,
     is_human_rating,
@@ -1229,6 +1230,25 @@ class ContextBuilder:
 
         incomplete: list[str] = []
 
+        def seerr_target() -> SeerrTarget | None:
+            """The Overseerr/Jellyseerr target, or None when it isn't fully connected.
+
+            Simpler than an Arr target because there is less to get right: a *seerr needs only a URL
+            and a key, since the quality profile and root folder are its own business.
+            """
+            url = (store.get("requests.overseerr.url") or "").strip()
+            api_key = store.get("requests.overseerr.apikey") or ""
+            if not url or not api_key:
+                msg = "Overseerr is the chosen request target but has no address or API key"
+                logger.warning("{} — nothing will be requested", msg)
+                incomplete.append(msg)
+                return None
+            return SeerrTarget(
+                url=url,
+                api_key=api_key,
+                request_as_user_id=int(store.get("requests.overseerr.request_as_user_id") or 0),
+            )
+
         def target(prefix: str) -> ArrTarget | None:
             url = (store.get(f"{prefix}.url") or "").strip()
             api_key = store.get(f"{prefix}.apikey") or ""
@@ -1255,10 +1275,21 @@ class ContextBuilder:
                 tag=(store.get("requests.tag") or "").strip(),
             )
 
+        # Branch on the target the owner CHOSE, never on which one happened to build. Deciding it by
+        # "did Overseerr resolve?" meant a half-configured Overseerr fell through to a Radarr left
+        # over from before the switch — silently sending to an app the owner had chosen to stop
+        # using. An unfinished choice must request nothing and say so, not route somewhere else.
+        #
+        # One target or the other, never both: the *seerr owns the download apps, so the Arr targets
+        # (and every per-row profile/folder override that acts on them) must not also be live.
+        via_seerr = store.get("requests.target") == "overseerr"
+        seerr = seerr_target() if via_seerr else None
         return RequestConfig(
             enabled=True,
-            radarr=target("requests.radarr"),
-            sonarr=target("requests.sonarr"),
+            target="overseerr" if via_seerr else "arr",
+            overseerr=seerr,
+            radarr=None if via_seerr else target("requests.radarr"),
+            sonarr=None if via_seerr else target("requests.sonarr"),
             incomplete_targets=incomplete,
             rating_source=store.get("requests.rating_source") or "tmdb",
             mdblist_api_key=store.get("requests.mdblist.apikey") or "",

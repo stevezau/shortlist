@@ -598,6 +598,7 @@ function SentRow({
   item,
   radarrUrl,
   sonarrUrl,
+  overseerrUrl,
   onClear,
   clearing,
   arrView,
@@ -606,23 +607,34 @@ function SentRow({
   item: RequestCandidate;
   radarrUrl: string;
   sonarrUrl: string;
+  /** Set only when requests route through Overseerr — which then answers for films AND shows. */
+  overseerrUrl: string;
   onClear: (id: number) => void;
   clearing: boolean;
   arrView: ArrView;
   nameOf: DisplayNameLookup;
 }) {
   const isMovie = item.media_type === "movie";
-  const app = isMovie ? "Radarr" : "Sonarr";
-  const ArrGlyph = isMovie ? RadarrGlyph : SonarrGlyph;
-  const base = (isMovie ? radarrUrl : sonarrUrl).replace(/\/+$/, "");
-  // Deep-link straight to the title's arr page. Radarr accepts its TMDB id; Sonarr has NO id URL —
-  // only /series/<titleSlug> — so it needs the slug captured at send time. Without a slug (a title
-  // sent before we recorded it) fall back to the app's home page rather than a dead link.
-  const arrPath = isMovie
-    ? `movie/${item.arr_slug ?? item.tmdb_id}`
-    : item.arr_slug
-      ? `series/${item.arr_slug}`
-      : "";
+  // Naming the app is not cosmetic: the badge is a record of where this title actually went, and
+  // on the Overseerr route it read "Sent to Radarr" for every film — an app that was never asked.
+  const viaSeerr = Boolean(overseerrUrl);
+  const app = viaSeerr ? "Overseerr" : isMovie ? "Radarr" : "Sonarr";
+  const ArrGlyph = viaSeerr ? Inbox : isMovie ? RadarrGlyph : SonarrGlyph;
+  const base = (
+    viaSeerr ? overseerrUrl : isMovie ? radarrUrl : sonarrUrl
+  ).replace(/\/+$/, "");
+  // Deep-link straight to the title's page. Overseerr needs no slug at all — its own UI addresses
+  // both types by TMDB id — which is why a *seerr send records none. Radarr accepts its TMDB id;
+  // Sonarr has NO id URL, only /series/<titleSlug>, so it needs the slug captured at send time.
+  // Without a slug (a title sent before we recorded it) fall back to the app's home page rather
+  // than a dead link.
+  const arrPath = viaSeerr
+    ? `${isMovie ? "movie" : "tv"}/${item.tmdb_id}`
+    : isMovie
+      ? `movie/${item.arr_slug ?? item.tmdb_id}`
+      : item.arr_slug
+        ? `series/${item.arr_slug}`
+        : "";
   const arrLink = base ? `${base}/${arrPath}` : "";
   const lead = arrLink
     ? [
@@ -1056,9 +1068,16 @@ function arrViewFor(
   const isMovie = item.media_type === "movie";
   if (isPending) return { kind: "checking" };
   if (!status) return { kind: "none" }; // the fetch failed outright; the page says so elsewhere
-  const reach = isMovie ? status.radarr : status.sonarr;
+  // Overseerr answers for films and shows alike, so when it is the route there is no per-media-type
+  // app to name — and the two Arr fields are always "off", which must not read as "reachable".
+  // Tested against the two live values, never `!== "off"`: the field is absent from a response
+  // predating it, and `undefined !== "off"` would route every Arr install down the Overseerr branch
+  // and blank its badges.
+  const viaSeerr = status.overseerr === "ok" || status.overseerr === "unreachable";
+  const reach = viaSeerr ? status.overseerr : isMovie ? status.radarr : status.sonarr;
   if (reach === "unreachable") {
-    return { kind: "unreachable", app: isMovie ? "Radarr" : "Sonarr" };
+    const app = viaSeerr ? "Overseerr" : isMovie ? "Radarr" : "Sonarr";
+    return { kind: "unreachable", app };
   }
   const found = status.statuses[String(item.id)];
   return found ? { kind: "status", status: found } : { kind: "none" };
@@ -1306,8 +1325,20 @@ export function RequestsPage() {
           // things back. On the default "any" server nothing is.
           const languageModeOn =
             settingString(settings, "requests.language_mode", "any") !== "any";
-          const radarrUrl = settingString(settings, "requests.radarr.url");
-          const sonarrUrl = settingString(settings, "requests.sonarr.url");
+          // Read from the TARGET, not from whichever URLs happen to be filled in: an owner who tried
+          // Radarr first and then switched still has its address saved, and passing it here would
+          // deep-link Overseerr's sends into Radarr.
+          const viaSeerr =
+            settingString(settings, "requests.target", "arr") === "overseerr";
+          const overseerrUrl = viaSeerr
+            ? settingString(settings, "requests.overseerr.url")
+            : "";
+          const radarrUrl = viaSeerr
+            ? ""
+            : settingString(settings, "requests.radarr.url");
+          const sonarrUrl = viaSeerr
+            ? ""
+            : settingString(settings, "requests.sonarr.url");
           return (
             <QueryBoundary
               query={requestsQuery}
@@ -1711,6 +1742,7 @@ export function RequestsPage() {
                                 item={item}
                                 radarrUrl={radarrUrl}
                                 sonarrUrl={sonarrUrl}
+                                overseerrUrl={overseerrUrl}
                                 onClear={(id) => clear.mutate([id])}
                                 clearing={clear.isPending}
                                 arrView={arrView(item)}

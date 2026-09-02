@@ -1,0 +1,37 @@
+{
+  "_provenance": "NOT recorded from a live server — built from Overseerr's published OpenAPI spec (overseerr-api.yml, User schema + GET /user) on 2026-09-02. Re-record against a real instance when one is available.",
+  "_caveat": "`displayName` is what the Overseerr UI shows and what the live API returns, but it is NOT in the published User schema — which documents `username`, `plexUsername` and `email`. The client falls through all four in that order, so a fork returning only the documented fields still names every account.",
+  "pageInfo": { "pages": 1, "pageSize": 100, "results": 3, "page": 1 },
+  "results": [
+    {
+      "id": 1,
+      "email": "owner@example.test",
+      "username": null,
+      "plexUsername": "serverowner",
+      "displayName": "serverowner",
+      "userType": 1,
+      "permissions": 2,
+      "requestCount": 42
+    },
+    {
+      "id": 4,
+      "email": "shortlist@example.test",
+      "username": "Shortlist",
+      "plexUsername": null,
+      "displayName": "Shortlist",
+      "userType": 2,
+      "permissions": 32,
+      "requestCount": 0
+    },
+    {
+      "id": 7,
+      "email": "moo@example.test",
+      "username": null,
+      "plexUsername": "moohouse",
+      "displayName": "MooHouse",
+      "userType": 1,
+      "permissions": 32,
+      "requestCount": 8
+    }
+  ]
+}

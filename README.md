@@ -113,7 +113,8 @@ account is told to hide that label, so only its owner ever sees it.
 **Grow your library**
 
 - 📥 **Fills its own gaps (optional)** — when a great pick isn't in your library, Shortlist can ask
-  **Radarr/Sonarr** to grab it. Off by default and cautious: the strongest picks auto-send (a few a
+  **Radarr/Sonarr** to grab it — or files a request in **Overseerr/Jellyseerr** and lets it do
+  the fetching. Off by default and cautious: the strongest picks auto-send (a few a
   night); the rest wait in a **Requests** inbox for one-click approval.
 
 **Trust & safety**

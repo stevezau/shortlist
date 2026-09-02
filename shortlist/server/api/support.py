@@ -255,6 +255,10 @@ def _scrub(s: str) -> str:
 _LOCATION_KEYS = {
     "plex.url",
     "tautulli.url",
+    # Only the URL. `requests.target` ("arr"/"overseerr") and `request_as_user_id` are not network
+    # locations, and shaping them would hide the one non-sensitive fact worth having in a bug report
+    # — which route this install is on — behind a "<set>".
+    "requests.overseerr.url",
     "requests.radarr.url",
     "requests.sonarr.url",
     "curator.ollama_url",

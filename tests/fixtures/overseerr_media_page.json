@@ -1,0 +1,62 @@
+{
+  "_provenance": "NOT recorded from a live server — built from Overseerr's published OpenAPI spec (overseerr-api.yml, MediaInfo schema + GET /media) on 2026-09-02. Re-record against a real instance when one is available; see the caveat below.",
+  "_caveat": "`mediaType` is absent from the published MediaInfo schema but IS returned by the live API, and the client needs it: TMDB's movie and tv id spaces overlap, so id 550 names both a film and a series. It is included here because the client depends on it, and `SeerrClient` logs a warning + fails open if a real instance ever answers without it.",
+  "_status_enum": "1=UNKNOWN 2=PENDING 3=PROCESSING 4=PARTIALLY_AVAILABLE 5=AVAILABLE 6=DELETED",
+  "pageInfo": { "pages": 1, "pageSize": 100, "results": 6, "page": 1 },
+  "results": [
+    {
+      "id": 1,
+      "mediaType": "movie",
+      "tmdbId": 273481,
+      "tvdbId": null,
+      "status": 5,
+      "createdAt": "2026-08-01T10:00:27.000Z",
+      "updatedAt": "2026-08-02T10:00:27.000Z"
+    },
+    {
+      "id": 2,
+      "mediaType": "movie",
+      "tmdbId": 496243,
+      "tvdbId": null,
+      "status": 3,
+      "createdAt": "2026-08-03T10:00:27.000Z",
+      "updatedAt": "2026-08-03T11:00:27.000Z"
+    },
+    {
+      "id": 3,
+      "mediaType": "movie",
+      "tmdbId": 12345,
+      "tvdbId": null,
+      "status": 2,
+      "createdAt": "2026-08-04T10:00:27.000Z",
+      "updatedAt": "2026-08-04T10:00:27.000Z"
+    },
+    {
+      "id": 4,
+      "mediaType": "tv",
+      "tmdbId": 1399,
+      "tvdbId": 121361,
+      "status": 4,
+      "createdAt": "2026-07-20T10:00:27.000Z",
+      "updatedAt": "2026-08-05T10:00:27.000Z"
+    },
+    {
+      "id": 5,
+      "mediaType": "tv",
+      "tmdbId": 82856,
+      "tvdbId": 361753,
+      "status": 5,
+      "createdAt": "2026-07-21T10:00:27.000Z",
+      "updatedAt": "2026-07-30T10:00:27.000Z"
+    },
+    {
+      "id": 6,
+      "mediaType": "movie",
+      "tmdbId": 999999,
+      "tvdbId": null,
+      "status": 6,
+      "createdAt": "2026-06-01T10:00:27.000Z",
+      "updatedAt": "2026-06-02T10:00:27.000Z"
+    }
+  ]
+}
