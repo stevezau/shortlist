@@ -19,23 +19,14 @@ export const DAY_CHIPS: { iso: number; short: string; long: string }[] = [
 ];
 
 /**
- * A Date's ISO weekday, 1 (Monday) .. 7 (Sunday).
+ * Deliberately absent: anything that reads the browser's clock.
  *
- * `Date.getDay()` calls Sunday 0 and the API takes ISO 1-7, so sending getDay() straight through
- * would store a day that matches nothing — a row that silently never appears on Sundays, with no
- * error to notice. This is the only place that conversion happens.
- */
-export function isoWeekday(when: Date): number {
-  const js = when.getDay();
-  return js === 0 ? 7 : js;
-}
-
-/**
- * Deliberately absent: an `isShownToday(days)` that reads `new Date()`.
- *
- * Days turn over on the SERVER's clock — the one the midnight job and Plex follow — so a badge
- * derived from the viewer's clock can say "Hidden today" for a row Plex is showing, for as long as
- * the two timezones differ. The API answers it instead, as `Collection.shown_today`.
+ * Days turn over on the SERVER's clock — the one the midnight job and Plex follow — so a "today"
+ * computed here can disagree with what Plex is actually doing for as long as the two timezones
+ * differ. Both places that wanted it are answered without it: the Rows badge uses the API's
+ * `Collection.shown_today`, and switching a row to "only on these days" ticks the whole week rather
+ * than guessing at today. Seen live: the browser said Wednesday while the server was on Thursday, and
+ * seeding from the browser produced a row that hid itself the moment it was saved.
  */
 
 function inWeekOrder(days: ShowDays): typeof DAY_CHIPS {

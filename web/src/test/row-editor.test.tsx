@@ -1822,3 +1822,41 @@ describe("RowPreview — a row that only appears on some days says so", () => {
     expect(within(panel as HTMLElement).queryByText("Only on")).toBeNull();
   });
 });
+
+describe("RowEditor — switching to a day schedule does not guess at today", () => {
+  beforeEach(() => {
+    updateCollection.mockClear();
+  });
+
+  it("ticks the whole week, which still means every day", async () => {
+    // It used to seed the BROWSER's weekday. Days turn over on the server's clock, so with the two
+    // either side of midnight that pre-selected a day which was not today on the server — and saving
+    // straight away hid the row. Seen live: browser on Wednesday, server already on Thursday.
+    renderEditor(row({ show_days: [] }));
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Only on these days" }),
+    );
+
+    for (const name of ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]) {
+      expect(screen.getByRole("button", { name })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    }
+  });
+
+  it("narrows only when you untick a day", async () => {
+    renderEditor(row({ show_days: [] }));
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Only on these days" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Sun" }));
+    await userEvent.click(screen.getByRole("button", { name: /Save changes/i }));
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    const body = updateCollection.mock.calls.at(0)?.[1] as Collection;
+    expect(body.show_days).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+});

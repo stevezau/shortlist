@@ -1,12 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Segmented } from "@/components/segmented";
-import {
-  DAY_CHIPS,
-  isoWeekday,
-  type ShowDays,
-  showDaysSentence,
-} from "@/lib/show-days";
+import { DAY_CHIPS, type ShowDays, showDaysSentence } from "@/lib/show-days";
 
 type Mode = "always" | "days";
 
@@ -51,10 +46,15 @@ export function RowShowDaysField({
           { value: "always", label: "Every day" },
           { value: "days", label: "Only on these days" },
         ]}
-        // Switching to "days" seeds today's weekday rather than an empty or arbitrary set: an empty
-        // one means "every day" and would leave the control looking chosen but changing nothing.
+        // Switching to "days" ticks the WHOLE week, which still means "every day" — so flipping the
+        // mode alone changes nothing until you actually narrow it, and you narrow by unticking.
+        //
+        // It used to seed today's weekday from `new Date()`. That is the BROWSER's day, and days turn
+        // over on the SERVER's clock: with the two either side of midnight it pre-selected a day that
+        // was not today on the server, so saving immediately hid the row. Seen live — the browser said
+        // Wednesday while the server was already on Thursday.
         onChange={(next) =>
-          onChange(next === "always" ? [] : [isoWeekday(new Date())])
+          next === "always" ? onChange([]) : onChange(DAY_CHIPS.map((c) => c.iso))
         }
       />
       {mode === "days" && (
