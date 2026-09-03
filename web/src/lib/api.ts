@@ -261,13 +261,21 @@ export const api = {
   }> => request("/api/users/sync", { method: "POST" }),
 
   // --- Background jobs ---
-  getJobs: (kind?: string, limit = 25, status?: JobStatus): Promise<Job[]> =>
+  getJobs: (
+    kind?: string,
+    limit = 25,
+    status?: JobStatus,
+    excludeRoutine = false,
+  ): Promise<Job[]> =>
     request(
       `/api/system/jobs?limit=${limit}` +
         (kind ? `&kind=${encodeURIComponent(kind)}` : "") +
         // Server-side, not a client filter over a fetched page: the "N failed" badge counts every
         // failed row in the table, and on a real server all eight sat past the newest hundred.
-        (status ? `&status=${encodeURIComponent(status)}` : ""),
+        (status ? `&status=${encodeURIComponent(status)}` : "") +
+        // Same reason, other direction: `watch.reconcile` was 165 of 197 jobs in a day, so the
+        // newest page the header polls was almost all reconciles. Failures still come through.
+        (excludeRoutine ? "&exclude_routine=true" : ""),
     ),
 
   /** Every job Shortlist can run, with its schedule and how it went last time. */

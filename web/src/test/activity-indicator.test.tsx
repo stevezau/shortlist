@@ -31,7 +31,12 @@ vi.mock("sonner", () => ({
 
 vi.mock("@/lib/api", () => ({
   api: {
-    getJobs: (kind?: string, limit?: number) => getJobs(kind, limit),
+    getJobs: (
+      kind?: string,
+      limit?: number,
+      status?: string,
+      excludeRoutine?: boolean,
+    ) => getJobs(kind, limit, status, excludeRoutine),
     getJobCatalog: () => getJobCatalog(),
     getRuns: (collection?: string, beforeId?: number, limit?: number) =>
       getRuns(collection, beforeId, limit),
@@ -124,6 +129,16 @@ describe("ActivityIndicator toasts", () => {
     toastLoading.mockClear();
     toastSuccess.mockClear();
     toastError.mockClear();
+  });
+
+  it("asks the server to leave the routine job kinds out of the feed", async () => {
+    // `watch.reconcile` is queued once per playback stop — 165 of the 197 jobs a day on a 46-user
+    // server, which is more than this poll's page holds. Dropping them server-side is what keeps
+    // the Recent list and the toasts about things worth telling the operator, and it is why there
+    // is no client-side kind filter here to test instead.
+    await renderIndicator([]);
+
+    expect(getJobs).toHaveBeenCalledWith(undefined, 30, undefined, true);
   });
 
   it("stays silent on the first poll, however much history it loads", async () => {

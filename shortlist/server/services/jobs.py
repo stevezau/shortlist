@@ -85,6 +85,16 @@ class JobKind:
     # — running those on a timer is a choice to make, not a default to inherit.
     schedule_optional: bool = False
     trigger: str = ""  # what causes it, for the kinds no button can start
+    # Queued so often that a SUCCESSFUL one carries no news. Measured on a 46-user server: 165
+    # `watch.reconcile` in 24 hours, 84% of every job queued — enough to own all five slots of the
+    # header's "Recent" list permanently, so a privacy sync or a nightly run was never visible
+    # there, and to pop a success toast every nine minutes for something nobody asked for.
+    #
+    # Suppresses nothing on its own: it only makes a kind eligible for `exclude_routine` on
+    # `GET /jobs`, which the header's activity poll passes and the Jobs page does not. A FAILURE is
+    # never routine and is never dropped — a reconcile that fails is the only thing that would say a
+    # partial watch went uncredited.
+    routine: bool = False
 
 
 # Every registered kind, in the order the Jobs page shows them. `manual` is a deliberate allow-list,
@@ -222,6 +232,7 @@ CATALOG: tuple[JobKind, ...] = (
         ),
         manual=False,
         writes_plex=False,  # local database only
+        routine=True,  # one per playback stop; see JobKind.routine
         trigger=(
             "Runs when a playback session ends — nothing schedules it, and there is nothing to run by "
             "hand. If it never runs (Shortlist restarted mid-playback, say), nothing is lost: the "
@@ -487,6 +498,15 @@ def writes_plex(kind: str) -> bool:
     default is "take the lock", never "assume it is harmless"."""
     entry = BY_KIND.get(kind)
     return True if entry is None else entry.writes_plex
+
+
+def routine_kinds() -> tuple[str, ...]:
+    """The kinds a successful one of which carries no news — see :attr:`JobKind.routine`.
+
+    Unknown kinds are absent, so anything the catalogue doesn't describe is treated as newsworthy:
+    the safe default for a feed whose job is to tell an operator that something happened.
+    """
+    return tuple(entry.kind for entry in CATALOG if entry.routine)
 
 
 def _claimable(kind: str, *, allow_writers: bool, allow_history: bool) -> bool:

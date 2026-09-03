@@ -1124,6 +1124,7 @@ async def list_jobs(
     kind: str | None = None,
     before_id: int | None = None,
     status: JobStatus | None = None,
+    exclude_routine: bool = False,
 ) -> list[dict]:
     """Recent background jobs, newest first — the "did that actually happen?" answer.
 
@@ -1139,7 +1140,17 @@ async def list_jobs(
     Measured on a real server: 8 failures, all `privacy.sync`, at ids 587-596 — the newest hundred
     jobs started at id 680, so filtering a fetched page client-side answered "8 failed" with an
     empty list. A count over the whole table needs a filter over the whole table.
+
+    `exclude_routine` drops the high-volume automatic kinds (`JobKind.routine`) unless they FAILED,
+    and exists for the same reason `status` does: a client filter over a fetched page cannot work
+    when the noise outnumbers the news. Measured on a 46-user server, `watch.reconcile` was 165 of
+    the 197 jobs queued in a day, so the newest 30 rows the header polls were almost all reconciles
+    and nothing else could be seen behind them. The Jobs page does not pass it — that is where you
+    go to look at reconciles — and a failure is never dropped, because a reconcile that fails is the
+    only thing that would say a partial watch went uncredited.
     """
+    from sqlalchemy import or_
+
     from shortlist.server.db.models import Job
 
     with request.app.state.sessions() as session:
@@ -1148,6 +1159,8 @@ async def list_jobs(
             query = query.filter(Job.kind == kind)
         if status:
             query = query.filter(Job.status == status)
+        if exclude_routine and (noisy := jobs.routine_kinds()):
+            query = query.filter(or_(Job.kind.notin_(noisy), Job.status == "failed"))
         if before_id is not None:
             query = query.filter(Job.id < before_id)
         rows = query.order_by(Job.created_at.desc(), Job.id.desc()).limit(min(limit, 200)).all()

@@ -27,7 +27,13 @@ export function isInFlight(job: Job): boolean {
 export function useJobActivity() {
   return useQuery({
     queryKey: ["jobs", "activity"],
-    queryFn: () => api.getJobs(undefined, ACTIVITY_LIMIT),
+    // `excludeRoutine`: the header is a feed of things worth telling you about, so the high-volume
+    // automatic kinds are dropped by the SERVER (see `JobKind.routine`) rather than filtered here —
+    // one per playback stop measured 165 of the 197 jobs queued in a day on a 46-user server, which
+    // is more than this page holds, so a client-side filter would have shown an empty list. Coming
+    // out of the poll entirely is also what silences their toasts: they never reach `jobTransitions`.
+    // Failures are exempt server-side, so a reconcile that fails still toasts and still counts.
+    queryFn: () => api.getJobs(undefined, ACTIVITY_LIMIT, undefined, true),
     refetchInterval: (query) => {
       const jobs = query.state.data as Job[] | undefined;
       return jobs?.some(isInFlight) ? 3_000 : 30_000;

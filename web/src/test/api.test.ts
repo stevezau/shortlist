@@ -51,6 +51,23 @@ describe("api", () => {
     expect(init.headers).not.toHaveProperty("x-shortlist-csrf");
   });
 
+  it("asks the server to drop routine job kinds only when told to", async () => {
+    // The param name is the whole contract: FastAPI ignores a query param it doesn't declare, so a
+    // typo here silences nothing and reports no error — the header would just keep filling with the
+    // 165-a-day reconciles this exists to keep out.
+    // A fresh Response per call: a body can only be read once.
+    fetchMock.mockImplementation(() => Promise.resolve(jsonResponse([])));
+
+    await api.getJobs(undefined, 30, undefined, true);
+    await api.getJobs(undefined, 30);
+
+    const urls = fetchMock.mock.calls.map((call) => call[0] as string);
+    expect(urls).toEqual([
+      "/api/system/jobs?limit=30&exclude_routine=true",
+      "/api/system/jobs?limit=30",
+    ]);
+  });
+
   it("sends the CSRF header on every mutation", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ run_id: 1 }));
 

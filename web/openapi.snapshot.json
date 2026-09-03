@@ -10622,7 +10622,7 @@
     },
     "/api/system/jobs": {
       "get": {
-        "description": "Recent background jobs, newest first \u2014 the \"did that actually happen?\" answer.\n\nMaintenance work used to be fire-and-forget: it landed in the logs and the events table and\nnowhere an operator would look. Runs keep their own page; this is everything else.\n\n`kind` narrows it to one job type, which is how the Jobs page shows a single job's own history\nwithout pulling every other kind's rows down with it. `before_id` pages backwards \u2014 pass the id\nof the oldest job you already have.\n\n`status` narrows it to one outcome, and it exists because the Jobs page's \"N failed\" badge\ncounts every failed row in the table while the feed behind it could only fetch the newest N.\nMeasured on a real server: 8 failures, all `privacy.sync`, at ids 587-596 \u2014 the newest hundred\njobs started at id 680, so filtering a fetched page client-side answered \"8 failed\" with an\nempty list. A count over the whole table needs a filter over the whole table.",
+        "description": "Recent background jobs, newest first \u2014 the \"did that actually happen?\" answer.\n\nMaintenance work used to be fire-and-forget: it landed in the logs and the events table and\nnowhere an operator would look. Runs keep their own page; this is everything else.\n\n`kind` narrows it to one job type, which is how the Jobs page shows a single job's own history\nwithout pulling every other kind's rows down with it. `before_id` pages backwards \u2014 pass the id\nof the oldest job you already have.\n\n`status` narrows it to one outcome, and it exists because the Jobs page's \"N failed\" badge\ncounts every failed row in the table while the feed behind it could only fetch the newest N.\nMeasured on a real server: 8 failures, all `privacy.sync`, at ids 587-596 \u2014 the newest hundred\njobs started at id 680, so filtering a fetched page client-side answered \"8 failed\" with an\nempty list. A count over the whole table needs a filter over the whole table.\n\n`exclude_routine` drops the high-volume automatic kinds (`JobKind.routine`) unless they FAILED,\nand exists for the same reason `status` does: a client filter over a fetched page cannot work\nwhen the noise outnumbers the news. Measured on a 46-user server, `watch.reconcile` was 165 of\nthe 197 jobs queued in a day, so the newest 30 rows the header polls were almost all reconciles\nand nothing else could be seen behind them. The Jobs page does not pass it \u2014 that is where you\ngo to look at reconciles \u2014 and a failure is never dropped, because a reconcile that fails is the\nonly thing that would say a partial watch went uncredited.",
         "operationId": "list_jobs_api_system_jobs_get",
         "parameters": [
           {
@@ -10689,6 +10689,16 @@
                 }
               ],
               "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "exclude_routine",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Exclude Routine",
+              "type": "boolean"
             }
           }
         ],

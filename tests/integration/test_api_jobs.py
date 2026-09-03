@@ -829,3 +829,58 @@ class TestJobStatusIsAClosedSet:
     def test_an_unknown_status_is_refused_rather_than_ignored(self, client: TestClient):
         """A typo'd filter must not silently return everything — that reads as "nothing failed"."""
         assert client.get("/api/system/jobs", params={"status": "explodey"}).status_code == 422
+
+
+class TestRoutineJobsCanBeExcluded:
+    """`watch.reconcile` is queued once per playback stop. Measured on the maintainer's 46-user
+    server: 165 of the 197 jobs queued in a day, 84% of the table — enough to own all five slots of
+    the header's "Recent" list permanently, so a privacy sync or a nightly run was never visible
+    there, and to pop a success toast every nine minutes for something nobody asked for.
+
+    Excluded by the SERVER for the same reason `status=` is: a client filter over a fetched page
+    cannot work when the noise outnumbers the news."""
+
+    def test_successful_routine_jobs_are_dropped_but_failures_are_kept(self, client: TestClient):
+        """A failure is never routine. A reconcile that fails is the only thing that would say a
+        partial watch went uncredited, so it must still reach the header's feed and failed badge."""
+        from shortlist.server.db.models import Job
+
+        with client.app.state.sessions() as session:
+            session.add(Job(kind="privacy.sync", status="done", payload={}, result={}))
+            session.add(Job(kind="watch.reconcile", status="failed", payload={}, result={}, error="boom"))
+            # Buried under enough successful reconciles that a newest-page fetch cannot reach either.
+            for _ in range(40):
+                session.add(Job(kind="watch.reconcile", status="done", payload={}, result={}))
+            session.commit()
+
+        unfiltered = client.get("/api/system/jobs", params={"limit": 30}).json()
+        assert {(j["kind"], j["status"]) for j in unfiltered} == {("watch.reconcile", "done")}, (
+            "fixture no longer buries the news under the noise"
+        )
+
+        rows = client.get("/api/system/jobs", params={"limit": 30, "exclude_routine": "true"}).json()
+
+        assert [(j["kind"], j["status"]) for j in rows] == [
+            ("watch.reconcile", "failed"),
+            ("privacy.sync", "done"),
+        ]
+
+    def test_the_jobs_page_still_sees_every_one(self, client: TestClient):
+        """The flag is opt-in per caller. The Jobs page is where you go to look AT reconciles, so it
+        does not pass it, and asking for the kind by name must never come back empty."""
+        from shortlist.server.db.models import Job
+
+        with client.app.state.sessions() as session:
+            for _ in range(3):
+                session.add(Job(kind="watch.reconcile", status="done", payload={}, result={}))
+            session.commit()
+
+        assert len(client.get("/api/system/jobs").json()) == 3
+        assert len(client.get("/api/system/jobs", params={"kind": "watch.reconcile"}).json()) == 3
+
+    def test_only_deliberately_flagged_kinds_are_routine(self):
+        """A kind nobody classified must count as news. Defaulting the other way would silence a new
+        job kind from the operator's feed by accident — the feed exists to say something happened."""
+        from shortlist.server.services import jobs as jobs_service
+
+        assert jobs_service.routine_kinds() == ("watch.reconcile",)
