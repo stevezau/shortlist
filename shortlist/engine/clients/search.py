@@ -279,9 +279,16 @@ class ExaClient:
         return response.json()
 
     def ping(self) -> str:
-        """A cheap probe for the Settings 'test connection' button. Raises on an unusable key."""
-        results = self.search("popular movies and TV shows to watch this week", num_results=1)
-        return f"ok — {len(results)} result"
+        """A cheap probe for the Settings 'test connection' button. Raises on an unusable key.
+
+        Reports the KEY's state, not a result count. It used to answer "ok — N result", and the cheap
+        mode this probe runs on legitimately returns nothing sometimes — so a perfectly good key
+        rendered as "ok — 0 result" in green, which reads as a failure. Whether Exa answered at all is
+        the entire question this button asks; how many rows came back on a one-result probe is noise.
+        Phrased like the TMDB card beside it.
+        """
+        self.search("popular movies and TV shows to watch this week", num_results=1)
+        return "Exa key works"
 
 
 def _parse_extracted_titles(payload: dict) -> list[TitleCandidate]:
@@ -434,7 +441,8 @@ class SearxngClient:
                 f"SearXNG answered, but no engine returned anything{detail}. The instance is reachable "
                 "and JSON is on; its upstream engines are blocked or rate-limited. Check its own logs."
             )
-        return f"ok — {len(results)} results"
+        # Unconditional count: the empty case raised above, so reaching here means results exist.
+        return f"SearXNG responded — {len(results)} results"
 
 
 def _unresponsive(payload: dict) -> list[str]:

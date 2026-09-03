@@ -56,9 +56,25 @@ class TestExaClient:
         ]
 
     @respx.mock
-    def test_ping_returns_ok_string(self):
+    def test_ping_confirms_the_key_when_exa_answers(self):
         respx.post(EXA_SEARCH_URL).mock(return_value=httpx.Response(200, json={"results": [{"title": "x"}]}))
-        assert "ok" in ExaClient("k").ping()
+        assert ExaClient("k").ping() == "Exa key works"
+
+    @respx.mock
+    def test_ping_still_confirms_the_key_when_the_probe_finds_nothing(self):
+        """A working key that happened to return no rows read as "ok — 0 result" in green, which is
+        how a success renders as a failure. The probe runs on the cheapest mode, which measurably
+        returns nothing sometimes, so this is the normal case rather than an edge one. Whether Exa
+        answered at all is the entire question the Test button asks."""
+        respx.post(EXA_SEARCH_URL).mock(return_value=httpx.Response(200, json={"results": []}))
+        assert ExaClient("k").ping() == "Exa key works"
+
+    @respx.mock
+    def test_ping_still_raises_on_a_bad_key(self):
+        """The message must not become reassuring in every case — a dead key still has to fail."""
+        respx.post(EXA_SEARCH_URL).mock(return_value=httpx.Response(401, json={"error": "bad key"}))
+        with pytest.raises(httpx.HTTPStatusError):
+            ExaClient("bad").ping()
 
     @respx.mock
     def test_search_raises_on_http_error(self):
@@ -278,8 +294,10 @@ class TestSearxngClient:
 
     @respx.mock
     def test_ping_reports_the_result_count(self):
+        # Names the service, not "ok" — a Test button's answer should say WHICH thing responded, the
+        # way the Plex and TMDB cards beside it do.
         respx.get(f"{_SEARX}/search").mock(return_value=httpx.Response(200, json=_FIXTURE))
-        assert "ok" in SearxngClient(_SEARX).ping()
+        assert "SearXNG responded" in SearxngClient(_SEARX).ping()
 
     @respx.mock
     def test_ping_names_the_dead_engines_when_nothing_came_back(self):

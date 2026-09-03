@@ -522,9 +522,9 @@ class TestSettingsApi:
         assert no_key["ok"] is False and "Exa" in no_key["message"]
         # With a key, it pings Exa (mocked — no test may touch the network).
         client.put("/api/settings", json={"values": {"exa.apikey": "exa-secret-123"}})
-        monkeypatch.setattr("shortlist.engine.clients.search.ExaClient.ping", lambda self: "ok — 1 result")
+        monkeypatch.setattr("shortlist.engine.clients.search.ExaClient.ping", lambda self: "Exa key works")
         ok = client.post("/api/settings/test/exa").json()
-        assert ok["ok"] is True and "ok" in ok["message"]
+        assert ok["ok"] is True and "Exa key works" in ok["message"]
         # Both branches build their own dict, so both are checked against the response model.
         assert set(no_key) == {"ok", "message"} and set(ok) == {"ok", "message"}
 
@@ -752,9 +752,12 @@ class TestSettingsApi:
         no_url = client.post("/api/settings/test/searxng").json()
         assert no_url["ok"] is False and "SearXNG" in no_url["message"]
         client.put("/api/settings", json={"values": {"searxng.url": "http://searx:8080"}})
-        monkeypatch.setattr("shortlist.engine.clients.search.SearxngClient.ping", lambda self: "ok — 8 results")
+        monkeypatch.setattr(
+            "shortlist.engine.clients.search.SearxngClient.ping",
+            lambda self: "SearXNG responded — 8 results",
+        )
         ok = client.post("/api/settings/test/searxng").json()
-        assert ok["ok"] is True and "ok" in ok["message"]
+        assert ok["ok"] is True and "SearXNG responded" in ok["message"]
         assert set(no_url) == {"ok", "message"} and set(ok) == {"ok", "message"}
 
     def test_searxng_json_misconfiguration_reaches_the_owner_verbatim(self, client: TestClient, monkeypatch):
