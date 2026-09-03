@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -9,7 +10,7 @@ from shortlist.engine.candidates import (
     gather_candidates,
     genre_coherence,
 )
-from shortlist.engine.clients.search import SearchResult
+from shortlist.engine.clients.search import SearchResult, TitleCandidate
 from shortlist.engine.curator import NullCurator
 from shortlist.engine.curator.base import parse_web_titles
 from shortlist.engine.models import MediaType, Pick, Seed
@@ -300,6 +301,22 @@ class _FakeSearch:
         return self._results
 
 
+class _FakeExtractingSearch(_FakeSearch):
+    """A backend that also extracts titles server-side, as Exa does via `outputSchema`.
+
+    The fake must be no easier than the real thing: the real client returns BOTH shapes from one
+    request, so this does too — and the source is expected to prefer the titles while keeping the
+    snippets for the trace and for the fallback.
+    """
+
+    def __init__(self, results, titles, name: str = "exa", results_per_query: int = 10):
+        super().__init__(results, name=name, results_per_query=results_per_query)
+        self._titles = titles
+
+    def search_detailed(self, query, *, num_results=8):
+        return self.search(query, num_results=num_results), list(self._titles)
+
+
 class _NonNativeCurator:
     """A curator with NO native web search (like Ollama): only `complete` powers llm_web."""
 
@@ -505,16 +522,22 @@ class TestLlmWebBackends:
 
 
 class _DictCache:
-    """A minimal in-memory Cache (get/set) for the per-title web-search cache."""
+    """A minimal in-memory Cache (get/set) for the per-title web-search cache.
+
+    Records the TTL as well as the value: how LONG a thin result is kept is a decision with a cost
+    attached at both extremes, so tests assert it rather than just that something was stored.
+    """
 
     def __init__(self):
         self.store: dict[str, str] = {}
+        self.ttls: dict[str, int] = {}
 
     def get(self, key):
         return self.store.get(key)
 
     def set(self, key, value, ttl_s):
         self.store[key] = value
+        self.ttls[key] = ttl_s
 
 
 class TestPerTitleWebSearchCache:
@@ -545,7 +568,7 @@ class TestPerTitleWebSearchCache:
         assert len(search.queries) == 2  # one search per title, not one blended query
         assert any("Dune" in q for q in search.queries) and any("Arrival" in q for q in search.queries)
         # Cached by (provider, media, tmdb_id) — see test_switching_backends_does_not_reuse... below.
-        assert set(cache.store) == {"websearch:exa:movie:1", "websearch:exa:movie:2"}
+        assert set(cache.store) == {"websearch2:exa:movie:1", "websearch2:exa:movie:2"}
 
     def test_switching_backends_does_not_reuse_the_other_backends_cached_results(self, mock_tmdb):
         """The cache key must carry the PROVIDER, or a switch is invisible for the 14-day TTL.
@@ -555,7 +578,9 @@ class TestPerTitleWebSearchCache:
         """
         self._tmdb(mock_tmdb)
         exa_cached = _DictCache()
-        exa_cached.set("websearch:exa:movie:1", "[]", 1)  # Dune already searched via Exa this window
+        exa_cached.set(
+            "websearch2:exa:movie:1", '{"results": [], "titles": []}', 1
+        )  # Dune already searched via Exa this window
         searxng = _FakeSearch([make_result("Result", "text")], name="searxng")
         gather_candidates(
             mock_tmdb,
@@ -568,7 +593,7 @@ class TestPerTitleWebSearchCache:
             web_search_mode="searxng",
         )
         assert searxng.queries, "SearXNG must run its own search, not inherit Exa's cached page"
-        assert "websearch:searxng:movie:1" in exa_cached.store
+        assert "websearch2:searxng:movie:1" in exa_cached.store
 
     def test_each_backend_is_asked_for_its_own_result_depth(self, mock_tmdb):
         """SearXNG is free and returns thin snippets, so it pulls a wider page than Exa — the engine
@@ -634,7 +659,9 @@ class TestPerTitleWebSearchCache:
         self._tmdb(mock_tmdb)
         search = _FakeSearch([make_result("Result", "text")])
         cache = _DictCache()
-        cache.set("websearch:exa:movie:1", "[]", 1)  # Dune already searched by a prior user this window
+        cache.set(
+            "websearch2:exa:movie:1", '{"results": [], "titles": []}', 1
+        )  # Dune already searched by a prior user this window
         stats = GatherStats()
         gather_candidates(
             mock_tmdb,
@@ -1175,3 +1202,169 @@ class TestOriginalLanguageIsCarried:
         merged = next(c for c in pool if c.tmdb_id == 42)
         assert merged.sources == {"trakt", "tmdb_similar"}
         assert merged.language == "ja", "the copy that KNOWS the language must win"
+
+
+class TestStructuredExtractionPath:
+    """Exa extracts the recommended titles server-side, so the curator picks from a title list
+    rather than reading article prose. SearXNG can't, and keeps the prose path unchanged."""
+
+    def _tmdb(self, mock_tmdb):
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked([])
+        mock_tmdb.genre_names.return_value = {}
+        mock_tmdb.search.side_effect = lambda title, mt, year=None: None
+        return mock_tmdb
+
+    def _titles(self, *names):
+        return [TitleCandidate(title=n, year=2023, media="movie") for n in names]
+
+    def _gather(self, mock_tmdb, search, curator, cache=None, seeds=None):
+        return gather_candidates(
+            mock_tmdb,
+            seeds or [seed(1, "Dune")],
+            sources=["llm_web"],
+            curator=curator,
+            profile=web_profile(),
+            search=search,
+            web_search_mode="exa",
+            web_search_cache=cache or _DictCache(),
+        )
+
+    def test_the_curator_is_given_the_extracted_titles_not_the_article_prose(self, mock_tmdb):
+        """The whole point of the structured path: ~20 tokens a candidate instead of an 800-character
+        block, so the cap stops rationing which seeds the curator ever sees."""
+        self._tmdb(mock_tmdb)
+        search = _FakeExtractingSearch(
+            [make_result("An article", "a very long article body about many films")],
+            self._titles("Silo", "Counterpart"),
+        )
+        curator = _NonNativeCurator("[]")
+        self._gather(mock_tmdb, search, curator)
+
+        prompt = curator.last_user
+        assert "Silo" in prompt and "Counterpart" in prompt
+        assert "a very long article body" not in prompt
+
+    def test_it_falls_back_to_prose_when_extraction_comes_back_empty(self, mock_tmdb):
+        """A mode that declines to synthesise, or a shape change at the provider, must degrade to the
+        path that shipped before this — never to an empty source."""
+        self._tmdb(mock_tmdb)
+        search = _FakeExtractingSearch([make_result("An article", "article body text")], [])
+        curator = _NonNativeCurator("[]")
+        self._gather(mock_tmdb, search, curator)
+
+        assert "article body text" in curator.last_user
+
+    def test_a_title_found_by_several_seeds_is_listed_once(self, mock_tmdb):
+        """Ten seeds asking "what to watch after X" name a lot of the same titles, and a prompt that
+        lists Silo nine times spends its budget saying one thing."""
+        self._tmdb(mock_tmdb)
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Silo"))
+        curator = _NonNativeCurator("[]")
+        self._gather(mock_tmdb, search, curator, seeds=[seed(1, "Dune"), seed(2, "Arrival")])
+
+        assert curator.last_user.count("Silo") == 1
+
+    def test_a_thin_result_is_cached_briefly_and_a_rich_one_for_a_fortnight(self, mock_tmdb):
+        """Both extremes cost something, so the TTL is the dial rather than a yes/no.
+
+        Caching a thin draw for 14 days serves a dud to every user who watched that title, and the
+        provider is measurably variable — three identical calls returned 36, 45 and 38 usable titles.
+        But NOT caching it bills a fresh search for every user, every night, forever, for any seed
+        that genuinely has little written about it. A day covers one nightly run across the roster.
+        """
+        self._tmdb(mock_tmdb)
+        cache = _DictCache()
+        thin = _FakeExtractingSearch([make_result("a", "b")], self._titles("Silo"))  # 1 < the floor
+        self._gather(mock_tmdb, thin, _NonNativeCurator("[]"), cache=cache)
+        assert cache.ttls["websearch2:exa:movie:1"] == 24 * 3600
+
+        cache = _DictCache()
+        rich = _FakeExtractingSearch([make_result("a", "b")], self._titles("Silo", "Devs", "Counterpart"))
+        self._gather(mock_tmdb, rich, _NonNativeCurator("[]"), cache=cache)
+        assert cache.ttls["websearch2:exa:movie:1"] == 14 * 24 * 3600
+
+    def test_the_seed_is_never_offered_back_as_a_recommendation(self, mock_tmdb):
+        """An article headed "shows like Severance" names Severance, and the extraction lists it.
+
+        Caught by running the real thing against live Exa: the curator proposed Severance to someone
+        whose seed it was. The row never shows it — already-watched titles are dropped further down —
+        but it burns one of the k proposal slots and reads as a bogus suggestion in the run trace.
+        """
+        self._tmdb(mock_tmdb)
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Dune", "Silo", "Devs", "From"))
+        curator = _NonNativeCurator("[]")
+        self._gather(mock_tmdb, search, curator, seeds=[seed(1, "Dune")])
+
+        prompt = curator.last_user
+        assert "Silo" in prompt  # the others survive
+        assert "\n- Dune" not in prompt  # the seed does not
+
+    def test_a_cached_entry_carries_both_shapes(self, mock_tmdb):
+        """One request returns snippets AND titles, so the cache stores both — a reader must not have
+        to know which backend wrote the entry."""
+        self._tmdb(mock_tmdb)
+        cache = _DictCache()
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Silo", "Devs", "From"))
+        self._gather(mock_tmdb, search, _NonNativeCurator("[]"), cache=cache)
+
+        stored = json.loads(cache.store["websearch2:exa:movie:1"])
+        assert [t["title"] for t in stored["titles"]] == ["Silo", "Devs", "From"]
+        assert stored["results"][0]["title"] == "a"
+
+    def test_searxng_still_takes_the_prose_path(self, mock_tmdb):
+        """It is a metasearch proxy with no synthesis of its own; the source branches on the provider,
+        not on a setting."""
+        self._tmdb(mock_tmdb)
+        search = _FakeSearch([make_result("An article", "article body text")], name="searxng")
+        curator = _NonNativeCurator("[]")
+        gather_candidates(
+            mock_tmdb,
+            [seed(1, "Dune")],
+            sources=["llm_web"],
+            curator=curator,
+            profile=web_profile(),
+            search=search,
+            web_search_mode="searxng",
+            web_search_cache=_DictCache(),
+        )
+        assert "article body text" in curator.last_user
+
+    def test_one_failing_seed_does_not_lose_the_other_seeds(self, mock_tmdb):
+        """Exa's deeper modes run ~10s against a 100s ceiling at its CDN, and a request that exceeds
+        it returns an HTML 524 — seen repeatedly while measuring. Left to raise, that single response
+        disables `llm_web` for the whole user and discards every seed that already searched fine."""
+        self._tmdb(mock_tmdb)
+
+        class _FlakySearch(_FakeExtractingSearch):
+            def search_detailed(self, query, *, num_results=8):
+                if "Dune" in query:
+                    raise RuntimeError("524 Origin Time-out")
+                return super().search_detailed(query, num_results=num_results)
+
+        search = _FlakySearch([make_result("a", "b")], self._titles("Silo", "Devs", "From"))
+        curator = _NonNativeCurator("[]")
+        self._gather(mock_tmdb, search, curator, seeds=[seed(1, "Dune"), seed(2, "Arrival")])
+
+        assert "Silo" in curator.last_user  # Arrival's results still reached the curator
+
+    def test_every_seed_failing_is_reported_as_a_failed_source(self, mock_tmdb):
+        """Tolerating one dead seed must not quietly tolerate a dead backend — an empty return would
+        read as "the web had nothing to suggest", and the caller's every-source-failed check exists
+        precisely to make that loud."""
+        self._tmdb(mock_tmdb)
+
+        class _DeadSearch(_FakeExtractingSearch):
+            def search_detailed(self, query, *, num_results=8):
+                raise RuntimeError("524 Origin Time-out")
+
+        with pytest.raises(RuntimeError, match="every candidate source failed"):
+            gather_candidates(
+                mock_tmdb,
+                [seed(1, "Dune")],
+                sources=["llm_web"],
+                curator=_NonNativeCurator("[]"),
+                profile=web_profile(),
+                search=_DeadSearch([make_result("a", "b")], self._titles("Silo")),
+                web_search_mode="exa",
+                web_search_cache=_DictCache(),
+            )

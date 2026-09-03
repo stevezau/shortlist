@@ -12,7 +12,8 @@ Two ways the "search the web for what to watch next" source can get web results:
 Two external providers ship today, both behind the same ``WebSearchProvider`` protocol:
 
 * **Exa** — a hosted search API built for LLM grounding. Bills per search; returns extracted PAGE
-  TEXT, which is the richest context a curator can read.
+  TEXT *and*, via ``outputSchema``, a structured list of the titles those pages recommend — so the
+  curator reads a title list rather than paragraphs of prose.
 * **SearXNG** — the self-hosted metasearch engine. Free to run, and it needs no vendor account or
   key, though it does forward each query on to real search engines. Returns those engines' result
   SNIPPETS (a couple hundred characters) rather than page text, so it takes a wider slice of the one
@@ -33,6 +34,30 @@ EXA_SEARCH_URL = "https://api.exa.ai/search"
 _DEFAULT_RESULTS = 8
 _DEFAULT_MAX_CHARS = 800  # per-result text budget — enough to name titles, small enough to stay cheap
 
+# Exa's search modes, cheapest first. Measured on 2026-09-02 (see
+# `.claude/docs/llm-web-search-upgrade.md`): `deep-lite` returned 47 and 36 TMDB-resolvable titles
+# on two seeds against `auto`'s 13 and 8, for $0.012 a search against $0.007. `auto` is NOT a safe
+# default here — with `outputSchema` attached it returned ZERO titles on one run despite 26k
+# characters of page text, and `instant` puts a year on barely one title in nine, which the TMDB
+# resolver needs. The owner picks the mode; this list is what the settings dropdown offers.
+EXA_SEARCH_TYPES: tuple[str, ...] = ("instant", "fast", "auto", "deep-lite", "deep", "deep-reasoning")
+DEFAULT_EXA_SEARCH_TYPE = "deep-lite"
+
+# How long to wait, by mode. Measured response times: the cheap modes answer in 2.5-4.6s, `deep-lite`
+# and `deep` in 6.5-18s, `deep-reasoning` in 24-39s. The ceiling matters because Exa does sometimes
+# hang rather than answer — 1 of 6 `deep-lite` searches never returned and hit the timeout, and a
+# request that runs past ~100s comes back as an HTML 524 from Exa's CDN instead of JSON. So the wait
+# is set a few times the mode's real spread and no more: every second beyond that is wall-clock a
+# nightly run spends waiting for a search that is not coming, once per hanging seed per user.
+_EXA_TIMEOUTS: dict[str, float] = {
+    "instant": 20.0,
+    "fast": 20.0,
+    "auto": 20.0,
+    "deep-lite": 45.0,
+    "deep": 45.0,
+    "deep-reasoning": 90.0,
+}
+
 
 @dataclass(frozen=True)
 class SearchResult:
@@ -41,6 +66,29 @@ class SearchResult:
     title: str
     url: str
     text: str
+
+
+@dataclass(frozen=True)
+class TitleCandidate:
+    """One film/series a search result recommended, as extracted by the search provider itself.
+
+    This is what makes the structured path cheap: the provider turns paragraphs of prose into
+    ``Silo (2023) [show]``, so the curator's prompt carries ~10 tokens per candidate instead of an
+    800-character article block, and every seed's findings fit rather than being rationed by a cap.
+
+    Deliberately just the three fields. A ``why`` field — a one-line reason from the source article,
+    which would have given the curator more to match a taste profile against — was measured and
+    REMOVED: asking Exa for it made every ``deep-lite`` search exceed Cloudflare's 100s limit and
+    return an HTML **524** (5 of 5 attempts, ~125s each), where the same call without it answers 200
+    in about 10s with 31-44 titles. See ``_EXA_TITLE_SCHEMA``.
+
+    ``year`` is often None — the extraction can only report a year the article actually printed, and
+    a recorded response carried one for 15 of 31 titles. The TMDB resolver has to cope without it.
+    """
+
+    title: str
+    year: int | None
+    media: str  # "movie" or "show"
 
 
 class WebSearchProvider(Protocol):
@@ -56,6 +104,51 @@ class WebSearchProvider(Protocol):
     def ping(self) -> str: ...
 
 
+def extracts_titles(provider: object) -> bool:
+    """Whether this provider can return TitleCandidates as well as prose snippets.
+
+    Exa can (its ``outputSchema`` does the extraction server-side, inside the price of the search);
+    SearXNG cannot — it is a metasearch proxy with no synthesis of its own, so its snippets still go
+    to the curator as prose. Both shapes flow through the same source in ``candidates.py``.
+    """
+    return callable(getattr(provider, "search_detailed", None))
+
+
+# The shape Exa is asked to synthesise from the pages it found. Extraction is deliberately
+# TASTE-NEUTRAL — "what do these articles recommend", never "what would this person like" — because
+# the answer is cached under the seed title and shared across every user on the server. Put a taste
+# profile in the systemPrompt and that cache stops being shareable, which is what makes the per-title
+# approach affordable at all. Personalisation stays in the curator, which reads the whole union.
+# KEEP THIS SCHEMA SMALL. Adding a fourth field — a one-line "why" reason per title — made every
+# `deep-lite` search time out at Cloudflare and return an HTML 524 after ~125s, 5 attempts out of 5,
+# while the identical request without it answered 200 in ~10s. Exa's synthesis cost scales with what
+# you ask it to write, and the ceiling is the CDN's, not ours: there is no timeout we can raise. Any
+# new field here needs the same live check before it ships.
+_EXA_TITLE_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "titles": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "year": {"type": ["integer", "null"]},
+                    "media": {"type": "string", "enum": ["movie", "show"]},
+                },
+                "required": ["title", "media"],
+            },
+        }
+    },
+    "required": ["titles"],
+}
+_EXA_SYSTEM_PROMPT = (
+    "List every movie or TV series recommended as something to watch next in these sources. "
+    "Exclude the title the reader has already watched. Give each one's exact release year and "
+    "whether it is a movie or a series. Be exhaustive — list all of them, not just the best few."
+)
+
+
 class ExaClient:
     """Exa semantic search (https://exa.ai). Returns ranked web results with extracted text.
 
@@ -63,16 +156,56 @@ class ExaClient:
     retries the safe cases (a connect failure that never landed, or an explicit 429 rate-limit) and
     leaves the rest to the source's own try/except in ``candidates.py``. The API key travels in the
     ``x-api-key`` header (never the URL/query), so it can't leak into a logged request line (rule 9).
+
+    Every search also carries an ``outputSchema``, so one request returns both the page text and the
+    titles those pages recommend. The synthesis is free in money — measured across every mode,
+    ``costDollars`` came back identical to the bare search — but NOT free in time: it is what pushes
+    a `deep-lite` search from 4s to ~10s, and asking for one more field per title pushed it past
+    Cloudflare's limit entirely (see ``_EXA_TITLE_SCHEMA``).
     """
 
     name = "exa"
-    # Lean on purpose: Exa bills per search AND returns up to 800 chars of real page text per result,
-    # so five results already fill the curator's RAG budget. Depth here costs money.
-    results_per_query = 5
+    # Ten, the free ceiling: Exa bills results past 10 at $1/1k on top of the search, and a measured
+    # sweep found n=5, 10 and 20 all yielding the same range of usable titles. Asking for fewer saves
+    # nothing and asking for more only costs.
+    results_per_query = 10
 
-    def __init__(self, api_key: str, *, timeout: float = 20.0):
+    def __init__(self, api_key: str, *, search_type: str = DEFAULT_EXA_SEARCH_TYPE, timeout: float | None = None):
         self._api_key = api_key
-        self._timeout = timeout
+        # An unknown mode would be a 400 from Exa on every seed of every run, so an unrecognised
+        # setting falls back to the default rather than failing the source all night.
+        self._search_type = search_type if search_type in EXA_SEARCH_TYPES else DEFAULT_EXA_SEARCH_TYPE
+        if self._search_type != search_type:
+            logger.warning("exa: unknown search type {!r}; using {!r}", search_type, self._search_type)
+        # Per mode, not one number: a `deep-reasoning` search legitimately runs 40s where an `instant`
+        # one is done in 3, so a single timeout either cuts the slow mode off or leaves the fast mode
+        # waiting half a minute on a search that has already hung. See `_EXA_TIMEOUTS`.
+        self._timeout = timeout if timeout is not None else _EXA_TIMEOUTS.get(self._search_type, 45.0)
+
+    def search_detailed(
+        self, query: str, *, num_results: int = _DEFAULT_RESULTS
+    ) -> tuple[list[SearchResult], list[TitleCandidate]]:
+        """Run one search, returning both the page snippets and the titles Exa extracted from them.
+
+        Args:
+            query: The natural-language search query (built from the user's watchlist upstream).
+            num_results: How many web results to ask Exa for.
+
+        Returns:
+            ``(results, titles)``. Either half can be empty without the other being: a page set with
+            no recommendations in it yields no titles, and a synthesis that fails still leaves the
+            snippets, which the caller falls back to.
+        """
+        payload = self._post(query, num_results)
+        results: list[SearchResult] = []
+        for item in payload.get("results", []):
+            title = (item.get("title") or "").strip()
+            if not title:
+                continue
+            results.append(SearchResult(title=title, url=item.get("url") or "", text=(item.get("text") or "").strip()))
+        titles = _parse_extracted_titles(payload)
+        logger.debug("exa {} · {!r} → {} results, {} titles", self._search_type, query[:60], len(results), len(titles))
+        return results, titles
 
     def search(self, query: str, *, num_results: int = _DEFAULT_RESULTS) -> list[SearchResult]:
         """Run one search and return up to ``num_results`` results with extracted text.
@@ -84,6 +217,11 @@ class ExaClient:
         Returns:
             The parsed results, newest/most-relevant first. Results with no title are skipped.
         """
+        return self.search_detailed(query, num_results=num_results)[0]
+
+    def _post(self, query: str, num_results: int) -> dict:
+        """One raw search response. Raises for status; a non-JSON body raises too and is caught by
+        the source's own guard — Exa answered 200 with an unparseable body once during testing."""
         response = http_retry.request(
             "POST",
             EXA_SEARCH_URL,
@@ -91,25 +229,44 @@ class ExaClient:
             json={
                 "query": query,
                 "numResults": num_results,
-                "type": "auto",
+                "type": self._search_type,
                 "contents": {"text": {"maxCharacters": _DEFAULT_MAX_CHARS}},
+                "outputSchema": _EXA_TITLE_SCHEMA,
+                "systemPrompt": _EXA_SYSTEM_PROMPT,
             },
             timeout=self._timeout,
         )
         response.raise_for_status()
-        results: list[SearchResult] = []
-        for item in response.json().get("results", []):
-            title = (item.get("title") or "").strip()
-            if not title:
-                continue
-            results.append(SearchResult(title=title, url=item.get("url") or "", text=(item.get("text") or "").strip()))
-        logger.debug("exa search · {!r} → {} results", query[:60], len(results))
-        return results
+        return response.json()
 
     def ping(self) -> str:
         """A cheap probe for the Settings 'test connection' button. Raises on an unusable key."""
         results = self.search("popular movies and TV shows to watch this week", num_results=1)
         return f"ok — {len(results)} result"
+
+
+def _parse_extracted_titles(payload: dict) -> list[TitleCandidate]:
+    """Pull the schema-shaped synthesis out of an Exa response.
+
+    Shape recorded from a real response (``tests/fixtures/exa_search_structured.json``): the
+    synthesis lands under ``output.content``, beside an ``output.grounding`` list giving per-field
+    citations. Nothing here trusts that it is present — a mode that declines to synthesise, or a
+    response shape change, leaves the snippets intact and simply contributes no titles.
+    """
+    content = (payload.get("output") or {}).get("content")
+    if not isinstance(content, dict):
+        return []
+    out: list[TitleCandidate] = []
+    for item in content.get("titles") or []:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        if not title:
+            continue
+        year = item.get("year")
+        media = "show" if str(item.get("media") or "").lower() in ("show", "tv", "series") else "movie"
+        out.append(TitleCandidate(title=title, year=int(year) if isinstance(year, int) else None, media=media))
+    return out
 
 
 class SearxngClient:
@@ -196,7 +353,17 @@ class SearxngClient:
         """One raw JSON search page, with the two misconfigurations translated into their fix."""
         response = http_retry.get(
             self._search_url,
-            params={"q": query, "format": "json", "categories": "general"},
+            # `safesearch=1` is free: measured against a real instance it returned an identical
+            # yield (12 usable titles either way), and a "what to watch next" recommender has no
+            # business surfacing adult results. `safesearch=2` costs a title and is not worth it.
+            #
+            # `time_range` is deliberately absent, and that is a measured decision rather than an
+            # omission. It looked like a large win on one seed (Severance: 12 → 20 usable) and is a
+            # serious loss on another (Poor Things: 18 → 15 at `year`, → 8 at `month`), because a
+            # recency window cuts out exactly the evergreen "best of" articles that are an older
+            # title's only coverage. `language` changed nothing, and `pageno` 2 adds results the
+            # prompt's own snippet cap then discards.
+            params={"q": query, "format": "json", "categories": "general", "safesearch": 1},
             auth=self._auth,
             timeout=self._timeout,
         )

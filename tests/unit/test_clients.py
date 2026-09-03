@@ -437,25 +437,94 @@ class TestTmdbClient:
         assert TmdbClient("k").discover(MediaType.MOVIE, []) == []
 
     @respx.mock
-    def test_search_returns_top_match_with_the_query_and_year(self):
+    def test_search_sends_only_the_query_and_ranks_the_year_locally(self):
+        """The year ranks, it no longer filters — and that is the point of the change.
+
+        Sending `year=` (or `first_air_date_year=`) made TMDB exclude everything else, so a proposal
+        whose year was one out returned NOTHING and the title was lost entirely. Sources disagree
+        about years constantly: a series gets dated by its premiere, a film by its festival run.
+        Ranking keeps the near-miss and still puts the right release first.
+        """
         route = respx.get("https://api.themoviedb.org/3/search/movie").mock(
             return_value=httpx.Response(200, json={"results": [{"id": 42, "title": "Dune"}, {"id": 43}]})
         )
         found = TmdbClient("k").search("Dune", MediaType.MOVIE, year=2021)
-        assert found["id"] == 42  # the top result, used to resolve an LLM-proposed title
+        assert found["id"] == 42
         params = route.calls.last.request.url.params
         assert params.get("query") == "Dune"
-        assert params.get("year") == "2021"  # movies gate on `year`
+        assert params.get("year") is None
+        assert params.get("first_air_date_year") is None
 
     @respx.mock
-    def test_search_shows_gate_on_first_air_date_year(self):
-        route = respx.get("https://api.themoviedb.org/3/search/tv").mock(
-            return_value=httpx.Response(200, json={"results": [{"id": 95396, "name": "Severance"}]})
+    def test_search_prefers_an_exact_title_over_a_more_popular_one(self):
+        """TMDB's own order is popularity, which is quietly wrong for shared and remade titles —
+        exactly the case that puts an unrelated film in someone's row."""
+        respx.get("https://api.themoviedb.org/3/search/movie").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {"id": 1, "title": "Poor Things: The Making Of", "release_date": "2024-01-01"},
+                        {"id": 2, "title": "Poor Things", "release_date": "2023-12-07"},
+                    ]
+                },
+            )
         )
-        found = TmdbClient("k").search("Severance", MediaType.SHOW, year=2022)
-        assert found["id"] == 95396
-        params = route.calls.last.request.url.params
-        assert params.get("first_air_date_year") == "2022"  # shows use first_air_date_year, not year
+        assert TmdbClient("k").search("Poor Things", MediaType.MOVIE, year=2023)["id"] == 2
+
+    @respx.mock
+    def test_search_uses_the_year_to_separate_two_exact_titles(self):
+        """A remake and its original share a title exactly, so only the year can tell them apart."""
+        respx.get("https://api.themoviedb.org/3/search/movie").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {"id": 1, "title": "Dune", "release_date": "1984-12-14"},
+                        {"id": 2, "title": "Dune", "release_date": "2021-09-15"},
+                    ]
+                },
+            )
+        )
+        assert TmdbClient("k").search("Dune", MediaType.MOVIE, year=2021)["id"] == 2
+        assert TmdbClient("k").search("Dune", MediaType.MOVIE, year=1984)["id"] == 1
+
+    @respx.mock
+    def test_search_keeps_a_title_whose_year_is_one_out(self):
+        """Half of what web extraction produces has no year at all, and plenty of the rest is off by
+        one. Neither may cost us the title — under the old filter, both did."""
+        respx.get("https://api.themoviedb.org/3/search/tv").mock(
+            return_value=httpx.Response(
+                200, json={"results": [{"id": 95396, "name": "Severance", "first_air_date": "2022-02-17"}]}
+            )
+        )
+        assert TmdbClient("k").search("Severance", MediaType.SHOW, year=2023)["id"] == 95396
+        assert TmdbClient("k").search("Severance", MediaType.SHOW)["id"] == 95396
+
+    @respx.mock
+    def test_search_ignores_punctuation_differences_in_the_title(self):
+        """A title copied out of an article carries a curly apostrophe; TMDB stores a straight one."""
+        respx.get("https://api.themoviedb.org/3/search/tv").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {"id": 1, "name": "Daredevil", "first_air_date": "2015-04-10"},
+                        {"id": 2, "name": "Marvel's Daredevil", "first_air_date": "2015-04-10"},
+                    ]
+                },
+            )
+        )
+        # The curly apostrophe is the point of the test, not a typo — hence the noqa.
+        assert TmdbClient("k").search("Marvel’s Daredevil", MediaType.SHOW)["id"] == 2  # noqa: RUF001
+
+    @respx.mock
+    def test_search_falls_back_to_tmdb_order_when_nothing_matches_well(self):
+        """No title or year signal to go on — keep the old behaviour rather than invent a preference."""
+        respx.get("https://api.themoviedb.org/3/search/movie").mock(
+            return_value=httpx.Response(200, json={"results": [{"id": 7}, {"id": 8}]})
+        )
+        assert TmdbClient("k").search("Something Else", MediaType.MOVIE)["id"] == 7
 
     @respx.mock
     def test_search_returns_none_when_nothing_matches(self):

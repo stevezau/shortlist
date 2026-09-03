@@ -123,6 +123,12 @@ DEFAULTS: dict[str, Any] = {
     # a reverse proxy in front of it (SearXNG itself has no auth); the password is a SECRET_KEY.
     "searxng.url": "",
     "searxng.username": "",
+    # How hard Exa works on each search, and what it costs. Measured on two seeds (see
+    # `.claude/docs/llm-web-search-upgrade.md`): `deep-lite` found 47 and 36 TMDB-resolvable titles
+    # for $0.012 a search, where `auto` found 13 and 8 for $0.007 — and once returned nothing at all
+    # from 26k characters of page text. `deep-lite` is the default despite costing more because the
+    # cheap modes are erratic, and every search is cached 14 days and shared across the whole roster.
+    "exa.search_type": "deep-lite",
     # Cap on already-finished titles in a row, as a fraction: 0.0 = all fresh (default), 1.0 = no
     # filtering, in between = at most that share of the row may be things already watched. Per-row.
     "recommendations.watched_pct": 0.0,

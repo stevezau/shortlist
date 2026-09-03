@@ -110,19 +110,35 @@ class TmdbClient:
     def search(self, title: str, media_type: MediaType, *, year: int | None = None) -> dict | None:
         """Resolve a free-text title to its best TMDB match, or None if nothing matches.
 
-        Used to turn an LLM's proposed titles (which come back as strings, not ids) into real
-        candidates. Returns the top result in the same shape as ``suggestions`` items (``id``,
-        ``title``/``name``, ``genre_ids``, ``vote_average``, dates), so it pools identically.
+        Used to turn proposed titles (which arrive as strings, not ids) into real candidates. Returns
+        one result in the same shape as ``suggestions`` items (``id``, ``title``/``name``,
+        ``genre_ids``, ``vote_average``, dates), so it pools identically.
+
+        The year is used to RANK, never to filter. Filtering server-side looks tidier and is worse in
+        both directions: a proposal whose year is off by one — common, because sources date a series
+        by its premiere and a film by its festival run — returns nothing at all and the title is lost,
+        while a proposal with no year (about half of what web extraction produces, since articles
+        often don't print one) gets no help whatever. Ranking keeps the near-misses and still puts
+        the right release first.
+
+        Args:
+            title: The proposed title, as written by a model or extracted from an article.
+            media_type: Which TMDB index to search.
+            year: Release year, if known. Used to break ties, not to exclude.
+
+        Returns:
+            The best match, or None when the search returned nothing at all.
         """
         query = (title or "").strip()
         if not query:
             return None
         kind = "movie" if media_type is MediaType.MOVIE else "tv"
-        params: dict[str, object] = {"query": query}
-        if year:
-            params["year" if media_type is MediaType.MOVIE else "first_air_date_year"] = year
-        results = self._get(f"/search/{kind}", params=params).get("results", [])
-        return results[0] if results else None
+        results = self._get(f"/search/{kind}", params={"query": query}).get("results", [])
+        if not results:
+            return None
+        # `max` keeps the first of equal scores, so a tie falls back to TMDB's own popularity order —
+        # which is what this function used to return outright.
+        return max(results, key=lambda r: _match_score(r, query, year))
 
     def genre_names(self, media_type: MediaType) -> dict[int, str]:
         kind = "movie" if media_type is MediaType.MOVIE else "tv"
@@ -192,3 +208,47 @@ class TmdbClient:
         """
         kind = "movie" if media_type is MediaType.MOVIE else "tv"
         return (self._get(f"/{kind}/{tmdb_id}") or {}).get("overview") or ""
+
+
+def _normalise(title: str) -> str:
+    """A title reduced to letters and digits, lowercased.
+
+    So "Marvel's Daredevil", the same with a curly apostrophe (what a copy-paste out of an article
+    actually contains) and "marvels daredevil" all compare equal. Deliberately crude: this decides
+    which of TMDB's own results to prefer, not whether two titles are the same work.
+    """
+    return "".join(c for c in title.lower() if c.isalnum())
+
+
+def _match_score(result: dict, query: str, year: int | None) -> tuple[int, int]:
+    """Rank one TMDB search result against the title (and year) that was asked for.
+
+    Returns a (title, year) score pair, compared left to right — an exact title match always beats a
+    better year, because the year is the less reliable half of a proposal. Sources routinely date a
+    series by its premiere and a film by its festival showing, so a year that is one out is a normal
+    near-miss, while a title that doesn't match is usually a different work.
+
+    Without this the caller took ``results[0]``, TMDB's popularity order, which is right most of the
+    time and quietly wrong for remakes and shared titles — searching "Poor Things (2023)" ahead of
+    an unrelated more-popular entry is exactly the case that produced a wrong row.
+    """
+    name = _normalise(str(result.get("title") or result.get("name") or ""))
+    wanted = _normalise(query)
+    if name == wanted:
+        title_score = 2
+    elif wanted and (wanted in name or name in wanted):
+        title_score = 1
+    else:
+        title_score = 0
+
+    if year is None:
+        return (title_score, 0)
+    date = str(result.get("release_date") or result.get("first_air_date") or "")
+    try:
+        found = int(date[:4])
+    except ValueError:
+        return (title_score, 0)
+    gap = abs(found - year)
+    # One year out is the common honest disagreement, so it still scores — just below an exact hit.
+    year_score = 2 if gap == 0 else 1 if gap <= 1 else 0
+    return (title_score, year_score)

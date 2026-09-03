@@ -22,10 +22,15 @@ from dataclasses import dataclass, field
 
 from loguru import logger
 
-from shortlist.engine.clients.search import SearchResult
+from shortlist.engine.clients.search import SearchResult, TitleCandidate, extracts_titles
 from shortlist.engine.clients.tmdb import Cache, NullCache, TmdbClient
 from shortlist.engine.curator import NullCurator
-from shortlist.engine.curator.base import build_web_query_for_title, build_web_rag_prompt, parse_web_titles
+from shortlist.engine.curator.base import (
+    build_web_pick_prompt,
+    build_web_query_for_title,
+    build_web_rag_prompt,
+    parse_web_titles,
+)
 from shortlist.engine.models import MAX_ROW_SIZE, Candidate, MediaType, Seed
 
 # One cached web search PER recent title (Exa bills per search): cache the RESULTS by (media, tmdb_id)
@@ -35,6 +40,23 @@ WEB_SEARCH_CACHE_TTL_S = 14 * 24 * 3600
 _WEB_SEARCH_PER_TITLE = 5  # results per per-title search (many titles → keep each lean for the RAG)
 _WEB_SEARCH_MAX_TITLES = 10  # default number of recent titles to search; overridden by recent_count
 _WEB_SEARCH_RAG_CAP = 40  # cap the unioned results handed to the web-search LLM so the RAG prompt stays bounded
+# The same cap for the STRUCTURED path, and far higher on purpose. `_WEB_SEARCH_RAG_CAP` is small
+# because each entry is an 800-character article block; a TitleCandidate is a title, a year and a
+# media type — roughly 15 tokens — so 300 of them cost less prompt than 40 prose blocks. That is the
+# point of the structured path: the curator picks from everything the searches found instead of from
+# a rationed slice of it.
+_WEB_PICK_CAP = 300
+# A search that came back nearly empty is cached BRIEFLY rather than for the usual fortnight. Exa's
+# `deep-lite` is measurably variable — three identical calls returned 36, 45 and 38 usable titles,
+# sharing only 45% — so a thin draw should not be served to every user for two weeks. But refusing to
+# cache it at all is worse: a seed that genuinely has little written about it would then be a fresh
+# billable search for every user, every night, forever. A day is long enough to cover one nightly run
+# across the whole roster and short enough that tomorrow tries again.
+_MIN_CACHEABLE_TITLES = 3
+_THIN_CACHE_TTL_S = 24 * 3600
+# Bumped from `websearch:` when the cached shape changed from a bare result list to {results,titles}.
+# Old entries are never read again and age out on their own TTL.
+_WEB_SEARCH_CACHE_PREFIX = "websearch2"
 
 # Every candidate source the engine knows how to run. The owner can enable any subset globally
 # (settings ``candidates.sources``) or per row (``collections.candidate_sources``); an unknown value
@@ -179,47 +201,89 @@ def _web_via_search(
     cache = cache or NullCache()
     trace_queries: list[dict] = []
     per_seed: list[list[SearchResult]] = []
+    per_seed_titles: list[list[TitleCandidate]] = []
+    failed_seeds: list[str] = []
     seen_urls: set[str] = set()
     # The provider is part of the key: Exa returns page text and SearXNG returns engine snippets, so
     # serving one from the other's entry would make a backend switch invisible for the whole 14-day
     # TTL. (Pre-1.1 `exasearch:` keys simply age out — nothing reads them again.)
     provider = getattr(search, "name", "exa")
     per_query = getattr(search, "results_per_query", _WEB_SEARCH_PER_TITLE)
+    # Exa extracts the recommended titles server-side inside the price of the search; SearXNG has no
+    # synthesis of its own, so its snippets still go to the curator as prose. One code path, two
+    # shapes, decided per provider rather than per setting.
+    structured = extracts_titles(search)
     if web_trace is not None:
         # Which backend actually ran. Under `auto` the mode alone can't say, so the trace would
         # otherwise credit the wrong one on a server that configured the other.
         web_trace["provider"] = provider
-    for seed in seeds[: max(1, recent_count)]:
-        key = f"websearch:{provider}:{seed.media_type.value}:{seed.tmdb_id}"
+        web_trace["structured"] = structured
+    searched = seeds[: max(1, recent_count)]
+    for seed in searched:
+        key = f"{_WEB_SEARCH_CACHE_PREFIX}:{provider}:{seed.media_type.value}:{seed.tmdb_id}"
         query = build_web_query_for_title(seed.title)
         cached = cache.get(key)
         if cached is not None:
             stats.exa_cache_hits += 1  # served from the shared cache — not billed (see GatherStats)
-            items = json.loads(cached)
+            payload = json.loads(cached)
+            # A cache row is data from outside this function's control: it outlives the process and
+            # survives upgrades, so a malformed one must not take down the whole source for this user
+            # (the caller's guard would disable `llm_web` for them entirely).
+            if not isinstance(payload, dict):
+                logger.warning("llm_web: ignoring a malformed cache entry for {!r}", seed.title)
+                payload = {}
         else:
             stats.exa_searches += 1  # a real (uncached) search — count the billable request
-            hits = search.search(query, num_results=per_query)
-            items = [{"title": r.title, "url": r.url, "text": r.text} for r in hits]
-            cache.set(key, json.dumps(items), WEB_SEARCH_CACHE_TTL_S)
-        trace_queries.append(
-            {"seed": seed.title, "query": query, "cached": cached is not None, "returned": [i["title"] for i in items]}
-        )
-        kept: list[SearchResult] = []
-        for it in items:
-            # Dedup by url, but only when there IS one — Exa maps a missing url to "", and deduping
-            # on "" would collapse every url-less snippet to a single result, dropping usable context.
-            if it["url"] and it["url"] in seen_urls:
+            try:
+                payload = _search_one_seed(search, query, per_query, structured)
+            except Exception as e:
+                # One seed's failure must not cost the other nine. Exa's deeper modes take ~10s
+                # against a 100s ceiling at its CDN, and a request that exceeds it comes back as an
+                # HTML 524 — observed repeatedly while measuring. Without this, that single response
+                # raises out of the loop and the caller disables `llm_web` for this user entirely,
+                # discarding every seed that had already searched successfully.
+                logger.warning("llm_web: search failed for {!r} ({}); continuing", seed.title, type(e).__name__)
+                failed_seeds.append(seed.title)
+                per_seed.append([])
+                per_seed_titles.append([])
                 continue
-            if it["url"]:
-                seen_urls.add(it["url"])
-            kept.append(SearchResult(title=it["title"], url=it["url"], text=it["text"]))
-        per_seed.append(kept)
+            cache.set(key, json.dumps(payload), _cache_ttl(payload, structured))
+        items = payload.get("results") or []
+        found = _titles_from_cache_payload(payload)
+        # Whichever shape this seed produced, sampled — the trace is stored per user per run.
+        returned = [t.title for t in found] if found else [i["title"] for i in items]
+        trace_queries.append(
+            {
+                "seed": seed.title,
+                "query": query,
+                "cached": cached is not None,
+                "returned": returned[:_TRACE_RETURNS_SAMPLE],
+            }
+        )
+        per_seed.append(_dedupe_by_url(items, seen_urls))
+        per_seed_titles.append(found)
+    # Tolerating one dead seed must not quietly tolerate a dead BACKEND. If every search failed, the
+    # source really is down, and the caller's "every source failed" check has to see that rather than
+    # read an empty return as "the web had nothing to suggest tonight".
+    if failed_seeds and len(failed_seeds) == len(searched):
+        raise RuntimeError(f"every web search failed ({len(failed_seeds)} seeds)")
     results = _interleave(per_seed)
+    candidates = _drop_seed_titles(_dedupe_titles(_interleave(per_seed_titles)), seeds)
     if web_trace is not None:
         web_trace["searches"] = trace_queries
-    if not results:
+        # Sampled like every other trace list. The prompt may carry 300 candidates; the trace is
+        # stored per user per run and rendered in a browser, so it takes a readable sample of them.
+        web_trace["extracted"] = [_title_label(t) for t in candidates[:_TRACE_RETURNS_SAMPLE]]
+    # Prefer the structured list when the provider produced one: it costs a fraction of the prompt
+    # and carries every seed's findings rather than a capped slice. An extraction that came back
+    # empty — a mode that declined to synthesise, a shape change — still has the snippets, so this
+    # degrades to exactly the path that shipped before rather than to nothing.
+    if candidates:
+        system, user = build_web_pick_prompt(profile, candidates[:_WEB_PICK_CAP], k)
+    elif results:
+        system, user = build_web_rag_prompt(profile, results[:_WEB_SEARCH_RAG_CAP], k)
+    else:
         return []
-    system, user = build_web_rag_prompt(profile, results[:_WEB_SEARCH_RAG_CAP], k)
     titles = parse_web_titles(curator.complete(system, user), k)
     stats.add_tokens("llm_web", getattr(curator, "last_tokens", 0))
     if web_trace is not None:
@@ -229,7 +293,111 @@ def _web_via_search(
     return titles
 
 
-def _interleave(per_seed: list[list[SearchResult]]) -> list[SearchResult]:
+def _dedupe_by_url(items: list[dict], seen_urls: set[str]) -> list[SearchResult]:
+    """One seed's snippets as SearchResults, dropping any URL another seed already contributed.
+
+    ``seen_urls`` is shared across seeds and mutated here — ten "what to watch after X" searches hit
+    a lot of the same articles. Deduped only when there IS a url: Exa maps a missing one to ``""``,
+    and treating that as a key would collapse every url-less snippet into one, losing real context.
+    """
+    kept: list[SearchResult] = []
+    for it in items:
+        url = it["url"]
+        if url and url in seen_urls:
+            continue
+        if url:
+            seen_urls.add(url)
+        kept.append(SearchResult(title=it["title"], url=url, text=it["text"]))
+    return kept
+
+
+def _search_one_seed(search, query: str, per_query: int, structured: bool) -> dict:
+    """One seed's search, as the JSON-serialisable shape the cache stores.
+
+    ``{"results": [...], "titles": [...]}`` for every provider — SearXNG simply contributes an empty
+    ``titles``. Keeping one shape means the cached entry says what it holds without the reader having
+    to know which backend wrote it.
+    """
+    if structured:
+        hits, found = search.search_detailed(query, num_results=per_query)
+    else:
+        hits, found = search.search(query, num_results=per_query), []
+    return {
+        "results": [{"title": r.title, "url": r.url, "text": r.text} for r in hits],
+        "titles": [{"title": t.title, "year": t.year, "media": t.media} for t in found],
+    }
+
+
+def _cache_ttl(payload: dict, structured: bool) -> int:
+    """How long this seed's search should be reused for.
+
+    Everything is cached — the alternative is re-billing a search for every user every night — but a
+    thin draw only lasts a day rather than a fortnight. Exa's `deep-lite` genuinely varies run to
+    run, so a search that found almost nothing is more likely to be a bad draw than a fact about the
+    title, and tomorrow gets to try again. A rich draw is what the fortnight is for.
+    """
+    thin = len(payload.get("titles") or []) < _MIN_CACHEABLE_TITLES if structured else not payload.get("results")
+    return _THIN_CACHE_TTL_S if thin else WEB_SEARCH_CACHE_TTL_S
+
+
+def _titles_from_cache_payload(payload: dict) -> list[TitleCandidate]:
+    """Rebuild TitleCandidates from a cached (or freshly built) seed payload."""
+    out: list[TitleCandidate] = []
+    for t in payload.get("titles") or []:
+        title = str(t.get("title") or "").strip()
+        if not title:
+            continue
+        year = t.get("year")
+        out.append(
+            TitleCandidate(
+                title=title,
+                year=int(year) if isinstance(year, int) else None,
+                media="show" if t.get("media") == "show" else "movie",
+            )
+        )
+    return out
+
+
+def _dedupe_titles(candidates: list[TitleCandidate]) -> list[TitleCandidate]:
+    """Drop repeats across seeds, keeping the first (best-ranked) mention of each title.
+
+    Ten seeds searched for "what to watch after X" name a lot of the same titles, and a prompt that
+    lists Silo nine times spends its budget saying one thing. Keyed on title+media, not the year —
+    sources disagree about a series' year far more often than they disagree about its name.
+    """
+    seen: set[tuple[str, str]] = set()
+    out: list[TitleCandidate] = []
+    for c in candidates:
+        key = (c.title.strip().lower(), c.media)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(c)
+    return out
+
+
+def _drop_seed_titles(candidates: list[TitleCandidate], seeds: list[Seed]) -> list[TitleCandidate]:
+    """Remove the titles this search was ABOUT from the titles it suggests.
+
+    An article headed "shows like Severance" names Severance, and the extraction dutifully lists it —
+    verified live, where the curator then proposed Severance to someone whose seed it was. The row
+    never shows it (the pipeline drops anything already watched further down), so the cost is quieter
+    than a wrong row: it burns one of the k proposal slots and reads as a bogus suggestion in the run
+    trace. Both prompts already say not to; this makes it true rather than requested.
+
+    Matched on the seed's title, not its id, because that is all the extraction gives us back.
+    """
+    watched = {s.title.strip().lower() for s in seeds if getattr(s, "title", "")}
+    return [c for c in candidates if c.title.strip().lower() not in watched]
+
+
+def _title_label(candidate: TitleCandidate) -> str:
+    """A TitleCandidate as a display string for the run trace."""
+    year = f" ({candidate.year})" if candidate.year else ""
+    return f"{candidate.title}{year} [{candidate.media}]"
+
+
+def _interleave[T](per_seed: list[list[T]]) -> list[T]:
     """Round-robin the per-seed result lists into one, best-first within each seed.
 
     The RAG prompt is capped (``_WEB_SEARCH_RAG_CAP``), and the cap used to fall on a list built by
@@ -238,8 +406,11 @@ def _interleave(per_seed: list[list[SearchResult]]) -> list[SearchResult]:
     That got worse the MORE results a backend returned: at 10 per search only 4 of 10 recent watches
     reached the prompt, against 8 at Exa's 5. Taking one result per seed per pass means the cap is
     shared, so every seed is represented and a wider page adds depth instead of crowding others out.
+
+    Used for both shapes — prose snippets and extracted TitleCandidates — because the reasoning is
+    the same either way: whatever the cap is, every seed should be represented under it.
     """
-    merged: list[SearchResult] = []
+    merged: list[T] = []
     for rank in range(max((len(s) for s in per_seed), default=0)):
         for seed_results in per_seed:
             if rank < len(seed_results):

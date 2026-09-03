@@ -72,12 +72,24 @@ def taste_summary(profile: UserProfile, max_titles: int = 20) -> str:
     return "Recently watched (most recent first):\n" + "\n".join(lines)
 
 
+# Note what this prompt does NOT ask for: tmdb_id or imdb_id. Measured 2026-09-02 against the live
+# curator, only 4 of 10 proposed tmdb_ids and 6 of 10 imdb_ids were correct — and a wrong id resolves
+# to a REAL but unrelated title ("Black Mirror" → "Wild China"), which reaches someone's row. A wrong
+# *title* simply fails to resolve and vanishes, so title+year is the safer contract. See
+# `.claude/docs/llm-web-search-upgrade.md` §3.
+#
+# The year is demanded rather than requested, and the prompt says why: the resolver disambiguates on
+# it. At Anthropic's old `max_uses=3` only 4 of 12 proposals carried one.
 _WEB_SYSTEM = (
     "You are a film and TV recommender with live web search. Based on what this person recently "
     "watched, search the web for {k} current, well-reviewed titles they'd most likely want to watch "
     "next — 'what to watch next' picks, recent releases, and critically-loved titles similar in "
-    "taste. Prefer real, findable titles over obscure guesses. Respond with ONLY a JSON array of up "
-    'to {k} objects, each {{"title": str, "year": int or null, "media": "movie" or "show"}}. No prose.'
+    "taste. Rules: (1) never recommend a title they already watched, or another season or sequel of "
+    "one; (2) ALWAYS give the exact release year — it is used to look the title up, and a missing "
+    "year means the recommendation is discarded; (3) use the exact title as released, not a "
+    "description of it. Prefer real, findable titles over obscure guesses. Respond with ONLY a JSON "
+    'array of up to {k} objects, each {{"title": str, "year": int, "media": "movie" or "show"}}. '
+    "No prose."
 )
 
 
@@ -101,8 +113,18 @@ _WEB_RAG_SYSTEM = (
     "You are a film and TV recommender. Below are excerpts from recent web articles about what to "
     "watch. Based on what this person recently enjoyed, pick the {k} titles mentioned in these "
     "articles they'd most likely want to watch next. Prefer real, well-reviewed, findable titles. "
+    "Give the exact release year wherever the article states it — it is used to look the title up. "
     'Respond with ONLY a JSON array of up to {k} objects, each {{"title": str, "year": int or null, '
     '"media": "movie" or "show"}}. No prose.'
+)
+
+_WEB_PICK_SYSTEM = (
+    "You are a film and TV recommender. Below is a list of titles that recent web articles "
+    "recommend as things to watch next. Based on what this person recently enjoyed, "
+    "pick the {k} they'd most likely want to watch next. Choose only from the list — do not add "
+    "titles of your own. Keep each title and year exactly as written; they are used to look the "
+    'title up. Respond with ONLY a JSON array of up to {k} objects, each {{"title": str, "year": '
+    'int or null, "media": "movie" or "show"}}. No prose.'
 )
 
 
@@ -134,6 +156,31 @@ def build_web_rag_prompt(profile: UserProfile, results: list, k: int) -> tuple[s
     return system, user
 
 
+def build_web_pick_prompt(profile: UserProfile, candidates: list, k: int) -> tuple[str, str]:
+    """(system, user) prompts for picking from titles the SEARCH PROVIDER already extracted.
+
+    The third and cheapest shape of the ``llm_web`` prompt. ``build_web_prompt`` asks a model to go
+    and search; ``build_web_rag_prompt`` hands it article prose to read; this hands it a plain list
+    of titles, because Exa's ``outputSchema`` did the reading server-side inside the price of the
+    search. A candidate costs ~20 tokens here against ~200 for a prose block, which is why the
+    caller's cap can be an order of magnitude larger and every seed's findings actually reach the
+    model.
+
+    The caller resolves each returned title to TMDB and library-verifies it, so a title the model
+    invents rather than picks from the list reaches no row.
+    """
+    system = _WEB_PICK_SYSTEM.format(k=k)
+    lines = []
+    for c in candidates:
+        year = getattr(c, "year", None)
+        lines.append(
+            f"- {getattr(c, 'title', '')}" + (f" ({year})" if year else "") + f" [{getattr(c, 'media', 'movie')}]"
+        )
+    context = "\n".join(lines) or "(no titles found)"
+    user = f"{taste_summary(profile)}\n\nTitles recommended by recent articles:\n{context}\n\nPick up to {k}."
+    return system, user
+
+
 def parse_web_titles(text: str, limit: int) -> list[dict]:
     """Pull the JSON array of ``{title, year, media}`` out of a model's (possibly chatty) reply.
 
@@ -152,6 +199,11 @@ def parse_web_titles(text: str, limit: int) -> list[dict]:
                 data = json.loads(raw[start : end + 1])
             except json.JSONDecodeError:
                 data = None
+    # A provider answering under a JSON schema returns the array wrapped in an object, because a
+    # bare top-level array is not expressible in OpenAI's strict Structured Outputs (the root must
+    # be an object). Unwrap it, so the same parser serves the schema'd and the chatty replies.
+    if isinstance(data, dict):
+        data = data.get("titles")
     if not isinstance(data, list):
         logger.warning("llm_web: could not parse a title list from the model reply")
         return []

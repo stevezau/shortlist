@@ -35,6 +35,22 @@ const SEARCH_BACKENDS = [
   { value: "searxng", label: "SearXNG (self-hosted)" },
 ] as const;
 
+/** How hard Exa works per search, cheapest first. Labels carry the price because that is the whole
+ *  trade-off, and the two cheap modes are labelled as erratic because they measurably are: on the
+ *  same two searches "Balanced" found 13 and 8 usable titles where "Thorough" found 47 and 36, and
+ *  once returned nothing at all. Values must match EXA_SEARCH_TYPES on the server. */
+const EXA_SEARCH_TYPES = [
+  {
+    value: "instant",
+    label: "Instant — $0.007, fastest, often no release years",
+  },
+  { value: "fast", label: "Fast — $0.007, erratic" },
+  { value: "auto", label: "Balanced — $0.007, erratic" },
+  { value: "deep-lite", label: "Thorough — $0.012, recommended" },
+  { value: "deep", label: "Deep — $0.012, fewer titles, steadier" },
+  { value: "deep-reasoning", label: "Deep reasoning — $0.015, slowest" },
+] as const;
+
 /** Whether the card should show `backend`'s fields for the pending choice. Exactly one backend runs,
  *  so exactly one backend's fields are ever asked for. */
 function offers(
@@ -364,6 +380,13 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
               label: "Exa API key",
               kind: "password",
               helpUrl: "https://dashboard.exa.ai/api-keys",
+              showIf: (v) => offers(v, "exa"),
+            },
+            {
+              key: "exa.search_type",
+              label: "Search depth",
+              kind: "select",
+              options: [...EXA_SEARCH_TYPES],
               showIf: (v) => offers(v, "exa"),
             },
             {

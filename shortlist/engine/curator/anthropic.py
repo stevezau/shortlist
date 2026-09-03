@@ -64,7 +64,22 @@ class AnthropicCurator:
                 max_tokens=2048,
                 system=system,
                 messages=[{"role": "user", "content": user}],
-                tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
+                # Five, not three, and the difference is the YEAR. Measured against the live API on
+                # five seeds: at max_uses=3 only 4 of 12 proposals carried a release year, at 5 it is
+                # 10-12 of 12, and the resolver needs the year to disambiguate. It costs ~$0.05 more
+                # per user per run ($0.055 → $0.106, five searches at $10/1k plus the tokens they
+                # bring). Ten searches buys one more year and doubles the bill again.
+                #
+                # The tool version stays at the original: `web_search_20260209` and `_20260318` add
+                # dynamic filtering, which needs Claude 4.6+ and 400s on our default haiku-4-5 unless
+                # you pass `allowed_callers: ["direct"]` — and with `direct` they produce byte-identical
+                # output at identical cost. Nothing to gain until the default model moves.
+                #
+                # No `allowed_domains` either: a whitelist of review sites is rejected outright with
+                # "The following domains are not accessible to our user agent: ['reddit.com',
+                # 'vulture.com']". `blocked_domains` and `user_location` both work and both changed
+                # nothing except the token bill.
+                tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}],
             )
         except anthropic.APIError as e:
             logger.warning("llm_web (anthropic): {}", e)

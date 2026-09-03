@@ -18,7 +18,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from shortlist.engine.clients.mdblist import MdbListClient
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.plextv import PlexTvClient
-from shortlist.engine.clients.search import ExaClient, SearxngClient, WebSearchProvider
+from shortlist.engine.clients.search import (
+    DEFAULT_EXA_SEARCH_TYPE,
+    ExaClient,
+    SearxngClient,
+    WebSearchProvider,
+)
 from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.clients.trakt import TraktClient
 from shortlist.engine.context import EngineContext
@@ -112,7 +117,7 @@ def make_search_client(get: Callable[[str], object]) -> WebSearchProvider | None
     mode = get("llm_web.search_provider") or "native"
     if mode == "exa":
         key = get("exa.apikey")
-        return ExaClient(key) if key else None
+        return ExaClient(key, search_type=str(get("exa.search_type") or DEFAULT_EXA_SEARCH_TYPE)) if key else None
     if mode == "searxng":
         url = (str(get("searxng.url") or "")).strip()
         if not url:

@@ -13,6 +13,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from shortlist.engine.clients.http_retry import redact
+from shortlist.engine.clients.search import EXA_SEARCH_TYPES
 from shortlist.engine.models import (
     LANGUAGE_MODES,
     MAX_REFRESH_DAYS,
@@ -296,6 +297,10 @@ VALIDATORS = {
     "candidates.sources": _known_sources,
     "rows.hub_anchor": _hub_anchors,
     "llm_web.search_provider": _one_of("native", "exa", "searxng"),
+    # Validated here as well as clamped in the client: a typo saved through the API would otherwise
+    # be a 400 from Exa on every seed of every run, and the owner would see an empty row, not a bad
+    # setting. The client's fallback is the second line of defence, for a value written before this.
+    "exa.search_type": _one_of(*EXA_SEARCH_TYPES),
     "searxng.url": _url_without_credentials,
     "recommendations.watched_pct": _bounded_float(0.0, 1.0),
     # Refresh cadence in days. 0 = frozen; the ceiling is a validation bound, not a behaviour cap —
@@ -673,7 +678,10 @@ async def test_connection(service: str, request: Request) -> dict:
                 api_key = get("exa.apikey") or ""
                 if not api_key:
                     raise RuntimeError("An Exa API key is required for AI web search")
-                return ExaClient(api_key).ping()
+                # Ping on `fast`, whatever the configured mode: Test should answer in a couple of
+                # seconds, and `deep-reasoning` takes up to 40. This proves the key, which is the
+                # only thing the button claims to prove.
+                return ExaClient(api_key, search_type="fast").ping()
             if service == "native_search":
                 # A REAL web search, not a capability lookup. `supports_native_web_search` says the
                 # provider offers the tool; it cannot say this account's plan or model may use it.

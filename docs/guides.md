@@ -102,3 +102,30 @@ fork's `:develop` image (`bitr8/agregarr:develop`).
 
 Shortlist's own side is **Settings → Row placement**, which decides where it puts rows and whether
 it manages shelf order at all — turning that off leaves the order entirely to the other tool.
+
+## Your AI web search finds nothing new
+
+The `llm_web` source asks the web what to watch next. Which backend it asks is
+**Settings → AI web search**, and the three choices behave very differently.
+
+**Gemini answers from memory, not from the web.** Google's grounding tool is attached on every
+call, and Gemini decides for itself whether to use it — for "what should I watch next" it almost
+never does. It answers from training data instead, so the titles are real and well-chosen but often
+years old. Nothing can force it: an explicit instruction to search, a search-shaped prompt and the
+API's own "always call a tool" setting all leave it at zero searches. If you are on Gemini and want
+genuinely current picks, point the backend at Exa or SearXNG. The logs say
+`Gemini answered without searching the web` whenever this happens, so you can tell at a glance.
+
+Claude and GPT both really search. GPT is much the cheaper of the two — about a cent per person per
+night against Claude's ten, for the same quality — because Claude needs five searches to reliably
+report release years where GPT needs one.
+
+**Exa has a depth setting** (**Search depth**, next to the API key). It defaults to *Thorough*,
+which costs $0.012 a search instead of $0.007. That is deliberate: the cheap modes are erratic — on
+the same two searches, *Balanced* found 13 and 8 usable titles where *Thorough* found 47 and 36, and
+once found none at all. Every search is cached for a fortnight and shared across everyone on your
+server, so the extra half-cent buys candidates for the whole roster rather than one person.
+
+**SearXNG needs its JSON API turned on**, or it answers Shortlist with a 403 — add `json` to
+`search.formats` in its `settings.yml` and restart. Its upstream engines rate-limit self-hosted
+instances, so expect a few to fail on any given search; the **Test** button names the ones that did.

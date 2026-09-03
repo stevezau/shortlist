@@ -59,7 +59,9 @@ export const CURATOR_PROVIDERS: readonly CuratorProviderInfo[] = [
     id: "google",
     label: "Gemini",
     glyph: "google",
-    defaultModel: "gemini-2.5-flash",
+    // An alias, matching the backend's DEFAULT_MODEL. `gemini-2.5-flash` was here until Google
+    // retired it for new users, which 404'd every fresh Google setup on its first run.
+    defaultModel: "gemini-flash-latest",
     needsKey: true,
     needsUrl: false,
     keyUrl: "https://aistudio.google.com/apikey",
