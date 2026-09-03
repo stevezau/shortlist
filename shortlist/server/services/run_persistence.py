@@ -1492,10 +1492,17 @@ def _emit_request_events(session: Session, run_id: int, report) -> None:
     # window), and keying on the pool skipped exactly that case. `wanted == 0` stays silent — nothing
     # was missing, which is not a problem to report.
     if report.requests is not None and report.requests.wanted and not report.requests.considered:
+        # How many people's demand fed this pass, and the floor it had to clear. Demand counts
+        # DISTINCT wanters, so a run covering fewer people than the floor cannot fill the pool no
+        # matter what the settings say — a one-user manual run against `min_demand=2` is guaranteed
+        # to land here. That is not a warning and it is not the owner's floors: it is the run's own
+        # scope, so it is recorded as INFO and `notifications._requests_found_nothing` skips it.
+        population = len(report.users)
+        unreachable = report.requests.demand_floor > population
         _add_event(
             session,
             "requests.none_qualified",
-            "warning",
+            "info" if unreachable else "warning",
             run_id,
             dry_run=report.dry_run,
             wanted=report.requests.wanted,
@@ -1504,6 +1511,9 @@ def _emit_request_events(session: Session, run_id: int, report) -> None:
             examined=report.requests.examined,
             lookups_spent=report.requests.lookups_spent,
             exhausted_pool=report.requests.examined >= report.requests.pool_size,
+            users=population,
+            demand_floor=report.requests.demand_floor,
+            demand_unreachable=unreachable,
         )
     if report.requests is None or not report.requests.outcomes:
         return

@@ -919,6 +919,13 @@ class RequestReport:
     # Titles the LANGUAGE mode alone removed from that pool ("only" mode). Kept apart from the other
     # base floors so the "nothing qualified" alert can name the setting that actually bound.
     dropped_by_language: int = 0
+    # The LOWEST `min_demand` any row gated on this run — the fewest distinct wanters a title needed
+    # to reach the rating gate through the most permissive row. Recorded so a zero can be told apart
+    # from a zero that was arithmetically GUARANTEED: demand counts distinct people, so a run covering
+    # fewer people than this floor can never fill the pool, whatever the owner's settings say. Six
+    # such events on the maintainer's server (2026-09-02..03, all `users_ok=1` manual runs) raised
+    # "loosen your floors" while the nightly 46-user run was requesting normally.
+    demand_floor: int = 0
     examined: int = 0  # of those, how many the rating gate actually rated
     lookups_spent: int = 0  # live rating-API calls that cost; cached ratings are free and are not counted
     # The same three, per row slug, plus what each row actually got. A run-wide total cannot answer

@@ -132,6 +132,51 @@ class TestTheShelfEventsANightlyRunEmits:
         assert [(a[0], a[1]) for a in seen] == [("run.hub_unplaced", "info"), ("run.hub_order", "info")]
 
 
+class TestTheZeroRequestedEventSaysWhetherItWasReachable:
+    """`_emit_request_events` — "0 requested" has two shapes and only one is about the owner's
+    settings. `min_demand` counts DISTINCT wanters, so a run covering fewer people than the floor
+    could never have filled the pool, whatever the settings were. Six such events on the
+    maintainer's server (2026-09-03, every one a one-user manual run) raised "Nothing is being
+    requested — loosen your floors" while the nightly 46-user run was requesting normally."""
+
+    @staticmethod
+    def _emit(*, users: int, demand_floor: int) -> dict:
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from shortlist.engine.models import RequestReport
+        from shortlist.server.services import run_persistence as rp
+
+        seen: list[tuple] = []
+        requests = RequestReport(wanted=650, pool_size=0, demand_floor=demand_floor)
+        report = SimpleNamespace(
+            requests=requests,
+            dry_run=False,
+            users=[UserRunReport(username=f"u{i}", slug=f"u{i}") for i in range(users)],
+        )
+        with patch.object(rp, "add_audit", lambda session, scope, level, **f: seen.append((scope, level, f))):
+            rp._emit_request_events(None, 7, report)
+        return next(f | {"_level": level} for scope, level, f in seen if scope == "requests.none_qualified")
+
+    def test_a_run_smaller_than_its_own_demand_floor_is_info_and_flagged(self):
+        fields = self._emit(users=1, demand_floor=2)
+
+        assert fields["_level"] == "info", "arithmetically guaranteed, so not an alarm"
+        assert fields["demand_unreachable"] is True
+        assert (fields["users"], fields["demand_floor"]) == (1, 2)
+
+    def test_a_full_roster_that_cleared_nothing_is_still_a_warning(self):
+        """The shape the alert exists for: plenty of people, plenty missing, floors too tight."""
+        fields = self._emit(users=46, demand_floor=2)
+
+        assert fields["_level"] == "warning"
+        assert fields["demand_unreachable"] is False
+
+    def test_a_floor_of_one_is_never_unreachable(self):
+        """The default. One person wanting a title is one wanter, so a single-user run clears it."""
+        assert self._emit(users=1, demand_floor=1)["demand_unreachable"] is False
+
+
 class TestPicksCarryTheBuiltAtStamp:
     """`built_at` has to survive the write as well as the read.
 

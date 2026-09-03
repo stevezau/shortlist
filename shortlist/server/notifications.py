@@ -278,6 +278,17 @@ def _mdblist_quota(session: Session) -> dict | None:
     }
 
 
+def _is_evidence_of_nothing_requested(event: Event) -> bool:
+    """Whether one ``requests.none_qualified`` event says anything about the owner's SETTINGS.
+
+    See :func:`_requests_found_nothing` for why a dry run and a demand-unreachable run don't. An
+    event predating those fields counts as evidence — the old behaviour, which is the safe default
+    for an alert whose whole job is to break a five-day silence.
+    """
+    data = event.message if isinstance(event.message, dict) else {}
+    return not data.get("dry_run") and not data.get("demand_unreachable")
+
+
 def _requests_found_nothing(session: Session) -> dict | None:
     """Recent runs wanted titles but the rating gate passed none of them, so nothing reached
     Sonarr/Radarr and nothing reached the inbox either.
@@ -286,15 +297,29 @@ def _requests_found_nothing(session: Session) -> dict | None:
     and queues nothing shows "0 requested" on a green run, which is also what a run with nothing to
     do shows. It went unnoticed for five days in production. Fires only after TWO runs, so a single
     quiet night — genuinely common — never nags.
+
+    Two shapes of that zero are NOT evidence and are filtered out before counting, because both
+    fired this alert on the maintainer's server while the nightly run was requesting normally
+    (2026-09-03: six events, every one of them from a one-user manual run):
+
+    * a **dry run** asked for nothing by definition, so it can't be short of things to ask for;
+    * a run covering fewer people than its own ``min_demand`` (``demand_unreachable``) could not have
+      filled the pool whatever the settings were — telling that owner to loosen their floors is
+      advice they can follow forever without effect. Same mis-attribution the language branch below
+      exists to prevent, one level up.
+
+    Filtered in Python rather than SQL: both facts live inside the event's JSON message, and the
+    fetch is widened so a burst of skipped test runs cannot crowd the real ones out of the window.
     """
     since = datetime.now(UTC) - timedelta(days=3)
-    events = (
+    candidates = (
         session.query(Event)
         .filter(Event.scope == "requests.none_qualified", Event.ts >= since)
         .order_by(Event.ts.desc())
-        .limit(5)
+        .limit(50)
         .all()
     )
+    events = [e for e in candidates if _is_evidence_of_nothing_requested(e)][:5]
     if len(events) < 2:
         return None
     latest = events[0]

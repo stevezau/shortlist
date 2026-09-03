@@ -360,6 +360,10 @@ def _gate_rows(
     # can exceed `wanted` and claim the language setting is the sole cause when it is not — the very
     # mis-attribution this counter exists to prevent, reintroduced one level up.
     dropped_language_keys: set[tuple[int, MediaType]] = set()
+    # The most permissive row's demand floor, so the server can tell a zero the settings caused from
+    # one the run's own population made impossible (see `RequestReport.demand_floor`). Taken across
+    # rows, not per row: if ANY row could have passed a title, the floor was reachable this run.
+    report.demand_floor = min((row.cfg.min_demand for row in rows), default=0)
     for index, row in enumerate(rows):
         in_play = [
             m

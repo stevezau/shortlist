@@ -304,6 +304,58 @@ class TestRequestsFoundNothing:
 
         assert notif._requests_found_nothing(session) is None
 
+    def test_ignores_a_run_that_covered_fewer_people_than_its_own_demand_floor(self, session):
+        """The false positive this alert actually produced. `min_demand=2` counts DISTINCT wanters,
+        so a one-user manual run cannot fill the pool whatever the settings are — and the maintainer
+        was told six times to loosen floors that were never the reason, while the nightly 46-user run
+        was requesting normally (2026-09-03)."""
+        session.add_all(
+            [
+                self._event(wanted=650, pool_size=0, examined=0, users=1, demand_floor=2, demand_unreachable=True)
+                for _ in range(6)
+            ]
+        )
+        session.commit()
+
+        assert notif._requests_found_nothing(session) is None
+
+    def test_ignores_dry_runs(self, session):
+        """A dry run asked for nothing by definition, so it is no evidence that there was nothing to
+        ask for. Three of the maintainer's six false positives were dry runs."""
+        session.add_all([self._event(wanted=650, pool_size=0, examined=0, dry_run=True) for _ in range(3)])
+        session.commit()
+
+        assert notif._requests_found_nothing(session) is None
+
+    def test_still_fires_when_real_runs_hide_behind_a_burst_of_skipped_ones(self, session):
+        """The reason the fetch is widened before filtering. An afternoon of test runs is a burst of
+        events that say nothing, and the two real ones sit UNDER them — filtering a page of 5 would
+        have dropped exactly the evidence the alert exists for."""
+        now = datetime.now(UTC)
+        for i in range(20):
+            event = self._event(wanted=650, pool_size=0, examined=0, users=1, demand_floor=2, demand_unreachable=True)
+            event.ts = now - timedelta(minutes=i)
+            session.add(event)
+        for i in range(2):
+            real = self._event(wanted=11424, pool_size=0, examined=0, users=46, demand_floor=2)
+            real.ts = now - timedelta(hours=24 + i)
+            session.add(real)
+        session.commit()
+
+        result = notif._requests_found_nothing(session)
+
+        assert result is not None
+        assert "The last 2 runs" in result["body"], "only the real runs may be counted"
+        assert "11424 titles" in result["body"]
+
+    def test_counts_an_event_from_before_the_new_fields_existed(self, session):
+        """An event written by an older build carries neither `users` nor `demand_unreachable`. The
+        safe default for an alert whose job is to break a five-day silence is to still speak."""
+        session.add_all([self._event(wanted=702, pool_size=0, examined=0) for _ in range(2)])
+        session.commit()
+
+        assert notif._requests_found_nothing(session) is not None
+
 
 class TestFailedJobs:
     def test_fires_when_a_job_exhausts_its_retries(self, session):

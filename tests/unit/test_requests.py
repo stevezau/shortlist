@@ -644,6 +644,30 @@ class TestRequestMissing:
         _request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         assert [c[0] for c in fake.movie_calls] == [2]  # the lone-wanter title is filtered out
 
+    def test_records_the_lowest_demand_floor_any_row_gated_on(self, monkeypatch):
+        """`demand_floor` is what lets the server tell "your floors are too tight" from "this run
+        covered fewer people than its own floor, so the pool could never fill" — the second of which
+        raised the "Nothing is being requested" alert six times on the maintainer's server while the
+        nightly run was requesting normally. The LOWEST floor, because a title passing through any
+        one row is enough to make the floor reachable."""
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: FakeArr())
+        strict = _cfg(radarr=RADARR, min_demand=5)
+        lenient = _cfg(radarr=RADARR, min_demand=2)
+        title = MissingTitle(1, "one wanter", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, demand=1)
+
+        report = requests_mod.request_missing(
+            strict,
+            FakeTmdb(),
+            [
+                requests_mod.RowRequest("strict_row", strict, self._demand(title)),
+                requests_mod.RowRequest("lenient_row", lenient, self._demand(title)),
+            ],
+            dry_run=False,
+        )
+
+        assert report.pool_size == 0
+        assert report.demand_floor == 2
+
     def test_min_year_excludes_older_titles(self, monkeypatch):
         fake = FakeArr()
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
