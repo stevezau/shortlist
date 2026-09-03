@@ -301,6 +301,33 @@ assertion checks.
 survivable — 10 seeds per user, shared cache, and defect #3 is now fixed so the rest still land — but
 it means some seeds contribute nothing on any given night, and the run log will say so.
 
+## 5e. Live verification on SFLIX (dry runs, MooHouse — 30 seeds, 49-user install)
+
+Deployed to the live container and run for real. Three dry runs, each after deploying the fix the
+previous one exposed.
+
+| run | searches | cached | proposals | already-watched dropped | resolved | unresolved | seed leak | time |
+| --- | -------- | ------ | --------- | ----------------------- | -------- | ---------- | --------- | ---- |
+| 15  | 20       | 0      | 80        | — (no filter yet)       | 80       | 0          | **6**     | 224s |
+| 16  | 23       | 22     | 76        | 4                       | 76       | 0          | **1**     | 23s  |
+| 17  | 23       | 23     | 54        | **26**                  | 50       | 4          | **none**  | 13s  |
+
+**The bug the live run found, which nine audit rounds and 3800 tests did not.** The model proposes
+already-watched titles even when told not to and even when they are stripped from the list it is
+shown — it fills them back in from its own knowledge. Run 15 returned six seeds among 40 proposals.
+Filtering on the pool's seeds took it to one; the survivor was watched but seeded in a _different_
+pool, which is the pool boundary showing through. Matching the whole history took it to none.
+
+**26 of 80 proposals were already-watched titles** — a third of what the model was asked for. They
+never reached a row (the downstream watched-filter has always caught them) but they were spending
+the k, and nothing counted them. `already_watched` is now in the run trace, so a prompt that starts
+wasting the budget is visible rather than inferred.
+
+The cache behaves as designed: run 15 paid for 20 searches, runs 16 and 17 served 22 and 23 of 23
+from cache and billed nothing, and the run dropped from 224s to 13s. `unresolved: 4` on run 17 is
+the expected hallucination tail — those titles resolve to nothing and vanish, which is the whole
+reason ids were rejected in §3.
+
 ## 6. Implementation plan
 
 1. **`ExaClient`** — `type` from settings (default `deep-lite`), `numResults=10`, `outputSchema` for
