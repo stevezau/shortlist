@@ -16,7 +16,12 @@ export function Segmented<T extends string>({
   ariaLabel,
 }: {
   value: T;
-  options: { value: T; label: ReactNode }[];
+  options: {
+    value: T;
+    label: ReactNode;
+    disabled?: boolean;
+    reason?: string;
+  }[];
   onChange: (value: T) => void;
   /** Visible caption; when set, the buttons are wrapped in a labelled fieldset. */
   legend?: string;
@@ -32,6 +37,11 @@ export function Segmented<T extends string>({
           size="sm"
           variant={value === option.value ? "default" : "outline"}
           aria-pressed={value === option.value}
+          disabled={option.disabled}
+          // `title` is a fallback ONLY. A disabled Button carries `disabled:pointer-events-none` and
+          // takes no focus, so neither mouse nor keyboard can surface this — whoever supplies a
+          // `reason` must also render it as text (see `providerHint`).
+          title={option.disabled ? option.reason : undefined}
           onClick={() => onChange(option.value)}
         >
           {option.label}

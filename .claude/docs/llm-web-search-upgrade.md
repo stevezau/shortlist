@@ -328,6 +328,147 @@ from cache and billed nothing, and the run dropped from 224s to 13s. `unresolved
 the expected hallucination tail — those titles resolve to nothing and vanish, which is the whole
 reason ids were rejected in §3.
 
+## 5f. Live verification at full scale (run 18 — 46 users, REAL run, 2026-09-03)
+
+The first non-dry run on the upgraded code, and the roster-scale measurement §7 listed as missing.
+Owner-triggered from the UI. 62 minutes, `status: ok`, **46 of 46 users ok, 0 errors, 0 promotion
+blockers**.
+
+| measure                              | run 18            |
+| ------------------------------------ | ----------------- |
+| billable searches                    | 662               |
+| cache hits                           | 380 (**36.5%**)   |
+| cost at `deep-lite` ($0.012/search)  | **$7.94**         |
+| titles added / removed               | 848 / 822         |
+| LLM tokens                           | 350,637           |
+| proposals reaching the resolver      | 3,204             |
+| already-watched proposals dropped    | **378**           |
+| unresolved against TMDB              | **23 (0.7%)**     |
+| failed seeds                         | none              |
+| rows using structured extraction     | 92 of 92          |
+
+**The already-watched filter is load-bearing at scale, not a MooHouse curiosity.** The curator
+proposed 3,582 titles across 46 real histories and 378 of them — **1 in 10** — were things that
+person had already watched. §5e measured this on one account with 30 seeds and could not tell
+whether that account was unusual. It is not.
+
+**0.7% unresolved** is the year-ranking change in `TmdbClient.search` holding up across 46 libraries:
+year now ranks candidates instead of filtering them, so a title whose year the model got wrong still
+resolves to the right entry rather than vanishing.
+
+**Cost, which nothing had measured before.** $7.94 a night is ~$238/month at `deep-lite`, and the
+36.5% hit rate is steady state rather than a cold start — the `websearch2:` namespace had been
+filling for 13 days. The cheap tiers would be ~$139/month, so the depth setting is a real ~$100/month
+decision, against the 47-and-36 vs 13-and-8 usable-titles gap in §2.2.
+
+**`shares_updated: 0`** is the expected steady state, not a skipped step: the `label!=shortlist_*`
+excludes were already correct from previous runs, so the read-modify-write merge found nothing to
+change. Plex-safety rule 1 still ran.
+
+**A false alarm worth recording.** `extracted` read exactly 25 on all 92 rows, which looks like a cap
+discarding most of what Exa found. It is `_TRACE_RETURNS_SAMPLE` — a trace display sample. The prompt
+still receives `candidates[:_WEB_PICK_CAP]` (300). Anyone reading these traces will notice the
+uniform 25 and should not chase it.
+
+## 5g. Two findings RETRACTED, and what replaced them (2026-09-03)
+
+Both were reported to the owner as fact and both were wrong. Recorded here in full, because the way
+each was reached is more useful than the conclusion.
+
+### Retraction 1 — "Exa with no AI burns $7.94 a night"
+
+**Claimed:** with an Exa key and the provider set to None, every run paid for every search, extracted
+the titles, then discarded them. Reported as a live production bug on a 46-user server.
+
+**Actually:** `gather_candidates` gated the whole source on a separate `llm_ready` check —
+`curator is not None and not isinstance(curator, NullCurator)` — which ran BEFORE
+`_web_search_capable` was consulted. With no AI provider the source never ran at all. **Zero searches
+fired. No money was ever spent.**
+
+**How the error was made:** the probe called `web_recommendations` directly instead of
+`gather_candidates`. The inner function does bill and discard when reached that way; production never
+reaches it that way. This is the exact failure mode `.claude/rules/testing.md` and the "confirm a fix
+by running the real code" note both warn about — a reimplementation of the call path is not the call
+path, and here even calling the *real* function at the wrong level was enough to invent a bug.
+
+**What was true underneath:** Exa really does extract titles unaided, so keyless Exa is a genuine
+capability — it was simply never reachable. Turning it on (owner decision, 2026-09-03) meant removing
+`llm_ready` so `_web_search_capable` is the single authority, and matching `hasWebSearch()` in
+`sources.ts`. Pinned by `test_candidates.py::TestWebSearchWithoutAnLlm::
+test_gather_candidates_really_runs_the_source_with_no_ai`, which goes through the front door.
+
+**Verified live** through `gather_candidates` with real keys: `none + exa` at `deep-lite` → 1 billable
+search, **39 candidates**, no AI provider present. Eight further provider x backend cells behaved
+exactly as designed against the live Exa, Anthropic, OpenAI and Google APIs.
+
+### Retraction 2 — "Gemini's picks are stale training data"
+
+**Claimed:** Gemini attaches the grounding tool, never searches, and therefore returns stale titles —
+so the native option should be disabled for it.
+
+**Actually:** the first half holds and the second does not. Re-measured under the year-anchored
+prompt (§5h): `web_search_queries` is still empty, and a control question that cannot be answered
+from memory still makes the same client issue three real queries. But the titles it returns from
+memory were **12 of 12 from 2024 or later** — The Pitt, Pluribus, Adolescence, Task — overlapping what
+the searching control found. Its training data is simply recent enough.
+
+**How the error was made:** the original measurement used the OLD prompt, which never named the year.
+That prompt was later found to be the whole problem for OpenAI too (§5h). Repeating a finding without
+re-running it after changing the thing it depended on is how a stale measurement becomes a false
+claim.
+
+**What replaced it:** Gemini stays selectable and unflagged as broken. The log line dropped from
+WARNING to INFO and now states the real cost — it cannot refresh itself as its cutoff recedes, where
+Claude and GPT can.
+
+## 5h. The prompt fix: make native search look forward (2026-09-03)
+
+`_WEB_SYSTEM` asked for "current, well-reviewed titles". A model has no reliable idea what today is,
+so *current* anchors to its training cutoff — the wrong end — and the tool being attached is not an
+instruction to use it. Both are now explicit: the prompt carries the current year and last year, and
+says the model's own knowledge is out of date.
+
+Same models, same seeds, same day; only the prompt changed:
+
+| model              | 2024+ before | 2024+ after | note                                    |
+| ------------------ | ------------ | ----------- | --------------------------------------- |
+| `gpt-4o-mini`      | 0 / 12       | **12 / 12** | 8,384 tokens, 5.9s                      |
+| `gpt-5-mini`       | 0 / 12       | **9 / 12**  | 67,612 tokens, 100s — searches far harder |
+| `claude-haiku-4-5` | not measured | 12 / 12     | no control run; not evidence of a gain  |
+
+**The over-correction, and the guard.** The year anchor worked too well at first: `gpt-4o-mini` began
+returning UNRELEASED 2026 titles and "Season 3" entries. Two rules fixed it — only already-released
+titles, and never name a season. The numbers above are the second measurement.
+
+**A cost worth knowing.** `gpt-5-mini` now spends 8x the tokens and 17x the wall-clock of
+`gpt-4o-mini` for a slightly worse result, which is an argument for changing the OpenAI default back.
+Left as an owner decision rather than flipping it twice in one session.
+
+## 5i. The Settings merge (2026-09-03, owner decision)
+
+The AI provider card and the Web search card became one, titled **"AI & Web search"**. This reverses
+the position taken earlier in the same session, and the reason it was wrong is worth keeping.
+
+**The objection:** the AI key has a second consumer — `poster_service.make_studio` builds the
+image backend from `curator.provider` + `curator.api_key` (OpenAI and Google only) — so it cannot
+live inside a box called "Web search". **Why it did not hold:** the owner's name for the card owns
+both things explicitly, and the provider picker having exactly ONE home is what prevents the
+duplication that `ai-web-search-card.tsx` records ("no way to tell which one was authoritative").
+
+The provider list is now a function of the chosen backend, because the branches genuinely differ:
+
+| Search with          | AI provider | Selectable providers                                    |
+| -------------------- | ----------- | ------------------------------------------------------- |
+| Exa                  | optional    | all, None included — Exa extracts titles itself          |
+| My AI's own search   | required    | Claude, OpenAI, Gemini — **not local**, no search tool   |
+| My SearXNG           | required    | all except None — raw snippets need reading              |
+
+Two bugs were introduced by the merge and caught before it shipped: `offers()` defaulted an unset
+backend to `native` while the new helpers defaulted to `exa` (a fresh install would have shown the
+wrong provider list), and the single Test button had to learn to probe the external backend when one
+is configured and the AI provider otherwise — which is what keeps heuristic mode's "no AI, nothing to
+test" answer working.
+
 ## 6. Implementation plan
 
 1. **`ExaClient`** — `type` from settings (default `deep-lite`), `numResults=10`, `outputSchema` for
@@ -359,18 +500,24 @@ reason ids were rejected in §3.
 
 ## 7. Status
 
-All five backends measured against live APIs. Implemented; not yet committed.
+All five backends measured against live APIs. **Shipped to `dev`** (77dcd27, 46924a1, cb15267,
+01ff07f) and verified in production by run 18 — see §5f. The settings-UI polish and the model-alias
+work that followed are a later change.
 
-**Verification:** `ruff check` clean · **3811 unit + integration tests pass, 1 skipped** · `tsc -b`
-clean · **1395 web tests pass** · a 28-check live audit of the shipped classes against the real Exa,
-Anthropic, OpenAI, Google and TMDB APIs, passing end to end including the cache round-trip.
+**Verification:** `ruff check` + `ruff format --check` clean · **3,833 unit + integration tests pass,
+2 skipped** · `tsc -b` clean · eslint 0 errors · `vite build` ok · **1,404 web tests pass** · a
+28-check live audit of the shipped classes against the real Exa, Anthropic, OpenAI, Google and TMDB
+APIs, passing end to end including the cache round-trip · **run 18: a real 46-user run, `ok`**.
 
 **`pytest -m e2e` was NOT run** — it needs Playwright browsers, which are in neither the runtime
-image nor this machine. A settings select was added, so CI's e2e job is the first thing that would
-catch a wizard regression.
+image nor this machine. CI's e2e job covers it. Two settings selects were touched; nothing in
+`tests/e2e/` asserts on the web-search card, and the one test naming a model
+(`test_curator_model_e2e.py`) already stubs the undated `claude-haiku-4-5` that is now the default.
 
-Also unverified: behaviour at roster scale over a real nightly run, and whether the measured
-settings hold for a library unlike the test seeds (all prestige TV — see §8).
+**Roster scale is now verified** — see §5f: run 18 was a real (non-dry) run over all 46 users,
+`status: ok`, no errors, no promotion blockers, and it is where the cost and already-watched figures
+come from. Still unverified: whether the measured *settings* hold for a library unlike the test seeds
+(all prestige TV — see §8).
 
 ## 8. Open items
 
@@ -379,11 +526,22 @@ settings hold for a library unlike the test seeds (all prestige TV — see §8).
   search for this task.
 - The OpenAI and Google keys used for the 2026-09-02 probes were pasted into a chat transcript —
   **rotate them**.
-- Not built, deliberately: **resolving a blank `curator.model` from the provider's live model list**
-  rather than a hardcoded constant. That is the general fix for the bug class the retired
-  `gemini-2.5-flash` default exposed, and it would prevent the same thing happening to
-  `claude-haiku-4-5-20251001` and `gpt-4o-mini` later. An alias default fixes Google today without
-  the refactor; the refactor is still worth doing.
+- **Model rot — handled by aliases plus a drift test, not by live resolution.** Every default is now
+  an undated alias (`claude-haiku-4-5`, `gpt-5-mini`, `gemini-flash-latest`), probed live on
+  2026-09-03: the undated Anthropic alias answers 200, and Anthropic's own `/v1/models` listing
+  carries undated ids for everything newer — `claude-haiku-4-5-20251001` was the oldest id still
+  listed, so it was next to be retired. `tests/unit/test_curator_defaults.py` reads
+  `web/src/lib/providers.ts` and fails if the wizard and the engine name different models, or if any
+  default carries an 8-digit date.
+
+  This also fixed a live split nobody had noticed: the wizard WRITES its `defaultModel` into
+  `curator.model`, so `gpt-5-mini` was what installs ran while the engine's blank-field fallback was
+  `gpt-4o-mini`. Two defaults for one decision, silently. **`gpt-5-mini` is unmeasured** — the
+  measurements in §5b were on `gpt-4o-mini`, and the keys were rotated before it could be retested.
+
+  Still not built, and now deliberately declined: **resolving a blank model from the provider's live
+  model list**. It requires a heuristic that guesses model naming conventions ("prefer the newest
+  `gpt-N-mini`"), which is the same rot one level up. Aliases cannot guess wrong.
 - Not measured: whether these settings hold on a **library unlike the test seeds**. Everything was
   measured on Severance, The Bear, Andor, Poor Things and Shogun — prestige TV. The large effects
   (`auto` returning nothing, `max_uses=3` halving year coverage, the `why` 524) are structural

@@ -24,7 +24,6 @@ from loguru import logger
 
 from shortlist.engine.clients.search import SearchResult, TitleCandidate, extracts_titles
 from shortlist.engine.clients.tmdb import Cache, NullCache, TmdbClient
-from shortlist.engine.curator import NullCurator
 from shortlist.engine.curator.base import (
     build_web_pick_prompt,
     build_web_query_for_title,
@@ -119,7 +118,13 @@ def _web_search_capable(curator, search, mode: str) -> bool:
     failure.
     """
     if mode in EXTERNAL_SEARCH_MODES:
-        return search is not None
+        if search is None:
+            return False
+        # A backend alone is not enough — something has to turn results into titles. Exa does that
+        # itself (`outputSchema`), so it runs with no AI at all; SearXNG returns raw snippets that
+        # only a model can read. Without this split, SearXNG with no AI provider registered as
+        # ATTEMPTED and returned nothing, which is exactly what this function exists to prevent.
+        return extracts_titles(search) or getattr(curator, "can_complete", True)
     return getattr(curator, "supports_native_web_search", False)
 
 
@@ -167,6 +172,10 @@ def web_recommendations(
         recs = curator.recommend_web(profile, seeds, k)
         stats.add_tokens("llm_web", getattr(curator, "last_tokens", 0))
     recs = _drop_watched_proposals(recs, seeds, profile, web_trace)
+    # Cap here, not before the filter: the keyless path hands back every extracted title so that
+    # dropping watched ones eats into the surplus rather than into the row. A no-op for the model
+    # paths, which never return more than k.
+    recs = recs[:k]
     web_trace["proposed"] = [_rec_label(r) for r in recs]
     return recs
 
@@ -314,14 +323,43 @@ def _web_via_search(
         system, user = build_web_rag_prompt(profile, results[:_WEB_SEARCH_RAG_CAP], k)
     else:
         return []
+    # No model to ask: Exa's `outputSchema` already returned clean titles, so hand those straight to
+    # the pipeline, which ranks and explains every candidate in code anyway. Before this, the Exa
+    # branch of `_web_search_capable` was unreachable — `gather_candidates` refused the whole source
+    # without a real curator — so Exa-without-AI produced nothing. It did NOT bill: a claim that it
+    # cost $7.94 a night was made and retracted (see the design doc §5g); that figure is run 18's
+    # real, productive spend under Claude. Only Exa reaches here with candidates; SearXNG returns
+    # snippets something must still read, and native search IS the model.
+    if not getattr(curator, "can_complete", True):
+        return _titles_as_proposals(candidates, web_trace, reason="no AI provider configured")
     titles = parse_web_titles(curator.complete(system, user), k)
     stats.add_tokens("llm_web", getattr(curator, "last_tokens", 0))
+    # Same fallback for a model that answered with nothing usable — rate-limited, timed out, or
+    # replying in prose. Degrading to Exa's own extraction beats losing the searches we just paid for.
+    if not titles and candidates:
+        return _titles_as_proposals(candidates, web_trace, reason="the model returned no usable titles")
     if web_trace is not None:
         web_trace["rag_system"] = system
         web_trace["rag_user"] = user
     # `proposed` is recorded by the caller, once, AFTER already-watched titles are dropped — so the
     # trace shows what the run actually used rather than what the model first said.
     return titles
+
+
+def _titles_as_proposals(candidates: list[TitleCandidate], web_trace: dict | None, *, reason: str) -> list[dict]:
+    """Exa's extracted titles as proposals, skipping the model entirely.
+
+    The list is already interleaved across seeds, deduplicated and stripped of seed titles, so the
+    first k are a spread rather than one seed's haul. Downstream is unchanged: they resolve against
+    TMDB, get filtered to the library, and are ranked and explained by `picker`, which needs no LLM.
+    """
+    if web_trace is not None:
+        web_trace["unpicked"] = reason
+    # NOT `candidates[:k]`: the caller drops already-watched proposals AFTER this returns, and run 18
+    # measured about 1 in 10 of them watched. Slicing first would hand back k and deliver k-1 while
+    # hundreds of unwatched candidates went unused. The model path cannot do this — it only ever
+    # returns k — but this one has the whole list.
+    return [{"title": c.title, "year": c.year, "media": c.media} for c in candidates]
 
 
 def _dedupe_by_url(items: list[dict], seen_urls: set[str]) -> list[SearchResult]:
@@ -639,9 +677,6 @@ def gather_candidates(
             failures["tmdb_discover"] = f"{type(e).__name__}: {e}"
             logger.warning("tmdb_discover source failed ({}); continuing with the other sources", type(e).__name__)
 
-    # NullCurator isn't an LLM (it's the no-AI stub), so the web-search source needs a real curator;
-    # without one it's a no-op — matching the UI, which blocks the toggle.
-    llm_ready = curator is not None and not isinstance(curator, NullCurator)
     if "trakt" in enabled and trakt is not None:
         attempted.add("trakt")
         try:
@@ -659,9 +694,14 @@ def gather_candidates(
             failures["trakt"] = f"{type(e).__name__}: {e}"
             logger.warning("trakt source failed ({}); continuing with the other sources", type(e).__name__)
 
+    # Whether this source can run is `_web_search_capable`'s question ALONE — it used to also require
+    # a real (non-Null) curator, which quietly outranked it and made that function's Exa branch dead
+    # code. Exa returns extracted titles, so Exa with no AI provider is a complete setup.
+    # `curator is not None` stays: `_web_search_capable` reads capabilities off the curator with
+    # getattr defaults, and None would read as capable.
     if (
         "llm_web" in enabled
-        and llm_ready
+        and curator is not None
         and profile is not None
         and _web_search_capable(curator, search, web_search_mode)
     ):

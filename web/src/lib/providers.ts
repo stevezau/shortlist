@@ -39,7 +39,9 @@ export const CURATOR_PROVIDERS: readonly CuratorProviderInfo[] = [
     id: "anthropic",
     label: "Claude",
     glyph: "anthropic",
-    defaultModel: "claude-haiku-4-5-20251001",
+    // Undated alias, matching the backend's DEFAULT_MODEL. A dated id rots on the provider's
+    // retirement schedule — which is exactly how `gemini-2.5-flash` below started 404ing.
+    defaultModel: "claude-haiku-4-5",
     needsKey: true,
     needsUrl: false,
     keyUrl: "https://console.anthropic.com/settings/keys",

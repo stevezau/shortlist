@@ -6,6 +6,7 @@ import pytest
 
 from shortlist.engine.candidates import (
     GatherStats,
+    _web_search_capable,
     filter_candidates,
     gather_candidates,
     genre_coherence,
@@ -539,6 +540,178 @@ class _DictCache:
     def set(self, key, value, ttl_s):
         self.store[key] = value
         self.ttls[key] = ttl_s
+
+
+class TestWebSearchWithoutAnLlm:
+    """Exa extracts titles itself, so the model is not required to get value from a paid search.
+
+    What actually shipped: `gather_candidates` refused the source entirely without a real curator,
+    so the Exa branch of `_web_search_capable` was unreachable and Exa-without-AI produced nothing.
+    It did NOT bill — a claim that it cost $7.94 a night was made and retracted (design doc §5g);
+    that figure is run 18's real, productive spend under Claude. These tests pin the capability now
+    that it is reachable, and the front-door test below is the one that would have caught the
+    original mistake.
+    """
+
+    def _titles(self, *names):
+        return [TitleCandidate(title=n, year=2020, media="movie") for n in names]
+
+    def test_exa_titles_are_used_when_no_ai_provider_is_configured(self):
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor", "Shogun"))
+        stats = GatherStats()
+
+        out = web_recommendations(
+            NullCurator(), search, "exa", web_profile(), [seed(1, "Dune")], 5, stats, cache=_DictCache()
+        )
+
+        assert [o["title"] for o in out] == ["Andor", "Shogun"]
+        assert stats.exa_searches == 1  # the search was paid for — and now it buys something
+
+    def test_the_search_is_not_wasted_silently(self):
+        """The regression in one assertion: paying for a search and returning nothing is the bug."""
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor"))
+        stats = GatherStats()
+
+        out = web_recommendations(
+            NullCurator(), search, "exa", web_profile(), [seed(1, "Dune")], 5, stats, cache=_DictCache()
+        )
+
+        assert stats.exa_searches == 1 and out, (stats.exa_searches, out)
+
+    def test_a_model_that_answers_with_nothing_usable_falls_back_to_the_extraction(self):
+        """Rate-limited, timed out, or replying in prose — the searches are already paid for, so
+        Exa's own titles beat losing them."""
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor", "Shogun"))
+        curator = _NonNativeCurator("I'm sorry, I can't help with that.")
+        stats = GatherStats()
+
+        out = web_recommendations(
+            curator, search, "exa", web_profile(), [seed(1, "Dune")], 5, stats, cache=_DictCache()
+        )
+
+        assert curator.complete_calls == 1  # it DID ask, and only fell back after
+        assert [o["title"] for o in out] == ["Andor", "Shogun"]
+
+    def test_a_working_model_still_wins_over_the_raw_extraction(self):
+        """The fallback must not become the default path: a usable reply is still preferred, because
+        the model is what matches the list to this person's taste."""
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor", "Shogun"))
+        reply = '[{"title": "Silo", "year": 2023, "media": "show"}]'
+        stats = GatherStats()
+
+        out = web_recommendations(
+            _NonNativeCurator(reply), search, "exa", web_profile(), [seed(1, "Dune")], 5, stats, cache=_DictCache()
+        )
+
+        assert [o["title"] for o in out] == ["Silo"]
+
+    def test_the_model_is_never_called_when_there_is_none(self):
+        """`NullCurator.complete` is free, but calling it logs a parse warning that reads as a real
+        failure. Skipping it keeps a keyless install's log clean."""
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor"))
+        curator = NullCurator()
+        calls = []
+        curator.complete = lambda system, user: calls.append(1) or ""
+
+        web_recommendations(
+            curator, search, "exa", web_profile(), [seed(1, "Dune")], 5, GatherStats(), cache=_DictCache()
+        )
+
+        assert calls == []
+
+    def test_the_fallback_respects_k(self):
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("A", "B", "C", "D", "E"))
+
+        out = web_recommendations(
+            NullCurator(), search, "exa", web_profile(), [seed(1, "Dune")], 2, GatherStats(), cache=_DictCache()
+        )
+
+        assert len(out) == 2
+
+    def test_searxng_still_needs_a_model_because_it_extracts_nothing(self):
+        """The asymmetry that makes this per-backend: SearXNG returns snippets, so something must
+        read them. Only Exa hands back titles. A self-hosted SearXNG costs nothing, so producing
+        nothing here wastes no money — but it must not silently look like Exa's behaviour."""
+        search = _FakeSearch([make_result("Result", "text")], name="searxng")
+
+        out = web_recommendations(
+            NullCurator(), search, "searxng", web_profile(), [seed(1, "Dune")], 5, GatherStats(), cache=_DictCache()
+        )
+
+        assert out == []
+
+    def test_gather_candidates_really_runs_the_source_with_no_ai(self, mock_tmdb):
+        """Through the FRONT DOOR, not `web_recommendations` directly.
+
+        This is the test that was missing. `gather_candidates` gated the source on a separate
+        `llm_ready` check that outranked `_web_search_capable`, so Exa-with-no-AI was refused before
+        the capability function was ever consulted — and every test calling `web_recommendations`
+        directly passed against what was, in production, dead code.
+        """
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked([])
+        mock_tmdb.genre_names.return_value = {}
+        mock_tmdb.search.side_effect = lambda title, mt, year=None: (
+            {"id": 9001, "name": "Andor", "first_air_date": "2022-09-21", "genre_ids": []} if title == "Andor" else None
+        )
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor"))
+
+        out = gather_candidates(
+            mock_tmdb,
+            [seed(1, "Dune")],
+            sources=["llm_web"],
+            curator=NullCurator(),
+            profile=web_profile(),
+            search=search,
+            web_search_mode="exa",
+            web_search_cache=_DictCache(),
+        )
+
+        pool = out[0] if isinstance(out, tuple) else out
+        assert len(search.queries) == 1, "the source never ran"
+        assert [c.title for c in pool] == ["Andor"]
+
+    def test_gather_candidates_still_skips_searxng_with_no_ai(self, mock_tmdb):
+        """The other half: lifting the gate must not let through what genuinely cannot work."""
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked([])
+        mock_tmdb.genre_names.return_value = {}
+        search = _FakeSearch([make_result("a", "b")], name="searxng")
+
+        gather_candidates(
+            mock_tmdb,
+            [seed(1, "Dune")],
+            sources=["llm_web"],
+            curator=NullCurator(),
+            profile=web_profile(),
+            search=search,
+            web_search_mode="searxng",
+            web_search_cache=_DictCache(),
+        )
+
+        assert search.queries == [], "SearXNG searched with nothing able to read the results"
+
+    def test_searxng_with_no_model_is_not_even_capable(self):
+        """`_web_search_capable` gates `attempted`: a source that cannot run must not register as
+        having been tried, or "every source failed" misreads an incapable setup as a failure. A
+        backend alone used to be enough, so SearXNG + no AI counted as attempted and returned
+        nothing."""
+        assert _web_search_capable(NullCurator(), _FakeSearch([], name="searxng"), "searxng") is False
+
+    def test_exa_with_no_model_IS_capable_because_it_extracts(self):
+        search = _FakeExtractingSearch([], self._titles("Andor"))
+        assert _web_search_capable(NullCurator(), search, "exa") is True
+
+    def test_searxng_with_a_model_is_capable(self):
+        assert _web_search_capable(_NonNativeCurator("[]"), _FakeSearch([], name="searxng"), "searxng") is True
+
+    def test_the_trace_records_why_the_model_was_skipped(self):
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor"))
+        stats = GatherStats()
+
+        web_recommendations(
+            NullCurator(), search, "exa", web_profile(), [seed(1, "Dune")], 5, stats, cache=_DictCache()
+        )
+
+        assert "no AI provider" in stats.trace["web"]["unpicked"]
 
 
 class TestPerTitleWebSearchCache:

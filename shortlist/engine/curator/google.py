@@ -81,18 +81,22 @@ class GoogleCurator:
     def recommend_web(self, profile: UserProfile, seeds: list, k: int) -> list[dict]:
         """Propose up to k titles via Gemini's Google Search grounding tool (the ``llm_web`` source).
 
-        **Gemini usually does not actually search for this task.** Measured against the live API: the
-        tool is attached, `grounding_metadata.web_search_queries` comes back empty, and the answer is
-        drawn from training data — 0 of 12 titles were from 2025 or later on a 2026 run. It is not a
-        reporting artefact: the same client asked for a 48-hour-old news headline searched, cited its
-        sources and answered correctly, while the identical call with no tool said it had no live
-        access. Nor can it be forced — an explicit "you MUST search, do not answer from memory", a
-        retrieval-shaped prompt, and `tool_config` with `mode="ANY"` all left it at zero searches
-        (and `mode="ANY"` returned an empty response after 47s, so it must never be sent).
+        **Gemini does not actually search for this task — but its answers are still good.**
+        Measured against the live API: the tool is attached and
+        `grounding_metadata.web_search_queries` comes back empty. Not a reporting artefact — a
+        control question that cannot be answered from memory ("shows that premiered in 2026") made
+        the same client issue three real queries and cite its sources. Nor can it be forced: an
+        explicit "you MUST search", a retrieval-shaped prompt, and `tool_config` with `mode="ANY"`
+        all left it at zero searches (and `mode="ANY"` returned an empty response after 47s, so it
+        must never be sent).
 
-        So this logs when a run answered without searching, which is what turns a silent degradation
-        into something an owner can see and act on — the action being to point ``llm_web`` at Exa or
-        SearXNG, which do search. Degrades to an empty list on any provider error.
+        The conclusion originally drawn from that was wrong, and is corrected here. Under the old
+        prompt Gemini returned 0 of 12 titles from 2025 or later, which read as staleness. Under the
+        year-anchored prompt (see ``_WEB_SYSTEM``) it returns **12 of 12 from 2024 or later**,
+        overlapping the titles the searching control found. Its training data is simply recent
+        enough. So this logs at INFO, not WARNING: the one real cost is that it cannot refresh
+        itself as its cutoff recedes, where Claude and GPT can. Degrades to an empty list on any
+        provider error.
         """
         system, user = build_web_prompt(profile, seeds, k)
         try:
@@ -114,10 +118,15 @@ class GoogleCurator:
         usage = getattr(r, "usage_metadata", None)
         self.last_tokens = getattr(usage, "total_token_count", 0) or 0
         if not _searched(r):
-            logger.warning(
-                "llm_web (google): Gemini answered without searching the web — these titles come from "
-                "the model's training data, not current articles. Point the web-search backend at Exa "
-                "or SearXNG for genuinely current picks."
+            # INFO, not WARNING, and no longer "these titles are stale". Re-measured 2026-09-03 under
+            # the year-anchored prompt: Gemini still issues no search queries for this task, but the
+            # titles it returns from memory were 12 of 12 from 2024 or later, and matched what the
+            # searching control found. The behaviour is real; the old conclusion drawn from it was
+            # wrong. What remains true is that it cannot self-correct as its cutoff recedes.
+            logger.info(
+                "llm_web (google): Gemini answered from its own knowledge rather than searching. Its "
+                "picks are current today, but unlike Claude and GPT it will not refresh them by "
+                "searching — so they age with the model. Exa or SearXNG always reads live articles."
             )
         return parse_web_titles(r.text or "", k)
 

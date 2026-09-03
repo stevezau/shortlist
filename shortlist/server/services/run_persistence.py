@@ -1026,19 +1026,43 @@ def _queue_retention_prune(sessions: sessionmaker[Session]) -> None:
         logger.warning("could not queue the retention prune ({}) — the next run will", type(e).__name__)
 
 
+# Key prefixes nothing reads any more. Renaming a cache namespace strands every row under the old
+# name: no code can reach them again, but they keep their TTL and sit in the file the nightly backup
+# copies whole. `websearch:` was retired for `websearch2:` when the payload changed shape to carry
+# extracted titles beside the raw results — 711 stranded rows on a 46-user server, none of them
+# expired, all of them unreadable. Expiry alone clears these eventually; naming them clears them now.
+_RETIRED_CACHE_PREFIXES = ("websearch:",)
+
+
 def prune_expired_cache(session: Session) -> int:
-    """Drop cache rows whose TTL has passed.
+    """Drop cache rows whose TTL has passed, plus any left behind by a renamed key namespace.
 
     `DbCache.get` filters on `expires_at`, but nothing ever DELETED an expired row, so the table
     only grew. `library_index` is the worst of them: its key deliberately changes whenever the
     library changes, so every library edit stranded a whole-library JSON blob that could never be
     read again — in the same file the nightly backup copies in full and keeps ten of.
+
+    Retired prefixes are the same problem arriving a different way: the row is live by its TTL and
+    dead by its key. Matching on the key rather than `kind` is required — the old and new web-search
+    namespaces share `kind='websearch'`, so a kind-wide delete would take the live rows too.
     """
     from shortlist.server.db.models import CacheRow
 
     removed = session.query(CacheRow).filter(CacheRow.expires_at < time.time()).delete(synchronize_session=False)
     if removed:
         logger.info("pruned {} expired cache row(s)", removed)
+    for prefix in _RETIRED_CACHE_PREFIXES:
+        # `startswith(autoescape=True)`, never a hand-built LIKE: in LIKE, `_` matches ANY character,
+        # so a future prefix such as `library_index:` would over-match — and this loop DELETES. An
+        # assert would not do as a guard either, since `python -O` strips it.
+        stranded = (
+            session.query(CacheRow)
+            .filter(CacheRow.key.startswith(prefix, autoescape=True))
+            .delete(synchronize_session=False)
+        )
+        if stranded:
+            logger.info("pruned {} cache row(s) under the retired '{}' key namespace", stranded, prefix)
+            removed += stranded
     return removed
 
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import threading
+from datetime import UTC, datetime
 from typing import Protocol
 
 from loguru import logger
@@ -80,32 +81,65 @@ def taste_summary(profile: UserProfile, max_titles: int = 20) -> str:
 #
 # The year is demanded rather than requested, and the prompt says why: the resolver disambiguates on
 # it. At Anthropic's old `max_uses=3` only 4 of 12 proposals carried one.
+# The native-search prompt. Two things in it are load-bearing and were both missing:
+#
+# 1. THE YEAR. A model has no reliable idea what today is, so "current" and "recent" anchor to its
+#    training cutoff — which is exactly the wrong end. Measured on a 2026 run: gpt-4o-mini and
+#    gpt-5-mini each returned 12 titles and NOT ONE was from 2024 or later.
+# 2. AN EXPLICIT INSTRUCTION TO SEARCH. The tool being attached is not an instruction to use it.
+#
+# Neither is a guess. Asked "best-reviewed TV shows that premiered in 2026" — a question that names
+# the year and cannot be answered from memory — both models fired real searches and returned 2026
+# titles with citations. The tool works; the old prompt simply never asked it to look forward.
+#
+# Gemini is the exception and no prompt fixes it: it declines to search for this task under every
+# phrasing tried, including `tool_config mode="ANY"`. See GoogleCurator.recommend_web.
 _WEB_SYSTEM = (
-    "You are a film and TV recommender with live web search. Based on what this person recently "
-    "watched, search the web for {k} current, well-reviewed titles they'd most likely want to watch "
-    "next — 'what to watch next' picks, recent releases, and critically-loved titles similar in "
-    "taste. Rules: (1) never recommend a title they already watched, or another season or sequel of "
-    "one; (2) ALWAYS give the exact release year — it is used to look the title up, and a missing "
-    "year means the recommendation is discarded; (3) use the exact title as released, not a "
-    "description of it. Prefer real, findable titles over obscure guesses. Respond with ONLY a JSON "
-    'array of up to {k} objects, each {{"title": str, "year": int, "media": "movie" or "show"}}. '
-    "No prose."
+    "You are a film and TV recommender with live web search. Today is in {year}, which is LATER than "
+    "your training cutoff — so your own knowledge of what is new is out of date. Search the web "
+    "before answering rather than recommending from memory. Search for what 'what to watch next' "
+    "articles, critics' best-of lists and review sites are recommending in {year} and {last_year}. "
+    "Based on what this person recently watched, give {k} titles they'd most likely want to watch "
+    "next. Strongly prefer titles released in {last_year} or {year}; include something older only "
+    "when it is an unusually good match for their taste. Rules: (1) never recommend a title they "
+    "already watched, or another season or sequel of one; (2) ALWAYS give the exact release year — "
+    "it is used to look the title up, and a missing year means the recommendation is discarded; "
+    "(3) use the exact title as released, not a description of it; (4) only titles ALREADY RELEASED "
+    "and watchable now — never announced, upcoming or unaired ones; (5) name a series by its series "
+    "title alone, never 'Season 2' or 'Part 3'. Prefer real, findable titles over "
+    'obscure guesses. Respond with ONLY a JSON array of up to {k} objects, each {{"title": str, '
+    '"year": int, "media": "movie" or "show"}}. No prose.'
 )
 
 
-def build_web_prompt(profile: UserProfile, seeds: list, k: int) -> tuple[str, str]:
+def build_web_prompt(profile: UserProfile, seeds: list, k: int, *, year: int | None = None) -> tuple[str, str]:
     """(system, user) prompts for a web-search recommendation call (the ``llm_web`` source).
 
     Asks the model to propose NEW titles via web search; the caller resolves each to a real TMDB id
     and library-verifies it, so a hallucinated title simply resolves to nothing rather than reaching
     a row.
+
+    Args:
+        profile: The person being recommended for — used only when no seeds carry a title.
+        seeds: Their weighted recent watches; the first 20 titles anchor the request.
+        k: How many titles to ask for.
+        year: The current year, injected into the prompt because a model cannot be trusted to know
+            it. Defaults to today's. Tests pin it so the prompt is deterministic.
+
+    Returns:
+        ``(system, user)`` — the system prompt carrying the rules, and the user prompt carrying the
+        watch list.
     """
     liked = [getattr(s, "title", "") for s in seeds if getattr(s, "title", "")][:20]
     if not liked:
         liked = [w.title for w in sorted(profile.history, key=lambda w: w.watched_at, reverse=True)[:20]]
     body = "\n".join(f"- {t}" for t in liked) or "- (no history yet — recommend broadly popular titles)"
-    system = _WEB_SYSTEM.format(k=k)
-    user = f"They recently enjoyed:\n{body}\n\nRecommend up to {k} titles to watch next."
+    now = year if year is not None else datetime.now(UTC).year
+    system = _WEB_SYSTEM.format(k=k, year=now, last_year=now - 1)
+    user = (
+        f"They recently enjoyed:\n{body}\n\nSearch the web for what to watch next, then recommend "
+        f"up to {k} titles. Favour things released in {now - 1} or {now}."
+    )
     return system, user
 
 

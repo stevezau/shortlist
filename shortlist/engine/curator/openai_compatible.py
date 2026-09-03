@@ -78,7 +78,7 @@ class OpenAICompatibleCurator(OpenAICurator):
     def _send_model(self) -> str:
         """The model name to send. Asks the server what it has if we weren't told.
 
-        Inheriting OpenAI's `gpt-4o-mini` default would be actively wrong here: llama.cpp ignores the
+        Inheriting OpenAI's hosted DEFAULT_MODEL would be actively wrong here: llama.cpp ignores the
         field, but vLLM and LM Studio VALIDATE it and answer "model not found" — so leaving Model
         blank, which is the natural thing to do for a server hosting exactly one model, would fail on
         two of the runtimes this provider exists to support. Resolved once and remembered.

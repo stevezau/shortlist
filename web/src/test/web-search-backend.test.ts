@@ -77,13 +77,27 @@ describe("hasWebSearch across the backend × configuration matrix", () => {
     expect(hasWebSearch(settings(OLLAMA))).toBe(false);
   });
 
-  it("still requires an AI provider, whatever the backend", () => {
-    // A search backend only SEARCHES; a model still has to pick titles out of the results.
+  it("requires an AI provider for SearXNG, which only returns snippets", () => {
+    // Named for SearXNG on purpose: this used to claim "whatever the backend", which stopped being
+    // true when Exa began extracting titles itself.
     expect(
       hasWebSearch(
         settings({ ...SEARX, "llm_web.search_provider": "searxng" }),
       ),
     ).toBe(false);
+  });
+
+  it("requires NO AI provider for Exa, which extracts titles itself", () => {
+    // The cell this matrix existed to pin and did not cover.
+    expect(
+      hasWebSearch(
+        settings({
+          "exa.apikey": "•••••",
+          "llm_web.search_provider": "exa",
+          "curator.provider": "none",
+        }),
+      ),
+    ).toBe(true);
   });
 
   it("is satisfied by a native-capable provider on the default backend", () => {

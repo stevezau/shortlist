@@ -33,6 +33,7 @@ from openai.types.responses import Response as OpenAIResponse
 from shortlist.engine.curator import NullCurator, make_curator
 from shortlist.engine.curator.anthropic import AnthropicCurator
 from shortlist.engine.curator.google import GoogleCurator
+from shortlist.engine.curator.openai import DEFAULT_MODEL as OPENAI_DEFAULT_MODEL
 from shortlist.engine.curator.openai import OpenAICurator
 from shortlist.engine.curator.openai_compatible import OpenAICompatibleCurator, normalize_base_url
 from shortlist.engine.models import MediaType, Seed
@@ -205,7 +206,7 @@ class TestOpenAICurator:
         assert text == "Based on the articles, I'd recommend The Wild Robot and Severance."
         assert curator.last_tokens == 228
         call_kwargs = curator._client.chat.completions.create.call_args.kwargs
-        assert call_kwargs["model"] == "gpt-4o-mini"
+        assert call_kwargs["model"] == OPENAI_DEFAULT_MODEL
 
     def test_complete_degrades_to_empty_string_on_api_error(self):
         curator = make_curator("openai", api_key="sk-test")
@@ -274,7 +275,7 @@ class TestOpenAICompatibleCurator:
         assert text == "Based on the articles, I'd recommend The Wild Robot and Severance."
         assert curator.last_tokens == 228
         call_kwargs = curator._client.chat.completions.create.call_args.kwargs
-        assert call_kwargs["model"] == "llama3.3"  # resolved off the server's model list, not gpt-4o-mini
+        assert call_kwargs["model"] == "llama3.3"  # resolved off the server's model list, not OpenAI's default
 
     def test_send_model_falls_back_to_the_only_model_when_nothing_chat_capable_is_available(self):
         curator = make_curator("ollama", base_url="http://localhost:11434/v1")

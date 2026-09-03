@@ -11,7 +11,15 @@ from shortlist.engine.curator.base import (
 )
 from shortlist.engine.models import UserProfile
 
-DEFAULT_MODEL = "gpt-4o-mini"
+# Must match `defaultModel` for "openai" in web/src/lib/providers.ts, which the wizard writes into
+# `curator.model` — this constant only applies when that setting is blank. The two disagreed
+# (gpt-4o-mini here, gpt-5-mini there), so an owner who cleared the field silently switched model.
+# Aligned on the wizard's value because that is what installs in the field are already running.
+# Pinned by tests/unit/test_curator_defaults.py.
+#
+# Undated on purpose (see the note on the Anthropic default). Measured: gpt-4o-mini returned 12
+# usable titles where gpt-4o returned 4, so a thin row on OpenAI is a reason to check the model.
+DEFAULT_MODEL = "gpt-5-mini"
 
 # Structured Outputs for the title list. `strict` requires every property to be listed in `required`
 # and `additionalProperties: false` at each level, so `year` is nullable rather than optional.
@@ -69,9 +77,18 @@ class OpenAICurator:
         self._schema_supported = True
 
     def ping(self) -> str:
+        """A cheap "does this key work" probe. The Settings card fires it automatically.
+
+        `max_completion_tokens`, NOT `max_tokens`: Chat Completions rejects the latter outright on
+        the gpt-5 and o-series families ("Unsupported parameter: 'max_tokens' is not supported with
+        this model"), which turned a perfectly good key into "Connection failed" the moment the
+        default model moved to `gpt-5-mini`. The budget is generous because a reasoning model spends
+        it on reasoning first and would otherwise return an empty string, which reads as a failure
+        too. Both spellings are accepted by the 4-series, so this is safe for every model.
+        """
         r = self._client.chat.completions.create(
             model=self._model,
-            max_tokens=16,
+            max_completion_tokens=256,
             messages=[{"role": "user", "content": "Reply with the single word: ready"}],
         )
         return r.choices[0].message.content or ""
@@ -123,8 +140,9 @@ class OpenAICurator:
         "free, so take it" rather than a proven win.
 
         `filters` is deliberately never sent: it 400s on gpt-4o-mini and gpt-4.1-mini ("Parameter
-        'filters' not supported with model 'X'") and works only on the gpt-5 family. The owner picks
-        the model, so sending it would break the default setup.
+        'filters' not supported with model 'X'") and works only on the gpt-5 family. The DEFAULT is
+        now in that family, but the owner picks the model — so sending it would break every setup
+        that chose a 4-series one.
 
         Dropping the schema — never the search — is the fallback, because losing the schema costs
         tidy parsing (which `parse_web_titles` already handles) while losing the search costs the

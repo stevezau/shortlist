@@ -48,8 +48,23 @@ export type ConnectionField =
       key: string;
       label: string;
       kind: "select";
-      options: { value: string; label: string }[];
+      /** Static list, or a function of the current values when one choice narrows another — the
+          providers offered for "my AI's own search" are not the ones offered for SearXNG, because
+          local models have no search tool. A disabled option stays VISIBLE with its reason: hiding
+          it makes people hunt for a control that was never there. */
+      options:
+        | { value: string; label: string }[]
+        | ((values: Record<string, string>) => {
+            value: string;
+            label: string;
+            disabled?: boolean;
+            reason?: string;
+          }[]);
       showIf?: (values: Record<string, string>) => boolean;
+      /** One line under the buttons explaining the current choice. The buttons sit in a row, so a
+          label long enough to carry the trade-off makes the row unreadable — this is where that
+          detail goes instead. */
+      hint?: (values: Record<string, string>) => string | undefined;
       /** Other field keys to clear when this one changes — e.g. switching AI provider clears the
           now-wrong saved model and key so the new provider's are entered fresh. */
       resets?: string[];
@@ -362,19 +377,30 @@ export function ConnectionCard({
                     )}
                   </div>
                   {field.kind === "select" ? (
-                    <Segmented
-                      ariaLabel={field.label}
-                      value={values[field.key] ?? ""}
-                      options={field.options}
-                      onChange={(v) =>
-                        setValues((prev) => {
-                          const next = { ...prev, [field.key]: v };
-                          // Clear now-stale sibling fields (e.g. the previous provider's model + key).
-                          for (const k of field.resets ?? []) next[k] = "";
-                          return next;
-                        })
-                      }
-                    />
+                    <>
+                      <Segmented
+                        ariaLabel={field.label}
+                        value={values[field.key] ?? ""}
+                        options={
+                          typeof field.options === "function"
+                            ? field.options(values)
+                            : field.options
+                        }
+                        onChange={(v) =>
+                          setValues((prev) => {
+                            const next = { ...prev, [field.key]: v };
+                            // Clear now-stale sibling fields (e.g. the previous provider's model + key).
+                            for (const k of field.resets ?? []) next[k] = "";
+                            return next;
+                          })
+                        }
+                      />
+                      {field.hint?.(values) && (
+                        <p className="text-xs text-muted-foreground">
+                          {field.hint(values)}
+                        </p>
+                      )}
+                    </>
                   ) : field.kind === "password" ? (
                     <SecretInput
                       id={id}

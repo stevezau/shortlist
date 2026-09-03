@@ -39,15 +39,37 @@ describe("RecommendationsSection", () => {
     expect(screen.getByLabelText(/Trakt API key/i)).toBeInTheDocument();
   });
 
-  it("AI web search: with no curator, prompts to set one up (every backend needs a model)", () => {
+  // Whether an AI provider is needed depends on the BACKEND — it used to be asked as one blanket
+  // question, which told Exa owners to buy a key they did not need. Exa extracts titles itself.
+  it("web search: native with no curator says the search runs inside the AI", () => {
+    renderSection({
+      "curator.provider": "none",
+      "candidates.sources": ["llm_web"],
+      "llm_web.search_provider": "native",
+    });
+    expect(screen.getByText(/the search runs inside it/i)).toBeInTheDocument();
+  });
+
+  it("web search: SearXNG with no curator explains WHY it needs one", () => {
+    renderSection({
+      "curator.provider": "none",
+      "searxng.url": "http://searx.local:8080",
+      "candidates.sources": ["llm_web"],
+      "llm_web.search_provider": "searxng",
+    });
+    expect(screen.getByText(/returns raw web snippets/i)).toBeInTheDocument();
+  });
+
+  it("web search: Exa with no curator does NOT ask for one, because it needs none", () => {
+    // The bug this pins: Exa + no AI was reported as needing a key, while the engine ran anyway and
+    // billed for every search. Both halves are fixed; this is the UI half.
     renderSection({
       "curator.provider": "none",
       "exa.apikey": "•••••",
       "candidates.sources": ["llm_web"],
+      "llm_web.search_provider": "exa",
     });
-    expect(
-      screen.getByText(/needs an AI provider to choose titles/i),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/needs an AI provider/i)).not.toBeInTheDocument();
   });
 
   it("AI web search: 'AI provider's own' on a provider that can't self-search (Ollama) warns loudly", () => {
@@ -165,7 +187,9 @@ describe("RecommendationsSection", () => {
   it("saves the idle hold, and says what turning it off means", async () => {
     renderSection({ "recommendations.idle_hold_days": 0 });
     // Off is the shipped default, so the control has to explain the DEFAULT, not just the feature.
-    expect(screen.getByText(/rebuild on schedule whatever/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/rebuild on schedule whatever/i),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /^a month$/i }));
 
@@ -179,7 +203,9 @@ describe("RecommendationsSection", () => {
     // The one thing an owner must not misread. A row that stopped for ever would be the opposite of
     // what this is for, and the number is the only thing on screen that says otherwise.
     renderSection({ "recommendations.idle_hold_days": 30 });
-    expect(screen.getByText(/rebuilds anyway after 30 days/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/rebuilds anyway after 30 days/i),
+    ).toBeInTheDocument();
   });
 
   it("warns when the hold can never fire because the cadence already beats it", async () => {

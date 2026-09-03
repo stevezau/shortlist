@@ -103,17 +103,19 @@ export function hasExternalSearch(settings: Settings): boolean {
  * Whether the llm_web source can actually search under the chosen backend — the mode decides which
  * capability is required, so the toggle can never claim "on" where it would silently do nothing.
  *
- * EVERY backend needs a real AI provider: even the external paths only SEARCH, then hand the results
- * to the provider to pick titles from. With no provider (heuristic mode) the engine's own
- * `llm_ready` gate skips the source entirely — so a search backend alone must NOT un-block the
- * toggle. Mirrors `candidates._web_search_capable` on the server.
+ * Whether an AI provider is needed depends on the BACKEND, and this used to ask it as one blanket
+ * question ("EVERY backend needs a real AI provider"). That stopped being true when Exa began
+ * returning extracted titles: Exa reads its own results, so Exa alone is a complete setup. SearXNG
+ * returns raw snippets that only a model can read, and native search IS the model.
+ *
+ * Mirrors `candidates._web_search_capable` on the server — the two must agree, or the toggle and the
+ * run disagree about whether the source can run.
  */
 export function hasWebSearch(settings: Settings): boolean {
-  if (!hasCurator(settings)) return false;
   const mode = webSearchProvider(settings);
-  if (mode === "exa") return hasExa(settings);
-  if (mode === "searxng") return hasSearxng(settings);
-  return hasNativeWebSearch(settings); // native
+  if (mode === "exa") return hasExa(settings); // Exa extracts titles itself — no AI needed
+  if (mode === "searxng") return hasSearxng(settings) && hasCurator(settings);
+  return hasNativeWebSearch(settings); // native — the provider's own tool IS the AI
 }
 
 /** The reason a source can't be enabled yet, or null when its dependency is satisfied. */
@@ -124,15 +126,16 @@ export function sourceBlockedReason(
   if (source.requires === "trakt" && !hasTrakt(settings))
     return "Needs a Trakt API key — add it in Connections first.";
   if (source.requires === "web_search" && !hasWebSearch(settings)) {
-    // An AI provider is needed in every mode — it picks the titles from the search results. Report
-    // that first, since without it no search backend can help.
-    if (!hasCurator(settings))
-      return "Needs an AI provider to choose titles from the results — set one up in Connections first.";
+    // The BACKEND decides what is missing, so it is asked first. Leading with "needs an AI provider"
+    // sent Exa owners off to configure one while the real gap — the Exa key — stayed; and Exa needs
+    // no AI at all, because it extracts the titles itself.
     const mode = webSearchProvider(settings);
     if (mode === "exa")
       return "Needs an Exa API key — add it in Connections, or switch the search backend there to SearXNG or your AI provider's own.";
     if (mode === "searxng")
-      return "Needs the address of your SearXNG instance — add it in Connections, or switch the search backend there to Exa or your AI provider's own.";
+      return !hasSearxng(settings)
+        ? "Needs the address of your SearXNG instance — add it in Connections, or switch the search backend there to Exa or your AI provider's own."
+        : "Needs an AI provider to read SearXNG's results — set one up in Connections, or switch the search backend there to Exa, which needs none.";
     return "Needs Claude, GPT, or Gemini — Ollama can't web-search. Change your AI provider in Connections, or switch the search backend there to Exa or your own SearXNG.";
   }
   return null;

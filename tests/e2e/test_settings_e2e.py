@@ -73,16 +73,18 @@ class TestDefaults:
         type the address their server is known by, and have it persist under the right key (#7).
         """
         page.goto("/settings")
-        # The provider config lives on the "AI provider" connection card now (the old standalone
-        # "AI curator" section was removed — the provider only powers the web-search source).
-        title = page.get_by_text("AI provider").first
-        expect(title).to_be_visible(timeout=LOAD)
-        # Scope to the AI-provider card: every connection card has an identical Edit/Test pair.
-        card = title.locator('xpath=ancestor::div[contains(@class,"rounded")][1]')
+        # The provider config lives on the merged "AI & Web search" card (testId kept from when it
+        # was the standalone AI-provider card, so this scopes to it without matching field labels).
+        card = page.get_by_test_id("connection-llm")
+        expect(card).to_be_visible(timeout=LOAD)
         card.get_by_role("button", name=re.compile("^(Edit|Set up)$")).first.click()
 
-        # "Provider" renders as a segmented group, not a <select> — pick the option by its label.
-        page.get_by_label("Provider").get_by_role("button", name=re.compile(r"^Local")).click()
+        # A local model has no web search of its own, so it is only offered under a backend that
+        # does the searching for it. Choosing Exa first is what a real owner has to do, and picking
+        # the backend BEFORE the provider is the order the card asks for.
+        page.get_by_label("Where to search").get_by_role("button", name="Exa").click()
+        # "AI provider" renders as a segmented group, not a <select> — pick the option by its label.
+        page.get_by_label("AI provider").get_by_role("button", name=re.compile(r"^Local")).click()
         # The URL field must APPEAR — without it there is no way to say where the server is.
         url = page.get_by_label("Server URL")
         expect(url).to_be_visible(timeout=LOAD)

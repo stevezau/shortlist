@@ -71,8 +71,10 @@ describe("RowSourcesField", () => {
   });
 
   it("keeps a source whose dependency isn't met (intent) and shows what's needed — never strips it", async () => {
-    // No curator, but the row carries llm_web. Intent model: it's kept (not stripped), the toggle
-    // stays usable and ON, and a note explains the missing dependency (fixed globally, not per-row).
+    // No curator and no backend key, but the row carries llm_web. Intent model: it's kept (not
+    // stripped), the toggle stays usable and ON, and a note explains the missing dependency (fixed
+    // globally, not per-row). The note names the BACKEND, not the AI provider — Exa needs no AI, so
+    // leading with "needs an AI provider" pointed at the wrong gap.
     const onChange = vi.fn();
     renderField(["tmdb_similar", "llm_web"], onChange);
 
@@ -80,7 +82,7 @@ describe("RowSourcesField", () => {
     expect(aiSwitch()).toBeChecked(); // still on — intent preserved
     expect(onChange).not.toHaveBeenCalled(); // NOT auto-stripped
     expect(
-      screen.getByText(/Needs an AI provider to choose titles/i),
+      screen.getByText(/Needs Claude, GPT, or Gemini/i),
     ).toBeInTheDocument();
   });
 

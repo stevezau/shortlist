@@ -12,7 +12,18 @@ from shortlist.engine.curator.base import (
 from shortlist.engine.models import UserProfile
 
 # Design doc §3: cheap tier is plenty for a web-search title lookup.
-DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+#
+# The UNDATED alias, deliberately, and it must stay that way. `gemini-2.5-flash` was pinned here's
+# sibling until Google retired it and every fresh Google install 404'd on its first run with nothing
+# in the UI saying why; a dated Anthropic id is the same bug on a different retirement schedule.
+# Probed live (2026-09-03): `claude-haiku-4-5` answers 200, and Anthropic's own /v1/models listing
+# now carries undated ids for everything newer than this generation — `claude-haiku-4-5-20251001`
+# was the OLDEST id still listed, so it is the next one to go.
+#
+# Must match `defaultModel` for "anthropic" in web/src/lib/providers.ts — the wizard WRITES its copy
+# into `curator.model`, so a disagreement means two different defaults depending on how you set up.
+# Pinned by tests/unit/test_curator_defaults.py.
+DEFAULT_MODEL = "claude-haiku-4-5"
 
 
 class AnthropicCurator:

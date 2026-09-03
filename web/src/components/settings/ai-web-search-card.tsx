@@ -24,10 +24,18 @@ function backendReady(backend: string, settings: Settings): boolean {
   return hasNativeWebSearch(settings);
 }
 
-/** What's missing, phrased as the thing to go and do. Null when the source can actually run. */
+/** What's missing, phrased as the thing to go and do. Null when the source can actually run.
+ *
+ *  Whether an AI provider is needed depends on the backend, and used to be asked as one blanket
+ *  question. Exa extracts the titles itself, so it runs with no AI at all; SearXNG returns raw
+ *  snippets that only a model can read; native search IS the model. Asking blankly told Exa owners
+ *  to go and buy a key they did not need, and — worse — read as the reason the source was idle when
+ *  it was actually running and being billed for. */
 function missing(backend: string, settings: Settings): string | null {
-  if (!hasCurator(settings))
-    return "This also needs an AI provider to choose titles from the results.";
+  if (!hasCurator(settings) && backend !== "exa")
+    return backend === "searxng"
+      ? "This also needs an AI provider: SearXNG returns raw web snippets, and something has to read them to find the titles."
+      : "This also needs an AI provider — the search runs inside it.";
   if (backendReady(backend, settings)) return null;
   if (backend === "exa") return "No Exa API key is saved yet.";
   if (backend === "searxng") return "No SearXNG address is saved yet.";
@@ -62,8 +70,10 @@ export function AiWebSearchCard({
       <CardContent className="space-y-4 pt-6">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-0.5">
+            {/* Not "AI — web search": the AI is optional here now that Exa extracts titles itself,
+                and a title claiming otherwise is what sent Exa owners looking for a key. */}
             <p className="text-sm font-medium">
-              AI — web search for what to watch next
+              Web search for what to watch next
             </p>
             <p className="text-sm text-muted-foreground">
               Searches the live web for current, well-reviewed titles to watch
@@ -131,8 +141,8 @@ export function AiWebSearchCard({
                     {RECENT_COUNT_LABEL}
                   </a>{" "}
                   allows (default 10). Results are cached for two weeks and
-                  shared across everyone, so a popular title is searched once for
-                  the whole server — not once per person.
+                  shared across everyone, so a popular title is searched once
+                  for the whole server — not once per person.
                 </p>
               )}
               {backend === "exa" && (
