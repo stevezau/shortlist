@@ -166,27 +166,32 @@ def web_recommendations(
     else:
         recs = curator.recommend_web(profile, seeds, k)
         stats.add_tokens("llm_web", getattr(curator, "last_tokens", 0))
-    recs = _drop_watched_proposals(recs, seeds, web_trace)
+    recs = _drop_watched_proposals(recs, seeds, profile, web_trace)
     web_trace["proposed"] = [_rec_label(r) for r in recs]
     return recs
 
 
-def _drop_watched_proposals(recs: list[dict], seeds: list[Seed], web_trace: dict | None = None) -> list[dict]:
+def _drop_watched_proposals(recs: list[dict], seeds: list[Seed], profile, web_trace: dict | None = None) -> list[dict]:
     """Drop proposals naming a title this person has already watched.
 
     Both prompts say not to recommend one, and the structured path additionally removes seed titles
     from the candidate list before the model ever sees them — and the model proposes them anyway. On
     a live 30-seed run it returned six: Ted Lasso, Reacher, Slow Horses, Mr. Robot, The Capture and
-    Star Trek: Strange New Worlds, all seeds, all from its own knowledge rather than the list.
+    Star Trek: Strange New Worlds, all watched, all from its own knowledge rather than the list.
 
     Nothing broken reaches a row — `filter_candidates` drops watched titles downstream — but 6 of 40
     proposals were spent on titles that could never be used, and they read as real suggestions in the
     run trace. Filtering here covers every mode, native included, in the one place they converge.
 
-    Seeds are the recent watches, not the whole history, so this is a cheap subset of what the
-    downstream watched-filter does properly. It is about not wasting the k the model was asked for.
+    Matched against the whole HISTORY, not just this pool's seeds. Filtering on seeds alone left one
+    leak on the live re-run: pools carry their own seed subset, so a title seeded in one pool is not
+    seeded in another, and "Mr. Robot" came back as a proposal in the pool that had not seeded it.
     """
     watched = {s.title.strip().lower() for s in seeds if getattr(s, "title", "")}
+    for watch in getattr(profile, "history", None) or []:
+        title = getattr(watch, "title", "")
+        if title:
+            watched.add(title.strip().lower())
     kept = [r for r in recs if str(r.get("title", "")).strip().lower() not in watched]
     dropped = len(recs) - len(kept)
     if dropped and web_trace is not None:

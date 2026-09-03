@@ -1406,8 +1406,15 @@ class TestStructuredExtractionPath:
             last_tokens = 0
 
             def recommend_web(self, profile, seeds, k):
-                return [{"title": "Dune", "year": 2021, "media": "movie"}, {"title": "Silo", "media": "show"}]
+                return [
+                    {"title": "Dune", "year": 2021, "media": "movie"},
+                    {"title": "Mr. Robot", "year": 2015, "media": "show"},
+                    {"title": "Silo", "media": "show"},
+                ]
 
         stats = GatherStats()
-        out = web_recommendations(_Native(), None, "native", web_profile(), [seed(1, "Dune")], 5, stats)
+        # Watched but NOT a seed of this pool. Pools carry their own seed subset, so filtering on
+        # seeds alone left exactly this case leaking on the live re-run.
+        profile = SimpleNamespace(history=[SimpleNamespace(title="Mr. Robot")])
+        out = web_recommendations(_Native(), None, "native", profile, [seed(1, "Dune")], 5, stats)
         assert [t["title"] for t in out] == ["Silo"]
