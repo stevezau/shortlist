@@ -199,7 +199,7 @@ describe("ConnectionsSection", () => {
       const names = within(depth)
         .getAllByRole("button")
         .map((b) => b.textContent?.trim());
-      expect(names).toEqual(["Instant", "Deep lite", "Deep"]);
+      expect(names).toEqual(["Instant", "Auto", "Deep lite", "Deep"]);
     });
 
     it("explains the depth you have selected, and only that one", async () => {
@@ -207,21 +207,15 @@ describe("ConnectionsSection", () => {
         "llm_web.search_provider": "exa",
         "exa.search_type": "deep-lite",
       });
-      expect(
-        within(card).getByText(/three to four times/i),
-      ).toBeInTheDocument();
-      expect(
-        within(card).queryByText(/without a release year/i),
-      ).not.toBeInTheDocument();
+      expect(within(card).getByText(/every single test/i)).toBeInTheDocument();
+      expect(within(card).queryByText(/unreliable/i)).not.toBeInTheDocument();
 
       await userEvent.click(
         within(card).getByRole("button", { name: "Instant" }),
       );
+      expect(within(card).getByText(/unreliable/i)).toBeInTheDocument();
       expect(
-        within(card).getByText(/without a release year/i),
-      ).toBeInTheDocument();
-      expect(
-        within(card).queryByText(/three to four times/i),
+        within(card).queryByText(/every single test/i),
       ).not.toBeInTheDocument();
     });
 
@@ -231,9 +225,7 @@ describe("ConnectionsSection", () => {
       const card = await openWebSearchCard({
         "llm_web.search_provider": "exa",
       });
-      expect(
-        within(card).getByText(/three to four times/i),
-      ).toBeInTheDocument();
+      expect(within(card).getByText(/every single test/i)).toBeInTheDocument();
     });
 
     it("says Gemini won't refresh its picks, without blocking the choice", async () => {

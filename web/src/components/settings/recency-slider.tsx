@@ -13,6 +13,8 @@ interface RecencySliderProps {
  * new). A weight, not a filter — old titles still reach rows, they just have to be a better match.
  *
  * The era strip is the control's whole point. "50%" tells nobody anything, so the bars say what the
+ * setting DOES to titles of each age — each one relative to a title released this year, which is why
+ * the leftmost bar is full at every setting and labelled "this year" rather than "100%".
  * setting actually trades: how strongly a title of each vintage ranks, recomputed live from the
  * same curve the engine uses. Years are counted back from today rather than written down, so the
  * labels stay honest as the calendar moves.
@@ -68,8 +70,13 @@ export function RecencySlider({
             <span className="text-xs tabular-nums text-muted-foreground">
               {era.year}
             </span>
+            {/* The newest era is the REFERENCE every other bar is measured against, so its weight is
+                1 at every slider position. Printing "100%" on a number that can never move reads as
+                a value that ought to respond to the control — so it is named for what it is. */}
             <span className="text-xs tabular-nums text-muted-foreground/70">
-              {Math.round(era.weight * 100)}%
+              {era.weight >= 1
+                ? "this year"
+                : `${Math.round(era.weight * 100)}%`}
             </span>
           </div>
         ))}

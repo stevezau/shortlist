@@ -14,12 +14,23 @@ from shortlist.engine.models import UserProfile
 # Must match `defaultModel` for "openai" in web/src/lib/providers.ts, which the wizard writes into
 # `curator.model` — this constant only applies when that setting is blank. The two disagreed
 # (gpt-4o-mini here, gpt-5-mini there), so an owner who cleared the field silently switched model.
-# Aligned on the wizard's value because that is what installs in the field are already running.
-# Pinned by tests/unit/test_curator_defaults.py.
+# Pinned by tests/unit/test_curator_defaults.py, which fails if this and the SPA disagree — they did
+# (gpt-4o-mini here, gpt-5-mini there), so clearing the Model field silently changed which ran.
 #
-# Undated on purpose (see the note on the Anthropic default). Measured: gpt-4o-mini returned 12
-# usable titles where gpt-4o returned 4, so a thin row on OpenAI is a reason to check the model.
-DEFAULT_MODEL = "gpt-5-mini"
+# `gpt-4o-mini`, on measurement rather than recency. Same seeds, same day, both under the
+# year-anchored prompt:
+#
+#   gpt-4o-mini   12 titles, 12 from 2024+,   8,384 tokens,   5.9s
+#   gpt-5-mini    12 titles,  9 from 2024+,  67,612 tokens, 100.0s
+#
+# 8x the tokens and 17x the wall clock for a slightly worse answer, and the native path runs one call
+# per person per row — roughly 92 a night on a 46-user server. The case for gpt-5-mini is that it is
+# newer and lives longer; the case against is that this cost is paid every night and is invisible,
+# whereas a retired model 404s loudly and gets fixed in a minute.
+#
+# Undated on purpose (see the note on the Anthropic default). Also measured: gpt-4o returned 4 usable
+# titles where gpt-4o-mini returned 12, so a thin row on OpenAI is a reason to check the model.
+DEFAULT_MODEL = "gpt-4o-mini"
 
 # Structured Outputs for the title list. `strict` requires every property to be listed in `required`
 # and `additionalProperties: false` at each level, so `year` is nullable rather than optional.

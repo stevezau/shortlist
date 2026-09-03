@@ -41,9 +41,7 @@ function renderLive(initial: string[]) {
 }
 
 const aiSwitch = () =>
-  screen.getByLabelText(
-    /Enable AI — web search for what to watch next for this row/i,
-  );
+  screen.getByLabelText(/Enable Web search — what to watch next for this row/i);
 
 describe("RowSourcesField", () => {
   beforeEach(() => {

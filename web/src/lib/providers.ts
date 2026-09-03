@@ -51,7 +51,10 @@ export const CURATOR_PROVIDERS: readonly CuratorProviderInfo[] = [
     id: "openai",
     label: "OpenAI",
     glyph: "openai",
-    defaultModel: "gpt-5-mini",
+    // Must match DEFAULT_MODEL in shortlist/engine/curator/openai.py — the wizard WRITES this into
+    // `curator.model`, so a disagreement means two different defaults depending on how you set up.
+    // Measured 8x cheaper and 17x faster than gpt-5-mini for the same result; see that file.
+    defaultModel: "gpt-4o-mini",
     needsKey: true,
     needsUrl: false,
     keyUrl: "https://platform.openai.com/api-keys",

@@ -6,6 +6,32 @@ import { RecencySlider } from "@/components/settings/recency-slider";
 const THIS_YEAR = new Date().getFullYear();
 
 describe("RecencySlider", () => {
+  it("names the newest bar instead of printing a 100% that can never move", () => {
+    // Every bar is measured against a title released THIS YEAR, so the leftmost one is full at every
+    // slider position. Labelling a fixed reference "100%" makes it look like a value that ought to
+    // respond to the control — which is exactly how it was read.
+    const { rerender } = render(
+      <RecencySlider value={65} onChange={() => {}} />,
+    );
+    expect(screen.getByText("this year")).toBeInTheDocument();
+    expect(screen.queryByText("100%")).not.toBeInTheDocument();
+
+    // Still true at the other end of the range — the point is that it NEVER moves.
+    rerender(<RecencySlider value={5} onChange={() => {}} />);
+    expect(screen.getByText("this year")).toBeInTheDocument();
+    expect(screen.queryByText("100%")).not.toBeInTheDocument();
+  });
+
+  it("still prints a real percentage on the older bars, which do move", () => {
+    const { rerender } = render(
+      <RecencySlider value={90} onChange={() => {}} />,
+    );
+    const strong = screen.getAllByText(/^\d+%$/).map((n) => n.textContent);
+    rerender(<RecencySlider value={10} onChange={() => {}} />);
+    const weak = screen.getAllByText(/^\d+%$/).map((n) => n.textContent);
+    expect(strong).not.toEqual(weak);
+  });
+
   it("reports the value on a real slider so it is keyboard-reachable", () => {
     render(<RecencySlider value={40} onChange={() => {}} />);
     const slider = screen.getByRole("slider", { name: /release date counts/i });

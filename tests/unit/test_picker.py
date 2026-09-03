@@ -32,7 +32,7 @@ class TestReasonFor:
         source — the old blanket "Popular in your library" was wrong for a web pick and contradicted
         the "suggested by AI web search" provenance shown right beneath it."""
         web = make_candidate(2, "Ron's Gone Wrong", seeds=[], genres=["Animation"], sources={"llm_web"})
-        assert reason_for(web) == "Suggested by AI web search"
+        assert reason_for(web) == "Recommended on the web right now"
 
         discover = make_candidate(3, "Arrival", seeds=[], genres=["Sci-Fi"], sources={"tmdb_discover"})
         assert reason_for(discover) == "In genres you watch a lot"

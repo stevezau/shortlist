@@ -547,7 +547,7 @@ class TestWebSearchWithoutAnLlm:
 
     What actually shipped: `gather_candidates` refused the source entirely without a real curator,
     so the Exa branch of `_web_search_capable` was unreachable and Exa-without-AI produced nothing.
-    It did NOT bill — a claim that it cost $7.94 a night was made and retracted (design doc §5g);
+    It did NOT bill — a claim that it cost $7.94 a night was made and retracted;
     that figure is run 18's real, productive spend under Claude. These tests pin the capability now
     that it is reachable, and the front-door test below is the one that would have caught the
     original mistake.

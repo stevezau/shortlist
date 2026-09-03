@@ -41,7 +41,7 @@ export const SOURCES: readonly SourceInfo[] = [
   },
   {
     id: "llm_web",
-    label: "AI — web search for what to watch next",
+    label: "Web search — what to watch next",
     short: "AI web search",
     desc: "Searches the live web for well-reviewed titles to watch next, then keeps only the ones already in your library. Claude, GPT and Gemini do the searching themselves; any other provider searches through Exa or your own self-hosted SearXNG. Pick which in Settings → Finding titles.",
     requires: "web_search",

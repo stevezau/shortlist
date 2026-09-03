@@ -97,12 +97,17 @@ const EXA_SEARCH_TYPES = [
   {
     value: "instant",
     label: "Instant",
-    hint: "Cheapest and fastest, but finds about a quarter as many titles — and often without a release year, which makes them harder to match to your library.",
+    hint: "Cheapest and fastest, but unreliable: measured at 11 titles one run and none the next. Fine with an AI provider, which can fall back to reading the raw articles — risky without one.",
+  },
+  {
+    value: "auto",
+    label: "Auto",
+    hint: "Exa chooses the strategy per search, and it is their own recommended setting. Measured the weakest here — 2 picks where Instant gave 7, at the same price.",
   },
   {
     value: "deep-lite",
     label: "Deep lite",
-    hint: "Recommended. Found three to four times more usable titles per search than any other mode, for about half a cent more.",
+    hint: "Recommended, and the only mode that produced titles on every single test. Found three to four times more than the cheap modes, for about half a cent more.",
   },
   {
     value: "deep",
@@ -288,7 +293,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           testId="connection-llm"
           title="AI & Web search"
           need="optional"
-          purpose="Looks up what to watch next on the live web, then keeps only titles already in your library. Everything else — choosing the picks, writing the “Because you watched…” lines — is plain code that runs with or without this."
+          purpose="Finds what critics and “what to watch next” articles are recommending right now, and keeps only the titles you already own. Optional — without it, rows are built from your library alone."
           settings={settings}
           summary={searchSummary(settings)}
           glyph={<Globe aria-hidden className="text-primary" />}

@@ -107,7 +107,7 @@ DEFAULTS: dict[str, Any] = {
     "notifications.dismissed": [],
     # Which candidate sources feed recommendations (engine/candidates.py). More = wider recall.
     "candidates.sources": ["tmdb_similar", "tmdb_discover"],
-    # Which backend the "AI — web search" (llm_web) source searches with. Exactly one, always:
+    # Which backend the web-search (llm_web) source searches with. Exactly one, always:
     #   'native'  — the curator provider's own web-search tool (Claude/GPT/Gemini only)
     #   'exa'     — the hosted Exa search API
     #   'searxng' — the owner's own SearXNG instance. Self-hosted metasearch: no vendor account, key

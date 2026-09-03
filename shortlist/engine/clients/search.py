@@ -44,19 +44,28 @@ _DEFAULT_MAX_CHARS = 800  # per-result text budget — enough to name titles, sm
 # API on one query, with the `outputSchema` this client always sends:
 #
 #   instant   11 extracted titles   2.8s
-#   fast       0                    1.5s   <- rejected
-#   auto       0                    2.3s   <- rejected, and it is Exa's OWN "recommended" setting
+#   fast       0                    1.5s   <- not offered
+#   auto       0                    2.3s   <- offered anyway, by owner request
 #   deep-lite 42                   13.5s   <- the default
 #   deep      32                    7.5s
-#   deep-reasoning 32              13.4s   <- rejected: same titles as `deep`, ~2x the wait and cost
+#   deep-reasoning 32              13.4s   <- not offered: same titles as `deep`, ~2x the wait and cost
 #
-# `fast` and `auto` return results but decline to synthesise the structured output, so they hand back
-# ZERO titles — and title extraction is what lets Exa run with no AI provider at all. Offering a
-# setting that silently produces an empty row is worse than not offering it.
+# `fast` and `auto` return results but usually decline to synthesise the structured output, and title
+# extraction is what lets Exa run with no AI provider at all.
+#
+# `auto` is offered at the owner's request (2026-09-03) despite measuring worst: same price as
+# `instant` and 2 picks against its 7, end to end through `web_recommendations` on the same seed.
+# It is Exa's own recommended setting, which is a fair reason to want it available; the hint beside
+# it says what it measured so the choice is informed rather than blind.
+#
+# The cheap modes are also ERRATIC rather than uniformly small: `instant` extracted 11 titles in one
+# probe and none in the next, where `deep-lite` produced titles on every test. With an AI provider
+# that is survivable (the source falls back to letting the model read the raw articles); with no AI
+# provider a run that extracts nothing produces nothing, which is why `deep-lite` is the default.
 #
 # All six remain valid API values; a stored setting naming a dropped one still resolves, because
 # `ExaClient.__init__` clamps anything unrecognised to the default.
-EXA_SEARCH_TYPES: tuple[str, ...] = ("instant", "deep-lite", "deep")
+EXA_SEARCH_TYPES: tuple[str, ...] = ("instant", "auto", "deep-lite", "deep")
 DEFAULT_EXA_SEARCH_TYPE = "deep-lite"
 
 # How long to wait, by mode. Measured response times: `instant` answers in 2.5-4.6s, `deep-lite` and
@@ -83,6 +92,7 @@ DEFAULT_EXA_SEARCH_TYPE = "deep-lite"
 # nightly run spends waiting for a search that is not coming, once per hanging seed per user.
 _EXA_TIMEOUTS: dict[str, float] = {
     "instant": 20.0,
+    "auto": 20.0,
     "deep-lite": 45.0,
     "deep": 45.0,
 }

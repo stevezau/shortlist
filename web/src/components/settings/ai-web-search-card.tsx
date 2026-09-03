@@ -43,11 +43,11 @@ function missing(backend: string, settings: Settings): string | null {
 }
 
 /**
- * "AI — web search for what to watch next": the on/off switch for the source, and what turning it on
+ * "Web search for what to watch next": the on/off switch for the source, and what turning it on
  * will cost.
  *
  * WHICH backend it searches with, and that backend's credentials, deliberately live on the
- * Connections → Web search card and nowhere else. They were briefly in both places, which meant the
+ * Connections → "AI & Web search" card and nowhere else. They were briefly in both places, which meant the
  * same control rendered twice with no way to tell which one was authoritative. Connections owns the
  * services Shortlist talks to (the AI provider works the same way); this card owns whether the
  * source runs and how hard. It still NAMES the backend and says plainly when one isn't usable, so
