@@ -180,12 +180,11 @@ function testableSearchService(settings: Settings): TestableService {
 function searchSummary(settings: Settings): string {
   const chosen = settingString(settings, "llm_web.search_provider") || "native";
   const providerId = settingString(settings, "curator.provider");
-  // "None" is a deliberate choice but not a configured connection, so it must not make the card
-  // read as set up on its own.
-  const ai =
-    providerId && providerId !== "none"
-      ? (findProvider(providerId)?.label ?? "")
-      : "";
+  // "None" (heuristic mode) COUNTS as configured — it is a deliberate choice with a real answer
+  // ("Built-in picker — no AI, nothing to test"), and `configured` is `Boolean(summary)`, so
+  // excluding it disabled the Test button that e2e asserts on. Only a genuinely unset provider is
+  // blank.
+  const ai = providerId ? (findProvider(providerId)?.label ?? providerId) : "";
   const where =
     chosen === "searxng"
       ? hasSearxng(settings)
@@ -195,7 +194,8 @@ function searchSummary(settings: Settings): string {
         ? hasExa(settings)
           ? "Exa"
           : ""
-        : ai
+        : // "its own web search" only where there IS one — never for None or a local model.
+          providerId && providerId !== "none"
           ? "its own web search"
           : "";
   // Either half alone counts as configured: Exa runs with no AI, and a saved AI key is real even
