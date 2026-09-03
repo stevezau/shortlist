@@ -90,12 +90,15 @@ coming from Shortlist rather than from a person. Shortlist never creates that ac
 only lists the accounts already there. On many servers every existing account can already
 auto-approve, in which case making one is the only way to get a queue in Overseerr at all.
 
-**People on your server are not offered here, on purpose.** A title Shortlist wants is usually wanted
-by several people at once, while an Overseerr request has exactly one requester — so choosing a
-person would not file each title under whoever wanted it. It would put that one name on *everything*,
-for ever, including titles they had nothing to do with, spending their request quota and notifying
-them each time. The picker lists only your API key's own account and accounts made for this, and says
-how many it left out.
+The picker lists every account on the instance, with accounts made for this first and people on your
+server after them, and tells you which ones auto-approve.
+
+**Picking a person has a cost, and the screen says so when you do.** A title Shortlist wants is
+usually wanted by several people at once, while an Overseerr request has exactly one requester — so
+choosing a person does not file each title under whoever wanted it. It puts that one name on
+_everything_, spends their request quota and notifies them each time. A local account avoids all
+three, which is why it is the recommendation — but on many servers a person is the only account that
+does not auto-approve, so the choice stays yours.
 
 **Two things work differently on this route:**
 
@@ -183,8 +186,15 @@ without asking only if it clears **both** `requests.auto_min_demand` (default 3 
 
 ### Nothing is being requested at all
 
-If runs keep finishing with **0 requested** and the inbox stays empty, the rating gate is rejecting
-everything it managed to rate. The run's stats carry the three numbers that tell you which:
+First, check whether the runs you are looking at covered **everybody**. `requests.min_demand` counts
+_distinct people_ who want a title, so a run over one person can never produce a title wanted by two
+— the pool comes out empty whatever your settings say. That is a fact about the run's scope, not
+about your floors, so a run smaller than its own `min_demand` is recorded as `info` rather than a
+warning and never raises the **Nothing is being requested** notification. Judge the floors on a
+nightly run over the whole roster.
+
+If full runs keep finishing with **0 requested** and the inbox stays empty, the rating gate is
+rejecting everything it managed to rate. The run's stats carry the three numbers that tell you which:
 
 - `requests_pool` — titles that cleared the base floors (`min_demand`, the year window). If this is
   **0**, those floors are the problem, not the ratings: `requests.min_year` and `requests.min_demand`

@@ -713,65 +713,35 @@ describe("RequestsSettings", () => {
       "requests.overseerr.apikey": "\u2022\u2022\u2022\u2022\u2022",
     };
 
-    it("does not offer real people at all", async () => {
-      // A title here is wanted by SEVERAL people; an Overseerr request has exactly one requester.
-      // Picking a person does not attribute each title to whoever wanted it — it puts one name on
-      // everything, for ever, including titles they had nothing to do with. MooHouse is a person.
+    it("offers real people, grouped after the accounts made for this", async () => {
+      // They were hidden for a while, and that was wrong: on most instances every account that
+      // does NOT auto-approve belongs to a person, so hiding them left owners with nothing to pick
+      // and every title downloading immediately (reported on discussion #110).
       renderPanel(VIA_SEERR);
       expect(
-        await screen.findByRole("option", { name: /Shortlist — requests wait/ }),
+        await screen.findByRole("option", { name: /MooHouse/ }),
       ).toBeTruthy();
-      expect(screen.queryByRole("option", { name: /MooHouse/ })).toBeNull();
+      const groups = [...document.querySelectorAll("optgroup")].map(
+        (g) => g.label,
+      );
+      expect(groups).toEqual([
+        "Accounts made for this",
+        "People on your server",
+      ]);
     });
 
-    it("says why the list is short, so it doesn't read as a failed load", async () => {
-      renderPanel(VIA_SEERR);
-      // No apostrophe in the matcher — the copy uses a curly one (&rsquo;).
-      expect(
-        await screen.findByText(/People on your server .* listed/),
-      ).toBeTruthy();
+    it("says what picking a person costs THEM, at the moment it is picked", async () => {
+      renderPanel({ ...VIA_SEERR, "requests.overseerr.request_as_user_id": 7 });
+      const note = await screen.findByText(/count against their quota/);
+      expect(note.textContent).toMatch(/MooHouse/);
     });
 
-    it("points at an existing holding account instead of telling you to make one", async () => {
-      // "Make a user called Shortlist" is unhelpful advice when the list already contains one.
-      renderPanel(VIA_SEERR);
-      const line = await screen.findByText(/Want to check them in Overseerr/);
-      // Scoped to that sentence: "Shortlist" is also an option in the dropdown above.
-      expect(line.textContent).toMatch(/Pick\s+Shortlist\s+above/);
-      expect(
-        screen.queryByText(/Make a user there without auto-approve/),
-      ).toBeNull();
-    });
-
-    it("does tell you to make one when there is none", async () => {
-      getSeerrOptions.mockResolvedValue({
-        users: [
-          {
-            id: 1,
-            name: "serverowner",
-            auto_approve_movies: true,
-            auto_approve_tv: true,
-            is_plex_user: true,
-          },
-        ],
-        default_user_id: 1,
-      });
-      renderPanel(VIA_SEERR);
-      expect(
-        await screen.findByText(/Make a user there without auto-approve/),
-      ).toBeTruthy();
-    });
-
-    it("says nothing extra for an account that already holds requests", async () => {
-      // The dropdown says "requests wait for approval" and the summary says what that means for a
-      // title. A third sentence repeating it is what made this card three paragraphs long.
+    it("says nothing of the sort for an account made for this", async () => {
       renderPanel({ ...VIA_SEERR, "requests.overseerr.request_as_user_id": 4 });
       expect(
         await screen.findByRole("option", { name: /Shortlist — requests wait/ }),
       ).toBeTruthy();
-      expect(
-        screen.queryByText(/Want to check them in Overseerr first\?/),
-      ).toBeNull();
+      expect(screen.queryByText(/count against their quota/)).toBeNull();
     });
   });
 });

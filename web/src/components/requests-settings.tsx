@@ -370,13 +370,7 @@ function OverseerrCard({
     (u) => u.id !== options.data?.default_user_id,
   );
   const serviceAccounts = others.filter((u) => !u.is_plex_user);
-  // Real people are NOT offered, and that is a decision rather than an omission. A title here is
-  // wanted by several people at once — that is the whole demand model — while an Overseerr request
-  // has exactly one requester. Choosing a person does not file each title under whoever wanted it;
-  // it files EVERY title under that one person for ever, including ones they had nothing to do
-  // with. The job people might reach for it to do — holding requests for approval — is what a local
-  // account does properly, which is what the help text recommends.
-  const peopleHidden = others.length - serviceAccounts.length;
+  const people = others.filter((u) => u.is_plex_user);
   // An account already able to hold requests for review, if there is one.
   const holdingAccount = serviceAccounts.find(
     (u) => !u.auto_approve_movies && !u.auto_approve_tv,
@@ -454,11 +448,29 @@ function OverseerrCard({
                 </option>
                 {/* Only accounts made FOR this. The default is already the option above, and real
                   people are deliberately absent — see `peopleHidden` below. */}
-                {serviceAccounts.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name} &mdash; {accountEffect(u)}
-                  </option>
-                ))}
+                {/* Accounts made for this first, then real people. People ARE offered: on most
+                    instances every account that does not auto-approve belongs to one, so hiding
+                    them left owners with nothing to pick and every title downloading immediately.
+                    An option that can be misused but has a real use gets a warning, not a ban —
+                    the note under the picker says what choosing a person costs them. */}
+                {serviceAccounts.length > 0 && (
+                  <optgroup label="Accounts made for this">
+                    {serviceAccounts.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name} &mdash; {accountEffect(u)}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {people.length > 0 && (
+                  <optgroup label="People on your server">
+                    {people.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name} &mdash; {accountEffect(u)}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
                 {/* A saved account the list does not contain — because the fetch failed, or because
                   it was since deleted in Overseerr. Without it the select falls back to its first
                   option and the screen silently misreports the saved value as "Server default",
@@ -494,11 +506,19 @@ function OverseerrCard({
                   )}
                 </p>
               )}
-            {peopleHidden > 0 && (
+            {/* Only when a real person is actually chosen. A title here is usually wanted by
+                several people at once while an Overseerr request has one requester, so this is a
+                real cost — but it is the owner's server and their call, so it is stated at the
+                moment they make it rather than used to remove the option. */}
+            {chosen?.is_plex_user && (
               <p className="text-sm text-muted-foreground">
-                People on your server aren&rsquo;t listed &mdash; a title is
-                usually wanted by several at once, so one name would end up on
-                everything.
+                Every request will show as{" "}
+                <strong className="font-medium text-foreground">
+                  {chosen.name}
+                </strong>
+                &rsquo;s, count against their quota, and notify them &mdash;
+                including titles they had nothing to do with. A local account in
+                Overseerr avoids that.
               </p>
             )}
           </div>
