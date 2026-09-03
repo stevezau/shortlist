@@ -17,8 +17,8 @@ import type { Settings, TestableService } from "@/lib/types";
  *  disagree — they are the same setting, shown where each is useful. */
 const SEARCH_BACKENDS = [
   { value: "exa", label: "Exa" },
-  { value: "native", label: "My AI’s own search" },
-  { value: "searxng", label: "My SearXNG" },
+  { value: "native", label: "AI Search" },
+  { value: "searxng", label: "SearXNG" },
 ] as const;
 
 /** Providers whose own model can search the web. Mirrors NATIVE_WEB_SEARCH_PROVIDERS in sources.ts
@@ -42,8 +42,8 @@ function providerOptionsFor(values: Record<string, string>) {
         label: provider.label,
         disabled: true,
         reason: isNone
-          ? "Searching with your AI needs an AI."
-          : `${provider.label} has no web search of its own. Choose Exa or SearXNG instead.`,
+          ? "“AI Search” means your AI does the searching, so it needs one. Pick Exa above instead — it searches on its own and needs no AI at all."
+          : `${provider.label} models have no web search built in — there is no tool to switch on. Pick Exa or SearXNG above and ${provider.label} can still choose the titles.`,
       };
     if (backend === "searxng" && isNone)
       return {
@@ -51,7 +51,7 @@ function providerOptionsFor(values: Record<string, string>) {
         label: provider.label,
         disabled: true,
         reason:
-          "SearXNG can’t read its own results, so “None” won’t work here. Pick a provider, or switch to Exa above — it needs none.",
+          "SearXNG returns raw web pages, so something has to read them to find the titles. Pick any provider — a local one is fine — or switch to Exa above, which reads its own results.",
       };
     return { value: provider.id, label: provider.label };
   });
@@ -97,32 +97,17 @@ const EXA_SEARCH_TYPES = [
   {
     value: "instant",
     label: "Instant",
-    hint: "Fastest and cheapest, but often returns titles with no release year, which makes them harder to match to your library.",
-  },
-  {
-    value: "fast",
-    label: "Fast",
-    hint: "Cheap and quick, but inconsistent — some searches come back with very few titles.",
-  },
-  {
-    value: "auto",
-    label: "Balanced",
-    hint: "Exa picks the strategy per search. Measured no better than Fast for this, and once returned nothing.",
+    hint: "Cheapest and fastest, but finds about a quarter as many titles — and often without a release year, which makes them harder to match to your library.",
   },
   {
     value: "deep-lite",
-    label: "Thorough",
-    hint: "Recommended. Found three to five times more usable titles per search than the cheap modes, for about half a cent more.",
+    label: "Deep lite",
+    hint: "Recommended. Found three to four times more usable titles per search than any other mode, for about half a cent more.",
   },
   {
     value: "deep",
     label: "Deep",
-    hint: "Steadier than Thorough but finds fewer titles, at the same price.",
-  },
-  {
-    value: "deep-reasoning",
-    label: "Deep reasoning",
-    hint: "Slowest and dearest, with no measured gain over Thorough for this task.",
+    hint: "Faster than Deep lite and steadier, but finds fewer titles. Same price.",
   },
 ] as const;
 

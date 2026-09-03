@@ -350,15 +350,13 @@ class TestSchemaSupportIsRemembered:
 class TestExaTimeouts:
     def test_the_wait_matches_the_mode(self):
         """One timeout cannot serve every mode. Measured: the cheap modes answer in 2.5-4.6s,
-        `deep-lite`/`deep` in 6.5-18s, `deep-reasoning` in 24-39s — and Exa does hang rather than
-        answer (1 of 6 `deep-lite` searches never returned). Too low cuts off a legitimate slow
-        search; too high spends a minute of every nightly run waiting on one that is not coming.
+        `deep-lite`/`deep` in 6.5-18s — and Exa does hang rather than
+        answer (1 of 6 `deep-lite` searches never returned), so the ceiling is what stops a nightly
+        run waiting on a search that is not coming.
         """
-        assert ExaClient("k", search_type="fast")._timeout < ExaClient("k", search_type="deep-lite")._timeout
-        assert ExaClient("k", search_type="deep-lite")._timeout < ExaClient("k", search_type="deep-reasoning")._timeout
-        # Comfortably above the slowest measured success for each mode, and no more.
-        assert ExaClient("k", search_type="deep-lite")._timeout >= 40
-        assert ExaClient("k", search_type="deep-reasoning")._timeout >= 60
+        assert ExaClient("k", search_type="instant")._timeout < ExaClient("k", search_type="deep-lite")._timeout
+        assert ExaClient("k", search_type="deep-lite")._timeout == ExaClient("k", search_type="deep")._timeout
+        assert ExaClient("k", search_type="instant")._timeout >= 20
 
     def test_an_explicit_timeout_still_wins(self):
         assert ExaClient("k", search_type="deep", timeout=5.0)._timeout == 5.0

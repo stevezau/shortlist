@@ -30,23 +30,37 @@ export function Segmented<T extends string>({
 }) {
   const buttons = (
     <div className="flex flex-wrap gap-2">
-      {options.map((option) => (
-        <Button
-          key={option.value}
-          type="button"
-          size="sm"
-          variant={value === option.value ? "default" : "outline"}
-          aria-pressed={value === option.value}
-          disabled={option.disabled}
-          // `title` is a fallback ONLY. A disabled Button carries `disabled:pointer-events-none` and
-          // takes no focus, so neither mouse nor keyboard can surface this — whoever supplies a
-          // `reason` must also render it as text (see `providerHint`).
-          title={option.disabled ? option.reason : undefined}
-          onClick={() => onChange(option.value)}
-        >
-          {option.label}
-        </Button>
-      ))}
+      {options.map((option) => {
+        const button = (
+          <Button
+            key={option.value}
+            type="button"
+            size="sm"
+            variant={value === option.value ? "default" : "outline"}
+            aria-pressed={value === option.value}
+            disabled={option.disabled}
+            onClick={() => onChange(option.value)}
+          >
+            {option.label}
+          </Button>
+        );
+        if (!option.disabled || !option.reason) return button;
+        // A wrapper that DOES take pointer events, so hovering a dead option answers "why can't I
+        // pick this?" in place. `aria-describedby` is not usable here (the reason has no element of
+        // its own), so the text is also exposed to assistive tech via `aria-label`, and a caller
+        // that wants it visible renders it as a hint as well — a disabled button takes no focus, so
+        // hover alone would leave keyboard users with nothing.
+        return (
+          <span
+            key={option.value}
+            title={option.reason}
+            aria-label={option.reason}
+            className="inline-flex cursor-not-allowed"
+          >
+            {button}
+          </span>
+        );
+      })}
     </div>
   );
 

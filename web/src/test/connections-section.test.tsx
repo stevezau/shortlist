@@ -120,7 +120,7 @@ describe("ConnectionsSection", () => {
         within(card).getByRole("button", { name: /edit|set up/i }),
       );
       await userEvent.click(
-        within(card).getByRole("button", { name: "My SearXNG" }),
+        within(card).getByRole("button", { name: "SearXNG" }),
       );
       await userEvent.type(
         within(card).getByLabelText(/SearXNG address/i),
@@ -188,8 +188,9 @@ describe("ConnectionsSection", () => {
     }
 
     it("keeps the depth buttons to a name, with no price crammed in", async () => {
-      // Six buttons each reading "Thorough — $0.012, recommended" made the row unreadable. The
-      // trade-off moved to one line under the row; the buttons carry the name alone.
+      // Buttons reading "Thorough — $0.012, recommended" made the row unreadable, so the trade-off
+      // moved to one line under the row. The names are Exa's own, so the setting can be checked
+      // against their dashboard — and only the three modes that actually return titles are offered.
       const card = await openWebSearchCard({
         "llm_web.search_provider": "exa",
         "exa.search_type": "deep-lite",
@@ -198,14 +199,7 @@ describe("ConnectionsSection", () => {
       const names = within(depth)
         .getAllByRole("button")
         .map((b) => b.textContent?.trim());
-      expect(names).toEqual([
-        "Instant",
-        "Fast",
-        "Balanced",
-        "Thorough",
-        "Deep",
-        "Deep reasoning",
-      ]);
+      expect(names).toEqual(["Instant", "Deep lite", "Deep"]);
     });
 
     it("explains the depth you have selected, and only that one", async () => {
@@ -214,29 +208,31 @@ describe("ConnectionsSection", () => {
         "exa.search_type": "deep-lite",
       });
       expect(
-        within(card).getByText(/three to five times/i),
+        within(card).getByText(/three to four times/i),
       ).toBeInTheDocument();
       expect(
-        within(card).queryByText(/no release year/i),
+        within(card).queryByText(/without a release year/i),
       ).not.toBeInTheDocument();
 
       await userEvent.click(
         within(card).getByRole("button", { name: "Instant" }),
       );
-      expect(within(card).getByText(/no release year/i)).toBeInTheDocument();
       expect(
-        within(card).queryByText(/three to five times/i),
+        within(card).getByText(/without a release year/i),
+      ).toBeInTheDocument();
+      expect(
+        within(card).queryByText(/three to four times/i),
       ).not.toBeInTheDocument();
     });
 
     it("falls back to the default depth's explanation when none is saved", async () => {
       // A server upgraded from before this setting existed has no stored value, and the backend
-      // defaults it to deep-lite — so the blank must read as Thorough, not as no explanation.
+      // defaults it to deep-lite — so the blank must read as Deep lite, not as no explanation.
       const card = await openWebSearchCard({
         "llm_web.search_provider": "exa",
       });
       expect(
-        within(card).getByText(/three to five times/i),
+        within(card).getByText(/three to four times/i),
       ).toBeInTheDocument();
     });
 
@@ -341,7 +337,7 @@ describe("ConnectionsSection", () => {
         "curator.provider": "none",
       });
       expect(
-        within(searx).getByText(/can’t read its own results/i),
+        within(searx).getByText(/something has to read them/i),
       ).toBeInTheDocument();
     });
 

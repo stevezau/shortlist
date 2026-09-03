@@ -40,22 +40,51 @@ _DEFAULT_MAX_CHARS = 800  # per-result text budget — enough to name titles, sm
 # default here — with `outputSchema` attached it returned ZERO titles on one run despite 26k
 # characters of page text, and `instant` puts a year on barely one title in nine, which the TMDB
 # resolver needs. The owner picks the mode; this list is what the settings dropdown offers.
-EXA_SEARCH_TYPES: tuple[str, ...] = ("instant", "fast", "auto", "deep-lite", "deep", "deep-reasoning")
+# Three of Exa's six `/search` types, because only these three do the job. Measured live against the
+# API on one query, with the `outputSchema` this client always sends:
+#
+#   instant   11 extracted titles   2.8s
+#   fast       0                    1.5s   <- rejected
+#   auto       0                    2.3s   <- rejected, and it is Exa's OWN "recommended" setting
+#   deep-lite 42                   13.5s   <- the default
+#   deep      32                    7.5s
+#   deep-reasoning 32              13.4s   <- rejected: same titles as `deep`, ~2x the wait and cost
+#
+# `fast` and `auto` return results but decline to synthesise the structured output, so they hand back
+# ZERO titles — and title extraction is what lets Exa run with no AI provider at all. Offering a
+# setting that silently produces an empty row is worse than not offering it.
+#
+# All six remain valid API values; a stored setting naming a dropped one still resolves, because
+# `ExaClient.__init__` clamps anything unrecognised to the default.
+EXA_SEARCH_TYPES: tuple[str, ...] = ("instant", "deep-lite", "deep")
 DEFAULT_EXA_SEARCH_TYPE = "deep-lite"
 
-# How long to wait, by mode. Measured response times: the cheap modes answer in 2.5-4.6s, `deep-lite`
-# and `deep` in 6.5-18s, `deep-reasoning` in 24-39s. The ceiling matters because Exa does sometimes
+# How long to wait, by mode. Measured response times: `instant` answers in 2.5-4.6s, `deep-lite` and
+# `deep` in 6.5-18s. The ceiling matters because Exa does sometimes
 # hang rather than answer — 1 of 6 `deep-lite` searches never returned and hit the timeout, and a
 # request that runs past ~100s comes back as an HTML 524 from Exa's CDN instead of JSON. So the wait
 # is set a few times the mode's real spread and no more: every second beyond that is wall-clock a
+# THREE FIELDS, AND THAT IS THE CEILING. Asking Exa for a fourth does not just cost time — it
+# destroys the three that work. Retested live 2026-09-03 on `deep-lite`, one query each:
+#
+#   fields                secs  titles   year     media    the extra field
+#   title/year/media       9.0      38   38/38    38/38    -
+#   + blurb (<=15 words)  28.5      45    0/45     0/45    0/45   <- never populated
+#   + why (free text)     66.4      35    0/35     0/35    0/35   <- never populated
+#   + genres (array)      47.0      31   18/31    31/31    0/31   <- never populated
+#
+# The extra field comes back EMPTY every time, and asking for it makes Exa drop the year and media
+# from every title. The year is what TMDB resolution matches on, so that trade is strictly losing.
+# (An earlier note blamed HTTP 524 timeouts; those were transient and are not the real reason.)
+#
+# If more context is ever needed, the article snippets are already in the response and already
+# fetched — see `_web_via_search`, which keeps them for the fallback prompt. Do not ask the schema.
+
 # nightly run spends waiting for a search that is not coming, once per hanging seed per user.
 _EXA_TIMEOUTS: dict[str, float] = {
     "instant": 20.0,
-    "fast": 20.0,
-    "auto": 20.0,
     "deep-lite": 45.0,
     "deep": 45.0,
-    "deep-reasoning": 90.0,
 }
 
 
@@ -177,7 +206,7 @@ class ExaClient:
         self._search_type = search_type if search_type in EXA_SEARCH_TYPES else DEFAULT_EXA_SEARCH_TYPE
         if self._search_type != search_type:
             logger.warning("exa: unknown search type {!r}; using {!r}", search_type, self._search_type)
-        # Per mode, not one number: a `deep-reasoning` search legitimately runs 40s where an `instant`
+        # Per mode, not one number: a `deep-lite` search legitimately runs 18s where an `instant`
         # one is done in 3, so a single timeout either cuts the slow mode off or leaves the fast mode
         # waiting half a minute on a search that has already hung. See `_EXA_TIMEOUTS`.
         self._timeout = timeout if timeout is not None else _EXA_TIMEOUTS.get(self._search_type, 45.0)
