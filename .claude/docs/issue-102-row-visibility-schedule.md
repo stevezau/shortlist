@@ -206,6 +206,24 @@ TV Shows  4,879 shows ~120k ep visibility write 0.005s   (create 26.44s / delete
 is _in_ a collection. Five scheduled rows across the roster is roughly 460 flips at midnight: **under
 3 seconds**. The 16.5s TV anomaly is membership-only and does not apply here.
 
+## Known limitation, accepted on purpose
+
+**Un-pausing someone can briefly show a row that today's schedule says to hide.**
+
+`user.restore` promotes through `promote_user_rows` WITHOUT `skip_unmatched`, so a collection it
+cannot identify takes promotion's no-spec branch, which shows it. That needs three things at once: a
+`{top_seed}`-titled row (its title cannot be re-rendered without picks), a delivery-ledger key that is
+missing or claimed by two rows, and somebody being un-paused on one of that row's off days.
+
+Left alone deliberately. Restore's contract is "put their rows BACK", so under-showing is the wrong
+failure direction there — teaching it to skip what it cannot identify risks a row never returning
+after an un-pause, which is worse and harder to notice than a row appearing a day early. The midnight
+pass corrects it within 24 hours, and the excludes are merged either way, so nobody sees anybody
+else's row.
+
+Revisit only if `{top_seed}` rows start losing ledger entries in practice; the fix would be to give
+restore the same ledger-identity treatment the run now has, not to flip its fallback.
+
 ## Checked, not a problem
 
 - **Upgrade**: `show_days = []` means every day. No row changes behaviour.

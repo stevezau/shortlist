@@ -25,6 +25,14 @@ All notable changes to this project are documented here. This project follows
 
 ### Fixed
 
+- **"Something else is reordering your shelf" no longer fires because two people watched the same
+  film.** A "Because you watched X" row is named after the film, so everyone who watched that film
+  gets a row with the *same* name. The check that spots another tool fighting Shortlist for the shelf
+  was counting those as one row being moved over and over — so two people sharing a film was enough
+  to set it off, and the alert then pointed at Kometa or Agregarr, which had done nothing. It now
+  counts each row once per pass, which is what it always meant to do. A shelf genuinely being fought
+  over still raises it. (#106)
+
 - **"Something else is reordering your shelf" no longer fires when nothing else is.** A row rebuilt
   during a run got a new Plex id, and the shelf-ordering pass at the end of that same run was still
   working from the delivery record read before the run started. So it did not recognise the row as

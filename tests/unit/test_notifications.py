@@ -716,6 +716,37 @@ class TestShelfContention:
         assert "Kometa" in result["body"] and "Agregarr" in result["body"]
         assert result["action_url"] == "/settings#placement"
 
+    def test_two_people_sharing_one_seed_title_is_not_contention(self, session):
+        """Measured on the maintainer's server, where this fires for real.
+
+        A `{top_seed}` row renders the SAME title for everyone who watched that title, so two people
+        who both watched "Colin from Accounts" each get a collection called "Because you watched Colin
+        from Accounts". One ordering pass moves both, and counting occurrences records TWO moves of
+        one row — so two ordinary passes cross a threshold meant for three genuine re-moves, and the
+        alert accuses Kometa or Agregarr of something nothing did.
+
+        A pass counts once per row. That is what the code's own comment has always claimed.
+        """
+        for _ in range(2):  # two passes, well under the threshold
+            self._ordered(
+                session,
+                "Movies",
+                ["Because you watched Colin from Accounts", "Because you watched Colin from Accounts"],
+            )
+        session.commit()
+
+        assert notif._shelf_contention(session) is None
+
+    def test_a_row_genuinely_moved_three_times_still_fires(self, session):
+        """The other side of the same change: deduping within a pass must not blunt the real signal."""
+        for _ in range(3):
+            self._ordered(session, "Movies", ["Picked for You", "Picked for You"])
+        session.commit()
+
+        result = notif._shelf_contention(session)
+
+        assert result is not None and "3 times" in result["body"]
+
     def test_a_flood_of_unplaceable_records_cannot_crowd_out_the_contention_evidence(self, session):
         """The entire reason issue #106's "could not place" record got its own scope.
 

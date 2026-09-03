@@ -558,7 +558,14 @@ def _shelf_contention(session: Session) -> dict | None:
         if not isinstance(moved, list):
             continue
         counts = per_library.setdefault(library, {})
-        for title in moved:
+        # ONE count per row per PASS, which is what this dict has always claimed to hold. Counting
+        # every occurrence instead made the alert fire on servers where nothing was fighting us: a
+        # `{top_seed}` row renders the SAME title for everyone who watched that title, so two people
+        # who both watched one film give one pass two entries for "one row". Two ordinary passes then
+        # crossed a threshold meant for three genuine re-moves, and the notification named Kometa and
+        # Agregarr as the likely cause of something neither had done. Measured on the maintainer's
+        # server: two rows over the line on three consecutive days, with no other tool involved.
+        for title in set(moved):
             counts[title] = counts.get(title, 0) + 1
 
     contended = {library: max(counts.values()) for library, counts in per_library.items() if counts}
