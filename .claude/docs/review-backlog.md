@@ -5,7 +5,59 @@ Findings from the nine-reviewer pre-`beta.8` sweep (July 2026). **Everything is 
 history for 2026-07-31.
 
 Kept as the record of what was fixed, so a future reviewer who rediscovers one of these checks the
-history before "fixing" it again. Nothing here is outstanding.
+history before "fixing" it again. Everything from that sweep is closed; the OPEN section immediately
+below is later work.
+
+---
+
+## OPEN — issue #108 watch-status follow-ups (2026-09-02)
+
+Six commits landed for #108 (`dd2614a`, `a829724`, `1c61a9c`, `ac0a165`, `545a340`, `83cf07a`), and
+the reporter then tested all nine watch-status paths against `2bf1d90`. **Six pass**: mark a show
+watched, unmark it, mark a show that already had some episodes, mark an episode, unmark an episode,
+unmark a season. Three do not. None is a regression from those commits — 2 and 3 are deliberate
+trade-offs made in them, and 1 predates them.
+
+**1. A season marked watched on a NEVER-watched show does not appear.** The reporter's own
+characterisation: mark the whole show watched, unmark it, THEN mark a season, and it works — so Plex
+only propagates a season mark once some watch record already exists for that show. It could not be
+reproduced on the maintainer's server (a season mark there DID set the episodes and the show
+appeared, `The Night Agent`, verified 2026-09-02), so the behaviour differs by server or by how the
+show got into that state.
+
+The signal exists and is measured: `?type=3&unwatched=0` returned 1,045 seasons rolling up to 522
+shows, of which **52 are invisible to the show-level read**. Those season rows carry `viewCount` and
+`lastViewedAt` but NO `leafCount`/`viewedLeafCount`, so they say a season was watched and nothing
+about how much — the same shape as the show-level bug one level down. Every one on that server is old
+(2017–2024), so they are historical residue there rather than fresh marks.
+
+*Fix direction:* read `?type=3&unwatched=0`, roll up by `parentRatingKey`. **Open question first:**
+such a show has a watched season and zero watched episodes per Plex, so what does
+`viewed_leaf_count` become? Recording 0 makes it not count as watched anyway, which defeats the
+point. Needs a decision, not just code.
+
+**2. The "Finished" date does not move when a partly-watched show is marked fully watched.** Plex
+does not update the show's own `lastViewedAt` when episodes are marked, so a series finished today
+still reads as finished months ago. `83cf07a` repairs this only for a show with NO date at all;
+repairing a STALE one means taking `max(show date, newest episode date)`, which needs the episode
+read on every library rather than only on libraries holding an undated show — roughly +2.4s per
+person per library on a 47-user server. Cost/benefit call.
+
+**3. A pick stays "finished" on the dashboard after being unmarked in Plex.** Working as designed:
+credit withdrawal (`_withdraw_unwatched`) is gated on the `sync.watch_full_days` pass because it
+edits `picks.watched_at` and does not self-heal, so it lags by up to a week. `a829724` deliberately
+kept it there while moving the watched-set deletion to every sync. Revisit only with that reasoning
+in hand.
+
+**Also outstanding, unrelated to the reporter:**
+
+* **The watch sync now takes ~87s** (was ~27s on the broken read). The cost is 141 serial PMS calls —
+  users x their libraries — not any single query. Two levers, neither tried: fetch the static half of
+  a library's metadata once instead of once per user, and run users in parallel (`run.concurrency`
+  already exists for other work).
+* **`545a340` and `83cf07a` never had an Architecture Review.** Both touch watch history —
+  `545a340` changes which rows are DELETED — which the risk list in `.claude/CLAUDE.md` says is not
+  optional. Do this before the next release tag.
 
 ---
 
