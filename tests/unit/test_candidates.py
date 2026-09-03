@@ -9,6 +9,7 @@ from shortlist.engine.candidates import (
     filter_candidates,
     gather_candidates,
     genre_coherence,
+    web_recommendations,
 )
 from shortlist.engine.clients.search import SearchResult, TitleCandidate
 from shortlist.engine.curator import NullCurator
@@ -1368,3 +1369,45 @@ class TestStructuredExtractionPath:
                 web_search_mode="exa",
                 web_search_cache=_DictCache(),
             )
+
+    def test_a_proposal_naming_a_seed_is_dropped(self, mock_tmdb):
+        """The model proposes already-watched titles even when told not to, and even when they were
+        stripped from the list it was shown — it fills them in from its own knowledge.
+
+        Caught on a live 30-seed run: 6 of 40 proposals were seeds (Ted Lasso, Reacher, Slow Horses,
+        Mr. Robot, The Capture, Star Trek: Strange New Worlds). Nothing broken reached a row, because
+        watched titles are dropped downstream, but a seventh of the k the model was asked for was
+        spent on titles that could never be used.
+        """
+        self._tmdb(mock_tmdb)
+        reply = '[{"title": "Dune", "year": 2021, "media": "movie"}, {"title": "Silo", "year": 2023, "media": "show"}]'
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Silo", "Devs", "From"))
+        stats = GatherStats()
+        out = web_recommendations(
+            _NonNativeCurator(reply),
+            search,
+            "exa",
+            web_profile(),
+            [seed(1, "Dune")],
+            5,
+            stats,
+            cache=_DictCache(),
+        )
+        assert [t["title"] for t in out] == ["Silo"]  # the seed is gone, the real suggestion stays
+        assert stats.trace["web"]["already_watched"] == 1
+        assert stats.trace["web"]["proposed"] == ["Silo (2023) [show]"]  # the trace shows what was used
+
+    def test_a_native_curator_gets_the_same_filter(self, mock_tmdb):
+        """Native providers never see a candidate list at all, so this is their only guard."""
+        self._tmdb(mock_tmdb)
+
+        class _Native:
+            supports_native_web_search = True
+            last_tokens = 0
+
+            def recommend_web(self, profile, seeds, k):
+                return [{"title": "Dune", "year": 2021, "media": "movie"}, {"title": "Silo", "media": "show"}]
+
+        stats = GatherStats()
+        out = web_recommendations(_Native(), None, "native", web_profile(), [seed(1, "Dune")], 5, stats)
+        assert [t["title"] for t in out] == ["Silo"]
