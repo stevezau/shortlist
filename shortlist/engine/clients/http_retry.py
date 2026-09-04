@@ -117,18 +117,36 @@ _WRITE_RETRY_EXC: tuple[type[Exception], ...] = (httpx.ConnectError, httpx.Conne
 _WRITE_RETRY_STATUS = frozenset({429})
 
 
-def get(url: str, *, attempts: int = DEFAULT_ATTEMPTS, **kwargs) -> httpx.Response:
+def get(url: str, *, attempts: int = DEFAULT_ATTEMPTS, status_attempts: int | None = None, **kwargs) -> httpx.Response:
     """GET with full transient-failure retry (timeouts, connection errors, 429, 5xx)."""
-    return _send("GET", url, attempts=attempts, retry_exc=_GET_RETRY_EXC, retry_status=_GET_RETRY_STATUS, **kwargs)
+    return _send(
+        "GET",
+        url,
+        attempts=attempts,
+        status_attempts=status_attempts,
+        retry_exc=_GET_RETRY_EXC,
+        retry_status=_GET_RETRY_STATUS,
+        **kwargs,
+    )
 
 
-def idempotent_post(url: str, *, attempts: int = DEFAULT_ATTEMPTS, **kwargs) -> httpx.Response:
+def idempotent_post(
+    url: str, *, attempts: int = DEFAULT_ATTEMPTS, status_attempts: int | None = None, **kwargs
+) -> httpx.Response:
     """A POST that is safe to repeat — a search API whose body is just a query.
 
     Same retry set as `get`: any timeout or transport error, plus 429 and 5xx. Never use this for a
     call that changes state on the far side; that is what `request` is for.
     """
-    return _send("POST", url, attempts=attempts, retry_exc=_GET_RETRY_EXC, retry_status=_GET_RETRY_STATUS, **kwargs)
+    return _send(
+        "POST",
+        url,
+        attempts=attempts,
+        status_attempts=status_attempts,
+        retry_exc=_GET_RETRY_EXC,
+        retry_status=_GET_RETRY_STATUS,
+        **kwargs,
+    )
 
 
 def request(method: str, url: str, *, attempts: int = DEFAULT_ATTEMPTS, **kwargs) -> httpx.Response:
@@ -144,24 +162,32 @@ def _send(
     attempts: int,
     retry_exc: tuple[type[Exception], ...],
     retry_status: frozenset[int],
+    status_attempts: int | None = None,
     base_backoff: float = BASE_BACKOFF_S,
     max_backoff: float = MAX_BACKOFF_S,
     **kwargs,
 ) -> httpx.Response:
+    """`attempts` bounds the EXPENSIVE failures — a timeout costs the caller's whole ceiling before
+    it even reports. `status_attempts` bounds the cheap ones: a 429 or a 503 comes back in
+    milliseconds, so giving it the same tiny budget throws away a nearly-free retry. They were one
+    number, which meant bounding Exa's 90s hang case to 2 attempts also capped its 429s at 2.
+    """
+    status_budget = attempts if status_attempts is None else status_attempts
+    ceiling = max(attempts, status_budget)
     host = _host(url)
-    for attempt in range(1, attempts + 1):
+    for attempt in range(1, ceiling + 1):
         started = time.monotonic()
         try:
             response = httpx.request(method, url, **kwargs)
         except retry_exc as exc:
-            if attempt >= attempts:
+            if attempt >= attempts:  # the expensive budget
                 raise
             _wait(_backoff(attempt, base_backoff, max_backoff), method, host, type(exc).__name__, attempt, attempts)
             continue
         # Host + status + latency only (never the URL — its query can carry an api_key, rule 9). This
         # is the per-call trail that answers "which service was slow tonight" at DEBUG.
         logger.debug("{} {} → {} in {:.2f}s", method, host, response.status_code, time.monotonic() - started)
-        if response.status_code in retry_status and attempt < attempts:
+        if response.status_code in retry_status and attempt < status_budget:  # the cheap budget
             delay = _retry_after(response) or _backoff(attempt, base_backoff, max_backoff)
             _wait(delay, method, host, f"HTTP {response.status_code}", attempt, attempts)
             continue

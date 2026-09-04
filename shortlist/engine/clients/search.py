@@ -283,10 +283,14 @@ class ExaClient:
         the source's own guard — Exa answered 200 with an unparseable body once during testing."""
         response = http_retry.idempotent_post(
             EXA_SEARCH_URL,
-            # TWO attempts, not the default three. The ceiling below is already generous, so a second
-            # try covers a blip while a third only multiplies the hang case: at 90s x 3 plus backoff
-            # a single stuck seed costs 273s, and a nightly run can hit ten of them per person.
+            # Two budgets, because the two failures cost wildly different amounts of a run's night.
+            # A hang burns the full 90s ceiling before it even reports, so a third attempt only
+            # multiplies it (273s per stuck seed, ten seeds a person, eight people at once). A 429 or
+            # a 503 comes back in milliseconds — measured 0.2s — so capping those at two threw away a
+            # nearly-free retry on the case a busy run actually hits, which is exactly what Exa does
+            # when `run.concurrency` searches land together.
             attempts=2,
+            status_attempts=5,
             headers={"x-api-key": self._api_key, "Content-Type": "application/json"},
             json={
                 "query": query,

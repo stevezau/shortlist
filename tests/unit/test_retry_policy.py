@@ -79,6 +79,62 @@ class TestMutationsStayConservative:
             http_retry.request("POST", URL, json={})
 
 
+class TestCheapAndExpensiveFailuresGetDifferentBudgets:
+    """A 429 and a hang cost a run wildly different amounts, so one attempt count cannot serve both.
+
+    Measured through the real Exa client: a 429 comes back in ~0.2s, while a hang burns the whole 90s
+    ceiling before it even reports. Bounding the hang to 2 attempts — which is right, since a third
+    costs 271s per stuck seed at concurrency 8 — silently capped the 429s at 2 as well, throwing away
+    a nearly-free retry on the case a busy run actually hits.
+    """
+
+    @pytest.mark.parametrize("status", [429, 503])
+    @respx.mock
+    def test_a_cheap_status_gets_the_bigger_budget(self, status, monkeypatch):
+        _no_backoff(monkeypatch)
+        route = respx.post(URL).mock(return_value=httpx.Response(status))
+        http_retry.idempotent_post(URL, json={}, attempts=2, status_attempts=5)
+        assert route.call_count == 5
+
+    @respx.mock
+    def test_an_expensive_timeout_keeps_the_small_one(self, monkeypatch):
+        _no_backoff(monkeypatch)
+        route = respx.post(URL).mock(side_effect=httpx.ReadTimeout("slow"))
+        with pytest.raises(httpx.ReadTimeout):
+            http_retry.idempotent_post(URL, json={}, attempts=2, status_attempts=5)
+        assert route.call_count == 2, "a hang must stay bounded even when statuses get more chances"
+
+    @respx.mock
+    def test_the_budgets_default_to_the_same_number(self, monkeypatch):
+        """Omitting `status_attempts` must behave exactly as before — every other caller relies on it."""
+        _no_backoff(monkeypatch)
+        route = respx.post(URL).mock(return_value=httpx.Response(503))
+        http_retry.idempotent_post(URL, json={}, attempts=2)
+        assert route.call_count == 2
+
+    @respx.mock
+    def test_exa_ships_with_the_split(self, monkeypatch):
+        """The client the run actually uses, not just the helper underneath it."""
+        from shortlist.engine.clients.search import EXA_SEARCH_URL, ExaClient
+
+        _no_backoff(monkeypatch)
+        route = respx.post(EXA_SEARCH_URL).mock(return_value=httpx.Response(429))
+        with pytest.raises(httpx.HTTPStatusError):
+            ExaClient("k").search("q")
+        assert route.call_count == 5, "a rate-limited search should keep trying — each one costs ~0.2s"
+
+    @respx.mock
+    def test_a_server_that_honours_retry_after_is_obeyed(self, monkeypatch):
+        """A service telling us exactly how long to wait beats any ladder we compute."""
+        sleeps: list[float] = []
+        monkeypatch.setattr(http_retry.time, "sleep", sleeps.append)
+        respx.post(URL).mock(
+            side_effect=[httpx.Response(429, headers={"Retry-After": "7"}), httpx.Response(200, json={})]
+        )
+        http_retry.idempotent_post(URL, json={})
+        assert sleeps == [7.0]
+
+
 class TestEveryBackoffIsJittered:
     """Runs process `run.concurrency` users at once, so a service wobble hits them together.
 
