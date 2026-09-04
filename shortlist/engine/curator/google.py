@@ -54,7 +54,29 @@ class GoogleCurator:
             raise ImportError("Google provider needs `pip install shortlist[google]`") from e
         # google-genai's HttpOptions.timeout is in MILLISECONDS; without this the constructor's
         # timeout was silently dropped, so a stalled Gemini call was bounded only by the SDK default.
-        self._client = genai.Client(api_key=api_key, http_options={"timeout": int(timeout * 1000)})
+        #
+        # `retry_options` matches what the Anthropic and OpenAI SDKs do for us (`max_retries=2`) and
+        # what `http_retry` does for every other service: a 429 or a 5xx is a blip, not an answer, so
+        # it is retried with exponential backoff rather than losing the call. Without it this was the
+        # one provider with no retry at all — the SDK default does not cover rate limits.
+        self._client = genai.Client(
+            api_key=api_key,
+            http_options={
+                "timeout": int(timeout * 1000),
+                "retry_options": {
+                    # TWO attempts. google-genai retries httpx timeouts UNCONDITIONALLY, regardless
+                    # of `http_status_codes`, so every extra attempt multiplies the wall clock the
+                    # `timeout` above exists to bound — and `recommend_web` can call this twice when
+                    # a model rejects the schema. Three made a stalled call ~368s per person.
+                    "attempts": 2,
+                    "initial_delay": 1.0,
+                    "max_delay": 30.0,
+                    "exp_base": 2.0,
+                    "jitter": 1.0,
+                    "http_status_codes": [429, 500, 502, 503, 504],
+                },
+            },
+        )
         self._model = model
         # Whether this model takes a response schema alongside grounding. Gemini 3 does; 2.5 does not.
         # The owner picks the model, so this is learned from the first call and then remembered — a

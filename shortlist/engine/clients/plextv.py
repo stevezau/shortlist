@@ -62,6 +62,15 @@ class PlexTvUser:
     restriction_profile: str = ""
 
 
+# plex.tv statuses worth a second attempt on an idempotent write. 429 is handled separately above,
+# because it also has to slow the pace down rather than just wait.
+_RETRYABLE_SERVER_STATUS = frozenset({500, 502, 503, 504})
+#: How many 5xx retries one filter write gets. Deliberately far shorter than the connect-error
+#: ladder: the privacy phase writes a filter for EVERY account, so any per-account wait is paid ~46
+#: times over on a bad night, and after the first hard failure the run cannot promote regardless.
+_SERVER_5XX_TRIES = 2
+
+
 class PlexTvClient:
     """Thin plex.tv API client for the surfaces plexapi doesn't cover well."""
 
@@ -282,6 +291,7 @@ class PlexTvClient:
         # failure used to raise "still throttling", sending the operator to the wrong diagnosis on
         # the most privacy-sensitive write path).
         last_failure = "no attempt was made"
+        server_tries = 0
         for attempt in range(6):
             self._throttle()
             try:
@@ -306,6 +316,33 @@ class PlexTvClient:
                 )
                 last_failure = "plex.tv is rate-limiting filter writes (HTTP 429)"
                 continue  # the loop-top _throttle now waits the new, larger pace before retrying
+            if r.status_code in _RETRYABLE_SERVER_STATUS and server_tries < _SERVER_5XX_TRIES:
+                # A 5xx is plex.tv having a moment, not a verdict on the request — and this PUT is
+                # SAFE to repeat: it carries the full pre-merged filter value, not a delta (rule 3's
+                # merge already happened upstream), so re-sending it either applies the same value or
+                # re-applies it as a no-op. Losing the write instead is a privacy problem, not just a
+                # missing feature: the `label!=shortlist_*` exclusion is what hides one person's row
+                # from everyone else (rule 1), so a dropped filter write leaves a row unhidden until
+                # the next run.
+                #
+                # Its OWN short ladder, not the connect-error one. Sharing that gave 5xx six attempts
+                # and ~90s per account — and the privacy phase walks every account in the audience, so
+                # one plex.tv outage cost ~69 minutes of uninterruptible waiting on a run that could
+                # no longer promote anything anyway. Two waits (2s, 4s) cover a blip; a real outage is
+                # not going to clear inside a minute.
+                server_tries += 1
+                detail = redact(" ".join((r.text or "").split()))[:300]
+                last_failure = f"plex.tv returned HTTP {r.status_code}{f' — {detail}' if detail else ''}"
+                logger.warning(
+                    "plex.tv HTTP {} on filter write (try {} of {}); retrying in {:.0f}s",
+                    r.status_code,
+                    server_tries,
+                    _SERVER_5XX_TRIES,
+                    net_backoff,
+                )
+                time.sleep(net_backoff)
+                net_backoff = min(net_backoff * 2, 30.0)
+                continue
             # Carry plex.tv's own words. "HTTP 400" alone leaves the operator guessing which of
             # their accounts plex.tv won't accept a filter for, and why (issue #1). The body is
             # short XML/JSON; truncate it and redact in case it ever echoes the token back.

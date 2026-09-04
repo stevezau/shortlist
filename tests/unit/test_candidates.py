@@ -689,6 +689,49 @@ class TestWebSearchWithoutAnLlm:
 
         assert search.queries == [], "SearXNG searched with nothing able to read the results"
 
+    def test_a_lost_search_is_recorded_in_the_trace(self, mock_tmdb):
+        """A dropped search must leave evidence somewhere an owner can see.
+
+        The source deliberately survives one dead seed, which is right — but a run that quietly
+        loses most of them looked identical in the trace to one where the web had little to say.
+        On the first real 46-user run 23 of 36 searches died on timeout and the trace held nothing;
+        the only record was a log line, which rotates and never reaches the "How we picked" page.
+        """
+
+        class _HalfDead(_FakeExtractingSearch):
+            def search_detailed(self, query, *, num_results=8):
+                if "Dune" in query:
+                    raise TimeoutError("Exa took too long")
+                return super().search_detailed(query, num_results=num_results)
+
+        search = _HalfDead([make_result("a", "b")], self._titles("Andor"))
+        stats = GatherStats()
+
+        web_recommendations(
+            NullCurator(),
+            search,
+            "exa",
+            web_profile(),
+            [seed(1, "Dune"), seed(2, "Arrival")],
+            5,
+            stats,
+            cache=_DictCache(),
+            recent_count=2,
+        )
+
+        assert stats.trace["web"]["failed_seeds"] == ["Dune"]
+
+    def test_no_failed_seeds_key_when_every_search_worked(self):
+        """The key's PRESENCE is the signal, so a clean run must not carry an empty one."""
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor"))
+        stats = GatherStats()
+
+        web_recommendations(
+            NullCurator(), search, "exa", web_profile(), [seed(1, "Dune")], 5, stats, cache=_DictCache()
+        )
+
+        assert "failed_seeds" not in stats.trace["web"]
+
     def test_searxng_with_no_model_is_not_even_capable(self):
         """`_web_search_capable` gates `attempted`: a source that cannot run must not register as
         having been tried, or "every source failed" misreads an incapable setup as a failure. A

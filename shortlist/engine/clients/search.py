@@ -68,8 +68,25 @@ _DEFAULT_MAX_CHARS = 800  # per-result text budget — enough to name titles, sm
 EXA_SEARCH_TYPES: tuple[str, ...] = ("instant", "auto", "deep-lite", "deep")
 DEFAULT_EXA_SEARCH_TYPE = "deep-lite"
 
-# How long to wait, by mode. Measured response times: `instant` answers in 2.5-4.6s, `deep-lite` and
-# `deep` in 6.5-18s. The ceiling matters because Exa does sometimes
+# How long to wait, by mode. These were calibrated at 45s from prestige-TV seeds measured ONE AT A
+# TIME, and the first real 46-user run showed that is far too tight: 13 of 21 searches died on
+# ReadTimeout. Two causes, both invisible in the original measurement:
+#
+#   * MAINSTREAM titles are much slower than prestige TV, because there is vastly more "what to watch
+#     next" content to synthesise. Re-measured on the seeds that actually failed — "Anyone But You"
+#     35.6s / 109 titles, "Avatar: The Way of Water" 32.7s, "21 Jump Street" 21.0s / 103 titles —
+#     against 7-19s for Severance, The Bear, Andor and Shogun.
+#   * CONCURRENCY. The run processes `run.concurrency` users at once (8 here), and at that rate Exa
+#     also starts answering 429 (3 of 8 in the reproduction). Those are retried by `http_retry`, so
+#     they recover — but they add to the wall clock the ceiling has to cover.
+#
+# 90s, not higher: a request running past ~100s comes back as an HTML 524 from Exa's CDN instead of
+# JSON, so a longer wait buys nothing. Every second beyond the real spread is wall-clock a nightly
+# run spends on a search that is not coming, twice per hanging seed (see `attempts=2` below) — but
+# losing the search costs the
+# whole roster, since one result is cached for 14 days and shared by everyone.
+#
+# The ceiling matters because Exa does sometimes
 # hang rather than answer — 1 of 6 `deep-lite` searches never returned and hit the timeout, and a
 # request that runs past ~100s comes back as an HTML 524 from Exa's CDN instead of JSON. So the wait
 # is set a few times the mode's real spread and no more: every second beyond that is wall-clock a
@@ -91,10 +108,10 @@ DEFAULT_EXA_SEARCH_TYPE = "deep-lite"
 
 # nightly run spends waiting for a search that is not coming, once per hanging seed per user.
 _EXA_TIMEOUTS: dict[str, float] = {
-    "instant": 20.0,
-    "auto": 20.0,
-    "deep-lite": 45.0,
-    "deep": 45.0,
+    "instant": 30.0,
+    "auto": 30.0,
+    "deep-lite": 90.0,
+    "deep": 90.0,
 }
 
 
@@ -191,9 +208,12 @@ _EXA_SYSTEM_PROMPT = (
 class ExaClient:
     """Exa semantic search (https://exa.ai). Returns ranked web results with extracted text.
 
-    A search is a read, but Exa exposes it as POST, so it goes through ``http_retry.request`` — which
-    retries the safe cases (a connect failure that never landed, or an explicit 429 rate-limit) and
-    leaves the rest to the source's own try/except in ``candidates.py``. The API key travels in the
+    A search is a read, but Exa exposes it as POST, so it goes through
+    ``http_retry.idempotent_post``: repeating a search changes nothing, so it retries the full set —
+    read timeouts, transport errors, 429 and 5xx — with backoff. It used to go through ``request``,
+    the MUTATION path, which retries only 429; a timeout or a 502 therefore lost the search outright,
+    and the first real 46-user run lost 13 of 21 that way. Whatever survives that is left to the
+    source's own try/except in ``candidates.py``. The API key travels in the
     ``x-api-key`` header (never the URL/query), so it can't leak into a logged request line (rule 9).
 
     Every search also carries an ``outputSchema``, so one request returns both the page text and the
@@ -261,9 +281,12 @@ class ExaClient:
     def _post(self, query: str, num_results: int) -> dict:
         """One raw search response. Raises for status; a non-JSON body raises too and is caught by
         the source's own guard — Exa answered 200 with an unparseable body once during testing."""
-        response = http_retry.request(
-            "POST",
+        response = http_retry.idempotent_post(
             EXA_SEARCH_URL,
+            # TWO attempts, not the default three. The ceiling below is already generous, so a second
+            # try covers a blip while a third only multiplies the hang case: at 90s x 3 plus backoff
+            # a single stuck seed costs 273s, and a nightly run can hit ten of them per person.
+            attempts=2,
             headers={"x-api-key": self._api_key, "Content-Type": "application/json"},
             json={
                 "query": query,

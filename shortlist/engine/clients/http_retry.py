@@ -4,14 +4,23 @@ Every outbound call (TMDB, Tautulli, Trakt, Arr, OMDb, plex.tv reads) goes throu
 transient blip — a read timeout, a dropped connection, an HTTP 429/5xx — is retried with exponential
 backoff instead of failing the whole run. (Run 3 on SFLIX died on a single 30s PMS read timeout.)
 
-Two entry points, split by HTTP safety:
+Three entry points, split by HTTP safety:
 
 * ``get`` — for idempotent reads. Retries the widest set: any timeout or transport error, plus 429
   and 5xx responses. A GET can always be safely repeated.
+* ``idempotent_post`` — for a POST that is SAFE TO REPEAT, i.e. a search API that uses POST only to
+  carry a JSON body too large for a query string. Retries exactly what ``get`` does. Exa is the
+  reason this exists: its search went through ``request`` and so retried only 429, which meant a
+  read timeout or a 502 lost the search outright. On the first real 46-user run that cost 13 of 21
+  searches. Use this ONLY where repeating the call changes nothing on the far side.
 * ``request`` — for mutations (POST/PUT/DELETE). Retries ONLY when the request provably never
   reached the server (a connect error / connect timeout) or the server explicitly rate-limited it
   (429). Never on a read timeout or a 5xx, because the mutation may have already applied and a blind
-  retry would double it (a second Radarr add, a second filter write).
+  retry would double it (a second Radarr add, a second Overseerr request).
+
+  The share-filter PUT in ``plextv.py`` is the documented exception and does not use this path: it
+  carries a full pre-merged value rather than a delta, so re-sending it converges instead of
+  doubling — see the 5xx branch there for why that is safe and this is not.
 
 A server's ``Retry-After`` header is honoured (capped) over the computed backoff.
 """
@@ -111,6 +120,15 @@ _WRITE_RETRY_STATUS = frozenset({429})
 def get(url: str, *, attempts: int = DEFAULT_ATTEMPTS, **kwargs) -> httpx.Response:
     """GET with full transient-failure retry (timeouts, connection errors, 429, 5xx)."""
     return _send("GET", url, attempts=attempts, retry_exc=_GET_RETRY_EXC, retry_status=_GET_RETRY_STATUS, **kwargs)
+
+
+def idempotent_post(url: str, *, attempts: int = DEFAULT_ATTEMPTS, **kwargs) -> httpx.Response:
+    """A POST that is safe to repeat — a search API whose body is just a query.
+
+    Same retry set as `get`: any timeout or transport error, plus 429 and 5xx. Never use this for a
+    call that changes state on the far side; that is what `request` is for.
+    """
+    return _send("POST", url, attempts=attempts, retry_exc=_GET_RETRY_EXC, retry_status=_GET_RETRY_STATUS, **kwargs)
 
 
 def request(method: str, url: str, *, attempts: int = DEFAULT_ATTEMPTS, **kwargs) -> httpx.Response:

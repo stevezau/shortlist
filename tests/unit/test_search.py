@@ -367,14 +367,22 @@ class TestSchemaSupportIsRemembered:
 
 class TestExaTimeouts:
     def test_the_wait_matches_the_mode(self):
-        """One timeout cannot serve every mode. Measured: the cheap modes answer in 2.5-4.6s,
-        `deep-lite`/`deep` in 6.5-18s — and Exa does hang rather than
-        answer (1 of 6 `deep-lite` searches never returned), so the ceiling is what stops a nightly
-        run waiting on a search that is not coming.
+        """One timeout cannot serve every mode, and the deep ones need far longer than a serial
+        measurement suggests. The first real 46-user run lost 13 of 21 searches to ReadTimeout at a
+        45s ceiling: mainstream titles synthesise much more slowly than the prestige TV the original
+        numbers came from ("Anyone But You" 35.6s, "Avatar: The Way of Water" 32.7s), and the run's
+        own concurrency adds to it. Exa's CDN returns a 524 past ~100s, so 90s is the useful ceiling.
         """
         assert ExaClient("k", search_type="instant")._timeout < ExaClient("k", search_type="deep-lite")._timeout
         assert ExaClient("k", search_type="deep-lite")._timeout == ExaClient("k", search_type="deep")._timeout
         assert ExaClient("k", search_type="instant")._timeout >= 20
+
+    def test_the_deep_modes_clear_the_slowest_real_response(self):
+        """A regression guard with a number behind it: the slowest successful search observed on a
+        real seed was 35.6s, and the run saw worse under load. A ceiling near that is how 13 of 21
+        searches were lost, so it must stay comfortably clear of it — and under Exa's ~100s 524."""
+        deep = ExaClient("k", search_type="deep-lite")._timeout
+        assert 60 <= deep <= 100, deep
 
     def test_an_explicit_timeout_still_wins(self):
         assert ExaClient("k", search_type="deep", timeout=5.0)._timeout == 5.0

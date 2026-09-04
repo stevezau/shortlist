@@ -338,7 +338,7 @@ class TestUninstallSurvivesADepartedUser:
         self, client: TestClient, monkeypatch
     ):
         """The ambiguous half of rule 10, and the one where the audit row is the ONLY artifact.
-        `update_user_filters` retries what provably never reached plex.tv and deliberately lets a
+        `update_user_filters` retries what is safe to resend (a full-value PUT converges) and lets a
         READ timeout through, because the write may have applied — so it must carry what it sent."""
         _plex, plextv = fake_context(monkeypatch, client)
         plextv.update_user_filters.side_effect = TimeoutError("timed out reading the response")

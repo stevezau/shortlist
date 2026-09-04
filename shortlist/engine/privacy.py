@@ -846,8 +846,9 @@ def restore_user_restrictions(
         # Field names only: a restore payload is the user's ENTIRE original filter string per field.
         logger.info("[dry-run] {}: would restore {} from the snapshot", snapshot.username, ", ".join(sorted(changed)))
         return True
-    # The PUT is INSIDE the try, not before it. `update_user_filters` retries the failures that
-    # provably never reached plex.tv (connect errors, pool timeouts) and deliberately lets a READ
+    # The PUT is INSIDE the try, not before it. `update_user_filters` retries connect errors, pool
+    # timeouts, 429 and a short ladder of 5xx — every one of them safe because the PUT carries a full
+    # pre-merged value, so a repeat converges rather than doubling. It deliberately lets a READ
     # timeout propagate, precisely because "the write may have applied" — so at or past this line the
     # account's filters may already have changed. Every failure from here therefore carries
     # `changed`: the caller has to audit a write it could not confirm (rule 10), and the ambiguous

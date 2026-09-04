@@ -284,6 +284,76 @@ class TestPlexTvClient:
         assert max(sleeps, default=0) >= 1.0
         assert 0.0 < client._pace < 1.0
 
+    @pytest.mark.parametrize("status", [500, 502, 503, 504])
+    @respx.mock
+    def test_a_transient_5xx_is_retried_because_the_filter_PUT_is_idempotent(self, status, monkeypatch):
+        """Losing a filter write is a PRIVACY problem, not a missing feature.
+
+        The `label!=shortlist_*` exclusion is what hides one person's row from everyone else (rule
+        1), so a dropped write leaves a row unhidden until the next run. This PUT carries the full
+        pre-merged value rather than a delta (rule 3's merge happened upstream), so re-sending it
+        either applies the same value or re-applies it as a no-op — which is what makes retrying a
+        5xx safe here, where it would not be on a Radarr add.
+        """
+        monkeypatch.setattr(plextv_mod.time, "sleep", lambda _s: None)
+        route = respx.put("https://plex.tv/api/users/100")
+        route.side_effect = [httpx.Response(status), httpx.Response(200)]
+        self._client().update_user_filters(100, {"filterMovies": "label!=Shortlist_a"})
+        assert len(route.calls) == 2
+        # The RETRY must carry the same value — a retry that sent something else would be a
+        # different write, and rule 3 forbids rebuilding a filter.
+        assert route.calls.last.request.url.params["filterMovies"] == "label!=Shortlist_a"
+
+    @respx.mock
+    def test_a_4xx_verdict_is_not_retried(self, monkeypatch):
+        """A 400 is plex.tv's answer about this account, not a blip — retrying only wastes the run."""
+        monkeypatch.setattr(plextv_mod.time, "sleep", lambda _s: None)
+        route = respx.put("https://plex.tv/api/users/100")
+        route.side_effect = [httpx.Response(400, text="nope"), httpx.Response(200)]
+        with pytest.raises(RuntimeError):
+            self._client().update_user_filters(100, {"filterMovies": "x=y"})
+        assert len(route.calls) == 1
+
+    @respx.mock
+    def test_relentless_5xx_gives_up_fast_because_every_account_pays_this(self, monkeypatch):
+        """Asserts the ladder's COST, not just its length.
+
+        The privacy phase writes a filter for every account in the audience, so a per-account wait is
+        paid ~46 times over on a bad night — and after the first hard failure the run cannot promote
+        anything anyway. Sharing the connect-error ladder cost 90s per account (~69 minutes across a
+        real roster) and no test could see it, because they all patch `sleep` away.
+        """
+        sleeps: list[float] = []
+        monkeypatch.setattr(plextv_mod.time, "sleep", sleeps.append)
+        route = respx.put("https://plex.tv/api/users/100").mock(return_value=httpx.Response(503))
+        with pytest.raises(RuntimeError, match="503"):
+            self._client().update_user_filters(100, {"filterMovies": "x=y"})
+        assert 1 < len(route.calls) <= 4
+        assert sum(sleeps) <= 20, f"{sum(sleeps)}s per account is too long to pay 46 times"
+
+    @respx.mock
+    def test_a_5xx_give_up_still_carries_plex_tvs_own_words(self, monkeypatch):
+        """Issue #1: "HTTP 500" alone leaves an operator guessing WHICH account and why. That string
+        reaches them through `report.promotion_blockers`, so dropping the body makes a permanently
+        failing account undiagnosable from the UI."""
+        monkeypatch.setattr(plextv_mod.time, "sleep", lambda _s: None)
+        respx.put("https://plex.tv/api/users/100").mock(
+            return_value=httpx.Response(503, text="account is not eligible for label filters")
+        )
+        with pytest.raises(RuntimeError, match="not eligible for label filters"):
+            self._client().update_user_filters(100, {"filterMovies": "x=y"})
+
+    @respx.mock
+    def test_a_5xx_does_not_slow_the_adaptive_pace(self, monkeypatch):
+        """A distinct matrix cell from the 429 test above: 429 means "you are going too fast" and
+        must widen the pace (rule 6); a 5xx means plex.tv is unwell and must not."""
+        monkeypatch.setattr(plextv_mod.time, "sleep", lambda _s: None)
+        route = respx.put("https://plex.tv/api/users/100")
+        route.side_effect = [httpx.Response(503), httpx.Response(200)]
+        client = self._client()
+        client.update_user_filters(100, {"filterMovies": "x=y"})
+        assert client._pace == 0.0
+
     @respx.mock
     def test_relentless_429_backs_off_then_gives_up_without_looping_forever(self, monkeypatch):
         monkeypatch.setattr(plextv_mod.time, "sleep", lambda _s: None)  # don't actually wait

@@ -313,6 +313,13 @@ def _web_via_search(
         # Sampled like every other trace list. The prompt may carry 300 candidates; the trace is
         # stored per user per run and rendered in a browser, so it takes a readable sample of them.
         web_trace["extracted"] = [_title_label(t) for t in candidates[:_TRACE_RETURNS_SAMPLE]]
+        if failed_seeds:
+            # A lost search is a SILENT loss without this. Tolerating one dead seed (above) is right,
+            # but a run that quietly drops most of them looks identical in the trace to one where the
+            # web simply had little to say. Measured on the first real 46-user run: 23 of 36 searches
+            # died on timeout and the trace recorded none of it — the only evidence was a log line,
+            # which rotates and never reaches the "How we picked" page.
+            web_trace["failed_seeds"] = failed_seeds
     # Prefer the structured list when the provider produced one: it costs a fraction of the prompt
     # and carries every seed's findings rather than a capped slice. An extraction that came back
     # empty — a mode that declined to synthesise, a shape change — still has the snippets, so this
