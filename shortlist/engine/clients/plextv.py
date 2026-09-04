@@ -303,7 +303,7 @@ class PlexTvClient:
                 logger.warning("plex.tv unreachable on filter write (attempt {}): {}", attempt + 1, type(e).__name__)
                 last_failure = f"plex.tv was unreachable ({type(e).__name__})"
                 time.sleep(net_backoff)
-                net_backoff = min(net_backoff * 2, 30.0)
+                net_backoff = http_retry.jittered(min(net_backoff * 2, 30.0))
                 continue
             if r.status_code in (200, 201):
                 logger.debug("PUT {} {} -> {}", url, sorted(fields), r.status_code)
@@ -341,7 +341,7 @@ class PlexTvClient:
                     net_backoff,
                 )
                 time.sleep(net_backoff)
-                net_backoff = min(net_backoff * 2, 30.0)
+                net_backoff = http_retry.jittered(min(net_backoff * 2, 30.0))
                 continue
             # Carry plex.tv's own words. "HTTP 400" alone leaves the operator guessing which of
             # their accounts plex.tv won't accept a filter for, and why (issue #1). The body is

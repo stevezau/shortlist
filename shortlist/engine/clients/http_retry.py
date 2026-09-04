@@ -169,10 +169,24 @@ def _send(
     raise AssertionError("unreachable: the loop always returns or raises")  # pragma: no cover
 
 
+def jittered(delay: float) -> float:
+    """A delay spread by ±20%, for any retry loop that does its own backoff.
+
+    Runs process `run.concurrency` users at once (8 on the maintainer's server), so when a service
+    wobbles it wobbles for all of them within the same second. Without jitter every thread computes
+    the identical ladder and re-hits the service in lockstep, which is what turns a blip into a
+    thundering herd — and each synchronised wave makes the next failure more likely, not less.
+
+    Exported because three loops outside this module do their own backoff: the plex.tv filter write,
+    `plex_pms._retry_idempotent`, and the urllib3 Retry on the PMS session (which takes its own
+    `backoff_jitter`). They all used bare `delay * 2`.
+    """
+    return delay * random.uniform(0.8, 1.2)
+
+
 def _backoff(attempt: int, base: float, cap: float) -> float:
     """Exponential backoff with ±20% jitter so retries from many users don't thundering-herd a service."""
-    raw = min(cap, base * (2 ** (attempt - 1)))
-    return raw * random.uniform(0.8, 1.2)
+    return jittered(min(cap, base * (2 ** (attempt - 1))))
 
 
 def _retry_after(response: httpx.Response) -> float | None:

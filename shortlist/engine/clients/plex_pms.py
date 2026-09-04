@@ -256,6 +256,9 @@ def _retrying_session() -> requests.Session:
         read=3,
         status=3,
         backoff_factor=1.5,  # waits ~0s, 1.5s, 3s between tries
+        # urllib3 defaults this to 0.0 — no jitter at all. Every parallel user shares one PMS, so a
+        # 429 or a slow read hits them together and they would otherwise retry in step.
+        backoff_jitter=0.5,
         status_forcelist=(429, 500, 502, 503, 504),
         allowed_methods=frozenset({"GET", "HEAD", "OPTIONS"}),
         respect_retry_after_header=True,
@@ -308,7 +311,9 @@ def _retry_idempotent(operation: Callable[[], None], *, label: str, attempts: in
         except _PMS_TIMEOUTS as error:
             if attempt == attempts - 1:
                 raise
-            delay = 2.0 * (2**attempt)  # 2s, 4s, 8s
+            # Jittered: eight users deliver in parallel, so a PMS wobble times out all of them within
+            # the same second and an unjittered ladder marches them back in lockstep.
+            delay = http_retry.jittered(2.0 * (2**attempt))  # ~2s, ~4s, ~8s
             logger.warning(
                 "{}: PMS {} — retry {}/{} in {:.0f}s",
                 label,

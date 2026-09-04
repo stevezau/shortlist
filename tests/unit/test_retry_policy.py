@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
+import requests
 import respx
 
 from shortlist.engine.clients import http_retry
@@ -76,6 +77,62 @@ class TestMutationsStayConservative:
         respx.post(URL).mock(side_effect=httpx.ReadTimeout("too slow"))
         with pytest.raises(httpx.ReadTimeout):
             http_retry.request("POST", URL, json={})
+
+
+class TestEveryBackoffIsJittered:
+    """Runs process `run.concurrency` users at once, so a service wobble hits them together.
+
+    An unjittered ladder marches every thread back in lockstep, and each synchronised wave makes the
+    next failure MORE likely. Three loops outside `http_retry` do their own backoff and all three
+    used a bare `delay * 2`.
+    """
+
+    def test_the_helper_actually_spreads_the_delay(self):
+        spread = {http_retry.jittered(10.0) for _ in range(200)}
+        assert len(spread) > 100, "jittered() returned a near-constant value"
+        assert all(8.0 <= d <= 12.0 for d in spread), (min(spread), max(spread))
+
+    def test_two_callers_do_not_get_the_same_delay(self):
+        """The property that matters: two threads failing at the same instant must not agree."""
+        assert len({http_retry.jittered(5.0) for _ in range(50)}) > 40
+
+    def test_the_shared_retry_path_does_not_sleep_the_bare_ladder(self, monkeypatch):
+        """The unjittered ladder is 1s then 2s. Real sleeps must land near those, never exactly on
+        them — otherwise every parallel caller wakes at the same instant."""
+        sleeps: list[float] = []
+        monkeypatch.setattr(http_retry.time, "sleep", sleeps.append)
+        with respx.mock:
+            respx.post(URL).mock(return_value=httpx.Response(503))
+            http_retry.idempotent_post(URL, json={})
+        assert sleeps, "a 503 should have backed off before retrying"
+        assert all(s not in (1.0, 2.0, 4.0) for s in sleeps), sleeps
+
+    def test_the_pms_delivery_retry_is_jittered(self, monkeypatch):
+        """`_retry_idempotent` backs off 2/4/8s for EVERY parallel user identically without this."""
+        import shortlist.engine.clients.plex_pms as pms
+
+        seen: list[float] = []
+        monkeypatch.setattr(pms.http_retry, "jittered", lambda d: seen.append(d) or 0.0)
+        monkeypatch.setattr(pms.time, "sleep", lambda _s: None)
+        calls = {"n": 0}
+
+        def flaky():
+            calls["n"] += 1
+            if calls["n"] < 3:
+                # `requests`, not httpx: plexapi talks over requests, and `_PMS_TIMEOUTS` is defined
+                # in those terms — an httpx error would sail straight past the retry.
+                raise requests.exceptions.ReadTimeout("slow")
+
+        pms._retry_idempotent(flaky, label="test")
+        assert seen, "the delivery retry computed a delay without passing it through jittered()"
+
+    def test_the_pms_session_sets_a_backoff_jitter(self):
+        """urllib3 defaults `backoff_jitter` to 0.0 — the PMS session must not accept that."""
+        import shortlist.engine.clients.plex_pms as pms
+
+        session = pms._retrying_session()
+        retry = session.get_adapter("http://x").max_retries
+        assert getattr(retry, "backoff_jitter", 0.0) > 0.0
 
 
 class TestTheSearchBackendsUseTheRightPolicy:
