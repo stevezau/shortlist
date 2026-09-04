@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from shortlist.engine.clients.plex_pms import PlexClient
+from shortlist.engine.clients.plex_pms import CollectionRejectedItems, PlexClient
 from shortlist.engine.delivery import DEFAULT_ROW_NAME, deliver_rows, render_row_name, row_marker, sweep_broken_rows
 from shortlist.engine.models import LABEL_PREFIX, EngineConfig, MediaType, Pick
 from tests.conftest import make_profile
@@ -579,6 +579,83 @@ class TestDeliverRows:
         plex.fetch_items.assert_called_once_with([1001, 1002])  # the fresh row holds the wanted picks
         assert stored == "Shortlist_sarah"
         assert diff.removed == [f"Stale {k}" for k in range(6)]
+
+    def test_a_collection_that_refuses_every_item_is_rebuilt(self, engine_config, movies, shows):
+        """Observed on a real server: an EMPTY collection of ours 400'd on a batch of 30 valid shows
+        and on a single one, while a sibling accepted the same item a second later. Same library,
+        same subtype, every ratingKey resolving — the Plex object itself was broken, and it stayed
+        broken run after run, so that person's row was empty and would never have refilled."""
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        existing = self._existing_with_stale(profile, 0)  # empty: nothing to lose by rebuilding
+        existing.items.return_value = []
+        existing.childCount = 0  # and Plex AGREES it is empty — an empty read alone is not enough
+        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+        plex.set_items.side_effect = CollectionRejectedItems("(400) bad_request; .../collections/9/items")
+
+        diff, stored = deliver_rows(plex, profile, picks(), engine_config)
+
+        plex.delete_owned_collection.assert_called_once()
+        assert plex.delete_owned_collection.call_args.args[0] is existing
+        assert plex.delete_owned_collection.call_args.args[1] == LABEL_PREFIX
+        # The ARGUMENTS, not just the call. Mutating the repair to `title=display` — dropping the
+        # per-account invisible marker, which is exactly the shared-tag leak `sweep_broken_rows`
+        # exists to clean up — left an assert-called-once test green.
+        create = plex.create_collection.call_args
+        assert create.args[0] is movies
+        assert create.args[1] == "✨ Movies Picked for You" + row_marker(profile.plex_account_id)
+        assert plex.fetch_items.call_args.args[0] == [1001, 1002]
+        assert stored == "Shortlist_sarah"
+        # The ledger's handle must follow the NEW collection, or the next run addresses the deleted one.
+        assert diff.rating_key is not None
+
+    def test_a_row_plex_says_has_items_is_never_deleted_on_an_empty_read(self, engine_config, movies, shows):
+        """plex-safety rule 4: an empty read never authorises a delete.
+
+        plexapi returns [] for a 200 carrying no children, which is indistinguishable from a failed
+        read — the exact successful-but-empty answer rule 4 records for `<Label>`. A PMS mid
+        library-index rebuild could hand back an empty membership for a row that really has 30 items,
+        and without this guard one bad-read night would delete and recreate every row on the server.
+        """
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        existing = self._existing_with_stale(profile, 0)
+        existing.items.return_value = []  # the read says empty...
+        existing.childCount = 30  # ...but Plex says it has 30 items
+        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+        plex.set_items.side_effect = CollectionRejectedItems("(400) bad_request; .../collections/9/items")
+
+        with pytest.raises(CollectionRejectedItems):
+            deliver_rows(plex, profile, picks(), engine_config)
+        plex.delete_owned_collection.assert_not_called()
+
+    def test_a_400_on_a_POPULATED_collection_still_fails(self, engine_config, movies, shows):
+        """The repair is deliberately narrow. A row that HAS items has something to lose from being
+        deleted, and a 400 there is a different fault — so it must surface, not silently rebuild."""
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        existing = self._existing_with_stale(profile, 2)
+        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+        plex.set_items.side_effect = CollectionRejectedItems("(400) bad_request; .../collections/9/items")
+
+        with pytest.raises(CollectionRejectedItems):
+            deliver_rows(plex, profile, picks(), engine_config)
+        plex.delete_owned_collection.assert_not_called()
+
+    def test_a_non_400_failure_is_never_swallowed(self, engine_config, movies, shows):
+        """Anchored on the leading token, not `"400" in`: plexapi puts the collection's own ratingKey
+        in the message, so a substring test matches keys like 1400 or 40053. That exact mistake
+        swallowed 500s and 401s in `_rename_or_keep`."""
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        existing = self._existing_with_stale(profile, 0)
+        existing.items.return_value = []
+        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+        plex.set_items.side_effect = RuntimeError("(500) internal; http://pms/library/collections/1400/items")
+
+        with pytest.raises(RuntimeError, match="500"):
+            deliver_rows(plex, profile, picks(), engine_config)
+        plex.delete_owned_collection.assert_not_called()
 
     def test_exactly_the_threshold_rebuilds_boundary(self, engine_config, movies, shows):
         """Boundary: removing exactly _REBUILD_MIN_REMOVES items rebuilds (the branch is `>=`)."""

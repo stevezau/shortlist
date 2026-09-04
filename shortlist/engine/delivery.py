@@ -7,7 +7,7 @@ from dataclasses import replace
 
 from loguru import logger
 
-from shortlist.engine.clients.plex_pms import PlexClient, log_title
+from shortlist.engine.clients.plex_pms import CollectionRejectedItems, PlexClient, log_title
 from shortlist.engine.clients.poster import PosterArtist
 from shortlist.engine.models import (
     LABEL_PREFIX,
@@ -1243,7 +1243,55 @@ def _deliver_one(
             display,
             ", ".join(sorted(gone)),
         )
-    plex.set_items(collection, existing_items, add_items, wanted_keys)
+    try:
+        plex.set_items(collection, existing_items, add_items, wanted_keys)
+    except CollectionRejectedItems:
+        # A Plex collection can end up in a state where it refuses EVERY add. Observed on a real
+        # server (darren3437, SFLIX, runs 21 and 22): an empty collection of ours 400'd on a batch of
+        # 30 valid shows AND on a single one, while a sibling collection accepted the very same item
+        # a second later. Same library, same subtype, same machineIdentifier, every ratingKey
+        # resolving — the object itself was broken, and it stayed broken run after run, so that
+        # person's row was empty and would never have refilled.
+        #
+        # `set_items` raises this ONLY for the add, so a 400 from its removeItems or sortUpdate calls
+        # cannot land here — those are different endpoints and a rebuild would not fix them.
+        #
+        # Two guards before deleting anything, because this is a delete path (rule 4). The row must
+        # be EMPTY — a populated one has something to lose and a different fault — and Plex must
+        # AGREE it is empty. `existing_items` alone is not enough: plexapi returns [] for a 200
+        # carrying no children, which is indistinguishable from a failed read, and rule 4 is explicit
+        # that an empty read never authorises a delete. `childCount` comes off the listing object
+        # already in hand, so this costs no extra call.
+        try:
+            plex_says = int(getattr(collection, "childCount", 0) or 0)
+        except (TypeError, ValueError):
+            plex_says = 1  # unreadable count -> assume it has items, so this fails CLOSED
+        if existing_items or plex_says:
+            raise
+        logger.warning(
+            "{}: Plex refused every item for '{}' in '{}' and the row is empty — rebuilding it. "
+            "A collection can end up in a state that rejects all adds; recreating is the only repair.",
+            profile.username,
+            display,
+            section.title,
+        )
+        plex.delete_owned_collection(collection, label_prefix)
+        stored, diff.rating_key, vanished = _create_labelled_collection(
+            plex,
+            section,
+            profile,
+            picks,
+            title=title,
+            label=label,
+            display=display,
+            poster=poster,
+            artist=artist,
+            order_work=order_work,
+        )
+        if vanished:
+            dead = set(vanished)
+            diff.added = [p.title for p in picks if p.rating_key not in dead]
+        return diff, stored
     if order_work is not None:
         order_work.append((collection, wanted_keys))
     apply_poster(plex, collection, poster, profile, picks, library_name=section.title, artist=artist, dry_run=False)

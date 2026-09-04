@@ -281,6 +281,16 @@ _PMS_TIMEOUTS = (
 _HUB_ORDER_ATTEMPTS = 3
 
 
+class CollectionRejectedItems(RuntimeError):
+    """Plex answered 400 when items were ADDED to a collection — not to any other write on it.
+
+    Observed on a real server: an empty collection of ours refused a batch of 30 valid shows AND a
+    single one, while a sibling in the same library accepted the same item seconds later. The object
+    itself was broken and stayed broken run after run. `delivery._deliver_one` treats this, and only
+    this, as grounds to rebuild the row.
+    """
+
+
 def _retry_idempotent(operation: Callable[[], None], *, label: str, attempts: int = 4) -> None:
     """Retry an IDEMPOTENT PMS mutation (promotion, or a delivery collection upsert) on a read/connect
     timeout, backing off between tries.
@@ -1259,7 +1269,19 @@ class PlexClient:
         wanted_set = set(wanted_keys)
         to_remove = [i for i in existing_items if i.ratingKey not in wanted_set]
         if add_items:
-            collection.addItems(add_items)
+            try:
+                collection.addItems(add_items)
+            except Exception as exc:
+                # Anchored on the leading token, never `"400" in`: plexapi formats the message as
+                # `f'({status}) {codename}; {url} {errtext}'` and that url carries the collection's
+                # own ratingKey, so a substring test matches keys like 1400 or 40053 — the mistake
+                # that once swallowed 500s and 401s in `delivery._rename_or_keep`.
+                if not str(exc).startswith("(400)"):
+                    raise
+                # Raised from HERE, not inferred by the caller, so "the collection refuses items" can
+                # never be confused with a 400 from the removeItems or sortUpdate below. Those are
+                # different endpoints and a rebuild does not fix them.
+                raise CollectionRejectedItems(str(exc)) from exc
         if to_remove:
             collection.removeItems(to_remove)
         collection.sortUpdate(sort="custom")

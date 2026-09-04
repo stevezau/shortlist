@@ -11,8 +11,10 @@ import pytest
 import respx
 
 from shortlist.engine.clients.search import (
+    _EXA_TIMEOUTS,
     _EXA_TITLE_SCHEMA,
     DEFAULT_EXA_SEARCH_TYPE,
+    EXA_SEARCH_TYPES,
     EXA_SEARCH_URL,
     ExaClient,
     SearchResult,
@@ -383,6 +385,27 @@ class TestExaTimeouts:
         searches were lost, so it must stay comfortably clear of it — and under Exa's ~100s 524."""
         deep = ExaClient("k", search_type="deep-lite")._timeout
         assert 60 <= deep <= 100, deep
+
+    def test_every_offered_mode_is_one_the_client_accepts(self):
+        """The clamp makes a wrong mode SILENT, so nothing else would catch this.
+
+        The Settings Test button hardcoded `search_type="fast"`. When `fast` was dropped for
+        returning no titles, `ExaClient` clamped the unknown value to the DEFAULT — so every
+        auto-test on the Settings page quietly ran `deep-lite` at 1.7x the price, and the only
+        evidence was a log line. Found on a live provider check, not by any test.
+        """
+        for mode in EXA_SEARCH_TYPES:
+            assert ExaClient("k", search_type=mode)._search_type == mode, mode
+            assert mode in _EXA_TIMEOUTS, f"{mode} has no timeout, so it would fall back silently"
+
+    def test_instant_is_first_because_the_test_button_pings_whatever_is(self):
+        """`settings.py` pings `EXA_SEARCH_TYPES[0]`, so this order is load-bearing, not cosmetic.
+
+        Asserts the IDENTITY, not "the smallest timeout": `instant` and `auto` share a 30s ceiling,
+        so a timeout comparison stays green if they swap — and `auto` measured the worst of every
+        mode (2 picks where `instant` gave 7, at the same price).
+        """
+        assert EXA_SEARCH_TYPES[0] == "instant", EXA_SEARCH_TYPES
 
     def test_an_explicit_timeout_still_wins(self):
         assert ExaClient("k", search_type="deep", timeout=5.0)._timeout == 5.0

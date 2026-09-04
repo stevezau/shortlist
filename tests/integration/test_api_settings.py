@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from shortlist.engine.clients.search import EXA_SEARCH_TYPES
 from shortlist.server.db.models import User
 from shortlist.server.settings_store import SettingsStore
 
@@ -522,9 +523,19 @@ class TestSettingsApi:
         assert no_key["ok"] is False and "Exa" in no_key["message"]
         # With a key, it pings Exa (mocked — no test may touch the network).
         client.put("/api/settings", json={"values": {"exa.apikey": "exa-secret-123"}})
-        monkeypatch.setattr("shortlist.engine.clients.search.ExaClient.ping", lambda self: "Exa key works")
+        # Capture the MODE the probe runs on, which is the one parameter this endpoint controls.
+        # It hardcoded "fast"; when that mode was dropped, `ExaClient` silently CLAMPED the unknown
+        # value to the default, so every auto-test on the Settings page quietly ran `deep-lite` at
+        # ~1.7x the price. Nothing failed — the only evidence was a log line — and this test passed
+        # throughout, because it asserted the message and never the argument.
+        seen: list[str] = []
+        monkeypatch.setattr(
+            "shortlist.engine.clients.search.ExaClient.ping",
+            lambda self: seen.append(self._search_type) or "Exa key works",
+        )
         ok = client.post("/api/settings/test/exa").json()
         assert ok["ok"] is True and "Exa key works" in ok["message"]
+        assert seen == [EXA_SEARCH_TYPES[0]], "the probe must use the cheapest OFFERED mode, never a literal"
         # Both branches build their own dict, so both are checked against the response model.
         assert set(no_key) == {"ok", "message"} and set(ok) == {"ok", "message"}
 

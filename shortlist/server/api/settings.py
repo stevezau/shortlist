@@ -678,10 +678,15 @@ async def test_connection(service: str, request: Request) -> dict:
                 api_key = get("exa.apikey") or ""
                 if not api_key:
                     raise RuntimeError("An Exa API key is required for AI web search")
-                # Ping on `fast`, whatever the configured mode: Test should answer in a couple of
-                # seconds, and `deep-reasoning` takes up to 40. This proves the key, which is the
-                # only thing the button claims to prove.
-                return ExaClient(api_key, search_type="fast").ping()
+                # Ping on the CHEAPEST OFFERED mode, whatever the configured one: Test should answer
+                # in a couple of seconds and cost as little as possible, and proving the key is the
+                # only thing this button claims to do.
+                #
+                # Taken from EXA_SEARCH_TYPES rather than named literally. It used to hardcode
+                # "fast"; when that mode was dropped for returning no titles, `ExaClient` clamped the
+                # unknown value to the DEFAULT — so every auto-test on the Settings page silently ran
+                # `deep-lite` at 1.7x the price and logged a warning nobody had asked for.
+                return ExaClient(api_key, search_type=EXA_SEARCH_TYPES[0]).ping()
             if service == "native_search":
                 # A REAL web search, not a capability lookup. `supports_native_web_search` says the
                 # provider offers the tool; it cannot say this account's plan or model may use it.
