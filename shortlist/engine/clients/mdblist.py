@@ -41,6 +41,20 @@ class MdbListRateLimitError(MdbListError):
     titles this run, falls back to TMDB ratings, and alerts the owner."""
 
 
+#: Consecutive failures before this client gives up on MDBList for the rest of the run.
+#:
+#: Measured, not guessed. MDBList went down mid-run on 2026-09-04: every lookup burned the full
+#: retry ladder (3 attempts x a 15s timeout plus backoff, ~43s each) and returned a soft None, so
+#: the run walked its entire 100-lookup budget one dead call at a time — over an hour of a nightly
+#: run spent on a provider that was answering nothing, and it would have happened again every night
+#: until MDBList came back. Five failures is enough to tell an outage from a blip and costs ~3
+#: minutes instead of ~72.
+#:
+#: Deliberately never re-closes. The client is built once per run, so a new run always gets a fresh
+#: circuit — that is the right granularity, and re-probing mid-run would just re-pay the ladder.
+_BREAKER_TRIP = 5
+
+
 class MdbListClient:
     def __init__(
         self,
@@ -58,6 +72,10 @@ class MdbListClient:
         # cached title is answered from SQLite — so this, not the number of titles inspected, is what
         # a caller rationing the free tier has to budget against. See `requests._gate_by_source`.
         self.live_lookups = 0
+        # Circuit breaker. Consecutive transport/5xx failures; at `_BREAKER_TRIP` the client stops
+        # calling MDBList for the rest of its life and answers None instantly. See `_fetch_all`.
+        self._consecutive_failures = 0
+        self._circuit_open = False
 
     def rating(self, tmdb_id: int, media_type: MediaType, source: str) -> tuple[float, int] | None:
         """(rating 0..10, votes) for ``source`` on this title, or None if that source has no score.
@@ -94,6 +112,22 @@ class MdbListClient:
         if cached is not None:
             self._cache.set(key, cached, ttl_s)
 
+    def _note_failure(self, reason: str) -> None:
+        """Count a failure and open the circuit once MDBList has clearly stopped answering."""
+        self._consecutive_failures += 1
+        if self._consecutive_failures >= _BREAKER_TRIP and not self._circuit_open:
+            self._circuit_open = True
+            # WARNING, and said once: this changes what the run produces (titles go unrated, so they
+            # are not requested), and an owner seeing thin requests needs the reason without reading
+            # a hundred identical timeout lines.
+            logger.warning(
+                "MDBList has failed {} times in a row ({}); giving up on it for the rest of this run. "
+                "Titles will go unrated rather than each one waiting out the retries — roughly an hour "
+                "of run time on a full budget. Ratings resume automatically on the next run.",
+                self._consecutive_failures,
+                reason,
+            )
+
     def _fetch_all(self, tmdb_id: int, media_type: MediaType) -> dict[str, list] | None:
         """Fetch every source's (rating, votes) for one title, normalised to a 0..10 scale.
 
@@ -101,16 +135,23 @@ class MdbListClient:
         failure. Raises ``MdbListRateLimitError`` on 429.
         """
         kind = "movie" if media_type is MediaType.MOVIE else "show"
+        if self._circuit_open:
+            return None
         try:
             r = http_retry.get(f"{API}/tmdb/{kind}/{tmdb_id}", params={"apikey": self._api_key}, timeout=self._timeout)
         except httpx.HTTPError as e:
             logger.warning("MDBList unreachable for {} {}: {}", kind, tmdb_id, type(e).__name__)
+            self._note_failure("unreachable")
             return None
         if r.status_code == 429:
+            # A quota verdict, not an outage — it has its own handling and must not trip the breaker,
+            # or a rate-limited run would look like a dead provider to the next caller.
             raise MdbListRateLimitError("MDBList daily request limit reached")
         if r.status_code != 200:
             logger.warning("MDBList returned HTTP {} for {} {}", r.status_code, kind, tmdb_id)
+            self._note_failure(f"HTTP {r.status_code}")
             return None
+        self._consecutive_failures = 0  # a real answer clears the run of failures behind it
         try:
             data = r.json()
         except ValueError:  # a 200 with a non-JSON body (proxy/error page)
