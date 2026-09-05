@@ -223,6 +223,7 @@ export function StepCurator({ data, update }: StepProps) {
                 placeholder={selected.defaultModel}
                 models={modelOptions}
                 loading={models.isFetching}
+                      error={models.isError}
                 onChange={setModel}
               />
             </div>

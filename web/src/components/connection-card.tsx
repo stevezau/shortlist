@@ -420,6 +420,7 @@ export function ConnectionCard({
                       placeholder={field.placeholder}
                       models={modelOptions}
                       loading={models.isLoading}
+                      error={models.isError}
                       onChange={(v) =>
                         setValues((prev) => ({ ...prev, [field.key]: v }))
                       }

@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Check, Loader2, Pen } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useLocation, useParams } from "react-router";
+import { Link, useLocation, useParams } from "react-router";
 
 import { BackLink } from "@/components/back-link";
 import { MAX_SEEDS_LABEL } from "@/components/max-seeds-field";
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ProgressBar } from "@/components/ui/progress-bar";
+import { Skeleton } from "@/components/ui/skeleton";
 import { api, apiUrl } from "@/lib/api";
 import { useCollections } from "@/lib/queries";
 
@@ -176,6 +177,35 @@ export function RowRenamePage() {
         </p>
       </header>
 
+      {/* Loading, a failed fetch, and "the URL names a row that does not exist" all fell through
+          this `collection &&` guard and rendered the header above a blank space — no skeleton, no
+          error, no "that row is gone". Three answers, one silence. */}
+      {!confirmed && collections.isPending && (
+        <div className="max-w-md space-y-3">
+          <Skeleton className="h-9 w-full" />
+          <Skeleton className="h-9 w-32" />
+        </div>
+      )}
+      {!confirmed && collections.isError && (
+        <div className="max-w-md space-y-2">
+          <p className="text-sm text-destructive-text" role="alert">
+            Couldn&rsquo;t load this row.
+          </p>
+          <Button variant="outline" onClick={() => collections.refetch()}>
+            Try again
+          </Button>
+        </div>
+      )}
+      {!confirmed && collections.isSuccess && !collection && (
+        <div className="max-w-md space-y-2">
+          <p className="text-sm text-muted-foreground">
+            That row no longer exists — it may have been deleted.
+          </p>
+          <Button variant="outline" asChild>
+            <Link to="/rows">Back to rows</Link>
+          </Button>
+        </div>
+      )}
       {!confirmed && collection && (
         <div className="max-w-md space-y-3">
           <div className="space-y-2">

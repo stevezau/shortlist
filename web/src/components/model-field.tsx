@@ -17,6 +17,7 @@ export function ModelField({
   placeholder,
   models,
   loading,
+  error,
   onChange,
 }: {
   id: string;
@@ -24,6 +25,10 @@ export function ModelField({
   placeholder?: string;
   models: string[];
   loading: boolean;
+  /** A FAILED model list is not an empty one. Both callers threaded `loading` but not this, so a bad
+   *  key or an unreachable provider rendered exactly like "loaded, no models to offer" — the owner
+   *  saw "Sensible default" and no reason to suspect the credential they had just entered. */
+  error?: boolean;
   onChange: (value: string) => void;
 }) {
   const [custom, setCustom] = useState(false);
@@ -46,7 +51,11 @@ export function ModelField({
         className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
       >
         <option value="">
-          {loading ? "Loading models…" : "Sensible default"}
+          {loading
+            ? "Loading models…"
+            : error
+              ? "Couldn't list models"
+              : "Sensible default"}
         </option>
         {options.map((m) => (
           <option key={m} value={m}>
@@ -55,6 +64,12 @@ export function ModelField({
         ))}
         <option value={CUSTOM_MODEL}>Custom…</option>
       </select>
+      {error && !loading && (
+        <p className="text-xs text-destructive-text" role="alert">
+          Couldn&rsquo;t load the model list. Check the key and the URL — you can
+          still type a model name below.
+        </p>
+      )}
       {custom && (
         <Input
           type="text"

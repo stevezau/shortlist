@@ -48,23 +48,30 @@ export function StepCustomize({ update, next }: StepProps) {
     const savedSize = saved["row.size"];
     // Functional updaters: if the fetch was slow and the owner already picked something, their
     // choice wins. An absent saved value never overwrites what they chose.
-    if (savedTpl) {
-      setChoice((cur) =>
-        cur !== "static"
-          ? cur
+    //
+    // All three called unconditionally at the effect's top level, exactly as `step-history` does.
+    // Wrapping them in `if (savedTpl)` reads more naturally but trips
+    // `react-hooks/set-state-in-effect`, which is an ERROR in this config and would fail CI's lint
+    // job — so the "is there anything to apply?" test lives inside each updater instead.
+    setChoice((cur) =>
+      cur !== "static" || !savedTpl
+        ? cur
+        : savedTpl === DYNAMIC_TPL
+          ? "dynamic"
           : savedTpl === STATIC_TPL
             ? "static"
-            : savedTpl === DYNAMIC_TPL
-              ? "dynamic"
-              : "custom",
-      );
-      setCustomTpl((cur) =>
-        savedTpl === STATIC_TPL || savedTpl === DYNAMIC_TPL ? cur : savedTpl,
-      );
-    }
-    if (typeof savedSize === "number" && savedSize > 0) {
-      setRowSize((cur) => (cur === ROW_SIZE_DEFAULT ? savedSize : cur));
-    }
+            : "custom",
+    );
+    setCustomTpl((cur) =>
+      !savedTpl || savedTpl === STATIC_TPL || savedTpl === DYNAMIC_TPL
+        ? cur
+        : savedTpl,
+    );
+    setRowSize((cur) =>
+      typeof savedSize === "number" && savedSize > 0 && cur === ROW_SIZE_DEFAULT
+        ? savedSize
+        : cur,
+    );
   }, [settings.data]);
 
   const template =

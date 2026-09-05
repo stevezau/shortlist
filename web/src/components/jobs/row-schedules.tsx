@@ -1,6 +1,7 @@
 import { CalendarClock, Clock } from "lucide-react";
 import { Link } from "react-router";
 
+import { Skeleton } from "@/components/ui/skeleton";
 import { describeCron } from "@/lib/cron";
 import { timeUntil } from "@/lib/format";
 import { useSchedule } from "@/lib/queries";
@@ -27,6 +28,35 @@ export function RowSchedules() {
   const query = useSchedule();
   const groups = (query.data?.rows ?? []).filter((entry) => entry.cron);
 
+  // Loading, a failed fetch and "genuinely nothing on its own schedule" all produced an empty list
+  // and rendered nothing at all — three different situations collapsed into one blank space, so a
+  // broken schedule endpoint looked exactly like a server with no per-row schedules. Absent is a
+  // legitimate answer here (most installs have none), so it stays silent; the other two do not.
+  if (query.isPending) {
+    return (
+      <section className="space-y-2">
+        <h2 className="text-sm font-medium">Rows</h2>
+        <Skeleton className="h-16 w-full" />
+      </section>
+    );
+  }
+  if (query.isError) {
+    return (
+      <section className="space-y-2">
+        <h2 className="text-sm font-medium">Rows</h2>
+        <p className="text-sm text-destructive-text" role="alert">
+          Couldn&rsquo;t load row schedules.{" "}
+          <button
+            type="button"
+            className="underline underline-offset-2"
+            onClick={() => query.refetch()}
+          >
+            Try again
+          </button>
+        </p>
+      </section>
+    );
+  }
   if (groups.length === 0) return null;
 
   return (
