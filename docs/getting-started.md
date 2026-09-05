@@ -122,9 +122,11 @@ ignore the label exclusion, which is why the wizard surfaces your version before
 You're in the user list too, so you can give yourself a row like anyone else. On a one-person
 server that's the whole point.
 
-What Plex cannot do is hide collections from the **server owner**: your own Home shows every user's
-row, not just yours. If you share the server with other people and want a clean Home, watch on a
-Plex Home user and keep the admin account for administration.
+What Plex cannot do is hide collections from the **server owner**. Your own Home screen is fine —
+Shortlist puts each person's row only on their side — but the library's **Collections** tab shows you
+everyone's, and so does the Recommended shelf if you leave that on for a row. If that bothers you,
+take the rows off the Recommended shelf, or watch on a Plex Home user and keep the admin account for
+administration.
 
 ## You're set up. What now?
 

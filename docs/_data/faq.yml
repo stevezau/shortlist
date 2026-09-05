@@ -44,10 +44,12 @@
 
 - q: What can the server owner see?
   a: >-
-    Everything. Plex cannot hide collections from the account that owns the server, so the admin
-    account's home screen shows every user's row, not just its own. That is a Plex limitation rather
-    than a Shortlist choice. If you share with other people and want a tidy home screen, watch on a
-    Plex Home user and keep the admin account for admin.
+    Not everyone's rows on your own Home screen — Shortlist puts each person's row only on their
+    side, so nobody else's row lands on yours. Where you do see them all is the library's Collections
+    tab, and the Recommended shelf if you leave that on for a row, because Plex cannot hide anything
+    from the account that owns the server. That is a Plex limitation rather than a Shortlist choice.
+    If it bothers you, take the rows off the Recommended shelf, or watch on a Plex Home user and keep
+    the admin account for admin.
 
 - q: What happens to my Plex settings if I uninstall?
   a: >-

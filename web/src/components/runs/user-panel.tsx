@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 
 import { PickList } from "@/components/pick-list";
+import { TitlePoster } from "@/components/title-poster";
 import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
 import { provenanceLabel } from "@/lib/pick-provenance";
@@ -113,23 +114,36 @@ function sharedPoolsTokens(pools: RunPoolCost[]): number {
   return pools.reduce((n, pool) => n + pool.tokens, 0);
 }
 
+/** The match-quality half of `provenanceLabel` — "close match", "related" — without the "suggested
+ *  by TMDB" prefix, which repeated a word the score and the links on the same line already carry. */
+function matchQuality(pick: Pick): string {
+  const label = provenanceLabel(pick);
+  const [, quality] = label.split(" · ");
+  return quality ?? "";
+}
+
 /** One ranked pick: rank, a status dot (green = new this run), title + reason, and where it
  *  came from. */
 function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
   const links = titleLinks(pick);
   return (
-    <li className="flex items-baseline gap-3 py-1.5">
+    // `items-start`, not `items-baseline`: a poster and a text baseline do not align.
+    <li className="flex items-start gap-3 py-1.5">
       <span
         className={cn(
-          "w-9 shrink-0 text-right text-sm font-semibold tabular-nums",
+          "w-9 shrink-0 pt-0.5 text-right text-sm font-semibold tabular-nums",
           rankClass(pick.rank),
         )}
       >
         #{pick.rank}
       </span>
+      {/* The same artwork `PickList` shows, from the same `rating_key`, because this is the page
+          where you eyeball what went into someone's row. Only five picks render per library before
+          the show-all toggle, so the cost is bounded. */}
+      <TitlePoster ratingKey={pick.rating_key} />
       <span
         className={cn(
-          "mt-1.5 h-2 w-2 shrink-0 rounded-full",
+          "mt-2 h-2 w-2 shrink-0 rounded-full",
           isNew ? "bg-success" : "bg-muted-foreground/30",
         )}
         aria-label={isNew ? "new this run" : "kept"}
@@ -157,9 +171,10 @@ function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
         {(ratingLabel(pick) || provenanceLabel(pick) || links.length > 0) && (
           <span className="flex flex-wrap items-baseline gap-x-2 text-xs text-muted-foreground/80">
             <span className="truncate">
-              {[ratingLabel(pick), provenanceLabel(pick)]
-                .filter(Boolean)
-                .join(" · ")}
+              {/* Not `provenanceLabel` as well: it renders "suggested by TMDB", which put the word
+                  TMDB three times in one line meaning the score, the source and the link. The match
+                  quality is the half that adds something the links do not. */}
+              {[ratingLabel(pick), matchQuality(pick)].filter(Boolean).join(" · ")}
             </span>
             {links.map((link) => (
               <a
@@ -450,11 +465,13 @@ function UserPanelBody({
           className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
           aria-hidden="true"
         />
+        {/* No heading. `RunUser.reason` is one of eight specific sentences, and two of them are
+            cancellations ("The run was cancelled before this person's turn") — under a heading
+            reading "Nothing to build for this person" the page contradicted itself: there WAS
+            something to build, the run stopped. The reasons are already complete sentences and are
+            already rendered heading-free on the cold-start path below, which reads better. */}
         <div>
-          <p className="font-medium text-foreground">
-            Nothing to build for this person
-          </p>
-          <p className="mt-1 text-muted-foreground">
+          <p className="text-foreground">
             {result.reason ??
               "No row was due for them in this run. Check that a per-person row is enabled and that they’re in its audience."}
           </p>

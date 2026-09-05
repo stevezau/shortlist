@@ -93,11 +93,7 @@ collections and runs unattended: an **empty** roster is ignored entirely, and if
 your enabled accounts appear to vanish at once, nothing happens and an error is recorded instead.
 Both cases are far more likely to be a truncated response than a real mass departure.
 
-A departed row stays in the list so you can see what happened. **Remove** clears it out: their pick
-history and run history are deleted and the row disappears. What it deliberately keeps is that
-account's _original Plex share settings_, recorded before Shortlist ever touched them — so
-uninstalling Shortlist can still put the account back exactly as it found it. That record is the only
-copy, which is why Remove archives rather than deletes.
+A departed row stays in the list so you can see what happened. **Remove** deletes that person's pick history and run history, and their row disappears from the list. It keeps one thing: a copy of their original Plex share settings from before Shortlist touched them, so uninstalling can still put their account back exactly as it was.
 
 You do not have to clean up their share filters. Once their row is gone from the server, the next
 privacy pass drops the leftover `label!=` entry from everyone else's filters on its own — but only

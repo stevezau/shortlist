@@ -23,7 +23,7 @@
 - group: More suggestions
   items:
     - name: Trakt
-      note: optional, finds titles TMDB misses
+      note: optional, finds titles TMDB misses (their API key now needs a paid VIP plan)
     - name: MDBList
       note: optional, ratings from IMDb, Rotten Tomatoes and others
 
@@ -33,6 +33,8 @@
       note: optional, for films
     - name: Sonarr
       note: optional, for TV
+    - name: Overseerr, Jellyseerr
+      note: optional, hand the request to them instead and let them drive the download apps
 
 - group: AI models
   items:
@@ -44,6 +46,8 @@
 - group: Web search
   items:
     - name: Exa
-      note: optional, and the only way a model you run yourself can search
+      note: optional, a hosted search API
+    - name: SearXNG
+      note: optional, search you host yourself — no account, no key
     - name: Your AI provider's own search
       note: optional, works with Claude, GPT and Gemini

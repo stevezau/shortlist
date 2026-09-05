@@ -8,12 +8,7 @@ import { Link } from "react-router";
 
 import { QueryBoundary } from "@/components/query-boundary";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  CORE_CATEGORIES,
-  deriveHealthChips,
-  type HealthState,
-} from "@/lib/health";
+import { deriveHealthChips, type HealthState } from "@/lib/health";
 import { useNotifications } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
@@ -42,9 +37,20 @@ const TONE: Record<HealthState, { icon: LucideIcon; className: string }> = {
  * One chip per subsystem the notification registry already watches, so the dashboard answers "which
  * area needs me" without the bell being opened and every alert read in order.
  *
- * A green chip means "nothing outstanding here", not "checked and healthy": most of these alerts
- * are dismissable, and the Verdict card's status line below reads raw report fields no dismissal
- * can silence. Where the two overlap, that line is the authority — hence the wording here.
+ * ONLY renders chips that need attention. A healthy server shows nothing at all.
+ *
+ * Six permanently-green chips were an all-clear nobody asked for, rendered on every page load —
+ * the exact thing `notifications-design.md` refuses for the webhook ("skipped entirely if empty; no
+ * 'all clear' ping nobody asked for") and warns about for the update notice ("the paradigm case of
+ * a notifier training itself to be ignored").
+ *
+ * They were also weaker than they looked. A green chip means "nothing outstanding here", NOT
+ * "checked and healthy" — most of these alerts are dismissable, so dismissing one turns the chip
+ * green while the fact behind it stands. And the Verdict card 400px below reads raw report fields
+ * that no dismissal can silence, so on the two facts they share, that line is the authority and
+ * this was the copy that had to hedge. A strip that is silent when everything is fine keeps the
+ * "which area" grouping exactly when it is worth something and says nothing the bell has not
+ * already said when it is not.
  */
 export function HealthStrip() {
   const notifications = useNotifications();
@@ -54,19 +60,18 @@ export function HealthStrip() {
     <div className="mb-6">
       <QueryBoundary
         query={notifications}
-        skeleton={
-          <ul className="flex flex-wrap gap-2">
-            {CORE_CATEGORIES.map((core) => (
-              <li key={core.category}>
-                <Skeleton className="h-6 w-24 rounded-full" />
-              </li>
-            ))}
-          </ul>
-        }
+        // No skeleton: the common answer is "nothing to show", so a placeholder row would flash
+        // six grey pills and then collapse on every dashboard load.
+        skeleton={null}
       >
-        {(data) => (
-          <ul aria-label="Open alerts by area" className="flex flex-wrap gap-2">
-            {deriveHealthChips(data.notifications).map((chip) => {
+        {(data) => {
+          const chips = deriveHealthChips(data.notifications).filter(
+            (chip) => chip.state !== "ok",
+          );
+          if (chips.length === 0) return null;
+          return (
+          <ul aria-label="Needs attention" className="flex flex-wrap gap-2">
+            {chips.map((chip) => {
               const { icon: Icon, className } = TONE[chip.state];
               return (
                 <li key={chip.category}>
@@ -86,9 +91,7 @@ export function HealthStrip() {
                       {chip.label}
                       {/* The state itself, for anyone who cannot see the colour or the icon. */}
                       <span className="sr-only">
-                        {chip.detail
-                          ? `: ${chip.detail}`
-                          : ": nothing outstanding"}
+                        {chip.detail ? `: ${chip.detail}` : ""}
                       </span>
                     </Badge>
                   </Link>
@@ -96,7 +99,8 @@ export function HealthStrip() {
               );
             })}
           </ul>
-        )}
+          );
+        }}
       </QueryBoundary>
     </div>
   );

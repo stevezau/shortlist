@@ -362,7 +362,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 AI web search runs a &ldquo;what to watch if you liked X&rdquo;
                 search for. Fewer = tighter and cheaper, and setting it higher
                 than <strong>{MAX_SEEDS_LABEL}</strong> changes nothing. Results
-                are cached for two weeks and shared across people.
+                are cached for 7 days and shared across people.
               </p>
               <div className="flex items-center gap-2">
                 <Input

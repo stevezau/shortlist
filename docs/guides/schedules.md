@@ -1,5 +1,5 @@
 ---
-title: "Schedules: when rows rebuild"
+title: "Schedules: when rows run"
 description: Every row runs on its own schedule. How to set it, how to write a custom one, and which background jobs matter.
 heading: Schedules and runs
 nav_order: 4

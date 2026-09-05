@@ -211,8 +211,10 @@ describe("RunDetailPage — grouped by library", () => {
     expect(screen.getByText(/war epic/)).toBeInTheDocument();
     // This page is where "why did it pick that?" gets asked, and it has its OWN pick renderer
     // rather than using PickList — so the provenance line has to be asserted here separately.
+    // Just the match quality now. "suggested by TMDB" was dropped from this line because it put
+    // the word TMDB three times in one row — the score, the source, and the link chip.
     expect(
-      screen.getByText(/suggested by TMDB · loosely related/),
+      screen.getByText(/loosely related/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/survival series/)).not.toBeInTheDocument();
 

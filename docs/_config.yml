@@ -87,6 +87,8 @@ nav:
         url: /guides/troubleshooting/
       - title: On the internet
         url: /guides/security/
+  - title: What it works with
+    url: /integrations/
   - title: Reference
     url: /reference/
     blurb: Settings, API, env vars

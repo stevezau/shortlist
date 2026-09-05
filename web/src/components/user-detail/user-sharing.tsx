@@ -57,13 +57,23 @@ export function UserSharing({ user }: { user: User }) {
               </Label>
               <SavedIndicator show={saved} />
             </div>
+            {/* This toggle is the ONE write in the product that widens what an account can see
+                (plex-safety rule 3). The old copy — "leave their Plex sharing exactly as you set
+                it" — read as a considerate no-op and never said the consequence out loud, while the
+                badge this same choice produces already said it plainly. The decision is made here,
+                so the outcome belongs here. */}
             <p className="text-sm text-muted-foreground">
-              Shortlist adds label exclusions to {who}&rsquo;s Plex restrictions
-              so the only personal row they see is their own. Turn this off to
-              leave their Plex sharing exactly as you set it — Shortlist takes
-              back out the exclusions it added and never touches that account
-              again. A shared row you&rsquo;ve limited to certain people stays
-              hidden from them either way.
+              <strong className="text-foreground">On:</strong> Shortlist edits{" "}
+              {who}&rsquo;s Plex sharing so the only personal row they see is
+              their own.
+            </p>
+            <p className="text-sm text-muted-foreground">
+              <strong className="text-destructive-text">Off:</strong> {who} will
+              be able to see everyone else&rsquo;s personal rows. Shortlist
+              removes what it added to their account and never touches it again.
+              Nobody else&rsquo;s account changes — everyone still has{" "}
+              {who}&rsquo;s row hidden, and a shared row you&rsquo;ve limited to
+              certain people stays hidden either way.
             </p>
           </div>
           <Switch

@@ -140,7 +140,7 @@ export function AiWebSearchCard({
                   <a href="#recent-count" className="font-medium underline">
                     {RECENT_COUNT_LABEL}
                   </a>{" "}
-                  allows (default 10). Results are cached for two weeks and
+                  allows (default 10). Results are cached for 7 days and
                   shared across everyone, so a popular title is searched once
                   for the whole server — not once per person.
                 </p>

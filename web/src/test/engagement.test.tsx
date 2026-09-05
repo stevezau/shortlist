@@ -77,7 +77,11 @@ function report(over: Partial<EffectivenessReport> = {}): EffectivenessReport {
     // `overall` was absent entirely, though the fixture is cast to `EffectivenessReport`, which has
     // it. The card reads `overall.dropped`/`overall.bounced` to tell "nobody gave up" from "the only
     // give-ups were too short to list" — a distinction it cannot make against an undefined.
-    overall: { dropped: 0, bounced: 0 },
+    // A MATURED cohort. The card suppresses every "nothing landed" warning while
+    // `landing.rate` is null, because that is the Impact card's "not enough time yet" — without a
+    // rate here these tests would assert warnings the product deliberately withholds on a new
+    // install. `rate: 0` is a real measurement of zero; `null` is "we cannot say".
+    overall: { dropped: 0, bounced: 0, landing: { rate: 0, matured_days: 30 } },
     ...over,
   } as unknown as EffectivenessReport;
 }

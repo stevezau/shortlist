@@ -1826,7 +1826,11 @@ figcaption {
   border-radius: 5px;
   padding: 0.1em 0.38em;
   color: var(--accent-text);
-  white-space: nowrap;
+  /* NOT `nowrap`. It defeated the `overflow-wrap` beside it, so a long inline code span — an API
+     path, or the ranking formula — set a min-content width wider than a phone and panned the whole
+     page sideways. Reference was 555px of content in a 316px viewport. */
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .prose pre {

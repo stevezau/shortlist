@@ -227,9 +227,26 @@ export function NeedsALook({
           skeleton={<Skeleton className="mt-3 h-16 w-full" />}
         >
           {(data) => {
+            // The SAME maturity gate the Impact card above uses. `landing.rate === null` is that
+            // card's "Not enough time yet — every pick gets N days to be watched before it counts".
+            // Without this, a five-minute-old install showed that sentence and, twelve inches below,
+            // three amber warnings that nobody had watched anything — two cards on one screen
+            // contradicting each other by construction.
+            // `?.` because an older report — or a caller that builds `overall` by hand — may carry no
+            // landing block at all. Absent is NOT the same as `null`: null is the server saying "too
+            // early to judge", absent is no opinion, and only the first may suppress a warning.
+            const tooEarly = report.overall.landing?.rate === null;
+            const idle = tooEarly ? null : idlePeople(report.coverage);
+            // Only when the line above covers EVERYONE. "3 of 3 people got picks and watched none"
+            // followed by one line per row saying the same of each row is one fact stated three
+            // ways. When only SOME people are idle, the per-row breakdown says which rows — which is
+            // new information and the reason this list exists.
+            const idleCoversEveryone =
+              idle !== null &&
+              report.coverage.users_idle === report.coverage.users_with_picks;
             const problems = [
-              idlePeople(report.coverage),
-              ...deadRows(report.per_row),
+              idle,
+              ...(tooEarly || idleCoversEveryone ? [] : deadRows(report.per_row)),
               unwatchedRequests(report.requests),
               ...gaveUp(data.people),
             ].filter((p): p is Problem => p !== null);

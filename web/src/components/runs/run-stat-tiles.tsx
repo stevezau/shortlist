@@ -184,7 +184,7 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
               : "web lookups · one per recent watch"
           }
           // Vendor-neutral: the same counter serves Exa and a self-hosted SearXNG.
-          title="External web-search requests this run actually made — a count, not tokens. Exa bills per request and SearXNG rate-limits per request, so it is tracked apart from token spend. Results are cached for two weeks and shared across everyone, so most lookups are served from cache and cost nothing."
+          title="External web-search requests this run actually made — a count, not tokens. Exa bills per request and SearXNG rate-limits per request, so it is tracked apart from token spend. Results are cached for 7 days and shared across everyone, so most lookups are served from cache and cost nothing."
         />
       )}
     </div>

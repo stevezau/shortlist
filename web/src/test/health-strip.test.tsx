@@ -60,47 +60,40 @@ function renderStrip() {
 describe("HealthStrip", () => {
   beforeEach(() => useNotifications.mockReset());
 
-  it("shows a chip per area, each one a link, when nothing is firing", () => {
+  it("renders nothing at all when every area is quiet", () => {
+    // Six permanently-green chips were an all-clear nobody asked for, on every page load — the same
+    // thing notifications-design.md refuses for the webhook ("no 'all clear' ping nobody asked
+    // for"). They were also weaker than they looked: most of these alerts are dismissable, so a
+    // dismissal turns a chip green while the fact behind it stands.
     useNotifications.mockReturnValue(loaded([]));
-    renderStrip();
+    const { container } = renderStrip();
 
-    const strip = screen.getByRole("list", { name: /Open alerts by area/i });
-    expect(within(strip).getAllByRole("link")).toHaveLength(6);
-    expect(
-      within(strip).getByRole("link", { name: /Privacy/i }),
-    ).toHaveAttribute("href", "/users");
+    expect(screen.queryByRole("list")).toBeNull();
+    expect(container.querySelector("a")).toBeNull();
   });
 
-  it("says a chip is quiet in words, not only in colour", () => {
-    // A screen reader gets neither the tint nor the icon, so the state has to be in the name.
-    useNotifications.mockReturnValue(loaded([]));
-    renderStrip();
-
-    expect(
-      screen.getByRole("link", { name: /Runs: nothing outstanding/i }),
-    ).toBeInTheDocument();
-  });
-
-  it("marks the area an alert belongs to, and links to that alert's own page", () => {
+  it("shows only the area that needs attention, not the five that do not", () => {
     useNotifications.mockReturnValue(loaded([alert()]));
     renderStrip();
 
-    const privacy = screen.getByRole("link", {
-      name: /Privacy: kid can see other people's rows/i,
-    });
-    expect(privacy).toHaveAttribute("href", "/users");
-    // The other five stay quiet — a strip that reddens all over says nothing about where to look.
+    const strip = screen.getByRole("list", { name: /Needs attention/i });
+    expect(within(strip).getAllByRole("link")).toHaveLength(1);
     expect(
-      screen.getByRole("link", { name: /Jobs: nothing outstanding/i }),
-    ).toBeInTheDocument();
+      within(strip).getByRole("link", {
+        name: /Privacy: kid can see other people's rows/i,
+      }),
+    ).toHaveAttribute("href", "/users");
+    expect(screen.queryByText(/nothing outstanding/i)).toBeNull();
   });
 
-  it("shows placeholders while the alerts are still loading", () => {
-    // Never a bare all-clear before the answer is known — the trap the bell was fixed for.
+  it("shows nothing while the alerts are still loading", () => {
+    // Never a bare all-clear before the answer is known — the trap the bell was fixed for. With the
+    // strip silent when healthy, a placeholder would flash six grey pills and then collapse on
+    // every single dashboard load.
     useNotifications.mockReturnValue(queryResult({ isPending: true }));
     const { container } = renderStrip();
 
-    expect(container.querySelectorAll("li")).toHaveLength(6);
+    expect(container.querySelectorAll("li")).toHaveLength(0);
     expect(screen.queryByText(/nothing outstanding/i)).toBeNull();
     expect(screen.queryByRole("link")).toBeNull();
   });

@@ -18,7 +18,8 @@ Eight short pages instead of one long one. If you know what you want to do, star
 | Give a row its own artwork                       | [Row posters](guides/rows.md#row-posters)                               |
 | Change where the suggestions come from           | [What goes in a row](guides/picks.md)                                   |
 | Stop one film skewing someone's picks            | [Blocking a seed](guides/picks.md#blocking-a-seed)                      |
-| Change how often a row refreshes                 | [Schedules and runs](guides/schedules.md)                               |
+| Change how often a row's picks CHANGE            | [What goes in a row](guides/picks.md)                                   |
+| Change WHEN a row runs overnight                 | [Schedules and runs](guides/schedules.md)                               |
 | Use AI, or keep it cheap                         | [AI and cost](guides/ai.md)                                             |
 | Send missing films and shows to Radarr, Sonarr or Overseerr | [Requests](guides/requests.md)                               |
 | Find out why a row didn't turn up                | [Troubleshooting](guides/troubleshooting.md)                            |
