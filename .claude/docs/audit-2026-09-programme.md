@@ -917,9 +917,12 @@ re-running against HEAD; CI runs plain `eslint .` without `--max-warnings 0` any
 | `wizard-dataloss` | ✅ done | `1179be2` (+ lint fix in `5db61b8`) |
 | `oneclick-delete` | ✅ done | `85be899` |
 | `four-states` | ✅ done (all 6) | `95d650d`, `5db61b8` |
+| `evaluation` (Wave 0) | ✅ done | `5a8a49c` |
+| `affinity` + `dampener` | ✅ primitives done, wiring pending | `aac9b48` |
+| `migration-ci` | ✅ done | merged from worktree, `56adbfa` |
 | everything else | ☐ not started | — |
 
-**9 of 35 implemented, 35 of 35 designed.** Wave 1 complete except `dry-run-gap`;
+**12 of 35 implemented, 35 of 35 designed.** (`affinity`/`dampener` are primitives only — nothing stamps `genre_penalty` yet, so the new term is inert until the wiring lands.) Wave 1 complete except `dry-run-gap`;
 Wave 2 complete except `sse-dead`.
 
 Remaining: `dry-run-gap`, `sse-dead`, `evaluation` (Wave 0), the 5 engine items (Wave 3, blocked on
