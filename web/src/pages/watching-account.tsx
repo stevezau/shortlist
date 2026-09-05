@@ -185,10 +185,19 @@ export function WatchingAccountPage() {
       <Step n={2} title="Your options">
         <OptionCard
           title="Take the rows off the library shelf"
+          // `collectionsQuery.data ?? []` cannot tell "no row is on the shelf" from "nobody has
+          // told us yet": both are an empty list. So a still-loading or FAILED query rendered
+          // "Already done" — the strongest claim on the page, made without having checked, and
+          // permanently, because a failed query never resolves. On the one screen whose whole job is
+          // explaining a privacy limitation honestly, an unverified all-clear is the worst default.
           body={
-            affected.length
-              ? `Rows show on everyone's Home screen only. Nobody sees anyone else's, including you. You lose the row inside Movies and TV Shows. Affects ${affected.length} row${affected.length === 1 ? "" : "s"}.`
-              : "Already done — no row is on the friends' Recommended shelf."
+            collectionsQuery.isPending
+              ? "Checking which rows are on the friends' Recommended shelf…"
+              : collectionsQuery.isError
+                ? "Couldn't check which rows are on the shelf — Shortlist could not reach its own API. Reload the page to try again."
+                : affected.length
+                  ? `Rows show on everyone's Home screen only. Nobody sees anyone else's, including you. You lose the row inside Movies and TV Shows. Affects ${affected.length} row${affected.length === 1 ? "" : "s"}.`
+                  : "Already done — no row is on the friends' Recommended shelf."
           }
           action={
             chose === "shelf-off" ? (
@@ -199,7 +208,12 @@ export function WatchingAccountPage() {
             ) : (
               <Button
                 variant="outline"
-                disabled={!affected.length || shelfOff.isPending}
+                // Never offer to fix what we have not managed to look at.
+                disabled={
+                  !collectionsQuery.isSuccess ||
+                  !affected.length ||
+                  shelfOff.isPending
+                }
                 onClick={() => shelfOff.mutate()}
               >
                 {shelfOff.isPending && (
@@ -257,7 +271,7 @@ export function WatchingAccountPage() {
         )}
 
         {shelfOff.isError && (
-          <p className="text-sm text-destructive">
+          <p className="text-sm text-destructive-text">
             Couldn&rsquo;t change the rows:{" "}
             {apiErrorMessage(
               shelfOff.error,
@@ -459,7 +473,8 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
           setPreview(reallyWrote ? null : result);
           setPreviewOf(reallyWrote ? null : target);
           setPreviewSource(reallyWrote ? null : effectiveSource);
-          if (!reallyWrote) setAcceptedRemovals(dryRun ? false : acceptedRemovals);
+          if (!reallyWrote)
+            setAcceptedRemovals(dryRun ? false : acceptedRemovals);
           if (reallyWrote) {
             // A new copy must never inherit an earlier restore's verdict.
             setUndone(null);
@@ -534,7 +549,9 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
               server the owner is the only answer and a one-option control is noise. */}
           {sourceOptions.length > 1 && (
             <label className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-muted-foreground">Copy the history from</span>
+              <span className="text-muted-foreground">
+                Copy the history from
+              </span>
               <select
                 className="rounded-md border bg-background px-2 py-1 text-sm"
                 value={effectiveSource ?? ""}
@@ -549,7 +566,10 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
                 }}
               >
                 {sourceOptions.map((option) => (
-                  <option key={option.id} value={option.isOwner ? "" : option.id}>
+                  <option
+                    key={option.id}
+                    value={option.isOwner ? "" : option.id}
+                  >
                     {option.label}
                   </option>
                 ))}
@@ -659,11 +679,11 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
             ) : (
               <>
                 It ends up matching {sourceName}&rsquo;s: the same films ticked
-                off, the same episodes of each show, and anything{" "}
-                {sourceName} is part-way through sitting at the same point in
-                Continue Watching. Anything watched on that account that{" "}
-                {sourceName} hasn&rsquo;t watched is un-ticked, so the two really
-                do match. {sourceName}&rsquo;s own account is never written to.
+                off, the same episodes of each show, and anything {sourceName}{" "}
+                is part-way through sitting at the same point in Continue
+                Watching. Anything watched on that account that {sourceName}{" "}
+                hasn&rsquo;t watched is un-ticked, so the two really do match.{" "}
+                {sourceName}&rsquo;s own account is never written to.
               </>
             )}{" "}
             <strong className="text-foreground">
@@ -689,103 +709,109 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
             !nothingToCopy &&
             transfer.data.snapshot_id !== null
           ) && (
-          <div className="space-y-2 rounded-md border border-dashed p-3 text-sm">
-            <p className="font-medium">An earlier copy can still be undone</p>
-            {(snapshots.data ?? []).map((snapshot) => (
-              <div key={snapshot.id} className="space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={undoPreviewCall.isPending || !snapshot.complete}
-                    onClick={() =>
-                      (setUndoFailure(null),
-                      undoPreviewCall.mutate(
-                        { snapshot_id: snapshot.id, dry_run: true },
-                        {
-                          onSuccess: (r) =>
-                            setUndoPreview({ id: snapshot.id, report: r }),
-                          onError: (e) =>
-                            setUndoFailure({
-                              id: snapshot.id,
-                              reason: apiErrorMessage(e, "please try again."),
-                            }),
-                        },
-                      ))
-                    }
-                  >
-                    Preview undoing the copy onto {snapshot.username}
-                  </Button>
-                  <span className="text-xs text-muted-foreground">
-                    {snapshot.complete
-                      ? `Would put back ${snapshot.entries} title${snapshot.entries === 1 ? "" : "s"} as they were.`
-                      : "Can't be undone — a library wasn't readable when that copy ran, so the saved state is incomplete."}
-                  </span>
-                </div>
-                {undoFailure?.id === snapshot.id && (
-                  <p className="text-xs text-destructive">
-                    Couldn&rsquo;t undo it: {undoFailure.reason}
-                  </p>
-                )}
-                {undoPreview?.id === snapshot.id && (
-                  <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
-                    {/* Undo is a mirror in the other direction, so it REMOVES anything watched on
-                        that account since the copy. It used to be one unguarded click. */}
-                    <p>
-                      Restoring makes {snapshot.username} match the saved state
-                      again. That un-ticks{" "}
-                      <strong>
-                        {undoPreview.report.unmarks +
-                          undoPreview.report.offsets_cleared}
-                      </strong>{" "}
-                      thing(s) watched on it since &mdash; including anything
-                      watched there after the copy.
-                    </p>
-                    {undoPreview.report.removals_preview.length > 0 && (
-                      <ul className="max-h-40 list-disc overflow-y-auto pl-5 text-xs text-muted-foreground">
-                        {undoPreview.report.removals_preview.map((title) => (
-                          <li key={title}>{title}</li>
-                        ))}
-                      </ul>
-                    )}
+            <div className="space-y-2 rounded-md border border-dashed p-3 text-sm">
+              <p className="font-medium">An earlier copy can still be undone</p>
+              {(snapshots.data ?? []).map((snapshot) => (
+                <div key={snapshot.id} className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <Button
                       variant="outline"
                       size="sm"
-                      disabled={undo.isPending}
-                      onClick={() =>
-                        (setUndoFailure(null),
-                        undo.mutate(
-                          { snapshot_id: snapshot.id, dry_run: false },
+                      disabled={undoPreviewCall.isPending || !snapshot.complete}
+                      onClick={() => (
+                        setUndoFailure(null),
+                        undoPreviewCall.mutate(
+                          { snapshot_id: snapshot.id, dry_run: true },
                           {
-                            onSuccess: (r) => {
-                              if (!undoLanded(r)) {
-                                setUndoFailure({
-                                  id: snapshot.id,
-                                  reason: undoFailureReason(r),
-                                });
-                                return;
-                              }
-                              setUndoPreview(null);
-                              setUndoFailure(null);
-                              setUndone({ id: snapshot.id, userId: snapshot.user_id });
-                            },
+                            onSuccess: (r) =>
+                              setUndoPreview({ id: snapshot.id, report: r }),
                             onError: (e) =>
                               setUndoFailure({
                                 id: snapshot.id,
                                 reason: apiErrorMessage(e, "please try again."),
                               }),
                           },
-                        ))
-                      }
+                        )
+                      )}
                     >
-                      Restore it
+                      Preview undoing the copy onto {snapshot.username}
                     </Button>
+                    <span className="text-xs text-muted-foreground">
+                      {snapshot.complete
+                        ? `Would put back ${snapshot.entries} title${snapshot.entries === 1 ? "" : "s"} as they were.`
+                        : "Can't be undone — a library wasn't readable when that copy ran, so the saved state is incomplete."}
+                    </span>
                   </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+                  {undoFailure?.id === snapshot.id && (
+                    <p className="text-xs text-destructive-text">
+                      Couldn&rsquo;t undo it: {undoFailure.reason}
+                    </p>
+                  )}
+                  {undoPreview?.id === snapshot.id && (
+                    <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
+                      {/* Undo is a mirror in the other direction, so it REMOVES anything watched on
+                        that account since the copy. It used to be one unguarded click. */}
+                      <p>
+                        Restoring makes {snapshot.username} match the saved
+                        state again. That un-ticks{" "}
+                        <strong>
+                          {undoPreview.report.unmarks +
+                            undoPreview.report.offsets_cleared}
+                        </strong>{" "}
+                        thing(s) watched on it since &mdash; including anything
+                        watched there after the copy.
+                      </p>
+                      {undoPreview.report.removals_preview.length > 0 && (
+                        <ul className="max-h-40 list-disc overflow-y-auto pl-5 text-xs text-muted-foreground">
+                          {undoPreview.report.removals_preview.map((title) => (
+                            <li key={title}>{title}</li>
+                          ))}
+                        </ul>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={undo.isPending}
+                        onClick={() => (
+                          setUndoFailure(null),
+                          undo.mutate(
+                            { snapshot_id: snapshot.id, dry_run: false },
+                            {
+                              onSuccess: (r) => {
+                                if (!undoLanded(r)) {
+                                  setUndoFailure({
+                                    id: snapshot.id,
+                                    reason: undoFailureReason(r),
+                                  });
+                                  return;
+                                }
+                                setUndoPreview(null);
+                                setUndoFailure(null);
+                                setUndone({
+                                  id: snapshot.id,
+                                  userId: snapshot.user_id,
+                                });
+                              },
+                              onError: (e) =>
+                                setUndoFailure({
+                                  id: snapshot.id,
+                                  reason: apiErrorMessage(
+                                    e,
+                                    "please try again.",
+                                  ),
+                                }),
+                            },
+                          )
+                        )}
+                      >
+                        Restore it
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -854,7 +880,7 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
               </Button>
             )}
             {readHistory.isError && (
-              <p className="text-destructive">
+              <p className="text-destructive-text">
                 Couldn&rsquo;t start the read:{" "}
                 {apiErrorMessage(readHistory.error, "please try again.")}
               </p>
@@ -864,8 +890,8 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
 
         {safeModeBlocked && (
           <p className="rounded-md border border-dashed p-3 text-sm">
-            <strong>Safe mode is on, so nothing was written.</strong> Turn it off
-            in Settings to let this run for real.
+            <strong>Safe mode is on, so nothing was written.</strong> Turn it
+            off in Settings to let this run for real.
           </p>
         )}
 
@@ -951,12 +977,13 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
                       <strong className="text-foreground">
                         This copy will NOT be undoable, because that account
                         can&rsquo;t see all of your libraries &mdash; Shortlist
-                        can&rsquo;t save a complete picture of its current state.
+                        can&rsquo;t save a complete picture of its current
+                        state.
                       </strong>
                     ) : (
                       <>
-                        Shortlist saves that account&rsquo;s current state first,
-                        so this can be undone.
+                        Shortlist saves that account&rsquo;s current state
+                        first, so this can be undone.
                       </>
                     )}
                   </span>
@@ -995,7 +1022,7 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
                 That account is back to how it was before the copy.
               </p>
             ) : transfer.data.verify_mismatched > 0 ? (
-              <p className="text-xs text-destructive">
+              <p className="text-xs text-destructive-text">
                 {transfer.data.verify_mismatched} didn&rsquo;t take effect when
                 Shortlist checked afterwards. Run it again &mdash; it only
                 writes what&rsquo;s still missing.
@@ -1026,70 +1053,70 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
               </p>
             )}
             {transfer.data.errors.length > 0 && (
-              <p className="text-xs text-destructive">
+              <p className="text-xs text-destructive-text">
                 {transfer.data.errors[0]}
               </p>
             )}
             {transfer.data.snapshot_id !== null &&
               transfer.data.target_unreadable.length === 0 && (
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={undo.isPending || undoneThisOne}
-                  onClick={() =>
-                    (setUndoFailure(null),
-                    undo.mutate(
-                      {
-                        snapshot_id: transfer.data.snapshot_id as number,
-                        dry_run: false,
-                      },
-                      {
-                        // A 200 carrying `errors` is a REFUSAL — an incomplete snapshot, an account
-                        // that is no longer a Home user, a restore that did not land. Treating any
-                        // 200 as a completed restore is what let the panel claim success for one.
-                        onSuccess: (r) =>
-                          undoLanded(r)
-                            ? (setUndoFailure(null),
-                              setUndone({
-                                id: transfer.data.snapshot_id as number,
-                                // The account the COPY ran against, not whatever the radio shows
-                                // now — the two diverge as soon as someone selects another user.
-                                userId: transferredTo as number,
-                              }))
-                            : setUndoFailure({
-                                id: transfer.data.snapshot_id as number,
-                                reason: undoFailureReason(r),
-                              }),
-                        onError: (e) =>
-                          setUndoFailure({
-                            id: transfer.data.snapshot_id as number,
-                            reason: apiErrorMessage(e, "please try again."),
-                          }),
-                      },
-                    ))
-                  }
-                >
-                  {undo.isPending && (
-                    <Loader2
-                      className="h-4 w-4 animate-spin"
-                      aria-hidden="true"
-                    />
-                  )}
-                  Undo this
-                </Button>
-                <span className="text-xs text-muted-foreground">
-                  {/* Says what it removes. This button is offered straight after a copy, when the
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={undo.isPending || undoneThisOne}
+                    onClick={() => (
+                      setUndoFailure(null),
+                      undo.mutate(
+                        {
+                          snapshot_id: transfer.data.snapshot_id as number,
+                          dry_run: false,
+                        },
+                        {
+                          // A 200 carrying `errors` is a REFUSAL — an incomplete snapshot, an account
+                          // that is no longer a Home user, a restore that did not land. Treating any
+                          // 200 as a completed restore is what let the panel claim success for one.
+                          onSuccess: (r) =>
+                            undoLanded(r)
+                              ? (setUndoFailure(null),
+                                setUndone({
+                                  id: transfer.data.snapshot_id as number,
+                                  // The account the COPY ran against, not whatever the radio shows
+                                  // now — the two diverge as soon as someone selects another user.
+                                  userId: transferredTo as number,
+                                }))
+                              : setUndoFailure({
+                                  id: transfer.data.snapshot_id as number,
+                                  reason: undoFailureReason(r),
+                                }),
+                          onError: (e) =>
+                            setUndoFailure({
+                              id: transfer.data.snapshot_id as number,
+                              reason: apiErrorMessage(e, "please try again."),
+                            }),
+                        },
+                      )
+                    )}
+                  >
+                    {undo.isPending && (
+                      <Loader2
+                        className="h-4 w-4 animate-spin"
+                        aria-hidden="true"
+                      />
+                    )}
+                    Undo this
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    {/* Says what it removes. This button is offered straight after a copy, when the
                       account has had no chance to accumulate anything of its own — but the panel
                       stays mounted, so the copy states the consequence rather than assuming. */}
-                  {undoneThisOne
-                    ? "Put back exactly as it was."
-                    : "Puts that account back as it was before \u2014 un-ticking anything watched on it since."}
-                </span>
-              </div>
-            )}
+                    {undoneThisOne
+                      ? "Put back exactly as it was."
+                      : "Puts that account back as it was before \u2014 un-ticking anything watched on it since."}
+                  </span>
+                </div>
+              )}
             {undoFailure?.id === transfer.data.snapshot_id && (
-              <p className="text-xs text-destructive">
+              <p className="text-xs text-destructive-text">
                 {/* Rendered here BECAUSE the snapshot list is hidden while this panel is up. A
                     refusal comes back as a 200, so `undo.isError` is false for it — a partial or
                     refused restore used to show nothing while the line above still claimed the
@@ -1101,7 +1128,7 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
         )}
 
         {transfer.isError && (
-          <p className="text-sm text-destructive">
+          <p className="text-sm text-destructive-text">
             Couldn&rsquo;t move the history:{" "}
             {apiErrorMessage(
               transfer.error,

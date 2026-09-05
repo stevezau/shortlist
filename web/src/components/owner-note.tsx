@@ -129,7 +129,7 @@ export function OwnerNote({ className }: { className?: string }) {
         </div>
 
         {dismiss.isError && (
-          <p className="text-xs text-destructive">
+          <p className="text-xs text-destructive-text">
             Couldn&rsquo;t save that &mdash; the note will be back on the next
             reload. Try again.
           </p>

@@ -185,10 +185,15 @@ describe("WatchingAccountPage", () => {
     listCollections.mockResolvedValue([row({ placement_friends: "home" })]);
     renderPage();
 
+    // Wait for the ANSWER, not just for the button to exist. This used to await the button and then
+    // assert the copy synchronously — but the button is in the DOM (and disabled) from the first
+    // render, so both assertions were satisfied while the query was still pending, by the very bug
+    // this file now covers: "Already done" was rendered before anything had been checked. The test
+    // passed BECAUSE of the defect, which is why it never caught it.
+    expect(await screen.findByText(/already done/i)).toBeInTheDocument();
     expect(
-      await screen.findByRole("button", { name: /do this for me/i }),
+      screen.getByRole("button", { name: /do this for me/i }),
     ).toBeDisabled();
-    expect(screen.getByText(/already done/i)).toBeInTheDocument();
   });
 
   it("scrolls the transfer step into view when it appears", async () => {
@@ -231,6 +236,48 @@ describe("WatchingAccountPage", () => {
 
 /** The deep link the Users page uses. The guide is what you read once; the tool is what you come
  *  back for, so pressing "Watching account" has to land on the tool rather than the explainer. */
+describe("WatchingAccountPage when the collections query has not answered", () => {
+  it("does not claim the shelf is already clear while it is still loading", async () => {
+    // `data ?? []` made an unanswered query indistinguishable from a genuinely clean server, so the
+    // page asserted "Already done" before it had checked anything. This is the same class as the
+    // privacy claim the page exists to explain — the one screen that must never over-claim.
+    listCollections.mockReturnValue(new Promise(() => {})); // never resolves
+
+    renderPage();
+
+    expect(await screen.findByText(/checking/i)).toBeInTheDocument();
+    expect(screen.queryByText(/already done/i)).not.toBeInTheDocument();
+  });
+
+  it("says it could not check when the query fails, and does not claim done", async () => {
+    listCollections.mockRejectedValue(new Error("network"));
+
+    renderPage();
+
+    expect(await screen.findByText(/couldn.t check/i)).toBeInTheDocument();
+    expect(screen.queryByText(/already done/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps the fix disabled until it knows there is something to fix", async () => {
+    listCollections.mockRejectedValue(new Error("network"));
+
+    renderPage();
+    await screen.findByText(/couldn.t check/i);
+
+    expect(
+      screen.getByRole("button", { name: /do this for me/i }),
+    ).toBeDisabled();
+  });
+
+  it("still says already done when the server really is clear", async () => {
+    listCollections.mockResolvedValue([row({ placement_friends: "home" })]);
+
+    renderPage();
+
+    expect(await screen.findByText(/already done/i)).toBeInTheDocument();
+  });
+});
+
 describe("WatchingAccountPage opened with ?setup=1", () => {
   function renderAt(path: string) {
     const client = new QueryClient({
