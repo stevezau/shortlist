@@ -247,6 +247,19 @@ def _summary(status: privacy_status.SharingStatus, accounts: list[dict], enforce
     # checked", never "somebody is exposed" — the same distinction `measured` exists to hold.
     if enforcement["measured"] and enforcement["not_enforced"]:
         return "not_enforced"
+    # Below `not_enforced` for the same reason that sits below `missing`: an unhideable row is the
+    # LEAST actionable of the three — the owner has to change a Plex parental profile, where a
+    # missing rule fixes itself on the next run. Above `clean`, because a run that looked through a
+    # profiled account's eyes and SAW other people's rows is a measured exposure, and printing
+    # "every account hides every row" over the top of it is the exact defect this page exists to
+    # prevent. `filters_not_enforced` was given this treatment and its sibling was missed.
+    if enforcement["measured"] and enforcement["unhideable"]:
+        return "unhideable"
+    # `left_alone` deliberately does NOT escalate. It is the owner's own per-account choice
+    # (`manage_sharing=0`), not a fault, and `test_a_left_alone_account_is_reported_as_a_setting_not_a_fault`
+    # pins that. What it does mean is that the clean headline cannot claim "EVERY account" — the copy
+    # is the fix on that half, not the verdict, so `sharing.tsx` narrows the sentence when any account
+    # is left alone.
     return "clean"
 
 
@@ -271,11 +284,23 @@ def _enforcement(session) -> dict:
         None,
     )
     if run is None:
-        return {"measured": False, "run_id": None, "measured_at": None, "not_enforced": {}}
+        return {
+            "measured": False,
+            "run_id": None,
+            "measured_at": None,
+            "not_enforced": {},
+            "unhideable": {},
+        }
     exposed = (run.stats or {}).get("filters_not_enforced") or {}
+    # Its sibling, written by `pipeline._record_unhideable` on the same run, from the same look: a
+    # row Plex refuses to hide from an account at all — a parental profile, where plex.tv rejects the
+    # filter write outright. Read here rather than left to the accounts table, because a summary that
+    # ignores it prints a green universal claim over a measured exposure.
+    unhideable = (run.stats or {}).get("unhideable_rows") or {}
     return {
         "measured": True,
         "run_id": run.id,
         "measured_at": iso_utc(run.finished_at),
         "not_enforced": {name: list(keys) for name, keys in exposed.items()},
+        "unhideable": {name: list(keys) for name, keys in unhideable.items()},
     }

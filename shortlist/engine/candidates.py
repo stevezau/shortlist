@@ -679,6 +679,15 @@ def enrich_cast_affinity(ranked: list[Candidate], tmdb: TmdbClient, seeds: list[
                 casts[key] = set()
         return casts[key]
 
+    # Idempotent: drop any cast attribution we left last time before adding this one. Candidates are
+    # SHARED objects, and both cut sites enrich — `_candidate_pool` on the pool's own cut, and
+    # `RowPolicy.cut_at_recency` on an overlapping subset for a row that overrides recency. Appending
+    # blindly made a reason read "shares Zendaya with Dune, and shares Zendaya with Dune", and a
+    # third row stacked a third copy. Ordering the call sites would be the fragile fix; being
+    # idempotent lets either run in any order, which is what "ORDERS, NEVER SELECTS" already implies.
+    for candidate in ranked:
+        if candidate.attributions:
+            candidate.attributions = [a for a in candidate.attributions if a.signal != "cast"]
     candidate_casts = [cast_for(c.tmdb_id, c.media_type) for c in ranked]
     idf = cast_idf([c for c in candidate_casts if c])
     for candidate, own_cast in zip(ranked, candidate_casts, strict=True):

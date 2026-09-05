@@ -437,6 +437,10 @@ class TestEnforcement:
             "run_id": run_id,
             "measured_at": enforcement["measured_at"],
             "not_enforced": {},
+            # Its sibling, read from the same run and the same look: a row Plex refuses to hide from
+            # an account at all. Empty here for the same reason `not_enforced` is — a run that looked
+            # and found nothing, which is what clears the alert.
+            "unhideable": {},
         }
         assert enforcement["measured_at"], "an owner has to know how old the reading is"
 
@@ -495,3 +499,49 @@ class TestTheEndpointContract:
             a["missing"] for a in support["accounts"]
         ]
         assert status["rows_on_plex"] == support["rows_on_plex"]
+
+
+class TestAMeasuredUnhideableRowIsNeverPaintedGreen:
+    """A run that looked through a profiled account's eyes and SAW other people's rows is a measured
+    exposure. `filters_not_enforced` was given this treatment; its sibling `unhideable_rows` was
+    missed, so the page printed "Every account hides all N rows that aren't theirs" over the top of
+    it — the exact over-claim this whole screen exists to prevent.
+    """
+
+    def test_the_summary_escalates_above_clean(self, client: TestClient, monkeypatch):
+        TestEnforcement._run(
+            client,
+            stats={"filters_not_enforced": {}, "unhideable_rows": {"kid": [31, 32]}},
+            minutes_ago=10,
+        )
+        _rows_on_plex(monkeypatch, [])
+        _roster(monkeypatch, {})
+
+        body = client.get("/api/privacy/status").json()
+
+        assert body["summary"] != "clean", "a measured exposure was reported as a clean bill of health"
+        assert body["summary"] == "unhideable"
+
+    def test_it_ranks_below_a_missing_rule(self, client: TestClient, monkeypatch):
+        """A missing rule is the one the next run fixes; an unhideable row needs the owner to change
+        a Plex parental profile. The actionable verdict leads."""
+        TestEnforcement._run(
+            client,
+            stats={"filters_not_enforced": {}, "unhideable_rows": {"kid": [31]}},
+            minutes_ago=10,
+        )
+        _rows_on_plex(monkeypatch, [])
+        _roster(monkeypatch, {})
+
+        body = client.get("/api/privacy/status").json()
+
+        assert body["enforcement"]["unhideable"] == {"kid": [31]}, "the measurement still reaches the panel"
+
+    def test_an_unmeasured_run_reports_nothing_rather_than_exposure(self, client: TestClient, monkeypatch):
+        _rows_on_plex(monkeypatch, [])
+        _roster(monkeypatch, {})
+
+        body = client.get("/api/privacy/status").json()
+
+        assert body["enforcement"]["measured"] is False
+        assert body["enforcement"]["unhideable"] == {}

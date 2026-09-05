@@ -169,11 +169,31 @@ function Summary({
     );
   }
   if (data.summary === "clean") {
+    // "EVERY account" is only true when every account is actually hiding. An account you chose to
+    // leave alone (`manage_sharing = 0`) is not a fault — the verdict deliberately stays clean — but
+    // it does not hide anyone's rows, so it cannot be counted in a universal claim. Saying "every"
+    // over the top of it is the same over-claim this whole page exists to stop making.
+    const leftAlone = data.accounts.filter(
+      (account) => account.state === "left_alone",
+    );
+    const rows = data.rows_on_plex.length;
     return (
       <Banner tone="good">
         <p>
-          Every account hides all {data.rows_on_plex.length}{" "}
-          {data.rows_on_plex.length === 1 ? "row" : "rows"} that aren't theirs.{" "}
+          {leftAlone.length > 0 ? (
+            <>
+              Every account Shortlist manages hides all {rows}{" "}
+              {rows === 1 ? "row" : "rows"} that aren't theirs.{" "}
+              {leftAlone.length === 1
+                ? `${leftAlone[0]?.username} is left alone at your request, so Shortlist does not hide anything from them.`
+                : `${leftAlone.length} accounts are left alone at your request, so Shortlist does not hide anything from them.`}{" "}
+            </>
+          ) : (
+            <>
+              Every account hides all {rows} {rows === 1 ? "row" : "rows"} that
+              aren't theirs.{" "}
+            </>
+          )}
           <ReadAt at={data.read_at} />
         </p>
       </Banner>

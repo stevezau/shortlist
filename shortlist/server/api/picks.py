@@ -165,7 +165,12 @@ async def pick_poster(rating_key: int, request: Request) -> Response:
     if isinstance(result, str):  # an ETag alone: the browser's copy is current
         return Response(status_code=304, headers={"ETag": result, "Cache-Control": _CACHE_CONTROL})
     body, content_type, etag = result
-    return Response(body, media_type=content_type, headers={"ETag": etag, "Cache-Control": _CACHE_CONTROL})
+    # Never echo the PMS's Content-Type verbatim. This is served from the app's OWN origin, so a
+    # non-image type coming back from a compromised or misbehaving PMS would be rendered as that type
+    # on a direct navigation. An `<img>` would not execute it and the route is owner-gated, so this
+    # is hardening rather than a live hole — but it costs one line.
+    safe_type = content_type if content_type.startswith("image/") else "image/jpeg"
+    return Response(body, media_type=safe_type, headers={"ETag": etag, "Cache-Control": _CACHE_CONTROL})
 
 
 def _fetch_poster(
