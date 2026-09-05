@@ -1668,6 +1668,12 @@ class RowPolicy:
 
         Memoised per (pool, recency) because rows commonly agree: two "New & Notable" rows sharing a
         gather and a setting should sort the list once, not once each.
+
+        `recency` is in the key because `RowSpec` can override it per row. The three scoring dials
+        below cannot — they come from `EngineConfig` and are constant for the whole run — so they do
+        not belong in the key today. **If a per-row override is ever added for any of them, it must
+        be added here too**, or two rows that disagree about it will collide on one memoised cut and
+        the second row will silently get the first row's ranking.
         """
         key = (self.pool_key(spec), recency)
         if key not in self.recency_cuts:
