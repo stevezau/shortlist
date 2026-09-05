@@ -31,6 +31,7 @@ export function InlineKeyField({
   hint,
   helpUrl,
   helpLabel = "Get a key",
+  testLabel = "Test",
   secret = true,
 }: {
   settingKey: string;
@@ -45,6 +46,12 @@ export function InlineKeyField({
   /** Wording for that link. Override where there is no key to get — a self-hosted backend's link
    *  points at install docs, and calling that "Get a key" invents a step that doesn't exist. */
   helpLabel?: string;
+  /**
+   * Wording for the test button. Override wherever the test is not a silent ping: this one really
+   * posts a message to whatever the address points at, and a button that says only "Test" would not
+   * be saying what pressing it does.
+   */
+  testLabel?: string;
   /**
    * False for a setting that is an ADDRESS rather than a credential (a SearXNG URL). Redacting one
    * would hide the very value the owner needs to read back to spot a typo, and the sentinel logic
@@ -121,7 +128,7 @@ export function InlineKeyField({
           disabled={!saved && !save.isSuccess}
         >
           {!test.isPending && <PlugZap aria-hidden="true" />}
-          Test
+          {testLabel}
         </Button>
       </div>
       {save.isError && (

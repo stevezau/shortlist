@@ -783,6 +783,87 @@ class TestSettingsApi:
         body = client.post("/api/settings/test/searxng").json()
         assert body["ok"] is False and "search.formats" in body["message"]
 
+    def test_notify_test_button_really_sends_down_the_3am_path(self, client: TestClient):
+        """The deliberate antidote to a Test that proves nothing.
+
+        A notifier whose Test succeeds while the nightly path is unwired is worse than no notifier: it
+        is one the owner now trusts. So this button does not ping — it builds an item and hands it to
+        the SAME `notify.deliver` a failed run reaches, with the same body builder, the same settings
+        read and the same HTTP call. The body is asserted here, not merely the fact of a call.
+        """
+        import json
+
+        import httpx
+        import respx
+
+        from shortlist.server.services import notify
+
+        webhook = "https://discord.com/api/webhooks/123/tok-en"
+
+        off = client.post("/api/settings/test/notify").json()
+        assert off["ok"] is False and "switched off" in off["message"]
+
+        client.put("/api/settings", json={"values": {"notify.webhook.enabled": True}})
+        blank = client.post("/api/settings/test/notify").json()
+        assert blank["ok"] is False and "address" in blank["message"]
+
+        client.put("/api/settings", json={"values": {"notify.webhook.url": webhook}})
+        # The address is a bearer token in a URL, so it is redacted on read like any other secret.
+        assert client.get("/api/settings").json()["notify.webhook.url"] == "•••••"
+
+        with respx.mock:
+            route = respx.post(webhook).mock(return_value=httpx.Response(204))
+            ok = client.post("/api/settings/test/notify").json()
+        assert ok["ok"] is True and "204" in ok["message"]
+        sent = json.loads(route.calls.last.request.content)
+        assert sent | {"sent_at": ""} == notify.webhook_body(notify.test_item(), now=None) | {"sent_at": ""}
+        assert sent["source"] == "shortlist" and sent["id"] == "notify-test"
+        assert set(off) == {"ok", "message"} and set(ok) == {"ok", "message"}
+
+    def test_the_webhook_address_is_ssrf_checked_but_the_sentinel_still_round_trips(self, client: TestClient):
+        """Both halves, because adding this key to `_FETCHED_URL_KEYS` creates a new combination.
+
+        It is the first setting that is BOTH a URL the server fetches AND a secret, so the redacted
+        sentinel now reaches the SSRF guard. Checked as an address it fails ("must start with http"),
+        which would 422 the entire settings save every time the owner pressed Save with a webhook
+        configured — a guard breaking the page it was added to protect.
+        """
+        blocked = client.put(
+            "/api/settings",
+            json={"values": {"notify.webhook.url": "http://169.254.169.254/latest/meta-data/"}},
+        )
+        assert blocked.status_code == 422
+
+        client.put("/api/settings", json={"values": {"notify.webhook.url": "https://hooks.example.com/abc"}})
+        # Saving again with the sentinel the UI echoes back must be accepted AND leave the value alone.
+        again = client.put(
+            "/api/settings",
+            json={"values": {"notify.webhook.url": "•••••", "notify.webhook.enabled": True}},
+        )
+        assert again.status_code == 200
+        with client.app.state.sessions() as session:
+            store = SettingsStore(session, client.app.state.secrets)
+            assert store.get("notify.webhook.url") == "https://hooks.example.com/abc"
+
+    def test_a_failing_notify_test_never_echoes_the_webhook_token(self, client: TestClient):
+        """`api/settings.py` ends its probe with `redact(...)`, which does NOT know this URL shape —
+        so the scrubbing has to happen where the exception is born, in `notify.deliver`. If it moves
+        or is removed, the owner's token is served straight back in an API response (rule 9).
+        """
+        import httpx
+        import respx
+
+        webhook = "https://discord.com/api/webhooks/123456789/S3cr3t-T0ken-Value"
+        client.put(
+            "/api/settings",
+            json={"values": {"notify.webhook.enabled": True, "notify.webhook.url": webhook}},
+        )
+        with respx.mock:
+            respx.post(webhook).mock(return_value=httpx.Response(403, text="nope"))
+            body = client.post("/api/settings/test/notify").json()
+        assert body["ok"] is False and "403" in body["message"]
+        assert webhook not in body["message"] and "S3cr3t-T0ken-Value" not in body["message"]
+
     def test_arr_options_serve_the_dropdowns_the_settings_form_needs(self, client: TestClient, monkeypatch):
         """Quality profiles and root folders, so a non-technical owner picks from a list instead of
         hunting down a numeric profile id and a server path."""

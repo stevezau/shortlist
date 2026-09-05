@@ -111,6 +111,12 @@ DEFAULTS: dict[str, Any] = {
     # Notification ids the owner dismissed. Each id encodes its state (run id / version), so the same
     # alert stays hidden but a new failure or a newer release surfaces again. Capped to the newest 100.
     "notifications.dismissed": [],
+    # Send the bell's alerts to a webhook as well. Opt-in, off by default: an unasked-for outbound
+    # POST from a self-hosted tool is not a default anyone should inherit. Only ONE event goes out —
+    # a whole run failing — because that is the one an owner cannot see before their next login
+    # (services/notify.py). The address itself is a SECRET_KEY below: it is a bearer token in a URL.
+    "notify.webhook.enabled": False,
+    "notify.webhook.url": "",
     # Which candidate sources feed recommendations (engine/candidates.py). More = wider recall.
     "candidates.sources": ["tmdb_similar", "tmdb_discover"],
     # Which backend the web-search (llm_web) source searches with. Exactly one, always:
@@ -262,6 +268,10 @@ SECRET_KEYS = {
     "exa.apikey",  # Exa web-search API key for the llm_web source
     "searxng.password",  # reverse-proxy password guarding a self-hosted SearXNG
     "api.token",  # our own programmatic API token (encrypted at rest so the owner can reveal it)
+    # A Discord/Slack webhook address IS a bearer token — anyone holding the URL can post to that
+    # channel — so it is encrypted at rest and redacted on read like any other credential, even
+    # though it looks like a mere address.
+    "notify.webhook.url",
 }
 
 # Keys stored server-side but NEVER returned by all_public() and never writable via the generic

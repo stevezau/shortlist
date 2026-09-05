@@ -844,7 +844,10 @@ export type TestableService =
   | "trakt"
   | "exa"
   | "searxng"
-  | "native_search";
+  | "native_search"
+  // Not a ping like the rest: it really posts a test message to the owner's webhook, deliberately, so
+  // the button exercises the same path a failed run does.
+  | "notify";
 
 /** Alias kept short for the components that render one line of this. */
 export type UserRun = UserRunSummary;
