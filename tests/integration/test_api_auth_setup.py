@@ -131,6 +131,67 @@ class TestAuthResponses:
         assert r.json() == {"ok": True}
         assert set(r.json()) == {"ok"}
 
+    def test_logout_refuses_a_request_without_the_csrf_header(self, client: TestClient):
+        """`POST /logout` was the one state-changing auth route with no CSRF check, so any other site
+        could sign the owner out with a cross-origin form post. Not data loss, but it is the same
+        class as every other guarded POST here and the guard is one line.
+
+        The shared `client` fixture sets the header for every request, which is exactly why no
+        existing test caught this — the header has to be removed explicitly.
+        """
+        del client.headers[CSRF_HEADER]
+        r = client.post("/api/auth/logout")
+
+        assert r.status_code == 403
+        assert CSRF_HEADER in r.json()["detail"]
+
+    def test_a_non_json_pin_body_is_a_clean_error_not_a_500(self, client: TestClient):
+        """A captive portal, proxy or plex.tv incident answering `200 text/html` used to surface as an
+        unhandled KeyError/ValueError — a 500 with nothing actionable in it. `owned_machine_ids` in the
+        same module already documents this exact failure and guards against it; the PIN endpoints did
+        not, despite calling the same host.
+        """
+        with respx.mock:
+            respx.post("https://plex.tv/api/v2/pins").mock(
+                return_value=httpx.Response(200, text="<html>captive portal</html>")
+            )
+            r = client.post("/api/auth/pin")
+
+        assert r.status_code == 502
+        assert "plex.tv" in r.json()["detail"]
+
+    def test_a_pin_body_missing_its_fields_is_a_clean_error(self, client: TestClient):
+        with respx.mock:
+            respx.post("https://plex.tv/api/v2/pins").mock(return_value=httpx.Response(201, json={"unexpected": 1}))
+            r = client.post("/api/auth/pin")
+
+        assert r.status_code == 502
+        assert "plex.tv" in r.json()["detail"]
+
+    def test_a_non_json_poll_body_is_a_clean_error(self, client: TestClient):
+        with respx.mock:
+            respx.get("https://plex.tv/api/v2/pins/42").mock(
+                return_value=httpx.Response(200, text="<html>portal</html>")
+            )
+            r = client.get("/api/auth/pin/42")
+
+        assert r.status_code == 502
+        assert "plex.tv" in r.json()["detail"]
+
+    def test_an_account_body_with_no_usable_id_is_a_clean_error(self, client: TestClient):
+        """`int(info["id"])` on a body that has no id, or a non-numeric one, is the second unguarded
+        parse — and it runs AFTER a token has been obtained, so failing opaquely here strands a login
+        that already succeeded at plex.tv."""
+        with respx.mock:
+            respx.get("https://plex.tv/api/v2/pins/42").mock(
+                return_value=httpx.Response(200, json={"authToken": "tok"})
+            )
+            respx.get("https://plex.tv/api/v2/user").mock(return_value=httpx.Response(200, json={"id": "not-a-number"}))
+            r = client.get("/api/auth/pin/42")
+
+        assert r.status_code == 502
+        assert "plex.tv" in r.json()["detail"]
+
     def test_creating_a_pin_returns_the_code_and_the_client_id(self, client: TestClient):
         """`client_id` is on the response because plex.tv only honours the PIN for the same client —
         dropping it would make every login fail at the poll with nothing to explain why."""

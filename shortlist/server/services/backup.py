@@ -66,15 +66,38 @@ def take_backup(config_dir: Path, *, label: str = "scheduled", max_keep: int = D
             if conn is not None:
                 conn.close()
 
-    _rotate(backup_dir, max_keep)
+    # Housekeeping must never invalidate the backup it is tidying up around. This runs on every boot,
+    # so an exception escaping here failed the boot AFTER a good backup had already been written —
+    # a crash-loop on a host that recreates the container automatically, and the backup was lost with
+    # it. Rotation failing just means old files linger, which costs disk and nothing else.
+    try:
+        _rotate(backup_dir, max_keep)
+    except OSError as e:
+        logger.warning("could not rotate old backups ({}); keeping them, the new backup is fine", e)
     return backup_path
 
 
 def _rotate(backup_dir: Path, max_keep: int) -> None:
-    """Keep only the most recent `max_keep` backups, delete the rest."""
-    backups = sorted(backup_dir.glob("shortlist_*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
+    """Keep only the most recent `max_keep` backups, delete the rest.
+
+    Every file is handled independently: `glob` gives a snapshot, and by the time we `stat` or
+    `unlink` an entry it may be gone — a concurrent boot rotating the same directory, a manual
+    tidy-up, a network filesystem. One vanished file must not stop the rest being rotated, and must
+    not be reported as a failure: it is already in the state we wanted.
+    """
+
+    def _mtime(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return 0.0  # sorts last, so it is a rotation candidate; the unlink below tolerates it
+
+    backups = sorted(backup_dir.glob("shortlist_*.db"), key=_mtime, reverse=True)
     for old in backups[max_keep:]:
-        old.unlink()
+        try:
+            old.unlink()
+        except FileNotFoundError:
+            continue  # someone else got there first — the desired outcome either way
         logger.debug("rotated old backup: {}", old.name)
 
 

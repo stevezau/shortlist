@@ -235,6 +235,23 @@ def _cookie_path(request: Request) -> str:
     return getattr(request.app.state, "base_path", "") or "/"
 
 
+def _plextv_json(response: httpx.Response, what: str):
+    """Parse a plex.tv body, turning "2xx but not JSON" into a clean 502 instead of a 500.
+
+    `owned_machine_ids` already documents this failure — a captive portal or proxy answering
+    `200 text/html` — and guards against it. The PIN and account endpoints call the same host and did
+    not, so the same outage surfaced there as an unhandled ValueError with nothing in the log to act
+    on. Kept as one helper so a third caller cannot quietly reintroduce it.
+    """
+    try:
+        return response.json()
+    except ValueError as e:
+        logger.warning("plex.tv returned a non-JSON {} body ({})", what, type(e).__name__)
+        raise HTTPException(
+            status_code=502, detail=f"plex.tv returned an unreadable {what} response — try again"
+        ) from e
+
+
 def _check_csrf(request: Request) -> None:
     if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get(CSRF_HEADER) != "1":
         raise HTTPException(status_code=403, detail=f"missing {CSRF_HEADER} header")
@@ -256,6 +273,12 @@ def _rate_limit_token_failures() -> None:
 
     Only FAILURES are counted, so a busy legitimate integration is never throttled — the limit is
     invisible unless something is guessing.
+
+    Called AFTER the current failure has been recorded, so the Nth failure in a window is the one
+    that gets the 429 and `_TOKEN_MAX_FAILS` is the count at which throttling starts, not the number
+    of 401s allowed before it. That is one stricter than the constant's name suggests; it is stated
+    here rather than "corrected", because the correction would loosen a security control to fix a
+    naming inaccuracy.
     """
     now = time.monotonic()
     while _TOKEN_FAILS and now - _TOKEN_FAILS[0] > _TOKEN_WINDOW_S:
@@ -354,7 +377,12 @@ async def create_pin(request: Request) -> dict:
             timeout=15,
         )
     r.raise_for_status()
-    data = r.json()
+    # Same failure `owned_machine_ids` documents: a captive portal or proxy answering `200 text/html`
+    # made `.json()`/`data["id"]` raise, which surfaced as a 500 with nothing actionable in it. A 2xx
+    # from plex.tv is not a promise about the body.
+    data = _plextv_json(r, "pin")
+    if not isinstance(data, dict) or "id" not in data or "code" not in data:
+        raise HTTPException(status_code=502, detail="plex.tv returned a PIN without an id or code — try again")
     return {"id": data["id"], "code": data["code"], "client_id": request.app.state.client_id}
 
 
@@ -380,15 +408,23 @@ async def poll_pin(pin_id: int, request: Request, response: Response) -> dict:
         if r.status_code == 404:
             raise HTTPException(status_code=404, detail="PIN expired — start over")
         r.raise_for_status()
-        token = r.json().get("authToken")
+        pin = _plextv_json(r, "PIN status")
+        token = pin.get("authToken") if isinstance(pin, dict) else None
         if not token:
             return {"linked": False}
         account = await client.get(
             f"{PLEXTV}/api/v2/user", headers={**_client_headers(state.client_id), "X-Plex-Token": token}, timeout=15
         )
     account.raise_for_status()
-    info = account.json()
-    account_id = int(info["id"])
+    info = _plextv_json(account, "account")
+    # This one runs AFTER plex.tv has already issued a token, so an opaque failure here strands a
+    # login that actually succeeded — the owner sees a 500 having just approved the PIN.
+    try:
+        account_id = int(info["id"])
+    except (TypeError, KeyError, ValueError) as e:
+        raise HTTPException(
+            status_code=502, detail="plex.tv returned an account without a usable id — try signing in again"
+        ) from e
 
     owner_id = state.owner_account_id()
     if owner_id is not None:
@@ -493,6 +529,11 @@ class LogoutOut(BaseModel):
 
 @router.post("/logout", response_model=LogoutOut)
 async def logout(request: Request, response: Response) -> dict:
+    # Logout changes state from a cookie, so it needs the same guard every other mutation here has:
+    # without it any other site could sign the owner out with a cross-origin form post. It is only a
+    # nuisance rather than data loss, which is presumably why it was missed — but this was the one
+    # state-changing auth route not going through `_check_csrf`.
+    _check_csrf(request)
     # Same path as the one it was set with, or the browser keeps the cookie and logout does nothing.
     response.delete_cookie(SESSION_COOKIE, path=_cookie_path(request))
     return {"ok": True}
