@@ -168,8 +168,13 @@ describe("RunDetailPage — grouped by library", () => {
         ],
       },
     ]);
-    detail.users[0].reason =
-      "It wasn't any of their rows' night to rebuild, so last run's titles were redelivered unchanged.";
+    // Mapped rather than indexed: `noUncheckedIndexedAccess` makes `users[0]` possibly undefined,
+    // and this fixture has exactly one person in it.
+    detail.users = detail.users.map((user) => ({
+      ...user,
+      reason:
+        "It wasn't any of their rows' night to rebuild, so last run's titles were redelivered unchanged.",
+    }));
     getRun.mockResolvedValue(detail);
     renderDetail();
 

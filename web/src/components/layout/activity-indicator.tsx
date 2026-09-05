@@ -187,7 +187,12 @@ export function ActivityIndicator({
             <span
               className={cn(
                 "absolute -right-2 -top-2 rounded-full px-1 text-[10px] font-semibold leading-4",
-                failing ? "bg-destructive text-white" : "bg-primary text-white",
+                // The paired foreground token, not `text-white`. White on `--primary` measures
+                // 1.76:1 — the worst contrast in the app, on a 10px digit — where
+                // `--primary-foreground` measures 10.06:1 and exists for exactly this pairing.
+                failing
+                  ? "bg-destructive text-destructive-foreground"
+                  : "bg-primary text-primary-foreground",
               )}
             >
               {inFlight.length}
