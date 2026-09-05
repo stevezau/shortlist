@@ -1424,16 +1424,19 @@ def sweep_broken_rows(
             labelled_seen += label is not None
             walked.append((section, collection, label))
     orphan_candidates = sum(1 for _s, c, label in walked if label is None and has_marker(c.title))
-    # This STILL waves a lone candidate through — `> 1` is the same `<= 1` clause spelled the other
-    # that one orphan is not a mass-deletion signature. True, and beside the point: that clause can
-    # only be satisfied when there is at most ONE Shortlist collection on the entire server, so it
-    # fired exactly when there was nothing to corroborate the read against — the case with the LEAST
-    # evidence, not the safest. On a single-row deployment (the documented 5 -> 15 -> 40 rollout
-    # guarantees one exists for days on every install) a single PMS hiccup during the sweep answered
-    # both reads "no label", and a genuine, months-old, correctly labelled row was deleted for good
-    # while the run reported success. Nothing here can tell that apart from a real fresh orphan on a
-    # way round — but it no longer decides on ONE read. What changed is the evidence required, not
-    # the population considered: see `_confirm_orphan_twice`, which is what makes this path
+    # A lone candidate is STILL waved through: `> 1` here is the same `<= 1` clause the old
+    # `trust_labels` had, spelled the other way round. What changed is not the population considered
+    # but the EVIDENCE required of it.
+    #
+    # Why that clause was never safe on its own: it can only be satisfied when there is at most ONE
+    # Shortlist collection on the entire server, so it fired exactly when there was nothing to
+    # corroborate the read against — the case with the LEAST evidence, not the safest. On a
+    # single-row deployment (the documented 5 -> 15 -> 40 rollout guarantees one exists for days on
+    # every install) one PMS hiccup during the sweep answered both reads "no label", and a genuine,
+    # months-old, correctly labelled row was deleted for good while the run reported success.
+    #
+    # Nothing here can tell that apart from a real fresh orphan on a single read. So nothing here
+    # decides on a single read any more — see `_confirm_orphan_twice`, which is what makes this path
     # strictly stronger than before rather than merely differently worded.
     systemic_failure = labelled_seen == 0 and orphan_candidates > 1
     if systemic_failure:

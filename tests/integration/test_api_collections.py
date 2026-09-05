@@ -1689,6 +1689,8 @@ class TestCollectionsApi:
         has nothing to preview. Ignoring it silently would mean `POST {"dry_run": true}` answers 201
         having created the row: a documented preview flag that writes, which is the shape
         plex-safety rule 8 exists to prevent."""
+        before = len(client.get("/api/collections").json())
+
         r = client.post(
             "/api/collections",
             json={"name": "Preview Me", "build": "per_person", "dry_run": True},
@@ -1696,11 +1698,18 @@ class TestCollectionsApi:
 
         assert r.status_code == 422
         assert "dry_run" in r.json()["detail"]
+        # The EFFECT, not just the status. The finding was "a documented preview flag that writes",
+        # and a test that only reads the code would still pass if the guard were moved below the
+        # insert — which is exactly the mistake it exists to catch.
+        after = client.get("/api/collections").json()
+        assert len(after) == before
+        assert not any(row["name"] == "Preview Me" for row in after)
 
     def test_post_still_creates_a_row_without_the_flag(self, client: TestClient):
         r = client.post("/api/collections", json={"name": "Real Row", "build": "per_person"})
 
-        assert r.status_code in (200, 201)
+        assert r.status_code == 201
+        assert any(row["name"] == "Real Row" for row in client.get("/api/collections").json())
 
 
 class TestNoTwoRowsShareATitle:

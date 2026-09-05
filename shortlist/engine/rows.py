@@ -1678,19 +1678,41 @@ class RowPolicy:
         key = (self.pool_key(spec), recency)
         if key not in self.recency_cuts:
             kinds = [MediaType.MOVIE, MediaType.SHOW] if spec.media == "both" else [MediaType(spec.media)]
-            self.recency_cuts[key] = ranking.cut_for_recency(
-                in_library,
-                kinds,
-                self.cfg.candidates_pre_rank,
-                recency,
-                _run_year(self.ctx.run_day),
-                # The same three dials `_candidate_pool` passes. Threading them into only one of the
-                # two cut sites gave a row that overrides `recency` a different ranking function from
-                # its siblings — on the same server, for the same person, on the same night.
-                self.cfg.genre_avoidance,
-                self.cfg.franchise,
-                self.cfg.cast,
-            )
+            year_now = _run_year(self.ctx.run_day)
+
+            def cut(candidates: list[Candidate], cast: float) -> list[Candidate]:
+                return ranking.cut_for_recency(
+                    candidates,
+                    kinds,
+                    self.cfg.candidates_pre_rank,
+                    recency,
+                    year_now,
+                    # The same dials `_candidate_pool` passes. Threading them into only one of the two
+                    # cut sites gave a row overriding `recency` a different ranking function from its
+                    # siblings — same server, same person, same night.
+                    self.cfg.genre_avoidance,
+                    self.cfg.franchise,
+                    cast,
+                )
+
+            # `cast` is deliberately 0.0 for the FIRST cut, and this is not a shortcut.
+            # `genre_avoidance` and `franchise` are stamped across the whole of `in_library` before
+            # any cut, so they are meaningful for every candidate here. `cast_overlap` is not: it is
+            # stamped by `enrich_cast_affinity` on an already-CUT list, because it needs both sides'
+            # cast lists and so is the one signal whose cost scales with the pool. Passing the dial
+            # against `in_library` would therefore score a handful of measured survivors against a
+            # majority still sitting at the 0.0 default — biasing the re-cut toward whichever
+            # candidates happened to win the SERVER-DEFAULT cut, which is precisely the "cap the
+            # dial's reach at whatever survived" failure this method exists to escape.
+            #
+            # So: cut without it, measure the bounded result, then re-cut with it. Same two-step as
+            # `_candidate_pool`, and memoised, so the extra TMDB reads are bounded by
+            # `candidates_pre_rank` and paid once per distinct (pool, recency).
+            cut_without_cast = cut(in_library, 0.0)
+            if self.cfg.cast > 0:
+                candidates_mod.enrich_cast_affinity(cut_without_cast, self.ctx.tmdb, self.seeds_for(spec))
+                cut_without_cast = cut(cut_without_cast, self.cfg.cast)
+            self.recency_cuts[key] = cut_without_cast
         return self.recency_cuts[key]
 
     def effective_recent_count(self, spec: RowSpec) -> int:

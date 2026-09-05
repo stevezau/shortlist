@@ -196,6 +196,23 @@ class TestTheCheckerCatchesTheRealThing:
         assert result.returncode == 0, result.stderr
         assert "migrations match" in result.stdout
 
+    def test_two_files_declaring_one_revision_fail_and_name_both(self, sandbox: Path):
+        """Last-file-wins would leave the EARLIER file entirely unchecked.
+
+        `read_manifest` already refuses a duplicate revision, because a badly resolved merge is how
+        two lines for one revision get there. The disk scan is the same accident one layer down, and
+        harder to notice: the check still reports success for every file it did look at.
+        """
+        victim = self._versions(sandbox) / VICTIM
+        twin = victim.with_name("9999_twin_of_the_victim.py")
+        twin.write_text(victim.read_text(encoding="utf-8"), encoding="utf-8")
+
+        result = self._run(sandbox)
+
+        assert result.returncode != 0
+        assert VICTIM in result.stderr + result.stdout
+        assert twin.name in result.stderr + result.stdout
+
     def test_an_edited_migration_fails_and_names_it(self, sandbox: Path):
         victim = self._versions(sandbox) / VICTIM
         original = victim.read_text()

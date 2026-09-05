@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import Counter
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import ClassVar
@@ -3337,6 +3338,74 @@ class TestLibraryIndexCache:
         ctx.plex.section_signature.return_value = "100:200"
         ctx.plex.build_library_index.return_value = {42: 1}
         return ctx
+
+    def _ctx_with_genres(self, cache, genres: dict[str, int] | None = None):
+        """A ctx whose scan fills the caller's genre counter, like a real PMS listing does."""
+        ctx = self._ctx(cache)
+        tally = genres if genres is not None else {"Drama": 3}
+
+        def scan(_section, genre_counts=None):
+            if genre_counts is not None:
+                genre_counts.update(tally)
+            return {42: 1}
+
+        ctx.plex.build_library_index.side_effect = scan
+        return ctx
+
+    def test_a_run_with_the_dial_off_does_not_poison_the_cache_for_a_run_with_it_on(self):
+        """The regression this cache's `tallied` flag exists for.
+
+        A dial-off run writes an entry with no tally. Serving that to a dial-on run leaves
+        `library_genre_counts` empty, so genre avoidance silently does nothing for up to the whole
+        TTL — or for ever on a library whose signature never moves.
+        """
+        cache = _DictCache()
+        section = MagicMock(key="1", title="Movies")
+        pipeline_mod._library_index(self._ctx_with_genres(cache), section)  # dial off
+
+        counts: Counter[str] = Counter()
+        ctx_on = self._ctx_with_genres(cache)
+        pipeline_mod._library_index(ctx_on, section, counts)
+
+        assert counts == Counter({"Drama": 3}), "the dial-on run inherited an empty tally"
+        assert ctx_on.plex.build_library_index.call_count == 1, "it should have re-scanned"
+
+    def test_a_cached_tally_is_served_without_re_scanning(self):
+        cache = _DictCache()
+        section = MagicMock(key="1", title="Movies")
+        pipeline_mod._library_index(self._ctx_with_genres(cache), section, Counter())
+
+        counts: Counter[str] = Counter()
+        ctx_second = self._ctx_with_genres(cache)
+        pipeline_mod._library_index(ctx_second, section, counts)
+
+        assert counts == Counter({"Drama": 3})
+        assert ctx_second.plex.build_library_index.call_count == 0, "a tallied entry must hit"
+
+    def test_a_library_with_no_genre_tags_still_caches(self):
+        """`tallied` records that a tally was TAKEN, not that it found anything.
+
+        A real library whose items carry no <Genre> children has a full index and an empty tally.
+        Inferring "no tally" from "empty tally" would make such a section re-scan on every run for
+        ever — a complete section walk per run, which is the cost this cache exists to avoid.
+        """
+        cache = _DictCache()
+        section = MagicMock(key="1", title="Movies")
+        pipeline_mod._library_index(self._ctx_with_genres(cache, genres={}), section, Counter())
+
+        ctx_second = self._ctx_with_genres(cache, genres={})
+        pipeline_mod._library_index(ctx_second, section, Counter())
+
+        assert ctx_second.plex.build_library_index.call_count == 0, "an empty tally re-scanned for ever"
+
+    def test_a_tallied_entry_still_serves_a_run_that_does_not_want_genres(self):
+        cache = _DictCache()
+        section = MagicMock(key="1", title="Movies")
+        pipeline_mod._library_index(self._ctx_with_genres(cache), section, Counter())
+
+        ctx_second = self._ctx_with_genres(cache)
+        assert pipeline_mod._library_index(ctx_second, section) == {42: 1}
+        assert ctx_second.plex.build_library_index.call_count == 0
 
     def test_unchanged_library_serves_the_cached_index_without_re_scanning(self):
         ctx = self._ctx(_DictCache())

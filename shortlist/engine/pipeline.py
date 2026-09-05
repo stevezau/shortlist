@@ -243,17 +243,23 @@ def _library_index(ctx: EngineContext, section, genre_counts: Counter[str] | Non
     cache_key = f"index3:{section.key}:{signature}" if signature else None
     if cache_key and (cached := ctx.index_cache.get(cache_key)):
         payload = json.loads(cached)
-        # A run with the dial OFF writes `genres: {}` under this same key. Serving that to a later run
+        # A run with the dial OFF writes no tally under this same key. Serving that to a later run
         # with the dial ON is worse than useless: with every section cached the tally is empty and the
         # dial silently does nothing, and with only SOME sections re-scanned the baseline becomes
         # whichever libraries happened to miss — so movie candidates get scored against a TV-only
-        # population and are demoted on arithmetic derived from the wrong library. Treat a
-        # genre-less entry as a miss when genres are wanted. An empty library legitimately writing
-        # `{}` costs one harmless re-scan of an empty index.
-        if genre_counts is None or payload.get("genres"):
+        # population and are demoted on arithmetic derived from the wrong library.
+        #
+        # Gated on `tallied`, which records that a tally was TAKEN — not on the tally being non-empty.
+        # Those differ for a real library whose items simply carry no <Genre> children (or whose
+        # `.genres` raises per item, which `build_library_index` suppresses): a full index and an
+        # empty tally. Inferring from emptiness would make such a section miss on every single run,
+        # for ever — a complete `section.all()` walk per run, which is exactly the "thousands of PMS
+        # reads" `_build_indexes` avoids. Entries written before this key existed carry no `tallied`,
+        # so they miss once and self-heal.
+        if genre_counts is None or payload.get("tallied"):
             index = {int(k): v for k, v in payload["index"].items()}
             if genre_counts is not None:
-                genre_counts.update(payload["genres"])
+                genre_counts.update(payload.get("genres", {}))
             _emit(ctx, section.title, "indexed (cached)", {"items": len(index)})
             return index
     _emit(ctx, section.title, "indexing", {})
@@ -269,7 +275,14 @@ def _library_index(ctx: EngineContext, section, genre_counts: Counter[str] | Non
     if cache_key:
         ctx.index_cache.set(
             cache_key,
-            json.dumps({"index": {str(k): v for k, v in index.items()}, "genres": dict(section_genres)}),
+            json.dumps(
+                {
+                    "index": {str(k): v for k, v in index.items()},
+                    "genres": dict(section_genres),
+                    # Whether a tally was TAKEN, which is not the same as whether it found anything.
+                    "tallied": genre_counts is not None,
+                }
+            ),
             INDEX_CACHE_TTL_S,
         )
     _emit(ctx, section.title, "indexed", {"items": len(index)})
