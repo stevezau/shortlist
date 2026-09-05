@@ -16,27 +16,42 @@ names an item on a server the owner owns, and every other endpoint they can call
 from __future__ import annotations
 
 import hashlib
+import threading
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from loguru import logger
+from starlette.concurrency import run_in_threadpool
 
 from shortlist.server.auth import require_owner
 from shortlist.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/picks", tags=["picks"], dependencies=[Depends(require_owner)])
 
-#: A week. The ETag below carries the artwork's own stamp, so replacing a poster in Plex invalidates
-#: this for free — a long max-age costs nothing and keeps a page of ten posters off the wire entirely
-#: on every revisit. `private` because these bytes are one owner's library, not a public CDN's.
-_CACHE_CONTROL = "private, max-age=604800"
+#: Five minutes, then revalidate. `private` because these bytes are one owner's library, not a public
+#: CDN's.
+#:
+#: NOT a week, and the reasoning matters. The ETag carries the artwork's own stamp, but that stamp
+#: comes from `_THUMB_MEMO`, which is only refreshed when a read FAILS — so on its own the ETag
+#: cannot notice new artwork, and a week-long `max-age` means the browser never asks. What actually
+#: happened when the owner replaced a poster was: the memoised stamp 404s at the PMS, this answers
+#: 502, the memo is dropped, and the NEXT load is correct — one broken tile, not free invalidation.
+#: A short max-age with revalidation lets the ETag do the job it was credited with: the browser asks,
+#: the memo is re-resolved, and a changed stamp returns new bytes instead of a 304.
+_CACHE_CONTROL = "private, max-age=300, must-revalidate"
 
-#: `rating_key -> thumb path`. Resolving the path is a PMS metadata read; serving the bytes is a
-#: second one. Memoising the first halves the round-trips for a list the owner scrolls back to.
+#: How long a resolved thumb path is trusted before it is looked up again. Bounds "the owner changed
+#: the artwork and one tile broke" to five minutes rather than to a process restart.
+_THUMB_MEMO_TTL_S = 300
+
+#: `rating_key -> (thumb path, resolved at)`. Resolving the path is a PMS metadata read; serving the
+#: bytes is a second one. Memoising the first halves the round-trips for a list the owner scrolls
+#: back to, and the timestamp bounds how long a path survives the owner changing the artwork.
 #:
 #: Deliberately NOT a byte cache. `poster_assets` exists for the handful of row posters the owner
 #: uploaded; a per-title image cache would grow with the library and has no eviction story. The
 #: browser cache is the byte cache, and it is already better at it.
-_THUMB_MEMO: dict[int, str] = {}
+_THUMB_MEMO: dict[int, tuple[str, float]] = {}
 
 #: Bounded so a long-running server cannot accumulate one entry per library item. Small because the
 #: working set is "the posters on the page in front of the owner", not the library.
@@ -51,40 +66,55 @@ _THUMB_MEMO_MAX = 4096
 #: The client holds its own copy either way; there is no reason for a second one here (rule 9).
 _CLIENT: dict[str, object] = {}
 
+#: Guards the check-then-set on `_CLIENT`. Every PMS call below runs in the threadpool, so two
+#: concurrent poster requests really are two OS threads here — without this, a page of ten posters
+#: could build ten `PlexServer`s (ten `GET /` handshakes) and keep the last one, which is the
+#: opposite of what the cache is for.
+_CLIENT_LOCK = threading.Lock()
+
 
 def _credentials_digest(url: str, token: str) -> str:
     return hashlib.sha256(f"{url}\0{token}".encode()).hexdigest()
 
 
-def _plex_client(store: SettingsStore):
-    """A PlexClient, or None when Plex isn't connected. Patched wholesale in tests.
+def _plex_client(url: str, token: str, timeout: int):
+    """A PlexClient for these credentials, cached. Blocking — call it in a threadpool.
 
     Kept between requests, unlike every other `_plex_client` in this codebase, because this endpoint
     is called once per PICTURE rather than once per page: constructing a `PlexServer` costs a `GET /`
     handshake (measured), so a rebuild per image made a ten-poster list pay ten of them on top of the
     reads it actually needed. Only `fetch_items` and a raw artwork GET are used here, neither of which
     touches the client's per-run section/collection caches, so there is nothing to go stale.
+
+    Takes plain values rather than a `SettingsStore` so the caller can read settings on the event
+    loop and hand this thread nothing that belongs to a SQLAlchemy session.
     """
     from shortlist.engine.clients.plex_pms import PlexClient
 
-    url, token = store.get("plex.url"), store.get("plex.token")
-    if not url or not token:
-        return None
-    key = _credentials_digest(str(url), str(token))
-    if key not in _CLIENT:
-        # One entry: a re-link supersedes the old credentials rather than accumulating beside them.
-        # The thumb memo goes with it — its paths are ratingKeys on the OLD server, and the same key
-        # on a new one names a different item.
-        _CLIENT.clear()
-        _THUMB_MEMO.clear()
-        _CLIENT[key] = PlexClient(str(url), str(token), timeout=int(store.get("plex.timeout_s") or 45))
-    return _CLIENT[key]
+    key = _credentials_digest(url, token)
+    with _CLIENT_LOCK:
+        if key not in _CLIENT:
+            # One entry: a re-link supersedes the old credentials rather than accumulating beside
+            # them. The thumb memo goes with it — its paths are ratingKeys on the OLD server, and the
+            # same key on a new one names a different item.
+            _CLIENT.clear()
+            _THUMB_MEMO.clear()
+            _CLIENT[key] = PlexClient(url, token, timeout=timeout)
+        return _CLIENT[key]
 
 
 def _memo_thumb(rating_key: int, thumb: str) -> None:
     if len(_THUMB_MEMO) >= _THUMB_MEMO_MAX:
         _THUMB_MEMO.clear()
-    _THUMB_MEMO[rating_key] = thumb
+    _THUMB_MEMO[rating_key] = (thumb, time.monotonic())
+
+
+def _memoised_thumb(rating_key: int) -> str | None:
+    """The remembered path, or None once it is older than the TTL."""
+    entry = _THUMB_MEMO.get(rating_key)
+    if entry is None or time.monotonic() - entry[1] > _THUMB_MEMO_TTL_S:
+        return None
+    return entry[0]
 
 
 @router.get("/{rating_key}/poster")
@@ -113,34 +143,72 @@ async def pick_poster(rating_key: int, request: Request) -> Response:
     if rating_key <= 0:
         raise HTTPException(status_code=404, detail="this pick was never matched to a library item")
 
+    # Settings are a local SQLite read; the session never leaves this thread. Everything after this
+    # is network I/O and belongs in the threadpool.
     state = request.app.state
     with state.sessions() as session:
-        client = _plex_client(SettingsStore(session, state.secrets))
-    if client is None:
+        store = SettingsStore(session, state.secrets)
+        url, token = str(store.get("plex.url") or ""), str(store.get("plex.token") or "")
+        timeout = int(store.get("plex.timeout_s") or 45)
+    if not url or not token:
         raise HTTPException(status_code=404, detail="Plex isn't connected")
 
-    thumb = _THUMB_MEMO.get(rating_key)
+    if_none_match = request.headers.get("if-none-match")
+    result = await run_in_threadpool(_fetch_poster, rating_key, url, token, timeout, if_none_match)
+    if result is None:
+        raise HTTPException(status_code=404, detail="no artwork for this item")
+    if isinstance(result, str):  # an ETag alone: the browser's copy is current
+        return Response(status_code=304, headers={"ETag": result, "Cache-Control": _CACHE_CONTROL})
+    body, content_type, etag = result
+    return Response(body, media_type=content_type, headers={"ETag": etag, "Cache-Control": _CACHE_CONTROL})
+
+
+def _fetch_poster(
+    rating_key: int, url: str, token: str, timeout: int, if_none_match: str | None
+) -> tuple[bytes, str, str] | str | None:
+    """The whole PMS conversation for one poster, off the event loop.
+
+    Every step here BLOCKS: building the client is a plexapi `GET /` handshake, `item_thumb_path`
+    uses `requests`, and `read_artwork` goes through `http_retry`, which `time.sleep`s between its
+    retries. Run inline on an `async def` handler, one slow or unreachable PMS would stall the whole
+    ASGI loop — SSE run progress and every other API call — for `plex.timeout_s` per image, and a
+    pick list fires ten to twenty of these at once. Same reason `collections.get_poster_image` and
+    `system`'s Plex probes are already off the loop.
+
+    Args:
+        rating_key: The item's Plex ratingKey.
+        url: The PMS base URL.
+        token: The owner's Plex token.
+        timeout: Per-read timeout in seconds.
+        if_none_match: The browser's `If-None-Match`, if it sent one.
+
+    Returns:
+        `(bytes, content_type, etag)` to serve, the ETag alone for a `304`, or None when there is no
+        artwork to serve.
+
+    Raises:
+        HTTPException: `502` when the PMS could not be read at all.
+    """
+    thumb = _memoised_thumb(rating_key)
     try:
+        client = _plex_client(url, token, timeout)
         if thumb is None:
             thumb = client.item_thumb_path(rating_key)
             if thumb is None:
-                raise HTTPException(status_code=404, detail="no artwork for this item")
+                return None
             _memo_thumb(rating_key, thumb)
 
         # The trailing segment of a Plex thumb path is the artwork's own stamp, so an ETag built from
-        # it invalidates itself the moment the poster changes. Weak, because the PMS may re-encode.
+        # it changes when the artwork does. Weak, because the PMS may re-encode.
         etag = f'W/"{rating_key}-{thumb.rsplit("/", 1)[-1]}"'
-        if request.headers.get("if-none-match") == etag:
-            return Response(status_code=304, headers={"ETag": etag, "Cache-Control": _CACHE_CONTROL})
+        if if_none_match == etag:
+            return etag
 
         body, content_type = client.read_artwork(thumb)
-    except HTTPException:
-        raise
     except Exception as e:
         # A stale memo (the item was re-added with new art) reads as a failure, so it is dropped
         # rather than left to fail every future request for this key.
         _THUMB_MEMO.pop(rating_key, None)
         logger.debug("could not read artwork for ratingKey={} ({})", rating_key, type(e).__name__)
         raise HTTPException(status_code=502, detail="Plex could not be read") from e
-
-    return Response(body, media_type=content_type, headers={"ETag": etag, "Cache-Control": _CACHE_CONTROL})
+    return body, content_type, etag

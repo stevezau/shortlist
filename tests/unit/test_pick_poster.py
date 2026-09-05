@@ -8,8 +8,10 @@ unanswerable from the UI.
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -86,7 +88,7 @@ def _fake_plex(monkeypatch, *, thumb: str | None = REAL_THUMB) -> MagicMock:
     client = MagicMock()
     client.item_thumb_path.return_value = thumb
     client.read_artwork.return_value = (b"\x89PNG\r\n\x1a\n", "image/png")
-    monkeypatch.setattr(picks, "_plex_client", lambda store: client)
+    monkeypatch.setattr(picks, "_plex_client", lambda url, token, timeout: client)
     return client
 
 
@@ -184,7 +186,7 @@ class TestPickPoster:
 
         client = MagicMock()
         client.item_thumb_path.side_effect = httpx.ConnectError("PMS down")
-        monkeypatch.setattr(picks, "_plex_client", lambda store: client)
+        monkeypatch.setattr(picks, "_plex_client", lambda url, token, timeout: client)
 
         r = app_client.get("/api/picks/575662/poster")
 
@@ -201,15 +203,35 @@ class TestPickPoster:
         assert r.headers["content-type"] == "image/png"
         plex.read_artwork.assert_called_once_with(REAL_THUMB)
 
-    def test_the_etag_carries_the_artwork_stamp_so_new_art_invalidates_it(self, app_client, monkeypatch):
-        """Plex puts the artwork's own mtime on the thumb path. Keying the ETag on it means replacing
-        a poster in Plex busts the browser cache for free — no cache-busting query needed."""
+    def test_the_etag_carries_the_artwork_stamp_and_the_browser_revalidates(self, app_client, monkeypatch):
+        """Plex puts the artwork's own mtime on the thumb path, so a changed poster changes the ETag.
+
+        The `max-age` has to be short for that to be worth anything: the ETag is built from the
+        MEMOISED path, and a week-long cache means the browser never asks, so new artwork would go
+        unnoticed until the stale stamp 404'd and the tile broke. `must-revalidate` is what lets the
+        stamp do the job."""
         _fake_plex(monkeypatch)
 
         r = app_client.get("/api/picks/575662/poster")
 
         assert "1786296858" in r.headers["etag"]
-        assert r.headers["cache-control"] == "private, max-age=604800"
+        assert r.headers["cache-control"] == "private, max-age=300, must-revalidate"
+
+    def test_new_artwork_is_picked_up_once_the_memo_expires(self, app_client, monkeypatch):
+        """The memo is what makes the ETag stale, so it is what has to expire. Without a TTL, a
+        replaced poster stayed wrong until the stale stamp 404'd or the process restarted."""
+        from shortlist.server.api import picks
+
+        plex = _fake_plex(monkeypatch)
+        first = app_client.get("/api/picks/575662/poster").headers["etag"]
+
+        plex.item_thumb_path.return_value = "/library/metadata/575662/thumb/1799999999"
+        # Age the entry rather than patching `time.monotonic`, which is the real clock every other
+        # thread and pytest itself are using.
+        path, stamp = picks._THUMB_MEMO[575662]
+        picks._THUMB_MEMO[575662] = (path, stamp - picks._THUMB_MEMO_TTL_S - 1)
+
+        assert app_client.get("/api/picks/575662/poster").headers["etag"] != first
 
     def test_a_matching_if_none_match_returns_304_and_reads_no_bytes_from_plex(self, app_client, monkeypatch):
         plex = _fake_plex(monkeypatch)
@@ -231,12 +253,19 @@ class TestPickPoster:
         assert r.status_code in (401, 403)
         plex.item_thumb_path.assert_not_called()
 
-    def test_plex_not_connected_is_a_404_not_a_500(self, app_client, monkeypatch):
+    def test_plex_not_connected_is_a_404_and_no_thread_is_spent_on_it(self, app_client, monkeypatch):
+        """The real condition — blank credentials — not a stubbed client. Answered on the event loop
+        before the threadpool hop, because there is nothing to ask."""
         from shortlist.server.api import picks
 
-        monkeypatch.setattr(picks, "_plex_client", lambda store: None)
+        plex = _fake_plex(monkeypatch)
+        with app_client.app.state.sessions() as session:
+            SettingsStore(session, app_client.app.state.secrets).set("plex.token", "")
+            session.commit()
+        picks._CLIENT.clear()
 
         assert app_client.get("/api/picks/575662/poster").status_code == 404
+        plex.item_thumb_path.assert_not_called()
 
 
 class TestTheRecordedEnvelope:
@@ -250,6 +279,43 @@ class TestTheRecordedEnvelope:
         # which is what makes it a capture rather than something hand-authored to agree with us.
         assert re.search(r"PMS \d+\.\d+", recorded["_recorded"]), "fixture provenance: not a real capture"
         assert recorded["MediaContainer"]["Metadata"][0]["ratingKey"], "the envelope `fetch_items` reads"
+
+
+class TestTheEventLoopIsNeverBlocked:
+    """Every PMS call here blocks: a plexapi `GET /` handshake, a `requests` read, and `http_retry`,
+    which `time.sleep`s between retries. Inline on an `async def` handler, one slow PMS would stall
+    the whole ASGI loop — SSE progress and every other API call — for `plex.timeout_s` PER IMAGE,
+    and a pick list fires ten to twenty at once."""
+
+    def test_the_handler_offloads_every_plex_call_to_the_threadpool(self, app_client, monkeypatch):
+        from shortlist.server.api import picks
+
+        loop_thread = threading.get_ident()
+        seen: list[int] = []
+
+        def record(*_args, **_kwargs):
+            seen.append(threading.get_ident())
+            return SimpleNamespace(
+                item_thumb_path=lambda _key: REAL_THUMB,
+                read_artwork=lambda _path: (b"\x89PNG", "image/png"),
+            )
+
+        monkeypatch.setattr(picks, "_plex_client", record)
+
+        assert app_client.get("/api/picks/575662/poster").status_code == 200
+
+        assert seen, "the client was never built"
+        assert loop_thread not in seen, "a blocking PMS call ran on the event loop thread"
+
+    def test_the_client_cache_is_guarded_against_concurrent_builds(self):
+        """The check-then-set is only safe because of the lock: the threadpool really does run two
+        poster requests on two OS threads, and without it a ten-poster page could build ten
+        `PlexServer`s — ten handshakes — and keep the last."""
+        from shortlist.server.api import picks
+
+        assert isinstance(picks._CLIENT_LOCK, type(threading.Lock()))
+        source = inspect.getsource(picks._plex_client)
+        assert "with _CLIENT_LOCK:" in source, "the cache write is not guarded"
 
 
 def test_the_client_exposes_both_halves():

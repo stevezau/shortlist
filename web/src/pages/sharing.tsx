@@ -77,7 +77,16 @@ export function SharingPage() {
   );
 }
 
-/** The headline: the worst true thing, never an average, and never green off a failed read. */
+/**
+ * The headline: the worst true thing, never an average, and never green off a failed read.
+ *
+ * Switches on `data.summary`, which the SERVER decides. It used to re-derive the verdict from
+ * `error`/`rows_error`/`accounts[].state` — two implementations of the same ranking, and only the
+ * server's one was documented. They had already diverged: the server ranks a measured enforcement
+ * failure above everything but a failed read, and this file did not look at enforcement at all, so
+ * it printed "Every account hides all N rows" directly above the panel saying Plex was ignoring the
+ * filter. Only the detail text is drawn from the raw fields.
+ */
 function Summary({
   data,
   onRetry,
@@ -85,7 +94,7 @@ function Summary({
   data: PrivacyStatus;
   onRetry: () => void;
 }) {
-  if (data.error) {
+  if (data.summary === "unreadable") {
     return (
       <Banner tone="bad" role="alert">
         <p>
@@ -98,7 +107,7 @@ function Summary({
       </Banner>
     );
   }
-  if (data.rows_error) {
+  if (data.summary === "rows_unknown") {
     return (
       <Banner tone="bad" role="alert">
         <p>
@@ -112,9 +121,29 @@ function Summary({
       </Banner>
     );
   }
+  if (data.summary === "not_enforced") {
+    // Stored is not enforced. These accounts DO carry every hide rule — that is why the enforcement
+    // check looked at them at all — so the "missing rules" wording below would be actively wrong,
+    // and so would anything green.
+    const who = Object.keys(data.enforcement.not_enforced);
+    return (
+      <Banner tone="bad" role="alert">
+        <p>
+          <strong>
+            Plex saved every hide rule and is showing other people's rows
+            anyway.
+          </strong>{" "}
+          Checked through {who.join(", ")}
+          {who.length === 1 ? "'s" : "'"} own eyes in run #
+          {data.enforcement.run_id}. Nothing below is wrong — the rules really
+          are on the filters. Plex is not applying them.
+        </p>
+      </Banner>
+    );
+  }
 
   const short = data.accounts.filter((a) => a.state === "missing");
-  if (short.length > 0) {
+  if (data.summary === "missing") {
     return (
       <Banner tone="bad" role="alert">
         <p>
@@ -272,6 +301,16 @@ function AccountRow({ account }: { account: AccountPrivacy }) {
               Plex rejects hide rules for an account with a restriction profile
               ({account.restriction_profile}). Clear the profile in Plex and the
               next run can hide their view.
+            </p>
+          )}
+          {account.user_id === null && (
+            // A share added since the last user sync. Every attribute beside the filter is a
+            // fallback (`user_type` reads "shared", `restriction_profile` reads ""), so the state
+            // beside it may be wrong in the one direction that matters — a parental-profile account
+            // would be badged "missing hide rules" when Plex simply refuses them.
+            <p className="mt-1 text-sm text-muted-foreground">
+              Plex knows this account, Shortlist hasn't synced it yet — run Sync
+              users on the Users page for a reliable answer.
             </p>
           )}
           {account.other_conditions.length > 0 && (

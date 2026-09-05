@@ -301,6 +301,7 @@ describe("the enforcement panel", () => {
   it("reports an exposure as something to file, not a setting to change", async () => {
     getPrivacyStatus.mockResolvedValue(
       status({
+        summary: "not_enforced",
         enforcement: {
           measured: true,
           run_id: 419,
@@ -316,6 +317,34 @@ describe("the enforcement panel", () => {
       await screen.findByText(/plex is ignoring the privacy filter/i),
     ).toBeVisible();
     expect(screen.getByText(/please open an issue/i)).toBeVisible();
+  });
+
+  it("a measured exposure turns the HEADLINE red, not just the panel", async () => {
+    // The whole point of the summary. `_verify_filters_enforced` only spot-checks accounts that
+    // ALREADY carry our excludes, so in this state every account is legitimately `hiding` with
+    // `missing: []` — and the headline used to read "Every account hides all 1 row that aren't
+    // theirs" directly above the red panel saying Plex was ignoring the filter.
+    getPrivacyStatus.mockResolvedValue(
+      status({
+        summary: "not_enforced",
+        accounts: [account({ state: "hiding", missing: [] })],
+        enforcement: {
+          measured: true,
+          run_id: 419,
+          measured_at: "2026-09-05T01:00:00+00:00",
+          not_enforced: { sarah: [21, 22] },
+        },
+      }),
+    );
+
+    renderPage();
+
+    expect(
+      await screen.findByText(/plex saved every hide rule and is showing/i),
+    ).toBeVisible();
+    expect(screen.queryByText(/every account hides all/i)).toBeNull();
+    // Not the "missing hide rule" wording either: these filters are complete.
+    expect(screen.queryByText(/missing a hide rule/i)).toBeNull();
   });
 
   it("states the Home-only scope once, and never claims the Collections tab", async () => {

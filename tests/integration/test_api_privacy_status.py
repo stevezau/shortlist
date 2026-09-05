@@ -53,15 +53,27 @@ def _roster(monkeypatch, filters_by_user: dict[str, dict[str, str]], ids: dict[s
     )
 
 
-def _rows_on_plex(monkeypatch, slugs: list[str]) -> None:
-    """The per-person rows that exist on the PMS right now."""
+def _rows_on_plex(monkeypatch, slugs: list[str], *, marked_but_unlabelled: int = 0) -> None:
+    """The per-person rows that exist on the PMS right now.
+
+    `owned_row_surfaces` is NOT optional on this fake. `existing_row_labels` only consults it when
+    the label read came back EMPTY — so a fake without it raised `AttributeError` inside the
+    fail-safe's own `except`, and every test passing `[]` silently got `rows_error` set instead of
+    the "no rows exist" answer it meant to set up. That made the one branch behind the SPA's "there's
+    nothing for anyone to hide" banner unreachable from any test. A fake must be no easier than the
+    real server; here it was harder, in the direction that hides a bug.
+    """
     from shortlist.server.services import privacy_status
 
     owned = {slug: OwnedRow(label=f"shortlist_{slug}") for slug in slugs}
+    surfaces = [{"marked": True}] * marked_but_unlabelled
     monkeypatch.setattr(
         privacy_status,
         "_plex_client",
-        lambda _store: SimpleNamespace(owned_collections=lambda _prefix: owned),
+        lambda _store: SimpleNamespace(
+            owned_collections=lambda _prefix: owned,
+            owned_row_surfaces=lambda flags=False: surfaces,
+        ),
     )
 
 
@@ -168,6 +180,34 @@ class TestTheVerdictIsAlwaysALiveRead:
         assert body["rows_error"], "a failed PMS read must be reported, not swallowed"
         assert body["rows_on_plex"] == []
         assert all(a["state"] != "hiding" for a in body["accounts"]), "nobody is 'hiding' off a failed read"
+
+    def test_a_server_with_no_rows_yet_is_reported_as_clean_not_as_unknown(self, client: TestClient, monkeypatch):
+        """The other half of the fail-safe, and the branch behind the SPA's "there's nothing for
+        anyone to hide" banner. A read that SUCCEEDED and found nothing is a real answer; only a read
+        that failed, or one contradicted by the title marker, is UNKNOWN."""
+        _seed_users(client, [{"slug": "sarah", "plex_account_id": 1000, "enabled": True}])
+        _rows_on_plex(monkeypatch, [])
+        _roster(monkeypatch, {"sarah": {"filterMovies": ""}}, ids={"sarah": 1000})
+
+        body = client.get("/api/privacy/status").json()
+
+        assert body["rows_error"] is None, "a successful read that found nothing is not an error"
+        assert body["rows_on_plex"] == []
+        assert body["summary"] == "clean"
+        assert next(a for a in body["accounts"] if a["slug"] == "sarah")["state"] == "hiding"
+
+    def test_rows_that_lost_their_labels_are_unknown_not_nothing_to_hide(self, client: TestClient, monkeypatch):
+        """The most reassuring possible lie, at the API boundary. Rows exist by title marker but read
+        as unlabelled — which is exactly the state where they are visible to everyone."""
+        _seed_users(client, [{"slug": "sarah", "plex_account_id": 1000, "enabled": True}])
+        _rows_on_plex(monkeypatch, [], marked_but_unlabelled=3)
+        _roster(monkeypatch, {"sarah": {"filterMovies": ""}}, ids={"sarah": 1000})
+
+        body = client.get("/api/privacy/status").json()
+
+        assert "carry no label" in body["rows_error"]
+        assert body["summary"] == "rows_unknown"
+        assert all(a["state"] == "unknown" for a in body["accounts"])
 
     def test_an_account_missing_an_exclude_names_the_rows_it_can_see(self, client: TestClient, monkeypatch):
         _seed_users(
@@ -297,6 +337,55 @@ class TestEnforcement:
         assert enforcement["run_id"] == measured, "read the newest run that MEASURED, not the newest run"
         assert enforcement["measured"] is True
         assert enforcement["not_enforced"] == {"sarah": [21, 22]}
+
+    def test_a_measured_exposure_outranks_a_stored_filter_in_the_headline(self, client: TestClient, monkeypatch):
+        """The worst thing this screen can do, and the reason the summary exists.
+
+        `_verify_filters_enforced` only spot-checks accounts that ALREADY carry our excludes
+        (`pipeline.py:602` skips the rest) — so the exact state discussion #88 describes is: every
+        filter is stored, every account reads `hiding`, `missing` is empty everywhere, and Plex is
+        serving other people's rows anyway. A summary that only looks at `missing` calls that "clean"
+        and prints "Every account hides all N rows that aren't theirs" directly above the red panel
+        saying Plex is ignoring the filter."""
+        self._run(client, stats={"filters_not_enforced": {"sarah": [21, 22]}}, minutes_ago=30)
+        _seed_users(
+            client,
+            [
+                {"slug": "sarah", "plex_account_id": 1000, "enabled": True},
+                {"slug": "mike", "plex_account_id": 1001, "enabled": True},
+            ],
+        )
+        _rows_on_plex(monkeypatch, ["sarah", "mike"])
+        # Everything is stored correctly. That is exactly the point.
+        _roster(monkeypatch, {"sarah": {"filterMovies": "label!=shortlist_mike"}}, ids={"sarah": 1000})
+
+        body = client.get("/api/privacy/status").json()
+
+        assert next(a for a in body["accounts"] if a["slug"] == "sarah")["missing"] == []
+        assert body["summary"] == "not_enforced", "a measured exposure must outrank a stored filter"
+
+    def test_a_failed_read_still_outranks_a_measured_exposure(self, client: TestClient, monkeypatch):
+        """Ranking, not a flat priority swap: with no roster nothing below is current, including
+        which accounts the old measurement named."""
+        from shortlist.server.services import privacy_status
+
+        self._run(client, stats={"filters_not_enforced": {"sarah": [21]}}, minutes_ago=30)
+        _rows_on_plex(monkeypatch, ["sarah"])
+        monkeypatch.setattr(
+            privacy_status,
+            "_plextv_client",
+            lambda _store, _mid: SimpleNamespace(list_users=lambda: (_ for _ in ()).throw(TimeoutError("down"))),
+        )
+
+        assert client.get("/api/privacy/status").json()["summary"] == "unreadable"
+
+    def test_an_unmeasured_exposure_key_cannot_reach_the_headline(self, client: TestClient, monkeypatch):
+        """No measuring run means no exposure to rank — "nobody looked" is not "somebody is exposed"."""
+        _seed_users(client, [{"slug": "sarah", "plex_account_id": 1000, "enabled": True}])
+        _rows_on_plex(monkeypatch, ["sarah"])
+        _roster(monkeypatch, {"sarah": {"filterMovies": ""}}, ids={"sarah": 1000})
+
+        assert client.get("/api/privacy/status").json()["summary"] == "clean"
 
     def test_a_clean_measurement_is_reported_as_measured_and_empty(self, client: TestClient, monkeypatch):
         """The empty dict is what lets a fixed server clear the alert, so it must survive as

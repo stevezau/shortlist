@@ -31,7 +31,7 @@ class TestThePosterProxy:
         assert response.headers["content-type"] == "image/png"
         assert response.content.startswith(b"\x89PNG"), "real image bytes, streamed from the PMS"
         # The fake serves the thumb only behind the metadata read, so a 200 here proves both hops ran.
-        assert response.headers["cache-control"] == "private, max-age=604800"
+        assert response.headers["cache-control"] == "private, max-age=300, must-revalidate"
         assert response.headers["etag"]
 
     def test_the_owners_plex_token_never_reaches_the_response(self, app: ShortlistApp, reset_fake_plex):

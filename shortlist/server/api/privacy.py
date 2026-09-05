@@ -88,7 +88,11 @@ class PrivacyStatusOut(PassthroughModel):
 
     read_at: str
     #: The headline, in priority order: "unreadable" (plex.tv failed) | "rows_unknown" (the PMS row
-    #: read failed) | "missing" (somebody can see a row that isn't theirs) | "clean".
+    #: read failed) | "not_enforced" (a run looked through a real account's eyes and Plex was serving
+    #: other people's rows anyway) | "missing" (a hide rule is absent from someone's share) | "clean".
+    #:
+    #: "not_enforced" outranks "missing" because the two cannot co-occur on one account: the
+    #: enforcement check only runs where our excludes are already stored.
     summary: str
     accounts: list[AccountPrivacyOut]
     #: The per-person row labels that exist on Plex right now — what the verdict was measured
@@ -137,7 +141,7 @@ def privacy_status_endpoint(request: Request) -> dict:
 
     return {
         "read_at": status.read_at,
-        "summary": _summary(status, accounts),
+        "summary": _summary(status, accounts, enforcement),
         "accounts": accounts,
         "rows_on_plex": status.rows_on_plex,
         "rows_error": status.rows_error,
@@ -209,16 +213,27 @@ def _owner_out(owner: User, rows_on_plex: list[str]) -> dict:
     }
 
 
-def _summary(status: privacy_status.SharingStatus, accounts: list[dict]) -> str:
+def _summary(status: privacy_status.SharingStatus, accounts: list[dict], enforcement: dict) -> str:
     """The headline, in priority order — the worst true thing, never an average.
 
     A failed read comes first because everything below it is then meaningless, and a page that reads
     green off an outage is the failure this whole item exists to prevent.
+
+    **A measured exposure outranks a stored filter**, and that ordering is the whole point.
+    `_verify_filters_enforced` only spot-checks accounts that ALREADY carry our excludes
+    (`pipeline.py:602` skips the rest), so the state discussion #88 reported — Plex storing every
+    rule and serving other people's rows anyway — has `missing` EMPTY on every account. Ranking on
+    `missing` alone printed "Every account hides all N rows that aren't theirs" directly above the
+    red panel saying Plex is ignoring the filter. Stored is not enforced; the headline has to say so.
     """
     if status.error:
         return "unreadable"
     if status.rows_error:
         return "rows_unknown"
+    # Only a run that actually LOOKED can report an exposure. An unmeasured empty result is "nobody
+    # checked", never "somebody is exposed" — the same distinction `measured` exists to hold.
+    if enforcement["measured"] and enforcement["not_enforced"]:
+        return "not_enforced"
     if any(a["state"] == "missing" for a in accounts):
         return "missing"
     return "clean"
