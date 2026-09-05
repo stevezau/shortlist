@@ -338,7 +338,12 @@ def test_capture_two_account_image(browser: Browser, app: ShortlistApp, reset_fa
     seen = {slug: _rows_visible_to(app, account_id) for account_id, slug in ((201, "Sarah"), (202, "Mike"))}
     for slug, rows in seen.items():
         assert rows, f"{slug} has no row to photograph — the run did not deliver one"
-        assert all(items for _key, _title, items in rows), f"{slug} has an empty row"
+        assert all(tiles for _key, _title, tiles in rows), f"{slug} has an empty row"
+        # A tile with no artwork path photographs as a blank box, and the picture would still be
+        # committed. The image is the only place that failure would ever show.
+        assert all(tile["thumb"] for _key, _title, tiles in rows for tile in tiles[:TILES]), (
+            f"{slug} has a tile with no artwork"
+        )
 
     columns = ""
     for slug, rows in seen.items():
