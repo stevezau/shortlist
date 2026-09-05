@@ -6,6 +6,8 @@ import {
   webSearchSummary,
   friendlyError,
   rankClass,
+  runRefetchIntervalMs,
+  runsListRefetchIntervalMs,
   tokenStepBreakdown,
 } from "@/lib/run-format";
 import type { RunDetail, RunLogEntry } from "@/lib/types";
@@ -416,5 +418,53 @@ describe("currentPhase — replaying run #10", () => {
         line("Shortlist", "finished", { ok: 46, failed: 0, seconds: 5666 }),
       ]),
     ).toBeNull();
+  });
+});
+
+/**
+ * The fallback poll for a run in flight, pinned.
+ *
+ * The ONLY other thing that refreshes a running run is the live SSE stream, and `EventSource`
+ * replays nothing it missed while disconnected — so when the stream itself is down, a finished run
+ * reads "Running" with a ticking timer until someone reloads. That is the SFLIX 2026-08-13 symptom
+ * (a cancel that HAD worked looked like one that was ignored), reachable through a dropped
+ * connection rather than through an idle one.
+ *
+ * The exported rule is asserted, never a copy of it — the same reasoning as
+ * `arr-status-polling.test.ts`, which pins the other polling predicate in this app.
+ */
+describe("run polling fallback", () => {
+  const running = { finished_at: null };
+  const finished = { finished_at: "2026-07-15T04:21:00Z" };
+
+  it("polls while a run has not finished", () => {
+    expect(runRefetchIntervalMs(running)).toBe(5_000);
+  });
+
+  it("stops polling once the run has a finished_at", () => {
+    // A settled run never changes again, so a timer here is a forever-fetch of a constant.
+    expect(runRefetchIntervalMs(finished)).toBe(false);
+  });
+
+  it("does not poll before the first answer arrives", () => {
+    expect(runRefetchIntervalMs(undefined)).toBe(false);
+  });
+
+  it("polls the list while ANY page holds an unfinished run", () => {
+    // The list is paged, and the running run sits on page one while older pages are all settled —
+    // so "every page is finished" is the only safe reason to stop.
+    expect(runsListRefetchIntervalMs([[finished], [running, finished]])).toBe(
+      5_000,
+    );
+  });
+
+  it("stops once every run on every page has finished", () => {
+    expect(runsListRefetchIntervalMs([[finished], [finished]])).toBe(false);
+  });
+
+  it("does not poll an empty or unloaded list", () => {
+    expect(runsListRefetchIntervalMs(undefined)).toBe(false);
+    expect(runsListRefetchIntervalMs([])).toBe(false);
+    expect(runsListRefetchIntervalMs([[]])).toBe(false);
   });
 });

@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query";
 
 import { api } from "./api";
+import { runRefetchIntervalMs, runsListRefetchIntervalMs } from "./run-format";
 import { useSSE } from "./sse";
 import type {
   ArrStatus,
@@ -134,6 +135,15 @@ export function useRunsPaged(collection?: string) {
       lastPage.length < RUNS_PAGE
         ? undefined
         : lastPage[lastPage.length - 1]?.id,
+    // Same safety net as `useRun`: the list's SSE handler in `runs.tsx` only fires while the stream
+    // is up. A tick refetches every page loaded so far, which after a few "Load more" presses is
+    // several requests per 5s — accepted deliberately over the two ways to trim it, because both
+    // cost correctness. `maxPages` would evict the older pages the operator just asked for, and
+    // gating on `pages[0]` alone would stop polling a run that is still going but has been pushed
+    // off the newest page by 50 later ones. It only ticks while a run is genuinely unfinished, and
+    // React Query's default `refetchIntervalInBackground: false` pauses it on an unfocused tab.
+    refetchInterval: (query) =>
+      runsListRefetchIntervalMs(query.state.data?.pages),
   });
 }
 
@@ -206,6 +216,10 @@ export function useRun(id: number, enabled = true) {
     queryKey: queryKeys.run(id),
     queryFn: () => api.getRun(id),
     enabled,
+    // The safety net for a stream that is down: see `runRefetchIntervalMs`. Without it this page's
+    // only refresh is `run.finished` over SSE, so a dropped connection leaves a finished run
+    // reading "Running" — and a cancelled one stuck on "Stopping…" — until someone reloads.
+    refetchInterval: (query) => runRefetchIntervalMs(query.state.data),
   });
 }
 
@@ -322,8 +336,17 @@ export function useCancelRun() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => api.cancelRun(id),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: queryKeys.runs }),
+    // Both keys named, rather than leaning on `["runs"]` reaching `["runs", id]` by prefix match.
+    // That match is real (checked against the installed @tanstack/query-core), but it is implicit:
+    // renaming a key could silently stop the detail page refreshing with nothing to catch it.
+    //
+    // This only ever reports "cancel requested" — cancellation is cooperative, so the run finishes
+    // the person it is on and then bails. What the run SETTLED as arrives later, over SSE or via
+    // `runRefetchIntervalMs`; this invalidation is not a substitute for either.
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.runs });
+      queryClient.invalidateQueries({ queryKey: queryKeys.run(id) });
+    },
   });
 }
 

@@ -61,13 +61,17 @@ describe("useSSE", () => {
     expect(latestSource().url).toBe("/api/events");
   });
 
-  it("reports connected after the stream opens", () => {
+  it("returns nothing — the connection flag was tracked but never read by any page", () => {
+    // `useSSE` used to return `{ connected }`, kept in `useState` purely to re-render on every
+    // open/error/close. All six call sites discard the return value, so the state existed only to
+    // make the whole page re-render for no consumer. Staleness is now answered by
+    // `runRefetchIntervalMs` — "is this run still unfinished?" — which is strictly more robust than
+    // "is the socket up?": it also covers a connection that is open but missed a publish.
     const { result } = renderHook(() => useSSE({}));
-    expect(result.current.connected).toBe(false);
 
     act(() => latestSource().onopen?.());
 
-    expect(result.current.connected).toBe(true);
+    expect(result.current).toBeUndefined();
   });
 
   it("dispatches run.user.stage to its handler with parsed JSON", () => {

@@ -6,6 +6,47 @@ import {
   STAGE_LABELS,
 } from "@/lib/run-stages";
 
+/** How often a run that has not finished is re-fetched when the live stream tells us nothing. */
+const RUN_POLL_FALLBACK_MS = 5_000;
+
+/** A run as the poll predicates read it — only whether it has settled matters. */
+type Settleable = { finished_at: string | null };
+
+/**
+ * How often to re-fetch ONE run, or `false` once it has settled.
+ *
+ * Exists because the only other thing that refreshes an in-flight run is the live SSE stream
+ * (`run-detail.tsx` and `runs.tsx` both wire `run.finished` to `invalidateQueries`) — and
+ * `EventSource` replays nothing it missed while it was disconnected. Its `onerror` retries with
+ * backoff up to 30s forever, and until it reconnects `run.finished` is never delivered, so a run
+ * that has ended still reads "Running" with a ticking timer. That is the SFLIX 2026-08-13 symptom
+ * (`runs.tsx`) reached through a dropped connection rather than an idle one, and it is also what
+ * leaves a cancelled run stuck on "Stopping…": cancelling records `cancel_requested`, and only the
+ * stream ever reports that the run then actually stopped.
+ *
+ * `false` once `finished_at` is set, so a settled run is never re-fetched for nothing.
+ */
+export function runRefetchIntervalMs(
+  run: Settleable | undefined,
+): number | false {
+  return run && !run.finished_at ? RUN_POLL_FALLBACK_MS : false;
+}
+
+/**
+ * {@link runRefetchIntervalMs} for the paged runs list: poll while ANY page holds an unfinished run.
+ *
+ * Every page, not just the first: the list is fetched in chunks and "Load more" keeps the older,
+ * already-settled pages in the cache beside the live one.
+ */
+export function runsListRefetchIntervalMs(
+  pages: Settleable[][] | undefined,
+): number | false {
+  if (!pages) return false;
+  return pages.some((page) => page.some((run) => !run.finished_at))
+    ? RUN_POLL_FALLBACK_MS
+    : false;
+}
+
 /** The one recognised failure class a raw engine/Plex error belongs to, or `null` for anything
  *  unrecognised. The single source of truth both `friendlyError` (what to SAY) and `errorBucket`
  *  (what counts as "the same problem") are built from, so the two can never drift apart. */

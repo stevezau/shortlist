@@ -531,6 +531,11 @@
             "title": "Defer Rename",
             "type": "boolean"
           },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
           "enabled": {
             "default": true,
             "title": "Enabled",
@@ -1054,6 +1059,17 @@
             ],
             "title": "Cold Start"
           },
+          "dry_run": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dry Run"
+          },
           "enabled": {
             "title": "Enabled",
             "type": "boolean"
@@ -1174,8 +1190,33 @@
             "title": "Placement Friends",
             "type": "string"
           },
+          "plan": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PlanEntryOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan"
+          },
           "poster": {
             "$ref": "#/components/schemas/PosterOut"
+          },
+          "preview_incomplete": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview Incomplete"
           },
           "recency": {
             "anyOf": [
@@ -3266,6 +3307,58 @@
         "title": "PinStatusOut",
         "type": "object"
       },
+      "PlanEntryOut": {
+        "additionalProperties": true,
+        "description": "One unit of Plex work an edit would cause.",
+        "properties": {
+          "collections": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Collections",
+            "type": "array"
+          },
+          "in_sections": {
+            "items": {
+              "type": "string"
+            },
+            "title": "In Sections",
+            "type": "array"
+          },
+          "kind": {
+            "description": "What this step would do.",
+            "enum": [
+              "poster_reset",
+              "privacy_sync",
+              "reconcile",
+              "rename",
+              "visibility"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "only_user_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Only User Ids",
+            "type": "array"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "reason",
+          "collections",
+          "only_user_ids",
+          "in_sections"
+        ],
+        "title": "PlanEntryOut",
+        "type": "object"
+      },
       "PlexServerOut": {
         "additionalProperties": true,
         "description": "A server plex.tv says this account can reach, with every advertised address already tried.",
@@ -4037,6 +4130,64 @@
           "path"
         ],
         "title": "RootFolderOut",
+        "type": "object"
+      },
+      "RowDeletePreviewOut": {
+        "additionalProperties": true,
+        "description": "What `DELETE /collections/{id}?dry_run=true` WOULD do. Nothing is written.",
+        "properties": {
+          "anchors_cleared": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Anchors Cleared",
+            "type": "array"
+          },
+          "collections": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Collections",
+            "type": "array"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "preview_incomplete": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview Incomplete"
+          },
+          "privacy_sync": {
+            "title": "Privacy Sync",
+            "type": "boolean"
+          },
+          "schedule_cleared": {
+            "title": "Schedule Cleared",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "dry_run",
+          "collections",
+          "anchors_cleared",
+          "privacy_sync",
+          "schedule_cleared",
+          "preview_incomplete",
+          "message"
+        ],
+        "title": "RowDeletePreviewOut",
         "type": "object"
       },
       "RowEffectivenessOut": {
@@ -7592,6 +7743,7 @@
     },
     "/api/collections/{collection_id}": {
       "delete": {
+        "description": "Delete a row, or with ``dry_run=true`` report what deleting it would do and write nothing.\n\nA query parameter rather than a body: `DELETE` bodies are awkward through both `fetch` and\nFastAPI, and this works with the SPA's existing `request()` helper unchanged.\n\n`POST /{id}/cleanup?dry_run=true` already previews the PLEX half. What only this can show is the\nLOCAL half, and one part of it is a genuine surprise: deleting this row silently strips every\nOTHER row's shelf placement that was positioned relative to it, changing where two other people's\nrows appear. That was logged after the fact and warned about nowhere.\n\nA preview answers 200 with :class:`RowDeletePreviewOut` instead of the delete's 204.",
         "operationId": "delete_collection_api_collections__collection_id__delete",
         "parameters": [
           {
@@ -7602,9 +7754,29 @@
               "title": "Collection Id",
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Dry Run",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RowDeletePreviewOut"
+                }
+              }
+            },
+            "description": "A dry-run preview; nothing was deleted."
+          },
           "204": {
             "description": "Successful Response"
           },
