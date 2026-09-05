@@ -975,6 +975,10 @@ def _candidate_pool(
     # `recency` participates in the cut. A no-op unless the owner turned the dial up, and the
     # library tally is empty in that case, so nothing is computed either.
     candidates_mod.stamp_genre_penalties(ctx.tmdb, in_library, seeds, ctx.library_genre_counts)
+    # Seed-side only, so it costs a handful of calls whatever the pool size — safe to run before
+    # the cut, where it can still rescue a sequel that would otherwise fall below the cap.
+    if ctx.config.franchise > 0:
+        candidates_mod.mark_franchise_members(in_library, ctx.tmdb)
     # Pre-rank EACH media type to its own cap, not the mixed pool to one cap — otherwise a 'both'
     # row whose pool skews one way (a mostly-TV watcher) truncates the other type away before the
     # per-media curate ever sees it, and that library's collection comes up empty.
@@ -985,8 +989,30 @@ def _candidate_pool(
     # when it overrides); the shared-row path — which has no such cache — passes the row's own
     # `effective_recency` and gets the right cut first time.
     ranked = ranking.cut_for_recency(
-        in_library, kinds, cap, recency, _run_year(ctx.run_day), ctx.config.genre_avoidance
+        in_library,
+        kinds,
+        cap,
+        recency,
+        _run_year(ctx.run_day),
+        ctx.config.genre_avoidance,
+        ctx.config.franchise,
+        ctx.config.cast,
     )
+    # AFTER the cut, unlike the other two: cast overlap needs both sides' cast lists, so it is
+    # the one signal whose cost scales with the pool. Bounded here to `candidates_pre_rank`
+    # rather than the raw gather. It re-orders `ranked` and never changes its membership.
+    if ctx.config.cast > 0:
+        candidates_mod.enrich_cast_affinity(ranked, ctx.tmdb, seeds)
+        ranked = ranking.cut_for_recency(
+            ranked,
+            kinds,
+            cap,
+            recency,
+            _run_year(ctx.run_day),
+            ctx.config.genre_avoidance,
+            ctx.config.franchise,
+            ctx.config.cast,
+        )
     # Stamp each traced return with its fate (kept as a candidate, or dropped and why), derived
     # entirely from the lists selection already produced above — so the trace can follow every title
     # in and out without altering a single delivered pick.

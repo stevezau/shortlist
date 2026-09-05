@@ -100,6 +100,8 @@ def score(
     recency: float = 0.0,
     year_now: int = 0,
     genre_avoidance: float = 0.0,
+    franchise: float = 0.0,
+    cast: float = 0.0,
 ) -> float:
     """How promising a candidate is, before the picker selects from it.
 
@@ -118,12 +120,51 @@ def score(
     rating = candidate.rating or 5.0  # unrated titles get a neutral prior, not zero
     base = (1 + candidate.seed_frequency) * rating * (1.0 + seed_weight) * candidate.affinity
     base *= negative_multiplier(candidate.genre_penalty * genre_avoidance)
+    # Every new term is a BOUNDED multiplier that is exactly 1.0 at its 0.0 default, which is what
+    # makes this composition backward-compatible by construction rather than by four separately
+    # verified accidents.
+    base *= franchise_factor(candidate.in_seed_franchise, franchise)
+    base *= cast_factor(candidate.cast_overlap, cast)
     return base * recency_factor(candidate.year, year_now, recency)
 
 
-def _sort_key(candidate: Candidate, recency: float = 0.0, year_now: int = 0, genre_avoidance: float = 0.0) -> tuple:
+#: Neither positive signal may out-rank a well-seeded, high-affinity title on its own. A full extra
+#: seed match is already worth +100% through `seed_frequency`; "continues the same story" and "shares
+#: a lead" are strong evidence, not that. One ceiling for both, so neither can quietly outgrow the
+#: other.
+FRANCHISE_BOOST_MAX = 0.5
+CAST_BOOST_MAX = 0.5
+
+
+def franchise_factor(in_seed_franchise: bool, strength: float) -> float:
+    """Boost for a title that continues a story one of its seeds began. 1.0 when off or not a member."""
+    if not in_seed_franchise:
+        return 1.0
+    return 1.0 + FRANCHISE_BOOST_MAX * max(0.0, min(1.0, strength))
+
+
+def cast_factor(overlap: float, strength: float) -> float:
+    """Boost proportional to IDF-discounted shared cast. 1.0 when off or nothing is shared."""
+    return 1.0 + CAST_BOOST_MAX * max(0.0, min(1.0, strength)) * max(0.0, min(1.0, overlap))
+
+
+def _sort_key(
+    candidate: Candidate,
+    recency: float = 0.0,
+    year_now: int = 0,
+    genre_avoidance: float = 0.0,
+    franchise: float = 0.0,
+    cast: float = 0.0,
+) -> tuple:
     return (
-        -score(candidate, recency=recency, year_now=year_now, genre_avoidance=genre_avoidance),
+        -score(
+            candidate,
+            recency=recency,
+            year_now=year_now,
+            genre_avoidance=genre_avoidance,
+            franchise=franchise,
+            cast=cast,
+        ),
         -candidate.rating,
         candidate.title,
     )
@@ -136,6 +177,8 @@ def cut_for_recency(
     recency: float,
     year_now: int,
     genre_avoidance: float = 0.0,
+    franchise: float = 0.0,
+    cast: float = 0.0,
 ) -> list[Candidate]:
     """Re-take the per-media ``pre_rank`` cut at this row's own release-date weight.
 
@@ -162,6 +205,8 @@ def pre_rank(
     recency: float = 0.0,
     year_now: int = 0,
     genre_avoidance: float = 0.0,
+    franchise: float = 0.0,
+    cast: float = 0.0,
 ) -> list[Candidate]:
     """Top `keep` candidates, giving every source a turn (best-first within each).
 
@@ -177,7 +222,7 @@ def pre_rank(
     """
     # `genre_avoidance` participates in the CUT for the same reason `recency` does: weighting only
     # after truncation would cap the dial's reach at whatever happened to survive the base sort.
-    ranked = sorted(candidates, key=lambda c: _sort_key(c, recency, year_now, genre_avoidance))
+    ranked = sorted(candidates, key=lambda c: _sort_key(c, recency, year_now, genre_avoidance, franchise, cast))
     if len(ranked) <= keep:
         return ranked
 

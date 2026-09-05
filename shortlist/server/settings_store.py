@@ -172,6 +172,9 @@ DEFAULTS: dict[str, Any] = {
     # that was a deliberate product call and is not a precedent for turning a new signal on for
     # people who never asked for it.
     "recommendations.genre_avoidance": 0.0,
+    # Both OFF by default, like genre_avoidance above and for the same reason.
+    "recommendations.franchise": 0.0,
+    "recommendations.cast": 0.0,
     # How many of a person's most recent watches the web-search source searches per row (one cached
     # Exa search each). Row-overridable. Fewer = tighter/cheaper; the DbCache dedups shared titles.
     "recommendations.recent_count": 10,

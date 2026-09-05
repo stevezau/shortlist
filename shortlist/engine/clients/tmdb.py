@@ -145,11 +145,44 @@ class TmdbClient:
         data = self._get(f"/genre/{kind}/list")
         return {g["id"]: g["name"] for g in data.get("genres", [])}
 
+    def details(self, tmdb_id: int, media_type: MediaType) -> dict:
+        """One title's genres, franchise collection and top-billed cast, from a SINGLE cached call.
+
+        `append_to_response=credits` folds in the `/credits` sub-resource TMDB would otherwise need a
+        second round trip for, and `belongs_to_collection` already rides on the bare detail payload.
+        One method and one cache entry serve the genre, franchise and cast lookups alike — three
+        separate per-title fetches would each carry their own cache-key shape and triple the requests
+        for data that arrives together anyway.
+
+        Adding the parameter changes the cache key (`_get` keys on path + query), so entries written
+        before this existed simply age out on the normal TTL rather than colliding.
+        """
+        kind = "movie" if media_type is MediaType.MOVIE else "tv"
+        return self._get(f"/{kind}/{tmdb_id}", params={"append_to_response": "credits"})
+
     def genre_ids_for(self, tmdb_id: int, media_type: MediaType) -> list[int]:
         """A title's own genre ids — used to derive a person's dominant genres for discover."""
-        kind = "movie" if media_type is MediaType.MOVIE else "tv"
-        data = self._get(f"/{kind}/{tmdb_id}")
+        data = self.details(tmdb_id, media_type)
         return [g["id"] for g in data.get("genres", []) if isinstance(g, dict) and "id" in g]
+
+    def collection_members(self, collection_id: int) -> set[int]:
+        """Every movie tmdb_id in a TMDB collection (a "franchise"), from ONE cached call.
+
+        Movie-only by TMDB's own schema — `belongs_to_collection` does not exist for TV, so the
+        franchise signal is inert for shows by construction rather than by choice.
+        """
+        data = self._get(f"/collection/{collection_id}")
+        return {p["id"] for p in data.get("parts", []) if isinstance(p, dict) and "id" in p}
+
+    def top_cast(self, tmdb_id: int, media_type: MediaType, limit: int = 5) -> list[str]:
+        """The top-billed cast names, in TMDB's billing order.
+
+        Billing order, not popularity: the leads are what make two titles feel related, and an
+        ensemble's twentieth credit is noise that would dilute every overlap it touches.
+        """
+        credits = self.details(tmdb_id, media_type).get("credits") or {}
+        cast = credits.get("cast") or []
+        return [c["name"] for c in cast[:limit] if isinstance(c, dict) and c.get("name")]
 
     def discover(
         self, media_type: MediaType, genre_ids: list[int], *, min_votes: int = 200, page: int = 1

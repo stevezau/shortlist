@@ -31,7 +31,7 @@ from shortlist.engine.curator.base import (
     build_web_rag_prompt,
     parse_web_titles,
 )
-from shortlist.engine.models import MAX_ROW_SIZE, Candidate, MediaType, Seed
+from shortlist.engine.models import MAX_ROW_SIZE, Attribution, Candidate, MediaType, Seed
 
 # One cached web search PER recent title (Exa bills per search): cache the RESULTS by (media, tmdb_id)
 # so a title many users watched is searched once server-wide.
@@ -567,6 +567,139 @@ def candidate_genre_penalty(genres: list[str], profile: dict[str, float]) -> flo
     if not genres or not profile:
         return 0.0
     return sum(min(0.0, profile.get(g, 0.0)) for g in genres) / len(genres)
+
+
+TOP_CAST_N = 5
+#: Summed IDF at which cast overlap counts as "as related as it gets". With the smoothed IDF below,
+#: one shared lead who appears in 1 of 50 pooled titles scores ~4.2 and saturates alone, while the
+#: prolific-actor case (40 of 50) scores ~1.2 and contributes barely a third — which is the whole
+#: point of discounting. NOT VALIDATED against live data; check with scripts/replay_eval.py.
+CAST_NORMALIZER = 3.0
+
+
+def mark_franchise_members(pool: list[Candidate], tmdb: TmdbClient) -> None:
+    """Flag any pooled MOVIE that shares a TMDB collection with one of its own seeds.
+
+    Seed-side, not candidate-side, and that is the difference between one call per SEED and one per
+    CANDIDATE: asking every pooled title whether it belongs to a collection is hundreds of detail
+    calls, where asking the handful of seeds and then fetching each collection's member list is a
+    couple of dozen — and the membership test that follows is a set lookup, not a request.
+
+    A no-op for shows. TMDB has no `belongs_to_collection` for TV, so there is nothing to look up,
+    and pretending otherwise would mean querying a namespace that does not exist.
+    """
+    seed_collections: dict[int, tuple[int, str]] = {}
+    for candidate in pool:
+        if candidate.media_type is not MediaType.MOVIE:
+            continue
+        for seed in candidate.seeds:
+            if seed.tmdb_id in seed_collections or seed.media_type is not MediaType.MOVIE:
+                continue
+            try:
+                collection = tmdb.details(seed.tmdb_id, MediaType.MOVIE).get("belongs_to_collection")
+            except Exception as exc:
+                logger.debug("franchise: could not read seed {} ({})", seed.tmdb_id, type(exc).__name__)
+                continue
+            if isinstance(collection, dict) and "id" in collection:
+                seed_collections[seed.tmdb_id] = (collection["id"], collection.get("name", ""))
+
+    members: dict[int, set[int]] = {}
+    for collection_id, _name in seed_collections.values():
+        if collection_id not in members:
+            try:
+                members[collection_id] = tmdb.collection_members(collection_id)
+            except Exception as exc:
+                logger.debug("franchise: could not read collection {} ({})", collection_id, type(exc).__name__)
+                members[collection_id] = set()
+
+    for candidate in pool:
+        if candidate.media_type is not MediaType.MOVIE:
+            continue
+        for seed in candidate.seeds:
+            entry = seed_collections.get(seed.tmdb_id)
+            if entry and candidate.tmdb_id in members.get(entry[0], set()):
+                candidate.in_seed_franchise = True
+                candidate.attributions.append(Attribution("franchise", seed.title, seed.tmdb_id, entry[1]))
+                break
+
+
+def cast_idf(pool_cast_lists: list[set[str]]) -> dict[str, float]:
+    """Smoothed inverse document frequency over THIS pool's cast lists.
+
+    The failure this exists to prevent: a prolific actor appearing in 40 unrelated titles makes all
+    40 look related to each other, and to anything else they are in. Weighting each shared name by
+    how rare it is in the set being compared is the textbook fix.
+
+    Scoping the corpus to the current pool is correct here, not a compromise — unlike the genre
+    baseline, which must NOT use the pool because it is built from the person's own seeds. Here the
+    pool IS the set of things being compared to one another, which is exactly what a document
+    frequency is measured over.
+    """
+    n = len(pool_cast_lists)
+    if n == 0:
+        return {}
+    df: Counter[str] = Counter()
+    for cast in pool_cast_lists:
+        df.update(cast)
+    return {actor: math.log((1 + n) / (1 + count)) + 1 for actor, count in df.items()}
+
+
+def cast_overlap_score(seed_cast: set[str], candidate_cast: set[str], idf: dict[str, float]) -> float:
+    """0..1 for how much MEANINGFUL cast two titles share — rare names count, ubiquitous ones barely."""
+    shared = seed_cast & candidate_cast
+    if not shared:
+        return 0.0
+    return min(1.0, sum(idf.get(actor, 0.0) for actor in shared) / CAST_NORMALIZER)
+
+
+def enrich_cast_affinity(ranked: list[Candidate], tmdb: TmdbClient, seeds: list[Seed]) -> None:
+    """Stamp `cast_overlap` on an ALREADY-BOUNDED list of candidates, in place.
+
+    Cast overlap needs BOTH sides' cast lists, unlike the franchise signal which only needs the
+    seeds'. That makes it the one signal here with a real per-candidate cost, so it must run after
+    the pool has been cut — bounded by `candidates_pre_rank` (a few dozen) rather than the raw gather
+    (hundreds). Same "cheap cut, then a bounded expensive re-rank" layering `cut_for_recency` uses.
+
+    ORDERS, NEVER SELECTS. This mutates scores and nothing else: no candidate is added and none is
+    removed, so it can change the row's order but can never change what was eligible for it. The same
+    discipline `TestRankAgainstPoolOrdersOnly` enforces elsewhere, and for the same reason — a
+    re-ranking step that quietly changes membership is invisible in a diff and catastrophic in a row.
+    """
+    if not ranked or not seeds:
+        return
+    casts: dict[tuple[int, MediaType], set[str]] = {}
+
+    def cast_for(tmdb_id: int, media_type: MediaType) -> set[str]:
+        key = (tmdb_id, media_type)
+        if key not in casts:
+            try:
+                casts[key] = set(tmdb.top_cast(tmdb_id, media_type, TOP_CAST_N))
+            except Exception as exc:
+                logger.debug("cast: could not read {} ({})", tmdb_id, type(exc).__name__)
+                casts[key] = set()
+        return casts[key]
+
+    candidate_casts = [cast_for(c.tmdb_id, c.media_type) for c in ranked]
+    idf = cast_idf([c for c in candidate_casts if c])
+    for candidate, own_cast in zip(ranked, candidate_casts, strict=True):
+        if not own_cast:
+            continue
+        best = 0.0
+        best_seed: Seed | None = None
+        best_actor = ""
+        for seed in candidate.seeds:
+            shared = own_cast & cast_for(seed.tmdb_id, seed.media_type)
+            if not shared:
+                continue
+            score = cast_overlap_score(own_cast, cast_for(seed.tmdb_id, seed.media_type), idf)
+            if score > best:
+                best, best_seed = score, seed
+                best_actor = max(shared, key=lambda a: idf.get(a, 0.0))
+        candidate.cast_overlap = best
+        if best_seed is not None and best > 0:
+            # The single highest-IDF shared name, because "shares Timothée Chalamet with Dune" is an
+            # explanation and a list of five co-stars is not.
+            candidate.attributions.append(Attribution("cast", best_seed.title, best_seed.tmdb_id, best_actor))
 
 
 def stamp_genre_penalties(

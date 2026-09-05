@@ -165,6 +165,28 @@ class Seed:
     recency_days: int = 0  # days between this title's most-recent watch and the newest watch overall
 
 
+@dataclass(frozen=True)
+class Attribution:
+    """One signal's strongest evidence for a candidate — which watched title, and why.
+
+    Separate from `Candidate.top_seed`, which answers "which seed weighed most" and drives the row
+    NAME and `Pick.seed_title`. This answers "what can we honestly tell the person", which is a
+    different question once more than one signal fires: a sequel found through a shared franchise and
+    a title found through a shared lead are both "because you watched Dune", and saying only that
+    throws away the part that would actually explain it.
+
+    Deliberately not persisted. `Pick.reason` is already a plain string and already survives a
+    carried-forward row, so the richer sentence is rendered into it and this stays live for one run —
+    exactly as `top_seed` is Candidate-only and only its flattened `seed_title`/`seed_tmdb_id` reach
+    the database.
+    """
+
+    signal: str  # "similarity" | "franchise" | "cast"
+    seed_title: str
+    seed_tmdb_id: int
+    detail: str = ""  # the shared actor's name, or the franchise's
+
+
 @dataclass
 class Candidate:
     """A TMDB-suggested title, later intersected with the library."""
@@ -207,6 +229,15 @@ class Candidate:
     # adjustment, not a multiplier — `ranking.negative_multiplier` combines it with any future
     # negative signal BEFORE flooring, so dampeners can never compound into a floor nobody chose.
     genre_penalty: float = 0.0
+    # Shares a TMDB collection with one of its own seeds — the sequel/prequel signal. Movie-only:
+    # TMDB has no `belongs_to_collection` for TV, so this is inert for shows by construction.
+    in_seed_franchise: bool = False
+    # 0..1, how much top-billed cast this shares with its seeds, with prolific actors already
+    # discounted (see `candidates.cast_idf`). 0.0 = no shared cast, or the signal is switched off.
+    cast_overlap: float = 0.0
+    # Every signal that fired for this candidate, for the "why you're seeing this" line. Empty until
+    # a signal beyond the plain seed match actually has something to add.
+    attributions: list[Attribution] = field(default_factory=list)
 
     @property
     def seed_frequency(self) -> int:
@@ -1152,6 +1183,12 @@ class EngineConfig:
     # product deliberately turned on for existing servers; that was its own decision, not a
     # precedent.
     genre_avoidance: float = 0.0
+    # How much "continues a story you already started" counts, 0.0 (off, the default) .. 1.0.
+    # Movie-only — TMDB has no franchise concept for TV.
+    franchise: float = 0.0
+    # How much shared top-billed cast counts, 0.0 (off, the default) .. 1.0. Prolific actors are
+    # discounted before this applies, so it means "shares someone NOTABLE", not "shares anyone".
+    cast: float = 0.0
     orphan_confirm_delay_s: float = 0.0
     dry_run: bool = False
     # The curated rows to deliver. Empty -> a single default per-person row synthesized from

@@ -50,8 +50,41 @@ def reason_for(candidate: Candidate) -> str:
         return _SEEDLESS_REASON_DEFAULT
     if candidate.genres:
         genres = ", ".join(candidate.genres[:2]).lower()
-        return f"Because you watched {genres} like {seed.title}"
-    return f"Because you watched {seed.title}"
+        base = f"Because you watched {genres} like {seed.title}"
+    else:
+        base = f"Because you watched {seed.title}"
+    return base + _extra_causes(candidate)
+
+
+#: Beyond this the line stops being an explanation and becomes a list.
+_MAX_EXTRA_CAUSES = 2
+_REASON_MAX_CHARS = 180
+
+
+def _extra_causes(candidate: Candidate) -> str:
+    """The clause naming signals BEYOND the plain seed match, or "" when there is nothing to add.
+
+    Only franchise and cast: "similarity" is what the sentence already said, and repeating it as
+    "…and is similar to Dune" would pad every reason on the server for no information.
+
+    Returns "" for the overwhelmingly common single-signal case, so the existing wording is
+    byte-identical for every pick that has nothing extra to explain.
+    """
+    extras: list[str] = []
+    for attribution in candidate.attributions:
+        if attribution.signal == "franchise":
+            name = attribution.detail or "the same series"
+            extras.append(f"also part of {name}")
+        elif attribution.signal == "cast" and attribution.detail:
+            extras.append(f"shares {attribution.detail} with {attribution.seed_title}")
+        if len(extras) == _MAX_EXTRA_CAUSES:
+            break
+    if not extras:
+        return ""
+    clause = " — " + ", and ".join(extras)
+    # A row name is rendered next to this; an unbounded sentence wraps to three lines and buries the
+    # part that mattered. Drop the extras entirely rather than truncate mid-word.
+    return clause if len(clause) <= _REASON_MAX_CHARS else ""
 
 
 def build_picks(candidates: list[Candidate], k: int) -> list[Pick]:
