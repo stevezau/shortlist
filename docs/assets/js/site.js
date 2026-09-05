@@ -144,6 +144,35 @@
     }
   }
 
+  /* -------------------------------------------------------------- reveal */
+
+  /* Progressive enhancement, same rule as everything else in this file: .reveal
+     sections are visible by default in CSS. This block is the only thing that
+     can hide one, and it only hides after proving it can also un-hide — so a
+     thrown error, a blocked script or a browser with no IntersectionObserver
+     leaves every section at its visible default rather than stuck invisible. */
+  var reduceMotion =
+    window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var reveals = document.querySelectorAll(".reveal");
+  if (reveals.length && !reduceMotion && "IntersectionObserver" in window) {
+    root.classList.add("js-reveal-ready");
+    var revealObserver = new IntersectionObserver(
+      function (entries, obs) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("is-visible");
+            obs.unobserve(entry.target); /* one-shot: not on every re-entry */
+          }
+        });
+      },
+      { threshold: 0.15, rootMargin: "0px 0px -10% 0px" },
+    );
+    reveals.forEach(function (el) {
+      revealObserver.observe(el);
+    });
+  }
+
   /* Anchor links on prose headings, so a section can be linked to directly. */
   document
     .querySelectorAll(".prose h2[id], .prose h3[id]")

@@ -10,9 +10,11 @@ It does, indirectly. Plex lets you hide things from someone by **label**, so Sho
 person's row a label of its own and tells every _other_ account to hide that label. The result is a
 row only its owner can see.
 
-The order matters: a row is created **hidden**, and only made visible once the "hide this from
-everyone else" rules are already in place, so there's no window where the wrong person could see
-it. Your existing sharing settings are saved beforehand, and **Uninstall** puts them back exactly.
+The order those steps happen in is what makes it safe, and it is the same every run:
+
+{% include privacy-order.html %}
+
+Your existing sharing settings are saved beforehand, and **Uninstall** puts them back exactly.
 
 This needs Plex Media Server **1.43.2.10687 or newer**, and **Plex Pass** on the admin account,
 because the hiding rule is a Pass feature. Older versions ignore it.
@@ -149,3 +151,31 @@ the feature, so a broken update wouldn't be caught automatically.
 
 That's why the minimum is Plex Media Server **1.43.2.10687**: older builds ignore the rule
 entirely. Stay on that build or newer, and watch the README for advisories.
+
+{% comment %}
+FAQPage structured data, generated from the same _data/faq.yml the home page's teaser renders, so
+this page's structured data and that teaser can never disagree. This page carries more questions
+than faq.yml on purpose (faq.yml is a deliberate short subset, see its own header): the reused set
+is accurate, just partial.
+
+It produces no Google rich result. Google retired the FAQ rich result and removed the feature: its
+own documentation page for FAQPage now 301s to /search/updates#removing-faq-rich-result (checked
+2026-09-05), and FAQPage is absent from the current structured-data gallery. It stays here for the
+same reason as the SoftwareApplication block in head.html: AI crawlers and other indexes read
+schema.org types to work out what this software is. Do not describe it as ranking work.
+{% endcomment %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {%- for q in site.data.faq -%}
+    {
+      "@type": "Question",
+      "name": {{ q.q | jsonify }},
+      "acceptedAnswer": { "@type": "Answer", "text": {{ q.a | markdownify | strip_html | normalize_whitespace | strip | jsonify }} }
+    }{%- unless forloop.last -%},{%- endunless -%}
+    {%- endfor -%}
+  ]
+}
+</script>

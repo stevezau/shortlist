@@ -921,6 +921,145 @@ figcaption {
   color: var(--muted);
 }
 
+/* ------------------------------------------------- privacy-order flow -- */
+/* The four-step diagram on /faq/. Same idea as `.order` above, one column over:
+   each step also states who can see the row at that moment, which is the part
+   the prose could never show at a glance. Kept separate from `.order` rather
+   than bolted onto it — that one is a compact aside beside a paragraph on the
+   landing page, this one is the figure a whole answer is built around. */
+
+.flow {
+  margin: 1.75rem 0;
+}
+
+.flow__steps {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.flow__step {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.25rem 0.9rem;
+  padding: 0 0 1.35rem 0;
+}
+
+.flow__step:last-child {
+  padding-bottom: 0;
+}
+
+/* The spine: the order is the whole point, so the steps are drawn as one run
+   rather than four separate cards. It stops at the last badge. */
+.flow__step:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 15px;
+  top: 34px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--accent-line);
+}
+
+.flow__num {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent-quiet);
+  color: var(--accent-text);
+  border: 1px solid var(--accent-line);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.flow__step--final .flow__num {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #1a1200; /* same near-black the amber buttons use; white on amber is 2.2:1 */
+}
+
+.flow__body strong {
+  display: block;
+  color: var(--text);
+  font-size: 1rem;
+  /* Not typography: 1rem x 1.9 is the 32px badge beside it, so the step title
+     sits on the badge's centre line without a second alignment rule. */
+  line-height: 1.9;
+}
+
+.flow__body span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+
+.flow__state {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.6rem 0 0;
+  padding: 0.3rem 0.65rem 0.3rem 0.5rem;
+  justify-self: start;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.flow__state svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
+}
+
+.flow__state--on {
+  border-color: var(--accent-line);
+  background: var(--accent-quiet);
+  color: var(--accent-text);
+}
+
+.flow figcaption {
+  margin-top: 1.4rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.6;
+  text-align: left; /* the site centres figcaptions under centred images; this figure is prose-aligned */
+  text-wrap: pretty;
+}
+
+/* Wide enough for the state to sit beside its step instead of under it. The
+   breakpoint is the content's, not the viewport's: `.prose` is capped at 68ch,
+   so this fires on a desktop docs page and never on a phone. */
+@media (min-width: 900px) {
+  .flow__step {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: start;
+    column-gap: 1rem;
+  }
+  .flow__state {
+    grid-column: 3;
+    grid-row: 1;
+    margin-top: 0.3rem;
+    /* A width, not a max-width: each step is its own grid, so an auto column
+       sizes to that row's own text and the chips come out ragged down the
+       left. Fixing the width lines all four up into one rail. */
+    width: 13rem;
+  }
+}
+
 /* ------------------------------------------------------------ showcase -- */
 
 .shots {
@@ -1737,4 +1876,39 @@ figcaption {
 
 .mt-lg {
   margin-top: clamp(1.75rem, 1rem + 2.5vw, 2.75rem);
+}
+
+/* --------------------------------------------------------------- reveal -- */
+/* Fade-up for section reveals. Visible at rest by design: `.reveal` on its own
+   carries no hidden state, so this file plus no JS (or JS that threw, or a
+   browser with no IntersectionObserver) renders every section normally. Only
+   site.js adds `.js-reveal-ready` to <html>, and only after it has confirmed it
+   can un-hide again — CSS never hides content on its own.
+
+   No prefers-reduced-motion block here: the sitewide rule near the top of this
+   file already forces transition-duration to 0.01ms on every element, so this
+   transition is already imperceptible under it. site.js skips the observer
+   entirely in that case, so the class is never even added. */
+.reveal {
+  opacity: 1;
+  transform: none;
+}
+
+.js-reveal-ready .reveal {
+  opacity: 0;
+  transform: translateY(16px);
+}
+
+/* The transition lives on the VISIBLE state, not the hidden one. Put it on the
+   hidden rule and the browser animates INTO it: site.js adds .js-reveal-ready
+   after first paint, every section below the fold fades out over half a second,
+   and only then fades back in. Measured, not guessed — an offscreen section
+   read opacity 0.0166 mid-fade-out. Here the hide is instantaneous and only the
+   reveal animates, because a transition is read from the after-change style. */
+.js-reveal-ready .reveal.is-visible {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 0.5s var(--ease),
+    transform 0.5s var(--ease);
 }

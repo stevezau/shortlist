@@ -242,23 +242,34 @@ MIT © Steven Adams
 <!-- `for-the-badge` throughout: mixing shields' flat default with GitHub's own actions badge left
      the row at two different heights, which is what made it read as clutter rather than a header.
      The build badge tracks `master` (the released code), not the default branch — a green tick next
-     to an unreleased dev commit tells a visitor nothing about what they are about to install. -->
+     to an unreleased dev commit tells a visitor nothing about what they are about to install.
 
-[build-shield]: https://img.shields.io/github/actions/workflow/status/stevezau/shortlist/ci.yml?branch=master&style=for-the-badge&label=build
+     Colour: the five badges whose value never changes get the full amber (`color=`). Build,
+     coverage and issues do NOT — their colour is the status (green build, red build, coverage on a
+     scale), so only their label chip is amber (`labelColor=`) and the message keeps shields' own
+     signal. Flattening all eight would have silenced "the build is red".
+
+     The amber is #a06a00, not the brand #e5a00d. shields.io has no text-colour parameter and always
+     draws white text, and white on #e5a00d is 2.24:1 — below every WCAG threshold. Same hue (40 vs
+     41 degrees), same full saturation, darkened until white text reaches 4.61:1, which clears AA for
+     normal text. The app makes the same call the other way round: `.btn--primary` keeps #e5a00d and
+     puts near-black text on it (docs/assets/css/main.css). -->
+
+[build-shield]: https://img.shields.io/github/actions/workflow/status/stevezau/shortlist/ci.yml?branch=master&style=for-the-badge&label=build&labelColor=a06a00
 [build-url]: https://github.com/stevezau/shortlist/actions/workflows/ci.yml
-[release-shield]: https://img.shields.io/github/v/release/stevezau/shortlist?style=for-the-badge&label=release
+[release-shield]: https://img.shields.io/github/v/release/stevezau/shortlist?style=for-the-badge&label=release&color=a06a00
 [release-url]: https://github.com/stevezau/shortlist/releases
-[codecov-shield]: https://img.shields.io/codecov/c/github/stevezau/shortlist?style=for-the-badge
+[codecov-shield]: https://img.shields.io/codecov/c/github/stevezau/shortlist?style=for-the-badge&labelColor=a06a00
 [codecov-url]: https://codecov.io/gh/stevezau/shortlist
-[docker-shield]: https://img.shields.io/docker/pulls/stevezzau/shortlist?style=for-the-badge
+[docker-shield]: https://img.shields.io/docker/pulls/stevezzau/shortlist?style=for-the-badge&color=a06a00
 [docker-url]: https://hub.docker.com/r/stevezzau/shortlist
-[size-shield]: https://img.shields.io/docker/image-size/stevezzau/shortlist/latest?style=for-the-badge&label=image
+[size-shield]: https://img.shields.io/docker/image-size/stevezzau/shortlist/latest?style=for-the-badge&label=image&color=a06a00
 [size-url]: https://hub.docker.com/r/stevezzau/shortlist/tags
-[stars-shield]: https://img.shields.io/github/stars/stevezau/shortlist.svg?style=for-the-badge
+[stars-shield]: https://img.shields.io/github/stars/stevezau/shortlist.svg?style=for-the-badge&color=a06a00
 [stars-url]: https://github.com/stevezau/shortlist/stargazers
-[issues-shield]: https://img.shields.io/github/issues/stevezau/shortlist.svg?style=for-the-badge
+[issues-shield]: https://img.shields.io/github/issues/stevezau/shortlist.svg?style=for-the-badge&labelColor=a06a00
 [issues-url]: https://github.com/stevezau/shortlist/issues
-[license-shield]: https://img.shields.io/github/license/stevezau/shortlist.svg?style=for-the-badge
+[license-shield]: https://img.shields.io/github/license/stevezau/shortlist.svg?style=for-the-badge&color=a06a00
 [license-url]: https://github.com/stevezau/shortlist/blob/master/LICENSE
 [ai-shield]: https://img.shields.io/badge/AI--Assisted-Claude%20Code-8A2BE2?style=for-the-badge&logo=anthropic&logoColor=white
 [ai-url]: https://claude.com/claude-code

@@ -20,12 +20,15 @@ import pytest
 from playwright.sync_api import Browser, Page, expect
 
 from shortlist.server.auth import SESSION_COOKIE, session_serializer
-from tests.e2e.conftest import OWNER_ACCOUNT_ID, ShortlistApp, build_real_rows
+from tests.e2e.conftest import OWNER_ACCOUNT_ID, ShortlistApp, build_real_rows, stub_plex_pin
 
 pytestmark = pytest.mark.e2e
 
 SHOTS_DIR = os.environ.get("SHOTS_DIR")
 LOAD = 20_000
+#: The server picker probes every address Plex advertises, including one that is deliberately
+#: unreachable — proving that means waiting out a connection timeout, not a page load.
+PROBE = 90_000
 VIEWPORT = {"width": 1440, "height": 950}
 skip_unless_capturing = pytest.mark.skipif(not SHOTS_DIR, reason="set SHOTS_DIR to capture screenshots")
 
@@ -108,6 +111,40 @@ def _capture(page: Page, path: str, name: str, *, wait: str | None = None) -> No
     _shot(page, name)
 
 
+#: Three more row DEFINITIONS for rows.png, copied verbatim from the production templates in
+#: web/src/lib/row-templates.ts (`because-you-watched`, `seen-it-already`, `popular-here`) so the
+#: shot shows templates people can actually pick, not an invented fixture shape. The shared one is
+#: there for its badge, not its picks: this page lists row DEFINITIONS and nothing runs after they
+#: are created — which matters, because sarah's and mike's watch sets are disjoint by fixture
+#: design, so no title in this library would clear that row's `min_watchers`.
+EXTRA_ROWS = (
+    {
+        "name": "🎯 Because you watched {top_seed}",
+        "build": "per_person",
+        "max_seeds": 1,
+        "recent_count": 3,
+        "media": "movie",
+        "size": 20,
+        "refresh_days": 1,
+        "seed_window": 1,
+    },
+    {
+        "name": "☕ {library_name} you've already seen",
+        "build": "per_person",
+        "rewatch": True,
+        "watched_pct": 1,
+        "refresh_days": 11,
+        "size": 15,
+    },
+    {
+        "name": "👥 Popular {library_name} on this server",
+        "build": "shared",
+        "min_watchers": 3,
+        "size": 20,
+    },
+)
+
+
 @skip_unless_capturing
 def test_capture_app_screenshots(shot_page: Page, app: ShortlistApp) -> None:
     build_real_rows(app)  # a real run against the fake server, so the pages have rows/picks/history
@@ -118,16 +155,53 @@ def test_capture_app_screenshots(shot_page: Page, app: ShortlistApp) -> None:
     _capture(shot_page, "/", "dashboard.png", wait="picked|watched|run")
     _capture(shot_page, f"/users/{sarah}", "user-detail.png", wait="Because you watched")
     _capture(shot_page, "/users", "users.png", wait="sarah")
-    _capture(shot_page, "/rows", "rows.png", wait="Picked for You")
     _capture(shot_page, "/runs", "runs.png", wait="succeeded|ok")
     _capture(shot_page, f"/runs/{run_id}", "run-detail.png", wait="AI tokens")
     _capture(shot_page, "/requests", "requests.png", wait="request")
     _capture(shot_page, "/settings", "settings.png", wait="Connections")
 
+    # rows.png needs row VARIETY, and the seeded install has exactly one row, so it came out as one
+    # card in an empty frame. The extra rows go in HERE rather than in `build_real_rows`, which is
+    # shared with four other e2e files — three of them assert an exact collection count that a
+    # second row per user would break. Captured last so every shot above still sees the same
+    # single-row state it did before, and no committed image moves for a reason unrelated to it.
+    # No second run needed: the Rows list renders `collections` rows, not delivered picks.
+    for payload in EXTRA_ROWS:
+        created = app.api("POST", "/api/collections", json=payload)
+        assert created.status_code == 201, created.text
+    _capture(shot_page, "/rows", "rows.png", wait="Picked for You")
+
 
 @skip_unless_capturing
-def test_capture_wizard_screenshot(fresh_shot_page: Page, fresh_app: ShortlistApp) -> None:
-    fresh_shot_page.goto("/setup")
-    fresh_shot_page.wait_for_timeout(1000)
-    _fit_viewport(fresh_shot_page)
-    _shot(fresh_shot_page, "wizard.png")
+def test_capture_wizard_screenshot(fresh_shot_page: Page, fresh_app: ShortlistApp, fake_plex) -> None:
+    """Two shots of the wizard: the welcome step, and the capability checklist on step 2.
+
+    getting-started.md walks seven steps with no picture at all. Welcome alone shows the product
+    exists; the Connect Plex checklist shows it verifying the reader's own server (version, Plex
+    Pass, libraries) before they commit to anything, which is the part worth seeing in advance.
+    Both come out of one browser context, so the second costs a few seconds and no extra fixture.
+    """
+    pms_url, _, _ = fake_plex
+    page = fresh_shot_page
+    stub_plex_pin(page, fresh_app)
+
+    page.goto("/setup")
+    expect(page.get_by_role("heading", name="Welcome")).to_be_visible(timeout=LOAD)
+    page.wait_for_timeout(1000)
+    _fit_viewport(page)
+    _shot(page, "wizard.png")
+
+    # The same sequence test_wizard_e2e.py::_connect_plex asserts, minus its assertions: if the
+    # wizard's labels ever change, that test fails first and says so, and this capture breaks with
+    # it for the same reason.
+    page.get_by_role("button", name="Get started").click()
+    expect(page.get_by_role("heading", name="Connect Plex")).to_be_visible()
+    page.get_by_role("button", name="Sign in with Plex").click()
+    expect(page.get_by_role("button", name="Sign in with Plex")).to_have_count(0, timeout=LOAD)
+    expect(page.get_by_text("FakePlex", exact=True).first).to_be_visible(timeout=PROBE)
+    expect(page.locator("button", has_text=pms_url).first).to_be_enabled(timeout=LOAD)
+    page.get_by_role("button", name="Run checks").click()
+    expect(page.get_by_text("Plex Pass active")).to_be_visible(timeout=LOAD)
+    page.wait_for_timeout(500)
+    _fit_viewport(page)
+    _shot(page, "wizard-connect.png")
