@@ -395,12 +395,41 @@ describe("UsersPage — Plex Home accounts", () => {
     expect(await screen.findByText("Younger Kid")).toBeInTheDocument();
   });
 
-  it("disables the toggle only for an account Plex really hides everything from", async () => {
+  it("gates the toggle only for an account Plex really hides everything from", async () => {
     getUsers.mockResolvedValue([managed("little_kid")]);
     renderPage();
 
     await screen.findByText("Younger Kid");
-    expect(screen.getByRole("switch")).toBeDisabled();
+    const toggle = screen.getByRole("switch");
+    // NOT the native `disabled` attribute. It drops the control out of the tab order and takes its
+    // explanation with it, which is how this shipped saying nothing at all to a keyboard or a
+    // screen reader — the reason was in a `title`, reachable only by hovering a mouse over it.
+    expect(toggle).not.toBeDisabled();
+    expect(toggle).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("says WHY that toggle is gated, in text assistive tech can reach", async () => {
+    getUsers.mockResolvedValue([managed("little_kid")]);
+    renderPage();
+
+    await screen.findByText("Younger Kid");
+    const reasonId =
+      screen.getByRole("switch").getAttribute("aria-describedby") ?? "";
+    expect(reasonId).not.toBe("");
+    expect(document.getElementById(reasonId)?.textContent).toMatch(
+      /Younger Kid restriction profile.*Settings → Users & Sharing/s,
+    );
+  });
+
+  it("ignores a click on the gated toggle instead of sending a patch Plex would defeat", async () => {
+    // `aria-disabled` is advisory: Radix still fires the change event, so the guard has to be real.
+    getUsers.mockResolvedValue([managed("little_kid")]);
+    renderPage();
+
+    await screen.findByText("Younger Kid");
+    await userEvent.click(screen.getByRole("switch"));
+
+    expect(patchUser).not.toHaveBeenCalled();
   });
 
   it("treats a managed account with NO profile as an ordinary user", async () => {
@@ -463,4 +492,4 @@ describe("UsersPage — reaching the watching account", () => {
       screen.queryByRole("link", { name: /watching account/i }),
     ).not.toBeInTheDocument();
   });
-})
+});

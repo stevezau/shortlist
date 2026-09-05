@@ -2,7 +2,11 @@ import { RefreshCw, Send, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 
-import { NeedsALook, WHY_GAVE_UP, Why } from "@/components/dashboard/engagement";
+import {
+  NeedsALook,
+  WHY_GAVE_UP,
+  Why,
+} from "@/components/dashboard/engagement";
 import { QueryBoundary } from "@/components/query-boundary";
 import { Segmented } from "@/components/segmented";
 import { Badge } from "@/components/ui/badge";
@@ -127,6 +131,34 @@ function Rate({
       {children}
     </div>
   );
+}
+
+type RunTone = "success" | "warning" | "destructive";
+
+const RUN_DOT: Record<RunTone, string> = {
+  success: "bg-success",
+  warning: "bg-warning",
+  destructive: "bg-destructive",
+};
+
+/**
+ * Three tiers, not two — the same three `notifications.py` already draws for this exact fact
+ * (`_last_run_problem`: whole-run `error`, per-user `warning`). `last_status` first, always: a run
+ * that died usually errored some people on the way down, and reading the count first would repaint
+ * a dead run amber.
+ */
+function runTone(runs: EffectivenessReport["runs"]): RunTone {
+  if (runs.last_status === "error") return "destructive";
+  return runs.errors_last > 0 ? "warning" : "success";
+}
+
+/** The words beside the dot, so the count is readable and not only colour-coded. */
+function runOutcome(runs: EffectivenessReport["runs"]): string {
+  if (runs.last_status === "error") return ", the run failed";
+  if (runs.errors_last > 0) {
+    return `, ${runs.errors_last} ${runs.errors_last === 1 ? "person" : "people"} failed`;
+  }
+  return ", no errors";
 }
 
 /**
@@ -279,18 +311,20 @@ function Verdict({
         </div>
 
         {/* Health, not impact — and therefore a line rather than two tiles competing with the
-            numbers above. */}
+            numbers above.
+
+            It overlaps the health strip above the card on two facts (last run, live tracking) and
+            is deliberately kept: these dots read raw report fields, where the strip reads the
+            notification feed, which a dismissal can silence. When the two disagree, this line is
+            right — so it stays, rather than being folded into the chip that can be switched off. */}
         <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-1 border-t pt-4 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5">
             <span
-              className={cn(
-                "h-1.5 w-1.5 rounded-full",
-                runs.errors_last ? "bg-destructive" : "bg-success",
-              )}
+              className={cn("h-1.5 w-1.5 rounded-full", RUN_DOT[runTone(runs)])}
               aria-hidden="true"
             />
             {runs.last_finished
-              ? `Last run ${timeAgo(runs.last_finished)}${runs.errors_last ? ", with errors" : ", no errors"}`
+              ? `Last run ${timeAgo(runs.last_finished)}${runOutcome(runs)}`
               : "No run yet"}
           </span>
           <span>

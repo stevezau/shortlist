@@ -182,10 +182,10 @@ privacy sync could not complete, request needs approval, a user's row could not 
 | `dryrun-preview`     | ☐      | Preview beside Save, not a mode you switch on                       |
 | `restriction-status` | ☐      | Show the owner that hiding actually worked — design doc promises it |
 | `bulk3state`         | ☐      | "No change" option so bulk edit doesn't clobber untouched fields    |
-| `healthstrip`        | ☐      | Independent status chips on the dashboard                           |
-| `progressive`        | ☐      | Disabled switches that say what's missing                           |
-| `emptystates`        | ☐      | Empty screens that name the next action                             |
-| `accent`             | ☐      | Let amber carry data, not just chrome                               |
+| `healthstrip`        | ☑      | 6 chips derived from the notification registry — no new backend     |
+| `progressive`        | ☑      | One real gap (users.tsx); `GatedSwitch` extracted to fix it         |
+| `emptystates`        | ☑      | Two real gaps: the 404 page and the Logs filtered-empty state       |
+| `accent`             | ☑      | Rank-1 only in PickList; three-tier run dot on the Verdict card     |
 
 `restriction-status` matters more than it looks: the automatic post-write privacy check was removed
 (2026-07-16), so this screen is the only way an owner could see for themselves that hiding worked.

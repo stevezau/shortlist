@@ -116,6 +116,53 @@ describe("LogsPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("offers a button that clears the filter, rather than telling you to clear it", async () => {
+    // The hint used to end "Try DEBUG, or clear the filter." — instructions for two controls that
+    // were already on the page, written as prose you have to go and find.
+    getLogs.mockResolvedValue(page([]));
+    renderPage();
+    await userEvent.type(screen.getByLabelText("Filter log lines"), "zzz");
+    await screen.findByText(/Nothing matches that filter/i);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /clear filter/i }),
+    );
+
+    expect(screen.getByLabelText("Filter log lines")).toHaveValue("");
+  });
+
+  it("offers the next quieter level as a button, and switches to it", async () => {
+    getLogs.mockResolvedValue(page([]));
+    renderPage();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Show DEBUG and louder/i }),
+    );
+
+    await waitFor(() =>
+      expect(getLogs).toHaveBeenLastCalledWith(
+        expect.objectContaining({ level: "DEBUG" }),
+      ),
+    );
+  });
+
+  it("offers nothing to click, and no orphaned advice, at the quietest level with no filter", async () => {
+    // DEBUG is the floor (`configure_logging` opens the sink there), so there is no quieter level to
+    // offer and nothing on this page can start a run. The hint must not keep promising either.
+    getLogs.mockResolvedValue(page([]));
+    renderPage();
+
+    await userEvent.click(await screen.findByRole("button", { name: "DEBUG" }));
+
+    expect(
+      await screen.findByText(
+        "Nothing has been logged at DEBUG or louder yet.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /clear filter/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /and louder/i })).toBeNull();
+  });
+
   // NOTE: no error-state case here. The failing-query path is `QueryBoundary`'s, covered by
   // library-picker.test.tsx; asserting it through THIS page kept surfacing the rejection as an
   // unowned one and failing the file regardless of how the mock was shaped.

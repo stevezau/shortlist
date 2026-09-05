@@ -33,7 +33,15 @@ export function PickList({
       <ol className={cn("space-y-1.5", className)}>
         {shown.map((pick) => (
           <li key={pick.rank} className="flex items-baseline gap-3 text-sm">
-            <span className="w-5 shrink-0 font-semibold text-primary">
+            {/* Amber on the top pick alone. Painted on every rank it was chrome — #1 and #15 read
+                identically — and the engine's own ordering, the one fact this list exists to show,
+                was carried by nothing but the digits. */}
+            <span
+              className={cn(
+                "w-5 shrink-0 font-semibold",
+                pick.rank === 1 ? "text-primary" : "text-muted-foreground",
+              )}
+            >
               #{pick.rank}
             </span>
             <span>
