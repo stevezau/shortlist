@@ -1,0 +1,84 @@
+{%- comment -%}
+The four-step write order from the engine's own privacy rule, drawn instead of described. The thing
+prose kept failing to land is the right-hand column: the row is on nobody's Home for the first three
+steps, and step 4 is the only one that shows it to anyone. Saying "the order matters" asks the reader
+to take that on trust; showing the same eye-with-a-line-through-it three times proves it.
+
+Built as HTML with inline SVG icons rather than as one big SVG on purpose. SVG text does not wrap, so
+a fixed viewBox would have to hard-code its own line breaks, and scaled into the 68ch prose column on
+a 320px screen its labels land around 8px. Here the icons and the spine are SVG; every word is real,
+wrapping, selectable text at the page's own font size.
+{%- endcomment -%}
+<figure class="flow">
+  <ol class="flow__steps">
+    <li class="flow__step">
+      <span class="flow__num" aria-hidden="true">1</span>
+      <div class="flow__body">
+        <strong>Clear up first</strong>
+        <span>Remove any row Plex can&rsquo;t hide for that kind of library, before anything else happens.</span>
+      </div>
+      <p class="flow__state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M3 3l18 18"/>
+          <path d="M10.6 5.1A9.9 9.9 0 0 1 12 5c5 0 9 4.5 9 7a12 12 0 0 1-2.2 3.2"/>
+          <path d="M6.6 6.7C4.3 8.1 3 10.3 3 12c0 2.5 4 7 9 7a9.6 9.6 0 0 0 4.4-1.1"/>
+          <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>
+        </svg>
+        On nobody&rsquo;s Home
+      </p>
+    </li>
+
+    <li class="flow__step">
+      <span class="flow__num" aria-hidden="true">2</span>
+      <div class="flow__body">
+        <strong>Send the row in hidden</strong>
+        <span>It exists in Plex now, but it isn&rsquo;t on anyone&rsquo;s home screen yet.</span>
+      </div>
+      <p class="flow__state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M3 3l18 18"/>
+          <path d="M10.6 5.1A9.9 9.9 0 0 1 12 5c5 0 9 4.5 9 7a12 12 0 0 1-2.2 3.2"/>
+          <path d="M6.6 6.7C4.3 8.1 3 10.3 3 12c0 2.5 4 7 9 7a9.6 9.6 0 0 0 4.4-1.1"/>
+          <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>
+        </svg>
+        On nobody&rsquo;s Home
+      </p>
+    </li>
+
+    <li class="flow__step">
+      <span class="flow__num" aria-hidden="true">3</span>
+      <div class="flow__body">
+        <strong>Hide it from everyone else</strong>
+        <span>Every other account is told to hide that row&rsquo;s label. Their own settings are left as they were.</span>
+      </div>
+      <p class="flow__state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M3 3l18 18"/>
+          <path d="M10.6 5.1A9.9 9.9 0 0 1 12 5c5 0 9 4.5 9 7a12 12 0 0 1-2.2 3.2"/>
+          <path d="M6.6 6.7C4.3 8.1 3 10.3 3 12c0 2.5 4 7 9 7a9.6 9.6 0 0 0 4.4-1.1"/>
+          <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>
+        </svg>
+        On nobody&rsquo;s Home
+      </p>
+    </li>
+
+    <li class="flow__step flow__step--final">
+      <span class="flow__num" aria-hidden="true">4</span>
+      <div class="flow__body">
+        <strong>Now show it</strong>
+        <span>Only now does the row appear, so it is never visible before it is private.</span>
+      </div>
+      <p class="flow__state flow__state--on">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M3 12c0-2.5 4-7 9-7s9 4.5 9 7c0 2.5-4 7-9 7s-9-4.5-9-7Z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+        On its owner&rsquo;s Home, and nobody else&rsquo;s
+      </p>
+    </li>
+  </ol>
+  <figcaption>
+    Steps 1 to 3 leave the row on nobody&rsquo;s home screen. There is no moment where it exists and
+    is visible to the wrong person.
+  </figcaption>
+</figure>

@@ -41,11 +41,11 @@ privacy section and nowhere else, because they used to be on the page twice.
           </span>
           <span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
-            No AI key needed
+            No AI key required
           </span>
           <span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
-            Puts your Plex back if you remove it
+            Undoes itself if you remove it
           </span>
         </p>
       </div>
@@ -56,7 +56,7 @@ privacy section and nowhere else, because they used to be on the page twice.
                alt="A Movies Picked for You row on Plex, filled with film posters">
         </div>
         <figcaption>
-          A &ldquo;Picked for You&rdquo; row on Plex &mdash; private to that user, and built from what they watched.
+          A &ldquo;Picked for You&rdquo; row on Plex, private to that user and built from what they watched.
         </figcaption>
       </figure>
     </div>
@@ -64,14 +64,15 @@ privacy section and nowhere else, because they used to be on the page twice.
 
   <!-- ---------------------------------------------------------- problem -- -->
   <section class="section section--tint">
-    <div class="wrap">
+    <div class="wrap reveal">
       <div class="section__head section__head--center" style="margin-bottom:0">
         <span class="eyebrow">The problem</span>
         <h2>Plex shows everyone the same rows</h2>
         <p class="section__lede">
           Everyone on your server opens Plex to a big library and no idea what to put on. The rows
-          Plex builds are the same for every account and lean on its own streaming catalogue, so they
-          don't know your sister has watched every heist film you own and your dad hasn't touched one.
+          Plex builds are the same for every account and often suggest what's in Plex's own streaming
+          catalogue rather than what's in your library, so they don't know your sister has watched
+          every heist film you own and your dad hasn't touched one.
         </p>
         <p class="section__lede" style="margin-top:1rem">
           Shortlist gives each person a row of their own instead.
@@ -82,7 +83,7 @@ privacy section and nowhere else, because they used to be on the page twice.
 
   <!-- ------------------------------------------------------ how it works -- -->
   <section class="section" id="how-it-works">
-    <div class="wrap">
+    <div class="wrap reveal">
       <div class="section__head section__head--center">
         <span class="eyebrow">How it works</span>
         <h2>Four steps, every night</h2>
@@ -127,7 +128,7 @@ privacy section and nowhere else, because they used to be on the page twice.
 
   <!-- -------------------------------------------------------- templates -- -->
   <section class="section" id="templates">
-    <div class="wrap">
+    <div class="wrap reveal">
       <div class="section__head section__head--center">
         <span class="eyebrow">Rows</span>
         <h2>It isn't only “Picked for You”</h2>
@@ -162,7 +163,7 @@ privacy section and nowhere else, because they used to be on the page twice.
 
   <!-- ---------------------------------------------------------- privacy -- -->
   <section class="section section--tint" id="privacy">
-    <div class="wrap">
+    <div class="wrap reveal">
       <div class="privacy">
         <div>
           <span class="eyebrow">Privacy</span>
@@ -191,6 +192,22 @@ privacy section and nowhere else, because they used to be on the page twice.
           <li><div><strong>Now show it</strong><span>Only now does the row appear, so it is never visible before it is private.</span></div></li>
         </ol>
       </div>
+
+      {%- comment -%}
+      The proof, rather than another claim. Both halves of this picture are the fake Plex server's
+      own answer to each account's token, captured by tests/e2e/test_marketing_assets.py, so it
+      cannot show a privacy result the code does not actually produce.
+      {%- endcomment -%}
+      <figure class="mt-lg">
+        <div class="frame">
+          <img src="{{ '/images/two-account.png' | relative_url }}" width="1440" height="785" loading="lazy"
+               alt="Two Plex home screens side by side. Sarah's has a Movies row and a TV Shows row; Mike's has only a TV Shows row, holding completely different titles. Each one notes that the other people's rows are not on this home screen.">
+        </div>
+        <figcaption>
+          Two accounts on one server, on the same night. Each home screen was read using that
+          account&rsquo;s own Plex token, from a test library with made-up titles.
+        </figcaption>
+      </figure>
 
       <div class="grid grid--3 mt-lg">
         <div class="card">
@@ -226,7 +243,7 @@ privacy section and nowhere else, because they used to be on the page twice.
 
   <!-- --------------------------------------------------------- features -- -->
   <section class="section" id="features">
-    <div class="wrap">
+    <div class="wrap reveal">
       <div class="section__head section__head--center">
         <span class="eyebrow">Features</span>
         <h2>What you get</h2>
@@ -246,10 +263,10 @@ privacy section and nowhere else, because they used to be on the page twice.
 
   <!-- --------------------------------------------------------- showcase -- -->
   <section class="section section--tint" id="screenshots">
-    <div class="wrap">
+    <div class="wrap reveal">
       <div class="section__head section__head--center">
         <span class="eyebrow">Behind the row</span>
-        <h2>See why each person got what they got</h2>
+        <h2>See the reasoning behind each row</h2>
         <p class="section__lede">
           These screenshots use a test library with made-up titles, so no real accounts appear. The
           Plex row at the top of this page is from a real server.
@@ -278,7 +295,7 @@ privacy section and nowhere else, because they used to be on the page twice.
 
   <!-- ------------------------------------------------------- works with -- -->
   <section class="section" id="works-with">
-    <div class="wrap">
+    <div class="wrap reveal">
       <div class="section__head section__head--center">
         <span class="eyebrow">Works with</span>
         <h2>Where the suggestions come from, and where they go</h2>
@@ -327,7 +344,7 @@ privacy section and nowhere else, because they used to be on the page twice.
 
   <!-- ------------------------------------------------------- quickstart -- -->
   <section class="section section--tint" id="install">
-    <div class="wrap">
+    <div class="wrap reveal">
       <div class="section__head section__head--center">
         <span class="eyebrow">Quick start</span>
         <h2>Running in about ten minutes</h2>
@@ -382,7 +399,7 @@ docker compose up -d</code></pre>
           <p>
             <strong>Want to try it without touching your server?</strong> Add
             <code>-e SHORTLIST_DRY_RUN=1</code>. Shortlist will show you everything it would do and
-            write nothing to Plex until you are happy.
+            write nothing to Plex. Remove the flag when you're ready for it to make real changes.
           </p>
         </div>
       </div>
@@ -422,7 +439,7 @@ docker compose up -d</code></pre>
 
   <!-- ---------------------------------------------------------- closing -- -->
   <section class="section section--tint">
-    <div class="wrap">
+    <div class="wrap reveal">
       <div class="section__head section__head--center" style="margin-bottom:0">
         <h2>Give it a try</h2>
         <p class="section__lede">

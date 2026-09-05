@@ -1,0 +1,217 @@
+<!doctype html>
+<!--
+  Source for docs/images/social-preview.png — the card Reddit, Discord, Slack and X render when
+  someone shares a docs link, and the file to upload by hand at GitHub → Settings → General →
+  Social preview.
+
+  Captured by tests/e2e/test_marketing_assets.py::test_capture_social_preview at exactly 1280x640
+  (2:1, no device scaling: those sites want that pixel size, and they crop anything taller).
+
+  Deliberately NOT a screenshot. The image it replaces was a blurred mock of Plex's own Home
+  screen — blurred because it was not safe to publish unblurred, which is the tell that it should
+  never have been a screenshot in the first place. Nothing here imitates Plex's UI or shows a real
+  library: the shelf motif at the bottom is abstract, so it can never go stale against the real app
+  and there is nothing on it to blur. Colours and copy are the site's own (docs/assets/css/main.css,
+  docs/_config.yml's tagline); the mark is docs/assets/img/logo.svg inlined so this file has no
+  external references and renders identically from any working directory.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Shortlist — social preview</title>
+    <style>
+      :root {
+        --bg: #08080a;
+        --surface: #121216;
+        --border: rgba(255, 255, 255, 0.09);
+        --text: #f4f4f5;
+        --muted: #94949f;
+        --amber: #e5a00d;
+        --amber-bright: #f5c04a;
+        --font:
+          ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        width: 1280px;
+        height: 640px;
+        margin: 0;
+        padding: 56px 64px 0;
+        overflow: hidden;
+        position: relative;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* One warm pool behind the wordmark so the card is not a flat black rectangle in a
+         dark-themed feed. Kept faint: it must never compete with the headline. */
+      body::before {
+        content: "";
+        position: absolute;
+        inset: -220px auto auto -180px;
+        width: 760px;
+        height: 620px;
+        border-radius: 50%;
+        background: radial-gradient(
+          circle,
+          rgba(229, 160, 13, 0.16),
+          rgba(229, 160, 13, 0) 68%
+        );
+      }
+
+      .brand,
+      .headline,
+      .points,
+      .shelves {
+        position: relative;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+      }
+
+      .brand svg {
+        width: 64px;
+        height: 64px;
+      }
+
+      .brand span {
+        font-size: 40px;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+      }
+
+      .headline {
+        margin: 38px 0 0;
+        max-width: 940px;
+        font-size: 52px;
+        line-height: 1.14;
+        font-weight: 700;
+        letter-spacing: -0.032em;
+      }
+
+      .headline em {
+        font-style: normal;
+        color: var(--amber-bright);
+      }
+
+      .points {
+        display: flex;
+        gap: 34px;
+        margin: 30px 0 0;
+        color: var(--muted);
+        font-size: 20px;
+        font-weight: 500;
+      }
+
+      .points li {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        list-style: none;
+      }
+
+      .points svg {
+        width: 20px;
+        height: 20px;
+        color: var(--amber);
+      }
+
+      /* The shelf motif: rows of blank tiles rising out of the dark. It reads as "rows of
+         things" without claiming to be a picture of anyone's library. The mask fades the TOP,
+         not the bottom: the shelves have to emerge from the background rather than start on a
+         hard horizontal line halfway down the card. */
+      .shelves {
+        position: absolute;
+        left: 64px;
+        right: -60px;
+        bottom: 0;
+        display: grid;
+        gap: 15px;
+        mask-image: linear-gradient(to bottom, transparent, #000 42%);
+      }
+
+      .shelf {
+        display: flex;
+        gap: 14px;
+      }
+
+      .shelf i {
+        display: block;
+        width: 92px;
+        height: 72px;
+        border-radius: 9px;
+        border: 1px solid var(--border);
+        background: linear-gradient(160deg, #191920, #0e0e12);
+      }
+
+      .shelf i:first-child {
+        border-color: rgba(229, 160, 13, 0.34);
+        background: linear-gradient(160deg, rgba(229, 160, 13, 0.22), #0e0e12);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="brand">
+      <svg viewBox="0 0 64 64" aria-hidden="true">
+        <rect width="64" height="64" rx="15" fill="#e5a00d" />
+        <path
+          fill="#1a1200"
+          d="M36.5 13.5c.5 0 .9.33 1.03.82l1.6 6.05a8.6 8.6 0 0 0 6.1 6.1l6.05 1.6c.49.13.82.53.82 1.03s-.33.9-.82 1.03l-6.05 1.6a8.6 8.6 0 0 0-6.1 6.1l-1.6 6.05a1.07 1.07 0 0 1-2.06 0l-1.6-6.05a8.6 8.6 0 0 0-6.1-6.1l-6.05-1.6a1.07 1.07 0 0 1 0-2.06l6.05-1.6a8.6 8.6 0 0 0 6.1-6.1l1.6-6.05c.13-.49.53-.82 1.03-.82Z"
+        />
+        <path
+          fill="#1a1200"
+          d="M20 36.5c.44 0 .82.29.94.71l.86 3.02a4.6 4.6 0 0 0 3.17 3.17l3.02.86a.98.98 0 0 1 0 1.88l-3.02.86a4.6 4.6 0 0 0-3.17 3.17l-.86 3.02a.98.98 0 0 1-1.88 0l-.86-3.02a4.6 4.6 0 0 0-3.17-3.17l-3.02-.86a.98.98 0 0 1 0-1.88l3.02-.86a4.6 4.6 0 0 0 3.17-3.17l.86-3.02c.12-.42.5-.71.94-.71Z"
+        />
+      </svg>
+      <span>Shortlist</span>
+    </div>
+
+    <h1 class="headline">
+      Per-user Plex recommendations, built from
+      <em>each person's own watch history</em>
+    </h1>
+
+    <ul class="points">
+      <li>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+          <path d="M20 6 9 17l-5-5" />
+        </svg>
+        A private row each
+      </li>
+      <li>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+          <path d="M20 6 9 17l-5-5" />
+        </svg>
+        One Docker container
+      </li>
+      <li>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+          <path d="M20 6 9 17l-5-5" />
+        </svg>
+        No AI key required
+      </li>
+    </ul>
+
+    <div class="shelves" aria-hidden="true">
+      <div class="shelf">
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+      </div>
+      <div class="shelf">
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+      </div>
+      <div class="shelf">
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+      </div>
+    </div>
+  </body>
+</html>

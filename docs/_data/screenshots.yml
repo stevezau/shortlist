@@ -4,6 +4,11 @@
 #
 # Captured by tests/e2e/test_screenshots.py against the fake-Plex harness, so the
 # titles are made up and no real account appears.
+#
+# `width`/`height` are the CSS size the page reserves, which is half each file's
+# pixel size (the harness captures at 2x). Keep them in step with the real files:
+# they existed to stop the page reflowing as images load, and a stale value does
+# the opposite of that.
 
 - title: Every pick, and why it was picked
   body: >-
@@ -13,7 +18,20 @@
   alt: A user detail page listing that person's ranked picks, each with the title that inspired it
   path: /users/sarah
   width: 1440
-  height: 1171
+  height: 1151
+
+- title: Add as many rows as you like
+  body: >-
+    Every row is a recipe, not a fixed feature: a rewatch shelf, a row built around one recent
+    favourite, one shared row everybody sees. Each keeps its own size and its own refresh schedule,
+    and the per-person ones stay private to their owner.
+  image: rows.png
+  alt: >-
+    The Rows page listing four configured rows: the default Picked for You row, a Because you watched
+    row, a rewatch row, and one shared row
+  path: /rows
+  width: 1440
+  height: 860
 
 - title: Watch a run happen
   body: >-
@@ -23,4 +41,4 @@
   alt: A run detail page showing per-user timings, the picks delivered, and a live activity log
   path: /runs/42
   width: 1440
-  height: 871
+  height: 947
