@@ -383,6 +383,94 @@ describe("JobsPage — sync check", () => {
     ).toBeInTheDocument();
   });
 
+  it("confirms at the click before deleting a collection", async () => {
+    // The preview callout already names every collection and says it cannot be undone — so the
+    // audit's "no confirm" was half wrong. What was missing is a confirm AT THE CLICK, which every
+    // other irreversible Plex write in this app has (row delete, row cleanup, disable-everyone,
+    // backup restore). This one button bundled reversible demotions and an irreversible delete
+    // under a single verb and fired both immediately.
+    runJob.mockResolvedValue({
+      id: 1,
+      kind: "sync.check",
+      status: "done",
+      detail: "",
+      error: null,
+      fixed: [],
+      orphans: ["Shortlist_ghost"],
+    });
+    renderPage();
+
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /^Check now: Check and fix rows on Plex$/,
+      }),
+    );
+    runJob.mockClear();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /^Fix 1 row$/ }),
+    );
+
+    expect(runJob).not.toHaveBeenCalled();
+    expect(
+      await screen.findByRole("dialog", { name: /delete 1 collection/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("does the delete once confirmed", async () => {
+    runJob.mockResolvedValue({
+      id: 1,
+      kind: "sync.check",
+      status: "done",
+      detail: "",
+      error: null,
+      fixed: [],
+      orphans: ["Shortlist_ghost"],
+    });
+    renderPage();
+
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /^Check now: Check and fix rows on Plex$/,
+      }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /^Fix 1 row$/ }),
+    );
+    runJob.mockClear();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /^Delete and fix$/ }),
+    );
+
+    expect(runJob).toHaveBeenCalledWith("sync.check", { confirmed: true });
+  });
+
+  it("does not confirm when nothing will be deleted", async () => {
+    // Demotions are reversible and the run repeats them nightly anyway. A confirm on every fix
+    // teaches people to click through the one that matters.
+    runJob.mockResolvedValue({
+      id: 1,
+      kind: "sync.check",
+      status: "done",
+      detail: "",
+      error: null,
+      fixed: ["Shortlist_gemnath"],
+      orphans: [],
+    });
+    renderPage();
+
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /^Check now: Check and fix rows on Plex$/,
+      }),
+    );
+    runJob.mockClear();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /^Fix 1 row$/ }),
+    );
+
+    expect(runJob).toHaveBeenCalledWith("sync.check", { confirmed: true });
+  });
+
   it("offers no fix button when nothing drifted", async () => {
     runJob.mockResolvedValue({
       id: 1,

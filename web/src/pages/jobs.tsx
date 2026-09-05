@@ -22,6 +22,14 @@ import { PageHeader } from "@/components/page-header";
 import { RowSchedules } from "@/components/jobs/row-schedules";
 import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
@@ -295,6 +303,8 @@ export function JobsPage() {
   const [watchedResult, setWatchedResult] = useState<SyncFinishedEvent | null>(
     null,
   );
+  // Gate on the one irreversible half of "Fix N rows" — see the button's own comment.
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useSSE({
     onSyncProgress: (event) => {
@@ -423,6 +433,46 @@ export function JobsPage() {
 
   return (
     <div className="space-y-5">
+      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Delete {orphans.length} collection
+              {orphans.length === 1 ? "" : "s"}?
+            </DialogTitle>
+            <DialogDescription>
+              {orphans.join(", ")} will be removed from Plex for good. Shortlist
+              no longer knows who they belong to, so it cannot hide them
+              instead. The titles themselves stay in your library. This can’t be
+              undone.
+            </DialogDescription>
+          </DialogHeader>
+          {/* Inside the dialog, not beside the button that opened it: a failure leaves this dialog
+              open, and everything behind an open dialog is aria-hidden — an alert out there would be
+              invisible to a screen reader and buried under the overlay for everyone else. */}
+          {driftFix.isError && (
+            <p role="alert" className="text-sm text-destructive-text">
+              Couldn’t fix those rows. Try again.
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmDelete(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              loading={driftFix.isPending}
+              onClick={() =>
+                driftFix.mutate(undefined, {
+                  onSuccess: () => setConfirmDelete(false),
+                })
+              }
+            >
+              Delete and fix
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <PageHeader
         icon={Wrench}
         title="Jobs"
@@ -749,7 +799,19 @@ export function JobsPage() {
                           <Button
                             size="sm"
                             loading={driftFix.isPending}
-                            onClick={() => driftFix.mutate()}
+                            // Confirm at the CLICK when this will delete, which every other
+                            // irreversible Plex write in the app already does (row delete, row
+                            // cleanup, disable-everyone, backup restore). The callout above already
+                            // names each collection, so the audit's "no confirm at all" was half
+                            // wrong — but one verb still fired reversible demotions and an
+                            // unrecoverable delete together, with nothing between the press and the
+                            // destruction. Only when something will actually be deleted: a confirm
+                            // on every fix teaches people to click through the one that matters.
+                            onClick={() =>
+                              orphans.length > 0
+                                ? setConfirmDelete(true)
+                                : driftFix.mutate()
+                            }
                           >
                             Fix {drifted.length + orphans.length} row
                             {drifted.length + orphans.length === 1 ? "" : "s"}
