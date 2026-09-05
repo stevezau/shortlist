@@ -62,7 +62,9 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     // watch" and quietly delivered a movies-only one.
     highlights: [
       "Films only",
-      "Built from 1 watch",
+      // Worded as the row card badges it ("All sources: 1 watch"), so the gallery and the list do
+      // not name one setting two ways.
+      "All sources: 1 watch",
       "Follows their latest watch",
     ],
     values: {

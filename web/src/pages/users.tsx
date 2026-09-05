@@ -386,10 +386,15 @@ export function UsersPage() {
                         so the number is what yields. */}
                     <TableHead
                       className="hidden sm:table-cell"
+                      // NOT "a pick gets a month before it counts" — that is the DASHBOARD's
+                      // landing rate, which uses a matured cohort. This figure is lifetime
+                      // watched-over-delivered with no maturity filter at all (`api/users.py`), so
+                      // borrowing that sentence would describe a different number. All the blank
+                      // means is "too early for a zero to tell you anything".
                       title={
                         ratesMatured
-                          ? "Share of Shortlist's picks this person has watched"
-                          : "Share of Shortlist's picks this person has watched. A pick gets a month to be watched before it counts, so this stays blank until your earliest picks are old enough."
+                          ? "Share of Shortlist's picks this person has watched, over all time"
+                          : "Share of Shortlist's picks this person has watched, over all time. Blank while every pick on the server is still too new to judge."
                       }
                     >
                       Picks watched

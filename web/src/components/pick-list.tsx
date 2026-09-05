@@ -9,13 +9,18 @@ import { cn } from "@/lib/utils";
  * The seed credit, appended only when the reason has not already named it.
  *
  * The engine's own reason usually names the seed — "Because you watched drama like Movie 08" — so
- * appending "· inspired by Movie 08" restated the first clause on the same line. Substring, not an
- * exact match: the reason embeds the title inside a sentence, it never equals it.
+ * appending "· inspired by Movie 08" restated the first clause on the same line.
+ *
+ * Matched on WORD BOUNDARIES, not with `includes`: a bare substring test suppresses the credit for
+ * any short title that happens to appear inside another word, and there are real films called *Up*,
+ * *It*, *Her* and *Heat* — "Uplifting sci-fi" contains "Up", so *Up*'s credit would vanish.
  */
 function seedNote(pick: Pick): string {
   const seed = pick.seed_title;
   if (!seed) return "";
-  return pick.reason.includes(seed) ? "" : ` · inspired by ${seed}`;
+  const escaped = seed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const named = new RegExp(`(^|\\W)${escaped}(\\W|$)`).test(pick.reason);
+  return named ? "" : ` · inspired by ${seed}`;
 }
 
 /**

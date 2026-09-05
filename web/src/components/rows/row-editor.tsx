@@ -461,9 +461,9 @@ export function RowEditor({
                 Runs
               </Link>
             </Button>
-            {/* Reads as the destructive control it points at — the Rows card spells Delete in the
-                same red with the same icon, and a plain grey label here did not look like a button
-                at all, let alone one that ends in deleting a row. */}
+            {/* Reads as the destructive control it points at — the Rows card's own "Remove or
+                delete" is the same red with the same icon, and a plain grey label here did not look
+                like a button at all, let alone one that ends in deleting a row. */}
             <Button
               variant="outline"
               size="sm"
