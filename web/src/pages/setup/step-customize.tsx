@@ -1,6 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { Check, Loader2 } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { FakePlexRow } from "@/components/fake-plex-row";
 import { RowSizeField } from "@/components/row-size-field";
@@ -10,7 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, apiErrorMessage } from "@/lib/api";
 import { ROW_SIZE_DEFAULT } from "@/lib/constants";
-import { renderRowName } from "@/lib/format";
+import { renderRowName, settingString } from "@/lib/format";
+import { useSettings } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
 import type { StepProps } from "./step-props";
@@ -30,6 +31,41 @@ export function StepCustomize({ update, next }: StepProps) {
   const [customTpl, setCustomTpl] = useState("✨ Fresh picks");
   const [rowSize, setRowSize] = useState(ROW_SIZE_DEFAULT);
   const customId = useId();
+
+  // Re-entering this step (Back/Next) remounts it — the wizard swaps the component per step — so
+  // seed the fields from what is already saved, once, when settings arrive. Without this the three
+  // fields above silently reset to their literals and the next save wrote those defaults OVER the
+  // owner's stored values. The worst case was "Skip for now — you can change this later", which is
+  // also a save: a control whose label promises nothing changes was replacing a custom row name
+  // with the classic default. Same pattern as `step-history`, for the same reason.
+  const settings = useSettings();
+  const seeded = useRef(false);
+  useEffect(() => {
+    const saved = settings.data;
+    if (seeded.current || !saved) return;
+    seeded.current = true;
+    const savedTpl = settingString(saved, "row.name_template");
+    const savedSize = saved["row.size"];
+    // Functional updaters: if the fetch was slow and the owner already picked something, their
+    // choice wins. An absent saved value never overwrites what they chose.
+    if (savedTpl) {
+      setChoice((cur) =>
+        cur !== "static"
+          ? cur
+          : savedTpl === STATIC_TPL
+            ? "static"
+            : savedTpl === DYNAMIC_TPL
+              ? "dynamic"
+              : "custom",
+      );
+      setCustomTpl((cur) =>
+        savedTpl === STATIC_TPL || savedTpl === DYNAMIC_TPL ? cur : savedTpl,
+      );
+    }
+    if (typeof savedSize === "number" && savedSize > 0) {
+      setRowSize((cur) => (cur === ROW_SIZE_DEFAULT ? savedSize : cur));
+    }
+  }, [settings.data]);
 
   const template =
     choice === "static"
