@@ -8,6 +8,7 @@ modules from importing each other.
 from __future__ import annotations
 
 import threading
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -93,6 +94,12 @@ class EngineContext:
     # Every library rows may be delivered to (all movie + show sections), for resolving a row's
     # library_keys to real sections. Built by _build_indexes each run.
     delivery_sections: list = field(default_factory=list)
+    # How many titles in the libraries THIS run can deliver to carry each genre — the population a
+    # person's own genre mix is compared against (`candidates.genre_avoidance_profile`). Tallied
+    # during the index scan that already happens, because a real PMS serves <Genre> inline in a
+    # section listing; it costs no extra request. Empty when genre avoidance is off, so nothing is
+    # computed for an owner who never asked for it.
+    library_genre_counts: Counter[str] = field(default_factory=Counter)
     # plex account id -> the slug Shortlist assigned that account, for EVERY user it knows (not just
     # tonight's). This is how "whose row is this?" is answered. It cannot be answered from a name:
     # people rename themselves, and two display names can slugify to the same string — either

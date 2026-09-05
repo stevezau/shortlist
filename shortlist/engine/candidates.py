@@ -569,6 +569,47 @@ def candidate_genre_penalty(genres: list[str], profile: dict[str, float]) -> flo
     return sum(min(0.0, profile.get(g, 0.0)) for g in genres) / len(genres)
 
 
+def stamp_genre_penalties(
+    tmdb: TmdbClient,
+    candidates: list[Candidate],
+    seeds: list[Seed],
+    library_genre_counts: dict[str, int],
+) -> None:
+    """Measure this person's genre avoidance and stamp it on every candidate, in place.
+
+    The person's own mix comes from their SEEDS, not their raw history: `WatchedItem` carries no
+    genres, and seeds are already this codebase's operational stand-in for "what this person likes"
+    everywhere else in this module. It also caps the sample at `max_seeds`, so a 2000-watch account
+    and a 30-watch one are compared on the same footing.
+
+    Both sides must speak the same vocabulary or nothing matches. Candidates carry TMDB genre NAMES
+    (mapped through `genre_names`), and Plex's `<Genre>` tags come from its metadata agent, which for
+    the Plex Movie agent is TMDB-derived — so "Horror" and "Science Fiction" line up. Where they do
+    NOT, the mismatch degrades to silence rather than error: a genre missing from the profile scores
+    0.0, so an unfamiliar vocabulary costs the signal, never the ranking.
+    """
+    if not library_genre_counts or not seeds or not candidates:
+        return
+    genre_maps: dict[MediaType, dict[int, str]] = {}
+    user_counts: Counter[str] = Counter()
+    for seed in seeds:
+        if seed.media_type not in genre_maps:
+            genre_maps[seed.media_type] = tmdb.genre_names(seed.media_type)
+        names = genre_maps[seed.media_type]
+        # Weighted by how much they actually watched it. A show binged 40 episodes deep says more
+        # about their taste than something they sampled once, and `Seed.weight` already carries
+        # exactly that judgement (watch count x recency decay) for the rest of the engine.
+        weight = max(1, round(seed.weight))
+        for gid in _seed_genre_ids(tmdb, seed):
+            if gid in names:
+                user_counts[names[gid]] += weight
+    profile = genre_avoidance_profile(dict(user_counts), dict(library_genre_counts))
+    if not profile:
+        return
+    for candidate in candidates:
+        candidate.genre_penalty = candidate_genre_penalty(candidate.genres, profile)
+
+
 def genre_coherence(seed_genre_ids: set[int], candidate_genre_ids: list[int]) -> float:
     """How much a candidate stays inside the seed's genres, 0.5..1.0.
 

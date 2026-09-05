@@ -168,6 +168,10 @@ DEFAULTS: dict[str, Any] = {
     # a default that means one thing on a new server and another on an old one is two products.
     # Nothing is rewritten at upgrade: a row adopts it on its next refresh night.
     "recommendations.recency": 0.5,
+    # OFF for everyone, including existing installs. `recency` above is seeded to 0.5 on purpose;
+    # that was a deliberate product call and is not a precedent for turning a new signal on for
+    # people who never asked for it.
+    "recommendations.genre_avoidance": 0.0,
     # How many of a person's most recent watches the web-search source searches per row (one cached
     # Exa search each). Row-overridable. Fewer = tighter/cheaper; the DbCache dedups shared titles.
     "recommendations.recent_count": 10,

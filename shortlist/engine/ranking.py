@@ -121,8 +121,12 @@ def score(
     return base * recency_factor(candidate.year, year_now, recency)
 
 
-def _sort_key(candidate: Candidate, recency: float = 0.0, year_now: int = 0) -> tuple:
-    return (-score(candidate, recency=recency, year_now=year_now), -candidate.rating, candidate.title)
+def _sort_key(candidate: Candidate, recency: float = 0.0, year_now: int = 0, genre_avoidance: float = 0.0) -> tuple:
+    return (
+        -score(candidate, recency=recency, year_now=year_now, genre_avoidance=genre_avoidance),
+        -candidate.rating,
+        candidate.title,
+    )
 
 
 def cut_for_recency(
@@ -131,6 +135,7 @@ def cut_for_recency(
     keep: int,
     recency: float,
     year_now: int,
+    genre_avoidance: float = 0.0,
 ) -> list[Candidate]:
     """Re-take the per-media ``pre_rank`` cut at this row's own release-date weight.
 
@@ -145,11 +150,19 @@ def cut_for_recency(
     truncate the other type away before its library's collection is ever built.
     """
     return [
-        c for kind in kinds for c in pre_rank([x for x in in_library if x.media_type is kind], keep, recency, year_now)
+        c
+        for kind in kinds
+        for c in pre_rank([x for x in in_library if x.media_type is kind], keep, recency, year_now, genre_avoidance)
     ]
 
 
-def pre_rank(candidates: list[Candidate], keep: int, recency: float = 0.0, year_now: int = 0) -> list[Candidate]:
+def pre_rank(
+    candidates: list[Candidate],
+    keep: int,
+    recency: float = 0.0,
+    year_now: int = 0,
+    genre_avoidance: float = 0.0,
+) -> list[Candidate]:
     """Top `keep` candidates, giving every source a turn (best-first within each).
 
     Round-robin, not a global sort: each source offers its best remaining candidate in turn until
@@ -162,7 +175,9 @@ def pre_rank(candidates: list[Candidate], keep: int, recency: float = 0.0, year_
     pool exceeds `keep` — the common case for a catalog-deep server, which is exactly who needs this
     — a newer title ranking below the cap could never be rescued however high the owner turned it.
     """
-    ranked = sorted(candidates, key=lambda c: _sort_key(c, recency, year_now))
+    # `genre_avoidance` participates in the CUT for the same reason `recency` does: weighting only
+    # after truncation would cap the dial's reach at whatever happened to survive the base sort.
+    ranked = sorted(candidates, key=lambda c: _sort_key(c, recency, year_now, genre_avoidance))
     if len(ranked) <= keep:
         return ranked
 

@@ -1145,6 +1145,13 @@ class EngineConfig:
     #
     # The DATACLASS defaults to 0 (immediate, so tests stay fast and a library caller inherits no
     # opinion). `settings_store` defaults the PRODUCT to a real delay.
+    # How much a person's measured genre avoidance counts when ranking, 0.0 (ignore it, the default
+    # and every existing install) .. 1.0. A WEIGHT, never a filter: an avoided genre is only ever
+    # asked to be a better match, and `ranking.negative_multiplier` floors the total so it can shade
+    # the order without deciding it. Off by default in BOTH layers — unlike `recency`, which the
+    # product deliberately turned on for existing servers; that was its own decision, not a
+    # precedent.
+    genre_avoidance: float = 0.0
     orphan_confirm_delay_s: float = 0.0
     dry_run: bool = False
     # The curated rows to deliver. Empty -> a single default per-person row synthesized from

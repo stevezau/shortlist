@@ -1018,6 +1018,7 @@ class ContextBuilder:
             refresh_days=int(store.get("recommendations.refresh_days") or 0),
             idle_hold_days=int(store.get("recommendations.idle_hold_days") or 0),
             recency=float(store.get("recommendations.recency") or 0.0),
+            genre_avoidance=float(store.get("recommendations.genre_avoidance") or 0.0),
             # No `or` fallback: 0 is a legitimate choice ("confirm twice, back to back") and `or`
             # would silently turn it into the product default. `store.get` already returns the
             # DEFAULTS value when the key is unset, so the zero survives.

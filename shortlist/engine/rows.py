@@ -970,6 +970,11 @@ def _candidate_pool(
         dropped=dropped,
     )
     in_library = _media_filter(valid, media)
+    # Measure genre avoidance BEFORE the cut, so the dial can rescue or demote a title across the
+    # truncation boundary rather than only reordering whatever already survived — the same reason
+    # `recency` participates in the cut. A no-op unless the owner turned the dial up, and the
+    # library tally is empty in that case, so nothing is computed either.
+    candidates_mod.stamp_genre_penalties(ctx.tmdb, in_library, seeds, ctx.library_genre_counts)
     # Pre-rank EACH media type to its own cap, not the mixed pool to one cap — otherwise a 'both'
     # row whose pool skews one way (a mostly-TV watcher) truncates the other type away before the
     # per-media curate ever sees it, and that library's collection comes up empty.
@@ -979,7 +984,9 @@ def _candidate_pool(
     # passes the server's value so every row that inherits it shares one cached cut (and re-cuts only
     # when it overrides); the shared-row path — which has no such cache — passes the row's own
     # `effective_recency` and gets the right cut first time.
-    ranked = ranking.cut_for_recency(in_library, kinds, cap, recency, _run_year(ctx.run_day))
+    ranked = ranking.cut_for_recency(
+        in_library, kinds, cap, recency, _run_year(ctx.run_day), ctx.config.genre_avoidance
+    )
     # Stamp each traced return with its fate (kept as a candidate, or dropped and why), derived
     # entirely from the lists selection already produced above — so the trace can follow every title
     # in and out without altering a single delivered pick.

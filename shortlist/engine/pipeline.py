@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -222,25 +223,47 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
 INDEX_CACHE_TTL_S = 7 * 24 * 3600
 
 
-def _library_index(ctx: EngineContext, section) -> dict[int, int]:
+def _library_index(ctx: EngineContext, section, genre_counts: Counter[str] | None = None) -> dict[int, int]:
     """This section's ``tmdb_id -> ratingKey`` index — from the cross-run cache when unchanged.
 
     Keyed on the section + a cheap change signature (item count + last-updated); a signature change
     (a title added/removed/edited) misses and re-scans. JSON object keys are strings, so tmdb ids
     round-trip through ``str()``/``int()``. A missing signature or NullCache just always re-scans.
+
+    ``genre_counts``, when given, is also filled with this section's genre tally. It has to ride the
+    CACHE as well as the scan: genres come free from the listing, but only when the listing is
+    actually fetched, and a cache hit fetches nothing — so a cached section would otherwise
+    contribute an empty tally and silently skew the baseline toward whichever libraries happened to
+    miss.
     """
     signature = ctx.plex.section_signature(section)
-    # v2 key: the cached payload dropped the old {"index", "episodes"} envelope for the bare index
-    # dict. A new prefix makes any old-format entry a clean miss (re-scan) instead of a parse crash.
-    cache_key = f"index2:{section.key}:{signature}" if signature else None
+    # v3 key: the payload regained an envelope, this time to carry the genre tally beside the index.
+    # A new prefix makes any older entry a clean miss (re-scan) rather than a parse crash — the same
+    # move v2 made when it dropped the original {"index", "episodes"} envelope.
+    cache_key = f"index3:{section.key}:{signature}" if signature else None
     if cache_key and (cached := ctx.index_cache.get(cache_key)):
-        index = {int(k): v for k, v in json.loads(cached).items()}
+        payload = json.loads(cached)
+        index = {int(k): v for k, v in payload["index"].items()}
+        if genre_counts is not None:
+            genre_counts.update(payload.get("genres", {}))
         _emit(ctx, section.title, "indexed (cached)", {"items": len(index)})
         return index
     _emit(ctx, section.title, "indexing", {})
-    index = ctx.plex.build_library_index(section)
+    section_genres: Counter[str] = Counter()
+    # Only ask for the tally when someone wants it. Passing `genre_counts=` unconditionally would
+    # make the call signature-sensitive for every caller and stub, for a value nobody reads when the
+    # dial is off — an owner who never enables this makes exactly the call they always did.
+    if genre_counts is None:
+        index = ctx.plex.build_library_index(section)
+    else:
+        index = ctx.plex.build_library_index(section, genre_counts=section_genres)
+        genre_counts.update(section_genres)
     if cache_key:
-        ctx.index_cache.set(cache_key, json.dumps({str(k): v for k, v in index.items()}), INDEX_CACHE_TTL_S)
+        ctx.index_cache.set(
+            cache_key,
+            json.dumps({"index": {str(k): v for k, v in index.items()}, "genres": dict(section_genres)}),
+            INDEX_CACHE_TTL_S,
+        )
     _emit(ctx, section.title, "indexed", {"items": len(index)})
     return index
 
@@ -300,9 +323,12 @@ def _build_indexes(
     # no users they are thousands of PMS reads thrown away, in front of the sweep, on the one path (a
     # closed gate) where the sweep is the entire point and must not be preceded by anything that can fail.
     index_sections = ctx.delivery_sections if users else []
+    # Only tally genres when something will actually read them. An owner who has never turned
+    # genre avoidance on pays nothing — not even the dict churn.
+    want_genres = ctx.config.genre_avoidance > 0
     for section in index_sections:
         kind = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
-        index = _library_index(ctx, section)
+        index = _library_index(ctx, section, ctx.library_genre_counts if want_genres else None)
         seed_index.update({rating_key: tmdb_id for tmdb_id, rating_key in index.items()})
         # Every library of a deliverable type is both a recommendation source (union) and a possible
         # delivery target (its own per-section index) — a row picks which ones under library_keys.
