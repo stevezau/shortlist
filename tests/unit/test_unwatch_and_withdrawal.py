@@ -124,6 +124,46 @@ def profile(history=(), *, slug="alex", account=99, complete=True):
     )
 
 
+class TestTheWithdrawalLogNamesWhatItTook:
+    """`watched_at`/`finished_at` have no other copy, so the log line is the only forensic trail if
+    withdrawal ever takes back something it should not have.
+
+    Live on a real server the first version read `Rabbit Hole, Rabbit Hole, Rabbit Hole, ...` eight
+    times — one entry per pick ROW, because a title is delivered by many runs. The count is
+    row-based, because that is what was written; the names are distinct, because that is what a
+    person reads.
+    """
+
+    def test_one_title_delivered_by_many_runs_is_named_once(self, world):
+        from shortlist.server.services.run_persistence import _withdraw_unwatched
+
+        with world() as session:
+            for rank in range(1, 4):  # the same show, credited by three different runs
+                session.add(
+                    PickRow(
+                        run_id=1,
+                        user_id=1,
+                        collection_slug="staff",
+                        section_key="1",
+                        library="Movies",
+                        tmdb_id=610,
+                        media_type="movie",
+                        rating_key=0,
+                        rank=rank,
+                        title="Rabbit Hole",
+                        created_at=NOW - timedelta(days=2),
+                        watched_at=NOW - timedelta(days=1),
+                    )
+                )
+            session.commit()
+        with world() as session:
+            user = session.query(User).filter_by(id=1).one()
+            gone = _withdraw_unwatched(session, user, {}, set(), now=NOW)
+
+        assert len(gone) == 3, "the count must stay row-based — that is what was actually written"
+        assert sorted(set(gone)) == ["Rabbit Hole"], "the log would repeat the same title once per row"
+
+
 class TestUnwatchingWithdrawsOnlyAFlagBackedCredit:
     """Someone can un-watch a title, and Plex marks things watched wrongly often enough that
     correcting it is normal housekeeping. Nothing withdrew a credit, so one bad flag counted toward

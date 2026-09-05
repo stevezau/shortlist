@@ -925,11 +925,16 @@ def reconcile_watched(
                     # WHICH, not just how many. `watched_at`/`finished_at` have no other copy, so this
                     # line is the entire forensic trail if it ever takes back something it shouldn't
                     # — the standard plex-safety rule 10 already sets for writes that reach Plex.
+                    # DISTINCT titles, not one entry per row. A title is delivered by many runs, so
+                    # a single withdrawal is typically 8+ pick rows for the same show, and the raw
+                    # list read "Rabbit Hole, Rabbit Hole, Rabbit Hole, ..." — which buries the one
+                    # thing this line exists to say. The COUNT stays row-based: that is what was
+                    # actually written.
                     logger.info(
                         "watch-sync: withdrew {} un-watched credit(s) for {}: {}",
                         len(gone),
                         user.username,
-                        ", ".join(gone),
+                        ", ".join(sorted(set(gone))),
                     )
 
             existing = shared_rows[user.id]
