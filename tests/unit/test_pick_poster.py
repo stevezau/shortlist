@@ -8,6 +8,7 @@ unanswerable from the UI.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import re
@@ -288,13 +289,24 @@ class TestTheEventLoopIsNeverBlocked:
     and a pick list fires ten to twenty at once."""
 
     def test_the_handler_offloads_every_plex_call_to_the_threadpool(self, app_client, monkeypatch):
+        """Asks the RUNNING LOOP, not thread identity.
+
+        Comparing `threading.get_ident()` against the test body's thread is vacuous: `TestClient`
+        runs the event loop on a thread of its own, so the test thread is never the loop thread and
+        the assertion passes whether or not the work was offloaded (measured both ways). A threadpool
+        worker has no running loop and the event-loop thread does — that difference is the property,
+        and it is the one that actually breaks when the `run_in_threadpool` hop is removed.
+        """
         from shortlist.server.api import picks
 
-        loop_thread = threading.get_ident()
-        seen: list[int] = []
+        offloaded: list[bool] = []
 
         def record(*_args, **_kwargs):
-            seen.append(threading.get_ident())
+            try:
+                asyncio.get_running_loop()
+                offloaded.append(False)
+            except RuntimeError:
+                offloaded.append(True)
             return SimpleNamespace(
                 item_thumb_path=lambda _key: REAL_THUMB,
                 read_artwork=lambda _path: (b"\x89PNG", "image/png"),
@@ -304,8 +316,8 @@ class TestTheEventLoopIsNeverBlocked:
 
         assert app_client.get("/api/picks/575662/poster").status_code == 200
 
-        assert seen, "the client was never built"
-        assert loop_thread not in seen, "a blocking PMS call ran on the event loop thread"
+        assert offloaded, "the client was never built"
+        assert all(offloaded), "a blocking PMS call ran on the event loop thread"
 
     def test_the_client_cache_is_guarded_against_concurrent_builds(self):
         """The check-then-set is only safe because of the lock: the threadpool really does run two

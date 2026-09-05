@@ -347,6 +347,21 @@ describe("the enforcement panel", () => {
     expect(screen.queryByText(/missing a hide rule/i)).toBeNull();
   });
 
+  it("a verdict this build doesn't know renders as 'couldn't interpret', never as green", async () => {
+    // The SPA now trusts the server's ranking, so a sixth state nobody wired up here must not fall
+    // through to "Every account hides all N rows" — the one direction this page must never default.
+    getPrivacyStatus.mockResolvedValue(
+      status({ summary: "some_future_state" }),
+    );
+
+    renderPage();
+
+    expect(
+      await screen.findByText(/couldn't interpret this reading/i),
+    ).toBeVisible();
+    expect(screen.queryByText(/every account hides all/i)).toBeNull();
+  });
+
   it("states the Home-only scope once, and never claims the Collections tab", async () => {
     renderPage();
 

@@ -58,8 +58,9 @@ _THUMB_MEMO: dict[int, tuple[str, float]] = {}
 _THUMB_MEMO_MAX = 4096
 
 
-#: The live client, keyed on a DIGEST of the credentials that built it. Re-linking a server changes
-#: the digest and builds a new client, so nothing can hand back one pointed at the wrong PMS.
+#: The live client, keyed on a DIGEST of the settings that built it. Re-linking a server — or
+#: changing the timeout — changes the digest and builds a new client, so nothing can hand back one
+#: pointed at the wrong PMS or holding a setting the owner has since changed.
 #:
 #: A digest rather than the values, because this is a module global: keying it on the token would put
 #: the token in plaintext in anything that reprs module state — a traceback, a debugger, a heap dump.
@@ -73,8 +74,11 @@ _CLIENT: dict[str, object] = {}
 _CLIENT_LOCK = threading.Lock()
 
 
-def _credentials_digest(url: str, token: str) -> str:
-    return hashlib.sha256(f"{url}\0{token}".encode()).hexdigest()
+def _credentials_digest(url: str, token: str, timeout: int) -> str:
+    """The cache key. Includes the TIMEOUT, which is not a credential but is baked into the client at
+    construction — leave it out and changing `plex.timeout_s` in Settings never reaches this
+    endpoint until the process restarts."""
+    return hashlib.sha256(f"{url}\0{token}\0{timeout}".encode()).hexdigest()
 
 
 def _plex_client(url: str, token: str, timeout: int):
@@ -84,14 +88,15 @@ def _plex_client(url: str, token: str, timeout: int):
     is called once per PICTURE rather than once per page: constructing a `PlexServer` costs a `GET /`
     handshake (measured), so a rebuild per image made a ten-poster list pay ten of them on top of the
     reads it actually needed. Only `fetch_items` and a raw artwork GET are used here, neither of which
-    touches the client's per-run section/collection caches, so there is nothing to go stale.
+    touches the client's per-run section/collection caches, so no read state goes stale. What IS baked
+    in at construction is the timeout, which is why the key covers it.
 
     Takes plain values rather than a `SettingsStore` so the caller can read settings on the event
     loop and hand this thread nothing that belongs to a SQLAlchemy session.
     """
     from shortlist.engine.clients.plex_pms import PlexClient
 
-    key = _credentials_digest(url, token)
+    key = _credentials_digest(url, token, timeout)
     with _CLIENT_LOCK:
         if key not in _CLIENT:
             # One entry: a re-link supersedes the old credentials rather than accumulating beside

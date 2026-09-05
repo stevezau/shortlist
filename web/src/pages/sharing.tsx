@@ -122,9 +122,9 @@ function Summary({
     );
   }
   if (data.summary === "not_enforced") {
-    // Stored is not enforced. These accounts DO carry every hide rule — that is why the enforcement
-    // check looked at them at all — so the "missing rules" wording below would be actively wrong,
-    // and so would anything green.
+    // Only reached when NO account is missing a rule — the server ranks a missing rule higher,
+    // because that one the next run fixes. So here the filters really are complete and the fault is
+    // Plex's, which is what makes the "nothing below is wrong" claim safe to make.
     const who = Object.keys(data.enforcement.not_enforced);
     return (
       <Banner tone="bad" role="alert">
@@ -133,8 +133,7 @@ function Summary({
             Plex saved every hide rule and is showing other people's rows
             anyway.
           </strong>{" "}
-          Checked through {who.join(", ")}
-          {who.length === 1 ? "'s" : "'"} own eyes in run #
+          Checked through the eyes of {who.join(", ")} in run #
           {data.enforcement.run_id}. Nothing below is wrong — the rules really
           are on the filters. Plex is not applying them.
         </p>
@@ -159,7 +158,7 @@ function Summary({
       </Banner>
     );
   }
-  if (data.rows_on_plex.length === 0) {
+  if (data.summary === "clean" && data.rows_on_plex.length === 0) {
     return (
       <Banner tone="neutral">
         <p>
@@ -169,12 +168,26 @@ function Summary({
       </Banner>
     );
   }
+  if (data.summary === "clean") {
+    return (
+      <Banner tone="good">
+        <p>
+          Every account hides all {data.rows_on_plex.length}{" "}
+          {data.rows_on_plex.length === 1 ? "row" : "rows"} that aren't theirs.{" "}
+          <ReadAt at={data.read_at} />
+        </p>
+      </Banner>
+    );
+  }
+  // A verdict this build does not know. Reached only if the server grows a sixth state and nobody
+  // wires it up here — and the default has to be "I don't know", never the green banner. Falling
+  // through to reassurance is the one direction this page's whole docstring says it must not take.
   return (
-    <Banner tone="good">
+    <Banner tone="neutral">
       <p>
-        Every account hides all {data.rows_on_plex.length}{" "}
-        {data.rows_on_plex.length === 1 ? "row" : "rows"} that aren't theirs.{" "}
-        <ReadAt at={data.read_at} />
+        Shortlist couldn't interpret this reading ({data.summary}), so it isn't
+        saying whether anything is hidden. The accounts below are still a live
+        read. <ReadAt at={data.read_at} />
       </p>
     </Banner>
   );

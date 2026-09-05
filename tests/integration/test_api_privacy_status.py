@@ -379,13 +379,49 @@ class TestEnforcement:
 
         assert client.get("/api/privacy/status").json()["summary"] == "unreadable"
 
-    def test_an_unmeasured_exposure_key_cannot_reach_the_headline(self, client: TestClient, monkeypatch):
-        """No measuring run means no exposure to rank — "nobody looked" is not "somebody is exposed"."""
-        _seed_users(client, [{"slug": "sarah", "plex_account_id": 1000, "enabled": True}])
-        _rows_on_plex(monkeypatch, ["sarah"])
-        _roster(monkeypatch, {"sarah": {"filterMovies": ""}}, ids={"sarah": 1000})
+    def test_an_unmeasured_exposure_cannot_reach_the_headline(self):
+        """ "Nobody looked" is not "somebody is exposed". Asserted against `_summary` directly, because
+        `_enforcement` can only ever ship `not_enforced: {}` alongside `measured: False` — so the
+        combination this guards is unreachable through the endpoint and a request-level test would
+        pass without the guard existing."""
+        from shortlist.server.api.privacy import _summary
+        from shortlist.server.services.privacy_status import SharingStatus
 
-        assert client.get("/api/privacy/status").json()["summary"] == "clean"
+        clean = SharingStatus(read_at="now")
+        exposure = {"measured": False, "run_id": None, "measured_at": None, "not_enforced": {"sarah": [21]}}
+
+        assert _summary(clean, [], exposure) == "clean"
+
+    def test_a_missing_rule_outranks_a_measured_exposure_because_only_it_is_actionable(
+        self, client: TestClient, monkeypatch
+    ):
+        """The two CAN co-occur, and my first fix assumed they could not.
+
+        `pipeline.py:602` gates the spot-check on `any(...)` — at least ONE of our labels, not all of
+        them — and `unhidden_rows_on_home` reports any of our rows on that Home whether or not that
+        particular row's exclude was ever stored. So an account carrying mike's exclude but missing
+        dan's is both `missing` AND in `filters_not_enforced`. Leading with "Plex saved every hide
+        rule" there is false, and it sends the owner to file an issue when the next run would fix it.
+        """
+        self._run(client, stats={"filters_not_enforced": {"sarah": [21]}}, minutes_ago=30)
+        _seed_users(
+            client,
+            [
+                {"slug": "sarah", "plex_account_id": 1000, "enabled": True},
+                {"slug": "mike", "plex_account_id": 1001, "enabled": True},
+                {"slug": "dan", "plex_account_id": 1002, "enabled": True},
+            ],
+        )
+        _rows_on_plex(monkeypatch, ["sarah", "mike", "dan"])
+        # Carries mike's exclude, missing dan's — enough to pass the engine's `any()` gate.
+        _roster(monkeypatch, {"sarah": {"filterMovies": "label!=shortlist_mike"}}, ids={"sarah": 1000})
+
+        body = client.get("/api/privacy/status").json()
+
+        assert next(a for a in body["accounts"] if a["slug"] == "sarah")["missing"] == ["shortlist_dan"]
+        assert body["summary"] == "missing", "the fixable verdict has to win when there is one"
+        # The measurement is not hidden — it still reaches the enforcement panel on its own.
+        assert body["enforcement"]["not_enforced"] == {"sarah": [21]}
 
     def test_a_clean_measurement_is_reported_as_measured_and_empty(self, client: TestClient, monkeypatch):
         """The empty dict is what lets a fixed server clear the alert, so it must survive as
