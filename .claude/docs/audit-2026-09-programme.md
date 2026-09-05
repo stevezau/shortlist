@@ -919,7 +919,7 @@ re-running against HEAD; CI runs plain `eslint .` without `--max-warnings 0` any
 | `four-states` | ✅ done (all 6) | `95d650d`, `5db61b8` |
 | everything else | ☐ not started | — |
 
-**10 of 35 implemented, 35 of 35 designed.** Wave 1 complete except `dry-run-gap`;
+**9 of 35 implemented, 35 of 35 designed.** Wave 1 complete except `dry-run-gap`;
 Wave 2 complete except `sse-dead`.
 
 Remaining: `dry-run-gap`, `sse-dead`, `evaluation` (Wave 0), the 5 engine items (Wave 3, blocked on
