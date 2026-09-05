@@ -49,6 +49,20 @@ STALE_AFTER = timedelta(minutes=30)
 # the tail is deliberately long rather than hammering a server that is already unhappy.
 _BACKOFF_S = (30, 300, 900)
 
+# `notify.send` is the exception, because it reaches a THIRD PARTY. Plex is on the same LAN and comes
+# back in minutes; Discord, Slack or a home-automation box can be unreachable for hours, and the
+# shared schedule at the default 3 attempts gives up after 5.5 minutes — long before the channel is
+# back, on the one job whose entire purpose is to reach somebody. This spans ~4.6 hours instead. When
+# it finally does give up, the `failed` state raises the existing `_failed_jobs` alert in the bell, so
+# the news is not lost — it falls back to the channel that cannot be broken by the thing that broke.
+#
+# The `+ 1` is not padding. A job waits between attempts, so N waits need N+1 attempts: `_finish`
+# retires the job the moment `attempts == max_attempts`, and `_claim` charges wait `schedule[n-1]`
+# before attempt n. Sized as `len(...)` the last and longest entry is never reached, which quietly
+# made this 1.6 hours while every comment and the Jobs page description said 4.6.
+NOTIFY_BACKOFF_S = (60, 300, 1800, 3600, 10800)
+NOTIFY_ATTEMPTS = len(NOTIFY_BACKOFF_S) + 1
+
 Handler = Callable[[object, dict], dict]  # (app.state, payload) -> result
 
 _HANDLERS: dict[str, Handler] = {}
@@ -95,6 +109,10 @@ class JobKind:
     # never routine and is never dropped — a reconcile that fails is the only thing that would say a
     # partial watch went uncredited.
     routine: bool = False
+    # This kind's own retry schedule, when the shared `_BACKOFF_S` is wrong for it. Empty means the
+    # shared one. Per-kind because how long to keep trying is a property of what is being called, not
+    # of the queue: see `NOTIFY_BACKOFF_S`.
+    backoff_s: tuple[int, ...] = ()
 
 
 # Every registered kind, in the order the Jobs page shows them. `manual` is a deliberate allow-list,
@@ -366,6 +384,23 @@ CATALOG: tuple[JobKind, ...] = (
             "it, or drop one of its libraries."
         ),
     ),
+    JobKind(
+        kind="notify.send",
+        label="Send an alert to your webhook",
+        description=(
+            "Posts one of Shortlist's own alerts to the webhook address you saved in Settings, so a "
+            "run that fails at 3am reaches you without you having to open the app and look. The "
+            "message is the same one the bell shows, and it never names anybody."
+            "\n\nIt keeps trying for about four and a half hours, because a chat service or an "
+            "automation box can be down far longer than Plex ever is. If it still cannot get through, "
+            "it gives up and the bell tells you a job failed — the one place that always works."
+        ),
+        # Not manual: the payload IS the message, so a generic "run it" button would send an empty one.
+        manual=False,
+        writes_plex=False,  # an HTTP POST to the owner's own webhook; nothing on Plex is touched
+        trigger="Queued when a whole run fails, and when you press Send a test in Settings.",
+        backoff_s=NOTIFY_BACKOFF_S,
+    ),
 )
 
 BY_KIND: dict[str, JobKind] = {k.kind: k for k in CATALOG}
@@ -509,6 +544,16 @@ def routine_kinds() -> tuple[str, ...]:
     return tuple(entry.kind for entry in CATALOG if entry.routine)
 
 
+def _backoff_for(kind: str) -> tuple[int, ...]:
+    """How long this kind waits between attempts. The shared schedule unless the catalogue overrides it.
+
+    Unknown kinds get the shared one — the conservative direction, since an unknown kind is by
+    definition not one we have decided needs longer.
+    """
+    entry = BY_KIND.get(kind)
+    return (entry.backoff_s if entry else ()) or _BACKOFF_S
+
+
 def _claimable(kind: str, *, allow_writers: bool, allow_history: bool) -> bool:
     """May a job of this kind START right now?
 
@@ -545,7 +590,8 @@ def _claim(
                     ready_at = job.finished_at or job.created_at
                     if ready_at is not None and ready_at.tzinfo is None:
                         ready_at = ready_at.replace(tzinfo=UTC)
-                    wait = _BACKOFF_S[min(job.attempts - 1, len(_BACKOFF_S) - 1)]
+                    schedule = _backoff_for(job.kind)
+                    wait = schedule[min(job.attempts - 1, len(schedule) - 1)]
                     if ready_at is not None and now - ready_at < timedelta(seconds=wait):
                         continue  # still backing off after a failure
                 job.status = "running"
@@ -1710,3 +1756,32 @@ def _rows_visibility(state, payload: dict) -> dict:
         dry_run=False,
     )
     return {"changed": changed, "collections": len(touched), "dry_run": False, "detail": summary}
+
+
+@handler("notify.send")
+def _notify_send(state, payload: dict) -> dict:
+    """Post one of the bell's alerts to the owner's webhook.
+
+    The queue's half of `services/notify.py`: decrypt the address, hand the item to the one sender,
+    and let anything that goes wrong become an ordinary job failure so the existing backoff and
+    dead-letter path apply unchanged. `notify.deliver` has already scrubbed its own error text, so
+    `_execute` writes a `Job.error` with no webhook token in it (plex-safety rule 9).
+
+    Idempotent in the sense the queue needs — a replay re-sends the same message rather than doing
+    something new — and a duplicate alert is the harmless direction for the failure it reports.
+    """
+    from shortlist.server.services import notify
+
+    with state.sessions() as session:
+        store = SettingsStore(session, state.secrets)
+        try:
+            detail = notify.deliver(store, payload.get("item") or {})
+        except notify.NotifyNotConfigured as e:
+            # NOT a failure. A failed job dead-letters and raises the in-app "jobs have failed" alert,
+            # which would be Shortlist reporting a fault because the owner switched something off
+            # between the run failing and this job running. That is a change of mind, not a problem.
+            logger.info("notify.send skipped — {}", e)
+            # The exception already says WHICH of the two reasons it was — switched off, or no address
+            # saved — so naming one here produced two contradictory sentences on the Jobs page.
+            return {"sent": False, "detail": f"Not sent: {e}"}
+    return {"sent": True, "detail": detail}

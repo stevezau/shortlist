@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  Bell,
   Cable,
   Inbox,
   KeyRound,
@@ -47,6 +48,12 @@ export const SETTINGS_SECTIONS: NavSection[] = [
   { id: "defaults", label: "Row defaults", icon: Rows3, group: "Rows" },
   { id: "placement", label: "Row placement", icon: ListOrdered, group: "Rows" },
   { id: "requests", label: "Requests", icon: Inbox, group: "Add-ons" },
+  {
+    id: "notifications",
+    label: "Notifications",
+    icon: Bell,
+    group: "System",
+  },
   {
     id: "advanced",
     label: "Advanced",

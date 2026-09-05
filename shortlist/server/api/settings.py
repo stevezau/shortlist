@@ -372,6 +372,10 @@ _FETCHED_URL_KEYS = (
     "curator.ollama_url",
     "curator.openai_base_url",
     "searxng.url",  # fetched by the Test button and by the llm_web source on every run
+    # POSTed to by `notify.send` on every failed run, and by the Send-a-test button. Being an
+    # outbound alert rather than an integration does not change what it is: a URL the server fetches
+    # because the owner typed it.
+    "notify.webhook.url",
     # NB: `curator_models` fetches an ollama_url WITHOUT saving it, so it checks the URL itself.
     # Anything else that fetches a caller-supplied URL without going through `PUT /settings` must
     # do the same — this tuple is not the only door.
@@ -389,6 +393,12 @@ def _reject_blocked_urls(values: dict[str, object]) -> None:
         value = values.get(key)
         if not value or not isinstance(value, str) or not value.strip():
             continue  # blank clears the setting — nothing to fetch
+        # `notify.webhook.url` is the first key that is BOTH a fetched URL and a secret, so the
+        # redacted sentinel now reaches this guard. It means "leave the stored value alone", exactly
+        # as it does in the write loop and in `_re_points_plex` — checking it as an address would
+        # 422 the whole settings save every time anyone pressed Save with a webhook configured.
+        if key in SECRET_KEYS and value == REDACTED_PLACEHOLDER:
+            continue
         try:
             check_url(value, what=f"{key}")
         except BlockedUrl as e:
@@ -598,6 +608,7 @@ _TESTABLE_SERVICES = frozenset(
         "exa",
         "searxng",
         "native_search",
+        "notify",
         "llm",
     }
 )
@@ -717,6 +728,13 @@ async def test_connection(service: str, request: Request) -> dict:
                         "or SearXNG as the search backend instead, or switch to a model that can."
                     )
                 return f"ok — the provider's own web search returned {len(found)} titles"
+            if service == "notify":
+                # The one test on this page that is not a ping: it really posts a message, because a
+                # test button that exercised its own private send path would prove nothing about the
+                # 3am one. Same `deliver`, same body builder, same settings — only the trigger differs.
+                from shortlist.server.services import notify
+
+                return notify.deliver(SettingsStore(session, state.secrets), notify.test_item())
             if service == "searxng":
                 from shortlist.engine.clients.search import SearxngClient
 

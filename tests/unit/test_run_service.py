@@ -24,7 +24,7 @@ from shortlist.engine.models import (
     UserRunReport,
 )
 from shortlist.server.db.adapters import DbCache, DbSnapshotStore
-from shortlist.server.db.models import Delivery, Event, PickRow, Run, RunUser, User
+from shortlist.server.db.models import Delivery, Event, Job, PickRow, Run, RunUser, User
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.services.context_builder import ContextBuilder
 from shortlist.server.services.run_service import RunService
@@ -259,6 +259,79 @@ class TestRunExecution:
             events = session.query(Event).filter_by(scope="run.user").all()
             assert len(events) == 2
             assert any(e.level == "error" for e in events)
+
+    def test_a_failed_run_queues_the_external_alert(self, sessions, tmp_path, monkeypatch):
+        """The wiring, driven through the real `RunService` rather than by calling the hook.
+
+        The hook itself is covered in `test_notify_delivery.py`; what only this can show is that
+        `_run_locked` actually calls it, on the path where the engine RETURNS a not-ok report.
+        """
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+        monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: fake_report())
+        with sessions() as session:
+            SettingsStore(session).set("notify.webhook.enabled", True)
+
+        async def scenario():
+            run_id = await service.start_run(trigger="schedule", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        run = asyncio.run(scenario())
+        assert run.status == "error"
+        with sessions() as session:
+            queued = session.query(Job).filter(Job.kind == "notify.send").all()
+        assert len(queued) == 1
+        # The payload is the bell's own alert for THIS run, not a message written twice.
+        assert queued[0].payload["item"]["id"] == f"run-failed-{run.id}"
+
+    def test_a_run_that_crashes_queues_the_alert_too(self, sessions, tmp_path, monkeypatch):
+        """The other path to `error`, and the one worth waking up for: the engine RAISED.
+
+        Hooking only the tidy path would stay silent exactly when Plex or plex.tv fell over.
+        """
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+
+        def _boom(ctx, profiles):
+            raise RuntimeError("plex.tv went away")
+
+        monkeypatch.setattr(run_service_mod, "engine_run", _boom)
+        with sessions() as session:
+            SettingsStore(session).set("notify.webhook.enabled", True)
+
+        async def scenario():
+            run_id = await service.start_run(trigger="schedule", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        run = asyncio.run(scenario())
+        assert run.status == "error"
+        with sessions() as session:
+            queued = session.query(Job).filter(Job.kind == "notify.send").all()
+        assert len(queued) == 1 and queued[0].payload["item"]["id"] == f"run-failed-{run.id}"
+
+    def test_a_healthy_run_queues_no_alert(self, sessions, tmp_path, monkeypatch):
+        """The guard at the call site. Without it the hook fires on every run and the owner mutes it."""
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+        healthy = RunReport(
+            started_at=datetime.now(UTC),
+            finished_at=datetime.now(UTC),
+            dry_run=False,
+            users=[UserRunReport(username="sarah", slug="sarah", status="ok", diff=CollectionDiff(added=["Movie"]))],
+            unhideable_measured=True,
+        )
+        monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: healthy)
+        with sessions() as session:
+            SettingsStore(session).set("notify.webhook.enabled", True)
+
+        async def scenario():
+            run_id = await service.start_run(trigger="schedule", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        run = asyncio.run(scenario())
+        assert run.status == "ok"
+        with sessions() as session:
+            assert session.query(Job).filter(Job.kind == "notify.send").count() == 0
 
     def test_shortlist_dry_run_env_forces_dry_run(self, sessions, tmp_path, monkeypatch):
         """SHORTLIST_DRY_RUN forces even a non-dry 'Run now' to dry-run — the safety a demo/test

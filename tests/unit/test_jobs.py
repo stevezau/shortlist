@@ -474,7 +474,10 @@ class TestHandlers:
         # make here, in a diff, rather than a number quietly moving.
         # `watch.reconcile` is a reader of Plex and a writer of our OWN database only: it credits
         # picks from playback already recorded locally and never opens a Plex client.
-        assert readers == {"sync.history", "backup.take", "maintenance.prune", "watch.reconcile"}
+        # `notify.send` touches neither Plex nor plex.tv — it POSTs one message to the owner's own
+        # webhook. Classing it a writer would park every alert behind the Plex lock, so the news that
+        # a run failed would wait on the very thing that just failed.
+        assert readers == {"sync.history", "backup.take", "maintenance.prune", "watch.reconcile", "notify.send"}
         writers = {e.kind for e in jobs.CATALOG if e.writes_plex}
         assert "privacy.sync" in writers and "sync.check" in writers
         assert {"user.cleanup", "user.hide", "user.restore", "row.reconcile"} <= writers

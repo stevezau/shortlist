@@ -146,21 +146,38 @@ def _secrets_we_cannot_read(store: SettingsStore) -> dict | None:
     }
 
 
+def run_failed_alert(run: Run) -> dict:
+    """The alert for a run that failed outright — one wording, two destinations.
+
+    Public because `services/notify.py` sends this same dict to the owner's webhook. Keeping one
+    definition is the point: a second wording written for the external channel is how a webhook
+    message and the bell start describing the same failure differently.
+
+    Args:
+        run: The failed run. Only its `id` is read.
+
+    Returns:
+        A notification dict in the registry's usual shape. It names no account, which is what makes it
+        safe to send off the server (see `notify.py`).
+    """
+    # A whole-run failure is usually a service being down (Plex/plex.tv unreachable, PMS too old).
+    return {
+        "id": f"run-failed-{run.id}",
+        "severity": "error",
+        "title": "The last run failed",
+        "body": "The most recent run ended in an error — open it to see what went wrong.",
+        "action_url": f"/runs/{run.id}",
+        "action_label": "See the run",
+        "dismissable": True,  # id is per-run, so a NEW failed run re-surfaces
+    }
+
+
 def _last_run_problem(session: Session) -> dict | None:
     last = session.query(Run).filter(Run.status.in_(("ok", "error"))).order_by(Run.id.desc()).first()
     if last is None:
         return None
     if last.status == "error":
-        # A whole-run failure is usually a service being down (Plex/plex.tv unreachable, PMS too old).
-        return {
-            "id": f"run-failed-{last.id}",
-            "severity": "error",
-            "title": "The last run failed",
-            "body": "The most recent run ended in an error — open it to see what went wrong.",
-            "action_url": f"/runs/{last.id}",
-            "action_label": "See the run",
-            "dismissable": True,  # id is per-run, so a NEW failed run re-surfaces
-        }
+        return run_failed_alert(last)
     failed = (last.stats or {}).get("users_error", 0)
     if failed:
         return {
