@@ -16,6 +16,8 @@ const pick = (rank: number, title: string, reason = "") => ({
   rank,
   title,
   reason,
+  // 0 = the pipeline never matched this title to a library item, so no poster is requested.
+  rating_key: 0,
   seed_title: null,
   sources: [],
   affinity: 1,

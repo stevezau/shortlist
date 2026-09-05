@@ -80,7 +80,24 @@ export const queryKeys = {
   // (fired after every mutation — App.tsx); `jobsCatalog` is what the catalogue query itself uses.
   jobs: ["jobs"] as const,
   jobsCatalog: ["jobs", "catalog"] as const,
+  privacyStatus: ["privacy", "status"] as const,
 };
+
+/**
+ * Every account's share filter, read live from plex.tv on each call.
+ *
+ * `staleTime` is 60s because this costs a plex.tv roster read AND a PMS collections read per call,
+ * and TanStack refetches on window focus — an owner alt-tabbing would otherwise hammer both. It is
+ * short enough that the page stays a reading rather than a cache: the timestamp on screen is
+ * `read_at` from the response, so an older answer says so itself.
+ */
+export function usePrivacyStatus() {
+  return useQuery({
+    queryKey: queryKeys.privacyStatus,
+    queryFn: api.getPrivacyStatus,
+    staleTime: 60_000,
+  });
+}
 
 export function useSession() {
   return useQuery({

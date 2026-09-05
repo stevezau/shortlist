@@ -1,6 +1,100 @@
 {
   "components": {
     "schemas": {
+      "AccountPrivacyOut": {
+        "additionalProperties": true,
+        "description": "One Plex account's share filter, as plex.tv reports it RIGHT NOW.",
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "integer"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "hides": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Hides",
+            "type": "array"
+          },
+          "manage_sharing": {
+            "title": "Manage Sharing",
+            "type": "boolean"
+          },
+          "missing": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing",
+            "type": "array"
+          },
+          "other_conditions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Other Conditions",
+            "type": "array"
+          },
+          "restriction_profile": {
+            "title": "Restriction Profile",
+            "type": "string"
+          },
+          "should_hide": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Should Hide",
+            "type": "array"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "user": {
+            "title": "User",
+            "type": "string"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          },
+          "user_type": {
+            "title": "User Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user",
+          "display_name",
+          "slug",
+          "account_id",
+          "user_id",
+          "user_type",
+          "restriction_profile",
+          "manage_sharing",
+          "state",
+          "hides",
+          "should_hide",
+          "missing",
+          "other_conditions"
+        ],
+        "title": "AccountPrivacyOut",
+        "type": "object"
+      },
       "ApiTokenCreatedOut": {
         "additionalProperties": true,
         "properties": {
@@ -1885,6 +1979,56 @@
         "title": "EffectivenessReportOut",
         "type": "object"
       },
+      "EnforcementOut": {
+        "additionalProperties": true,
+        "description": "The last time a run looked through a real account's eyes at their Home screen.\n\n`measured` is the whole point. An empty `not_enforced` on an unmeasured run is not \"all clear\" \u2014\nit is \"nobody looked\", and rendering the two the same is how a live alert gets cleared.",
+        "properties": {
+          "measured": {
+            "title": "Measured",
+            "type": "boolean"
+          },
+          "measured_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Measured At"
+          },
+          "not_enforced": {
+            "additionalProperties": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "title": "Not Enforced",
+            "type": "object"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          }
+        },
+        "required": [
+          "measured",
+          "run_id",
+          "measured_at",
+          "not_enforced"
+        ],
+        "title": "EnforcementOut",
+        "type": "object"
+      },
       "EngagementOut": {
         "additionalProperties": true,
         "properties": {
@@ -3155,6 +3299,11 @@
             ],
             "title": "Rating"
           },
+          "rating_key": {
+            "default": 0,
+            "title": "Rating Key",
+            "type": "integer"
+          },
           "reason": {
             "title": "Reason",
             "type": "string"
@@ -3409,6 +3558,70 @@
           "mode"
         ],
         "title": "PosterUploadOut",
+        "type": "object"
+      },
+      "PrivacyStatusOut": {
+        "additionalProperties": true,
+        "description": "One live reading of the whole server's sharing state.",
+        "properties": {
+          "accounts": {
+            "items": {
+              "$ref": "#/components/schemas/AccountPrivacyOut"
+            },
+            "title": "Accounts",
+            "type": "array"
+          },
+          "enforcement": {
+            "$ref": "#/components/schemas/EnforcementOut"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "read_at": {
+            "title": "Read At",
+            "type": "string"
+          },
+          "rows_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows Error"
+          },
+          "rows_on_plex": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Rows On Plex",
+            "type": "array"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "read_at",
+          "summary",
+          "accounts",
+          "rows_on_plex",
+          "rows_error",
+          "error",
+          "enforcement"
+        ],
+        "title": "PrivacyStatusOut",
         "type": "object"
       },
       "ProbeCheckOut": {
@@ -6511,6 +6724,10 @@
             ],
             "title": "Rating"
           },
+          "rating_key": {
+            "title": "Rating Key",
+            "type": "integer"
+          },
           "reason": {
             "title": "Reason",
             "type": "string"
@@ -6557,6 +6774,7 @@
           "rank",
           "title",
           "reason",
+          "rating_key",
           "media_type",
           "collection_slug",
           "library",
@@ -8188,6 +8406,69 @@
         "summary": "Dismiss",
         "tags": [
           "notifications"
+        ]
+      }
+    },
+    "/api/picks/{rating_key}/poster": {
+      "get": {
+        "description": "One delivered pick's artwork, streamed from the PMS.\n\n404 rather than a placeholder image when the item or its artwork is gone: a pick's ratingKey goes\nstale when a title is removed and re-added, and the SPA already renders a tile of the right size\nfor that. Answering with a picture would make a missing item indistinguishable from a real one.\n502 when the PMS itself failed, for the same reason \u2014 an outage is not \"this title has no art\".\n\nArgs:\n    rating_key: The pick's Plex ratingKey. `0` means the pipeline never matched the title.\n    request: The live request, for the app state and `If-None-Match`.\n\nReturns:\n    The image bytes with the PMS's own content type, or a `304` when the browser's copy is\n    current.\n\nRaises:\n    HTTPException: `404` when there is no artwork to serve, `502` when Plex could not be read.",
+        "operationId": "pick_poster_api_picks__rating_key__poster_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rating_key",
+            "required": true,
+            "schema": {
+              "title": "Rating Key",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pick Poster",
+        "tags": [
+          "picks"
+        ]
+      }
+    },
+    "/api/privacy/status": {
+      "get": {
+        "description": "Every account's live share filter, plus the last enforcement spot-check.\n\nCosts one plex.tv roster read and one PMS collections read. Writes nothing and mints no token, so\nit is safe to call from a screen the owner leaves open.\n\nArgs:\n    request: The live request, for app state.\n\nReturns:\n    The whole server's sharing state as of now, with the enforcement measurement beside it.",
+        "operationId": "privacy_status_endpoint_api_privacy_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrivacyStatusOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Privacy Status Endpoint",
+        "tags": [
+          "privacy"
         ]
       }
     },

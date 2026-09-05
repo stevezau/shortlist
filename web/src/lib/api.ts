@@ -1,5 +1,6 @@
 import type {
   Job,
+  PrivacyStatus,
   UserPickOutcome,
   RowEffectiveness,
   JobCatalogEntry,
@@ -220,6 +221,10 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(state),
     }),
+
+  // --- Sharing and privacy ---
+  getPrivacyStatus: (): Promise<PrivacyStatus> =>
+    request("/api/privacy/status"),
 
   // --- Users ---
   getUsers: (): Promise<User[]> => request("/api/users"),

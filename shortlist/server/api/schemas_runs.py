@@ -38,6 +38,9 @@ class PickOut(PassthroughModel):
     rank: int
     title: str
     reason: str
+    # The Plex ratingKey the poster proxy is keyed on. 0 means the pipeline never matched the title
+    # to a library item, or the run predates this field being recorded.
+    rating_key: int = 0
     seed_title: str | None  # the watched title that produced it, when the pipeline knows it
     sources: list[str]  # candidate-source ids; [] on picks written before provenance existed
     affinity: float | None  # 0..1, how near the top of the suggesting source's list it sat

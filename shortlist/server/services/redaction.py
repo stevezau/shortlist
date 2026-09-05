@@ -148,3 +148,33 @@ def known_identifiers(session: Session) -> dict[str, str]:
             if host:
                 values.setdefault(host, HOST)
     return dict(sorted(values.items(), key=lambda kv: -len(kv[0])))
+
+
+#: Anything shaped like a credential in a URL, a header line or a dict repr. Covers the `=`, `:` and
+#: quoted forms, because an exception message may carry any of them:
+#:     ?X-Plex-Token=abc      X-Plex-Token: abc      {'X-Plex-Token': 'abc'}
+_SECRET_PATTERN = re.compile(
+    r"((?:X-Plex-Token|token|apikey|api[-_]?key|key|secret)['\"]?\s*[:=]\s*['\"]?)[^&\s'\",;}\]]+",
+    re.IGNORECASE,
+)
+
+
+def scrub_secrets(s: str) -> str:
+    """Strip anything credential-shaped out of a string before it reaches a client.
+
+    Belt and braces for rule 9. No endpoint renders a token deliberately — plexapi and PlexTvClient
+    both send it as a header — but several QUOTE EXCEPTION MESSAGES, and an HTTP client's error
+    carries the URL and sometimes the headers it called with. One library that puts a credential in a
+    query string, now or later, would leak it into a public GitHub issue.
+
+    Lives here rather than in one API module for the reason this module exists: the support report
+    and the privacy status screen both render error strings, and a second copy of this regex is a
+    second thing to forget to update.
+
+    Args:
+        s: Any text on its way to a client.
+
+    Returns:
+        The text with credential-shaped values replaced by ``<redacted>``.
+    """
+    return _SECRET_PATTERN.sub(r"\1<redacted>", s)

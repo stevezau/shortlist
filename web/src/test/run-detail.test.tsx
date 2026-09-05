@@ -156,6 +156,7 @@ describe("RunDetailPage — grouped by library", () => {
           picks: [
             {
               rank: 1,
+              rating_key: 0,
               title: "Saving Private Ryan",
               reason: "war epic",
               seed_title: "Pressure",
@@ -177,6 +178,7 @@ describe("RunDetailPage — grouped by library", () => {
           picks: [
             {
               rank: 1,
+              rating_key: 0,
               title: "Deadliest Catch",
               reason: "survival series",
               seed_title: "Gold Rush",
@@ -335,6 +337,7 @@ describe("RunDetailPage — grouped by library", () => {
           picks: [
             {
               rank: 1,
+              rating_key: 0,
               title: "Heat",
               reason: "crime",
               seed_title: "",
@@ -356,6 +359,7 @@ describe("RunDetailPage — grouped by library", () => {
           picks: [
             {
               rank: 1,
+              rating_key: 0,
               title: "Fargo",
               reason: "crime",
               seed_title: "",
@@ -404,6 +408,7 @@ describe("RunDetailPage — grouped by library", () => {
           picks: [
             {
               rank: 1,
+              rating_key: 0,
               title: "A",
               reason: "a",
               seed_title: null,
@@ -425,6 +430,7 @@ describe("RunDetailPage — grouped by library", () => {
           picks: [
             {
               rank: 1,
+              rating_key: 0,
               title: "B",
               reason: "b",
               seed_title: null,
@@ -636,6 +642,7 @@ describe("RunDetailPage — grouped by library", () => {
           picks: [
             {
               rank: 1,
+              rating_key: 0,
               title: "Old Title",
               reason: "legacy",
               seed_title: null,
@@ -671,6 +678,7 @@ describe("RunDetailPage — grouped by library", () => {
           picks: [
             {
               rank: 1,
+              rating_key: 0,
               title: "Fresh One",
               reason: "new pick",
               seed_title: "X",

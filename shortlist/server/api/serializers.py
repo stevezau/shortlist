@@ -30,6 +30,10 @@ class UserPickOut(PassthroughModel):
     rank: int
     title: str
     reason: str
+    #: The item's Plex ratingKey, which `GET /api/picks/{rating_key}/poster` serves the artwork for.
+    #: `0` means the pipeline never matched the title to a library item, and the SPA renders a
+    #: placeholder tile rather than asking Plex about it.
+    rating_key: int
     media_type: str
     collection_slug: str
     library: str
@@ -88,6 +92,9 @@ def pick_dict(pick: PickRow) -> dict:
         "rank": pick.rank,
         "title": pick.title,
         "reason": pick.reason,
+        # What the poster proxy is keyed on. Non-null in the column, but `picker.py` stores
+        # `c.rating_key or 0`, so `0` is a real value meaning "never matched to a library item".
+        "rating_key": pick.rating_key or 0,
         "media_type": pick.media_type,
         "collection_slug": pick.collection_slug or DEFAULT_SLUG,  # legacy blank rows are the default row
         "library": pick.library or "",

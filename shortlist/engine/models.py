@@ -1384,11 +1384,10 @@ class RunReport:
     # see other people's rows. The read-back proves plex.tv STORED our exclusions; this asks whether
     # Plex ACTS on them.
     #
-    # NOTE (2026-08-18): this field reached `dev` inside a per-row-requests commit by mistake — the
-    # first commit of that branch staged the whole of models.py while the maintainer's privacy work
-    # was uncommitted in the same file. Its producer and consumer live on that in-flight branch, so
-    # in `dev` alone the field is currently written and read by nobody. It is left in place because
-    # removing it breaks that working tree; it becomes live when the privacy work lands.
+    # Written by `pipeline._verify_filters_enforced`, persisted by `run_persistence` and read by both
+    # the "Plex is ignoring the privacy filter" notification and `GET /api/privacy/status`. Read it
+    # beside `filters_enforcement_measured`, never alone: empty means "nothing exposed" ONLY when
+    # that flag says a check actually ran.
     filters_not_enforced: dict[str, list[int]] = field(default_factory=dict)
     # Whether the enforcement spot-check actually RAN. Without it an empty result is ambiguous — "we
     # looked and every account was clean" and "we never got that far" are the same empty dict — so the

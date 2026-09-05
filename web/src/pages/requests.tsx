@@ -23,6 +23,7 @@ import {
 import { PageHeader } from "@/components/page-header";
 import { EmptyState, QueryBoundary } from "@/components/query-boundary";
 import { Segmented } from "@/components/segmented";
+import { TitlePoster } from "@/components/title-poster";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -65,43 +66,6 @@ function RequestsSkeleton() {
         <Skeleton key={i} className="h-16 w-full" />
       ))}
     </div>
-  );
-}
-
-/**
- * The title's artwork — the whole point of the inbox being visual rather than a wall of names.
- *
- * TMDB's image CDN, built from the stored path: `w154` is the smallest bucket that still looks sharp
- * at this size on a 2x display, so a 40-title inbox costs a few hundred KB rather than megabytes.
- * `loading="lazy"` keeps the off-screen ones off the wire entirely. A title with no artwork (TMDB
- * has none, or the row predates 0044) gets a placeholder tile of the same size, so rows never jump.
- */
-function Poster({ item }: { item: RequestCandidate }) {
-  // TMDB's CDN is a third-party host this app never checks: a server behind a restrictive network,
-  // an ad-blocker, or a title whose artwork was pulled all fail at load time, long after the path
-  // looked fine. Falling back on error keeps that as a tidy placeholder instead of a broken-image
-  // icon in every row.
-  const [failed, setFailed] = useState(false);
-
-  if (!item.poster_path || failed) {
-    return (
-      <div
-        className="flex h-[87px] w-[58px] shrink-0 items-center justify-center rounded border bg-muted"
-        aria-hidden="true"
-      >
-        <Clapperboard className="h-5 w-5 text-muted-foreground/60" />
-      </div>
-    );
-  }
-  return (
-    <img
-      src={`https://image.tmdb.org/t/p/w154${item.poster_path}`}
-      // Decorative: the title is right beside it as real text, so announcing it twice is noise.
-      alt=""
-      loading="lazy"
-      onError={() => setFailed(true)}
-      className="h-[87px] w-[58px] shrink-0 rounded border object-cover"
-    />
   );
 }
 
@@ -345,9 +309,9 @@ function RequestsOffBanner() {
       <p className="text-sm font-medium">Requests are off</p>
       <p className="text-sm text-muted-foreground">
         These titles were found before you turned requests off. Nothing new is
-        added while it stays off, Shortlist isn&rsquo;t asking your download apps
-        for anything, and nothing here can be sent or rejected until you turn it
-        back on.
+        added while it stays off, Shortlist isn&rsquo;t asking your download
+        apps for anything, and nothing here can be sent or rejected until you
+        turn it back on.
       </p>
       <Button asChild variant="outline" size="sm">
         <Link to={SETTINGS_LINK}>Go to Settings &rarr; Requests</Link>
@@ -517,7 +481,7 @@ function PendingRow({
         onChange={() => onToggle(item.id)}
         className="mt-1.5 h-4 w-4 shrink-0 accent-primary disabled:cursor-not-allowed disabled:opacity-50"
       />
-      <Poster item={item} />
+      <TitlePoster posterPath={item.poster_path} />
       <div className="min-w-0 flex-1 space-y-2">
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
           <p className="text-base font-semibold leading-tight">{item.title}</p>
@@ -553,8 +517,8 @@ function PendingRow({
             {/* The CONCEPT is route-aware too, not just the app's name. Naming Overseerr and then
                 calling its blocklist an "import exclusion" sends the owner looking for a screen it
                 does not have — the same failure the app-name fix was made for, one word deeper. */}
-            {viaSeerr ? "blocklist" : "import exclusion"}). Shortlist never sends
-            it for you; clear it in {app} if you want it back.
+            {viaSeerr ? "blocklist" : "import exclusion"}). Shortlist never
+            sends it for you; clear it in {app} if you want it back.
           </p>
         ) : null}
         {item.detail ? (
@@ -669,7 +633,7 @@ function SentRow({
     : [];
   return (
     <div className="flex items-start gap-3 rounded-lg border p-3">
-      <Poster item={item} />
+      <TitlePoster posterPath={item.poster_path} />
       <div className="min-w-0 flex-1 space-y-1.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="font-medium">{item.title}</p>
@@ -1094,8 +1058,13 @@ function arrViewFor(
   // Tested against the two live values, never `!== "off"`: the field is absent from a response
   // predating it, and `undefined !== "off"` would route every Arr install down the Overseerr branch
   // and blank its badges.
-  const viaSeerr = status.overseerr === "ok" || status.overseerr === "unreachable";
-  const reach = viaSeerr ? status.overseerr : isMovie ? status.radarr : status.sonarr;
+  const viaSeerr =
+    status.overseerr === "ok" || status.overseerr === "unreachable";
+  const reach = viaSeerr
+    ? status.overseerr
+    : isMovie
+      ? status.radarr
+      : status.sonarr;
   if (reach === "unreachable") {
     const app = viaSeerr ? "Overseerr" : isMovie ? "Radarr" : "Sonarr";
     return { kind: "unreachable", app };

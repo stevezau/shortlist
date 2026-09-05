@@ -247,6 +247,7 @@ async def get_run(run_id: int, request: Request) -> dict:
                             "rank": p.rank,
                             "title": p.title,
                             "reason": p.reason,
+                            "rating_key": p.rating_key or 0,
                             "seed_title": p.seed_title,
                             "sources": [s for s in (p.sources or "").split(",") if s],
                             "affinity": p.affinity,
@@ -316,6 +317,9 @@ async def get_run(run_id: int, request: Request) -> dict:
                         "rank": p.get("rank", 0),
                         "title": p.get("title", ""),
                         "reason": p.get("reason", ""),
+                        # 0 on a run written before shared-row picks recorded it — the SPA reads that
+                        # as "no artwork to ask for", which is the honest answer.
+                        "rating_key": p.get("rating_key") or 0,
                         "seed_title": p.get("seed_title"),
                         "sources": p.get("sources") or [],
                         "affinity": p.get("affinity", 1.0),
