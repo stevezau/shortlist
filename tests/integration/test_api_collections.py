@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from shortlist.engine.rows import ROW_ORDERS
 from shortlist.server.auth import SESSION_COOKIE
-from shortlist.server.db.models import User
+from shortlist.server.db.models import DEFAULT_SLUG, User
 from shortlist.server.settings_store import SettingsStore
 
 pytestmark = pytest.mark.integration
@@ -76,6 +76,14 @@ COLLECTION_KEYS = {
     "hub_anchor",
     "library_keys",
     "poster",
+    # Preview-only, and null on every live response. `_serialize` never produces them: they are
+    # declared on `CollectionOut` with a default so a dry-run PATCH can ride them back beside the
+    # unchanged row AND so the SPA's generated types know about them — an undeclared key reaches the
+    # client but is invisible in the OpenAPI schema. That is the documented exception to this file's
+    # "a default lets a handler INVENT a key" rule, and naming them here is what keeps it deliberate.
+    "dry_run",
+    "plan",
+    "preview_incomplete",
 }
 
 #: Every key `collections._poster_view` renders, nested under `poster`.
@@ -2941,3 +2949,422 @@ class TestShownTodayComesFromTheServer:
         assert on["shown_today"] is True
         assert off["shown_today"] is False
         assert always["shown_today"] is True, "a row with no schedule is shown every day"
+
+
+class TestDryRunPreview:
+    """`PATCH`/`DELETE /collections/{id}` previewing what they would owe Plex, writing nothing.
+
+    Two of the four doors onto a row's Plex collections already preview (`/cleanup`, `/rename`) and
+    two did not. The urgent one is PATCH: narrowing a row's media or libraries DELETES its
+    collections in the libraries it walked away from (`_stranded_sections`), and that had no preview
+    anywhere. DELETE's Plex half was already visible through `/cleanup?dry_run=true`; what only its
+    own preview can show is the LOCAL half — `_forget_anchor_row` silently strips every other row's
+    shelf placement that pointed at this one.
+    """
+
+    def _plex(self, monkeypatch, client, *, collections, sections_raise: bool = False):
+        """A fake PMS over two libraries that RECORDS deletions instead of pretending they happened.
+
+        `deleted` is the assertion that matters throughout this class: a preview that writes is the
+        one failure mode worth the whole feature, and only a recording fake can catch it.
+        """
+        from unittest.mock import MagicMock
+
+        from shortlist.engine.models import EngineConfig
+
+        deleted: list[tuple[str, str]] = []
+        movies = SimpleNamespace(title="Movies", key="1", type="movie")
+        shows = SimpleNamespace(title="TV", key="2", type="show")
+        plex = MagicMock()
+        if sections_raise:
+            plex.sections.side_effect = OSError("PMS unreachable")
+        else:
+            plex.sections.return_value = [movies, shows]
+        plex.find_owned_collections.side_effect = lambda s, label: [
+            SimpleNamespace(title=title, _section=str(s.key))
+            for (title, lbl, key) in collections
+            if lbl == label and key == str(s.key)
+        ]
+        plex.delete_owned_collection.side_effect = lambda c, prefix: deleted.append((c.title, c._section))
+        ctx = SimpleNamespace(plex=plex, config=EngineConfig())
+        monkeypatch.setattr(client.app.state.run_service, "build_context", lambda **kw: ctx)
+        return deleted
+
+    def _row(self, client: TestClient, **body):
+        from shortlist.engine.delivery import row_marker
+
+        created = client.post("/api/collections", json={"name": "Gems", "media": "both", **body})
+        with client.app.state.sessions() as session:
+            user = session.query(User).order_by(User.id).first()
+            return created.json()["id"], user.slug, row_marker(user.plex_account_id)
+
+    def _jobs(self, client: TestClient) -> list[dict]:
+        return client.get("/api/system/jobs").json()
+
+    def _row_state(self, client: TestClient, cid: int) -> dict | None:
+        """One row, read off the LIST endpoint, or None if it is gone.
+
+        There is no `GET /collections/{id}` — asking for one answers 405, and two 405 bodies compare
+        EQUAL, so an "is the row unchanged?" assertion written against it passes whatever the preview
+        did. That is a test that cannot fail, which is worse than no test.
+        """
+        return next((c for c in client.get("/api/collections").json() if c["id"] == cid), None)
+
+    def test_a_dry_run_patch_writes_nothing(self, client: TestClient, monkeypatch):
+        """The whole contract in one test: a preview changes neither the row nor the queue."""
+        cid, uslug, marker = self._row(client)
+        deleted = self._plex(
+            monkeypatch,
+            client,
+            collections=[("Gems" + marker, f"shortlist_{uslug}", "1"), ("Gems" + marker, f"shortlist_{uslug}", "2")],
+        )
+        before = self._row_state(client, cid)
+
+        r = client.patch(f"/api/collections/{cid}", json={"name": "Gems", "media": "movie", "dry_run": True})
+
+        assert r.status_code == 200
+        assert r.json()["dry_run"] is True
+        assert self._row_state(client, cid) == before, "a preview must not edit the row"
+        assert self._jobs(client) == [], "a preview must not enqueue Plex work"
+        assert deleted == [], "a preview must not delete anything on Plex"
+
+    def test_a_dry_run_rename_of_the_default_row_does_not_write_the_global_template(
+        self, client: TestClient, monkeypatch
+    ):
+        """The landmine the obvious implementation walks into.
+
+        `SettingsStore.set` commits INSIDE itself (settings_store.py), so "apply the edit then
+        `session.rollback()`" would leave this permanently applied — a preview of one row's rename
+        that silently retitles every row on the server for every user.
+        """
+        self._plex(monkeypatch, client, collections=[])
+        default = next(c for c in client.get("/api/collections").json() if c["slug"] == DEFAULT_SLUG)
+        before = client.get("/api/settings").json()["row.name_template"]
+
+        r = client.patch(f"/api/collections/{default['id']}", json={"name": "🍿 Movie night", "dry_run": True})
+
+        assert r.status_code == 200
+        assert client.get("/api/settings").json()["row.name_template"] == before
+
+    def test_a_dry_run_patch_names_the_libraries_a_narrowing_would_strip(self, client: TestClient, monkeypatch):
+        """Narrowing `both` to `movie` DELETES this row's collections in the libraries it leaves.
+
+        The most destructive edit on the row editor, and the one with no preview at all before this.
+        """
+        cid, uslug, marker = self._row(client)
+        deleted = self._plex(
+            monkeypatch,
+            client,
+            collections=[("Gems" + marker, f"shortlist_{uslug}", "1"), ("Gems" + marker, f"shortlist_{uslug}", "2")],
+        )
+
+        r = client.patch(f"/api/collections/{cid}", json={"name": "Gems", "media": "movie", "dry_run": True})
+
+        plan = r.json()["plan"]
+        assert [entry["kind"] for entry in plan] == ["reconcile"]
+        # The TITLES are the whole point — a plan that merely says "a reconcile would happen" tells
+        # the operator nothing about what they are about to lose.
+        assert plan[0]["collections"] == ["Gems"]
+        assert plan[0]["reason"] == "collection.libraries"
+        assert r.json()["preview_incomplete"] is None
+        assert deleted == []
+
+    def _subset_row_of_two(self, client: TestClient, monkeypatch):
+        """A per-person row shared with both fixture users, over a fake PMS holding both copies."""
+        from shortlist.engine.delivery import row_marker
+
+        with client.app.state.sessions() as session:
+            keep, drop = session.query(User).order_by(User.id).all()[:2]
+            keep_id, drop_id, keep_slug, drop_slug = keep.id, drop.id, keep.slug, drop.slug
+            keep_marker, drop_marker = row_marker(keep.plex_account_id), row_marker(drop.plex_account_id)
+        created = client.post(
+            "/api/collections",
+            json={"name": "Gems", "audience": "subset", "audience_user_ids": [keep_id, drop_id]},
+        ).json()
+        deleted = self._plex(
+            monkeypatch,
+            client,
+            collections=[
+                ("Gems" + keep_marker, f"shortlist_{keep_slug}", "1"),
+                ("Gems" + drop_marker, f"shortlist_{drop_slug}", "1"),
+            ],
+        )
+        return created["id"], keep_id, drop_id, deleted
+
+    def test_a_dry_run_names_only_the_dropped_users_copy_when_the_audience_shrinks(
+        self, client: TestClient, monkeypatch
+    ):
+        """Shrinking a per-person row's audience deletes exactly the dropped people's copies.
+
+        The preview has to be right about WHOSE copy goes, not merely that a reconcile is owed —
+        `only_user_ids` is what scopes it, and the projection derives that on its own. Sent the way
+        the row editor sends it, with `audience` and the ids together.
+        """
+        cid, keep_id, drop_id, deleted = self._subset_row_of_two(client, monkeypatch)
+
+        r = client.patch(
+            f"/api/collections/{cid}",
+            json={"name": "Gems", "audience": "subset", "audience_user_ids": [keep_id], "dry_run": True},
+        )
+
+        plan = r.json()["plan"]
+        assert [(e["kind"], e["reason"]) for e in plan] == [("reconcile", "collection.audience")]
+        # Both copies render the same title, so `collections` cannot tell them apart — `only_user_ids`
+        # is the whole discriminator, and it is asserted POSITIVELY: `!= [keep_id]` would also pass on
+        # `[]`, which means "everyone", i.e. the kept person's copy going too.
+        assert plan[0]["collections"] == ["Gems"]
+        assert plan[0]["only_user_ids"] == [drop_id]
+        assert deleted == []
+
+    def test_a_dry_run_reports_the_wipe_that_ids_without_an_audience_actually_perform(
+        self, client: TestClient, monkeypatch
+    ):
+        """`audience_user_ids` sent WITHOUT `audience` clears the row's whole membership.
+
+        `_set_audience` gates on the RAW `body.audience`, which `CollectionIn` defaults to "everyone"
+        — so it deletes every membership row and adds none back, while the `audience` COLUMN stays
+        "subset". Everyone is dropped, not just the ids left out.
+
+        Whether that is the right live behaviour is a separate question; what this pins is that the
+        preview tells the truth about it. Reasoning from the row's merged audience instead made the
+        preview name one person's collection while the save removed every one of them — on a 40-user
+        server, "1 collection would go" followed by 40 deletions.
+        """
+        cid, keep_id, _drop_id, deleted = self._subset_row_of_two(client, monkeypatch)
+
+        preview = client.patch(
+            f"/api/collections/{cid}", json={"name": "Gems", "audience_user_ids": [keep_id], "dry_run": True}
+        )
+        previewed = preview.json()["plan"][0]["collections"]
+
+        client.patch(f"/api/collections/{cid}", json={"name": "Gems", "audience_user_ids": [keep_id]})
+
+        # The preview reports DISPLAY titles; the fake records what Plex was asked to delete, which
+        # still carries the invisible ownership marker.
+        from shortlist.engine.delivery import strip_marker
+
+        assert sorted(previewed) == sorted(strip_marker(title) for title, _section in deleted), (
+            "the preview must name exactly the collections the save removes"
+        )
+        assert len(deleted) == 2, "both copies go — the membership was wiped, not narrowed"
+
+    def test_a_preview_says_it_could_not_find_out_when_plex_is_unreadable(self, client: TestClient, monkeypatch):
+        """The third state. `_stranded_sections` answers an unreachable Plex with an EMPTY set —
+        the right answer for a live edit ("not knowing which libraries exist must mean delete
+        nothing") and a lie in a preview, where it is indistinguishable from "this edit is safe".
+
+        A preview that under-reports a deletion is worse than no preview, so the two cases must not
+        share one answer.
+        """
+        cid, _, _ = self._row(client)
+        self._plex(monkeypatch, client, collections=[], sections_raise=True)
+
+        r = client.patch(f"/api/collections/{cid}", json={"name": "Gems", "media": "movie", "dry_run": True})
+
+        assert r.status_code == 200
+        assert r.json()["plan"] == [], "an unreadable Plex plans nothing — which is exactly the trap"
+        assert r.json()["preview_incomplete"], "the preview must SAY it could not find out"
+        assert "librar" in r.json()["preview_incomplete"].lower()
+
+    def test_a_dry_run_patch_is_refused_by_whatever_would_refuse_the_real_edit(self, client: TestClient):
+        """A preview that succeeds where the save 422s is a preview of an edit that cannot happen."""
+        client.post("/api/collections", json={"name": "Taken"})
+        cid, _, _ = self._row(client)
+
+        preview = client.patch(f"/api/collections/{cid}", json={"name": "Taken", "dry_run": True})
+        real = client.patch(f"/api/collections/{cid}", json={"name": "Taken"})
+
+        assert preview.status_code == 422
+        assert (preview.status_code, preview.json()["detail"]) == (real.status_code, real.json()["detail"])
+
+    def test_a_refused_edit_leaves_the_global_template_alone(self, client: TestClient):
+        """A 422 must not have written half the edit — and this one could.
+
+        `SettingsStore.set` commits inside itself, and the default row's rename used to run BEFORE
+        `_validate_pairing`. So a save that renamed the default row and was then refused for an
+        unrelated contradiction had already retitled every row on the server, permanently, while
+        answering "422, nothing happened". Splitting the handler into validate-then-write for the
+        preview fixed that for the live path too, and this pins it.
+        """
+        default = next(c for c in client.get("/api/collections").json() if c["slug"] == DEFAULT_SLUG)
+        # Narrow it to movies FIRST, so the contradiction below is only visible on the MERGED row:
+        # `_validate` judges the request body, where `media` is absent and defaults to "both", and
+        # only the handler's second `_validate_pairing` sees the stored "movie". That is the one
+        # 422 that used to arrive after the rename had already been committed.
+        client.patch(f"/api/collections/{default['id']}", json={"name": default["name"], "media": "movie"})
+        before = client.get("/api/settings").json()["row.name_template"]
+
+        r = client.patch(
+            f"/api/collections/{default['id']}",
+            json={"name": "🍿 Movie night", "unstarted_only": True},
+        )
+
+        assert r.status_code == 422
+        assert client.get("/api/settings").json()["row.name_template"] == before
+
+    def test_an_unknown_audience_id_is_refused_before_the_rename_is_written(self, client: TestClient):
+        """The second 422 that used to land after `SettingsStore.set` had already committed.
+
+        `_set_audience` raises this from inside the apply half, so a default-row rename carrying a
+        bad user id answered "422, no such user" with every row on the server already retitled.
+        """
+        default = next(c for c in client.get("/api/collections").json() if c["slug"] == DEFAULT_SLUG)
+        before = client.get("/api/settings").json()["row.name_template"]
+
+        r = client.patch(
+            f"/api/collections/{default['id']}",
+            json={"name": "🍿 Movie night", "audience": "subset", "audience_user_ids": [999999]},
+        )
+
+        assert r.status_code == 422
+        assert "no such user" in r.json()["detail"]
+        assert client.get("/api/settings").json()["row.name_template"] == before
+
+    @pytest.mark.parametrize(
+        "patch",
+        [
+            {"media": "movie"},
+            {"library_keys": ["1"]},
+            {"build": "shared"},
+            {"enabled": False},
+            {"audience": "subset", "audience_user_ids": [1]},
+            {"audience": "everyone"},
+            # Ids WITHOUT `audience`: the cell that exercises the projection's second branch, where
+            # the kind is read off the row and only the membership comes from the request.
+            {"audience_user_ids": [1]},
+            {"show_days": [1, 3, 5]},
+            {"poster": {"mode": ""}},
+            {"name": "Renamed Gems"},
+            {"size": 25},  # owes Plex nothing — the empty-plan cell
+        ],
+    )
+    def test_a_dry_run_projects_exactly_what_the_real_patch_produces(
+        self, client: TestClient, monkeypatch, patch: dict
+    ):
+        """`_projected_snapshot` computes the post-edit state WITHOUT applying it, so it can drift
+        from the apply path field by field with nothing to notice — and a drifted preview is simply
+        wrong about a delete. Both are run over the matrix `plan_row_changes` branches on and
+        asserted to agree (`.claude/rules/testing.md`: cover the matrix, not one cell).
+
+        The plan the save executes is recorded at `_apply_plan` rather than reconstructed from side
+        effects. Reconstruction does not work here: a reconcile and a privacy sync become JOBS, while
+        a rename and a poster reset are carried out inline and leave only an audit event — so a
+        queue-only oracle reports an empty plan for two of the five kinds, and an oracle that
+        under-reports turns a real drift into a green test.
+        """
+        import shortlist.server.api.collections as collections_api
+
+        cid, uslug, marker = self._row(client, poster={"mode": "text", "title": "Gems"})
+        self._plex(
+            monkeypatch,
+            client,
+            collections=[("Gems" + marker, f"shortlist_{uslug}", "1"), ("Gems" + marker, f"shortlist_{uslug}", "2")],
+        )
+        executed: list[tuple] = []
+        original = collections_api._apply_plan
+
+        async def recording_apply_plan(state, plan, *, slug, build):
+            # The kind alone is not the contract. A projection can plan the right KIND of work
+            # against the wrong people or the wrong libraries — which is exactly how a preview
+            # under-reported an audience shrink as one removal while the save performed one per
+            # person — and a kinds-only comparison is green for all of it.
+            executed.extend((w.kind, w.scope, tuple(w.only_user_ids or ()), tuple(w.in_sections or ())) for w in plan)
+            await original(state, plan, slug=slug, build=build)
+
+        monkeypatch.setattr(collections_api, "_apply_plan", recording_apply_plan)
+
+        preview = client.patch(f"/api/collections/{cid}", json={"name": "Gems", **patch, "dry_run": True})
+        assert preview.status_code == 200
+        previewed = [
+            (e["kind"], e["reason"], tuple(e["only_user_ids"]), tuple(e["in_sections"])) for e in preview.json()["plan"]
+        ]
+        assert executed == [], "a preview must not reach the apply path at all"
+
+        applied = client.patch(f"/api/collections/{cid}", json={"name": "Gems", **patch})
+        assert applied.status_code == 200
+
+        assert previewed == executed, f"the preview drifted from the edit for {patch}"
+
+    def test_a_dry_run_delete_keeps_the_row_and_names_what_it_would_take(self, client: TestClient, monkeypatch):
+        cid, uslug, marker = self._row(client)
+        deleted = self._plex(monkeypatch, client, collections=[("Gems" + marker, f"shortlist_{uslug}", "1")])
+
+        r = client.delete(f"/api/collections/{cid}?dry_run=true")
+
+        assert r.status_code == 200
+        assert r.json()["dry_run"] is True
+        assert r.json()["collections"] == ["Gems"]
+        assert self._row_state(client, cid) is not None, "a preview must not delete the row"
+        assert self._jobs(client) == [] and deleted == []
+
+    @pytest.mark.parametrize(
+        ("build", "schedule", "expect_privacy_sync", "expect_schedule_cleared"),
+        [
+            # A SHARED row's label stops being declared shared, so every account's excludes have to
+            # be recomputed; a per-person row's deletion touches nobody else's filter.
+            ("shared", "30 3 * * *", True, True),
+            ("per_person", "30 3 * * *", False, True),
+            ("per_person", "", False, False),
+        ],
+    )
+    def test_a_dry_run_delete_reports_the_privacy_and_schedule_consequences(
+        self, client: TestClient, monkeypatch, build, schedule, expect_privacy_sync, expect_schedule_cleared
+    ):
+        """`privacy_sync` states a share-filter fact to the operator, so it has to be true.
+
+        All three flags are hand-built into the response, and none of them had a test row: an
+        inverted boolean here tells someone their friends' Plex filters will be rewritten when they
+        will not, or the reverse.
+        """
+        self._plex(monkeypatch, client, collections=[])
+        row = client.post("/api/collections", json={"name": "Gems", "build": build, "schedule": schedule}).json()
+
+        r = client.delete(f"/api/collections/{row['id']}?dry_run=true")
+
+        assert r.status_code == 200
+        assert r.json()["privacy_sync"] is expect_privacy_sync
+        assert r.json()["schedule_cleared"] is expect_schedule_cleared
+        assert r.json()["preview_incomplete"] is None
+        assert self._row_state(client, row["id"]) is not None
+
+    def test_a_dry_run_delete_says_when_it_could_not_read_plex(self, client: TestClient, monkeypatch):
+        """The walk-failed branch of the DELETE preview — the same third state the PATCH has."""
+        self._plex(monkeypatch, client, collections=[], sections_raise=True)
+        row = client.post("/api/collections", json={"name": "Gems"}).json()
+
+        r = client.delete(f"/api/collections/{row['id']}?dry_run=true")
+
+        assert r.status_code == 200
+        assert r.json()["preview_incomplete"], "an unreadable Plex must not report an empty removal as fact"
+        assert self._row_state(client, row["id"]) is not None
+
+    def test_a_dry_run_delete_of_the_default_row_names_its_real_title(self, client: TestClient, monkeypatch):
+        """The default row's `name` column is stale seed data — its title IS the global template."""
+        self._plex(monkeypatch, client, collections=[])
+        default = next(c for c in client.get("/api/collections").json() if c["slug"] == DEFAULT_SLUG)
+        template = client.get("/api/settings").json()["row.name_template"]
+
+        r = client.delete(f"/api/collections/{default['id']}?dry_run=true")
+
+        assert template in r.json()["message"]
+
+    def test_a_dry_run_delete_warns_that_other_rows_lose_their_placement(self, client: TestClient, monkeypatch):
+        """`_forget_anchor_row` silently reparents every row positioned relative to this one. It is
+        logged AFTER the fact and nothing warned first — this is the half `/cleanup?dry_run=true`
+        cannot show, and the reason DELETE needs a preview of its own rather than a pointer at
+        cleanup.
+        """
+        self._plex(monkeypatch, client, collections=[])
+        target = client.post("/api/collections", json={"name": "Anchor row"}).json()
+        follower = client.post(
+            "/api/collections",
+            json={"name": "Follower", "hub_anchor": {"1": {"row": target["slug"], "before": False}}},
+        ).json()
+
+        r = client.delete(f"/api/collections/{target['id']}?dry_run=true")
+
+        assert r.json()["anchors_cleared"] == [follower["slug"]]
+        assert self._row_state(client, follower["id"])["hub_anchor"] != {}, "the preview must not clear it"
+        # And the warning must be TRUE: the real delete does exactly what the preview promised.
+        client.delete(f"/api/collections/{target['id']}")
+        assert self._row_state(client, follower["id"])["hub_anchor"] == {}

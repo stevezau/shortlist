@@ -107,14 +107,21 @@ export type PosterMode = NonNullable<Schemas["PosterIn"]["mode"]>;
  */
 export type CollectionInput = Omit<
   Required<Schemas["CollectionIn"]>,
-  "hub_anchor"
+  "hub_anchor" | "dry_run"
 > & {
   hub_anchor: HubAnchorMap;
 };
 
 /** POST /api/collections and PATCH /api/collections/{id} body. Only `name` is required; every other
- *  field falls back to the row's stored value (PATCH) or the server default (POST). */
-export type CollectionBody = Partial<CollectionInput> & { name: string };
+ *  field falls back to the row's stored value (PATCH) or the server default (POST).
+ *
+ *  `dry_run` rides here rather than in {@link CollectionInput}: it is a mode for ONE request — preview
+ *  this edit and write nothing — not a field of the row the editor holds, so `toInput()` has nothing
+ *  to fill it from and a saved row has nowhere to put it back. */
+export type CollectionBody = Partial<CollectionInput> & {
+  name: string;
+  dry_run?: boolean;
+};
 
 /** A curated-row definition (GET/POST/PATCH /api/collections).
  *

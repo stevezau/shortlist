@@ -103,7 +103,20 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Delete Collection */
+        /**
+         * Delete Collection
+         * @description Delete a row, or with ``dry_run=true`` report what deleting it would do and write nothing.
+         *
+         *     A query parameter rather than a body: `DELETE` bodies are awkward through both `fetch` and
+         *     FastAPI, and this works with the SPA's existing `request()` helper unchanged.
+         *
+         *     `POST /{id}/cleanup?dry_run=true` already previews the PLEX half. What only this can show is the
+         *     LOCAL half, and one part of it is a genuine surprise: deleting this row silently strips every
+         *     OTHER row's shelf placement that was positioned relative to it, changing where two other people's
+         *     rows appear. That was logged after the fact and warned about nowhere.
+         *
+         *     A preview answers 200 with :class:`RowDeletePreviewOut` instead of the delete's 204.
+         */
         delete: operations["delete_collection_api_collections__collection_id__delete"];
         options?: never;
         head?: never;
@@ -2863,6 +2876,11 @@ export interface components {
              */
             defer_rename: boolean;
             /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
+            /**
              * Enabled
              * @default true
              */
@@ -3046,6 +3064,8 @@ export interface components {
              * @enum {unknown}
              */
             cold_start: "popular" | "skip" | null;
+            /** Dry Run */
+            dry_run?: boolean | null;
             /** Enabled */
             enabled: boolean;
             /** Fallback Name */
@@ -3096,7 +3116,11 @@ export interface components {
              * @enum {string}
              */
             placement_friends: "both" | "home" | "library" | "off";
+            /** Plan */
+            plan?: components["schemas"]["PlanEntryOut"][] | null;
             poster: components["schemas"]["PosterOut"];
+            /** Preview Incomplete */
+            preview_incomplete?: string | null;
             /** Recency */
             recency: number | null;
             /** Recent Count */
@@ -3934,6 +3958,28 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * PlanEntryOut
+         * @description One unit of Plex work an edit would cause.
+         */
+        PlanEntryOut: {
+            /** Collections */
+            collections: string[];
+            /** In Sections */
+            in_sections: string[];
+            /**
+             * Kind
+             * @description What this step would do.
+             * @enum {string}
+             */
+            kind: "poster_reset" | "privacy_sync" | "reconcile" | "rename" | "visibility";
+            /** Only User Ids */
+            only_user_ids: number[];
+            /** Reason */
+            reason: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * PlexServerOut
          * @description A server plex.tv says this account can reach, with every advertised address already tried.
          */
@@ -4288,6 +4334,28 @@ export interface components {
             id: number;
             /** Path */
             path: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RowDeletePreviewOut
+         * @description What `DELETE /collections/{id}?dry_run=true` WOULD do. Nothing is written.
+         */
+        RowDeletePreviewOut: {
+            /** Anchors Cleared */
+            anchors_cleared: string[];
+            /** Collections */
+            collections: string[];
+            /** Dry Run */
+            dry_run: boolean;
+            /** Message */
+            message: string;
+            /** Preview Incomplete */
+            preview_incomplete: string | null;
+            /** Privacy Sync */
+            privacy_sync: boolean;
+            /** Schedule Cleared */
+            schedule_cleared: boolean;
         } & {
             [key: string]: unknown;
         };
@@ -5841,7 +5909,9 @@ export interface operations {
     };
     delete_collection_api_collections__collection_id__delete: {
         parameters: {
-            query?: never;
+            query?: {
+                dry_run?: boolean;
+            };
             header?: never;
             path: {
                 collection_id: number;
@@ -5850,6 +5920,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description A dry-run preview; nothing was deleted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RowDeletePreviewOut"];
+                };
+            };
             /** @description Successful Response */
             204: {
                 headers: {

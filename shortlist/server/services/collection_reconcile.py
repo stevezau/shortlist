@@ -515,6 +515,65 @@ async def run_reconcile(
     return removed, error
 
 
+async def preview_row_removal(
+    state,
+    *,
+    slug: str,
+    build: str,
+    only_user_ids: set[int] | None = None,
+    in_sections: set[str] | None = None,
+    template: str | None = None,
+) -> tuple[list[str], str | None]:
+    """Which collections a removal WOULD strip, without removing them. Returns ``(titles, error)``.
+
+    The read-only sibling of :func:`run_reconcile`, which cannot answer this: it takes neither
+    ``in_sections`` — the whole subject of a NARROWING preview, where the row keeps the libraries it
+    still targets — nor ``template``, which the delete preview needs because the row it names is
+    about to stop existing.
+
+    ``dry_run=True`` is passed, never computed. `_reconcile_row_removal`'s chokepoint may only
+    STRENGTHEN it (``ctx.config.dry_run or dry_run``), so nothing — safe mode, a setting, a future
+    caller — can turn this into a deletion. Nothing is audited either: plex-safety rule 10 records
+    writes, and this makes none.
+
+    Runs the walk in an executor because it is blocking Plex I/O across every library. It takes no
+    lock, and needs none: ``jobs.plex_writer_lock`` serialises Plex WRITES and is held AROUND
+    `_reconcile_row_removal` by the job worker rather than inside it, so a preview can neither
+    deadlock against a live run nor perform the writes that lock exists to order.
+
+    Args:
+        state: The app state, for the Plex context and DB sessions.
+        slug: The row whose collections would go.
+        build: The row's build — ``shared`` goes by its own label, ``per_person`` per user.
+        only_user_ids: Limit to these users' copies; ``None`` means everyone.
+        in_sections: Limit to these section keys; ``None`` means every library.
+        template: Override the title template read from the DB, for a row about to be deleted.
+
+    Returns:
+        The display titles that would be removed, and a redacted error string if the walk failed
+        part-way (the titles found before it did are still returned).
+    """
+    removed: list[str] = []
+
+    def _work() -> None:
+        _reconcile_row_removal(
+            state,
+            slug=slug,
+            build=build,
+            dry_run=True,
+            removed=removed,
+            only_user_ids=only_user_ids,
+            template=template,
+            in_sections=in_sections,
+        )
+
+    try:
+        await asyncio.get_running_loop().run_in_executor(None, _work)
+    except Exception as e:
+        return removed, redact(f"{type(e).__name__}: {e}")  # a PMS error can carry a tokened URL (rule 9)
+    return removed, None
+
+
 def reconcile_row_rename_iter(
     state,
     *,

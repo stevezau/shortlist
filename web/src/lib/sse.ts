@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
 import { eventsUrl } from "./api";
 import type {
@@ -34,10 +34,14 @@ function parseData<T>(raw: string): T | null {
  * One EventSource per page: call this once at page level and fan the events
  * out via the handlers — never once per widget (rules/frontend.md).
  * Reconnects automatically with exponential backoff after connection loss.
+ *
+ * Returns nothing on purpose. It used to hand back a `connected` flag that no call site read: the
+ * state existed only to re-render the whole page on every open/error/close, for no consumer. A page
+ * that needs to know its data may be stale asks about the DATA instead — `runRefetchIntervalMs`
+ * (lib/run-format.ts) polls while a run has no `finished_at` — which also covers a stream that is
+ * connected but missed a publish, where a socket-level flag reports everything is fine.
  */
-export function useSSE(handlers: SSEHandlers): { connected: boolean } {
-  const [connected, setConnected] = useState(false);
-
+export function useSSE(handlers: SSEHandlers): void {
   // Keep the latest handlers in a ref so callers can pass inline objects
   // without tearing down and re-opening the connection every render.
   // Assigned in an effect, not during render: mutating a ref while rendering is unsafe under
@@ -60,7 +64,6 @@ export function useSSE(handlers: SSEHandlers): { connected: boolean } {
 
       source.onopen = () => {
         retryMs = INITIAL_RETRY_MS;
-        setConnected(true);
       };
 
       source.addEventListener(
@@ -101,7 +104,6 @@ export function useSSE(handlers: SSEHandlers): { connected: boolean } {
       );
 
       source.onerror = () => {
-        setConnected(false);
         source?.close();
         source = null;
         retryTimer = setTimeout(connect, retryMs);
@@ -115,9 +117,6 @@ export function useSSE(handlers: SSEHandlers): { connected: boolean } {
       disposed = true;
       if (retryTimer !== null) clearTimeout(retryTimer);
       source?.close();
-      setConnected(false);
     };
   }, []);
-
-  return { connected };
 }
