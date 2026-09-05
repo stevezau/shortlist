@@ -64,9 +64,10 @@ picks titles from your library they haven't seen but probably want to, explains 
 them on that person's Plex home screen as a **"Picked for You"** collection. It refreshes on a
 schedule you set, and each row is visible only to its owner.
 
-![A "Movies Picked for You" row on Plex](docs/images/plex-picked-for-you.jpg)
+![A "Movies Picked for You" row on Plex](docs/images/plex-picked-for-you.png)
 
-<sub>The result on a real server: a "Picked for You" row, private to that user.</sub>
+<sub>What lands on Plex: a "Picked for You" row, private to that user. Shown with the demo
+library the test suite ships, so the titles are placeholders — the layout is Plex's own.</sub>
 
 **It slots into the stack you already run.** Watch history comes straight from Plex (Tautulli
 optional), candidates from TMDB and Trakt, and gaps can be handed to **Radarr/Sonarr** — while
