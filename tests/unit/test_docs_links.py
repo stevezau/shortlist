@@ -30,23 +30,26 @@ SKIP_PREFIXES = ("http://", "https://", "mailto:", "tel:", "{{", "{%", "#{{")
 
 
 def _slugify(text: str) -> str:
-    """kramdown's `basic_generate_id`, which is what GitHub Pages runs.
+    """The heading id GitHub Pages actually produces, checked against the deployed HTML.
 
-    Transcribed from kramdown rather than approximated, and checked against kramdown itself over
-    every heading in `docs/` (180 of them, 180 agreeing). The detail worth keeping: it does NOT
-    collapse runs. Deleting a character that sat between two spaces leaves two spaces, and each
-    becomes its own hyphen — "Requests (Radarr / Sonarr, or Overseerr)" is
-    `requests-radarr--sonarr-or-overseerr`, with the double hyphen. A tidier regex that collapses
-    them disagrees on four of this site's headings and would call four working links broken.
+    Derived by fetching all 24 published pages and diffing their real `<h*, id=...>` values against
+    this function, because the obvious sources are both wrong here. The stock `kramdown` gem DELETES
+    underscores (`source_viewed_at` -> `sourceviewedat`), and trusting it cost a live regression:
+    two correct anchors in the split reference were "fixed" into two broken ones. GitHub Pages runs
+    kramdown with the GFM parser, which KEEPS them.
 
-    Underscores are deleted, not hyphenated: `source_viewed_at` is `sourceviewedat`. That is what
-    made two links in the split reference wrong.
+    The other detail worth keeping, and the one a tidier regex gets wrong: runs are not collapsed.
+    Deleting a character that sat between two spaces leaves two spaces, and each becomes its own
+    hyphen — "Requests (Radarr / Sonarr, or Overseerr)" is `requests-radarr--sonarr-or-overseerr`.
+
+    Re-derive it the same way if it ever drifts: compare against the deployed site, never against a
+    local markdown library.
     """
-    # kramdown slugs the RENDERED text, so inline code and link markup go first.
+    # The slug comes from the RENDERED text, so inline code and link markup go first.
     text = re.sub(r"`([^`]*)`", r"\1", text)
     text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
     text = re.sub(r"^[^a-zA-Z]+", "", text)
-    text = re.sub(r"[^a-zA-Z0-9 -]", "", text)
+    text = re.sub(r"[^a-zA-Z0-9 _-]", "", text)
     return text.replace(" ", "-").lower()
 
 
