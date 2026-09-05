@@ -464,9 +464,9 @@ function EnforcementPanel({ data }: { data: PrivacyStatus }) {
             <p className="text-muted-foreground">
               <strong className="text-foreground">Not checked recently.</strong>{" "}
               The last few runs didn&rsquo;t get as far as looking, so nothing
-              here says whether Plex is applying the rules. Every run checks
-              again, so the next one will &mdash; or start one now and come
-              back.
+              here says whether Plex is applying the rules. Every run tries
+              again, so the next one may answer it &mdash; or start one now
+              and come back.
             </p>
             <Button asChild variant="outline" size="sm">
               <Link to="/runs">Go to Runs</Link>

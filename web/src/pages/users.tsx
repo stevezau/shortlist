@@ -398,6 +398,16 @@ export function UsersPage() {
                       }
                     >
                       Picks watched
+                      {/* Visible, not only in the `title`. Before maturity this column is a dash
+                          for every person, and a whole column of dashes with its explanation
+                          hover-only tells a phone or keyboard user nothing at all. The tooltip
+                          stays for the detail; this says the one word that makes the dashes read
+                          as "not yet" instead of "broken". */}
+                      {!ratesMatured && (
+                        <span className="ml-1.5 font-normal text-muted-foreground">
+                          (too early)
+                        </span>
+                      )}
                     </TableHead>
                     <TableHead className="text-right">Enabled</TableHead>
                   </TableRow>

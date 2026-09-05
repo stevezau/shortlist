@@ -392,6 +392,12 @@ export function UserPanel({
               // "shared setup" is work amortised across everyone in the run — neither of which the
               // owner acts on, and neither guessable. The AI-token and web-search figures stay
               // visible: those are money, not internals.
+              //
+              // Left as a `title` on purpose, unlike the remedies elsewhere in this audit that were
+              // moved out of one. The difference is what the text IS: those were the only statement
+              // of how to fix an alarming thing, so hover-only made them unreachable. This is a
+              // glossary for a number nobody acts on, and making every row of a run's timing line a
+              // tab stop costs more than the gap it closes.
               <p
                 className="text-right text-sm text-muted-foreground"
                 title={

@@ -71,7 +71,9 @@ function RunLine({ run, userSlug }: { run: UserRun; userSlug: string }) {
           <p className="font-mono text-xs text-destructive-text">{run.error}</p>
         </div>
       ) : run.reason ? (
-        // Not a failure — the run deliberately left this person out, and said why.
+        // Not a failure. Either the run deliberately left this person out, or it delivered them
+        // and said why nothing was re-picked — `reason` covers both since the engine started
+        // explaining a carried-forward night.
         <p className="mt-1 text-xs text-muted-foreground">{run.reason}</p>
       ) : (
         <p className="mt-1 text-xs text-muted-foreground">

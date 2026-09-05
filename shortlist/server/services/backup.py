@@ -137,8 +137,18 @@ def restore_backup(config_dir: Path, backup_name: str) -> bool:
         logger.error("backup not found: {}", backup_name)
         return False
 
-    # Take a pre-restore backup of current state
-    take_backup(config_dir, label="pre-restore", max_keep=DEFAULT_MAX_BACKUPS)
+    # The pre-restore backup is the ONLY way back from a restore chosen by mistake, so a restore
+    # that could not take one does not proceed. `take_backup` returns None on a full disk, a
+    # permission problem, or a locked database — and the next two steps unlink the WAL and copy over
+    # the live database, which is exactly when there is nothing left to go back to. Refusing loses
+    # the restore; continuing loses the server's current state with no copy of it anywhere.
+    if take_backup(config_dir, label="pre-restore", max_keep=DEFAULT_MAX_BACKUPS) is None:
+        logger.error(
+            "refusing to restore {}: could not take a pre-restore backup first, so the current "
+            "database would be overwritten with no way back",
+            backup_name,
+        )
+        return False
 
     # Remove WAL/SHM files (they belong to the old DB)
     for suffix in (".db-wal", ".db-shm"):

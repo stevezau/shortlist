@@ -1353,8 +1353,14 @@ def _why_nothing_rebuilt(selection: list[dict]) -> str | None:
     decisions = [str(entry.get("decision") or "") for entry in selection]
     if not decisions or any(decision not in ("held_idle", "carried_forward") for decision in decisions):
         return None
-    held = decisions.count("held_idle")
-    waiting = decisions.count("carried_forward")
+    # Counted as ROWS, which is the word the sentence uses. `selection` holds one entry per
+    # (row, library), so one row spanning a movie and a TV library is two entries — counting those
+    # tells someone with a single row that two of their rows did something.
+    by_decision: dict[str, set[str]] = {}
+    for entry in selection:
+        by_decision.setdefault(str(entry.get("decision") or ""), set()).add(str(entry.get("row") or ""))
+    held = len(by_decision.get("held_idle", set()))
+    waiting = len(by_decision.get("carried_forward", set()))
     if not waiting:
         return (
             "Their rows were due to rebuild tonight, but they haven't watched anything since those rows "

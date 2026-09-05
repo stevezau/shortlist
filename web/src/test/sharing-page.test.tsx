@@ -316,7 +316,10 @@ describe("the enforcement panel", () => {
     // A status with nothing to do about it is a dead end on the panel an owner opens when they are
     // already worried (audit finding, Sep 2026). The check rides a RUN, so say when it happens
     // again and offer the page that starts one.
-    expect(screen.getByText(/every run checks again/i)).toBeVisible();
+    // "tries again ... may answer it", not "will". `_verify_filters_enforced` returns early on a
+    // dry run and can end unmeasured whenever a token or hub read fails, so the next run is not a
+    // guarantee — and this paragraph only renders when the last ones already failed to measure.
+    expect(screen.getByText(/every run tries.*again/is)).toBeVisible();
     expect(screen.getByRole("link", { name: /go to runs/i })).toHaveAttribute(
       "href",
       "/runs",

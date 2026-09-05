@@ -81,7 +81,7 @@ export function UnhiddenRowsBadge({ user }: { user: User }) {
       Sees {exposed} {exposed === 1 ? "row" : "rows"} of others&rsquo;
     </Badge>
   );
-  // The most alarming string in the app, and its whole 301-character remedy used to live in that
+  // The most alarming string in the app, and its whole 301-character remedy lives in that
   // `title` — hover-only on a desktop, unreachable on a phone. This badge is only ever shown for an
   // account with a restriction profile, which is exactly the account whose own page renders
   // `RestrictedNote`: the same remedy, in full, as text. So make the badge the way there rather

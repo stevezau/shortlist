@@ -209,10 +209,22 @@ export function TraceView({
         </header>
 
         {data.error && <ErrorBanner error={data.error} />}
-        {data.reason && !data.error && <SkipBanner reason={data.reason} />}
+        {/* Gated on the STATUS, not on `reason` alone. `reason` used to mean "nothing was built for
+            this person", and this page read it that way — but the engine now also sets it on an
+            `ok` person to say why their rows hold what they held last night, so on the second run
+            of any night this banner called a full, correct delivery trace a skip. `cold_start`
+            keeps the banner: that person really did get no row. */}
+        {data.status !== "ok" && data.reason && !data.error && (
+          <SkipBanner reason={data.reason} />
+        )}
+        {data.status === "ok" && data.reason && !data.error && (
+          <p className="text-sm text-muted-foreground">{data.reason}</p>
+        )}
 
         {/* The banner above already says why there is nothing here. Blaming a legacy run for a
-            deliberate skip would be a second, wrong explanation stacked on the right one. */}
+            deliberate skip would be a second, wrong explanation stacked on the right one. An `ok`
+            person carrying a reason was still DELIVERED, so they have libraries and never reach
+            this branch. */}
         {libraries.length === 0 && !data.reason ? (
           <EmptyState
             title="No per-library detail for this run"

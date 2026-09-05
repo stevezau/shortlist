@@ -76,3 +76,50 @@ class TestABackupIsNeverLostToRotation:
         result = backup_mod.take_backup(tmp_path, label="boot")
 
         assert result is not None and result.exists(), "a successful backup was thrown away by rotation"
+
+
+class TestARestoreNeverOverwritesTheOnlyCopy:
+    """`restore_backup` copies the chosen file over the live database and unlinks the WAL.
+
+    The pre-restore backup it takes first is the only way back from a restore chosen by mistake, and
+    `take_backup` answers None rather than raising on a full disk, a permission problem or a locked
+    database. Continuing past that answer destroys the server's current state with no copy of it
+    anywhere — the one case that needed the guarantee was the one case that didn't have it.
+    """
+
+    def _install(self, tmp_path: Path) -> Path:
+        from shortlist.server.db.session import make_engine, run_migrations
+
+        run_migrations(tmp_path)
+        make_engine(tmp_path).dispose()
+        chosen = backup_mod.take_backup(tmp_path, label="chosen")
+        assert chosen is not None
+        return chosen
+
+    def test_a_restore_is_refused_when_the_pre_restore_backup_cannot_be_taken(self, tmp_path: Path, monkeypatch):
+        chosen = self._install(tmp_path)
+        db_path = tmp_path / "shortlist.db"
+        before = db_path.read_bytes()
+        monkeypatch.setattr(backup_mod, "take_backup", lambda *_a, **_k: None)
+
+        assert backup_mod.restore_backup(tmp_path, chosen.name) is False
+        assert db_path.read_bytes() == before, "the live database was overwritten with no way back"
+
+    def test_a_restore_proceeds_when_the_pre_restore_backup_succeeds(self, tmp_path: Path):
+        """The other half of the branch: the guard must not have broken the normal path.
+
+        The live database is changed in a way SQLite still accepts — corrupting it would make
+        `take_backup` fail for a second reason and the test would pass on the guard it is trying to
+        prove is out of the way.
+        """
+        import sqlite3
+
+        chosen = self._install(tmp_path)
+        with sqlite3.connect(tmp_path / "shortlist.db") as con:
+            con.execute("CREATE TABLE only_in_the_live_db (id INTEGER PRIMARY KEY)")
+
+        assert backup_mod.restore_backup(tmp_path, chosen.name) is True
+
+        with sqlite3.connect(tmp_path / "shortlist.db") as con:
+            tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "only_in_the_live_db" not in tables, "the chosen backup did not replace the live database"

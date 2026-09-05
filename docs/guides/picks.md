@@ -176,11 +176,11 @@ other row.
 - **Rename a row.** Its collection is retitled in place for every user, so nothing is orphaned.
 - **Disable a user, or drop someone from a row's audience.** That person's now-stale collections are
   removed immediately.
-- **Remove from Plex**, the button on each row. Clears a row's collections on demand without deleting
+- **Remove from Plex**, under **Remove or delete** on a row. Clears a row's collections on demand without deleting
   the row's settings. Handy to force a rebuild on the next run.
 - **Disable a row**, its on/off switch. Its collection comes off Plex Home on the next run. A row
-  whose title is dynamic, built from a top pick, is left for that rebuild; use **Remove from Plex** if
-  you want it gone right now. Everything left in place stays private, because the row's label keeps it
+  whose title is dynamic, built from a top pick, is left for that rebuild; use **Remove or delete →
+  Remove from Plex** if you want it gone right now. Everything left in place stays private, because the row's label keeps it
   excluded from everyone else.
 
 ## Blocking a seed

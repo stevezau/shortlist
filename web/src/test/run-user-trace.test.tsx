@@ -522,6 +522,25 @@ describe("TraceView", () => {
     expect(screen.queryByText(/predates library-level tracing/i)).toBeNull();
   });
 
+  it("does not call a delivered person 'skipped' just because they carry a reason", () => {
+    // The regression this pins: `reason` used to mean "nothing was built for this person", and the
+    // engine now also sets it on an `ok` person to say why their rows hold what they held last
+    // night. On the second run of any night that is most of the roster, and every one of their
+    // trace pages said "Skipped this person" above a full, correct delivery trace.
+    const data = okTrace({
+      status: "ok",
+      reason:
+        "It wasn't any of their rows' night to rebuild, so last run's titles were redelivered unchanged.",
+    });
+
+    render(<TraceView data={data} />);
+
+    expect(screen.getByText(/night to rebuild/i)).toBeTruthy();
+    expect(screen.queryByText(/skipped this person/i)).toBeNull();
+    // The trace itself must still be there — it is the whole point of the page.
+    expect(screen.getByText(/Where we searched/)).toBeTruthy();
+  });
+
   it("still renders the library tabs when a reason coexists with stages", () => {
     // The other half of the same ternary: suppressing the EmptyState must not suppress the tabs.
     const data = okTrace({ reason: "Heads up about this run" });

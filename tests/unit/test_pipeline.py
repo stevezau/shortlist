@@ -5203,6 +5203,55 @@ class TestIdleHoldInARun:
             "rows were built — so last run's titles were redelivered unchanged."
         )
 
+    def test_the_sentence_covers_every_cell_of_its_own_matrix(self):
+        """Five outcomes, and only two were reachable from a full pipeline run.
+
+        The all-`carried_forward` sentence is the one nearly every install sees — it is what "it
+        wasn't their night" says — and it was pinned only by a hardcoded fixture in a vitest file,
+        so changing the wording here would have failed a web test that does not own the string.
+
+        The counts are per ROW, not per trace entry: `selection` carries one entry per
+        (row, library), so a single row living in a movie and a TV library must not be reported as
+        two rows.
+        """
+        why = rows_mod._why_nothing_rebuilt
+
+        assert why([]) is None
+        assert why([{"row": "picked", "decision": "refreshed"}]) is None
+        assert why([{"row": "picked", "decision": "carried_forward"}]) == (
+            "It wasn't any of their rows' night to rebuild, so last run's titles were redelivered unchanged."
+        )
+        # One row, two libraries, both held: one row, not two.
+        assert why(
+            [
+                {"row": "picked", "library": "Movies", "decision": "held_idle"},
+                {"row": "picked", "library": "TV Shows", "decision": "held_idle"},
+            ]
+        ) == (
+            "Their rows were due to rebuild tonight, but they haven't watched anything since those rows "
+            "were built — so last run's titles were redelivered unchanged."
+        )
+        assert why(
+            [
+                {"row": "picked", "decision": "carried_forward"},
+                {"row": "gems", "decision": "held_idle"},
+            ]
+        ) == (
+            "Nothing was re-picked for them tonight: 1 row was not due to rebuild, and 1 was held "
+            "because they haven't watched anything since."
+        )
+        assert why(
+            [
+                {"row": "picked", "decision": "carried_forward"},
+                {"row": "gems", "decision": "carried_forward"},
+                {"row": "cosy", "decision": "held_idle"},
+                {"row": "loud", "decision": "held_idle"},
+            ]
+        ) == (
+            "Nothing was re-picked for them tonight: 2 rows were not due to rebuild, and 2 were held "
+            "because they haven't watched anything since."
+        )
+
     def test_nothing_is_explained_away_when_a_row_actually_rebuilt(self, ctx: EngineContext, mock_plextv):
         """A rebuilt row puts a change on the page, and a sentence about rows that did not move
         would then be noise on top of it."""
