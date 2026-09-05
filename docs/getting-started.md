@@ -52,8 +52,10 @@ docker run -d --name shortlist \
   stevezzau/shortlist:latest
 ```
 
-The identical image is also on GHCR as `ghcr.io/stevezau/shortlist`, with the same tags. Use that
-one if you'd rather not hit Docker Hub's anonymous pull limits.
+The doubled **z** in `stevezzau` is deliberate — that is the project's Docker Hub account, even
+though the source lives at `github.com/stevezau/shortlist` with one. Don't "correct" it or the pull
+fails. The identical image is also on GHCR as `ghcr.io/stevezau/shortlist`, with the same tags; use
+that one if you'd rather not hit Docker Hub's anonymous pull limits.
 
 Open `http://your-host:5959`. A fresh install goes straight into the wizard. There is
 nothing to sign in to yet. Step 1 connects your Plex account (that's the sign-in, and it's
@@ -111,11 +113,12 @@ before you trust it. Two ways to do that:
 The **first real run is the slowest**: it builds every enabled user's rows and merges every account's
 share filter. Later runs are much faster. Most rows are unchanged and skipped.
 
-Every row is kept private automatically: it's a labeled collection excluded on every other
-account's share, delivered hidden and only promoted once those exclusions are in place. Your share
-filters are snapshotted before the first change, so **Uninstall** (Settings → Danger Zone) puts them
-back exactly as they were. This hiding relies on Plex Media Server ≥ 1.43.2.10687. Older builds
-ignore the label exclusion, which is why the wizard surfaces your version before you begin.
+Every row is hidden from every other account before it is ever put on a home screen, so nobody finds
+a row that was built for someone else. (You are the exception: Plex cannot hide anything from the
+server owner — see below.) Your share filters are copied before the first change, so **Uninstall**
+(Settings → Danger Zone) puts them back exactly as they were. The hiding relies on Plex Media Server
+1.43.2.10687 or newer — older builds ignore it, which is why the wizard surfaces your version before
+you begin.
 
 ## One thing you should know
 

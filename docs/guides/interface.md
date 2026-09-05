@@ -237,11 +237,11 @@ Each row's run schedule lives in that row's editor, not here. See [Schedules](sc
 ## Reading the dashboard
 
 Everything on the dashboard is scoped to the window selected at the top, **the last 30 days** by
-default. That matters more than it sounds: these figures used to be lifetime totals, which made
-every ratio a measure of how long Shortlist had been installed rather than of how good the picks
-were. A pick can only ever be credited **while its row is still showing it**, but the old
-denominator kept every pick ever delivered, for ever, so each night added ~60 permanently
-uncreditable picks per person to the bottom of the fraction and the number could only sink.
+default. That matters more than it sounds. A pick can only ever be credited **while its row is
+still showing it**, so counting every pick ever delivered would measure how long Shortlist has been
+installed rather than how good the picks are — each night would add another ~60 picks per person
+that can no longer be credited, and the number could only sink. The window is what keeps these
+figures about the picks.
 
 **Watched** — picks people STARTED in the window. A pick delivered last month and watched this week
 counts here, as long as the row was still showing it: this figure is about watching, not delivery.

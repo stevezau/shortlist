@@ -34,8 +34,8 @@ That includes gathering candidates, ranking them, and writing the "why" under ea
 ### The source that uses AI
 
 **AI web search** searches the live web for acclaimed, current "what to watch next" titles, then
-keeps the ones you own. In our own testing this was a strong extra source, surfacing well-reviewed
-titles the TMDB lists simply don't return. It is the only place AI spends anything, and it is off by
+keeps the ones you own. In testing this was a strong extra source, surfacing well-reviewed titles
+the TMDB lists simply don't return. It is the only place AI spends anything, and it is off by
 default.
 
 **How it works.** Shortlist takes each person's recent watches and turns them into real web searches
@@ -113,7 +113,6 @@ self-hosted instance. On a test instance, one search returned 20 results from Go
 rate-limiting and DuckDuckGo and Startpage both served CAPTCHAs — normal, and fine as long as at
 least one engine answers. If none do, **Test** reports which engines failed rather than a blank
 "no results", so you can enable different ones in SearXNG's own settings.
-   They reliably surface different films, so coverage is wider than either alone.
 
 It is entirely optional. Leave it empty and everything still works. You are just limited to your
 provider's own search, or to no web search at all.
@@ -138,7 +137,7 @@ cheapest-to-priciest levers:
    (Rows → Edit). Keep AI web search only on the rows that benefit and let the rest run on the free
    TMDB and Trakt sources.
 2. **Search fewer recent watches.** The source runs one web search per person's recent watch, so
-   lowering `recommendations.recent_count` (Settings → Finding titles) cuts searches. Results are
+   lowering how many recent watches it looks at (Settings → Finding titles) cuts searches. Results are
    cached for 7 days and shared across users, so a popular title is searched once server-wide.
 3. **Use a small, cheap model.** A fast or mini model such as Claude Haiku, GPT-mini or Gemini Flash
    is plenty. You don't need a flagship model to read a few search results.

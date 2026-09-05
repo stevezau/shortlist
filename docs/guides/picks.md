@@ -47,13 +47,9 @@ Settings → Finding titles has five more dials, each of which a row can overrid
   `8` days. If you trigger two runs the same day, a row that isn't due won't change. That is
   expected.
 
-  This used to be a 0–1 "Freshness" percentage that a curve turned into days behind the scenes, so
-  `0.55` meant "every 7 days" and there was no way to ask for anything slower than a fortnight.
-  Upgrading converts every value to the day count it already meant, so no row changes pace.
-
 - **Hold rows for inactive viewers**, called **Hold when they aren't watching** in the row editor.
-  A number of days; `0` (the default) turns it off, and nothing changes from how Shortlist has always
-  worked.
+  A number of days; `0` (the default) turns it off, so a row rebuilds on its normal cadence whatever
+  its owner has been watching.
 
   **Set it higher than the rebuild cadence, or it does nothing.** A row is rebuilt on its due night,
   so by its next due night it is exactly one cadence old — and the hold releases at that age. A row
@@ -99,8 +95,8 @@ Settings → Finding titles has five more dials, each of which a row can overrid
 
   **This applies to existing servers too.** Upgrading to the release that introduced it shifts each
   row towards newer titles on its next rebuild night — staggered by each row's cadence rather than
-  all at once. Nothing about who can see what changes. If you preferred the old behaviour, set the
-  slider to `0` and ranking ignores release date exactly as it used to.
+  all at once. Nothing about who can see what changes, and setting the slider to `0` turns release
+  date back out of the ranking entirely.
 
   It is a preference, not a filter. Nothing is excluded for being old — an older title simply has
   to be a better match to win a slot, so a classic three of someone's watches point at still beats a
@@ -124,11 +120,12 @@ This is rare, because Shortlist reads each person's **complete** watched set fro
 including titles they only _marked_ watched, whether ticked off individually or a whole season at
 once, rather than played.
 
-It reads the library _as that user_, with the per-user server token Plex mints for every share, and
-`viewCount > 0` covers both plays and marks at any depth. There is nothing to configure, and it works
-whether or not Shortlist runs on the same machine as Plex. This replaced an older playback-history
-read that saw plays only and capped at around 200. On one real server that hid **13,201** of a user's
-watched titles behind the roughly 1,000 the API reported.
+It reads the library _as that user_, with the per-user access key Plex mints for every share, and
+counts anything with a play count above zero — plays and marks alike, at any depth. There is nothing
+to configure, and it works whether or not Shortlist runs on the same machine as Plex. Plex's own
+playback-history feed would not do: it reports plays only, and stops at roughly the most recent 200 —
+on one real server it saw about **1,000** of a user's watched titles where reading the library in
+full found around **13,000**.
 
 When it does happen, it is almost always timing. **The read is per-run, so a title you mark watched
 after the last run stays eligible until the next one.** To fix it immediately without waiting for a
@@ -198,8 +195,7 @@ usually what you noticed in the first place. There is also a search box on a per
 
 Blocks are personal. A **shared** row is public, so one person's block does _not_ reshape what
 everyone else sees. Otherwise an individual preference would become a server-wide edit nobody else
-can see or undo. Shared rows use their own server-wide list,
-`recommendations.blocked_shared_seeds`.
+can see or undo. Shared rows have their own server-wide block list instead.
 
 ## Letting people block their own
 
@@ -216,9 +212,8 @@ A few things worth knowing:
 - **A rating they haven't given changes nothing.** Only a low rating acts, so this is silent for the
   majority of people, who rate nothing at all.
 - **Ratings land on the next sync, however old the title.** The sync re-reads every watched title
-  each time it runs, and a rating rides along with it. This used to be the slow case — rating
-  something from months ago sat behind the point the nightly read reached back to and waited up to a
-  week — and it no longer is.
+  each time it runs, and a rating rides along with it, so rating something you saw months ago counts
+  just as quickly as rating last night's film.
 - **A title stops seeding only if it was going to seed.** Rows are built from someone's most recent
   watches, so disliking a film from two years ago is recorded but changes nothing — it was never
   going to be picked as a seed. The rating matters when it's something they saw lately.

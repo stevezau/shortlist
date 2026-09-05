@@ -38,11 +38,12 @@ configures.
 
 **Continue Watching** is per-user, and only contains what you've already started.
 
-**Smart collections** get you the _shape_ of Netflix rows cheaply. "Highly rated thrillers",
-"90s action", "under 100 minutes" — saved filters that stay current as the library grows, promotable
-to the Home shelf. Genuinely worth doing, and where most people should start. But the filter runs
-against the library, not against the viewer: `Unplayed` means unplayed by the admin account, so
-everyone sees the same row including the people who've watched all of it.
+**Smart collections** get you the _shape_ of Netflix rows cheaply — "highly rated thrillers", "90s
+action", saved filters that stay current as the library grows and can be promoted to Home. Worth
+doing, and where most people should start. What they can't do is follow the viewer, so everyone still
+sees the same row: [how to improve Plex
+recommendations](improve-plex-recommendations.md#smart-collections-the-real-ceiling-of-the-built-in-tools)
+covers what to build and where it stops.
 
 That's the ceiling of the built-in features. Rows that look right, contents that aren't personal.
 
@@ -78,20 +79,18 @@ pick. Naming rows after their seed is most of the Netflix feel for almost no eff
 ### Rows that change
 
 A recommendation row that shows the same posters for a fortnight becomes invisible. Rebuilding on a
-schedule isn't enough on its own — an unchanged watch history run through a deterministic scorer
-produces an identical row. You need either fresh input (new watches, new library additions) or
+schedule isn't enough on its own — the same watch history scored the same way produces the same row
+every time. You need either fresh input (new watches, new library additions) or
 deliberate variation: rotate which seed drives the row, sample from a larger candidate pool than the
 row can hold, or weight recent watches more heavily.
 
 ### Rows from things you can watch now
 
 Verify every pick exists in your library before it goes in a collection, and drop anything the person
-has already watched. This sounds obvious and it's the most common failure of the AI-first approach —
-a model asked "what should Sam watch?" will confidently return titles you don't own, titles under
-alternate release names, and occasionally titles that don't exist.
-
-The fix is ordering: generate candidates from your library, then let the model rank and explain them.
-Never let it invent.
+has already watched. The order is what makes that possible: generate the candidates from your library,
+then let a model rank and explain them. Ask a model for titles instead and it returns films you don't
+own, films under alternate names, and occasionally films that don't exist. [AI recommendations for
+Plex](plex-ai-recommendations.md) is the long version.
 
 ## Where this leaves you
 
@@ -100,9 +99,9 @@ refreshed nightly, drawn from what you own. What you can't get is any of it from
 it's the label mechanism plus a scheduled job, and the scheduled job has to be careful about write
 ordering or it publishes people's private rows to the whole server.
 
-Two limits stay put whatever you build: **the server owner sees every row** (Plex doesn't filter the
-admin account — there's no share to filter), and **films and shows need separate rows** because label
-restrictions are tracked per library.
+Two limits stay put whatever you build: **the server owner sees every row**, and **films and shows
+need separate rows**. Neither has a fix —
+[per-user collections](plex-per-user-collections.md#two-things-to-watch-out-for) explains why.
 
 ## The automated version
 
@@ -120,6 +119,9 @@ docker run -d --name shortlist -p 5959:5959 \
   -v /path/to/config:/config \
   stevezzau/shortlist:latest
 ```
+
+The doubled **z** in `stevezzau` is deliberate — it's the project's Docker Hub account, not a
+typo. The same image is on GHCR as `ghcr.io/stevezau/shortlist`.
 
 Set `-e SHORTLIST_DRY_RUN=1` to preview every change without writing one.
 

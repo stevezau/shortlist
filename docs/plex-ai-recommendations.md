@@ -4,10 +4,10 @@ description: Where a language model helps with Plex recommendations, where it in
 heading: AI recommendations for Plex — what works and what doesn't
 ---
 
-**Short answer:** an LLM is good at ranking and explaining a list of candidates. It is bad at
-_producing_ that list. Ask a model "what should Sam watch?" and you get films you don't own, films
-under alternate titles, and occasionally films that don't exist. Generate candidates from your
-library first and the model becomes genuinely useful.
+**Short answer:** an AI model — an LLM, short for large language model — is good at ranking and
+explaining a list of candidates. It is bad at _producing_ that list. Ask a model "what should Sam
+watch?" and you get films you don't own, films under alternate titles, and occasionally films that
+don't exist. Generate candidates from your library first and the model becomes genuinely useful.
 
 This page is about the shape of the problem, not about any one tool.
 
@@ -35,13 +35,13 @@ Invert it. **Candidates from your library, ranking from the model.**
 
 1. Take what the person actually watched and finished.
 2. Find similar titles through a metadata source — [TMDB](https://www.themoviedb.org/) similarity,
-   shared genres, keywords, cast, crew — or a recommendations API like Trakt's.
+   shared genres, keywords, cast, crew — or a recommendations service like Trakt.
 3. **Filter to what's in your library**, and drop anything they've already seen.
 4. _Then_ hand that shortlist to the model and ask it to pick the best ten and say why.
 
-Now the model can't hallucinate, because it's choosing from a list you control. Every pick provably
-exists. And you get the thing an LLM is actually good at: a sentence explaining why this film
-follows from that one, which is what makes a row feel considered rather than random.
+Now the model can't invent anything, because it's choosing from a list you control. Every pick
+provably exists. And you get the thing a model is actually good at: a sentence explaining why this
+film follows from that one, which is what makes a row feel considered rather than random.
 
 Note that steps 1–3 need no AI at all. That's worth knowing before you buy an API key — the
 structural work is code, and the model is a finishing pass.
@@ -63,12 +63,12 @@ is doing the candidate generation, which is the design that hallucinates.
 
 A local model removes the cost and privacy questions entirely, and the ranking task is easy enough
 that small models do it well. The usual options are [Ollama](https://ollama.com/), llama.cpp, LM
-Studio, vLLM and LocalAI — all of which expose an OpenAI-compatible endpoint, so anything that talks
-to OpenAI can usually be pointed at them with a base-URL change.
+Studio, vLLM and LocalAI. All of them answer requests the same way OpenAI's service does, so a tool
+built for OpenAI can usually be pointed at one by changing nothing but the web address.
 
 Ranking twenty candidates and writing ten short sentences is not a demanding job. You do not need a
-70B model for this, and a modest local one running on the same box as your server is a perfectly
-reasonable setup.
+70-billion-parameter model for this, and a modest local one running on the same box as your server is
+a perfectly reasonable setup.
 
 The same setting covers hosted gateways that speak this API — ollama.com's cloud, OpenRouter — since
 the only difference is that they want an API key. Give the "Local / OpenAI-compatible" option the
@@ -99,7 +99,7 @@ Questions worth asking, whichever you pick:
 
 - **Are picks verified against the library before delivery,** or is the model's word taken for it?
 - **Can it run with no key at all?** If not, the model is probably generating candidates.
-- **Does it support a local endpoint,** or only cloud providers?
+- **Can you point it at a model running on your own hardware,** or only at cloud providers?
 - **Is history summarised or dumped** into the prompt?
 - **Does it re-run when nothing changed?**
 - **Can you see the reason for each pick** — and is that reason traceable to something the person
@@ -122,6 +122,9 @@ docker run -d --name shortlist -p 5959:5959 \
   -v /path/to/config:/config \
   stevezzau/shortlist:latest
 ```
+
+The doubled **z** in `stevezzau` is deliberate — it's the project's Docker Hub account, not a
+typo. The same image is on GHCR as `ghcr.io/stevezau/shortlist`.
 
 ## Related
 

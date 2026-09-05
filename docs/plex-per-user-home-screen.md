@@ -81,22 +81,19 @@ that's **n × (n−1)** share-filter entries:
 
 And it isn't a one-time cost. Add a user and you touch every existing share. Add a second row type —
 films and shows are separate collections, because label restrictions are evaluated per library — and
-it doubles. Rebuild rows nightly and every run walks the whole matrix again, each entry a
-read-modify-write against a string you must not corrupt.
+it doubles. Rebuild rows nightly and every run walks the whole matrix again, reading each account's
+current setting, changing only its own part, and writing it back without breaking the rest.
 
 Two or three collections by hand is fine. Past that you want something maintaining the matrix for
 you.
 
 ## Two limits you can't engineer around
 
-**The server owner sees everything.** Plex doesn't apply share filters to the admin account, because
-there's no share to filter. If you're the owner you will see every labelled collection on your
-server no matter what you do. Nothing is broken; there is no fix. Plan your QA around a non-owner
-test account, because checking privacy from the admin session will always show you everything.
-
-**Films and shows need separate rows.** A collection lives in one library, and Plex tracks
-`filterMovies` and `filterTelevision` separately. A collection holding the wrong type for its library
-matches neither restriction — which means it cannot be hidden from anyone, from any account, ever.
+**The server owner sees everything**, because Plex has no share to filter for the admin account.
+**Films and shows need separate rows**, because Plex keeps the label restrictions for a movie library
+and a TV library as two separate settings. Neither has a workaround, and one of them decides how you
+test: check privacy from a non-owner account, never from your own.
+[Per-user collections](plex-per-user-collections.md#two-things-to-watch-out-for) has the detail.
 
 ## The automated version
 
@@ -105,15 +102,19 @@ user gets their own rows built from their own watch history; every run sweeps ro
 delivers rows unpromoted, merges the `label!=` exclusions into every other account's share filter,
 and only then promotes anything onto Home. In that order, every time.
 
-It snapshots your share filters before its first write and restores them exactly on uninstall, merges
-rather than rebuilds, skips the owner, and never touches a collection it didn't create — so Kometa
-and anything else managing collections on the same server keep working.
+It copies your share filters before its first write and restores them exactly if you uninstall, and
+it never touches a collection it didn't create, so Kometa and anything else managing collections on
+the same server keep working. [Per-user
+collections](plex-per-user-collections.md#the-automated-version) lists the rest.
 
 ```bash
 docker run -d --name shortlist -p 5959:5959 \
   -v /path/to/config:/config \
   stevezzau/shortlist:latest
 ```
+
+The doubled **z** in `stevezzau` is deliberate — it's the project's Docker Hub account, not a
+typo. The same image is on GHCR as `ghcr.io/stevezau/shortlist`.
 
 ## Related
 

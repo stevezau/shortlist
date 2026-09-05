@@ -92,6 +92,13 @@ nav:
   - title: Reference
     url: /reference/
     blurb: Settings, API, env vars
+    children:
+      - title: Settings and env vars
+        url: /reference/settings/
+      - title: The API
+        url: /reference/api/
+      - title: How Shortlist decides things
+        url: /reference/concepts/
   - title: FAQ
     url: /faq/
     blurb: Privacy, Kometa, uninstall
