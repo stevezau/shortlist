@@ -798,7 +798,7 @@ def reconcile_watched(
     profiles,
     live_picks: dict[int, set[int]] | None = None,
     *,
-    full_resync: bool = False,
+    complete_read: bool = False,
 ) -> None:
     """Mark the picks a person actually watched — the hit rate, and the whole point of the app.
 
@@ -904,12 +904,12 @@ def reconcile_watched(
 
             # Only on a FULL re-read, and only for someone whose history actually came back. An
             # incremental read sees an un-watch only inside the window it covered (see
-            # `WatchSync._full_resync_due`), so "absent from this read" would withdraw half a
+            # `WatchSync._complete_read_due`), so "absent from this read" would withdraw half a
             # roster's credits on any night the cursor was narrow. An EMPTY history is excluded for
             # the same reason from the other direction: a read that failed and a person who has
             # watched nothing are indistinguishable here, and wrongly wiping real history is far
             # worse than leaving one stale credit for someone who un-watched their only title.
-            if full_resync and profile.history:
+            if complete_read and profile.history:
                 gone = _withdraw_unwatched(
                     session,
                     user,

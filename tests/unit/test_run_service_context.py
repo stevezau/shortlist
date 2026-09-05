@@ -1018,14 +1018,20 @@ class TestSyncWatched:
             assert s.query(WatchedTitle).count() == 10, "a thin answer wiped the library"
         assert len(reads) == 3, "the confirming re-read never happened"
 
-    def test_credit_withdrawal_stays_on_the_periodic_cadence(self, service, sessions, monkeypatch):
-        """`full_resync` decides whether the sync WITHDRAWS pick credit — the one consequence around
+    def test_credit_withdrawal_runs_on_EVERY_sync_now_that_every_read_is_complete(self, service, sessions, monkeypatch):
+        """`complete_read` decides whether the sync WITHDRAWS pick credit — the one consequence around
         here that does not self-heal on the next good read, since it edits `picks.watched_at`.
 
-        Since issue #108 every sync reads the whole library, so it would be easy to conclude the
-        withdrawal may run every time too. It must not: withdrawal acts on ABSENCE, and absence is
-        only trustworthy at the cadence the rest of the reconcile runs at. Asserts the KWARG, not the
-        call count — the call happens either way.
+        Withdrawal acts on ABSENCE, so it is only sound when the read was complete. It used to be
+        gated on the WEEKLY dead-sweep instead, because incremental reads could not tell "they
+        un-watched it" from "this pass did not look" — and that made the dashboard go on calling a
+        title "finished" for up to seven days after the person un-marked it in Plex, reported on
+        issue #108. Since #108 every read is complete (`force_full=True`), so the gate protected
+        nothing and now every pass withdraws.
+
+        Asserts the KWARG on every pass, not the call count — the call happens either way, so a
+        regression here is invisible to a count. The periodic cadence still exists; it just gates the
+        dead-library sweep alone now.
         """
         import asyncio
         from datetime import UTC, datetime, timedelta
@@ -1055,19 +1061,22 @@ class TestSyncWatched:
         monkeypatch.setattr(service, "build_context", lambda **k: fake_ctx)
         monkeypatch.setattr(service, "enabled_profiles", lambda session, user_ids=None: [profile])
         seen: list = []
-        monkeypatch.setattr(service, "_reconcile_watched", lambda profiles, full_resync=False: seen.append(full_resync))
+        monkeypatch.setattr(
+            service, "_reconcile_watched", lambda profiles, complete_read=False: seen.append(complete_read)
+        )
 
-        # First pass: nothing has ever reconciled, so it is due.
+        # First pass: nothing has ever reconciled.
         asyncio.run(service.sync_watched())
-        # Second: it just ran, so an ordinary pass must NOT withdraw.
+        # Second: an ORDINARY pass, with the periodic sweep not due. This is the one that regressed —
+        # it used to pass False here, which is the seven-day lag the reporter saw.
         asyncio.run(service.sync_watched())
-        # Third: wind the stamp back past `sync.watch_full_days` and it falls due again.
+        # Third: wind the stamp back past `sync.watch_full_days`, so the sweep falls due again.
         with sessions() as s:
             SettingsStore(s).set("report.watch_full_at", (datetime.now(UTC) - timedelta(days=30)).isoformat())
             s.commit()
         asyncio.run(service.sync_watched())
 
-        assert seen == [True, False, True], f"withdrawal ran on the wrong passes: {seen}"
+        assert seen == [True, True, True], f"a pass declined to withdraw un-watched credit: {seen}"
 
     def test_the_owner_is_synced_even_though_they_have_no_row_of_their_own(self, service, sessions, monkeypatch):
         """The owner's watched set has one consumer that has nothing to do with giving them a row.

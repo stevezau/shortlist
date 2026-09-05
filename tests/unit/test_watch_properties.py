@@ -528,7 +528,7 @@ class TestTheReportMeansWhatItSays:
             )
             for u in range(1, users + 1)
         ]
-        reconcile_watched(factory, profiles, full_resync=True)
+        reconcile_watched(factory, profiles, complete_read=True)
 
         with factory() as s:
             after = {p.id for p in s.query(PR).filter(PR.watched_at.isnot(None))}

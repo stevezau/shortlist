@@ -74,16 +74,18 @@ class WatchSync:
     def _dead_sweep_due(self, store: SettingsStore) -> bool:
         """Is this the periodic pass?
 
-        Not "is a complete read due" — every sync reads the whole library now (issue #108). Gates the
-        TWO things that must stay rare, because each acts on ABSENCE from a single response and
-        neither self-heals: the dead-library sweep, which believes one `/library/sections` answer for
-        every user, and withdrawing pick credit, which edits `picks.watched_at`. Never having run
-        counts as due.
+        Not "is a complete read due" — every sync reads the whole library now (issue #108). Gates ONE
+        thing, which must stay rare because it acts on ABSENCE from a single response and does not
+        self-heal: the dead-library sweep, which believes one `/library/sections` answer for every
+        user. Never having run counts as due.
 
-        Dropping cached titles the read did not return used to be gated here too. It no longer is —
-        that made un-watching take up to a week — and it does not need to be: it is guarded by proof
-        the read saw the whole library, plus a confirming re-read before any large deletion, and a
-        wrong drop of a single title comes back on the next sync.
+        Two things used to be gated here and no longer are, both because they made a correction the
+        person had already made in Plex take up to a week to show up. Dropping cached titles the read
+        did not return: guarded instead by proof the read saw the whole library, a confirming re-read
+        before any large deletion, and the fact that a wrong drop of one title returns on the next
+        sync. And withdrawing pick credit (#108, the dashboard still calling an un-marked title
+        "finished"): guarded instead by the completeness of the read plus withdrawal's own rules —
+        never a credit we watched happen, never one past 30 days, never an empty history.
         """
         stamp = store.get("report.watch_full_at")
         if not isinstance(stamp, str) or not stamp:
@@ -379,10 +381,17 @@ class WatchSync:
                 logger.warning(
                     "watch-sync: play-history read failed ({}) — watched state is still fresh", type(e).__name__
                 )
-            # Left on the weekly cadence deliberately, even though every read is now complete.
-            # Withdrawal removes pick credit, and moving it from weekly to every pass is a separate
-            # behaviour change that deserves its own review — not a side effect of this one.
-            reconcile_watched(profiles, full_resync=sweep_dead)
+            # `complete_read=True` unconditionally: every read above is complete (`force_full=True`),
+            # so absence from one is real evidence of an un-watch rather than a narrow cursor.
+            #
+            # This used to be gated on the WEEKLY sweep, which is what made a pick keep its credit for
+            # up to seven days after the person un-marked it in Plex — reported on #108, where the
+            # dashboard went on calling a title "finished" that Plex no longer had as watched. The
+            # gate was protecting against incremental reads, which no longer exist. Withdrawal's real
+            # guards are unchanged and are the ones that matter: it never touches a credit we watched
+            # happen (a play-log row or a watch percentage), never one older than 30 days, and never
+            # runs for a person whose history came back empty.
+            reconcile_watched(profiles, complete_read=True)
             with self._sessions() as session:
                 store = SettingsStore(session)
                 # Stamp the sync so the dashboard can show "watch status synced N ago".

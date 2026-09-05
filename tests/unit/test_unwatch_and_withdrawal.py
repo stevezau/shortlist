@@ -149,7 +149,7 @@ class TestUnwatchingWithdrawsOnlyAFlagBackedCredit:
             s.commit()
 
     def sync(self, world, history, *, full):
-        reconcile_watched(world, [profile(history)], full_resync=full)
+        reconcile_watched(world, [profile(history)], complete_read=full)
 
     def test_a_flag_only_credit_is_withdrawn_when_the_flag_goes(self, world):
         self.a_credited_pick(world, tmdb=510)
@@ -272,7 +272,7 @@ class TestSettledHistoryIsNeverErased:
         self.a_credit_aged(world, tmdb=510, days=UNWATCH_WITHDRAW_DAYS + 5)
         other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
 
-        reconcile_watched(world, [profile(other)], full_resync=True)
+        reconcile_watched(world, [profile(other)], complete_read=True)
 
         with world() as s:
             assert s.query(PickRow).filter_by(tmdb_id=510).one().watched_at is not None
@@ -285,7 +285,7 @@ class TestSettledHistoryIsNeverErased:
         self.a_credit_aged(world, tmdb=511, days=UNWATCH_WITHDRAW_DAYS - 5)
         other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
 
-        reconcile_watched(world, [profile(other)], full_resync=True)
+        reconcile_watched(world, [profile(other)], complete_read=True)
 
         with world() as s:
             assert s.query(PickRow).filter_by(tmdb_id=511).one().watched_at is None
@@ -324,7 +324,7 @@ class TestAWithdrawnCreditLeavesNothingBehind:
             s.commit()
         other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
 
-        reconcile_watched(world, [profile(other)], full_resync=True)
+        reconcile_watched(world, [profile(other)], complete_read=True)
 
         with world() as s:
             row = s.query(PickRow).filter_by(tmdb_id=510).one()
@@ -345,7 +345,7 @@ class TestUnwatchingAndSharedRows:
         # Plex says watched, but there is no session and no play-log entry.
         history = [WatchedItem(title="Fight Club", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=550)]
 
-        reconcile_watched(world, [profile(history)], full_resync=True)
+        reconcile_watched(world, [profile(history)], complete_read=True)
 
         with world() as s:
             assert s.query(SharedRowWatch).count() == 0, (
@@ -362,7 +362,7 @@ class TestUnwatchingAndSharedRows:
 
         # They un-watch it: it is absent from a full history read.
         other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
-        reconcile_watched(world, [profile(other)], full_resync=True)
+        reconcile_watched(world, [profile(other)], complete_read=True)
 
         with world() as s:
             assert s.query(SharedRowWatch).count() == 1, "we saw them press play; that still happened"
@@ -528,7 +528,7 @@ class TestALiveCreditIsNotWithdrawnByAResyncThatMissedIt:
             s.commit()
         other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
 
-        reconcile_watched(world, [profile(other)], full_resync=True)
+        reconcile_watched(world, [profile(other)], complete_read=True)
 
         with world() as s:
             row = s.query(PickRow).filter_by(tmdb_id=510).one()
@@ -560,7 +560,7 @@ class TestALiveCreditIsNotWithdrawnByAResyncThatMissedIt:
             s.commit()
         other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
 
-        reconcile_watched(world, [profile(other)], full_resync=True)
+        reconcile_watched(world, [profile(other)], complete_read=True)
 
         with world() as s:
             assert s.query(PickRow).filter_by(tmdb_id=511).one().watched_at is None
