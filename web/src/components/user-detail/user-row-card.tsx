@@ -38,6 +38,9 @@ function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
   const muted =
     (mute.isPending ? mute.variables?.patch.muted : undefined) ?? row.muted;
 
+  // This person's override if they have one, else the row's own size. The ceiling, not a count.
+  const configuredSize = row.override.row_size ?? row.size;
+
   // The mute sends ONLY {muted} so it can never persist a half-changed size; the drawer sends only
   // the size (the server writes just the fields it receives).
   const setMuted = (nextMuted: boolean) =>
@@ -75,9 +78,14 @@ function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
               {row.is_default && <Badge variant="outline">default</Badge>}
               {muted && <Badge variant="secondary">muted</Badge>}
             </div>
+            {/* The configured size is a CEILING, and printing it bare put "15 titles" directly
+                above a list offering "Show all 10 (+5)" — one number apparently disagreeing with
+                itself. Say which is which: what they actually got, out of what the row allows. */}
             <p className="text-sm text-muted-foreground">
-              {row.override.row_size ?? row.size} titles ·{" "}
-              {row.media === "both" ? "movies & shows" : `${row.media}s`}
+              {!muted && row.picks.length > 0
+                ? `${row.picks.length} of ${configuredSize} titles`
+                : `up to ${configuredSize} titles`}{" "}
+              · {row.media === "both" ? "movies & shows" : `${row.media}s`}
             </p>
           </div>
           <label className="flex items-center gap-2 text-sm text-muted-foreground">

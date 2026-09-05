@@ -6,6 +6,19 @@ import type { Pick } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
+ * The seed credit, appended only when the reason has not already named it.
+ *
+ * The engine's own reason usually names the seed — "Because you watched drama like Movie 08" — so
+ * appending "· inspired by Movie 08" restated the first clause on the same line. Substring, not an
+ * exact match: the reason embeds the title inside a sentence, it never equals it.
+ */
+function seedNote(pick: Pick): string {
+  const seed = pick.seed_title;
+  if (!seed) return "";
+  return pick.reason.includes(seed) ? "" : ` · inspired by ${seed}`;
+}
+
+/**
  * The ranked "#1 Title — why we picked it · inspired by Seed" list, shared by the per-user row card
  * and the run-detail results. Sorts by rank so callers can pass picks in any order.
  *
@@ -65,7 +78,7 @@ export function PickList({
               <span className="text-muted-foreground">
                 {" "}
                 — {pick.reason}
-                {pick.seed_title ? ` · inspired by ${pick.seed_title}` : ""}
+                {seedNote(pick)}
               </span>
               {/* Where it came from, on its own line: "why is this here?" was previously
                   unanswerable without reading the logs. */}

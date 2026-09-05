@@ -30,7 +30,7 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { buildLabel } from "@/lib/format";
 import { useSession, useVersion } from "@/lib/queries";
-import { GITHUB_REPO, SPONSOR_URL } from "@/lib/support";
+import { DOCS_URL, SPONSOR_URL } from "@/lib/support";
 import { Toaster } from "sonner";
 
 import { cn } from "@/lib/utils";
@@ -59,7 +59,7 @@ export function HelpLinks() {
   return (
     <div className="space-y-1 px-3">
       <a
-        href={`${GITHUB_REPO}#readme`}
+        href={DOCS_URL}
         target="_blank"
         rel="noopener noreferrer"
         className={linkClass}

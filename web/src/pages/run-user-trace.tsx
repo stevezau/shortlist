@@ -43,6 +43,7 @@ import {
   orderingRows,
   requestNote,
   shortlistBreakdown,
+  mediaGroupLabel,
   mediaLabel,
   sourceRole,
   watchedSummary,
@@ -86,7 +87,8 @@ export function RunUserTracePage() {
   const runId = Number(id);
   const uid = Number(userId);
   const isRow = rowSlug !== undefined;
-  const valid = Number.isFinite(runId) && (isRow ? Boolean(rowSlug) : Number.isFinite(uid));
+  const valid =
+    Number.isFinite(runId) && (isRow ? Boolean(rowSlug) : Number.isFinite(uid));
   // Both hooks always run — hooks cannot be called conditionally — and `enabled` decides which one
   // actually fetches.
   const userQuery = useRunUserTrace(runId, uid, valid && !isRow);
@@ -100,6 +102,18 @@ export function RunUserTracePage() {
         collections.data?.find((row) => row.slug === rowSlug)?.name ?? "",
       ) || undefined
     : undefined;
+  // Every row's name by slug, for the same reason and by the same rule: the trace's own
+  // `selection` entries carry slugs, and printing one in prose reads as a stray token.
+  const rowNames = useMemo(
+    () =>
+      Object.fromEntries(
+        (collections.data ?? []).flatMap((row) => {
+          const name = rowDisplayName(row.name);
+          return name ? [[row.slug, name] as const] : [];
+        }),
+      ),
+    [collections.data],
+  );
 
   return (
     <div className="space-y-6">
@@ -126,6 +140,7 @@ export function RunUserTracePage() {
               data={data}
               userId={uid}
               rowName={rowName}
+              rowNames={rowNames}
               sharedRow={isRow}
             />
           )}
@@ -159,6 +174,7 @@ export function TraceView({
   data,
   userId,
   rowName,
+  rowNames = {},
   sharedRow = false,
 }: {
   data: RunUserTraceResponse;
@@ -167,6 +183,9 @@ export function TraceView({
    *  row is called. `display_name` carries a per-LIBRARY rendered title ("Popular Movies on SFLIX"),
    *  which would name the whole row after one of its libraries. */
   rowName?: string;
+  /** Every row's name by SLUG, for the shortlist and delivery lines — the trace records slugs.
+   *  Optional so the view still renders standalone; unknown slugs fall back to the slug itself. */
+  rowNames?: Record<string, string>;
   /** A shared row belongs to nobody, so the person-framed copy in this view is wrong for it. */
   sharedRow?: boolean;
 }) {
@@ -208,14 +227,15 @@ export function TraceView({
             />
             {current && (
               <LibraryFlow
-                  lib={current}
-                  sharedRow={sharedRow}
-                  userId={userId}
-                  ratings={data.trace?.history?.ratings}
-                  selection={(data.trace?.selection ?? []).filter(
-                    (e) => e.library === current.label,
-                  )}
-                />
+                lib={current}
+                sharedRow={sharedRow}
+                userId={userId}
+                ratings={data.trace?.history?.ratings}
+                selection={(data.trace?.selection ?? []).filter(
+                  (e) => e.library === current.label,
+                )}
+                rowNames={rowNames}
+              />
             )}
           </>
         )}
@@ -321,7 +341,9 @@ function ShortlistTitles({ lib }: { lib: LibraryView }): ReactNode {
                     // Keyed "<tmdb_id>:<media>" — the pair, because a tmdb_id is NOT unique on
                     // its own (`uq_request_candidate_title` is (tmdb_id, media_type)). Falling back
                     // to the movie key would report a movie's request against a show of the same id.
-                    const note = requestNote(requests[`${t.tmdb_id}:${t.media}`]);
+                    const note = requestNote(
+                      requests[`${t.tmdb_id}:${t.media}`],
+                    );
                     return note ? (
                       <span className="text-primary/80">{note}</span>
                     ) : null;
@@ -336,15 +358,31 @@ function ShortlistTitles({ lib }: { lib: LibraryView }): ReactNode {
   );
 }
 
+/**
+ * A row's NAME for these lines, from its slug.
+ *
+ * `TraceSelection.row` is the slug the engine writes (`rows.py`: `"row": spec.slug`), and both
+ * lines below lead with it in bold — so a row configured as "✨ {library_name} Picked for You"
+ * announced itself as **picked** in the middle of a sentence written for a person. `rowNames` is
+ * the collections list keyed by slug; the slug remains the fallback for a row that has since been
+ * deleted, where there is no name left to show.
+ */
+function rowLabel(slug: string, rowNames: Record<string, string>): string {
+  return rowNames[slug] || slug;
+}
+
 /** What the release-date weight and the pool cap did to this library's shortlist. */
-function shortlistBody(entries: TraceSelection[]): ReactNode {
+function shortlistBody(
+  entries: TraceSelection[],
+  rowNames: Record<string, string>,
+): ReactNode {
   if (entries.length === 0) return null;
   return (
     <ul className="space-y-3">
       {entries.map((entry) => (
         <li key={entry.row} className="space-y-1 text-sm">
           <p>
-            <span className="font-medium">{entry.row}</span>
+            <span className="font-medium">{rowLabel(entry.row, rowNames)}</span>
             {entry.candidates != null && (
               <>
                 {" — "}
@@ -369,13 +407,16 @@ function shortlistBody(entries: TraceSelection[]): ReactNode {
 /** Whether the row was actually re-picked tonight, and what to do if it wasn't. This is the fact
  *  that was missing entirely: most nights a row is redelivered untouched and the page looked
  *  identical to a rebuild, so "I changed a setting and nothing moved" was unanswerable. */
-function deliveryNote(entries: TraceSelection[]): ReactNode {
+function deliveryNote(
+  entries: TraceSelection[],
+  rowNames: Record<string, string>,
+): ReactNode {
   if (entries.length === 0) return null;
   return (
     <ul className="mb-3 space-y-1.5 text-sm">
       {entries.map((entry) => (
         <li key={entry.row}>
-          <span className="font-medium">{entry.row}</span>{" "}
+          <span className="font-medium">{rowLabel(entry.row, rowNames)}</span>{" "}
           <span
             className={
               entry.decision === "carried_forward" ||
@@ -519,12 +560,16 @@ function LibraryFlow({
   userId,
   ratings,
   selection = [],
+  rowNames = {},
   sharedRow = false,
 }: {
   lib: LibraryView;
   userId?: number;
   ratings?: TraceRatings;
   selection?: TraceSelection[];
+  /** Row slug → the row's configured name, so the shortlist and delivery lines can name a row the
+   *  way the owner does rather than by its slug. Empty is safe: the slug is the fallback. */
+  rowNames?: Record<string, string>;
   /** A SHARED row belongs to nobody, so every "they / their" in this flow is wrong for it — and it
    *  records no per-person history stage at all, by design. */
   sharedRow?: boolean;
@@ -576,10 +621,10 @@ function LibraryFlow({
       subtitle: sharedRow
         ? "A shared row is built from what SEVERAL people watched, pooled — so it records no single person's history. The seeds below are the titles that cleared the row's minimum number of watchers."
         : isCold
-        ? `${watchedSummary(lib) || "Not enough watched here yet"} — too little to recommend from, so this is a cold start.`
-        : totalWatched > 0
-          ? `${watchedSummary(lib)}. Their most recent are below — what someone reached for lately is the best signal of what to recommend tonight, so each becomes a search seed for the step below.`
-          : "Their most recent watches, newest first — each becomes a search seed for the step below.",
+          ? `${watchedSummary(lib) || "Not enough watched here yet"} — too little to recommend from, so this is a cold start.`
+          : totalWatched > 0
+            ? `${watchedSummary(lib)}. Their most recent are below — what someone reached for lately is the best signal of what to recommend tonight, so each becomes a search seed for the step below.`
+            : "Their most recent watches, newest first — each becomes a search seed for the step below.",
       body: recentBody,
     },
     {
@@ -623,7 +668,7 @@ function LibraryFlow({
               "Everything found above is filtered (already watched, wrong library, excluded genres) and then cut to the strongest few per media type. Release date is part of that cut, not applied after it.",
             body: (
               <>
-                {shortlistBody(selection)}
+                {shortlistBody(selection, rowNames)}
                 <ShortlistTitles lib={lib} />
               </>
             ),
@@ -653,7 +698,7 @@ function LibraryFlow({
       body:
         lib.delivered.length > 0 ? (
           <>
-            {deliveryNote(selection)}
+            {deliveryNote(selection, rowNames)}
             <DeliveredList delivered={lib.delivered} />
           </>
         ) : (
@@ -1028,6 +1073,28 @@ function BranchConnector() {
   );
 }
 
+/**
+ * "The genres they watch most — movies: Drama, Thriller." — as an English sentence.
+ *
+ * This used to join the raw map: `${mediaLabel(m)} — ${gs.join(", ") || "none"}`, which on a
+ * library with no genre lean printed "The genres they watch most: Movie — none." — a media-type
+ * TOKEN mid-sentence, a dash standing in for a verb, and "none" answering a question the sentence
+ * had just promised an answer to. Media types with nothing to report are dropped rather than
+ * printed as "none", and when none of them has anything the sentence says that instead of
+ * pretending to list something.
+ */
+function discoverGenreSentence(genres: Record<string, string[]>): string {
+  const listed = Object.entries(genres).filter(([, gs]) => gs.length > 0);
+  if (listed.length === 0) {
+    return "No genre stands out in what they have watched here yet, so this source had nothing to narrow on.";
+  }
+  const parts = listed.map(
+    ([media, gs]) =>
+      `${mediaGroupLabel(media).toLowerCase()}: ${gs.join(", ")}`,
+  );
+  return `The genres they watch most — ${parts.join("; ")}.`;
+}
+
 function SourceCard({
   src,
   discoverGenres,
@@ -1058,18 +1125,30 @@ function SourceCard({
                   confusion was "what does 40 · 4 kept · 4 dropped even mean". */}
               <p className="text-xs text-muted-foreground">
                 {sourceRole(src.source)} It added{" "}
-                {src.contributed.toLocaleString()} title
+                {src.contributed.toLocaleString()} new title
                 {src.contributed === 1 ? "" : "s"} to the pool.
               </p>
               {(kept > 0 || droppedCount > 0) && (
-                <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <span className="inline-flex items-center gap-1 text-success">
-                    <Check className="h-3 w-3" aria-hidden="true" />
-                    {kept} made the shortlist
-                  </span>
-                  <span aria-hidden="true">·</span>
-                  <span>{droppedCount} dropped (see below)</span>
-                </p>
+                <>
+                  {/* The two numbers count DIFFERENT things and nothing said so — the comment
+                      that used to sit here recorded a real person being confused by it, and then
+                      left the confusion in place. `contributed` is net-new after dedup;
+                      kept/dropped covers everything this source returned, including titles another
+                      source had already added. Both right, different denominators, so the second
+                      line names its own. */}
+                  <p className="text-xs text-muted-foreground">
+                    Counting everything it returned, including titles another
+                    source found first:
+                  </p>
+                  <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <span className="inline-flex items-center gap-1 text-success">
+                      <Check className="h-3 w-3" aria-hidden="true" />
+                      {kept} made the shortlist
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span>{droppedCount} dropped (see below)</span>
+                  </p>
+                </>
               )}
             </>
           )}
@@ -1085,11 +1164,7 @@ function SourceCard({
       {src.source === "tmdb_discover" &&
         Object.keys(discoverGenres).length > 0 && (
           <p className="border-t px-3 py-2 text-xs text-muted-foreground">
-            The genres they watch most:{" "}
-            {Object.entries(discoverGenres)
-              .map(([m, gs]) => `${mediaLabel(m)} — ${gs.join(", ") || "none"}`)
-              .join("; ")}
-            .
+            {discoverGenreSentence(discoverGenres)}
           </p>
         )}
 
@@ -1333,7 +1408,11 @@ function WebSourceCard({
   const kept =
     [...fateByTitle.values()].filter((f) => f === "kept").length ||
     (source?.disposition?.kept ?? 0);
-  const mech = webMechanism(web?.mode ?? "", searches.length > 0, web?.provider);
+  const mech = webMechanism(
+    web?.mode ?? "",
+    searches.length > 0,
+    web?.provider,
+  );
   // Exa bills per search, so a title many users watched is searched once and reused from a shared
   // cache for the rest. Surface how many actually hit Exa vs came back cached — it's the difference
   // between a costly run and a cheap one.
@@ -1574,7 +1653,8 @@ function OrderingEvidence({ entry }: { entry: RunLibraryBreakdown }) {
   // Counted from THIS row. The fair-share passes run per row, so a library fed by two rows of 10
   // was claiming "In this row, 20 picks" — a number no row produced — over two correct lists of 10.
   const sources = new Set<string>();
-  for (const p of entry.picks) for (const src of p.sources ?? []) sources.add(src);
+  for (const p of entry.picks)
+    for (const src of p.sources ?? []) sources.add(src);
   const seedTitles = new Set(
     entry.picks.map((p) => p.seed_title).filter((t): t is string => Boolean(t)),
   );
@@ -1590,8 +1670,8 @@ function OrderingEvidence({ entry }: { entry: RunLibraryBreakdown }) {
         </span>{" "}
         and{" "}
         <span className="font-medium text-foreground">
-          {seedTitles.size} different title{seedTitles.size === 1 ? "" : "s"} you
-          watched
+          {seedTitles.size} different title{seedTitles.size === 1 ? "" : "s"}{" "}
+          you watched
         </span>{" "}
         — spread across your tastes, not stacked on one.
       </p>

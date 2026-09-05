@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { useAutosavedSettings } from "@/lib/autosave";
 import { settingBool } from "@/lib/format";
 import { useLibraries, useLibraryCollections } from "@/lib/queries";
+import { DOCS_SHELF_CONTENTION_URL } from "@/lib/support";
 import type { PlexLibrary, Settings } from "@/lib/types";
 
 const selectClass =
@@ -152,10 +153,10 @@ function LibraryPlacement({
       )}
       {anchorOffShelf && (
         <p className="text-sm text-destructive-text">
-          “{entry?.anchor}” isn’t on any of this library’s Plex shelves, so there’s
-          no position to anchor to. Turn it on in Plex (the library’s Manage
-          Recommendations screen) or choose something else — until then these
-          rows stay where they are.
+          “{entry?.anchor}” isn’t on any of this library’s Plex shelves, so
+          there’s no position to anchor to. Turn it on in Plex (the library’s
+          Manage Recommendations screen) or choose something else — until then
+          these rows stay where they are.
         </p>
       )}
     </div>
@@ -210,27 +211,31 @@ export function RowPlacementSection({ settings }: { settings: Settings }) {
                 will leave it alone. Rows are still built, delivered and kept
                 private either way.
               </p>
-              {/* The same advice is in the "something is reordering your shelf" notification, but
-                  that one only fires while this switch is ON — and turning it off is the fix it
-                  recommends. Owners who take that advice would never hear this otherwise. */}
+              {/* One clause and a link, not the 458-character version this used to print
+                  unconditionally — a fork recommendation, a GitHub URL and a Docker image name, on
+                  a settings screen, for a tool most owners do not run.
+
+                  The WARNING survives the trim, because it is the half that matters and it is not
+                  in the guides: an unmaintained Agregarr re-promotes collections with Plex's
+                  defaults, which puts other people's rows on the owner's own Home. Hedged, as it
+                  always was — Shortlist clears that every run, so it is a gap between runs.
+
+                  This line stays on screen at all rather than being left to the "something is
+                  reordering your shelf" notification, because that one only fires while this
+                  switch is ON — and turning it off is the fix it recommends. */}
               <p className="text-sm text-muted-foreground">
-                If it’s <strong className="text-foreground">Agregarr</strong>,
-                check which one you run. The original is no longer actively
-                released, and reordering a shelf on it re-promotes collections
-                with Plex’s defaults — which puts other people’s rows on{" "}
-                <em>your</em> Home, the one place no share filter can cover.
-                Shortlist clears that on every run, so it’s a gap between runs
-                rather than something permanent. The maintained fork at{" "}
+                Running one of those? An out-of-date{" "}
+                <strong className="text-foreground">Agregarr</strong> can put
+                other people’s rows on <em>your</em> Home between runs.{" "}
                 <a
-                  href="https://github.com/bitr8/agregarr-dev"
+                  href={DOCS_SHELF_CONTENTION_URL}
                   target="_blank"
                   rel="noreferrer"
-                  className="underline underline-offset-2 hover:text-foreground"
+                  className="font-medium underline underline-offset-2 hover:text-foreground"
                 >
-                  bitr8/agregarr-dev
-                </a>{" "}
-                (Docker: <code>bitr8/agregarr</code>) fixes it at the source and
-                is a drop-in swap.
+                  How to run one alongside Shortlist
+                </a>
+                .
               </p>
             </div>
             <Switch

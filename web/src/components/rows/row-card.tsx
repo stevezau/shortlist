@@ -1,12 +1,12 @@
 import {
   Image as ImageIcon,
   ListChecks,
+  Trash2,
   UserCheck,
   Users as UsersIcon,
 } from "lucide-react";
 import { Link } from "react-router";
 
-import { RowDestructiveActions } from "@/components/rows/row-destructive-actions";
 import { RowRunAction } from "@/components/rows/row-run-action";
 import { RowEnableToggle } from "@/components/rows/row-enable-toggle";
 import { Badge } from "@/components/ui/badge";
@@ -38,6 +38,13 @@ import { cn } from "@/lib/utils";
 const ROW_NAME_TOKEN_SPLIT = /(\{(?:user|top_seed|library_name)\})/;
 const ROW_NAME_TOKEN = /^\{(?:user|top_seed|library_name)\}$/;
 
+/** Whether this name renders any chips, so a caller can explain what a chip IS only when one is on
+ *  screen. Shares the pattern above rather than re-deriving the token list, which is the whole
+ *  reason that pattern is written out so carefully. */
+export function hasRowNameToken(name: string): boolean {
+  return ROW_NAME_TOKEN_SPLIT.test(name);
+}
+
 function RowCardName({ name }: { name: string }) {
   const parts = name.split(ROW_NAME_TOKEN_SPLIT);
   return (
@@ -58,11 +65,16 @@ function RowCardName({ name }: { name: string }) {
   );
 }
 
-/** One row in the Rows list: its audience/size summary, an enable toggle, edit, and delete.
+/** One row in the Rows list: its audience/size summary, an enable toggle, edit, and the way out.
  *
  * Renaming is NOT here. It lives in the editor beside the name it changes, which is where someone
- * looking to rename a row goes anyway — and on a card it was a third destructive-ish Plex write
- * competing for space with the two that had to stay.
+ * looking to rename a row goes anyway.
+ *
+ * Neither is removal, for the same reason. "Remove from Plex" and "Delete" sat here side by side
+ * with nothing on the card saying which one loses the row's settings — a hover title each, and
+ * nothing at all on a phone. The editor's danger section already explains the difference in a
+ * sentence above the very same two buttons, so this card links there instead of growing a third
+ * copy of that sentence on every row.
  */
 export function RowCard({
   collection,
@@ -166,9 +178,9 @@ export function RowCard({
             </div>
           )}
         </div>
-        {/* Wraps: six controls (toggle, Run, Runs, Edit, Remove from Plex, Delete) need well over
-            500px in one line, so on a phone they ran off the screen and Delete was unreachable.
-            Wrapping costs a row of height on narrow screens and changes nothing above it. */}
+        {/* Wraps: five controls need well over 400px in one line, so on a phone they ran off the
+            screen and the last one was unreachable. Wrapping costs a row of height on narrow
+            screens and changes nothing above it. */}
         <div className="flex flex-wrap items-center justify-end gap-2">
           <RowEnableToggle collection={collection} />
           {/* Rebuild, then the history of rebuilding — "Run" beside "Runs" in that order, because
@@ -189,7 +201,25 @@ export function RowCard({
           <Button variant="outline" size="sm" onClick={onEdit}>
             Edit
           </Button>
-          <RowDestructiveActions collection={collection} />
+          {/* ONE door, matching the editor's — not "Remove from Plex" and "Delete" side by side.
+              They are not interchangeable (one keeps the row's settings and rebuilds it next run,
+              the other destroys it), and nothing on the card said which was which except a hover
+              title. The editor already states the difference in a sentence above the same two
+              buttons, so this sends you there rather than restating it on every card. */}
+          <Button
+            asChild
+            variant="ghost"
+            size="sm"
+            className="text-destructive-text hover:text-destructive-text"
+          >
+            <Link
+              to={`/rows/${collection.id}#remove-this-row`}
+              aria-label={`Remove or delete ${collection.name}`}
+            >
+              <Trash2 aria-hidden="true" />
+              Remove or delete
+            </Link>
+          </Button>
         </div>
       </CardContent>
     </Card>

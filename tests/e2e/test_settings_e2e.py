@@ -36,7 +36,9 @@ class TestConnectionCards:
 
         plex = page.get_by_test_id("connection-plex")
         plex.get_by_role("button", name="Test").click()
-        expect(plex).to_contain_text("Connected to FakePlex (PMS 1.43.3.10793)", timeout=LOAD)
+        # Spelled out, not "PMS": the abbreviation is ours, and the owner reading this card has no
+        # reason to know it (audit finding, Sep 2026).
+        expect(plex).to_contain_text("Connected to FakePlex (Plex Media Server 1.43.3.10793)", timeout=LOAD)
 
         tmdb = page.get_by_test_id("connection-tmdb")
         tmdb.get_by_role("button", name="Test").click()

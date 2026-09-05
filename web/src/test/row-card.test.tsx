@@ -113,15 +113,34 @@ describe("RowCard", () => {
     expect(startRun).not.toHaveBeenCalled();
   });
 
-  it("offers Delete on the default row, same as every other row", async () => {
-    // The default row used to hide this button, so the first card in the list lacked the control
-    // every card below it had, with nothing on screen explaining why. Disabling it is still the
+  it("offers the way out on the default row, same as every other row", async () => {
+    // The default row used to hide this control, so the first card in the list lacked what every
+    // card below it had, with nothing on screen explaining why. Disabling it is still the
     // reversible option; deleting it is allowed.
     renderCard(collection({ slug: "picked", name: "Picked for You" }));
 
     expect(
-      await screen.findByRole("button", { name: /Delete Picked for You/ }),
-    ).toBeEnabled();
+      await screen.findByRole("link", {
+        name: /Remove or delete Picked for You/,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers ONE way out, pointing at the editor that explains the difference", async () => {
+    // "Remove from Plex" and "Delete" sat here side by side with nothing saying which one loses the
+    // row's settings — a hover title each, and nothing at all on a phone (audit finding, Sep 2026).
+    // The editor's danger section already states the difference above the same two buttons.
+    renderCard(collection({ id: 9, slug: "gems", name: "Hidden Gems" }));
+
+    const out = await screen.findByRole("link", {
+      name: /Remove or delete Hidden Gems/,
+    });
+    expect(out).toHaveAttribute("href", "/rows/9#remove-this-row");
+    // Neither of the two ambiguous buttons may survive on the card.
+    expect(screen.queryByRole("button", { name: /^Delete/ })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /Remove Hidden Gems from Plex/ }),
+    ).toBeNull();
   });
 
   it("shows a row's own sources and libraries so overrides are visible without opening it", async () => {

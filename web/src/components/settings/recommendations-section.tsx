@@ -326,9 +326,11 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 onChange={setRecency}
               />
             </div>
-            {/* The BROADER knob first. These two were the other way round, which gave no clue that
-                this one governs every source and the one below only slices the front of that same
-                list — `candidates.py` searches `seeds[:recent_count]`. Both labels are imported, not
+            {/* The narrower knob is NESTED inside the broader one, the way "Treat as didn't like
+                it" nests under "Respect Plex ratings" — because it is not a peer of it: it is a
+                slice of the very list above (`candidates.py` searches `seeds[:recent_count]`).
+                Side by side, the only clue to that was word order, and the sub-field had to spend
+                a whole paragraph explaining the setting above it. Both labels are imported, not
                 retyped: they are shared with the row editor, and a setting that goes by two names
                 across two screens is the bug this pairing already shipped once. */}
             <div className="space-y-2 border-t pt-4">
@@ -354,31 +356,31 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 />
                 <span className="text-sm text-muted-foreground">watches</span>
               </div>
-            </div>
-            <div className="space-y-2 border-t pt-4">
-              <Label htmlFor="recent-count">{RECENT_COUNT_LABEL}</Label>
-              <p className="text-sm text-muted-foreground">
-                A narrower slice of the same list: how many of those watches the
-                AI web search runs a &ldquo;what to watch if you liked X&rdquo;
-                search for. Fewer = tighter and cheaper, and setting it higher
-                than <strong>{MAX_SEEDS_LABEL}</strong> changes nothing. Results
-                are cached for 7 days and shared across people.
-              </p>
-              <div className="flex items-center gap-2">
-                <Input
-                  id="recent-count"
-                  type="number"
-                  min={1}
-                  max={25}
-                  value={recentCount}
-                  onChange={(e) =>
-                    setRecentCount(
-                      Math.max(1, Math.min(25, Number(e.target.value) || 1)),
-                    )
-                  }
-                  className="w-24"
-                />
-                <span className="text-sm text-muted-foreground">watches</span>
+              <div className="space-y-2 pt-2">
+                <Label htmlFor="recent-count">{RECENT_COUNT_LABEL}</Label>
+                {/* No "cached for 7 days" here any more: the AI web search card above owns the
+                    cost story and already says it, in more detail. */}
+                <p className="text-sm text-muted-foreground">
+                  How many of those the AI web search runs a &ldquo;what to
+                  watch if you liked X&rdquo; search for, newest first. Higher
+                  than the number above changes nothing.
+                </p>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="recent-count"
+                    type="number"
+                    min={1}
+                    max={25}
+                    value={recentCount}
+                    onChange={(e) =>
+                      setRecentCount(
+                        Math.max(1, Math.min(25, Number(e.target.value) || 1)),
+                      )
+                    }
+                    className="w-24"
+                  />
+                  <span className="text-sm text-muted-foreground">watches</span>
+                </div>
               </div>
             </div>
             {/* The switch and the line it draws stay in one block: "respect ratings" says nothing

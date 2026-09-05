@@ -24,6 +24,7 @@ import { PageHeader } from "@/components/page-header";
 import { EmptyState, QueryBoundary } from "@/components/query-boundary";
 import { Segmented } from "@/components/segmented";
 import { TitlePoster } from "@/components/title-poster";
+import { Why } from "@/components/why";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -380,24 +381,38 @@ function ArrStatusBadge({ view }: { view: ArrView }) {
     );
   }
   if (view.kind === "unreachable") {
+    // `max-w-full` + `min-w-0` + `flex-wrap` on the wrapper, because the disclosure's paragraph is
+    // a flex item here. MEASURED against the built stylesheet at 320/390/1024/1280: without them
+    // it is squeezed into a 111px column and stacks 312px tall at 320px; with them it takes the
+    // row's width and is 126px. Neither version scrolls the page sideways.
     return (
-      <Badge
-        variant="warning"
-        className="gap-1.5"
-        title={`Shortlist couldn't reach ${view.app}, so it can't say what state this title is in there. Check ${view.app} is running and that its URL and API key are right in Settings → Requests.`}
-      >
-        <TriangleAlert aria-hidden="true" className="h-3 w-3" />
-        Can&rsquo;t reach {view.app}
-      </Badge>
+      <span className="inline-flex min-w-0 max-w-full flex-wrap items-baseline">
+        <Badge variant="warning" className="gap-1.5">
+          <TriangleAlert aria-hidden="true" className="h-3 w-3" />
+          Can&rsquo;t reach {view.app}
+        </Badge>
+        <Why
+          text={`Shortlist couldn't reach ${view.app}, so it can't say what state this title is in there. Check ${view.app} is running and that its URL and API key are right in Settings → Requests.`}
+        />
+      </span>
     );
   }
   if (view.kind === "none") return null;
   const shown = ARR_STATUS_LABELS[view.status];
   if (!shown) return null;
+  // Downloaded / Downloading / Searching say everything in their label, so they stay a bare badge
+  // and the layout around them is untouched.
+  if (!shown.hint) return <Badge variant={shown.variant}>{shown.label}</Badge>;
+  // The two that DON'T — "Waiting for approval" and "Not monitored", the two statuses an owner most
+  // needs explained — carried 246- and 244-character remedies in a `title` and nowhere else:
+  // hover-only on a desktop, unreachable on a phone. `Why` is the app's existing answer to a long
+  // explanation that must stay reachable without taking a line, and it is a real button, so touch
+  // and keyboard both work.
   return (
-    <Badge variant={shown.variant} title={shown.hint}>
-      {shown.label}
-    </Badge>
+    <span className="inline-flex min-w-0 max-w-full flex-wrap items-baseline">
+      <Badge variant={shown.variant}>{shown.label}</Badge>
+      <Why text={shown.hint} />
+    </span>
   );
 }
 
@@ -637,7 +652,10 @@ function SentRow({
       <div className="min-w-0 flex-1 space-y-1.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="font-medium">{item.title}</p>
-          <div className="flex items-center gap-2">
+          {/* Wraps and shrinks, because the status badge beside these can open an explanation
+              underneath itself, and a non-wrapping row leaves it nowhere to go but a narrow
+              column (measured: 111px wide, 312px tall at 320px). */}
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <Badge variant="success" className="gap-1">
               <ArrGlyph className="h-3.5 w-3.5 rounded-[2px]" />
               Sent to {app}

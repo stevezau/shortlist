@@ -205,15 +205,17 @@ function RunRow({ run }: { run: Run }) {
               </span>
             )}
           </span>
-          {((run.stats.titles_added ?? 0) > 0 ||
-            (run.stats.titles_removed ?? 0) > 0) && (
-            <span title="Titles added to / rotated out of rows this run">
-              ·{" "}
-              <span className="text-success">
-                +{run.stats.titles_added ?? 0}
-              </span>
-              /−{run.stats.titles_removed ?? 0}
+          {/* The words ARE the legend. "+60/−0" needed one and had none — while the run's own
+              page labels the same two figures "added" and "rotated out", so the list and the
+              detail described one fact in two vocabularies. */}
+          {(run.stats.titles_added ?? 0) > 0 && (
+            <span>
+              · <span className="text-success">+{run.stats.titles_added}</span>{" "}
+              added
             </span>
+          )}
+          {(run.stats.titles_removed ?? 0) > 0 && (
+            <span>· −{run.stats.titles_removed} rotated out</span>
           )}
           {(run.stats.titles_requested ?? 0) > 0 && (
             <span title="Titles requested from Sonarr/Radarr">
@@ -231,35 +233,39 @@ function RunRow({ run }: { run: Run }) {
   );
 }
 
-/** The headline totals above the runs table: how many, how many worked, and when the last one ran. */
+/** How the run history reads in one line: all clean, or how many were not. */
+function historyHint(summary: RunsSummary): string {
+  // The caller only renders these tiles when `total > 0`; without this line an empty summary would
+  // fall through to `ok === total` and claim every run finished cleanly when there are none.
+  if (summary.total === 0) return "none yet";
+  if (summary.error > 0) return `${summary.error} failed`;
+  if (summary.ok === summary.total) return "all finished cleanly";
+  return `${summary.ok} finished cleanly`;
+}
+
+/**
+ * The headline above the runs table: when the last one ran, and what the history looks like.
+ *
+ * TWO tiles, not four. "Runs 1 / Succeeded 1 / Failed 0 / Last run" gave four boxes to one run's
+ * worth of information — three of them derivable from the fourth, and all four reading "1, 1, 0"
+ * on the install where a dashboard is least useful. The only number that cannot be derived is how
+ * many runs failed, so that is the hint on the count rather than a box of its own.
+ */
 function RunsStats({ summary }: { summary: RunsSummary }) {
   return (
-    <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <StatTile
-        icon={ListChecks}
-        label="Runs"
-        value={summary.total}
-        hint="recorded"
-      />
-      <StatTile
-        icon={CircleCheck}
-        label="Succeeded"
-        value={summary.ok}
-        hint="finished cleanly"
-        tone="success"
-      />
-      <StatTile
-        icon={CircleX}
-        label="Failed"
-        value={summary.error}
-        hint="ended in error"
-        tone={summary.error > 0 ? "destructive" : "default"}
-      />
+    <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
       <StatTile
         icon={CalendarClock}
         label="Last run"
         value={summary.last_finished ? timeAgo(summary.last_finished) : "never"}
         hint={summary.last_status ? runStatusLabel(summary.last_status) : "—"}
+      />
+      <StatTile
+        icon={summary.error > 0 ? CircleX : CircleCheck}
+        label="Runs recorded"
+        value={summary.total}
+        hint={historyHint(summary)}
+        tone={summary.error > 0 ? "destructive" : "default"}
       />
     </div>
   );
@@ -422,9 +428,13 @@ export function RunsPage() {
                         Duration are the two a narrow screen can spare: both are on the run's own
                         page, one tap away. */}
                     <TableHead>Run</TableHead>
-                    <TableHead className="hidden sm:table-cell">Trigger</TableHead>
+                    <TableHead className="hidden sm:table-cell">
+                      Trigger
+                    </TableHead>
                     <TableHead>Started</TableHead>
-                    <TableHead className="hidden md:table-cell">Duration</TableHead>
+                    <TableHead className="hidden md:table-cell">
+                      Duration
+                    </TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Users</TableHead>
                   </TableRow>

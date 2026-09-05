@@ -72,7 +72,7 @@ function StatusChip({
 function EffectTag({
   tag,
 }: {
-  tag: { text: string; title: string; destructive?: boolean };
+  tag: { text: string; title: string; destructive?: boolean; note?: string };
 }) {
   return (
     <span
@@ -111,8 +111,15 @@ export function JobRow({
   icon: LucideIcon;
   /** The row's primary action. Absent for automatic jobs — nothing here may start those. */
   action?: { label: string; run: () => void; pending: boolean };
-  /** What pressing this changes, if it changes anything outside Shortlist — see {@link EffectTag}. */
-  tag?: { text: string; title: string; destructive?: boolean };
+  /** What pressing this changes, if it changes anything outside Shortlist — see {@link EffectTag}.
+   *  `note` is the reassurance that has to stay VISIBLE beside a frightening tag; it renders on its
+   *  own line under the row rather than living in the tag's `title`. */
+  tag?: {
+    text: string;
+    title: string;
+    destructive?: boolean;
+    note?: string;
+  };
   /** Live progress, shown under the line WITHOUT expanding — a running job must be visible while
    *  the row is collapsed, or pressing Run looks like it did nothing. */
   live?: React.ReactNode;
@@ -205,6 +212,13 @@ export function JobRow({
           >
             {action.label}
           </Button>
+        )}
+
+        {/* `w-full` inside the wrapping flex row, so it takes a line of its own under everything
+            else at every width. A red "Can delete" whose only reassurance is a hover title is not
+            reassurance at all — on a phone there is no hover, and the tag is all that is left. */}
+        {tag?.note && (
+          <p className="w-full text-xs text-muted-foreground">{tag.note}</p>
         )}
       </div>
 

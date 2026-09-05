@@ -254,7 +254,23 @@ describe("what the page refuses to claim", () => {
 
     renderPage();
 
-    expect(await screen.findByText("Hides 0 of 0")).toBeVisible();
+    // The noun is part of the assertion now: "Hides 2 of 2" left the reader to guess two of what
+    // (audit finding, Sep 2026).
+    expect(await screen.findByText("Hides 0 of 0 rows")).toBeVisible();
+  });
+
+  it("says 'row', singular, when only one row is in play", async () => {
+    getPrivacyStatus.mockResolvedValue(
+      status({
+        accounts: [
+          account({ hides: ["r1"], should_hide: ["r1"], state: "hiding" }),
+        ],
+      }),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText("Hides 1 of 1 row")).toBeVisible();
   });
 
   it("shows the account's own filter conditions, so rule 3's preservation is visible", async () => {
@@ -285,11 +301,11 @@ describe("the enforcement panel", () => {
           run_id: null,
           measured_at: null,
           not_enforced: {},
-      unhideable: {},
-      unhideable_measured: false,
-      unhideable_run_id: null,
-      unhideable_measured_at: null,
-    },
+          unhideable: {},
+          unhideable_measured: false,
+          unhideable_run_id: null,
+          unhideable_measured_at: null,
+        },
       }),
     );
 
@@ -297,6 +313,14 @@ describe("the enforcement panel", () => {
 
     expect(await screen.findByText(/not checked recently/i)).toBeVisible();
     expect(screen.queryByText(/plex was applying the hide rules/i)).toBeNull();
+    // A status with nothing to do about it is a dead end on the panel an owner opens when they are
+    // already worried (audit finding, Sep 2026). The check rides a RUN, so say when it happens
+    // again and offer the page that starts one.
+    expect(screen.getByText(/every run checks again/i)).toBeVisible();
+    expect(screen.getByRole("link", { name: /go to runs/i })).toHaveAttribute(
+      "href",
+      "/runs",
+    );
   });
 
   it("names the run and when it measured", async () => {
@@ -319,11 +343,11 @@ describe("the enforcement panel", () => {
           run_id: 419,
           measured_at: "2026-09-05T01:00:00+00:00",
           not_enforced: { sarah: [21, 22] },
-      unhideable: {},
-      unhideable_measured: false,
-      unhideable_run_id: null,
-      unhideable_measured_at: null,
-    },
+          unhideable: {},
+          unhideable_measured: false,
+          unhideable_run_id: null,
+          unhideable_measured_at: null,
+        },
       }),
     );
 
@@ -349,11 +373,11 @@ describe("the enforcement panel", () => {
           run_id: 419,
           measured_at: "2026-09-05T01:00:00+00:00",
           not_enforced: { sarah: [21, 22] },
-      unhideable: {},
-      unhideable_measured: false,
-      unhideable_run_id: null,
-      unhideable_measured_at: null,
-    },
+          unhideable: {},
+          unhideable_measured: false,
+          unhideable_run_id: null,
+          unhideable_measured_at: null,
+        },
       }),
     );
 
@@ -367,19 +391,26 @@ describe("the enforcement panel", () => {
     expect(screen.queryByText(/missing a hide rule/i)).toBeNull();
   });
 
-  it("a verdict this build doesn't know renders as 'couldn't interpret', never as green", async () => {
-    // The SPA now trusts the server's ranking, so a sixth state nobody wired up here must not fall
+  it("a verdict this build doesn't know says so plainly, never green — and keeps the raw code out of the sentence", async () => {
+    // The SPA trusts the server's ranking, so a seventh state nobody wired up here must not fall
     // through to "Every account hides all N rows" — the one direction this page must never default.
+    //
+    // The second half is the audit finding: the token was interpolated straight into the English
+    // ("couldn't interpret this reading (rows_unknown)"). It is still on the page, because a
+    // server/SPA mismatch is exactly what a bug report needs — but as a labelled code to quote.
     getPrivacyStatus.mockResolvedValue(
       status({ summary: "some_future_state" }),
     );
 
     renderPage();
 
-    expect(
-      await screen.findByText(/couldn't interpret this reading/i),
-    ).toBeVisible();
+    const sentence = await screen.findByText(/doesn’t recognise the verdict/i);
+    expect(sentence).toBeVisible();
+    expect(sentence.textContent).not.toContain("some_future_state");
     expect(screen.queryByText(/every account hides all/i)).toBeNull();
+
+    const code = screen.getByText("some_future_state");
+    expect(code.tagName).toBe("CODE");
   });
 
   it("states the Home-only scope once, and never claims the Collections tab", async () => {

@@ -14,6 +14,7 @@ import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
 import { HelpLinks } from "@/components/layout/app-shell";
+import { DOCS_URL } from "@/lib/support";
 import type * as ApiModule from "@/lib/api";
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -50,11 +51,14 @@ describe("HelpLinks", () => {
     expect(issue.getAttribute("href")).toBe("/issue");
   });
 
-  it("still links out to the docs", () => {
+  it("links out to the docs SITE, not the repo README", () => {
+    // Changed with the audit: "Help & docs" used to open github.com/…#readme, which drops a
+    // non-technical owner into a source tree. shortlistapp.dev is the same material as pages.
     renderLinks();
 
     const docs = screen.getByRole("link", { name: /help & docs/i });
-    expect(docs.getAttribute("href")).toContain("github.com");
+    expect(docs.getAttribute("href")).toBe(DOCS_URL);
+    expect(docs.getAttribute("href")).toContain("shortlistapp.dev");
     expect(docs.getAttribute("target")).toBe("_blank");
   });
 

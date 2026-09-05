@@ -93,7 +93,10 @@ class TestTheSharingScreen:
         page.goto(f"{app.url}/sharing")
 
         expect(page.get_by_text("Sharing and privacy").first).to_be_visible(timeout=LOAD)
-        expect(page.get_by_text("that aren't theirs", exact=False).first).to_be_visible(timeout=LOAD)
+        # The PROMISE, not the mechanism. The subtitle used to open by describing what each account
+        # is "set to do" — which only means something to a reader who already knows about share
+        # filters (audit finding, Sep 2026).
+        expect(page.get_by_text("Nobody should see anyone else's row", exact=False).first).to_be_visible(timeout=LOAD)
         # The provenance is on screen: a reading without a timestamp reads as a standing guarantee.
         expect(page.get_by_text("Read from plex.tv at", exact=False).first).to_be_visible()
 

@@ -36,12 +36,25 @@ function renderAt(url: string) {
 }
 
 describe("UserDetailBody — which tab the URL selects", () => {
-  it("honours ?tab=history, which is where the dashboard links land", async () => {
+  it("honours ?tab=watched, which is where the dashboard links land", async () => {
     // The dashboard asserts the href it EMITS; without this nothing asserts the page honours it, so
     // renaming the key or the parse would leave every test green and land people on Rows.
+    renderAt("/users/1?tab=watched");
+
+    expect(
+      await screen.findByText(/What they did with their picks/i),
+    ).toBeTruthy();
+  });
+
+  it("still honours the old ?tab=history links", async () => {
+    // The tab is labelled "Watched" and its value said "history" (audit finding, Sep 2026). The
+    // value was renamed to match the label — but bookmarks and any link already sent out still say
+    // `history`, and silently landing them on Rows would be worse than the mismatch was.
     renderAt("/users/1?tab=history");
 
-    expect(await screen.findByText(/What they did with their picks/i)).toBeTruthy();
+    expect(
+      await screen.findByText(/What they did with their picks/i),
+    ).toBeTruthy();
   });
 
   it("defaults to Rows with no tab in the URL", () => {

@@ -1039,6 +1039,31 @@ class TestRowsWithNoNameForNewcomers:
         assert "Name for people with nothing watched yet" in got["body"]
         assert "Nothing has been deleted" in got["body"]
 
+    def test_the_title_names_the_row_without_its_placeholder_braces(self, session):
+        """Every row this alert can fire for has `{top_seed}` in its name by definition, so quoting
+        the name verbatim guaranteed a title with literal braces in it — "Because you watched
+        {top_seed} won't be built for…", in a sentence written for a person (audit, Sep 2026)."""
+        from shortlist.server.settings_store import SettingsStore
+
+        self._row(session, "because", "Because you watched {top_seed}")
+
+        got = notif._rows_with_no_name_for_newcomers(session, SettingsStore(session))
+
+        assert got is not None
+        assert "{" not in got["title"] and "}" not in got["title"]
+        assert "“Because you watched”" in got["title"]
+
+    def test_a_row_named_only_after_the_placeholder_still_gets_a_readable_title(self, session):
+        """Stripping leaves nothing at all here, and "“” won't be built" is worse than the braces."""
+        from shortlist.server.settings_store import SettingsStore
+
+        self._row(session, "seedonly", "{top_seed}")
+
+        got = notif._rows_with_no_name_for_newcomers(session, SettingsStore(session))
+
+        assert got is not None
+        assert got["title"].startswith("A row won")
+
     def test_it_goes_quiet_once_the_row_has_a_name(self, session):
         from shortlist.server.settings_store import SettingsStore
 

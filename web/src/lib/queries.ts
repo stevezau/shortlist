@@ -8,6 +8,7 @@ import {
 import { api } from "./api";
 import { runRefetchIntervalMs, runsListRefetchIntervalMs } from "./run-format";
 import { useSSE } from "./sse";
+import { useLiveClock } from "./use-live-clock";
 import type {
   ArrStatus,
   CollectionInput,
@@ -795,6 +796,41 @@ export function useReport(window: ReportWindow = "30") {
     queryFn: () => api.getReport(window),
     staleTime: 60_000,
   });
+}
+
+/**
+ * Has enough time passed for a per-person "picks watched" figure to mean anything?
+ *
+ * A pick only counts once it has had its full `matured_days` to be watched — the rule the dashboard
+ * already states in as many words, and withholds its own landing rate for. Until the OLDEST pick on
+ * the server reaches that age, no pick anywhere has had its chance, so every person's rate is 0 and
+ * says nothing about them. `formatHitRate` renders those as "—".
+ *
+ * Install-wide rather than per person, because that is the granularity the data supports: the users
+ * payload carries a rate but no pick dates. It is also monotonic — once the first pick is old
+ * enough this is true for good — which the windowed `landing.rate === null` would not be, since a
+ * quiet fortnight can empty that cohort on a mature server and hide rates that do mean something.
+ *
+ * Defaults to FALSE while the report is loading, so a 0 is withheld until it is known to be real
+ * rather than shown and then retracted.
+ *
+ * The clock comes from `useLiveClock`, not from `Date.now()` in the body: `Date.now()` is impure,
+ * and calling it while rendering makes the answer depend on when React happens to re-render
+ * (`react-hooks/purity` rejects it outright). The idle cadence is a minute, which is ample for a
+ * threshold measured in days — and it means a page left open across the boundary starts showing
+ * real rates without a reload.
+ *
+ * @returns True once picks are old enough for a zero to be a finding rather than a formality.
+ */
+export function useHitRatesMatured(): boolean {
+  const report = useReport();
+  const now = useLiveClock(false);
+  const firstPick = report.data?.first_pick;
+  const maturedDays = report.data?.overall.landing.matured_days;
+  if (!firstPick || maturedDays === undefined) return false;
+  const first = Date.parse(firstPick);
+  if (Number.isNaN(first)) return false;
+  return now - first >= maturedDays * 86_400_000;
 }
 
 /**

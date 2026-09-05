@@ -534,9 +534,10 @@ describe("ImpactReport", () => {
     const links = await screen.findAllByRole("link", { name: "Sarah H" });
     expect(links.length).toBeGreaterThanOrEqual(2); // By person, and the recent-watches feed
     for (const link of links) {
-      // `?tab=history` — arriving from a watch figure onto their ROW list is a second click for
-      // something the first click already asked.
-      expect(link.getAttribute("href")).toBe("/users/42?tab=history");
+      // `?tab=watched` — arriving from a watch figure onto their ROW list is a second click for
+      // something the first click already asked. The key matches the tab's LABEL now; it used to
+      // say `history` against a tab called "Watched" (audit finding, Sep 2026).
+      expect(link.getAttribute("href")).toBe("/users/42?tab=watched");
     }
   });
 

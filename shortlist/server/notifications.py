@@ -16,6 +16,7 @@ Shape (rendered by the React bell, so the fields are plain text — no HTML, no 
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func
@@ -198,6 +199,25 @@ def _usable_fallback(row) -> bool:
     return bool(value) and "{top_seed}" not in value
 
 
+def _row_display_name(name: str) -> str:
+    """A row's configured name with its ``{placeholder}`` segments removed.
+
+    The SPA's ``rowDisplayName`` (``web/src/lib/run-rows.ts``), on this side of the wire and for the
+    same reason: a row is stored as a TEMPLATE, so an alert that quotes the name verbatim reads
+    "Because you watched {top_seed} won't be built for…" — braces and all, in a sentence otherwise
+    written for a person. Rendering the template instead is no good either; the whole point of this
+    alert is that there is nobody to render it for.
+
+    Args:
+        name: The row's configured name or name template.
+
+    Returns:
+        The name with every ``{...}`` segment dropped and the whitespace it left collapsed. Empty
+        when the name is nothing but placeholders, which callers must have a fallback for.
+    """
+    return re.sub(r"\s+", " ", re.sub(r"\{[^}]*\}", " ", name)).strip()
+
+
 def _rows_with_no_name_for_newcomers(session: Session, store: SettingsStore) -> dict | None:
     """A row named after a watch, with no name for the people who haven't got one.
 
@@ -238,7 +258,15 @@ def _rows_with_no_name_for_newcomers(session: Session, store: SettingsStore) -> 
     if not rows:
         return None
     names = sorted(set(display.values()))
-    shown = names[0] if len(names) == 1 else f"{len(names)} rows"
+    # Stripped, never raw. Every row here has `{top_seed}` in its name BY DEFINITION — that is the
+    # condition being reported — so quoting the name verbatim guaranteed a brace-laden title:
+    # "Because you watched {top_seed} won't be built for…". Stripping can leave nothing at all (a
+    # row named only after the placeholder), which is what the last fallback is for.
+    if len(names) == 1:
+        stripped = _row_display_name(names[0])
+        shown = f"“{stripped}”" if stripped else "A row"
+    else:
+        shown = f"{len(names)} rows"
     return {
         "id": "rows-unnamed-" + ",".join(sorted({row.slug for row in rows})),
         "severity": "info",

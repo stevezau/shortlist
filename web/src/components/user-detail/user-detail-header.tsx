@@ -8,13 +8,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { formatHitRate, timeAgo } from "@/lib/format";
-import { usePatchUser, useStartRun } from "@/lib/queries";
+import { useHitRatesMatured, usePatchUser, useStartRun } from "@/lib/queries";
 import type { User } from "@/lib/types";
 
 /** The user page's identity header: avatar, status badges, stats, pause toggle, and Run now. */
 export function UserDetailHeader({ user }: { user: User }) {
   const patchUser = usePatchUser();
   const startRun = useStartRun();
+  const ratesMatured = useHitRatesMatured();
   const paused = user.prefs?.paused ?? false;
   // Two distinct states, kept from contradicting each other: `enabled` (does this person get a
   // Shortlist row at all — the Users-list On/Off) vs `paused` (temporarily skipped on runs, row kept).
@@ -41,8 +42,18 @@ export function UserDetailHeader({ user }: { user: User }) {
                 <>Plex username: {user.username} · </>
               )}
               {user.history_depth} titles watched · last run{" "}
-              {timeAgo(user.last_run_at)} · {formatHitRate(user.hit_rate)} of
-              picks watched
+              {timeAgo(user.last_run_at)}
+              {/* Dropped, never printed as "· — of picks watched": in a table cell an em dash reads
+                  as "nothing to report", but in a sentence it is a hole. The Users table withholds
+                  the same figure for the same reason — a rate of 0 says nothing about anyone until
+                  a pick has had its month to be watched. */}
+              {user.hit_rate !== null && (user.hit_rate > 0 || ratesMatured) ? (
+                <>
+                  {" "}
+                  · {formatHitRate(user.hit_rate, ratesMatured)} of picks
+                  watched
+                </>
+              ) : null}
             </p>
           </div>
         </div>

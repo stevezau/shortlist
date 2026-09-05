@@ -11,6 +11,7 @@ import { titleLinks } from "@/lib/title-links";
 import {
   friendlyError,
   rankClass,
+  rowTimingTitle,
   tokenStepBreakdown,
   webSearchSummary,
 } from "@/lib/run-format";
@@ -174,7 +175,9 @@ function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
               {/* Not `provenanceLabel` as well: it renders "suggested by TMDB", which put the word
                   TMDB three times in one line meaning the score, the source and the link. The match
                   quality is the half that adds something the links do not. */}
-              {[ratingLabel(pick), matchQuality(pick)].filter(Boolean).join(" · ")}
+              {[ratingLabel(pick), matchQuality(pick)]
+                .filter(Boolean)
+                .join(" · ")}
             </span>
             {links.map((link) => (
               <a
@@ -384,18 +387,30 @@ export function UserPanel({
                 Timing not recorded for this run
               </p>
             ) : (
-              <p className="text-right text-sm text-muted-foreground">
-                {formatDuration(cost.duration_ms - cost.blocked_ms)}
-                {/* `blocked_ms > 0` first: a row whose every source `continue`s in microseconds
-                    truncates BOTH numbers to 0, and 0 >= 0 * 0.1 would otherwise read as "waiting"
-                    for a row that did no work at all. */}
-                {cost.blocked_ms > 0 &&
-                  cost.blocked_ms >= cost.duration_ms * 0.1 &&
-                  ` · ${formatDuration(cost.blocked_ms)} waiting`}
+              // The TOTAL, with the split behind it. "25ms · 8ms waiting · shared setup 159ms" put
+              // two engineer concepts on screen — "waiting" is blocked on the Plex write lock,
+              // "shared setup" is work amortised across everyone in the run — neither of which the
+              // owner acts on, and neither guessable. The AI-token and web-search figures stay
+              // visible: those are money, not internals.
+              <p
+                className="text-right text-sm text-muted-foreground"
+                title={
+                  rowTimingTitle(
+                    cost.duration_ms,
+                    // Same floor as before: a row whose every source `continue`s in microseconds
+                    // truncates BOTH numbers to 0, and 0 >= 0 * 0.1 would otherwise claim it spent
+                    // its time waiting when it did no work at all.
+                    cost.blocked_ms >= cost.duration_ms * 0.1
+                      ? cost.blocked_ms
+                      : 0,
+                    setup?.setup_ms,
+                    formatDuration,
+                  ) || undefined
+                }
+              >
+                {formatDuration(cost.duration_ms)}
                 {setup && setup.setup_ms > 0 && (
                   <>
-                    {" · shared setup "}
-                    {formatDuration(setup.setup_ms)}
                     {poolTokens > 0 &&
                       ` · ${poolTokens.toLocaleString()} AI tokens${sharedPoolsNote(setup.pools)}`}
                     {webSearchSummary(sharedPoolsExaSearches(setup.pools))}

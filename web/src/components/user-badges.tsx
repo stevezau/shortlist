@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Link } from "react-router";
 
 import { Badge } from "@/components/ui/badge";
 import { profileName } from "@/lib/user-profile";
@@ -70,7 +71,7 @@ export function RestrictedBadge({ user }: { user: User }) {
 export function UnhiddenRowsBadge({ user }: { user: User }) {
   const exposed = user.unhidden_rows ?? 0;
   if (exposed < 1) return null;
-  return (
+  const badge = (
     <Badge
       variant="destructive"
       // The remedy must match the rest of the feature: turning the person off removes THEIR row,
@@ -79,6 +80,22 @@ export function UnhiddenRowsBadge({ user }: { user: User }) {
     >
       Sees {exposed} {exposed === 1 ? "row" : "rows"} of others&rsquo;
     </Badge>
+  );
+  // The most alarming string in the app, and its whole 301-character remedy used to live in that
+  // `title` — hover-only on a desktop, unreachable on a phone. This badge is only ever shown for an
+  // account with a restriction profile, which is exactly the account whose own page renders
+  // `RestrictedNote`: the same remedy, in full, as text. So make the badge the way there rather
+  // than restating any of it here.
+  return (
+    <Link
+      to={`/users/${user.id}`}
+      aria-label={`${user.display_name || user.username} can see ${exposed} ${
+        exposed === 1 ? "row" : "rows"
+      } belonging to other people — how to fix it`}
+      className="rounded-full underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {badge}
+    </Link>
   );
 }
 

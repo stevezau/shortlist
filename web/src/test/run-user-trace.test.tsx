@@ -123,6 +123,84 @@ describe("TraceView", () => {
     expect(within(searched).getByText("already watched")).toBeTruthy();
   });
 
+  it("reconciles the two counts on a source card, which count different things", () => {
+    // "It added 2 titles to the pool" and "1 made the shortlist · 1 dropped" have DIFFERENT
+    // denominators: `contributed` is net-new after dedup, kept/dropped covers everything the source
+    // returned including titles another source had already added. Both right; nothing said so, and
+    // the comment in the code recorded a real person being confused by it (audit, Sep 2026).
+    render(<TraceView data={okTrace()} />);
+
+    expect(screen.getByText(/added 2 new titles to the pool/i)).toBeTruthy();
+    expect(
+      screen.getByText(
+        /Counting everything it returned, including titles another source found first/i,
+      ),
+    ).toBeTruthy();
+  });
+
+  it("writes the discover genres as a sentence, with no media-type token in it", () => {
+    render(
+      <TraceView
+        data={okTrace({
+          trace: {
+            ...okTrace().trace,
+            gathers: [
+              {
+                pool: "movie · tmdb_discover",
+                discover_genres: { movie: ["Drama", "Thriller"], show: [] },
+                sources: [
+                  {
+                    source: "tmdb_discover",
+                    status: "ok",
+                    contributed: 4,
+                    detail: "",
+                  },
+                ],
+              },
+            ],
+          },
+        } as Partial<RunUserTraceResponse>)}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        /The genres they watch most — movies: Drama, Thriller\./,
+      ),
+    ).toBeTruthy();
+    // The media type with nothing to report is DROPPED, not printed as "Show — none".
+    expect(screen.queryByText(/— none/)).toBeNull();
+  });
+
+  it("says plainly when no genre stands out, rather than printing 'Movie — none'", () => {
+    render(
+      <TraceView
+        data={okTrace({
+          trace: {
+            ...okTrace().trace,
+            gathers: [
+              {
+                pool: "movie · tmdb_discover",
+                discover_genres: { movie: [] },
+                sources: [
+                  {
+                    source: "tmdb_discover",
+                    status: "ok",
+                    contributed: 4,
+                    detail: "",
+                  },
+                ],
+              },
+            ],
+          },
+        } as Partial<RunUserTraceResponse>)}
+      />,
+    );
+
+    expect(screen.getByText(/No genre stands out/i)).toBeTruthy();
+    expect(screen.queryByText(/Movie — none/)).toBeNull();
+  });
+
   it("surfaces the error for a person the run failed on", () => {
     render(
       <TraceView
@@ -727,6 +805,28 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
     expect(
       screen.getByText(/strongest 40 per media type/i),
     ).toBeInTheDocument();
+  });
+
+  it("names a row the way the owner does, not by its slug", () => {
+    // `TraceSelection.row` is the SLUG the engine writes, and both these lines lead with it in
+    // bold — so a row configured as "✨ {library_name} Picked for You" introduced itself as
+    // **picked** mid-sentence (audit finding, Sep 2026).
+    render(
+      <TraceView
+        data={withSelection()}
+        rowNames={{ picked: "✨ Picked for You" }}
+      />,
+    );
+
+    expect(screen.getAllByText("✨ Picked for You").length).toBeGreaterThan(0);
+    expect(screen.queryByText("picked")).toBeNull();
+  });
+
+  it("falls back to the slug for a row that no longer exists", () => {
+    // A deleted row is not in the collections list, and a blank lead-in would be worse than a slug.
+    render(<TraceView data={withSelection()} rowNames={{}} />);
+
+    expect(screen.getAllByText("picked").length).toBeGreaterThan(0);
   });
 
   it("says release date applied to the CUT, not merely to the order", () => {

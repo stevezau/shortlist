@@ -14,7 +14,9 @@ const PROMISES = [
   {
     icon: RotateCcw,
     title: "Reversible",
-    body: "Every share setting Shortlist touches is snapshotted first. Uninstall puts your server back exactly as Shortlist found it.",
+    // "Snapshotted" is a word from the code, on the first screen of the wizard — the one place the
+    // reader has least context for it.
+    body: "Before Shortlist changes any of your Plex sharing settings, it saves a copy of them exactly as they were. Uninstall puts your server back the way it found it.",
   },
 ];
 
@@ -42,7 +44,7 @@ export function StepWelcome({ next }: StepProps) {
       <div className="space-y-3">
         <p className="text-sm text-muted-foreground">
           Setup takes about ten minutes, including your first rows. Shortlist
-          picks the titles in code, so it needs no AI keys and nothing in the
+          picks the titles itself, so it needs no AI keys and nothing in the
           cloud. Adding an AI provider (Claude, GPT, Gemini, or one you run
           yourself) is optional &mdash; it unlocks rows built from a live web
           search, and AI-drawn artwork.

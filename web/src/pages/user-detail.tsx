@@ -26,17 +26,24 @@ function SectionHeading({ children }: { children: ReactNode }) {
   return <h2 className="text-lg font-semibold">{children}</h2>;
 }
 
-type UserTab = "rows" | "runs" | "settings" | "history";
+type UserTab = "rows" | "runs" | "settings" | "watched";
 
-const TABS: UserTab[] = ["rows", "runs", "settings", "history"];
+const TABS: UserTab[] = ["rows", "runs", "settings", "watched"];
+
+/** The tab was renamed on screen ("Watch History" → "Watched") and the URL kept the old word, so
+ *  `?tab=history` addressed a tab labelled "Watched". Links in the wild — the dashboard's, and any
+ *  bookmark — still say `history`, and a URL that silently lands on the wrong tab is worse than the
+ *  mismatch was. */
+const LEGACY_TAB_ALIASES: Record<string, UserTab> = { history: "watched" };
 
 export function UserDetailBody({ user }: { user: User }) {
   // In the URL, not component state. Someone arriving from the dashboard's "who watched what" wants
   // the watched view, and a link is the only way to say so — `?tab=` also survives a refresh and the
   // back button, which local state does not.
   const [params, setParams] = useSearchParams();
-  const asked = params.get("tab") as UserTab | null;
-  const tab: UserTab = asked && TABS.includes(asked) ? asked : "rows";
+  const raw = params.get("tab") ?? "";
+  const asked = (LEGACY_TAB_ALIASES[raw] ?? raw) as UserTab;
+  const tab: UserTab = TABS.includes(asked) ? asked : "rows";
   const setTab = (next: UserTab) => {
     // `replace`, so flicking between tabs does not fill the back button with them — Back should
     // return to where you came from, which is the dashboard.
@@ -57,8 +64,9 @@ export function UserDetailBody({ user }: { user: User }) {
           { value: "settings", label: "Settings" },
           // "Watched" rather than "Watch History": the tab now holds two different things — what
           // they did with SHORTLIST'S picks, and everything they have ever watched on Plex. The old
-          // label described only the second.
-          { value: "history", label: "Watched" },
+          // label described only the second. The VALUE follows the label (it used to stay
+          // "history", so the URL and the tab disagreed about what the tab was called).
+          { value: "watched", label: "Watched" },
         ]}
         value={tab}
         onChange={(value) => setTab(value as UserTab)}
@@ -127,7 +135,7 @@ export function UserDetailBody({ user }: { user: User }) {
         </div>
       )}
 
-      {tab === "history" && (
+      {tab === "watched" && (
         <div className="space-y-6">
           {/* Shortlist's picks FIRST. This is the question the app exists to answer for this person,
               and it is the one the page could not answer at all — it could show what was delivered
