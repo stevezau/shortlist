@@ -456,6 +456,56 @@ class TestOwnerSeesAllRows:
         assert notif._owner_sees_all_rows(session) is None
 
 
+class TestSecretsWeCannotRead:
+    """A lost /config/secret.key leaves credentials that cannot be decrypted OR recovered. Before the
+    fix, boot silently re-encrypted them with the new key and destroyed the originals; now they are
+    left untouched and the owner is told which ones."""
+
+    def _store_with_a_lost_key(self, session, tmp_path: Path):
+        from shortlist.server.services.secrets import SecretBox
+
+        box = SecretBox(tmp_path)
+        store = SettingsStore(session, box)
+        store.set("plex.token", "real-plex-token")
+        (tmp_path / "secret.key").unlink()
+        return SettingsStore(session, SecretBox(tmp_path))
+
+    def test_does_not_fire_when_every_secret_decrypts(self, session, tmp_path: Path):
+        from shortlist.server.services.secrets import SecretBox
+
+        store = SettingsStore(session, SecretBox(tmp_path))
+        store.set("plex.token", "real-plex-token")
+
+        assert notif._secrets_we_cannot_read(store) is None
+
+    def test_does_not_fire_when_nothing_is_stored(self, session, tmp_path: Path):
+        from shortlist.server.services.secrets import SecretBox
+
+        assert notif._secrets_we_cannot_read(SettingsStore(session, SecretBox(tmp_path))) is None
+
+    def test_fires_and_names_the_unreadable_keys(self, session, tmp_path: Path):
+        result = notif._secrets_we_cannot_read(self._store_with_a_lost_key(session, tmp_path))
+
+        assert result is not None
+        assert result["id"] == "secrets-we-cannot-read"
+        assert result["severity"] == "error"
+        assert "plex.token" in result["body"], "the owner cannot act without knowing WHICH credential"
+
+    def test_it_cannot_be_dismissed(self, session, tmp_path: Path):
+        """Same reason "runs are paused" cannot be: hiding it leaves an owner believing a server works
+        that does not, and the condition is still true right now."""
+        result = notif._secrets_we_cannot_read(self._store_with_a_lost_key(session, tmp_path))
+
+        assert result["dismissable"] is False
+
+    def test_the_copy_says_nothing_was_overwritten(self, session, tmp_path: Path):
+        """The recovery path depends on this being true and the owner believing it: restoring the old
+        secret.key still works, because the ciphertext was left byte-for-byte alone."""
+        result = notif._secrets_we_cannot_read(self._store_with_a_lost_key(session, tmp_path))
+
+        assert "overwritten" in result["body"].lower()
+
+
 class TestSeverityVocabulary:
     def test_every_firing_notification_uses_one_of_the_three_severities(self, session, monkeypatch):
         monkeypatch.setattr(notif, "check_for_update", lambda v: {"latest": "9.9.9", "url": "https://x"})

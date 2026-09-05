@@ -119,6 +119,33 @@ def _playback_listener_down(store: SettingsStore) -> dict | None:
     }
 
 
+def _secrets_we_cannot_read(store: SettingsStore) -> dict | None:
+    """Credentials encrypted with a key this instance no longer holds — a lost `/config/secret.key`.
+
+    Not dismissable, for the same reason "runs are paused" is not: every one of these is a credential
+    the app cannot use and cannot recover, so silencing the alert leaves an owner believing a server
+    is working that quietly is not. It clears itself the moment each key is re-entered.
+    """
+    lost = store.undecryptable_secrets()
+    if not lost:
+        return None
+    return {
+        "id": "secrets-we-cannot-read",
+        "severity": "error",
+        "title": "Some saved credentials can no longer be read",
+        "body": (
+            f"{len(lost)} saved credential(s) were encrypted with a different /config/secret.key than "
+            f"the one here now, so Shortlist cannot read them: {', '.join(lost)}. This usually means "
+            "secret.key was lost or the container was recreated without its /config volume. They "
+            "cannot be recovered without the original file — restore it from a backup, or re-enter "
+            "each one in Settings. Nothing has been overwritten, so restoring the old key still works."
+        ),
+        "action_url": "/settings",
+        "action_label": "Settings",
+        "dismissable": False,
+    }
+
+
 def _last_run_problem(session: Session) -> dict | None:
     last = session.query(Run).filter(Run.status.in_(("ok", "error"))).order_by(Run.id.desc()).first()
     if last is None:
@@ -687,6 +714,7 @@ def build_notifications(session: Session, store: SettingsStore, current_version:
     candidates = [
         _update_available(store, current_version),
         _runs_paused(store),
+        _secrets_we_cannot_read(store),
         _last_run_problem(session),
         _failed_jobs(session),
         _mdblist_quota(session),

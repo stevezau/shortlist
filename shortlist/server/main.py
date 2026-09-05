@@ -198,17 +198,34 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
             store = SettingsStore(session, secret_box)
             store.purge_legacy()  # drop stale rows from removed settings (e.g. old API-token hash)
             # Heal any secret still stored in the clear — `tmdb.apikey` was, on every install that
-            # predates it joining SECRET_KEYS (rule 9).
-            if healed := store.encrypt_plaintext_secrets():
-                logger.warning(
-                    "encrypted {} setting(s) that were stored in the clear: {}", len(healed), ", ".join(healed)
-                )
+            # predates it joining SECRET_KEYS (rule 9). Both results are REPORTED below, after the
+            # file sink exists: this used to log at this point, which is before `configure_logging`
+            # attaches /config/logs, so the one persistent trace of a credential problem was written
+            # to a sink that did not exist yet and never reached the log file at all.
+            healed = store.encrypt_plaintext_secrets()
+            unreadable = store.undecryptable_secrets()
             store.seed_from_env(dict(os.environ))
             # Configure logging from the DB setting (seeded from LOG_LEVEL on first boot). The
             # rotating file sink under /config/logs always captures DEBUG, so a quiet console still
             # leaves a full on-disk trail to diagnose a run after the fact.
             (config_dir / "logs").mkdir(parents=True, exist_ok=True)
             configure_logging(store.get("log.level"), log_file=str(config_dir / "logs" / "shortlist.log"))
+            if healed:
+                logger.warning(
+                    "encrypted {} setting(s) that were stored in the clear: {}", len(healed), ", ".join(healed)
+                )
+            if unreadable:
+                # Boot DEGRADED rather than refusing to start. The irreversible damage is the
+                # overwrite (now prevented in `encrypt_plaintext_secrets`), not the boot — and a
+                # crash-loop is the worst possible diagnosis channel on a headless, auto-recreated
+                # host, because it removes the UI, which is exactly where these get re-entered.
+                logger.error(
+                    "{} saved credential(s) cannot be decrypted with this /config/secret.key: {}. "
+                    "They were encrypted with a different key — restore the original secret.key from "
+                    "a backup, or re-enter them in Settings. Nothing has been overwritten.",
+                    len(unreadable),
+                    ", ".join(unreadable),
+                )
             # State the console level plainly at boot, so `docker logs` answers "is DEBUG on?" at a
             # glance (the file at /config/logs is always DEBUG regardless).
             logger.info(

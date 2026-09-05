@@ -7,6 +7,7 @@ APP_BASE_PATH) stay live and are never persisted.
 
 from __future__ import annotations
 
+import base64
 from typing import Any
 
 from loguru import logger
@@ -315,6 +316,29 @@ ENV_SEEDS = {
 
 _UNSET = object()
 
+# A Fernet token is base64url(0x80 || timestamp(8) || IV(16) || ciphertext || HMAC(32)), so the
+# smallest possible one decodes to 57 bytes and every one starts with the version byte 0x80.
+# Cryptography's spec: https://github.com/fernet/spec/blob/master/Spec.md
+_FERNET_VERSION_BYTE = 0x80
+_FERNET_MIN_BYTES = 57
+
+
+def _looks_like_fernet_token(value: str) -> bool:
+    """Whether `value` is SHAPED like a Fernet token, regardless of which key would decrypt it.
+
+    This is the only way to tell "encrypted with a key we have lost" from "never encrypted at all":
+    both raise an identical, message-less `InvalidToken` when decryption is attempted, so the
+    exception carries no information to branch on. Getting that wrong overwrote real credentials
+    (see `encrypt_plaintext_secrets`). Shape is checked instead, and it is checked conservatively —
+    a false "yes" only means a plaintext value is left alone and reported, while a false "no" would
+    destroy a credential.
+    """
+    try:
+        raw = base64.urlsafe_b64decode(value.encode())
+    except Exception:  # not even base64url — a bare API key, so genuinely plaintext
+        return False
+    return len(raw) >= _FERNET_MIN_BYTES and raw[0] == _FERNET_VERSION_BYTE
+
 
 class SettingsStore:
     def __init__(self, session: Session, secret_box=None):
@@ -417,6 +441,33 @@ class SettingsStore:
             out[row.key] = ("•••••" if value else "") if row.key in SECRET_KEYS else value
         return out
 
+    def _stored_secret(self, key: str) -> tuple[Setting | None, str | None]:
+        """The row and its raw stored string for one SECRET_KEY, or (row, None) when there is nothing
+        worth inspecting."""
+        row = self._session.get(Setting, key)
+        value = (row.value or {}).get("v") if row else None
+        return row, value if value and isinstance(value, str) else None
+
+    def undecryptable_secrets(self) -> list[str]:
+        """SECRET_KEYS whose stored value IS a Fernet token but does not decrypt with the current key.
+
+        Every one of these is a credential encrypted with a key we no longer hold — almost always a
+        lost or regenerated `/config/secret.key`. They are unrecoverable without that file, so the
+        only useful response is to tell the owner exactly which ones, loudly, and re-prompt for them.
+        """
+        if not self._secrets:
+            return []
+        bad = []
+        for key in sorted(SECRET_KEYS):
+            _row, value = self._stored_secret(key)
+            if value is None or not _looks_like_fernet_token(value):
+                continue
+            try:
+                self._secrets.decrypt(value)
+            except Exception:
+                bad.append(key)
+        return bad
+
     def encrypt_plaintext_secrets(self) -> list[str]:
         """Re-store any SECRET_KEY still sitting in the clear, encrypted. Returns the keys healed.
 
@@ -426,23 +477,25 @@ class SettingsStore:
         Fernet-decrypt the existing plaintext and raise, breaking TMDB (and so every recommendation)
         on every existing install.
 
-        Runs at boot, idempotent, and covers any key added to SECRET_KEYS in future — an encrypted
-        value round-trips, a plaintext one is re-written. Detection is by decryptability rather than a
-        prefix check, so it cannot be fooled by a key that merely looks Fernet-shaped.
+        Runs at boot, idempotent, and covers any key added to SECRET_KEYS in future.
+
+        A decrypt failure ALONE does not mean the value is plaintext, and treating it that way
+        destroyed credentials: a wrong key and genuine plaintext both raise a bare `InvalidToken`
+        carrying no message, so a lost `/config/secret.key` made this method re-encrypt every real
+        credential with the newly-minted key — overwriting the only copy that the original key could
+        ever have recovered — and report it as "stored in the clear". The two cases are told apart by
+        SHAPE instead: a Fernet token is still recognisable as one when it cannot be decrypted, so
+        anything token-shaped is left byte-for-byte alone and surfaced by `undecryptable_secrets()`.
         """
         if not self._secrets:
             return []
         healed = []
         for key in sorted(SECRET_KEYS):
-            row = self._session.get(Setting, key)
-            value = (row.value or {}).get("v") if row else None
-            if not value or not isinstance(value, str):
-                continue
-            try:
-                self._secrets.decrypt(value)
-            except Exception:  # any decrypt failure means the value is not encrypted
-                row.value = {"v": self._secrets.encrypt(value)}
-                healed.append(key)
+            row, value = self._stored_secret(key)
+            if value is None or _looks_like_fernet_token(value):
+                continue  # already ours, or encrypted under a key we have lost — never overwrite it
+            row.value = {"v": self._secrets.encrypt(value)}
+            healed.append(key)
         if healed:
             self._session.commit()
         return healed
