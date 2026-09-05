@@ -921,9 +921,14 @@ re-running against HEAD; CI runs plain `eslint .` without `--max-warnings 0` any
 | `affinity` + `dampener` | ✅ primitives done, wiring pending | `aac9b48` |
 | `migration-ci` | ✅ done | merged from worktree, `56adbfa` |
 | Wave 6 — all 8 items | ✅ done | merged from worktree, `0821a84` |
+| `dry-run-gap` + `sse-dead` | ✅ done | merged from worktree, `c9df6f3` |
+| Wave 3 — all 5 engine items | ✅ done | `aac9b48`, `a596678`, `25e3981` |
+| Wave 5 polish — 4 items | ✅ done | merged from worktree, `436e122` |
+| `notifications` (Wave 4) | ✅ v1 done | merged from worktree, `7ccaafa` |
+| `dryrun-preview` | ✅ resolved INTO `dry-run-gap` | one mechanism, not two — see below |
 | everything else | ☐ not started | — |
 
-**20 of 35 implemented, 35 of 35 designed.** (`affinity`/`dampener` are primitives only — nothing stamps `genre_penalty` yet, so the new term is inert until the wiring lands.) Wave 1 complete except `dry-run-gap`;
+**31 of 35 implemented, 35 of 35 designed.** (`affinity`/`dampener` are primitives only — nothing stamps `genre_penalty` yet, so the new term is inert until the wiring lands.) Wave 1 complete except `dry-run-gap`;
 Wave 2 complete except `sse-dead`.
 
 Remaining: `dry-run-gap`, `sse-dead`, `evaluation` (Wave 0), the 5 engine items (Wave 3, blocked on
@@ -1035,3 +1040,60 @@ problem and makes the social preview and README links read as a product rather t
 
 **Do NOT regress what is already ahead:** no third-party fonts, keep both themes, keep
 `:focus-visible`, keep per-page docs URLs. A richer landing page must not cost any of those.
+
+
+## State at 31 of 35
+
+Verified green on the merged tree, with CI's exact commands:
+`pytest` 4156 passed / 1 skipped · `pytest -m e2e` 106 passed · vitest 1486 passed · `tsc -b` clean ·
+`eslint .` 0 errors · `vite build` OK · `ruff format --check .` and `ruff check .` both exit 0 ·
+migration freeze: 62 match.
+
+**Still in flight:** `posters`, `restriction-status`, `bulk3state` (one agent), and Wave 8.
+
+### Decisions the agents took that are worth keeping
+
+- **`dryrun-preview` collapsed into `dry-run-gap`.** `dry_run` is a body field on PATCH and a query
+  param on DELETE; there is no separate `POST /{id}/preview`. Wave 5's own design said the two would
+  collapse, and its sketch used the apply-then-rollback approach that CANNOT work here, because
+  `SettingsStore.set` commits internally — a rollback-based preview of a default-row rename would
+  have permanently retitled every row on the server. The preview PROJECTS the post-edit snapshot.
+- **Writer-lock question answered:** `_reconcile_row_removal` acquires no lock; `plex_writer_lock` is
+  held AROUND it by `jobs._run_writer:781` and `run_service._run_locked:334`. So a preview cannot
+  deadlock against a run, and under `dry_run` it writes nothing anyway.
+- **Two pre-existing bugs fixed in passing:** a 422 could land AFTER `SettingsStore.set` had already
+  committed; and `_set_audience` gated on the raw `body.audience`, so sending `audience_user_ids`
+  alone wiped row membership — the preview said "1 collection" where the save removed one per person.
+- **Health chips vs the Verdict dot: the Verdict line wins, and both stay.** `run-failed-*` is
+  dismissable, so a dismissal turns the chip green while the dot stays red. Deleting the dot would
+  trade ground truth for an acknowledgement flag. The strip is therefore worded as OUTSTANDING WORK,
+  never health — "Open alerts by area", and quiet chips read "nothing outstanding", which stays true
+  after a dismissal.
+- **There are 14 notification builders now, not 13.** `secrets-we-cannot-read` (added earlier this
+  session) is deliberately unmapped to a chip — a lost `secret.key` is not one subsystem — and rides
+  the "Other" fallback.
+- **`redact()` was NOT sufficient for webhook URLs**, contrary to the brief I gave the agent. It
+  verified rather than trusted, and added `notify.scrub()`, which strips a URL's path/query/fragment
+  before running `redact()`. That covers `Job.error`, the `job.failed` audit row, logs, the support
+  bundle and the test endpoint's response in one place.
+- **No migration for notifications, and 0090 is still free.** The two things the design's migration
+  existed for — `notification_outbox` and `jobs.not_before` — are exactly what v1 cuts. An empty
+  0090 would have been the no-op-migration mistake `.claude/CLAUDE.md` warns about.
+
+### Owner decisions now CLOSED by implementation
+
+- **Badge amber**: `#a06a00` (4.61:1 with white, AA). `--amber-deep` only reached 3.5:1 and was not used.
+- **`bulk3state`**: no bulk-edit screen is being built. The one real defect (`users.py:431`) is being
+  fixed on its own.
+- **`legend-bug` dots vs badges**: left as dots, because `PickList` uses dots too.
+
+### Still open for the owner
+
+1. **`secret.key` in backups** — adding it makes a backup self-decrypting. Not taken unilaterally.
+2. **Domain** — `shortlist.sh` is TAKEN (RDAP has no coverage for `.sh`, which produced a false
+   "available"; DNS shows it delegated to Vercel). Likely free: `shortlist.tools`, `.wiki`, `.movie`,
+   `.host`, `shortlistarr.com/.dev`, `getshortlist.dev`. Recommended: **`shortlist.tools`**. Avoid
+   `.stream` (association with illegal streaming) and anything containing "Plex" (trademark).
+3. **`seo` FAQ schema** — shipped, but Google discontinued the FAQPage rich result; it is AI-crawler
+   value only now.
+4. **Two manual actions**: Docker Hub categories, GitHub social-preview upload. Neither has an API.
