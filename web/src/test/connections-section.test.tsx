@@ -385,6 +385,15 @@ describe("ConnectionsSection", () => {
     expect(
       await within(card).findByText(/Last run: 46 web searches/),
     ).toBeInTheDocument();
+    // The count alone reads as broken — it is far below "people x titles" and swings run to run.
+    // The cache is the reason, and this line is the only place the owner is told their picks can
+    // trail a new release. Asserted separately because the count regex above is unanchored and
+    // matched happily when this sentence did not exist at all.
+    expect(
+      await within(card).findByText(
+        /results are shared by everyone and reused for 7 days/,
+      ),
+    ).toBeInTheDocument();
   });
 
   it("omits the Exa usage note when no key is saved", async () => {

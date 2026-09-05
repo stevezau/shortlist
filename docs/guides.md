@@ -123,7 +123,7 @@ report release years where GPT needs one.
 **Exa has a depth setting** (**Search depth**, next to the API key). It defaults to *Thorough*,
 which costs $0.012 a search instead of $0.007. That is deliberate: the cheap modes are erratic — on
 the same two searches, *Balanced* found 13 and 8 usable titles where *Thorough* found 47 and 36, and
-once found none at all. Every search is cached for a fortnight and shared across everyone on your
+once found none at all. Every search is cached for a week and shared across everyone on your
 server, so the extra half-cent buys candidates for the whole roster rather than one person.
 
 **SearXNG needs its JSON API turned on**, or it answers Shortlist with a 403 — add `json` to

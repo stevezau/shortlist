@@ -5,6 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 from shortlist.engine.candidates import (
+    _THIN_CACHE_TTL_S,
+    WEB_SEARCH_CACHE_TTL_S,
     GatherStats,
     _web_search_capable,
     filter_candidates,
@@ -1481,24 +1483,31 @@ class TestStructuredExtractionPath:
 
         assert curator.last_user.count("Silo") == 1
 
-    def test_a_thin_result_is_cached_briefly_and_a_rich_one_for_a_fortnight(self, mock_tmdb):
+    def test_a_thin_result_is_cached_briefly_and_a_rich_one_for_the_full_ttl(self, mock_tmdb):
         """Both extremes cost something, so the TTL is the dial rather than a yes/no.
 
-        Caching a thin draw for 14 days serves a dud to every user who watched that title, and the
-        provider is measurably variable — three identical calls returned 36, 45 and 38 usable titles.
-        But NOT caching it bills a fresh search for every user, every night, forever, for any seed
-        that genuinely has little written about it. A day covers one nightly run across the roster.
+        Caching a thin draw for the full term serves a dud to every user who watched that title, and
+        the provider is measurably variable — three identical calls returned 36, 45 and 38 usable
+        titles. But NOT caching it bills a fresh search for every user, every night, forever, for any
+        seed that genuinely has little written about it. A day covers one nightly run across the
+        roster.
+
+        Asserted against the constants, not against literals: the full TTL is a freshness/cost dial
+        that gets retuned (14 days -> 7 on 2026-09-05), and this test is about the RELATIONSHIP
+        between the two TTLs, which must hold at every setting. The value itself is pinned where it
+        makes a promise to the owner — `test_cache_prune.py::test_cache_ttl_matches_the_ui`.
         """
         self._tmdb(mock_tmdb)
         cache = _DictCache()
         thin = _FakeExtractingSearch([make_result("a", "b")], self._titles("Silo"))  # 1 < the floor
         self._gather(mock_tmdb, thin, _NonNativeCurator("[]"), cache=cache)
-        assert cache.ttls["websearch2:exa:movie:1"] == 24 * 3600
+        assert cache.ttls["websearch2:exa:movie:1"] == _THIN_CACHE_TTL_S
 
         cache = _DictCache()
         rich = _FakeExtractingSearch([make_result("a", "b")], self._titles("Silo", "Devs", "Counterpart"))
         self._gather(mock_tmdb, rich, _NonNativeCurator("[]"), cache=cache)
-        assert cache.ttls["websearch2:exa:movie:1"] == 14 * 24 * 3600
+        assert cache.ttls["websearch2:exa:movie:1"] == WEB_SEARCH_CACHE_TTL_S
+        assert _THIN_CACHE_TTL_S < WEB_SEARCH_CACHE_TTL_S, "a thin draw must never outlive a rich one"
 
     def test_the_seed_is_never_offered_back_as_a_recommendation(self, mock_tmdb):
         """An article headed "shows like Severance" names Severance, and the extraction lists it.

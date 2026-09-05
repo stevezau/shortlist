@@ -194,6 +194,11 @@ function searchSummary(settings: Settings): string {
   return where || ai;
 }
 
+/** How long a web search is reused before it is paid for again — the copy half of
+ *  `WEB_SEARCH_CACHE_TTL_S` in shortlist/engine/candidates.py. Kept in step by
+ *  `test_cache_prune.py::test_cache_ttl_matches_the_ui`, which reads this file. */
+const WEB_SEARCH_CACHE_DAYS = 7;
+
 /** "Last run: 46 web searches" — a spend proxy, since neither backend exposes a live quota, so the
  *  most recent finished run's count is the closest thing to "usage today".
  *
@@ -209,7 +214,12 @@ function searchFootnote(
   // while its provider searched all night, and a server that removed its backend keeps showing the
   // count from before.
   if (lastSearches == null || !hasExternalSearch(settings)) return undefined;
-  return `Last run: ${lastSearches.toLocaleString()} web search${lastSearches === 1 ? "" : "es"}`;
+  // The cache is why this number is far lower than "people x titles" and why it swings run to run,
+  // so state it here rather than leaving the count looking broken. It is also the only place the
+  // owner is told their picks can lag a new release by up to a week.
+  // Mirrors WEB_SEARCH_CACHE_TTL_S (shortlist/engine/candidates.py); test_cache_ttl_matches_the_ui
+  // fails if the two drift apart.
+  return `Last run: ${lastSearches.toLocaleString()} web search${lastSearches === 1 ? "" : "es"} · results are shared by everyone and reused for ${WEB_SEARCH_CACHE_DAYS} days`;
 }
 
 /** Connections: Plex, Tautulli, TMDB, and the AI provider — each editable and testable in place. */

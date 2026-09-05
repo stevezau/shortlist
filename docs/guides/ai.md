@@ -68,7 +68,7 @@ Shortlist does the searching and hands the findings to your model, which buys yo
 2. **Your results stop depending on which AI you picked.** Switch from Claude to a cheap local model
    and the search half stays identical. Only the choosing changes.
 3. **The cost is predictable.** Exa bills per search rather than per word, and those searches are
-   reported separately from AI tokens. SearXNG costs nothing at all. Results are reused for 14 days
+   reported separately from AI tokens. SearXNG costs nothing at all. Results are reused for 7 days
    and shared across everyone on the server, so a popular film is looked up once, not once per person.
 4. **It is one clear choice.** Shortlist searches with exactly the backend you pick and no other, so
    a title is never searched — or billed — twice.
@@ -139,7 +139,7 @@ cheapest-to-priciest levers:
    TMDB and Trakt sources.
 2. **Search fewer recent watches.** The source runs one web search per person's recent watch, so
    lowering `recommendations.recent_count` (Settings → Finding titles) cuts searches. Results are
-   cached for 14 days and shared across users, so a popular title is searched once server-wide.
+   cached for 7 days and shared across users, so a popular title is searched once server-wide.
 3. **Use a small, cheap model.** A fast or mini model such as Claude Haiku, GPT-mini or Gemini Flash
    is plenty. You don't need a flagship model to read a few search results.
 4. **Run less often.** Nightly is the default. A longer schedule means fewer runs and fewer searches.

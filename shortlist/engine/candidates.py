@@ -33,9 +33,17 @@ from shortlist.engine.curator.base import (
 from shortlist.engine.models import MAX_ROW_SIZE, Candidate, MediaType, Seed
 
 # One cached web search PER recent title (Exa bills per search): cache the RESULTS by (media, tmdb_id)
-# so a title many users watched is searched once server-wide. 14 days — "if you liked X" doesn't
-# churn fast, and the request pass runs off the critical path so a slightly stale result is harmless.
-WEB_SEARCH_CACHE_TTL_S = 14 * 24 * 3600
+# so a title many users watched is searched once server-wide.
+#
+# 7 days, and the number is a freshness/cost trade, not a technical limit. A cached search cannot
+# contain anything released after it was made, so the TTL is the worst-case blind spot for new
+# releases and new seasons. Measured 2026-09-05: re-running 2-day-old searches returned titles 2
+# years OLDER on average and agreed with the cached set only ~54% of the time, so re-buying sooner
+# than this mostly re-rolls Exa's own variance rather than surfacing news — which is why it is not
+# lower. It was 14 days until the same date; that only ever got measured against 2-day-old entries,
+# which cannot detect staleness (little is released in 2 days), and the error is asymmetric — too
+# long is invisible (nobody reports the title they never saw) while too short shows up on the bill.
+WEB_SEARCH_CACHE_TTL_S = 7 * 24 * 3600
 _WEB_SEARCH_PER_TITLE = 5  # results per per-title search (many titles → keep each lean for the RAG)
 _WEB_SEARCH_MAX_TITLES = 10  # default number of recent titles to search; overridden by recent_count
 _WEB_SEARCH_RAG_CAP = 40  # cap the unioned results handed to the web-search LLM so the RAG prompt stays bounded
@@ -47,7 +55,7 @@ _WEB_SEARCH_RAG_CAP = 40  # cap the unioned results handed to the web-search LLM
 _WEB_PICK_CAP = 300
 # A search that came back nearly empty is cached BRIEFLY rather than for the usual fortnight. Exa's
 # `deep-lite` is measurably variable — three identical calls returned 36, 45 and 38 usable titles,
-# sharing only 45% — so a thin draw should not be served to every user for two weeks. But refusing to
+# sharing only 45% — so a thin draw should not be served to every user for a whole week. But refusing to
 # cache it at all is worse: a seed that genuinely has little written about it would then be a fresh
 # billable search for every user, every night, forever. A day is long enough to cover one nightly run
 # across the whole roster and short enough that tomorrow tries again.

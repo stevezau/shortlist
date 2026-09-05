@@ -116,3 +116,31 @@ class TestStrandedNamespacesGo:
             assert prune_expired_cache(s) == 1
             s.commit()
             assert prune_expired_cache(s) == 0
+
+
+class TestCacheTtlIsVisibleToTheOwner:
+    """The TTL is a freshness promise, so the UI states it — and a promise that drifts is worse
+    than none. These pin the number to the copy the owner actually reads."""
+
+    def test_cache_ttl_matches_the_ui(self):
+        """The Settings footnote quotes the TTL in days; the engine owns it in seconds.
+
+        Two languages, so nothing but a test keeps them honest. If you change
+        `WEB_SEARCH_CACHE_TTL_S`, change `WEB_SEARCH_CACHE_DAYS` in the TSX with it — otherwise the
+        card tells the owner their picks are at most N days old when they can be older.
+        """
+        import re
+        from pathlib import Path
+
+        from shortlist.engine.candidates import WEB_SEARCH_CACHE_TTL_S
+
+        tsx = Path(__file__).parents[2] / "web/src/components/settings/connections-section.tsx"
+        declared = re.search(r"const WEB_SEARCH_CACHE_DAYS = (\d+);", tsx.read_text())
+        assert declared, "the UI no longer declares WEB_SEARCH_CACHE_DAYS — update this test with it"
+        assert int(declared.group(1)) == WEB_SEARCH_CACHE_TTL_S // (24 * 3600)
+
+    def test_a_thin_result_is_not_held_for_the_full_ttl(self):
+        """The short TTL only means anything while it stays SHORTER than the full one."""
+        from shortlist.engine.candidates import _THIN_CACHE_TTL_S, WEB_SEARCH_CACHE_TTL_S
+
+        assert _THIN_CACHE_TTL_S < WEB_SEARCH_CACHE_TTL_S

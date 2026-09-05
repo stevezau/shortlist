@@ -97,7 +97,7 @@ The optional web-search source can search in three ways, and you pick one in
 - **Your results stop depending on which AI you picked.** Switch from Claude to a local model to
   save money and the search half stays identical. Only the choosing changes.
 - **The cost is predictable.** Exa bills per search, not per word, and Shortlist reports those
-  searches separately from AI usage. SearXNG costs nothing. Results are reused for 14 days and shared
+  searches separately from AI usage. SearXNG costs nothing. Results are reused for 7 days and shared
   across everyone on your server, so a popular film is looked up once. Not once per person.
 
 **Exa or SearXNG?** Exa returns extracted page text, needs no infrastructure, and its free tier
