@@ -85,13 +85,21 @@ def test_capture_app_screenshots(shot_page: Page, app: ShortlistApp) -> None:
     for payload in (
         {  # id: because-you-watched
             "name": "🎯 Because you watched {top_seed}",
-            "build": "per_person", "max_seeds": 1, "recent_count": 3,
-            "media": "movie", "size": 20, "refresh_days": 1, "seed_window": 1,
+            "build": "per_person",
+            "max_seeds": 1,
+            "recent_count": 3,
+            "media": "movie",
+            "size": 20,
+            "refresh_days": 1,
+            "seed_window": 1,
         },
         {  # id: seen-it-already ("Happy to see again")
             "name": "☕ {library_name} you've already seen",
-            "build": "per_person", "rewatch": True, "watched_pct": 1,
-            "refresh_days": 11, "size": 15,
+            "build": "per_person",
+            "rewatch": True,
+            "watched_pct": 1,
+            "refresh_days": 11,
+            "size": 15,
         },
     ):
         created = app.api("POST", "/api/collections", json=payload)

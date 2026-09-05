@@ -386,18 +386,20 @@ missing the only destructive half is worse than no preview"_.
 ```python
 class FieldChangeOut(PassthroughModel):
     """One setting this edit moves. `before`/`after` are already rendered for display."""
-    field: str          # "audience", "media", "name_template", …
-    label: str          # "Who gets this row"
+
+    field: str  # "audience", "media", "name_template", …
+    label: str  # "Who gets this row"
     before: str
     after: str
 
 
 class PlannedWorkOut(PassthroughModel):
     """One thing Shortlist would do on Plex, in the order it would happen."""
-    kind: str                       # row_changes.RECONCILE | PRIVACY_SYNC | RENAME | POSTER_RESET | VISIBILITY
-    detail: str                     # the plain-English sentence the dialog shows
-    affects_users: list[str]        # display names, for a per-user reconcile
-    affects_libraries: list[str]    # library names, for a stranded-section reconcile
+
+    kind: str  # row_changes.RECONCILE | PRIVACY_SYNC | RENAME | POSTER_RESET | VISIBILITY
+    detail: str  # the plain-English sentence the dialog shows
+    affects_users: list[str]  # display names, for a per-user reconcile
+    affects_libraries: list[str]  # library names, for a stranded-section reconcile
 
 
 class RowPreviewOut(PassthroughModel):
@@ -685,9 +687,9 @@ class AccountPrivacyOut(PassthroughModel):
     display_name: str
     slug: str
     plex_account_id: int
-    user_type: UserType                 # shared | managed | owner
-    restriction_profile: str            # "" unless Plex refuses filters for this account
-    manage_sharing: bool                # False = the owner asked us to leave this account alone
+    user_type: UserType  # shared | managed | owner
+    restriction_profile: str  # "" unless Plex refuses filters for this account
+    manage_sharing: bool  # False = the owner asked us to leave this account alone
     #: The `shortlist_*` labels currently in this account's filters, read from plex.tv this second.
     hides: list[str]
     #: Every per-person row that exists on Plex right now, minus this account's own.
@@ -703,15 +705,15 @@ class AccountPrivacyOut(PassthroughModel):
 class EnforcementOut(PassthroughModel):
     """The last time a run looked through a real account's eyes at their Home screen."""
 
-    measured: bool                      # report.filters_enforcement_measured
+    measured: bool  # report.filters_enforcement_measured
     run_id: int | None
-    measured_at: str | None             # ISO, UTC
+    measured_at: str | None  # ISO, UTC
     #: username -> ratingKeys of other people's rows visible on THEIR Home. Empty + measured = clean.
     not_enforced: dict[str, list[int]]
 
 
 class PrivacyStatusOut(PassthroughModel):
-    read_at: str                        # when THIS response was read from plex.tv
+    read_at: str  # when THIS response was read from plex.tv
     accounts: list[AccountPrivacyOut]
     #: Labels of the per-person rows that exist on Plex right now — what the verdict was measured
     #: against. Lets a caller tell "everyone is covered" from "there was nothing to cover".
@@ -965,7 +967,7 @@ sent = patch.prefs.model_fields_set
 for key in sent:
     value = getattr(patch.prefs, key)
     if value is None:
-        prefs.pop(key, None)   # explicit null clears the override
+        prefs.pop(key, None)  # explicit null clears the override
     else:
         prefs[key] = value
 ```
@@ -1003,7 +1005,7 @@ class UserBulkOut(PassthroughModel):
     """What the bulk edit did — per FIELD, because the owner asked for several at once."""
 
     matched: int
-    changed_by_field: dict[str, int]   # {"enabled": 12, "paused": 0}
+    changed_by_field: dict[str, int]  # {"enabled": 12, "paused": 0}
     #: Accounts a change could not apply to, and why: the owner (never restricted, rule 5), an
     #: account with a parental profile, or one plex.tv no longer lists. Named, never silently dropped.
     skipped: list[dict]

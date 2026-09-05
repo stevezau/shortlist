@@ -122,6 +122,7 @@ scorer before it becomes a real config knob.
 import random
 from shortlist.engine.models import Candidate, MediaType
 
+
 def team_draft_interleave(
     ranked_a: list[Candidate], ranked_b: list[Candidate], k: int, rng: random.Random
 ) -> list[tuple[Candidate, str]]:
@@ -211,11 +212,13 @@ from shortlist.engine.models import Candidate, EngineConfig, MediaType, UserProf
 from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine import candidates as candidates_mod, history as history_mod, ranking
 
+
 @dataclass(frozen=True)
 class HoldoutCase:
     user: UserProfile
     held_out: WatchedItem
     history_before: list[WatchedItem]  # every OTHER watch strictly BEFORE held_out.watched_at
+
 
 @dataclass(frozen=True)
 class ReplayOutcome:
@@ -232,6 +235,7 @@ class ReplayOutcome:
     def hit(self) -> bool:
         return self.in_final_row
 
+
 def holdout_cases(user: UserProfile, history: list[WatchedItem], *, max_holdouts: int = 5) -> list[HoldoutCase]:
     """Up to `max_holdouts` most-recent watches with a tmdb_id, each paired with history strictly
     before it — so a later watch never leaks into an earlier case's seeds (trap 2). The DB cache has
@@ -243,10 +247,19 @@ def holdout_cases(user: UserProfile, history: list[WatchedItem], *, max_holdouts
         for w in eligible
     ]
 
+
 def replay_case(
-    case: HoldoutCase, config: EngineConfig, *, config_label: str, tmdb: TmdbClient,
-    library_index: dict[MediaType, dict[int, int]], resolve_tmdb_id, run_day: int = 0,
-    curator=None, trakt=None, search=None,
+    case: HoldoutCase,
+    config: EngineConfig,
+    *,
+    config_label: str,
+    tmdb: TmdbClient,
+    library_index: dict[MediaType, dict[int, int]],
+    resolve_tmdb_id,
+    run_day: int = 0,
+    curator=None,
+    trakt=None,
+    search=None,
 ) -> ReplayOutcome:
     """Derive seeds/exclusions from `case.history_before` ONLY (never the full history — trap 1),
     gather -> filter -> rank, and report where `case.held_out` landed.
@@ -255,17 +268,29 @@ def replay_case(
     rows.py helper — see trap 4 for why this must never reuse EngineContext.previous_picks."""
     disliked = history_mod.disliked_seed_keys(case.history_before, config.dislike_threshold)
     seeds = history_mod.derive_seeds(
-        case.history_before, resolve_tmdb_id, max_seeds=config.max_seeds, disliked=disliked,
+        case.history_before,
+        resolve_tmdb_id,
+        max_seeds=config.max_seeds,
+        disliked=disliked,
     )
     pool = candidates_mod.gather_candidates(
-        tmdb, seeds, sources=config.candidate_sources, curator=curator, trakt=trakt, search=search,
+        tmdb,
+        seeds,
+        sources=config.candidate_sources,
+        curator=curator,
+        trakt=trakt,
+        search=search,
     )
     key = (case.held_out.tmdb_id, case.held_out.media_type)
     gathered = any((c.tmdb_id, c.media_type) == key for c in pool)
     watched_ids = {(w.tmdb_id, w.media_type) for w in case.history_before if w.tmdb_id is not None}
     dropped: list[tuple[Candidate, str]] = []
     valid = candidates_mod.filter_candidates(
-        pool, library_index, watched_tmdb_ids=watched_ids, excluded_genres=set(), dropped=dropped,
+        pool,
+        library_index,
+        watched_tmdb_ids=watched_ids,
+        excluded_genres=set(),
+        dropped=dropped,
     )
     drop_reason = next((reason for c, reason in dropped if (c.tmdb_id, c.media_type) == key), "")
     kinds = [MediaType.MOVIE, MediaType.SHOW]
@@ -274,8 +299,13 @@ def replay_case(
     final = ranking.diversify_by_seed(ranked, config.row_size)
     in_final = any((c.tmdb_id, c.media_type) == key for c in final)
     return ReplayOutcome(
-        case=case, config_label=config_label, gathered=gathered, drop_reason=drop_reason,
-        rank_in_ranked=rank, pool_size=len(ranked), in_final_row=in_final,
+        case=case,
+        config_label=config_label,
+        gathered=gathered,
+        drop_reason=drop_reason,
+        rank_in_ranked=rank,
+        pool_size=len(ranked),
+        in_final_row=in_final,
         reciprocal_rank=(1.0 / rank) if rank else 0.0,
     )
 ```

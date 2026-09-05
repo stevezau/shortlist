@@ -274,9 +274,12 @@ def test_engine_run_deletes_a_genuine_unlabelled_orphan_end_to_end(fakes, tmp_pa
     plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
     ctx = EngineContext(
         config=EngineConfig(row_size=5, min_history=5, candidates_pre_rank=10, max_seeds=5),
-        plex=plex, plextv=plextv, tmdb=TmdbClient("test-key"),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
         history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
-        curator=NullCurator(), snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
         known_slugs={202: "mike"},
     )
     mike = UserProfile(username="mike", plex_account_id=202, user_type=UserType.SHARED)

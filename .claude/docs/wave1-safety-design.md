@@ -1227,7 +1227,7 @@ a preview that lies:
         {"show_days": [1, 3, 5]},
         {"poster": {"mode": ""}},
         {"name": "🍿 Movie night"},
-        {"size": 25},                       # owes Plex nothing — the empty-plan cell
+        {"size": 25},  # owes Plex nothing — the empty-plan cell
     ],
 )
 def test_a_dry_run_projects_exactly_what_the_real_patch_produces(client, seeded_row, patch):

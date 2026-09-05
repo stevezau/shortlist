@@ -141,8 +141,8 @@ Add to `SECRET_KEYS` (Fernet at rest, redacted by `all_public()`, `REDACTED_PLAC
 already handled by the settings PUT path):
 
 ```python
-"notify.webhook.url",        # a Discord/Slack webhook URL IS a bearer token in a URL
-"notify.email.smtp_password",
+("notify.webhook.url",)  # a Discord/Slack webhook URL IS a bearer token in a URL
+("notify.email.smtp_password",)
 ```
 
 **Support-bundle gap:** `api/support.py`'s `_SECRET_PATTERN` only catches `token|apikey|key|secret`

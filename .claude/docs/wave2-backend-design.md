@@ -441,14 +441,13 @@ def test_logout_without_the_csrf_header_is_refused(self, client: TestClient):
     # A refused request must not half-perform the action.
     assert client.cookies.get(SESSION_COOKIE)
 
+
 def test_logout_still_works_for_a_session_that_is_not_the_owner(self, client: TestClient):
     """`_check_csrf`, not `require_owner`: a pre-link session, or one whose account lost ownership,
     must still be able to end itself — that is the session most in need of ending."""
     client.cookies.set(
         SESSION_COOKIE,
-        session_serializer(client.app.state.session_secret).dumps(
-            {"account_id": 999999, "username": "someone-else"}
-        ),
+        session_serializer(client.app.state.session_secret).dumps({"account_id": 999999, "username": "someone-else"}),
     )
 
     assert client.post("/api/auth/logout").json() == {"ok": True}
@@ -464,8 +463,8 @@ def _check(name: str, fn) -> dict:
         ok, detail = fn()
         return {"name": name, "ok": bool(ok), "detail": str(detail)}
     except Exception as e:
-        logger.debug("support health probe {} failed: {}", name, e)     # <-- RAW
-        return {"name": name, "ok": False, "detail": _fail(e)}          # <-- scrubbed
+        logger.debug("support health probe {} failed: {}", name, e)  # <-- RAW
+        return {"name": name, "ok": False, "detail": _fail(e)}  # <-- scrubbed
 ```
 
 **The same exception is scrubbed for the JSON body and logged raw, two lines apart, inside one
@@ -528,8 +527,8 @@ def test_a_failed_probe_is_scrubbed_before_it_reaches_the_log(self, client, capl
 
     result = support._check("Libraries", lambda: (_ for _ in ()).throw(boom))
 
-    assert sentinel not in result["detail"]           # already true today
-    assert sentinel not in captured_log_text()        # FALSE today — this is the bug
+    assert sentinel not in result["detail"]  # already true today
+    assert sentinel not in captured_log_text()  # FALSE today — this is the bug
     assert "<redacted>" in captured_log_text()
 ```
 
@@ -668,28 +667,26 @@ async def create_pin(request: Request) -> dict:
 the rest:
 
 ```python
-    try:
-        async with httpx.AsyncClient() as client:
-            pin = await client.get(f"{PLEXTV}/api/v2/pins/{pin_id}",
-                                   headers=_client_headers(state.client_id), timeout=15)
-            if pin.status_code == 404:
-                raise HTTPException(status_code=404, detail="PIN expired — start over")
-            token = _plextv_body(pin, "poll pin").get("authToken")
-            if not token:
-                return {"linked": False}
-            account = await client.get(
-                f"{PLEXTV}/api/v2/user",
-                headers={**_client_headers(state.client_id), "X-Plex-Token": token}, timeout=15)
-    except httpx.HTTPError as e:
-        logger.warning("poll pin: plex.tv unreachable ({})", type(e).__name__)
-        raise HTTPException(status_code=503, detail=_PLEXTV_UNREACHABLE) from e
-    info = _plextv_body(account, "identify account")
-    try:
-        account_id = int(info["id"])
-    except (KeyError, TypeError, ValueError) as e:
-        # A body we can't read is not an answer — the same rule `_seeded_token_account_id` applies.
-        raise HTTPException(status_code=502,
-                            detail="plex.tv did not say which account approved this PIN") from e
+try:
+    async with httpx.AsyncClient() as client:
+        pin = await client.get(f"{PLEXTV}/api/v2/pins/{pin_id}", headers=_client_headers(state.client_id), timeout=15)
+        if pin.status_code == 404:
+            raise HTTPException(status_code=404, detail="PIN expired — start over")
+        token = _plextv_body(pin, "poll pin").get("authToken")
+        if not token:
+            return {"linked": False}
+        account = await client.get(
+            f"{PLEXTV}/api/v2/user", headers={**_client_headers(state.client_id), "X-Plex-Token": token}, timeout=15
+        )
+except httpx.HTTPError as e:
+    logger.warning("poll pin: plex.tv unreachable ({})", type(e).__name__)
+    raise HTTPException(status_code=503, detail=_PLEXTV_UNREACHABLE) from e
+info = _plextv_body(account, "identify account")
+try:
+    account_id = int(info["id"])
+except (KeyError, TypeError, ValueError) as e:
+    # A body we can't read is not an answer — the same rule `_seeded_token_account_id` applies.
+    raise HTTPException(status_code=502, detail="plex.tv did not say which account approved this PIN") from e
 ```
 
 `HTTPException` is not an `httpx.HTTPError`, so the 404 raised inside the `try` passes through the
@@ -777,7 +774,8 @@ class TestPlexTvFailuresDuringLoginAreExplained:
     def test_pin_creation_reports_a_captive_portal_html_body_as_502(self, client):
         with respx.mock:
             respx.post("https://plex.tv/api/v2/pins").mock(
-                return_value=httpx.Response(200, text="<html>Sign in to the hotel wifi</html>"))
+                return_value=httpx.Response(200, text="<html>Sign in to the hotel wifi</html>")
+            )
             r = client.post("/api/auth/pin")
         assert r.status_code == 502
 
@@ -796,9 +794,9 @@ class TestPlexTvFailuresDuringLoginAreExplained:
     def test_polling_refuses_an_account_body_with_no_id(self, client):
         with respx.mock:
             respx.get("https://plex.tv/api/v2/pins/42").mock(
-                return_value=httpx.Response(200, json={"authToken": "pin-token-sentinel"}))
-            respx.get("https://plex.tv/api/v2/user").mock(
-                return_value=httpx.Response(200, json={"username": "steve"}))
+                return_value=httpx.Response(200, json={"authToken": "pin-token-sentinel"})
+            )
+            respx.get("https://plex.tv/api/v2/user").mock(return_value=httpx.Response(200, json={"username": "steve"}))
             r = client.get("/api/auth/pin/42")
         assert r.status_code == 502
 
@@ -814,8 +812,7 @@ class TestPlexTvFailuresDuringLoginAreExplained:
         """The NORMAL case, polled every ~1.5s. Turning this into an error would break every login."""
         with respx.mock:
             respx.get("https://plex.tv/api/v2/pins/42").mock(return_value=httpx.Response(200, json={}))
-            assert client.get("/api/auth/pin/42").json() == {"linked": False,
-                                                             "account_id": None, "username": None}
+            assert client.get("/api/auth/pin/42").json() == {"linked": False, "account_id": None, "username": None}
 ```
 
 ### 2.4 (d) Off-by-one bound — real, and smaller than the audit implies
@@ -1125,29 +1122,32 @@ worded failure.
 **(iii) The diagnosis must be logged where it survives**, i.e. below `configure_logging`:
 
 ```python
-            healed, unreadable = store.heal_and_audit_secrets()
-            store.seed_from_env(dict(os.environ))
-            (config_dir / "logs").mkdir(parents=True, exist_ok=True)
-            configure_logging(store.get("log.level"), log_file=str(config_dir / "logs" / "shortlist.log"))
-            # BELOW configure_logging on purpose: before this line there is no file sink, so anything
-            # logged above reaches `docker logs` and never /config/logs/shortlist.log — the file the
-            # support bundle exports and the one an owner reads after the fact.
-            if healed:
-                logger.warning("encrypted {} setting(s) that were stored in the clear: {}",
-                               len(healed), ", ".join(healed))
-            if unreadable:
-                app.state.unreadable_secrets = unreadable
-                logger.error(
-                    "CANNOT READ {} saved credential(s): {}. /config/secret.key does not match what "
-                    "encrypted them — it was regenerated, replaced, or restored from a different "
-                    "instance. The stored values have NOT been altered, so putting the original "
-                    "secret.key back and restarting restores everything. If it is gone for good, "
-                    "re-enter each of these in Settings; the API token must be regenerated.",
-                    len(unreadable), ", ".join(unreadable),
-                )
-                session.add(Event(scope="secrets.unreadable", level="error",
-                                  message={"keys": unreadable, "at": datetime.now(UTC).isoformat()}))
-                session.commit()
+healed, unreadable = store.heal_and_audit_secrets()
+store.seed_from_env(dict(os.environ))
+(config_dir / "logs").mkdir(parents=True, exist_ok=True)
+configure_logging(store.get("log.level"), log_file=str(config_dir / "logs" / "shortlist.log"))
+# BELOW configure_logging on purpose: before this line there is no file sink, so anything
+# logged above reaches `docker logs` and never /config/logs/shortlist.log — the file the
+# support bundle exports and the one an owner reads after the fact.
+if healed:
+    logger.warning("encrypted {} setting(s) that were stored in the clear: {}", len(healed), ", ".join(healed))
+if unreadable:
+    app.state.unreadable_secrets = unreadable
+    logger.error(
+        "CANNOT READ {} saved credential(s): {}. /config/secret.key does not match what "
+        "encrypted them — it was regenerated, replaced, or restored from a different "
+        "instance. The stored values have NOT been altered, so putting the original "
+        "secret.key back and restarting restores everything. If it is gone for good, "
+        "re-enter each of these in Settings; the API token must be regenerated.",
+        len(unreadable),
+        ", ".join(unreadable),
+    )
+    session.add(
+        Event(
+            scope="secrets.unreadable", level="error", message={"keys": unreadable, "at": datetime.now(UTC).isoformat()}
+        )
+    )
+    session.commit()
 ```
 
 `app.state.unreadable_secrets` (default `[]`) is the flag every surface reads. **Key names only** —
@@ -1156,12 +1156,12 @@ never a value, never a key fingerprint.
 ### 3.4 Option A — refuse to boot
 
 ```python
-            if unreadable and not _accept_lost_key():   # SHORTLIST_ACCEPT_LOST_SECRET_KEY=1
-                raise RuntimeError(
-                    f"refusing to start: {len(unreadable)} saved credential(s) cannot be decrypted "
-                    f"({', '.join(unreadable)}). Restore /config/secret.key, or set "
-                    "SHORTLIST_ACCEPT_LOST_SECRET_KEY=1 to start anyway and re-enter them."
-                )
+if unreadable and not _accept_lost_key():  # SHORTLIST_ACCEPT_LOST_SECRET_KEY=1
+    raise RuntimeError(
+        f"refusing to start: {len(unreadable)} saved credential(s) cannot be decrypted "
+        f"({', '.join(unreadable)}). Restore /config/secret.key, or set "
+        "SHORTLIST_ACCEPT_LOST_SECRET_KEY=1 to start anyway and re-enter them."
+    )
 ```
 
 **Trade-off.** A refusal to boot is the only signal that cannot be scrolled past: nothing runs, no
@@ -1335,8 +1335,9 @@ class TestLooksLikeCiphertext:
         for plaintext in ("", "x", "a" * 200, "a" * 4000):
             assert looks_like_ciphertext(box.encrypt(plaintext))
 
-    @pytest.mark.parametrize("value", ["", "shl_abc", "sk-ant-api03-xxxx",
-                                       "1234567890abcdef1234", "not base64 at all!!", "AAAA"])
+    @pytest.mark.parametrize(
+        "value", ["", "shl_abc", "sk-ant-api03-xxxx", "1234567890abcdef1234", "not base64 at all!!", "AAAA"]
+    )
     def test_a_credential_shaped_plaintext_is_not(self, value):
         assert not looks_like_ciphertext(value)
 ```
@@ -1380,8 +1381,8 @@ class TestBootWithALostSecretKey:
         bundle exports. FAILS TODAY."""
         ...  # boot with a lost key
         log = (tmp_path / "logs" / "shortlist.log").read_text()
-        assert "plex.token" in log                 # the KEY NAME is named
-        assert "a-token-sentinel" not in log       # the VALUE never is (rule 9)
+        assert "plex.token" in log  # the KEY NAME is named
+        assert "a-token-sentinel" not in log  # the VALUE never is (rule 9)
 
     def test_a_genuinely_first_boot_is_silent(self, tmp_path):
         """No key and no secrets is a normal first run. It must not warn, must not alert, and must

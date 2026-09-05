@@ -28,6 +28,7 @@ def details(self, tmdb_id: int, media_type: MediaType) -> dict:
     kind = "movie" if media_type is MediaType.MOVIE else "tv"
     return self._get(f"/{kind}/{tmdb_id}", params={"append_to_response": "credits"})
 
+
 def genre_ids_for(self, tmdb_id: int, media_type: MediaType) -> list[int]:
     data = self.details(tmdb_id, media_type)
     return [g["id"] for g in data.get("genres", []) if isinstance(g, dict) and "id" in g]
@@ -68,6 +69,7 @@ constant, automatically adaptive.
 GENRE_SHRINK_K = 10.0
 GENRE_LOG_CLAMP = 2.0  # ±4x ratio — beyond this a sparse genre stops adding real signal
 
+
 def genre_avoidance_profile(user_counts: dict[str, int], pool_counts: dict[str, int]) -> dict[str, float]:
     """Per-genre shrunk log2(userShare/poolShare), clamped. Positive = over-represented in the
     user's history, negative = avoided. Only the negative half is used downstream (Change 2) — this
@@ -86,6 +88,7 @@ def genre_avoidance_profile(user_counts: dict[str, int], pool_counts: dict[str, 
         shrunk = w * user_share + (1 - w) * pool_share
         out[genre] = max(-GENRE_LOG_CLAMP, min(GENRE_LOG_CLAMP, math.log2(shrunk / pool_share)))
     return out
+
 
 def candidate_genre_penalty(genres: list[str], profile: dict[str, float]) -> float:
     """This candidate's own avoidance signal — the mean of its genres' log ratios, negative half
@@ -188,8 +191,9 @@ combined total** — not one floor per dampener.
 
 ```python
 NEGATIVE_MULTIPLIER_FLOOR = 0.5  # matches genre_coherence's existing 0.5 floor (candidates.py:515):
-                                 # "shades the ranking rather than dominating it" — same number,
-                                 # same reason, same file family.
+# "shades the ranking rather than dominating it" — same number,
+# same reason, same file family.
+
 
 def negative_multiplier(*log2_penalties: float) -> float:
     """Combine every negative-affinity signal into ONE floored multiplier.
@@ -252,10 +256,12 @@ None beyond Change 1 — pure ranking plumbing, gated by the same strength.
 @dataclass(frozen=True)
 class Attribution:
     """One signal's strongest evidence for a candidate — which watched title, and why."""
-    signal: str        # "similarity" | "franchise" | "cast"
+
+    signal: str  # "similarity" | "franchise" | "cast"
     seed_title: str
     seed_tmdb_id: int
-    detail: str = ""   # the shared actor's name, or the franchise name
+    detail: str = ""  # the shared actor's name, or the franchise name
+
 
 # Candidate gains:
 attributions: list[Attribution] = field(default_factory=list)
@@ -351,9 +357,10 @@ def mark_franchise_members(pool: dict[tuple[int, MediaType], Candidate], tmdb: T
 ```python
 # ranking.py
 FRANCHISE_BOOST_MAX = 0.5  # smaller than a full extra seed match (+100% via seed_frequency) —
-                           # "continues the same story" is strong evidence, not equivalent to
-                           # having actually re-sought this seed. Caps the boost so a detected
-                           # sequel cannot out-rank a well-seeded, high-affinity title on its own.
+# "continues the same story" is strong evidence, not equivalent to
+# having actually re-sought this seed. Caps the boost so a detected
+# sequel cannot out-rank a well-seeded, high-affinity title on its own.
+
 
 def franchise_factor(is_member: bool, strength: float) -> float:
     return 1.0 + (FRANCHISE_BOOST_MAX * max(0.0, min(1.0, strength)) if is_member else 0.0)
@@ -408,9 +415,10 @@ corpus **is** the thing being compared — the current row's pool is the textboo
 compromise.
 
 ```python
-TOP_CAST_N = 5          # billing-order head — leads + notable co-stars, excludes ensemble
-CAST_NORMALIZER = 3.0   # saturation point for summed IDF overlap
-CAST_BOOST_MAX = 0.5    # same ceiling as FRANCHISE_BOOST_MAX, same reason
+TOP_CAST_N = 5  # billing-order head — leads + notable co-stars, excludes ensemble
+CAST_NORMALIZER = 3.0  # saturation point for summed IDF overlap
+CAST_BOOST_MAX = 0.5  # same ceiling as FRANCHISE_BOOST_MAX, same reason
+
 
 def cast_idf(pool_cast_lists: list[set[str]]) -> dict[str, float]:
     """Standard smoothed IDF over the CURRENT POOL's top-billed cast lists — down-weights an actor
@@ -421,6 +429,7 @@ def cast_idf(pool_cast_lists: list[set[str]]) -> dict[str, float]:
     for cast in pool_cast_lists:
         df.update(cast)
     return {actor: math.log((1 + n) / (1 + count)) + 1 for actor, count in df.items()}
+
 
 def cast_overlap_score(seed_cast: set[str], candidate_cast: set[str], idf: dict[str, float]) -> float:
     shared = seed_cast & candidate_cast

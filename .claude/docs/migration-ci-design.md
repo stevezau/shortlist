@@ -21,6 +21,8 @@ original content (`git show efaf9f9:...0032...`) read a setting like this:
 def _get(bind, key: str):
     row = bind.execute(sa.text("select value from settings where key = :k"), {"k": key}).scalar()
     return json.loads(row) if isinstance(row, str) else row
+
+
 ...
 if _get(bind, "curator.provider") != "ollama":
     return
@@ -569,7 +571,9 @@ def check(found: dict[str, tuple[Path, str]], entries: dict[str, tuple[str, str,
 def main(argv: list[str] | None = None) -> int:
     """Entry point. Returns a process exit status."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--write", action="store_true", help="add lines for NEW migrations; never changes an existing one")
+    parser.add_argument(
+        "--write", action="store_true", help="add lines for NEW migrations; never changes an existing one"
+    )
     parser.add_argument("--amend", metavar="REVISION", help="deliberately re-freeze an edited migration")
     parser.add_argument("--reason", default="", help="why databases already stamped at that revision are fine")
     args = parser.parse_args(argv)
@@ -730,7 +734,9 @@ class TestTheFingerprintIgnoresWhatDoesNotRun:
     @pytest.mark.parametrize(
         "edited",
         [
-            pytest.param(BASE.replace('"""A migration."""', '"""A migration.\n\nRewritten prose.\n"""'), id="docstring"),
+            pytest.param(
+                BASE.replace('"""A migration."""', '"""A migration.\n\nRewritten prose.\n"""'), id="docstring"
+            ),
             pytest.param(BASE.replace("def upgrade", "# why this exists\ndef upgrade"), id="comment"),
             pytest.param(BASE.replace("import sqlalchemy as sa\n", "import sqlalchemy as sa\n\n\n"), id="blank-lines"),
             pytest.param(
@@ -741,7 +747,9 @@ class TestTheFingerprintIgnoresWhatDoesNotRun:
                 id="reformatted",
             ),
             pytest.param(
-                BASE.replace("import sqlalchemy as sa\nfrom alembic import op", "from alembic import op\nimport sqlalchemy as sa"),
+                BASE.replace(
+                    "import sqlalchemy as sa\nfrom alembic import op", "from alembic import op\nimport sqlalchemy as sa"
+                ),
                 id="import-order",
             ),
         ],
@@ -754,7 +762,10 @@ class TestTheFingerprintIgnoresWhatDoesNotRun:
         [
             (BASE.replace("nullable=True", "nullable=False"), "a changed keyword"),
             (BASE.replace("sa.Boolean()", "sa.String(length=16)"), "a changed column type"),
-            (BASE.replace('    op.add_column("rows", sa.Column("flag", sa.Boolean(), nullable=True))', "    pass"), "a removed body"),
+            (
+                BASE.replace('    op.add_column("rows", sa.Column("flag", sa.Boolean(), nullable=True))', "    pass"),
+                "a removed body",
+            ),
             (BASE + '\n\ndef downgrade() -> None:\n    op.drop_column("rows", "flag")\n', "an added function"),
             (BASE.replace('"rows"', '"collections"'), "a changed table name"),
         ],
@@ -836,7 +847,9 @@ def test_every_data_migration_is_named_in_a_test():
         source = path.read_text()
         tree = ast.parse(source)
         executes = any(
-            isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in {"execute", "bulk_insert"}
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"execute", "bulk_insert"}
             for node in ast.walk(tree)
         )
         if not executes:
