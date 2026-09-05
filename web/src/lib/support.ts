@@ -6,10 +6,15 @@ export const GITHUB_REPO = "https://github.com/stevezau/shortlist";
  *  same material split into pages, searchable, and readable on a phone. */
 export const DOCS_URL = "https://shortlistapp.dev/";
 
-/** The guides page section on tools that fight Shortlist for the Plex Recommended shelf. Linked
- *  from Settings → Row placement, which used to carry the whole explanation inline. */
+/** The guides section on tools that fight Shortlist for the Plex Recommended shelf. Linked from
+ *  Settings → Row placement, which used to carry the whole explanation inline.
+ *
+ *  Points at the Agregarr VERSION check, not the shelf-shuffling section next to it. The sentence
+ *  in the app names one specific exposure — an out-of-date Agregarr putting other people's rows on
+ *  your Home — and only this section says which build you are on and which one fixes it. The
+ *  general section covers label exclusion and shuffling, and never mentions it. */
 export const DOCS_SHELF_CONTENTION_URL =
-  "https://shortlistapp.dev/guides/#another-tool-keeps-moving-your-rows";
+  "https://shortlistapp.dev/guides/rows/#check-which-agregarr-you-are-running";
 
 /** Where "Support this project" goes. GitHub Sponsors rather than a direct payment link: it takes no
  *  platform fee, and it is the page that lists every other way to give (Ko-fi included) via the

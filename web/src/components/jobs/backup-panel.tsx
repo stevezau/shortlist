@@ -135,8 +135,8 @@ export function BackupPanel() {
               WAL and copying over the live database. So the one case that most needs a guarantee is
               the one case that has none. Say what to check; claim nothing about the outcome. */}
           <p className="text-xs text-muted-foreground">
-            The backup may have been cleared out by the &ldquo;Backups
-            kept&rdquo; limit above &mdash; reload this page and pick another.
+            The backup may have been cleared out by the &ldquo;Keep&rdquo;
+            limit above &mdash; reload this page and pick another.
             If it&rsquo;s still listed, check{" "}
             <span className="font-mono">/config</span> is writable and has room,
             then try again. If it keeps failing, restore the file by hand rather

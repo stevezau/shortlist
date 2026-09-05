@@ -478,7 +478,12 @@ export function useCuratorModels(
   // BOTH inputs, not whichever is set first: a local/OpenAI-compatible server can now carry a key
   // as well as a URL, and keying on the key alone would serve a cached list from the previous
   // server when only the URL changed.
-  const credential = `${params.apiKey ?? ""} ${params.ollamaUrl ?? ""}`;
+  // `\u0000` as an escape, not a literal NUL byte in the source. Written literally it makes
+  // the file binary to every tool that reads it: `file` reports "data", and `grep` returns
+  // NOTHING for the whole file rather than erroring, so a search for any symbol in here comes
+  // back silently empty. The separator still has to be a character that cannot appear in a
+  // key or a URL, so the value stays the same.
+  const credential = `${params.apiKey ?? ""}\u0000${params.ollamaUrl ?? ""}`;
   return useQuery({
     queryKey: queryKeys.curatorModels(params.provider, fingerprint(credential)),
     queryFn: () =>

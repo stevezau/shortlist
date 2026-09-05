@@ -19,10 +19,12 @@ function renderAt(path: string, ready: boolean) {
 }
 
 describe("useHashScroll", () => {
-  let scrollIntoView: ReturnType<typeof vi.fn<() => void>>;
+  let scrollIntoView: ReturnType<
+    typeof vi.fn<(options?: ScrollIntoViewOptions) => void>
+  >;
 
   beforeEach(() => {
-    scrollIntoView = vi.fn<() => void>();
+    scrollIntoView = vi.fn<(options?: ScrollIntoViewOptions) => void>();
     Element.prototype.scrollIntoView = scrollIntoView;
   });
 
@@ -41,6 +43,31 @@ describe("useHashScroll", () => {
     expect(scrollIntoView.mock.instances[0]).toBe(
       document.getElementById("danger"),
     );
+  });
+
+  it("animates the jump, and does not when the viewer asked for no motion", () => {
+    // Asserting the ARGUMENT, not just the call: `.claude/rules/testing.md` — if removing a
+    // parameter from the code would not break the test, the test is not covering it. The CSS guard
+    // cannot catch this one, because a `behavior` passed here overrides the computed value.
+    renderAt("/settings#danger", true);
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: "smooth",
+      block: "center",
+    });
+
+    // Assigned, not spied: this jsdom has no `window.matchMedia` at all, which is why the hook
+    // optional-calls it — and why the assertion above is the real "no preference expressed" case.
+    scrollIntoView.mockClear();
+    const original = window.matchMedia;
+    window.matchMedia = vi.fn(
+      () => ({ matches: true }) as unknown as MediaQueryList,
+    );
+    renderAt("/settings#danger", true);
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: "auto",
+      block: "center",
+    });
+    window.matchMedia = original;
   });
 
   it("does nothing when there is no hash", () => {

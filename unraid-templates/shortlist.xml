@@ -17,7 +17,7 @@
   <Category>MediaServer:Other</Category>
   <WebUI>http://[IP]:[PORT:5959]</WebUI>
   <Icon>https://raw.githubusercontent.com/stevezau/shortlist/master/unraid-templates/shortlist-icon.png</Icon>
-  <Screenshot>https://raw.githubusercontent.com/stevezau/shortlist/master/docs/images/plex-picked-for-you.jpg</Screenshot>
+  <Screenshot>https://raw.githubusercontent.com/stevezau/shortlist/master/docs/images/plex-picked-for-you.png</Screenshot>
   <Requires>Plex Media Server 1.43.2.10687 or newer, Plex Pass on the admin account, and a free TMDB API key. Tautulli and an LLM API key are optional.</Requires>
   <ExtraSearchTerms>plex recommendations picked for you personalized rows collections tautulli radarr sonarr</ExtraSearchTerms>
   <Config Name="WebUI Port" Target="5959" Default="5959" Mode="tcp" Description="Web UI port" Type="Port" Display="always" Required="true" Mask="false">5959</Config>

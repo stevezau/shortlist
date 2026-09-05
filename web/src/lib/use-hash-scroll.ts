@@ -24,8 +24,17 @@ export function useHashScroll(ready: boolean): void {
     // Centred and smooth, matching the in-page jumps the row editor already does to this same
     // anchor — a bare `scrollIntoView()` pins the target to the very top of the viewport, so the
     // two ways of reaching one section landed differently.
-    document
-      .getElementById(hash.slice(1))
-      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    //
+    // The media query is checked in JS because the CSS guard cannot reach this: `index.css` sets
+    // `scroll-behavior: auto !important` under `prefers-reduced-motion`, and the `behavior` option
+    // passed here overrides the computed value regardless (measured — the scroll animated
+    // identically in both modes). Four other call sites in this codebase check it the same way.
+    const reduce = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)",
+    )?.matches;
+    document.getElementById(hash.slice(1))?.scrollIntoView({
+      behavior: reduce ? "auto" : "smooth",
+      block: "center",
+    });
   }, [ready, hash]);
 }
