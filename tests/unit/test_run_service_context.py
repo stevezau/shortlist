@@ -1357,6 +1357,75 @@ class TestSyncWatched:
             )
             assert pick.finished_at is not None
 
+    def test_the_date_repair_is_wired_to_the_history_source_per_SECTION(self, service, sessions, monkeypatch):
+        """Nothing else covers `WatchSync -> ShareTokenWatchSource.episode_dates -> PlexClient`.
+
+        Every cache test injects its own repair callable and every client test calls `PlexClient`
+        directly, so the wiring between them was exercised by nothing — and `_repair_stale_show_dates`
+        catches bare `Exception`, so a renamed method or a wrong section key would degrade to one
+        warning line and a green sync. Asserts the ARGUMENTS, not just that it was called.
+        """
+        from datetime import UTC, datetime, timedelta
+        from types import SimpleNamespace
+
+        from shortlist.engine.clients.plex_pms import WatchedRead
+        from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
+        from shortlist.server.db.models import User
+
+        with sessions() as session:
+            session.add(User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True))
+            session.commit()
+
+        profile = UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED, slug="sarah")
+        seen: list[tuple] = []
+
+        def fetch_section(_p, section, media, since=None):
+            item = WatchedItem(
+                title="X",
+                media_type=media,
+                watched_at=datetime.now(UTC),
+                tmdb_id=1,
+                rating_key=1,
+                viewed_leaf_count=(3 if media is MediaType.SHOW else None),
+                leaf_count=10,
+            )
+            return WatchedRead(items=[item], covers_window=True)
+
+        ctx = SimpleNamespace(
+            plex=SimpleNamespace(
+                sections=lambda: [SimpleNamespace(key="7", type="show"), SimpleNamespace(key="8", type="movie")]
+            ),
+            history_source=SimpleNamespace(
+                fetch_section=fetch_section,
+                episode_dates=lambda p, section, keys: seen.append((p.slug, section.key, set(keys))) or {},
+                fetch=lambda p, **k: [],
+            ),
+            config=SimpleNamespace(min_completion=0.7),
+        )
+
+        # First pass seeds the counts; the second is where a rise can be detected.
+        service.refresh_watched(ctx, profile, force_full=True)
+        seen.clear()
+
+        def risen(_p, section, media, since=None):
+            item = WatchedItem(
+                title="X",
+                media_type=media,
+                watched_at=datetime.now(UTC) - timedelta(days=900),
+                tmdb_id=1,
+                rating_key=1,
+                viewed_leaf_count=(9 if media is MediaType.SHOW else None),
+                leaf_count=10,
+            )
+            return WatchedRead(items=[item], covers_window=True)
+
+        ctx.history_source.fetch_section = risen
+        service.refresh_watched(ctx, profile, force_full=True)
+
+        assert seen == [("sarah", "7", {1})], (
+            f"the repair was not wired per-section for shows only (movies must not be asked): {seen}"
+        )
+
     def test_an_unshared_library_is_skipped_and_keeps_the_cache(self, service, sessions, monkeypatch):
         """A 403 is "not shared with them", NOT an unreadable section.
 

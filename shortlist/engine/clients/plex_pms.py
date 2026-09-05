@@ -2122,9 +2122,10 @@ class PlexClient:
         return out
 
     #: Above this many shows needing a date, ONE library-wide episode read is cheaper than a call
-    #: each. The library read costs ~2.8s against ~1.1s for the show read on a 9,563-episode library;
-    #: a single show is one small page. Marking a handful of shows is the normal case, so the per-show
-    #: path is the one that usually runs.
+    #: each. The library walk is ~2.8s over 9,563 episodes; a single show is one page of at most a few
+    #: dozen rows, so ~0.1-0.2s — the crossover is a dozen or so, not the ~3 the 1.1s SECTION read
+    #: would suggest (that read returns every show in the library, which is a different question).
+    #: Marking a handful of shows is the normal case, so the per-show path is the one that runs.
     _PER_SHOW_DATE_LIMIT = 12
 
     def newest_episode_dates(self, section_key: str | int, token: str, show_keys: set[int]) -> dict[int, datetime]:
@@ -2259,7 +2260,18 @@ class PlexClient:
                     continue  # a season or show row — only leaves carry the key we fold on
                 try:
                     key, stamp = int(raw), int(el.get("lastViewedAt") or 0)
+                    views = int(el.get("viewCount") or 0)
                 except ValueError:
+                    continue
+                # `viewCount`, client-side, exactly as `_newest_leaf_stamp` does — so the two paths
+                # that date a show cannot disagree about the same show. A part-watched episode
+                # carries a `lastViewedAt` and no `viewCount`, and on the first real show this was
+                # tried against its stamp was NEWER than the only episode actually finished. This
+                # server's `unwatched=0` does exclude those (probed 2026-09-05: episode 460770,
+                # viewOffset-only, absent from all 9,581 rows) — but the same endpoint family
+                # silently ignores `viewedLeafCount!=0` and `lastViewedAt>=`, so depending on the
+                # server to filter is the assumption that keeps being wrong here.
+                if views <= 0:
                     continue
                 if stamp > newest.get(key, 0):
                     newest[key] = stamp

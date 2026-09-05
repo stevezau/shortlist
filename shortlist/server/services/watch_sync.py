@@ -175,8 +175,8 @@ class WatchSync:
                             # group a title held in two libraries into one row and say which two
                             # (issue #111). This is the only place it is known — the page itself
                             # never talks to Plex.
-                            repair_dates=repair,
                             library=getattr(section, "title", "") or "",
+                            repair_dates=repair,
                             force_full=force_full,
                             # EVERY sync, not just the periodic pass. Confining deletion to that pass
                             # was right when a complete read could delete on no proof at all; it is

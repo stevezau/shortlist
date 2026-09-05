@@ -1004,6 +1004,84 @@ class TestAMarkedWatchedShowGetsItsRealDate:
             row = session.query(WatchedTitle).filter_by(user_id=user_id, rating_key=8).one()
             assert abs((row.viewed_at.replace(tzinfo=UTC) - recent).total_seconds()) < 1, "the date went backwards"
 
+    def test_the_repaired_date_SURVIVES_the_next_quiet_sync(self, sessions, user_id):
+        """The one that makes the repair worth anything. Missing it, the fix lasted a single night.
+
+        The repair only fires while the count is RISING, and `_upsert` then persists the new count.
+        So the next sync sees an unchanged count, does not repair, and Plex hands back the same stale
+        show date it always will — which used to be written straight over the good one. Every night.
+        Two syncs looked green; the third is where it showed.
+        """
+        cache = WatchCache(sessions)
+        old = datetime.now(UTC) - timedelta(days=700)
+        real = datetime.now(UTC) - timedelta(minutes=5)
+        self._sync(cache, sessions, user_id, [show("Marked", rating_key=11, viewed=1, leaf=8, watched_at=old)])
+        self._sync(
+            cache,
+            sessions,
+            user_id,
+            [show("Marked", rating_key=11, viewed=8, leaf=8, watched_at=old)],
+            lambda keys: {11: real},
+        )
+        # A quiet night. Plex reports the same count and the same stale date, for ever.
+        self._sync(cache, sessions, user_id, [show("Marked", rating_key=11, viewed=8, leaf=8, watched_at=old)])
+
+        with sessions() as session:
+            row = session.query(WatchedTitle).filter_by(user_id=user_id, rating_key=11).one()
+            assert abs((row.viewed_at.replace(tzinfo=UTC) - real).total_seconds()) < 1, (
+                "the stale show date overwrote the repaired one — the fix lasted exactly one sync"
+            )
+
+    def test_un_marking_still_moves_the_date_back(self, sessions, user_id):
+        """The guard above must not freeze a date for ever. A FALLING count is an un-mark, and the
+        date should follow it rather than keeping a repair for something no longer watched."""
+        cache = WatchCache(sessions)
+        old = datetime.now(UTC) - timedelta(days=700)
+        real = datetime.now(UTC) - timedelta(minutes=5)
+        self._sync(cache, sessions, user_id, [show("Marked", rating_key=12, viewed=1, leaf=8, watched_at=old)])
+        self._sync(
+            cache,
+            sessions,
+            user_id,
+            [show("Marked", rating_key=12, viewed=8, leaf=8, watched_at=old)],
+            lambda keys: {12: real},
+        )
+        self._sync(cache, sessions, user_id, [show("Marked", rating_key=12, viewed=2, leaf=8, watched_at=old)])
+
+        with sessions() as session:
+            row = session.query(WatchedTitle).filter_by(user_id=user_id, rating_key=12).one()
+            assert abs((row.viewed_at.replace(tzinfo=UTC) - old).total_seconds()) < 1, (
+                "a falling count did not re-date — the guard froze the date instead of following the un-mark"
+            )
+
+    def test_a_transferred_row_is_still_repaired(self, sessions, user_id):
+        """The detector must compare Plex's clock, not the transfer's.
+
+        A transferred row carries the ORIGINAL account's historical date in `source_viewed_at`, which
+        is always older than the replica's own stamp. Reading that as "the cached date" made
+        `item.watched_at > cached_date` true on every pass, so a transferred account's marked-watched
+        shows were silently never repaired.
+        """
+        cache = WatchCache(sessions)
+        old = datetime.now(UTC) - timedelta(days=700)
+        self._sync(cache, sessions, user_id, [show("Transferred", rating_key=13, viewed=1, leaf=8, watched_at=old)])
+        with sessions() as session:
+            row = session.query(WatchedTitle).filter_by(user_id=user_id, rating_key=13).one()
+            row.source_viewed_at = datetime.now(UTC) - timedelta(days=1500)  # the true, much older date
+            session.commit()
+
+        asked: list[set[int]] = []
+        real = datetime.now(UTC) - timedelta(minutes=5)
+        self._sync(
+            cache,
+            sessions,
+            user_id,
+            [show("Transferred", rating_key=13, viewed=8, leaf=8, watched_at=old)],
+            lambda keys: asked.append(set(keys)) or {13: real},
+        )
+
+        assert asked == [{13}], "a transferred row was never offered for repair"
+
     def test_a_failed_date_read_costs_the_date_and_nothing_else(self, sessions, user_id):
         cache = WatchCache(sessions)
         old = datetime.now(UTC) - timedelta(days=700)

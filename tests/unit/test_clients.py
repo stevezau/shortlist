@@ -2533,6 +2533,34 @@ class TestDatingAShowFromItsEpisodes:
         assert set(dates) == wanted
 
     @respx.mock
+    def test_both_paths_agree_about_the_same_show(self, mock_plex):
+        """The per-show and library-wide paths must never date one show differently.
+
+        The per-show path filters on `viewCount` client-side because this endpoint family cannot be
+        trusted to filter. The bulk path used to lean on the server's `unwatched=0` instead — so the
+        two disagreed by four days on the commit's own recorded rows, and the bulk path picked the
+        episode nobody finished. This server does exclude those, but `viewedLeafCount!=0` and
+        `lastViewedAt>=` are both silently ignored by it, so the guard belongs in our code.
+        """
+        watched, abandoned = 1637199585, 1637560154
+        section_url = "http://pms:32400/library/sections/2/all"
+        mock_plex._server.url.return_value = section_url
+        # The server hands back BOTH, as an ignored filter would.
+        rows = (
+            f'<Video ratingKey="1" type="episode" grandparentRatingKey="460767" viewCount="1" '
+            f'lastViewedAt="{watched}"/>'
+            f'<Video ratingKey="2" type="episode" grandparentRatingKey="460767" viewOffset="1058389" '
+            f'lastViewedAt="{abandoned}"/>'
+        )
+        respx.get(section_url).mock(
+            return_value=httpx.Response(200, text=f'<MediaContainer size="2" totalSize="2">{rows}</MediaContainer>')
+        )
+
+        bulk = mock_plex._newest_episode_stamps("2", "TOK")
+
+        assert bulk[460767] == watched, "the bulk fold dated a show from a part-watched episode"
+
+    @respx.mock
     def test_one_unreadable_show_does_not_cost_the_others_their_dates(self, mock_plex):
         mock_plex._server.url.side_effect = lambda path, **k: f"http://pms:32400{path}"
         respx.get("http://pms:32400/library/metadata/1/allLeaves").mock(return_value=httpx.Response(500))

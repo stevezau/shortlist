@@ -530,7 +530,14 @@ def _shows_plex_recounted_but_did_not_redate(
         item = counted[row.rating_key]
         if row.viewed_leaf_count is None or item.viewed_leaf_count <= row.viewed_leaf_count:
             continue  # nothing new was watched or marked
-        cached_date = _aware(row.source_viewed_at) or _aware(row.viewed_at)
+        # `viewed_at`, never `source_viewed_at`. The question here is whether the date PLEX reports
+        # stood still, so it has to be compared against the last date Plex gave us. A transferred row
+        # carries the ORIGINAL account's historical date in `source_viewed_at`, which is always older
+        # than the replica's stamp — so mixing the two clocks made `item.watched_at > cached_date`
+        # true every pass and a transferred account's marked-watched shows were silently never
+        # repaired. `_to_item` still prefers `source_viewed_at`, so the transfer's true date keeps
+        # winning everywhere it should.
+        cached_date = _aware(row.viewed_at)
         if cached_date is None or item.watched_at > cached_date:
             continue  # Plex moved the date too, so they PLAYED it and Plex is already right
         stale.add(row.rating_key)
@@ -567,7 +574,11 @@ def _repair_stale_show_dates(
     out = []
     repaired = 0
     for item in items:
-        when = dates.get(item.rating_key) if item.rating_key is not None else None
+        # Gated on OUR `stale` set, not merely on what the callback returned. The "must have a
+        # previous cached count" rule is computed here and is the one thing standing between this and
+        # re-dating a whole back catalogue, so it is enforced here too rather than trusted to a
+        # different module's key handling.
+        when = dates.get(item.rating_key) if item.rating_key in stale else None
         if when is not None and when > item.watched_at:
             repaired += 1
             out.append(replace(item, watched_at=when))
@@ -623,6 +634,9 @@ def _upsert(
     if row is None:
         row = WatchedTitle(user_id=user_id, section_key=section_key, rating_key=rating_key)
         session.add(row)
+    # BEFORE the assignments below overwrite it: the date guard needs to know whether anything new
+    # was watched or marked since last time, and `viewed_leaf_count` is about to be replaced.
+    previous_leaf_count = row.viewed_leaf_count
     row.tmdb_id = item.tmdb_id
     row.media_type = media_type.value
     # Only when the caller knows it. Writing "" unconditionally would let any caller that doesn't
@@ -642,14 +656,37 @@ def _upsert(
     # someone who thumbs-downs a title and then changes their mind would keep the old value for ever,
     # and their row would stay quietly shaped by a judgement they withdrew.
     row.user_rating = item.user_rating
-    # The epoch NEVER overwrites a real date. A show marked watched has no `lastViewedAt` of its own
-    # and is dated from its newest watched episode; when that episode read fails the reader honestly
-    # degrades to 1970, and writing that here would rewrite a correct cached date back to "finished
-    # 20697d ago" — the reported symptom of #108 — until some later sync happened to succeed. A first
-    # insert still records the epoch: it is the only thing known about the row.
+    # A WORSE date never overwrites a better one. Two ways that happens, and both put back the exact
+    # symptom of #108 within a night, silently, with no other copy of the good value.
+    #
+    # 1. The epoch. A show marked watched has no `lastViewedAt` of its own and is dated from its
+    #    newest watched episode; when that episode read fails the reader honestly degrades to 1970,
+    #    and writing that here would rewrite a correct date back to "finished 20697d ago".
+    #
+    # 2. Plex's still-stale show date, on a quiet night. This is subtler and it defeated the repair
+    #    entirely. `_repair_stale_show_dates` only fires while the count is RISING, and this function
+    #    then persists the new count — so the next sync sees an unchanged count, does not repair, and
+    #    Plex reports the same stale show date it always did. Writing it through reverted the repair
+    #    after exactly one night, every night, for ever. An unchanged count means Plex has learnt
+    #    nothing new about this show, so its date carries no new information and must not win.
+    #
+    # A FALLING count still writes through: that is an un-mark, and the date should follow it back.
+    # A first insert still records whatever it has, epoch included — it is all that is known.
     incoming = item.watched_at or utcnow()
     cached = _aware(row.viewed_at)
-    if not (incoming <= _EPOCH and cached is not None and cached > _EPOCH):
+    keep_cached = (
+        cached is not None
+        and incoming < cached
+        and (
+            incoming <= _EPOCH
+            or (
+                media_type is MediaType.SHOW
+                and previous_leaf_count is not None
+                and item.viewed_leaf_count == previous_leaf_count
+            )
+        )
+    )
+    if not keep_cached:
         row.viewed_at = incoming
 
 

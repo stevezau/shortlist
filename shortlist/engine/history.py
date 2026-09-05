@@ -103,9 +103,12 @@ class ShareTokenWatchSource:
     def episode_dates(self, user: UserProfile, section, show_keys: set[int]) -> dict[int, datetime]:
         """When each of these shows was last watched, read from its episodes AS this user.
 
-        Sits beside `fetch_section` because it needs the same per-user token and the same "raises
-        rather than swallowing" contract: the caller is repairing dates it already knows are wrong,
-        so an answer it cannot get must not read as an answer of "no date".
+        Sits beside `fetch_section` because it needs the same per-user token.
+
+        Unlike `fetch_section` this is best-effort, and deliberately: the caller is improving a date
+        it already has, so a show that will not read keeps the date it had rather than costing the
+        sync. Only the TOKEN raises — an unreadable episode list, or a walk that could not prove it
+        finished, comes back simply absent from the result.
 
         Raises:
             NoWatchToken: no server token could be obtained for this user.
