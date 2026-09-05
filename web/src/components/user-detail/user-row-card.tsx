@@ -80,9 +80,16 @@ function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
             </div>
             {/* The configured size is a CEILING, and printing it bare put "15 titles" directly
                 above a list offering "Show all 10 (+5)" — one number apparently disagreeing with
-                itself. Say which is which: what they actually got, out of what the row allows. */}
+                itself. Say which is which: what they actually got, out of what the row allows.
+
+                `picks.length <= configuredSize` is the load-bearing half. `picks` came from the
+                LAST RUN and `configuredSize` is the setting as it stands now, so lowering the size
+                from 15 to 5 refetches this card immediately and would otherwise read "15 of 5
+                titles" until the next run rebuilt the row. The ceiling alone is honest there. */}
             <p className="text-sm text-muted-foreground">
-              {!muted && row.picks.length > 0
+              {!muted &&
+              row.picks.length > 0 &&
+              row.picks.length <= configuredSize
                 ? `${row.picks.length} of ${configuredSize} titles`
                 : `up to ${configuredSize} titles`}{" "}
               · {row.media === "both" ? "movies & shows" : `${row.media}s`}

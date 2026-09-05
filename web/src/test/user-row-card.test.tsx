@@ -292,4 +292,34 @@ describe("UserRowCard", () => {
 
     expect(await screen.findByText(/up to 15 titles/)).toBeInTheDocument();
   });
+
+  it("never prints a delivered count larger than the size it is out of", async () => {
+    // `picks` is from the LAST RUN, `size` is the setting as it stands now — so lowering someone's
+    // row size from 15 to 5 refetches this card straight away and would read "15 of 5 titles"
+    // until the next run rebuilt the row. The ceiling alone is the honest reading there.
+    getUserRows.mockResolvedValue([
+      row({
+        size: 5,
+        picks: Array.from({ length: 15 }, (_, i) => ({
+          rank: i + 1,
+          title: `Title ${i + 1}`,
+          reason: "why",
+          rating_key: 0,
+          media_type: "movie",
+          collection_slug: "picked",
+          library: "",
+          section_key: "",
+          seed_title: null,
+          sources: [],
+          affinity: 1,
+          year: null,
+          rating: null,
+        })),
+      }),
+    ]);
+    renderSection();
+
+    expect(await screen.findByText(/up to 5 titles/)).toBeInTheDocument();
+    expect(screen.queryByText(/15 of 5/)).toBeNull();
+  });
 });

@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
+import { Link } from "react-router";
+
 import { CronPicker } from "@/components/cron-picker";
 import { MutationAlert } from "@/components/mutation-alert";
 import { Segmented } from "@/components/segmented";
@@ -126,19 +128,26 @@ export function BackupPanel() {
             error={restore.error}
             fallback="Couldn’t restore that backup."
           />
-          {/* NOT "nothing was changed": `restore_backup` unlinks the WAL and copies over the live
-              database, so a failure part-way through is not provably harmless. What IS guaranteed
-              is the pre-restore copy taken before any of that, so the honest reassurance names it
-              rather than claiming an outcome nobody measured. */}
+          {/* NO reassurance about your current database, in either direction. An earlier draft
+              promised a `pre-restore` copy "either way"; it is not taken either way. A missing file
+              returns before `take_backup` is ever called (`backup.py`), and when the disk is full
+              `take_backup` returns None and `restore_backup` carries on regardless — unlinking the
+              WAL and copying over the live database. So the one case that most needs a guarantee is
+              the one case that has none. Say what to check; claim nothing about the outcome. */}
           <p className="text-xs text-muted-foreground">
             The backup may have been cleared out by the &ldquo;Backups
             kept&rdquo; limit above &mdash; reload this page and pick another.
             If it&rsquo;s still listed, check{" "}
             <span className="font-mono">/config</span> is writable and has room,
-            then try again. Either way, a{" "}
-            <span className="font-mono">pre-restore</span> copy of your current
-            database is taken before anything is overwritten, and it&rsquo;s in
-            the list below.
+            then try again. If it keeps failing, restore the file by hand rather
+            than retrying: the{" "}
+            <Link
+              to="/logs"
+              className="font-medium underline underline-offset-2"
+            >
+              Logs page
+            </Link>{" "}
+            has the reason it gave.
           </p>
         </div>
       )}

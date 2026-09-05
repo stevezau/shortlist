@@ -32,15 +32,19 @@ function RowsSkeleton() {
  */
 function RowNameChipLegend({ rows }: { rows: Collection[] }) {
   if (!rows.some((row) => hasRowNameToken(row.name))) return null;
+  // Hedged, because this renders for ANY of the three tokens but can only show one example: a row
+  // named "🎯 Because you watched {top_seed}" on a library called "4K Films" would otherwise be
+  // told it reads "✨ Movies Picked for You", which is true of neither half.
   return (
     <p className="px-1 pt-1 text-xs text-muted-foreground">
       A chip like{" "}
       <span className="rounded bg-muted px-1 py-0.5 font-normal">
         library name
       </span>{" "}
-      is a placeholder, filled in when the row is built &mdash; so on Plex that
-      row reads{" "}
-      <span className="text-foreground">✨ Movies Picked for You</span>.
+      is a placeholder, filled in when the row is built &mdash; so &ldquo;✨
+      library name Picked for You&rdquo; reads{" "}
+      <span className="text-foreground">✨ Movies Picked for You</span> on Plex.
+      An example: the real library, person or recent watch fills in.
     </p>
   );
 }

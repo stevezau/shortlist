@@ -1088,9 +1088,12 @@ function discoverGenreSentence(genres: Record<string, string[]>): string {
   if (listed.length === 0) {
     return "No genre stands out in what they have watched here yet, so this source had nothing to narrow on.";
   }
+  // Written out rather than `mediaGroupLabel(media).toLowerCase()`, which turns "TV Shows" into
+  // "tv shows" — an initialism lowercased mid-sentence reads as a typo.
+  const inProse: Record<string, string> = { movie: "movies", show: "TV shows" };
   const parts = listed.map(
     ([media, gs]) =>
-      `${mediaGroupLabel(media).toLowerCase()}: ${gs.join(", ")}`,
+      `${inProse[media] ?? mediaGroupLabel(media)}: ${gs.join(", ")}`,
   );
   return `The genres they watch most — ${parts.join("; ")}.`;
 }

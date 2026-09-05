@@ -21,6 +21,11 @@ export function useHashScroll(ready: boolean): void {
   const { hash } = useLocation();
   useEffect(() => {
     if (!ready || !hash) return;
-    document.getElementById(hash.slice(1))?.scrollIntoView();
+    // Centred and smooth, matching the in-page jumps the row editor already does to this same
+    // anchor — a bare `scrollIntoView()` pins the target to the very top of the viewport, so the
+    // two ways of reaching one section landed differently.
+    document
+      .getElementById(hash.slice(1))
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [ready, hash]);
 }
