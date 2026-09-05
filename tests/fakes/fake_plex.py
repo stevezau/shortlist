@@ -17,8 +17,10 @@ Fidelity notes (mirrors of real-Plex behavior the engine depends on):
 from __future__ import annotations
 
 import base64
+import io
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from xml.etree.ElementTree import Element, SubElement, tostring
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -699,6 +701,40 @@ def _sorted_items(items: list[FakeMovie], sort: str | None) -> list[FakeMovie]:
     return sorted(items, key=_SORT_KEYS.get(fieldname, lambda m: m.rating_key), reverse=direction == "desc")
 
 
+@lru_cache(maxsize=256)
+def _fake_poster(rating_key: int) -> bytes:
+    """A poster-SHAPED, per-title-COLOURED image, not a stretched single pixel.
+
+    The 1x1 placeholder below is right for asserting "artwork was served"; it is wrong for the
+    screenshots the docs site ships, where every pick rendered as the same flat green rectangle and
+    the pick list looked broken rather than illustrated. Since `.claude/rules/testing.md` says the
+    fake must be no EASIER than the real server, and a real PMS returns a distinct 2:3 image per
+    title, this returns one too.
+
+    Deterministic from the rating key, so a screenshot re-taken tomorrow is byte-identical and does
+    not churn the repo. Falls back to the flat pixel if Pillow is missing, so the fake never becomes
+    the reason a test cannot run.
+    """
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:  # pragma: no cover - Pillow ships in requirements.lock via the posters extra
+        return _PNG_1X1
+
+    width, height = 200, 300
+    hue = (rating_key * 47) % 360  # spread neighbouring keys far apart so a list looks varied
+    image = Image.new("RGB", (width, height))
+    draw = ImageDraw.Draw(image)
+    for y in range(height):
+        # Top-to-bottom darkening, which is what makes it read as artwork rather than a colour swatch.
+        lightness = 62 - int(38 * y / height)
+        draw.line([(0, y), (width, y)], fill=f"hsl({hue}, 45%, {lightness}%)")
+    # A darker band where a real poster carries its title block.
+    draw.rectangle([0, height - 58, width, height], fill=f"hsl({hue}, 40%, 14%)")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 def make_fake_plex(state: FakePlexState) -> FastAPI:
     """PMS surface (path prefix '') — enough for plexapi + the engine's raw /hubs calls."""
     app = FastAPI()
@@ -1001,7 +1037,7 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
         item = state.item(rating_key)
         if item is None or stamp != str(item.added_at):
             raise HTTPException(status_code=404, detail=f"no artwork at {rating_key}/thumb/{stamp}")
-        return Response(_PNG_1X1, media_type="image/png")
+        return Response(_fake_poster(rating_key), media_type="image/png")
 
     @app.get("/hubs/sections/{section_id}/manage")
     def manage_hubs(section_id: int, request: Request) -> Response:
