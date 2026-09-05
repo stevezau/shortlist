@@ -8,6 +8,9 @@ function pick(rank: number, title: string): Pick {
   return {
     rank,
     title,
+    // Required since posters landed — the artwork is proxied from the PMS by rating key, which is
+    // the one identifier all four Pick construction sites carry.
+    rating_key: 1000 + rank,
     reason: "because you watched Fargo",
     seed_title: null,
     sources: [],

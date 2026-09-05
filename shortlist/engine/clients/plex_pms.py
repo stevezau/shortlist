@@ -1602,6 +1602,61 @@ class PlexClient:
         r.raise_for_status()
         return r.json().get("MediaContainer", {}).get("Hub", []) or []
 
+    def item_thumb_path(self, rating_key: int) -> str | None:
+        """The server-relative artwork path for one library item, or None when it has none.
+
+        Read through :meth:`fetch_items` so **plexapi owns the response shape**, not this repo. There
+        is no recorded fixture for a single ``GET /library/metadata/{key}`` carrying a ``thumb``
+        (rule 11): the recorded ``pms_metadata_batch_partial.json`` settles the envelope and the
+        partial-batch behaviour but was trimmed to ``ratingKey``/``type``, and every recorded ``thumb``
+        this repo holds (``pms_collections_listing.json``, ``pms_play_history.xml.txt``) came off a
+        different endpoint. Rather than parse a shape nobody has recorded, this leans on the same
+        plexapi path the delivery pipeline already depends on in production.
+
+        Defensive on purpose. An item with no artwork, or one whose ``thumb`` is anything other than a
+        path on THIS server, is reported as None so the caller can answer "no picture" — never by
+        following an absolute URL somewhere else, and never by inventing one.
+
+        Args:
+            rating_key: The item's Plex ratingKey.
+
+        Returns:
+            A path beginning with ``/`` (e.g. ``/library/metadata/123/thumb/1699999999``), or None.
+        """
+        items, _missing = self.fetch_items([rating_key])
+        if not items:
+            return None
+        thumb = str(getattr(items[0], "thumb", "") or "")
+        # A server-relative path only. plexapi hands back whatever the PMS wrote, and an absolute URL
+        # would turn this into a fetcher for a host the owner never pointed us at.
+        return thumb if thumb.startswith("/") and not thumb.startswith("//") else None
+
+    def read_artwork(self, thumb_path: str) -> tuple[bytes, str]:
+        """``(bytes, content-type)`` for a server-relative artwork path on this PMS.
+
+        The owner's token goes in the HEADER, never the query string (rule 9): these bytes are handed
+        to a browser by a proxy, and a token in the URL is a token in the browser's history.
+
+        Args:
+            thumb_path: A path from :meth:`item_thumb_path`. Must start with ``/``.
+
+        Returns:
+            The image bytes and the content type the PMS reported.
+
+        Raises:
+            ValueError: The path is not server-relative.
+            httpx.HTTPStatusError: The PMS refused the read.
+        """
+        if not thumb_path.startswith("/") or thumb_path.startswith("//"):
+            raise ValueError("artwork path must be relative to this server")
+        r = http_retry.get(
+            self._server.url(thumb_path, includeToken=False),
+            headers={"X-Plex-Token": self._token},
+            timeout=self._timeout,
+        )
+        r.raise_for_status()
+        return r.content, r.headers.get("content-type", "image/jpeg")
+
     def scrobble_as(self, rating_key: int, token: str, *, dry_run: bool = False) -> bool:
         """Mark one item played AS another account, using that account's server token.
 

@@ -157,6 +157,7 @@ def _routes(app: ShortlistApp) -> list[tuple[str, str, str | None]]:
         ("row edit", f"/rows/{row_id}", "Schedule|Audience|Name"),
         ("row rename", f"/rows/{row_id}/rename", "name|Rename"),
         ("users", "/users", "sarah"),
+        ("sharing", "/sharing", "Sharing and privacy"),
         ("user detail", f"/users/{sarah}", "Because you watched|sarah"),
         ("runs", "/runs", "succeeded|ok"),
         # "AI tokens|Summary|user" matched nothing this page renders — it shows DURATION,

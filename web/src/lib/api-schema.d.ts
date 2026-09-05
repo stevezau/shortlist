@@ -363,6 +363,71 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/picks/{rating_key}/poster": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pick Poster
+         * @description One delivered pick's artwork, streamed from the PMS.
+         *
+         *     404 rather than a placeholder image when the item or its artwork is gone: a pick's ratingKey goes
+         *     stale when a title is removed and re-added, and the SPA already renders a tile of the right size
+         *     for that. Answering with a picture would make a missing item indistinguishable from a real one.
+         *     502 when the PMS itself failed, for the same reason — an outage is not "this title has no art".
+         *
+         *     Args:
+         *         rating_key: The pick's Plex ratingKey. `0` means the pipeline never matched the title.
+         *         request: The live request, for the app state and `If-None-Match`.
+         *
+         *     Returns:
+         *         The image bytes with the PMS's own content type, or a `304` when the browser's copy is
+         *         current.
+         *
+         *     Raises:
+         *         HTTPException: `404` when there is no artwork to serve, `502` when Plex could not be read.
+         */
+        get: operations["pick_poster_api_picks__rating_key__poster_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/privacy/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Privacy Status Endpoint
+         * @description Every account's live share filter, plus the last enforcement spot-check.
+         *
+         *     Costs one plex.tv roster read and one PMS collections read. Writes nothing and mints no token, so
+         *     it is safe to call from a screen the owner leaves open.
+         *
+         *     Args:
+         *         request: The live request, for app state.
+         *
+         *     Returns:
+         *         The whole server's sharing state as of now, with the enforcement measurement beside it.
+         */
+        get: operations["privacy_status_endpoint_api_privacy_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/report": {
         parameters: {
             query?: never;
@@ -2615,6 +2680,40 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AccountPrivacyOut
+         * @description One Plex account's share filter, as plex.tv reports it RIGHT NOW.
+         */
+        AccountPrivacyOut: {
+            /** Account Id */
+            account_id: number;
+            /** Display Name */
+            display_name: string;
+            /** Hides */
+            hides: string[];
+            /** Manage Sharing */
+            manage_sharing: boolean;
+            /** Missing */
+            missing: string[];
+            /** Other Conditions */
+            other_conditions: string[];
+            /** Restriction Profile */
+            restriction_profile: string;
+            /** Should Hide */
+            should_hide: string[];
+            /** Slug */
+            slug: string;
+            /** State */
+            state: string;
+            /** User */
+            user: string;
+            /** User Id */
+            user_id: number | null;
+            /** User Type */
+            user_type: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** ApiTokenCreatedOut */
         ApiTokenCreatedOut: {
             /** Created At */
@@ -3343,6 +3442,27 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * EnforcementOut
+         * @description The last time a run looked through a real account's eyes at their Home screen.
+         *
+         *     `measured` is the whole point. An empty `not_enforced` on an unmeasured run is not "all clear" —
+         *     it is "nobody looked", and rendering the two the same is how a live alert gets cleared.
+         */
+        EnforcementOut: {
+            /** Measured */
+            measured: boolean;
+            /** Measured At */
+            measured_at: string | null;
+            /** Not Enforced */
+            not_enforced: {
+                [key: string]: number[];
+            };
+            /** Run Id */
+            run_id: number | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** EngagementOut */
         EngagementOut: {
             /** Losing */
@@ -3909,6 +4029,11 @@ export interface components {
             rank: number;
             /** Rating */
             rating?: number | null;
+            /**
+             * Rating Key
+             * @default 0
+             */
+            rating_key: number;
             /** Reason */
             reason: string;
             /** Seed Title */
@@ -4056,6 +4181,27 @@ export interface components {
             mode: string;
             /** Ok */
             ok: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PrivacyStatusOut
+         * @description One live reading of the whole server's sharing state.
+         */
+        PrivacyStatusOut: {
+            /** Accounts */
+            accounts: components["schemas"]["AccountPrivacyOut"][];
+            enforcement: components["schemas"]["EnforcementOut"];
+            /** Error */
+            error: string | null;
+            /** Read At */
+            read_at: string;
+            /** Rows Error */
+            rows_error: string | null;
+            /** Rows On Plex */
+            rows_on_plex: string[];
+            /** Summary */
+            summary: string;
         } & {
             [key: string]: unknown;
         };
@@ -5418,6 +5564,8 @@ export interface components {
             rank: number;
             /** Rating */
             rating: number | null;
+            /** Rating Key */
+            rating_key: number;
             /** Reason */
             reason: string;
             /** Section Key */
@@ -6317,6 +6465,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pick_poster_api_picks__rating_key__poster_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rating_key: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    privacy_status_endpoint_api_privacy_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrivacyStatusOut"];
                 };
             };
         };

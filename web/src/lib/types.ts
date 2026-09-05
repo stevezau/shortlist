@@ -496,6 +496,12 @@ export type SyncFinishedEvent = Schemas["SyncFinishedEvent"];
 /** One title this person was recommended and then played (`/api/users/{id}/outcomes`). */
 export type UserPickOutcome = Schemas["UserPickOutcomeOut"];
 
+/** GET /api/privacy/status — every account's share filter as plex.tv reports it right now. */
+export type PrivacyStatus = Schemas["PrivacyStatusOut"];
+
+/** One account on that screen. `state` is decided server-side so the copy lives in one place. */
+export type AccountPrivacy = Schemas["AccountPrivacyOut"];
+
 // ---------------------------------------------------------------------------
 // Hand-written — the shapes the schema genuinely cannot describe.
 //

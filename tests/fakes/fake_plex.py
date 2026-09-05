@@ -16,6 +16,7 @@ Fidelity notes (mirrors of real-Plex behavior the engine depends on):
 
 from __future__ import annotations
 
+import base64
 import re
 from dataclasses import dataclass, field
 from xml.etree.ElementTree import Element, SubElement, tostring
@@ -487,6 +488,13 @@ def seed_state() -> FakePlexState:
     return state
 
 
+#: A valid 1x1 PNG, for the artwork endpoint. Real bytes rather than a placeholder string so the
+#: proxy's content-type passthrough and the browser's `<img>` both behave as they would live.
+_PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+)
+
+
 def _xml(root: Element) -> Response:
     return Response(content=tostring(root, encoding="unicode"), media_type="text/xml")
 
@@ -550,6 +558,11 @@ def _movie_xml(parent: Element, state: FakePlexState, movie: FakeMovie, *, watch
         year=movie.year,
         addedAt=movie.added_at,
         audienceRating=movie.audience_rating,
+        # Artwork, in the shape a real PMS serves it — a server-relative path whose trailing segment
+        # is the artwork's own stamp (recorded: `pms_play_history.xml.txt`,
+        # `pms_collections_listing.json`). The poster proxy reads exactly this and builds its ETag
+        # from that stamp, so leaving it off would exercise only the "no artwork" branch.
+        thumb=f"/library/metadata/{movie.rating_key}/thumb/{movie.added_at}",
         # The library that actually holds it — never inferred from the type, or a second movie
         # library's items would all claim to live in the first one.
         librarySectionID=section.key if section else state.section_id,
@@ -975,6 +988,20 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"no items for {rating_keys}")
         root.set("size", str(found))
         return _xml(root)
+
+    @app.get("/library/metadata/{rating_key}/thumb/{stamp}")
+    def item_thumb(rating_key: int, stamp: str) -> Response:
+        """One item's artwork bytes.
+
+        Served ONLY behind the metadata read, exactly as a real PMS does: the caller has to learn the
+        path (stamp included) from `/library/metadata/{key}` first. Guessing it — or asking for an
+        item that is gone — is a 404, so the proxy's "missing item" branch is a real branch here and
+        not something only the mocks can reach.
+        """
+        item = state.item(rating_key)
+        if item is None or stamp != str(item.added_at):
+            raise HTTPException(status_code=404, detail=f"no artwork at {rating_key}/thumb/{stamp}")
+        return Response(_PNG_1X1, media_type="image/png")
 
     @app.get("/hubs/sections/{section_id}/manage")
     def manage_hubs(section_id: int, request: Request) -> Response:

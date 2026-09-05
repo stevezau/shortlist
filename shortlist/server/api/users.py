@@ -251,6 +251,39 @@ class UserSyncOut(PassthroughModel):
     total: int
 
 
+def merged_prefs(stored: dict, sent: BaseModel) -> dict:
+    """``stored`` with the fields ``sent`` actually mentioned applied, and nothing else touched.
+
+    Read with ``model_fields_set``, never with an ``is not None`` filter. "The client did not mention
+    this field" and "the client set it to null" are different instructions, and only the first means
+    "leave it alone" — the None filter collapsed them, so a pref could be set but never CLEARED. It
+    would also have started silently clobbering the day a ``UserPrefs`` field gained a non-``None``
+    default, because ``model_dump()`` renders that default whether or not the client sent it, writing
+    it into every user on every unrelated PATCH. ``PATCH /collections`` and ``PUT …/rows`` already
+    read the request this way; this was the last partial write that did not.
+
+    ``model_dump`` rather than ``getattr``, and that is not a style choice: ``prefs`` is a JSON
+    column and ``blocked_seeds`` accepts objects, so reading the field off the model would hand
+    SQLAlchemy ``BlockSeedBody`` instances instead of dicts. ``exclude_unset`` gives exactly the
+    fields ``model_fields_set`` names, with the nested models already converted.
+
+    Args:
+        stored: The prefs mapping as it is on the user right now. Never mutated.
+        sent: The parsed request body's prefs model.
+
+    Returns:
+        A new mapping. Keys the model knows nothing about (an install's accrued ``history_depth``,
+        say) pass through untouched.
+    """
+    merged = dict(stored)
+    for key, value in sent.model_dump(exclude_unset=True).items():
+        if value is None:
+            merged.pop(key, None)  # an explicit null clears the override
+        else:
+            merged[key] = value
+    return merged
+
+
 def _watch_depths(session) -> dict[int, int]:
     """user_id -> how many DISTINCT watched titles we last read for them.
 
@@ -426,9 +459,8 @@ async def patch_user(user_id: int, patch: UserPatch, request: Request) -> dict:
         if patch.request_tag is not None:
             user.request_tag = patch.request_tag.strip()
         if patch.prefs is not None:
-            prefs = dict(user.prefs or {})
-            was_paused = bool(prefs.get("paused"))
-            prefs.update({k: v for k, v in patch.prefs.model_dump().items() if v is not None})
+            was_paused = bool((user.prefs or {}).get("paused"))
+            prefs = merged_prefs(user.prefs or {}, patch.prefs)
             user.prefs = prefs
             # Pausing means "stop showing their row", so it has to come down NOW — a paused person is
             # absent from every run by definition, so nothing else would ever act on it. Unpausing is

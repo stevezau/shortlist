@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Eye, RefreshCw, Users as UsersIcon } from "lucide-react";
+import { Eye, RefreshCw, ShieldCheck, Users as UsersIcon } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 
@@ -158,6 +158,15 @@ export function UsersPage() {
             </Button>
             {/* Neither trigger carries `loading` — both merely OPEN a dialog; the mutation (and its
                 loading state) belongs to the confirm button inside it. */}
+            {/* Beside the people it is about, not in a Settings section: "is everyone's row
+                actually hidden from everyone else" is a question the owner asks while looking at
+                this list. */}
+            <Button variant="outline" asChild>
+              <Link to="/sharing">
+                <ShieldCheck aria-hidden="true" />
+                Sharing and privacy
+              </Link>
+            </Button>
             <Button
               variant="outline"
               onClick={() => setConfirmEnableOpen(true)}

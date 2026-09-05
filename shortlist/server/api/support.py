@@ -29,7 +29,6 @@ from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import Any
-from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
@@ -38,8 +37,7 @@ from sqlalchemy import func
 from sqlalchemy import text as sa_text
 
 import shortlist
-from shortlist.engine import privacy
-from shortlist.engine.models import LABEL_PREFIX, SHARED_LABEL_PREFIX, EngineConfig, RowSpec
+from shortlist.engine.models import SHARED_LABEL_PREFIX, EngineConfig, RowSpec
 from shortlist.engine.rows import effective_idle_hold_days
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
@@ -56,7 +54,8 @@ from shortlist.server.db.models import (
     WatchedTitle,
     WatchSyncState,
 )
-from shortlist.server.services.redaction import known_identifiers, redact_all
+from shortlist.server.services import privacy_status
+from shortlist.server.services.redaction import known_identifiers, redact_all, scrub_secrets
 from shortlist.server.settings_store import SettingsStore
 
 #: How long a single "turn it on" lasts. Long enough to survive a slow chat exchange across
@@ -87,33 +86,6 @@ _MATCH_CAP = 2000
 #: How many WARNING+ log lines ride along in a report. Enough to show a repeating failure, few enough
 #: that the whole thing still pastes into a chat window. The full log zip is a separate download.
 _ERROR_LINES = 40
-
-#: The label prefix every Shortlist exclusion carries, lowercased. Plex title-cases new labels, so
-#: comparisons are always case-insensitive.
-_LABEL_PREFIX = "shortlist_"
-
-
-def _per_person_excludes(row: dict) -> list[str]:
-    """The Shortlist excludes on one account that "leave their sharing alone" would actually remove.
-
-    A restricted shared row's `shortlist__shared_*` exclude is deliberately kept, so it is not
-    evidence that a removal is owed. `_is_ours` matches on `shortlist_`, which a shared label also
-    starts with — the same collision that made the writer strip them in the first place.
-    """
-    shared = SHARED_LABEL_PREFIX.lower()
-    return [v for v in row["shortlist_excludes"] if not unquote(v).lower().startswith(shared)]
-
-
-def _is_ours(value: str) -> bool:
-    """Is this filter value one of Shortlist's own labels?
-
-    Matched URL-DECODED, the same way `privacy` matches them: plex.tv stores whatever encoding the
-    last writer used, so the same label reaches us written more than one way. Comparing raw bytes
-    here would report a label this account already excludes as missing — the opposite of the one
-    question this report exists to answer.
-    """
-    return unquote(value).lower().startswith(_LABEL_PREFIX)
-
 
 # --------------------------------------------------------------------------------------------
 # mode
@@ -222,15 +194,6 @@ def _audit(session, tool: str, detail: dict[str, Any]) -> None:
 # --------------------------------------------------------------------------------------------
 
 
-#: Anything shaped like a credential in a URL, a header line or a dict repr. Covers the `=`, `:` and
-#: quoted forms, because an exception message may carry any of them:
-#:     ?X-Plex-Token=abc      X-Plex-Token: abc      {'X-Plex-Token': 'abc'}
-_SECRET_PATTERN = re.compile(
-    r"((?:X-Plex-Token|token|apikey|api[-_]?key|key|secret)['\"]?\s*[:=]\s*['\"]?)[^&\s'\",;}\]]+",
-    re.IGNORECASE,
-)
-
-
 def _scrub(s: str) -> str:
     """Strip anything credential-shaped out of a string before it reaches a client.
 
@@ -244,8 +207,9 @@ def _scrub(s: str) -> str:
     `issue.tsx` prints `checks[].detail` and `error` on screen verbatim.
     """
     # `redact_all` owns the literals-then-patterns order; see its docstring for why it is not the
-    # other way round.
-    return redact_all(_SECRET_PATTERN.sub(r"\1<redacted>", s), _KNOWN.get())
+    # other way round. The credential pattern itself lives in `redaction` so the privacy status
+    # endpoint, which renders the same error strings outside support mode, cannot drift from it.
+    return redact_all(scrub_secrets(s), _KNOWN.get())
 
 
 #: Setting keys whose VALUE is a network location. Reported as a shape, never verbatim: a report is
@@ -372,47 +336,6 @@ def _plex_client(store: SettingsStore):
     if not url or not token:
         return None
     return PlexClient(url, token, timeout=_PROBE_TIMEOUT_S)
-
-
-def _existing_row_labels(store: SettingsStore) -> tuple[set[str], str | None]:
-    """Lowercased labels of the PER-PERSON rows that exist on Plex right now, plus why not if unread.
-
-    The engine hides a row by excluding the label it found on the PMS (`privacy.desired_excludes`
-    works off `stored_labels`), so "which labels belong in everyone's filter" is a question only the
-    server can answer — the user table cannot, because a user with no row yet has no label anywhere.
-
-    Shared rows are left out. They are public (or audience-scoped) by design and are deliberately NOT
-    excluded from everyone, so counting them here would report every account as leaking one.
-
-    Returns ``(labels, error)``. An error means UNKNOWN, never "none": a read that failed must not be
-    reported as a clean bill of health, which is the same fail-safe the engine applies to this
-    enumeration (see `collections_known` in `pipeline._privacy_sync_phase`).
-
-    "No labels came back" is checked against the title MARKER, not just against exceptions. A read
-    that succeeds and returns nothing looks identical to a server with no rows — and on a server whose
-    rows have LOST their labels, which is the state this whole area exists to defend against, those
-    rows are visible to everyone. Printing "there is nothing for anyone to hide" there would be the
-    most reassuring possible lie. The marker is independent of the label, so the two disagreeing says
-    which of the two is true.
-    """
-    try:
-        plex = _plex_client(store)
-        if plex is None:
-            return set(), "Plex isn't connected."
-        owned = plex.owned_collections(LABEL_PREFIX)
-        shared_prefix = SHARED_LABEL_PREFIX.lower()
-        labels = {row.label.lower() for row in owned.values() if not row.label.lower().startswith(shared_prefix)}
-        if not labels:
-            # Same client, so the collection list is already cached — this costs no extra listing read.
-            marked = sum(1 for row in plex.owned_row_surfaces(flags=False) if row.get("marked"))
-            if marked:
-                return set(), f"{marked} collection(s) are ours by title but carry no label"
-    except Exception as e:
-        # Building the client is inside the guard too. It is documented never to raise, but this is
-        # the fail-safe path for the tool that reports leaks — one that raises here would take out
-        # the whole section instead of reporting "unknown".
-        return set(), _fail(e)
-    return labels, None
 
 
 def _counts_as_watched(
@@ -2061,97 +1984,20 @@ async def sharing(request: Request) -> dict:
     state = request.app.state
     with state.sessions() as session:
         store = SettingsStore(session, state.secrets)
-        client = _plextv_client(store, _machine_id(session))
-
-        # Which labels need hiding: the per-person rows that EXIST ON PLEX, read from the server.
-        #
-        # NOT the enabled-user list, which is what this used to do. The engine only ever excludes
-        # labels it found on the PMS (`desired_excludes` <- `stored_labels`), so an enabled user who
-        # has never received a row — a cold start, zero picks, a delivery that failed — contributes a
-        # label that can never appear in anybody's filter. Every account then read as "missing" it,
-        # and this reported `0 of N accounts hide every row` on a perfectly healthy server. One
-        # reporter's server had 13 of 24 users on `picks=0`; the tool told them their privacy was
-        # entirely broken (issue #76).
-        #
-        # Nor `len(accounts) - 1`, which is wrong in both directions: the OWNER has a row but is
-        # absent from the plex.tv roster (`list_users` returns shared + Home users only), so that
-        # undercounts; and a DISABLED user is in the roster with no row, so it also overcounts.
-        #
-        # Whose row is whose comes from ALL users, not just enabled ones: a paused or disabled person
-        # still owns their collection, and their own label must never count as something they should
-        # be hiding from themselves (see `privacy.desired_excludes`).
-        labelled = {u.plex_account_id: f"{_LABEL_PREFIX}{u.slug}".lower() for u in session.query(User).all()}
-        all_labels, rows_error = _existing_row_labels(store)
-        # plex.tv gives us a USERNAME; `person()` and every other tool key on a SLUG, and `slugify`
-        # lowercases and replaces punctuation — so they differ for essentially every real account
-        # ("MooHouse" -> "moohouse", "Chris Smith" -> "chris_smith"). Passing a username on as if it
-        # were a slug made the per-person section 404 for exactly the people with a privacy fault.
-        slug_of = {u.plex_account_id: u.slug for u in session.query(User).all()}
-        # Accounts the owner asked us to leave alone. They legitimately hide nothing, so counting them
-        # as a fault would make this tool cry wolf on a server that is exactly as its owner set it up.
-        unmanaged = {u.plex_account_id for u in session.query(User).filter_by(manage_sharing=False).all()}
-
-        rows: list[dict] = []
-        error = None
-        if client is None:
-            error = "Plex isn't linked."
-        else:
-            try:
-                for account in client.list_users():
-                    ours: dict[str, list[str]] = {}
-                    theirs: list[str] = []
-                    for name in ("filterMovies", "filterTelevision"):
-                        raw = account.filters.get(name) or ""
-                        if not raw:
-                            continue
-                        try:
-                            conditions = privacy.parse_filter(raw)
-                        except Exception:
-                            # A filter we cannot parse is reported verbatim rather than
-                            # mis-attributed — the engine refuses to rewrite one too.
-                            theirs.append(f"{name}: {raw} (unparseable)")
-                            continue
-                        for condition in conditions:
-                            mine = [v for v in condition.values if _is_ours(v)]
-                            others = [v for v in condition.values if not _is_ours(v)]
-                            if mine:
-                                ours.setdefault(name, []).extend(sorted(mine))
-                            if others or not mine:
-                                joined = ",".join(others)
-                                theirs.append(
-                                    f"{name}: {condition.field}{condition.op}{joined}" if joined else f"{name}: —"
-                                )
-                    ours_flat = sorted({label for labels in ours.values() for label in labels})
-                    rows.append(
-                        {
-                            "user": account.username,
-                            "slug": slug_of.get(account.id, ""),
-                            "account_id": account.id,
-                            # LABELS, not clauses. `merge_label_excludes` unions every shortlist label
-                            # into ONE `label!=` condition, so counting clauses reported "2
-                            # exclusions" on a server hiding forty rows — and classified a whole
-                            # clause as ours whenever it contained any shortlist label, blaming the
-                            # owner's own `label!=Kids` on Shortlist. That made this unable to answer
-                            # the one question it exists for: is every row excluded for this person.
-                            # The owner turned sharing management off for this account: `missing` below
-                            # is still reported truthfully, but it is a setting, not a fault.
-                            "manage_sharing": account.id not in unmanaged,
-                            "shortlist_excludes": ours_flat,
-                            "shortlist_excludes_by_filter": {k: sorted(set(v)) for k, v in ours.items()},
-                            "other_conditions": theirs,
-                            "filters": {k: v for k, v in account.filters.items() if v},
-                            # Every row that should be hidden from THIS person: all labelled people
-                            # bar themselves. Their own label must never sit in their own filter —
-                            # that would hide them from their own row (see `privacy.py`).
-                            "should_hide": sorted(all_labels - {labelled.get(account.id, "")}),
-                            "missing": sorted(
-                                (all_labels - {labelled.get(account.id, "")}) - {unquote(v).lower() for v in ours_flat}
-                            ),
-                        }
-                    )
-            except Exception as e:
-                error = _fail(e)
-        _audit(session, "sharing", {"accounts": len(rows)})
+        # ONE computation, shared with `GET /api/privacy/status`. The screen and this text block must
+        # never be able to disagree about whether a row is hidden.
+        status = privacy_status.read_sharing_status(
+            session,
+            store,
+            _machine_id(session),
+            fail=_fail,
+            # This module's own client builders, so the tools' existing stubs stay one seam.
+            plex_factory=_plex_client,
+            plextv_factory=_plextv_client,
+        )
+        _audit(session, "sharing", {"accounts": len(status.accounts)})
+    rows, error = status.accounts, status.error
+    all_labels, rows_error = set(status.rows_on_plex), status.rows_error
 
     # A left-alone account is expected to hide nothing, so it is never "a person who can see a row
     # that is not theirs" — it is listed separately, by name, so the state stays visible.
@@ -2201,8 +2047,8 @@ async def sharing(request: Request) -> dict:
             # shared row's exclude is KEPT on purpose (`privacy.clear_our_excludes`), so counting it
             # here reports a correct state as a permanent failure — and worse, makes the genuinely
             # stuck case (a 422'd removal) indistinguishable from the normal one.
-            cleared = [r["user"] for r in rows if not r["manage_sharing"] and not _per_person_excludes(r)]
-            still_held = [r for r in rows if not r["manage_sharing"] and _per_person_excludes(r)]
+            cleared = [r["user"] for r in rows if not r["manage_sharing"] and not privacy_status.per_person_excludes(r)]
+            still_held = [r for r in rows if not r["manage_sharing"] and privacy_status.per_person_excludes(r)]
             if cleared:
                 block.line(
                     f"Left alone by choice, so they hide nothing and can see other people's rows: "
@@ -2211,7 +2057,7 @@ async def sharing(request: Request) -> dict:
                 if len(cleared) > 8:
                     block.line(f"  …and {len(cleared) - 8} more")
             for row in still_held[:8]:
-                held = ", ".join(_per_person_excludes(row)[:6])
+                held = ", ".join(privacy_status.per_person_excludes(row)[:6])
                 block.line(f"{row['user']} (#{row['account_id']}) is set to be left alone, but our exclusions are")
                 block.line(f"  STILL on this account — the removal has not gone through: {held}")
             if len(still_held) > 8:
@@ -2263,7 +2109,7 @@ async def surfaces(request: Request) -> dict:
     with state.sessions() as session:
         store = SettingsStore(session, state.secrets)
         owner = session.query(User).filter(User.user_type == "owner").one_or_none()
-        owner_label = f"{_LABEL_PREFIX}{owner.slug}".lower() if owner else None
+        owner_label = f"{privacy_status.PER_PERSON_LABEL_PREFIX}{owner.slug}".lower() if owner else None
         placements = {
             c.slug: (c.name, c.placement or "both", c.placement_friends or c.placement or "both")
             for c in session.query(Collection).filter(Collection.enabled.is_(True)).all()

@@ -80,6 +80,7 @@ function okTrace(
         picks: [
           {
             rank: 1,
+            rating_key: 0,
             title: "Toy Story 2",
             reason: "Because you loved Toy Story",
             media_type: "movie",

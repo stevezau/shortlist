@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { TitlePoster } from "@/components/title-poster";
 import { provenanceLabel } from "@/lib/pick-provenance";
 import type { Pick } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -10,6 +11,8 @@ import { cn } from "@/lib/utils";
  *
  * `collapseAfter` caps how many rows show at first, with a "+N more" toggle — a person's row can hold
  * 40 titles, and a page of several rows is a wall without it. Omit it to always show every pick.
+ * It also bounds the poster requests: a collapsed pick is not in the DOM at all, so its artwork is
+ * never fetched until the owner expands the list.
  */
 export function PickList({
   picks,
@@ -32,19 +35,32 @@ export function PickList({
     <div className="space-y-1.5">
       <ol className={cn("space-y-1.5", className)}>
         {shown.map((pick) => (
-          <li key={pick.rank} className="flex items-baseline gap-3 text-sm">
-            {/* Amber on the top pick alone. Painted on every rank it was chrome — #1 and #15 read
+          // `items-start`, not `items-baseline`: a poster and a text baseline do not align.
+          // `relative` so the rank can ride the poster's corner on a narrow screen.
+          <li
+            key={pick.rank}
+            className="relative flex items-start gap-3 text-sm"
+          >
+            <TitlePoster ratingKey={pick.rating_key} />
+            {/* ONE rank element, moved by CSS rather than rendered twice. Two spans — one per
+                breakpoint — put the same text in the DOM twice, and `hidden` is display:none, so
+                whichever one a screen reader could reach depended on the viewport. Below `sm` this
+                sits on the poster's corner instead of taking its own 20px column, which is what
+                buys the title enough width to read at 320px.
+
+                Amber on the top pick alone. Painted on every rank it was chrome — #1 and #15 read
                 identically — and the engine's own ordering, the one fact this list exists to show,
                 was carried by nothing but the digits. */}
             <span
               className={cn(
-                "w-5 shrink-0 font-semibold",
+                "absolute left-0 top-0 rounded-br rounded-tl bg-background/90 px-1 text-xs font-semibold",
+                "sm:static sm:w-5 sm:shrink-0 sm:bg-transparent sm:px-0 sm:pt-0.5 sm:text-sm",
                 pick.rank === 1 ? "text-primary" : "text-muted-foreground",
               )}
             >
               #{pick.rank}
             </span>
-            <span>
+            <span className="min-w-0">
               <span className="font-medium">{pick.title}</span>
               <span className="text-muted-foreground">
                 {" "}
