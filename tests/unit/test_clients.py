@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import MagicMock
 
 import httpx
@@ -757,6 +758,93 @@ class TestPlexClient:
         ]
         index = mock_plex.build_library_index(section)
         assert index == {99: 2}
+
+    def test_build_library_index_can_tally_genres_in_the_same_scan(self, mock_plex: PlexClient):
+        """The library-genre baseline rides along on the scan that already happens, so measuring a
+        person's genre avoidance costs no extra PMS request."""
+        from collections import Counter
+
+        section = MagicMock()
+        section.title = "Movies"
+        section.totalSize = 2
+        first = fake_media_item(1, "A", tmdb_id=42)
+        first.genres = [SimpleNamespace(tag="Horror"), SimpleNamespace(tag="Thriller")]
+        second = fake_media_item(2, "B", tmdb_id=43)
+        second.genres = [SimpleNamespace(tag="Horror")]
+        section.all.return_value = [first, second]
+        counts: Counter[str] = Counter()
+
+        index = mock_plex.build_library_index(section, genre_counts=counts)
+
+        assert index == {42: 1, 43: 2}
+        assert counts == Counter({"Horror": 2, "Thriller": 1})
+
+    def test_one_item_with_an_odd_genre_shape_does_not_abort_the_scan(self, mock_plex: PlexClient):
+        """Tolerant like every other row-level read here: a bad scrape costs its own genres, never the
+        whole section's index."""
+        from collections import Counter
+
+        section = MagicMock()
+        section.title = "Movies"
+        section.totalSize = 2
+
+        class RaisesOnGenres:
+            ratingKey = 1
+            title = "Bad"
+            guids: ClassVar = [SimpleNamespace(id="tmdb://42")]
+
+            @property
+            def genres(self):
+                raise RuntimeError("a corrupted agent match")
+
+        bad = RaisesOnGenres()
+        good = fake_media_item(2, "Good", tmdb_id=43)
+        good.genres = [SimpleNamespace(tag="Drama")]
+        section.all.return_value = [bad, good]
+        counts: Counter[str] = Counter()
+
+        index = mock_plex.build_library_index(section, genre_counts=counts)
+
+        assert index == {42: 1, 43: 2}, "a bad genre read cost the whole index"
+        assert counts == Counter({"Drama": 1})
+
+    def test_genre_tallying_is_off_unless_asked_for(self, mock_plex: PlexClient):
+        section = MagicMock()
+        section.title = "Movies"
+        section.totalSize = 1
+        item = fake_media_item(1, "A", tmdb_id=42)
+        item.genres = [SimpleNamespace(tag="Horror")]
+        section.all.return_value = [item]
+
+        assert mock_plex.build_library_index(section) == {42: 1}
+
+    def test_genres_ride_free_on_the_section_listing_but_labels_do_not(self):
+        """The asymmetry the genre profile is built on, pinned against a RECORDED real response.
+
+        plexapi lazily re-reads a collection when `.labels` is touched, because a real PMS serves no
+        `<Label>` children in a listing — that re-read is the whole reason `plex-safety.md` rule 4
+        needs two guards before deleting an orphan. `<Genre>` children ARE served inline, so
+        `.genres` is answered from the parsed listing with no second request.
+
+        Asserted here rather than assumed because the cheap library-genre profile depends on it
+        entirely: if genres ever stop riding along, the scan silently becomes one HTTP round trip per
+        title and the profile has to move to a cached TMDB lookup instead (rule 11).
+
+        `server=None` is the proof: any lazy re-read has nothing to query and raises, so a passing
+        `.genres` assertion cannot be an accidental network read.
+        """
+        from xml.etree import ElementTree
+
+        from plexapi.video import Movie
+
+        xml = (FIXTURES / "pms_in_progress_movies.xml.txt").read_text()
+        video = ElementTree.fromstring(xml).find("Video")
+
+        movie = Movie(server=None, data=video)
+
+        assert [g.tag for g in movie.genres] == ["Horror", "Science Fiction"]
+        with pytest.raises(AttributeError):
+            _ = movie.labels
 
     def test_stored_label_returns_existing_title_cased_form_without_write(self, mock_plex: PlexClient):
         collection = MagicMock()

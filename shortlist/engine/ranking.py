@@ -18,6 +18,8 @@ Three rules, all learned the hard way:
 
 from __future__ import annotations
 
+import math
+
 from shortlist.engine.models import Candidate
 
 _UNATTRIBUTED = "_unattributed"  # a hand-built candidate carrying no source tag
@@ -67,7 +69,38 @@ def recency_factor(year: int | None, year_now: int, recency: float) -> float:
     return 0.5 ** (age / RECENCY_HALF_LIFE_YEARS * min(recency, 1.0))
 
 
-def score(candidate: Candidate, *, recency: float = 0.0, year_now: int = 0) -> float:
+#: The floor for ALL negative signals COMBINED — deliberately one number for the whole family, not
+#: one per signal. Matches `candidates.genre_coherence`'s existing 0.5 for the same reason it chose
+#: it: a dampener shades the ranking, it does not decide it.
+NEGATIVE_MULTIPLIER_FLOOR = 0.5
+
+
+def negative_multiplier(*log2_penalties: float) -> float:
+    """Combine every negative signal into ONE floored multiplier.
+
+    Each argument is a log2-domain adjustment <= 0, where 0 means "no opinion". They are summed in
+    log space — the log-domain equivalent of multiplying the raw ratios — and the floor is applied
+    ONCE, to the total.
+
+    That ordering is the entire point. Three dampeners each floored at 0.25 and then multiplied give
+    a 1.6% floor, not 25%: a limit nobody chose, emerging from how many signals happen to be stacked.
+    Combining first means the floor is an explicit, auditable clamp instead.
+
+    RULE for anything added later: a new negative signal is ANOTHER ARGUMENT to this function, never
+    its own separately-floored multiplier beside it. Reintroducing the second floor reintroduces the
+    bug, silently.
+    """
+    total = sum(min(0.0, penalty) for penalty in log2_penalties)
+    return 2 ** max(total, math.log2(NEGATIVE_MULTIPLIER_FLOOR))
+
+
+def score(
+    candidate: Candidate,
+    *,
+    recency: float = 0.0,
+    year_now: int = 0,
+    genre_avoidance: float = 0.0,
+) -> float:
     """How promising a candidate is, before the picker selects from it.
 
     ``1 + seed_frequency`` (not ``seed_frequency``): "three of your seeds suggested this" is a real
@@ -76,10 +109,15 @@ def score(candidate: Candidate, *, recency: float = 0.0, year_now: int = 0) -> f
 
     ``recency`` scales the result by release date (see ``recency_factor``); at its 0.0 default the
     factor is exactly 1.0, so this is the same arithmetic it has always been.
+
+    ``genre_avoidance`` scales the genre penalty the same way, through ``negative_multiplier``. At its
+    0.0 default the penalty argument is 0.0 and the multiplier is exactly 1.0, so every existing
+    install scores bit-for-bit as before until someone turns the dial.
     """
     seed_weight = max((s.weight for s in candidate.seeds), default=0.0)
     rating = candidate.rating or 5.0  # unrated titles get a neutral prior, not zero
     base = (1 + candidate.seed_frequency) * rating * (1.0 + seed_weight) * candidate.affinity
+    base *= negative_multiplier(candidate.genre_penalty * genre_avoidance)
     return base * recency_factor(candidate.year, year_now, recency)
 
 

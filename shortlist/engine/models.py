@@ -201,6 +201,12 @@ class Candidate:
     # penalising them for lacking a signal they never had is what `pre_rank`'s round-robin exists to
     # prevent. A title several seeds suggested keeps the strongest claim any of them made.
     affinity: float = 1.0
+    # This candidate's measured genre-avoidance signal: the mean of its genres' shrunk log ratios,
+    # negative half only (see `candidates.candidate_genre_penalty`). 0.0 = no opinion, which is what
+    # every candidate carries until the owner turns `recommendations.genre_avoidance` up. A log2
+    # adjustment, not a multiplier — `ranking.negative_multiplier` combines it with any future
+    # negative signal BEFORE flooring, so dampeners can never compound into a floor nobody chose.
+    genre_penalty: float = 0.0
 
     @property
     def seed_frequency(self) -> int:

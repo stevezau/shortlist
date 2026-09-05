@@ -14,6 +14,7 @@ import os
 import tempfile
 import time
 import xml.etree.ElementTree as ET
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -546,15 +547,30 @@ class PlexClient:
             by_type.setdefault(kind, section)
         return by_type
 
-    def build_library_index(self, section: LibrarySection) -> dict[int, int]:
+    def build_library_index(
+        self, section: LibrarySection, *, genre_counts: Counter[str] | None = None
+    ) -> dict[int, int]:
         """Scan a section once, returning ``tmdb_id -> ratingKey`` for every TMDB-identified item.
 
         The finished-show fraction no longer needs a total episode count here — the share-token watch
         read carries each user's own ``viewedLeafCount``/``leafCount`` (marks included), so the total is
         read per user rather than reconstructed from a server-wide index.
+
+        Pass ``genre_counts`` to also tally every item's genres during the SAME scan — an optional
+        out-parameter, like ``candidates.filter_candidates``' ``dropped``, so no existing caller has
+        to change. It is free: a real PMS serves ``<Genre>`` children inline in the section listing,
+        so plexapi answers ``.genres`` from the response already parsed. That is NOT true of
+        ``.labels``, which triggers a silent per-item re-read — the asymmetry is pinned by
+        ``test_genres_ride_free_on_the_section_listing_but_labels_do_not`` because the whole
+        library-genre baseline depends on it staying free.
         """
         index: dict[int, int] = {}
         for item in section.all():
+            if genre_counts is not None:
+                # Tolerant like every other row-level read in this scan: one item with an odd genre
+                # shape must not abort a whole section.
+                with contextlib.suppress(Exception):
+                    genre_counts.update(g.tag for g in (item.genres or []) if getattr(g, "tag", None))
             tmdb_id = _tmdb_guid(item)
             if tmdb_id is not None:
                 index[tmdb_id] = item.ratingKey

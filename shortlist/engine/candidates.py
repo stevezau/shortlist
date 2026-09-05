@@ -17,6 +17,7 @@ recommendation engine is not locked to TMDB's per-seed similarity. Sources today
 from __future__ import annotations
 
 import json
+import math
 from collections import Counter
 from dataclasses import dataclass, field
 
@@ -510,6 +511,62 @@ def _seed_genre_ids(tmdb: TmdbClient, seed: Seed) -> set[int]:
     except Exception as e:
         logger.debug("could not read genres for seed {} ({})", seed.title, type(e).__name__)
         return set()
+
+
+#: Empirical-Bayes shrinkage strength for the genre profile — on the order of half of TMDB's ~19
+#: movie genres. A flat additive constant cannot serve both ends of this range: tuned to steady a
+#: 3-watch estimate it swamps a 30-watch one, and tuned for 30 it barely touches 3. `n / (n + K)`
+#: does both with one number, trusting a 3-watch history for 23% of the estimate and a 30-watch one
+#: for 75%. NOT VALIDATED against live data — check with scripts/replay_eval.py before moving it.
+GENRE_SHRINK_K = 10.0
+#: +/- 2 in log2, i.e. a 4x ratio. Past this a genre with almost no presence in the library stops
+#: carrying information and starts carrying noise.
+GENRE_LOG_CLAMP = 2.0
+
+
+def genre_avoidance_profile(user_counts: dict[str, int], pool_counts: dict[str, int]) -> dict[str, float]:
+    """Per-genre shrunk log2(userShare / poolShare), clamped. Negative means avoided.
+
+    This is Hardie's Log Ratio, and the reason it needs shrinking is that Shortlist's histories are
+    exactly the size where a raw ratio misleads: someone who has watched three things has a 33%
+    "share" in each of them, which is not evidence of a preference. So the estimate is pulled toward
+    the population it is being compared against, by an amount that depends on how much evidence there
+    actually is.
+
+    `pool_counts` must come from the LIBRARY this person can see, never from the candidate pool. The
+    candidate pool is built from their own seeds, so comparing their taste against it compares them
+    with an echo of themselves — and an avoided genre is under-represented in both halves, which is
+    exactly the signal being measured cancelling itself out.
+
+    Returns both signs; only the negative half is used for scoring (see `candidate_genre_penalty`).
+    Liking something is already expressed by the seeds that produced the candidate.
+    """
+    n = sum(user_counts.values())
+    pool_total = sum(pool_counts.values())
+    if n == 0 or pool_total == 0:
+        return {}
+    trust = n / (n + GENRE_SHRINK_K)
+    profile: dict[str, float] = {}
+    for genre, pool_n in pool_counts.items():
+        pool_share = pool_n / pool_total
+        if pool_share <= 0:
+            continue
+        user_share = user_counts.get(genre, 0) / n
+        shrunk = trust * user_share + (1 - trust) * pool_share
+        profile[genre] = max(-GENRE_LOG_CLAMP, min(GENRE_LOG_CLAMP, math.log2(shrunk / pool_share)))
+    return profile
+
+
+def candidate_genre_penalty(genres: list[str], profile: dict[str, float]) -> float:
+    """This candidate's avoidance signal: the mean of its genres' log ratios, negative half only.
+
+    A genre missing from the profile is one the library does not stock, so we have nothing to compare
+    against and it contributes 0.0 — neutral, never a penalty. Guessing in either direction here
+    would put a thumb on the scale for titles whose genres happen to be unrecorded.
+    """
+    if not genres or not profile:
+        return 0.0
+    return sum(min(0.0, profile.get(g, 0.0)) for g in genres) / len(genres)
 
 
 def genre_coherence(seed_genre_ids: set[int], candidate_genre_ids: list[int]) -> float:
