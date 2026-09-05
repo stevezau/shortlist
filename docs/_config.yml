@@ -108,3 +108,8 @@ exclude:
   - Gemfile
   - Gemfile.lock
   - vendor
+  # Implementation plans written by the planning skill land in docs/ because that is where
+  # the skill puts them, not because they belong on the site. Left in, Jekyll publishes each
+  # one as a page and jekyll-sitemap hands it to Google — a 69KB internal spec competing with
+  # the pages written for readers.
+  - superpowers/
