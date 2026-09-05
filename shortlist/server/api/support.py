@@ -480,8 +480,14 @@ def _check(name: str, fn) -> dict:
         ok, detail = fn()
         return {"name": name, "ok": bool(ok), "detail": str(detail)}
     except Exception as e:
-        logger.debug("support health probe {} failed: {}", name, e)
-        return {"name": name, "ok": False, "detail": _fail(e)}
+        # Scrub BEFORE logging, not just before responding. plexapi puts `X-Plex-Token` straight into
+        # its error text (see the note in `pipeline.py`), and the rotating file sink under
+        # /config/logs is always DEBUG regardless of the console level — so logging the raw exception
+        # wrote a live Plex token to disk on every failed probe, and into any support bundle taken
+        # afterwards. Rule 9: never logged, never in exception messages.
+        detail = _fail(e)
+        logger.debug("support health probe {} failed: {}", name, detail)
+        return {"name": name, "ok": False, "detail": detail}
 
 
 @_tool.get("/support/health")
