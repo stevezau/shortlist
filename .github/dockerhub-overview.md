@@ -5,7 +5,7 @@ every user's Plex home screen — built from their own watch history, visible on
 Self-hosted, one Docker container, no AI key required.
 
 [Source on GitHub](https://github.com/stevezau/shortlist) ·
-[Documentation](https://stevezau.github.io/shortlist/) ·
+[Documentation](https://shortlistapp.dev/) ·
 [Report a bug](https://github.com/stevezau/shortlist/issues/new/choose)
 
 > The identical image is also published to GHCR as `ghcr.io/stevezau/shortlist` — same build, same
@@ -102,7 +102,7 @@ Settings live in the app's web interface, not in environment variables. The only
 variables that stay live are infrastructure ones: `PUID`, `PGID`, `TZ`, `PORT`, `APP_BASE_PATH`, and
 `SHORTLIST_DRY_RUN`.
 
-Full list: [Reference](https://stevezau.github.io/shortlist/reference/).
+Full list: [Reference](https://shortlistapp.dev/reference/).
 
 ## Requirements
 
@@ -112,10 +112,10 @@ Full list: [Reference](https://stevezau.github.io/shortlist/reference/).
 
 ## Links
 
-- [Documentation](https://stevezau.github.io/shortlist/)
-- [Getting started](https://stevezau.github.io/shortlist/getting-started/)
-- [How per-user Plex collections work](https://stevezau.github.io/shortlist/plex-per-user-collections/)
-- [Plex recommendation tools compared](https://stevezau.github.io/shortlist/plex-recommendation-tools/)
-- [FAQ](https://stevezau.github.io/shortlist/faq/)
+- [Documentation](https://shortlistapp.dev/)
+- [Getting started](https://shortlistapp.dev/getting-started/)
+- [How per-user Plex collections work](https://shortlistapp.dev/plex-per-user-collections/)
+- [Plex recommendation tools compared](https://shortlistapp.dev/plex-recommendation-tools/)
+- [FAQ](https://shortlistapp.dev/faq/)
 
 MIT licensed. Not affiliated with Plex Inc. Plex is a trademark of Plex, Inc.

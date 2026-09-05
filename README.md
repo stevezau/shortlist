@@ -28,14 +28,14 @@
     Self-hosted, one Docker container, no AI key required.
     <br />
     <br />
-    <a href="https://stevezau.github.io/shortlist/"><strong>Explore the docs »</strong></a>
+    <a href="https://shortlistapp.dev/"><strong>Explore the docs »</strong></a>
     <br />
     <br />
     <a href="#quick-start">Quick start</a>
     &middot;
-    <a href="https://stevezau.github.io/shortlist/plex-per-user-collections/">How per-user rows work</a>
+    <a href="https://shortlistapp.dev/plex-per-user-collections/">How per-user rows work</a>
     &middot;
-    <a href="https://stevezau.github.io/shortlist/plex-recommendation-tools/">Tools compared</a>
+    <a href="https://shortlistapp.dev/plex-recommendation-tools/">Tools compared</a>
     &middot;
     <a href="https://github.com/stevezau/shortlist/discussions/categories/q-a">Ask a question</a>
     &middot;
@@ -206,7 +206,7 @@ picks your server, and walks you to your first rows (about 10 minutes).
 
 ## Documentation
 
-📖 **[stevezau.github.io/shortlist](https://stevezau.github.io/shortlist/)** — the docs as a website.
+📖 **[shortlistapp.dev](https://shortlistapp.dev/)** — the docs as a website.
 
 | Page                                       | What's in it                                        |
 | ------------------------------------------ | --------------------------------------------------- |

@@ -45,8 +45,8 @@ description: >-
 # Not affected, because they resolve at request time or are already absolute:
 # the social-preview card (built from `image` + `absolute_url`), the JSON-LD in
 # _includes/head.html, the search index in search.json, and every shields.io badge.
-url: https://stevezau.github.io
-baseurl: /shortlist
+url: https://shortlistapp.dev
+baseurl: ""
 
 repo: https://github.com/stevezau/shortlist
 

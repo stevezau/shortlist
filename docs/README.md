@@ -2,7 +2,7 @@
 Browsing this folder on github.com? You're in the right place — these .md files
 are the docs. They're also published as a website, which is easier to read:
 
-    https://stevezau.github.io/shortlist/
+    https://shortlistapp.dev/
 
 This file exists only for the github.com folder view. The website's home page is
 index.md, and _config.yml excludes this file from the build so the two don't
@@ -17,7 +17,7 @@ outage, is the comment above `url:` in _config.yml.
 
 # Shortlist documentation
 
-**[Read these as a website →](https://stevezau.github.io/shortlist/)**
+**[Read these as a website →](https://shortlistapp.dev/)**
 
 | Guide                                                     | What's in it                                                       |
 | --------------------------------------------------------- | ------------------------------------------------------------------ |
