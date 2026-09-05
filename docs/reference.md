@@ -220,7 +220,7 @@ POST /api/setup/probe · POST /api/setup/link · GET/PUT /api/setup/state
 ### Users
 
 ```
-GET  /api/users · PATCH /api/users/{id} {enabled?, manage_sharing?, request_tag?, prefs?} · DELETE /api/users/{id} (only for someone plex.tv no longer lists: drops their picks and run history and hides them from the list; keeps the users row and their pre-Shortlist share-filter snapshot, which uninstall restores from — 409 for anyone still on the share) · POST /api/users/sync (shared + Home users from plex.tv, plus the server owner, whom that list never returns)
+GET  /api/users · PATCH /api/users/{id} {enabled?, manage_sharing?, request_tag?, prefs?} — a `prefs` key sent as `null` CLEARS that preference. Only the keys actually present are touched: an omitted key keeps its stored value, so a partial write cannot wipe the rest. Before this, `null` was indistinguishable from "not sent", so a preference could be set but never unset · DELETE /api/users/{id} (only for someone plex.tv no longer lists: drops their picks and run history and hides them from the list; keeps the users row and their pre-Shortlist share-filter snapshot, which uninstall restores from — 409 for anyone still on the share) · POST /api/users/sync (shared + Home users from plex.tv, plus the server owner, whom that list never returns)
 POST /api/users/set-enabled {enabled} (bulk enable/disable every user at once)
 ```
 
@@ -330,9 +330,39 @@ POST /api/watching-account/undo {snapshot_id, dry_run?} -> (same shape as /trans
      first and read `removals_preview`. It takes its own snapshot, so an undo is itself undoable.
 ```
 
+### Privacy status
+
+```
+GET  /api/privacy/status -> {summary, accounts[], checked_at, run_id}
+     What can be VERIFIED about row hiding right now, for an ordinary shared account — the same
+     computation the support page ran, out from behind support mode and rendered at /sharing.
+     It reports three things, each a live read: that plex.tv is storing each exclude now, that the rows
+     exist on the PMS now, and that Plex was applying them ON HOME for the accounts a run spot-checked
+     (naming the run and when).
+     It deliberately REFUSES to claim: anything outside Home (Plex's Collections tab has no recorded
+     answer, and plex-safety rule 11 forbids guessing one), anything for a parental-profile account
+     (plex.tv refuses the write), anything about the owner (no share exists — a Plex limitation, not a
+     fault), and "all clear" from a check that did not run or a read that failed.
+     A measured exposure outranks every other verdict except a failed read. The page never derives
+     "hidden" from what Shortlist WROTE — every cell is a live read or the words "not checked".
+```
+
 ### Rows
 
 ```
+PATCH /api/collections/{id} {dry_run: true} · DELETE /api/collections/{id}?dry_run=true
+     Preview what an edit would do to Plex before it does it. PATCH is the one that matters: narrowing a
+     row's media or libraries DELETES its collections in the libraries it no longer covers, and that had
+     no preview anywhere. The response carries the projected plan plus `preview_incomplete`, which is
+     the difference between "this edit removes nothing" and "the libraries could not be read, so we do
+     not know" — two answers that otherwise arrive as the same empty plan.
+     `dry_run` is rejected with 422 on POST: creating a row has nothing to preview, and silently
+     ignoring the flag would mean a documented preview parameter that writes.
+GET  /api/picks/{rating_key}/poster -> image bytes
+     A pick's artwork, proxied from the PMS rather than fetched from TMDB. Every `Pick` carries a
+     `rating_key` and only one of the four construction sites carries a `poster_path`, so the PMS is the
+     only source that covers all of them — no new column, no migration, no backfill gap. Owner-gated,
+     and it refuses any thumb path that is not on this server.
 GET/POST /api/collections · PATCH/DELETE /api/collections/{id} (incl. `request_tag`, `candidate_sources`, `library_keys`, `max_seeds` — how many watched titles the row is built from (1–100; null inherits the engine default of 30), `recency` — how much a title's release date counts when ranking it for this row (0.0–1.0; null inherits the global `recommendations.recency`), `cold_start` — what the row does for someone below `recommendations.min_history` (`popular` | `skip`; null inherits the global `recommendations.cold_start`), `fallback_name` — what to call this row for someone whose name cannot be filled in, i.e. a `{top_seed}` row for a person with nothing watched. `""` (the default) means there is no such name and the row is simply not built for them — Shortlist never invents one, and a value containing `{top_seed}` is refused because it could not be filled in either, `seed_window` — how many recent watches a one-title row cycles between, one per run (1–20, default 1 = always their most recent; no global to inherit), `pick_order` — how the delivered collection is ordered (`best` | `rating` | `newest` | `shuffle` | `new_first` — titles that arrived this run lead | `rotate` — the front advances by one title a day, default `best`), `show_days` — which days the row appears, as ISO weekdays 1=Mon..7=Sun (`[]` = every day; values outside 1-7 are refused, and the list is stored sorted and de-duplicated). The response also carries read-only `shown_today`, resolved on the SERVER's clock so a UI badge cannot disagree with what Plex is showing, `hub_anchor` — per-row shelf-placement override, and `poster` — custom row artwork {mode: ""|upload|generate, title, subtitle, style})
 GET  /api/collections/{id}/effectiveness -> {delivered, watched, finished, first_delivered_at, matured_days, matured, per_library} (has this row actually landed? `matured` is null until picks are old enough to judge — a pick counts as a hit only if watched while the row was still showing it, so a newer row is reported as "too early" rather than scored 0%)
      `finished` accompanies every `watched` here too, including per library. A row spanning Movies and TV can land the same share in
@@ -397,6 +427,21 @@ GET  /api/notifications -> {items[]} · POST /api/notifications/dismiss {id} (di
      Worth alerting at all because the failure is SILENT: the nightly play-log sweep still credits finished watches, so every
      number keeps looking plausible. What stops is the partial-watch signal, which only the live socket can see — and
      "nobody abandoned anything this week" looks exactly like a healthy week.
+```
+
+### Outgoing notifications
+
+```
+Settings -> System -> Notifications, or `notify.webhook.enabled` / `notify.webhook.url`.
+     A whole run failing POSTs generic JSON {source, version, id, severity, title, message, path, sent_at}
+     to one webhook — the gap being closed is that a run failing overnight was visible only to someone
+     who opened the app. Delivery reuses the existing job queue, so retry, backoff and the dead-letter
+     state are the ones already tested rather than a second mechanism.
+     `notify.webhook.url` is a SECRET (a Discord or Slack webhook URL is a bearer token in a URL): Fernet
+     at rest, redacted from `GET /api/settings`, and stripped of its path and query before any exception
+     text reaches a log, a `Job.error`, the audit trail or the support bundle.
+     The "Send a test" button travels the exact same code path as a real 3am failure — same settings
+     read, same body builder, same HTTP call — so a passing test cannot mean a broken channel.
 ```
 
 ### Settings and connections
