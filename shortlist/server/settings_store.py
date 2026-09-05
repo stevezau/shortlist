@@ -18,6 +18,11 @@ from shortlist.server.scheduler import DEFAULT_CRONS as _DEFAULT_CRONS
 
 DEFAULTS: dict[str, Any] = {
     "plex.url": "",
+    # Seconds between the two independent "is this row really unlabelled?" reads the sweep takes
+    # before DELETING an orphan — the engine's one irreversible write. 30s is long enough to outlast
+    # the transient miss this guards against (a PMS mid library-index rebuild) and costs nothing on a
+    # healthy server, where no row ever reaches the second read. 0 restores back-to-back confirms.
+    "plex.orphan_confirm_delay_s": 30.0,
     "tautulli.url": "",
     "tmdb.apikey": "",
     "curator.provider": "none",

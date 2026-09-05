@@ -1336,6 +1336,29 @@ def _deliver_one(
     return diff, stored
 
 
+def _confirm_orphan_twice(plex: PlexClient, collection, delay_s: float) -> bool:
+    """Two independent "still no label" answers, `delay_s` apart, before a row may be deleted.
+
+    A single `confirm_unlabelled` defeats a one-off flaky read but not a hiccup that is still live a
+    moment later, and both reads go to the same server through the same client — so back-to-back they
+    tend to fail together. Waiting between them is discriminating power a same-instant re-read does
+    not have: a PMS mid library-index rebuild recovers within seconds, while a genuine orphan's label
+    never appears however long you wait.
+
+    Fails closed and cheaply: if the first read says "labelled", there is no delay and no second
+    round-trip, which is the common case on every healthy server.
+
+    This does not make the delete provably safe — a fault lasting longer than the delay still ends in
+    a deletion, because the sweep holds no state across nights to compare against. It converts a
+    sub-second race into one that has to survive real wall-clock time.
+    """
+    if not plex.confirm_unlabelled(collection, LABEL_PREFIX):
+        return False
+    if delay_s:
+        time.sleep(delay_s)
+    return plex.confirm_unlabelled(collection, LABEL_PREFIX)
+
+
 def sweep_broken_rows(
     plex: PlexClient,
     config: EngineConfig,
@@ -1401,8 +1424,17 @@ def sweep_broken_rows(
             labelled_seen += label is not None
             walked.append((section, collection, label))
     orphan_candidates = sum(1 for _s, c, label in walked if label is None and has_marker(c.title))
-    trust_labels = labelled_seen > 0 or orphan_candidates <= 1
-    if not trust_labels:
+    # This used to also wave through a LONE candidate (`or orphan_candidates <= 1`), on the reasoning
+    # that one orphan is not a mass-deletion signature. True, and beside the point: that clause can
+    # only be satisfied when there is at most ONE Shortlist collection on the entire server, so it
+    # fired exactly when there was nothing to corroborate the read against — the case with the LEAST
+    # evidence, not the safest. On a single-row deployment (the documented 5 -> 15 -> 40 rollout
+    # guarantees one exists for days on every install) a single PMS hiccup during the sweep answered
+    # both reads "no label", and a genuine, months-old, correctly labelled row was deleted for good
+    # while the run reported success. Nothing here can tell that apart from a real fresh orphan on a
+    # single read, so nothing here decides on a single read any more — see `_confirm_orphan_twice`.
+    systemic_failure = labelled_seen == 0 and orphan_candidates > 1
+    if systemic_failure:
         logger.error(
             "the PMS returned NO labels for any of {} collection(s) that are ours by title — treating "
             "that as a failed read, NOT as {} orphans. Nothing will be deleted this pass.",
@@ -1418,14 +1450,14 @@ def sweep_broken_rows(
             # unlabelled "Picked for You" rows on SFLIX. The marker proves it's ours, so delete it;
             # the next successful run rebuilds the owner's row, labelled. A collection with no marker
             # is genuinely foreign (Kometa and friends) — leave it alone (rule 4).
-            if not has_marker(collection.title) or not trust_labels:
+            if not has_marker(collection.title) or systemic_failure:
                 continue
             # Ask the server again before destroying anything. A real PMS returns no labels in
             # the section listing, so the `collection.labels` above is only populated by a
             # silent plexapi re-read — and a read that SUCCEEDS carrying no <Label> is
             # indistinguishable from a genuinely unlabelled row. `confirm_unlabelled` is an
             # explicit second read whose failure means "leave it".
-            if not plex.confirm_unlabelled(collection, LABEL_PREFIX):
+            if not _confirm_orphan_twice(plex, collection, config.orphan_confirm_delay_s):
                 logger.warning(
                     "{}: looked unlabelled in the collection list but the server says it is labelled — NOT deleting it",
                     log_title(collection.title),

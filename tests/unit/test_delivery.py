@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 from plexapi.exceptions import BadRequest
 
+from shortlist.engine import delivery
 from shortlist.engine.clients.plex_pms import CollectionRejectedItems, PlexClient
 from shortlist.engine.delivery import DEFAULT_ROW_NAME, deliver_rows, render_row_name, row_marker, sweep_broken_rows
 from shortlist.engine.models import LABEL_PREFIX, EngineConfig, MediaType, Pick
@@ -1055,7 +1056,15 @@ class TestSweepBrokenRows:
 
         sweep_broken_rows(plex, engine_config, markers={"mike": row_marker(202)})
 
-        plex.confirm_unlabelled.assert_called_once_with(orphan, "shortlist")
+        # TWO confirms, not one. This asserted `assert_called_once_with` until the lone-candidate
+        # bypass was removed: one confirm was enough to authorise a delete, and on a single-row
+        # server one hiccup answering both the listing read and that confirm destroyed a real row.
+        # Both reads must agree, separated by `orphan_confirm_delay_s` (0 here, so no wall clock is
+        # spent in tests).
+        assert plex.confirm_unlabelled.call_args_list == [
+            call(orphan, "shortlist"),
+            call(orphan, "shortlist"),
+        ]
 
     def test_a_label_read_that_comes_back_empty_does_not_wipe_the_server(
         self, engine_config: EngineConfig, movies, shows
@@ -1135,6 +1144,67 @@ class TestSweepBrokenRows:
         deleted = sweep_broken_rows(plex, engine_config, markers={"mike": row_marker(202)})
 
         assert deleted == {"mike": [orphan.title]}
+
+    def test_confirm_unlabelled_is_required_twice_with_a_real_gap_before_deleting(
+        self, engine_config: EngineConfig, movies, shows, monkeypatch
+    ):
+        """The lone-candidate bypass was the dangerous one, not the systemic case.
+
+        `orphan_candidates <= 1` can only be true when there is at most ONE Shortlist collection on
+        the entire server — so it fired exactly when there was nothing to corroborate the read
+        against, which is backwards from every other guard here. On a single-row deployment (which
+        the documented 5 -> 15 -> 40 rollout guarantees exists for days on every install) one PMS
+        hiccup during the sweep answered both reads "no label", and a genuine, months-old, correctly
+        labelled row was deleted permanently while the run reported success.
+
+        A single confirm cannot tell the two apart, so nothing here trusts a single confirm any more:
+        two independent reads, separated by real wall-clock time. A transient hiccup clears; a
+        genuine orphan's label never arrives however long you wait.
+        """
+        orphan = self._collection(movies, title="✨ Movies Picked for You" + row_marker(202))
+        plex = self._plex(movies, shows, orphan)
+        plex.matches_section.return_value = True
+        plex.confirm_unlabelled.return_value = True
+        engine_config.orphan_confirm_delay_s = 30.0
+        slept: list[float] = []
+        monkeypatch.setattr(delivery.time, "sleep", slept.append)
+
+        deleted = sweep_broken_rows(plex, engine_config, markers={"mike": row_marker(202)})
+
+        assert deleted == {"mike": [orphan.title]}
+        assert plex.confirm_unlabelled.call_count == 2, "a single confirm must never authorise a delete"
+        assert slept == [30.0], "the two confirms must be separated by a real gap, not back-to-back"
+
+    def test_a_row_that_reads_as_labelled_on_the_second_look_is_spared(
+        self, engine_config: EngineConfig, movies, shows, monkeypatch
+    ):
+        """The case the delay exists for: the first read missed the label, the second one sees it.
+        Before the fix this row was deleted on the strength of one read."""
+        established = self._collection(movies, title="✨ Movies Picked for You" + row_marker(202))
+        plex = self._plex(movies, shows, established)
+        plex.matches_section.return_value = True
+        plex.confirm_unlabelled.side_effect = [True, False]  # transient miss, then the truth
+        engine_config.orphan_confirm_delay_s = 5.0
+        monkeypatch.setattr(delivery.time, "sleep", lambda _s: None)
+
+        deleted = sweep_broken_rows(plex, engine_config, markers={"mike": row_marker(202)})
+
+        assert deleted == {}, "deleted a row the server said was labelled"
+        plex.delete_owned_collection.assert_not_called()
+
+    def test_the_second_confirm_is_not_even_attempted_when_the_first_says_labelled(
+        self, engine_config: EngineConfig, movies, shows
+    ):
+        """Fail closed on the cheap answer — no delay, no second round-trip, for the common case."""
+        established = self._collection(movies, title="✨ Movies Picked for You" + row_marker(202))
+        plex = self._plex(movies, shows, established)
+        plex.matches_section.return_value = True
+        plex.confirm_unlabelled.return_value = False
+
+        deleted = sweep_broken_rows(plex, engine_config, markers={"mike": row_marker(202)})
+
+        assert deleted == {}
+        assert plex.confirm_unlabelled.call_count == 1
 
     def test_a_failed_re_read_is_treated_as_do_not_delete(self, engine_config: EngineConfig, movies, shows):
         """`confirm_unlabelled` returns False when it cannot read at all. "I don't know" must never

@@ -309,6 +309,67 @@ def test_engine_run_end_to_end(fakes, tmp_path):
         assert state.users[account_id].filters["filterMovies"] == merged
 
 
+def test_engine_run_deletes_a_genuine_unlabelled_orphan_end_to_end(fakes, tmp_path):
+    """Plants a real interrupted-run orphan on the fake PMS and sweeps it through the REAL pipeline.
+
+    The decision logic in `sweep_broken_rows` is well covered against MagicMocks, and
+    `confirm_unlabelled` is covered against the fake server — but nothing joined the two: no test
+    planted a genuine orphan and ran the pipeline over it. That gap matters here more than anywhere
+    else in the engine, because this is its one irreversible write, and because the shape it depends
+    on is a real-PMS quirk a mock cannot reproduce: the collections LISTING carries no `<Label>`
+    children (recorded in `pms_collections_listing.json`), so `collection.labels` is populated only
+    by plexapi silently re-reading each collection. This is the only place that re-read, the
+    `confirm_unlabelled` second read, the wall-clock gap between the two, and the aggregate guard all
+    run together against the shape Plex actually serves.
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+
+    # What a run that died between `create()` and the label write leaves behind: our invisible title
+    # marker, and no label at all. With no label, NO `label!=` share filter can hide it, so every
+    # account on the server sees it — which is why this is the one thing the sweep deletes.
+    orphan_key = 9200
+    movies_section = state.default_section("movie")
+    orphan_title = "✨ Movies Picked for You" + row_marker(202)
+    state.collections[orphan_key] = FakeCollection(
+        rating_key=orphan_key,
+        title=orphan_title,
+        section_id=movies_section.key,
+        labels=[],
+    )
+
+    ctx = EngineContext(
+        config=EngineConfig(
+            row_size=12,
+            min_history=5,
+            candidates_pre_rank=40,
+            max_seeds=12,
+            rows=[RowSpec(slug="picked", name_template="✨ {library_name} Picked for You", size=12)],
+            rows_defined=True,
+        ),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+    users = [
+        UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
+        for u in sorted(plextv.list_users(), key=lambda u: u.id)
+        if not u.restriction_profile
+    ]
+
+    report = engine_run(ctx, users)
+
+    assert report.ok, [(u.username, u.error) for u in report.users]
+    assert orphan_key not in state.collections, "the leaking orphan survived a full run"
+    assert any(orphan_title in titles for titles in report.swept_rows.values()), (
+        "the orphan was removed but the run did not report it"
+    )
+
+
 def _add_4k_movie_library(state: FakePlexState) -> FakeSection:
     """Mirror the movie catalog into a second movie library: "4K Movies", key 3.
 
