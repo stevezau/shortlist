@@ -100,6 +100,21 @@ class ShareTokenWatchSource:
             )
             return None
 
+    def episode_dates(self, user: UserProfile, section, show_keys: set[int]) -> dict[int, datetime]:
+        """When each of these shows was last watched, read from its episodes AS this user.
+
+        Sits beside `fetch_section` because it needs the same per-user token and the same "raises
+        rather than swallowing" contract: the caller is repairing dates it already knows are wrong,
+        so an answer it cannot get must not read as an answer of "no date".
+
+        Raises:
+            NoWatchToken: no server token could be obtained for this user.
+        """
+        token = self._token_for(user)
+        if token is None:
+            raise NoWatchToken(f"no server token for {user.username}")
+        return self._plex.newest_episode_dates(section.key, token, show_keys)
+
     def fetch_section(
         self,
         user: UserProfile,

@@ -2451,6 +2451,100 @@ class TestWatchedWindowCoverage:
         assert len(episode_calls) == mock_plex._EPISODE_PAGE_LIMIT, "the safety stop did not bound the walk"
 
 
+class TestDatingAShowFromItsEpisodes:
+    """`newest_episode_dates` — the repair for a show Plex re-counted without re-dating (#108).
+
+    Everything here is pinned to `pms_all_leaves.xml.txt`, recorded off a real server, because the
+    two behaviours that make this hard are both invisible from the code: the endpoint ignores
+    `unwatched=0`, and a part-watched episode carries a `lastViewedAt` with no `viewCount`.
+    """
+
+    _URL = "http://pms:32400/library/metadata/460767/allLeaves"
+
+    @staticmethod
+    def _fixture() -> str:
+        raw = (FIXTURES / "pms_all_leaves.xml.txt").read_text()
+        return raw[raw.index("<MediaContainer") :]
+
+    @respx.mock
+    def test_a_part_watched_episode_does_not_date_the_show(self, mock_plex):
+        """The trap the recording caught on the FIRST real show it was tried against.
+
+        Episode 2 was started and abandoned: `viewOffset`, `lastViewedAt`, no `viewCount`. Its stamp
+        is NEWER than the only episode actually watched, and it is not counted in the show's
+        `viewedLeafCount` either — so `max(lastViewedAt)` across all episodes dates the show from an
+        episode nobody finished.
+        """
+        mock_plex._server.url.return_value = self._URL
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._fixture()))
+
+        dates = mock_plex.newest_episode_dates("2", "TOK", {460767})
+
+        watched, abandoned = 1637199585, 1637560154
+        assert int(dates[460767].timestamp()) == watched, (
+            "dated the show from a part-watched episode — the newer stamp belongs to one nobody finished"
+        )
+        assert int(dates[460767].timestamp()) != abandoned
+
+    @respx.mock
+    def test_it_sends_page_headers_so_the_server_reports_a_total(self, mock_plex):
+        """`totalSize` is absent unless a container size is asked for, and without it a 1,175-episode
+        show is one 3.6MB response with nothing to prove the walk finished (both measured)."""
+        mock_plex._server.url.return_value = self._URL
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._fixture()))
+
+        mock_plex.newest_episode_dates("2", "TOK", {460767})
+
+        headers = respx.calls.last.request.headers
+        assert headers["X-Plex-Container-Size"] == str(mock_plex._WATCHED_PAGE)
+        assert headers["X-Plex-Container-Start"] == "0"
+
+    @respx.mock
+    def test_no_shows_asked_for_means_no_request_at_all(self, mock_plex):
+        """The whole point of detecting WHICH shows are stale: a quiet night must cost nothing."""
+        mock_plex._server.url.return_value = self._URL
+        route = respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._fixture()))
+
+        assert mock_plex.newest_episode_dates("2", "TOK", set()) == {}
+        assert not route.called
+
+    @respx.mock
+    def test_many_stale_shows_switch_to_one_library_wide_read(self, mock_plex):
+        """Past a dozen shows, one library read beats a call each — 2.8s against 1.1s for the show
+        read on a 9,563-episode library, so a call per show overtakes it quickly."""
+        section_url = "http://pms:32400/library/sections/2/all"
+        mock_plex._server.url.return_value = section_url
+        wanted = set(range(700, 700 + mock_plex._PER_SHOW_DATE_LIMIT + 1))
+        rows = "".join(
+            f'<Video ratingKey="{9000 + n}" type="episode" viewCount="1" '
+            f'grandparentRatingKey="{key}" lastViewedAt="{1_700_000_000 + n}"/>'
+            for n, key in enumerate(sorted(wanted))
+        )
+        route = respx.get(section_url).mock(
+            return_value=httpx.Response(
+                200, text=f'<MediaContainer size="{len(wanted)}" totalSize="{len(wanted)}">{rows}</MediaContainer>'
+            )
+        )
+
+        dates = mock_plex.newest_episode_dates("2", "TOK", wanted)
+
+        assert len(route.calls) == 1, "made a request per show instead of one library-wide read"
+        assert route.calls.last.request.url.params.get("type") == "4"
+        assert set(dates) == wanted
+
+    @respx.mock
+    def test_one_unreadable_show_does_not_cost_the_others_their_dates(self, mock_plex):
+        mock_plex._server.url.side_effect = lambda path, **k: f"http://pms:32400{path}"
+        respx.get("http://pms:32400/library/metadata/1/allLeaves").mock(return_value=httpx.Response(500))
+        respx.get("http://pms:32400/library/metadata/460767/allLeaves").mock(
+            return_value=httpx.Response(200, text=self._fixture())
+        )
+
+        dates = mock_plex.newest_episode_dates("2", "TOK", {1, 460767})
+
+        assert set(dates) == {460767}, "one failing show took the others' dates with it"
+
+
 class TestScrobbleAs:
     """Marking a title played AS another account — the write behind the watch-history transfer.
 

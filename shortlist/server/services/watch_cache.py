@@ -23,7 +23,7 @@ section outright. Incremental is an optimisation on top of a full read, not a re
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
 from loguru import logger
@@ -129,6 +129,7 @@ class WatchCache:
         library: str = "",
         force_full: bool = False,
         reconcile: bool = False,
+        repair_dates=None,
         now: datetime | None = None,
     ) -> SyncOutcome:
         """Bring one (person, library) up to date. `read(since)` performs the PMS call.
@@ -149,6 +150,11 @@ class WatchCache:
                 `force_full` because reading completely and deleting are different risks; the sync
                 sets both, `prefill_history` sets both, and the guards on the replace branch below
                 are what make deleting at that cadence safe.
+            repair_dates: ``f(show_keys) -> {rating_key: datetime}`` — the real watch date for shows
+                Plex re-counted without re-dating (see `_shows_plex_recounted_but_did_not_redate`).
+                Optional: without it those shows keep their stale date, which is what happened before
+                this existed. Called at most once per section, and only when something actually
+                changed, so a quiet night makes no request at all.
         """
         now = now or utcnow()
         full = force_full or self.needs_full(session, user_id, section_key, now=now)
@@ -156,6 +162,8 @@ class WatchCache:
         since = None if full else _aware(state.cursor_viewed_at) if state else None
 
         items, covers_window = _read_items(read(since))
+        if repair_dates is not None:
+            items = _repair_stale_show_dates(session, user_id, section_key, items, repair_dates)
 
         # THREE conditions before this section may be REPLACED — deleted, then refilled from what the
         # read returned. It is the only path here that destroys watch history, and every one of them
@@ -479,6 +487,99 @@ def _aware(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def _shows_plex_recounted_but_did_not_redate(
+    session: Session, user_id: int, section_key: str, items: list[WatchedItem]
+) -> set[int]:
+    """Shows whose episode count went UP while the show's own date stood still.
+
+    That combination has exactly one cause: the episodes were MARKED rather than played. Plex updates
+    a show's own `lastViewedAt` when the show is played and not when its episodes are marked, so a
+    series someone finishes by ticking "mark as watched" keeps whatever date it had — a partly-watched
+    series finished today still reads as finished months ago (issue #108, reported after the first
+    round of fixes).
+
+    That date is not cosmetic: it is the recency half of a seed's weight, halving every ~45 days. A
+    series marked watched today but dated two years ago weighs about zero, so it never seeds — the
+    person finishes a show and Shortlist cannot use it to find them anything similar.
+
+    Only titles with a PREVIOUS cached count qualify, and this is the load-bearing guard rather than
+    an optimisation. A show being seen for the first time has no count to have risen from, so
+    "it went up" would be true of every row on a first sync, a rebuilt cache, or a newly added
+    library — and re-dating those to now would tell Shortlist that everything in a person's history
+    was watched today. That is far worse than the stale date this repairs: a wrong OLD date makes one
+    show seed weakly, a wrong NEW date makes their whole back catalogue seed at full strength.
+    """
+    counted = {
+        item.rating_key: item for item in items if item.rating_key is not None and item.viewed_leaf_count is not None
+    }
+    if not counted:
+        return set()
+    stale: set[int] = set()
+    rows = (
+        session.query(WatchedTitle)
+        .filter(
+            WatchedTitle.user_id == user_id,
+            WatchedTitle.section_key == section_key,
+            WatchedTitle.rating_key.in_(list(counted)),
+        )
+        .all()
+    )
+    for row in rows:
+        item = counted[row.rating_key]
+        if row.viewed_leaf_count is None or item.viewed_leaf_count <= row.viewed_leaf_count:
+            continue  # nothing new was watched or marked
+        cached_date = _aware(row.source_viewed_at) or _aware(row.viewed_at)
+        if cached_date is None or item.watched_at > cached_date:
+            continue  # Plex moved the date too, so they PLAYED it and Plex is already right
+        stale.add(row.rating_key)
+    return stale
+
+
+def _repair_stale_show_dates(
+    session: Session, user_id: int, section_key: str, items: list[WatchedItem], repair_dates
+) -> list[WatchedItem]:
+    """Give the shows Plex re-counted but did not re-date their real date, from their episodes.
+
+    Never moves a date BACKWARDS. The episode answer replaces the show's date only when it is newer:
+    a show can hold episodes watched long ago beside a recent play, and the show's own row is right
+    in that case.
+
+    Dates are best-effort. A failure here logs and returns the items untouched — they keep the stale
+    date, which is exactly the behaviour before this existed, and no read is lost over it.
+    """
+    stale = _shows_plex_recounted_but_did_not_redate(session, user_id, section_key, items)
+    if not stale:
+        return items
+    try:
+        dates = repair_dates(stale)
+    except Exception as e:
+        logger.warning(
+            "watch cache: section {} — could not date {} re-counted show(s) from their episodes ({})",
+            section_key,
+            len(stale),
+            type(e).__name__,
+        )
+        return items
+    if not dates:
+        return items
+    out = []
+    repaired = 0
+    for item in items:
+        when = dates.get(item.rating_key) if item.rating_key is not None else None
+        if when is not None and when > item.watched_at:
+            repaired += 1
+            out.append(replace(item, watched_at=when))
+        else:
+            out.append(item)
+    if repaired:
+        logger.info(
+            "watch cache: section {} — took the real watch date from the episodes of {} marked-watched show(s)",
+            section_key,
+            repaired,
+        )
+    return out
 
 
 def _cache_key(item: WatchedItem) -> int | None:

@@ -1,0 +1,38 @@
+<!--
+  PMS 1.43.4 GET /library/metadata/{showRatingKey}/allLeaves — every episode of ONE show, with the
+  reading account's own watch state. Recorded 2026-09-05 from a real server (plex-safety rule 11).
+  Titles/ids are the server's own; nested <Media>/<Part>/<Image>/<Role> children are TRIMMED for
+  size, and so are episodes 5-8. Container and <Video> attribute names, and the presence/absence of
+  each, are verbatim. The real response read `size="8" totalSize="8"`; both are set to 4 below so the
+  container describes what it actually carries — a fixture whose own totals disagree with its rows
+  makes every paging test lie.
+
+  WHY THIS FIXTURE EXISTS — the stale "finished" date on issue #108. Marking a partly-watched series
+  as fully watched bumps the show's `viewedLeafCount` and leaves the show's own `lastViewedAt`
+  untouched, so a series finished today still reads as finished months ago. The episodes are the only
+  place the real date exists, and this is the read that gets it.
+
+  Two behaviours recorded here that the code depends on, both measured the same day:
+
+  1. `?unwatched=0` IS SILENTLY IGNORED on this endpoint. Filtered and unfiltered both returned the
+     same 8 rows. Same failure mode as the section endpoint (see pms_watched_shows.xml.txt) — the
+     filter is not refused, it is answered with everything — so `viewCount` is applied client-side.
+
+  2. `totalSize` is ABSENT unless an explicit `X-Plex-Container-Size` is sent. One Piece answered
+     `size="1175"` with no `totalSize` and a 3.6MB body unpaged, then `size="50" totalSize="1175"`
+     when a container size was asked for. So the page headers are always sent: without them a long
+     show is one enormous response AND the walk has no reported total to prove it finished.
+
+  THE TRAP, and why `viewCount` is the filter rather than `lastViewedAt`: episode 2 below carries
+  `lastViewedAt="1637560154"` and NO `viewCount` — it has a `viewOffset`, i.e. it was started and
+  abandoned. It is NOT counted in the show's `viewedLeafCount`. Dating a show from `max(lastViewedAt)`
+  across all episodes would therefore date it from an episode nobody finished, and in this very row
+  that abandoned episode is NEWER than the one actually watched (1637560154 > 1637199585) — so the
+  naive read is wrong on the first real show it was tried against.
+-->
+<MediaContainer size="4" totalSize="4" offset="0" allowSync="1" identifier="com.plexapp.plugins.library" key="460767" librarySectionID="2" librarySectionTitle="TV Shows" mixedParents="1" nocache="1" parentIndex="1" parentTitle="The Age of A.I." parentYear="2019" title1="TV Shows" title2="The Age of A.I." viewGroup="episode">
+<Video ratingKey="460769" key="/library/metadata/460769" parentRatingKey="460768" grandparentRatingKey="460767" type="episode" title="How Far is Too Far?" grandparentTitle="The Age of A.I." parentTitle="Season 1" index="1" parentIndex="1" viewCount="1" lastViewedAt="1637199585" year="2019" duration="46070" addedAt="1748324229" />
+<Video ratingKey="460770" key="/library/metadata/460770" parentRatingKey="460768" grandparentRatingKey="460767" type="episode" title="Healed through A.I." grandparentTitle="The Age of A.I." parentTitle="Season 1" index="2" parentIndex="1" viewOffset="1058389" lastViewedAt="1637560154" year="2019" duration="2394922" addedAt="1748324229" />
+<Video ratingKey="460771" key="/library/metadata/460771" parentRatingKey="460768" grandparentRatingKey="460767" type="episode" title="Using A.I. to build a better human" grandparentTitle="The Age of A.I." parentTitle="Season 1" index="3" parentIndex="1" year="2019" duration="2666816" addedAt="1748324229" />
+<Video ratingKey="460772" key="/library/metadata/460772" parentRatingKey="460768" grandparentRatingKey="460767" type="episode" title="Love, Art and Stories: Decoded" grandparentTitle="The Age of A.I." parentTitle="Season 1" index="4" parentIndex="1" year="2019" duration="2336746" addedAt="1748324229" />
+</MediaContainer>

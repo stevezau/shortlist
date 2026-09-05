@@ -154,6 +154,14 @@ class WatchSync:
                 def read(since, _section=section, _media=media_type):
                     return token_source.fetch_section(profile, _section, _media, since=since)
 
+                # Only ever called for shows Plex re-counted without re-dating, so a quiet night
+                # makes no request at all. Movies have no episodes to ask about.
+                repair = None
+                if media_type is MediaType.SHOW:
+
+                    def repair(show_keys, _section=section):
+                        return token_source.episode_dates(profile, _section, show_keys)
+
                 try:
                     outcomes.append(
                         cache.sync_section(
@@ -167,6 +175,7 @@ class WatchSync:
                             # group a title held in two libraries into one row and say which two
                             # (issue #111). This is the only place it is known — the page itself
                             # never talks to Plex.
+                            repair_dates=repair,
                             library=getattr(section, "title", "") or "",
                             force_full=force_full,
                             # EVERY sync, not just the periodic pass. Confining deletion to that pass

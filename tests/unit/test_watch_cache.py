@@ -879,3 +879,142 @@ class TestAKeylessRowIsNotChurnedEveryPass:
         with sessions() as session:
             after = {r.title: r.id for r in session.query(WatchedTitle).filter_by(user_id=user_id)}
         assert after == before, "the keyless row was deleted and re-inserted rather than left alone"
+
+
+def show(title: str, *, rating_key: int, viewed: int, leaf: int, watched_at: datetime) -> WatchedItem:
+    return WatchedItem(
+        title=title,
+        media_type=MediaType.SHOW,
+        watched_at=watched_at,
+        tmdb_id=rating_key,
+        rating_key=rating_key,
+        viewed_leaf_count=viewed,
+        leaf_count=leaf,
+    )
+
+
+class TestAMarkedWatchedShowGetsItsRealDate:
+    """Plex bumps a show's `viewedLeafCount` when its episodes are MARKED and leaves the show's own
+    `lastViewedAt` alone — so a partly-watched series finished today still reads as finished months
+    ago (issue #108, reported after the first round of fixes).
+
+    Not cosmetic: that date is the recency half of a seed's weight and halves every ~45 days, so a
+    series marked watched today but dated two years ago never seeds. The person finishes a show and
+    gets nothing like it recommended.
+
+    Reproduced on a real server before this existed: a show went 1/8 -> 8/8 and kept its 2024-10-11
+    date, while every one of its episodes carried that day's date.
+    """
+
+    def _sync(self, cache, sessions, user_id, items, repair=None):
+        with sessions() as session:
+            cache.sync_section(
+                session,
+                profile(),
+                user_id,
+                SECTION,
+                MediaType.SHOW,
+                lambda since: WatchedRead(items=list(items), covers_window=True),
+                repair_dates=repair,
+                force_full=True,
+                reconcile=True,
+            )
+            session.commit()
+
+    def test_the_count_rising_with_a_frozen_date_takes_the_episode_date(self, sessions, user_id):
+        cache = WatchCache(sessions)
+        old = datetime.now(UTC) - timedelta(days=700)
+        self._sync(cache, sessions, user_id, [show("Marked", rating_key=5, viewed=1, leaf=8, watched_at=old)])
+
+        real = datetime.now(UTC) - timedelta(minutes=5)
+        asked: list[set[int]] = []
+
+        def repair(keys):
+            asked.append(set(keys))
+            return {5: real}
+
+        # Plex now reports 8 of 8 — and the SAME stale date.
+        self._sync(cache, sessions, user_id, [show("Marked", rating_key=5, viewed=8, leaf=8, watched_at=old)], repair)
+
+        assert asked == [{5}], f"the wrong shows were sent for dating: {asked}"
+        with sessions() as session:
+            row = session.query(WatchedTitle).filter_by(user_id=user_id, rating_key=5).one()
+            assert abs((row.viewed_at.replace(tzinfo=UTC) - real).total_seconds()) < 1
+
+    def test_a_show_they_actually_PLAYED_is_left_alone(self, sessions, user_id):
+        """Playing updates the show's own date, so Plex is already right and there is nothing to ask."""
+        cache = WatchCache(sessions)
+        old = datetime.now(UTC) - timedelta(days=700)
+        self._sync(cache, sessions, user_id, [show("Played", rating_key=6, viewed=1, leaf=8, watched_at=old)])
+
+        asked: list[set[int]] = []
+        moved = datetime.now(UTC) - timedelta(hours=2)
+        self._sync(
+            cache,
+            sessions,
+            user_id,
+            [show("Played", rating_key=6, viewed=8, leaf=8, watched_at=moved)],
+            lambda keys: asked.append(set(keys)) or {},
+        )
+
+        assert asked == [], "asked Plex to re-date a show whose date had already moved"
+
+    def test_a_FIRST_sighting_is_never_re_dated(self, sessions, user_id):
+        """The guard that matters most, and the one whose absence would be worse than the bug.
+
+        A show seen for the first time has no previous count to have risen from. Treating that as
+        "the count went up" would re-date every row on a first sync, a rebuilt cache, or a newly
+        added library — telling Shortlist a person's entire back catalogue was watched today, so all
+        of it seeds at full strength. A wrong OLD date makes one show seed weakly; a wrong NEW date
+        poisons every recommendation they get.
+        """
+        cache = WatchCache(sessions)
+        asked: list[set[int]] = []
+        long_ago = datetime.now(UTC) - timedelta(days=900)
+        self._sync(
+            cache,
+            sessions,
+            user_id,
+            [show("Brand New", rating_key=7, viewed=40, leaf=40, watched_at=long_ago)],
+            lambda keys: asked.append(set(keys)) or {},
+        )
+
+        assert asked == [], "a never-before-seen show was treated as newly marked"
+        with sessions() as session:
+            row = session.query(WatchedTitle).filter_by(user_id=user_id, rating_key=7).one()
+            assert abs((row.viewed_at.replace(tzinfo=UTC) - long_ago).total_seconds()) < 1
+
+    def test_an_episode_date_OLDER_than_the_show_never_moves_it_backwards(self, sessions, user_id):
+        """A show can hold episodes watched years ago beside a recent play. The show's own date is
+        right in that case, so the episode answer is only ever an improvement, never a replacement."""
+        cache = WatchCache(sessions)
+        recent = datetime.now(UTC) - timedelta(days=1)
+        self._sync(cache, sessions, user_id, [show("Mixed", rating_key=8, viewed=2, leaf=20, watched_at=recent)])
+
+        ancient = datetime.now(UTC) - timedelta(days=2000)
+        self._sync(
+            cache,
+            sessions,
+            user_id,
+            [show("Mixed", rating_key=8, viewed=9, leaf=20, watched_at=recent)],
+            lambda keys: {8: ancient},
+        )
+
+        with sessions() as session:
+            row = session.query(WatchedTitle).filter_by(user_id=user_id, rating_key=8).one()
+            assert abs((row.viewed_at.replace(tzinfo=UTC) - recent).total_seconds()) < 1, "the date went backwards"
+
+    def test_a_failed_date_read_costs_the_date_and_nothing_else(self, sessions, user_id):
+        cache = WatchCache(sessions)
+        old = datetime.now(UTC) - timedelta(days=700)
+        self._sync(cache, sessions, user_id, [show("Marked", rating_key=9, viewed=1, leaf=8, watched_at=old)])
+
+        def boom(_keys):
+            raise RuntimeError("plex.tv would not mint a token")
+
+        self._sync(cache, sessions, user_id, [show("Marked", rating_key=9, viewed=8, leaf=8, watched_at=old)], boom)
+
+        with sessions() as session:
+            row = session.query(WatchedTitle).filter_by(user_id=user_id, rating_key=9).one()
+            assert row.viewed_leaf_count == 8, "a failed date read lost the count too"
+            assert abs((row.viewed_at.replace(tzinfo=UTC) - old).total_seconds()) < 1

@@ -2121,6 +2121,99 @@ class PlexClient:
         )
         return out
 
+    #: Above this many shows needing a date, ONE library-wide episode read is cheaper than a call
+    #: each. The library read costs ~2.8s against ~1.1s for the show read on a 9,563-episode library;
+    #: a single show is one small page. Marking a handful of shows is the normal case, so the per-show
+    #: path is the one that usually runs.
+    _PER_SHOW_DATE_LIMIT = 12
+
+    def newest_episode_dates(self, section_key: str | int, token: str, show_keys: set[int]) -> dict[int, datetime]:
+        """When each of these shows was last WATCHED, taken from its episodes.
+
+        For a show whose own `lastViewedAt` is stale — marking a partly-watched series bumps
+        `viewedLeafCount` and leaves the show's date alone (issue #108) — the episodes are the only
+        place the real date exists. The caller decides which shows need it; this just answers.
+
+        Args:
+            section_key: The library, used only to pick the bulk read when there are many.
+            token: The user's own server token — these are per-user watch states.
+            show_keys: The shows to date. Empty returns empty without a request.
+
+        Returns:
+            `{show ratingKey: newest watched-episode datetime}`, omitting any show nothing could date.
+        """
+        if not show_keys:
+            return {}
+        if len(show_keys) > self._PER_SHOW_DATE_LIMIT:
+            stamps = self._newest_episode_stamps(section_key, token)
+            if stamps is None:
+                return {}
+            return {k: datetime.fromtimestamp(v, tz=UTC) for k, v in stamps.items() if k in show_keys and v > 0}
+        out: dict[int, datetime] = {}
+        for key in sorted(show_keys):
+            try:
+                stamp = self._newest_leaf_stamp(key, token)
+            except Exception as e:
+                # Dates only — one show that will not read must not cost the other libraries their
+                # sync. It keeps the date it had, which is the pre-repair behaviour.
+                logger.warning("watched read: could not date show {} from its episodes ({})", key, type(e).__name__)
+                continue
+            if stamp:
+                out[key] = datetime.fromtimestamp(stamp, tz=UTC)
+        return out
+
+    def _newest_leaf_stamp(self, show_rating_key: int, token: str) -> int:
+        """Newest `lastViewedAt` across one show's WATCHED episodes, or 0 if none are.
+
+        Two things this endpoint does that the section read does not, both live-probed 2026-09-05 and
+        recorded in `pms_all_leaves.xml.txt`:
+
+        * ``?unwatched=0`` is **silently ignored** here — the filtered and unfiltered answers were
+          byte-for-byte the same 8 rows. So the filter is applied client-side, on ``viewCount``.
+        * ``totalSize`` is omitted entirely unless an explicit container size is asked for (One Piece
+          answered `size=1175` with no total, and `size=50 totalSize=1175` when paged). So the page
+          headers are always sent — without them a 1,175-episode show is one 3.6MB response.
+
+        A partially-watched episode carries a `lastViewedAt` and NO `viewCount` (recorded: episode 2
+        of the fixture, `viewOffset` only). It is excluded, because it is equally excluded from the
+        `viewedLeafCount` this repair exists to explain — counting it would date a show from an
+        episode nobody finished.
+        """
+        newest = 0
+        start = 0
+        for _ in range(self._EPISODE_PAGE_LIMIT):
+            url = self._server.url(f"/library/metadata/{show_rating_key}/allLeaves", includeToken=False)
+            r = http_retry.get(
+                url,
+                headers={
+                    "X-Plex-Token": token,
+                    "X-Plex-Container-Start": str(start),
+                    "X-Plex-Container-Size": str(self._WATCHED_PAGE),
+                },
+                timeout=self._timeout,
+            )
+            if r.status_code == 403:
+                raise SectionNotShared(f"show {show_rating_key} is not visible to this user")
+            r.raise_for_status()
+            root = ET.fromstring(r.text)
+            page = list(root)
+            for el in page:
+                try:
+                    views = int(el.get("viewCount") or 0)
+                    stamp = int(el.get("lastViewedAt") or 0)
+                except ValueError:
+                    continue
+                if views > 0:
+                    newest = max(newest, stamp)  # unwatched and part-watched rows are both excluded
+            if not page:
+                return newest
+            start += len(page)
+            reported = root.get("totalSize")
+            if reported is not None and start >= int(reported):
+                return newest
+        logger.warning("watched read: show {} did not finish paging its episodes", show_rating_key)
+        return newest
+
     def _newest_episode_stamps(self, section_key: str | int, token: str) -> dict[int, int] | None:
         """`{show ratingKey: newest watched episode lastViewedAt}` for one show library, read as `token`.
 

@@ -36,12 +36,21 @@ such a show has a watched season and zero watched episodes per Plex, so what doe
 `viewed_leaf_count` become? Recording 0 makes it not count as watched anyway, which defeats the
 point. Needs a decision, not just code.
 
-**2. The "Finished" date does not move when a partly-watched show is marked fully watched.** Plex
-does not update the show's own `lastViewedAt` when episodes are marked, so a series finished today
-still reads as finished months ago. `83cf07a` repairs this only for a show with NO date at all;
-repairing a STALE one means taking `max(show date, newest episode date)`, which needs the episode
-read on every library rather than only on libraries holding an undated show — roughly +2.4s per
-person per library on a 47-user server. Cost/benefit call.
+**2. The "Finished" date does not move when a partly-watched show is marked fully watched.** CLOSED.
+Plex does not update a show's own `lastViewedAt` when its episodes are MARKED, so a series finished
+today still read as finished months ago. Not cosmetic: that date is the recency half of a seed's
+weight and halves every ~45 days, so a series marked watched today but dated two years ago never
+seeds — you finish a show and get nothing like it.
+
+The cost objection recorded here (an episode read for every library, every sync) was answered by
+detecting WHICH shows need it instead of reading for all of them: the cache already holds last
+night's `viewed_leaf_count`, and a count that went UP while the show's date stood still has exactly
+one cause. A quiet night makes no request at all; marking a few shows costs one small
+`/library/metadata/{key}/allLeaves` each, and past a dozen it falls back to the single library-wide
+read. Two traps found by probing the live server rather than reasoning: that endpoint SILENTLY
+IGNORES `unwatched=0`, and a part-watched episode carries a `lastViewedAt` with no `viewCount` —
+on the first real show tried, that abandoned episode's stamp was NEWER than the only episode
+actually watched. Both recorded in `pms_all_leaves.xml.txt`.
 
 **3. A pick stays "finished" on the dashboard after being unmarked in Plex.** CLOSED by `ea33454`.
 Withdrawal was gated on the `sync.watch_full_days` pass to protect against INCREMENTAL reads, which
