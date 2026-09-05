@@ -239,7 +239,21 @@ def parse_web_titles(text: str, limit: int) -> list[dict]:
     if isinstance(data, dict):
         data = data.get("titles")
     if not isinstance(data, list):
-        logger.warning("llm_web: could not parse a title list from the model reply")
+        # SHOW THE REPLY. Without it this line says only that something went wrong, and the seed's
+        # candidates are gone with no way to tell a refusal ("I can't help with that") from a
+        # truncated response from a provider wrapping the array in a key we do not unwrap — three
+        # different fixes. Observed twice on SFLIX 2026-09-06 with nothing recorded but this
+        # sentence. Truncated because a reply can be thousands of tokens, and repr'd so that a
+        # response which is empty or pure whitespace is visibly so rather than looking like a
+        # missing log line.
+        preview = raw if isinstance(raw, str) else str(raw)
+        logger.warning(
+            "llm_web: could not parse a title list from the model reply ({} chars, parsed as {}): {!r}{}",
+            len(preview),
+            type(data).__name__,
+            preview[:400],
+            "…" if len(preview) > 400 else "",
+        )
         return []
     out: list[dict] = []
     for item in data:

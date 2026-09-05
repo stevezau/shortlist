@@ -54,13 +54,34 @@ def _rename_or_keep(collection, title: str, profile: UserProfile, section_title:
         # token, so anchoring it is exact.
         if not str(exc).startswith("(409)"):
             raise
+        # Name WHAT is squatting the title. "A collection already has that title" is untriageable on
+        # its own: the squatter is either this person's other row mid-cycle (self-healing, ignore),
+        # a row left behind by an interrupted run (the sweep clears it), or something a co-managing
+        # tool made (ours to leave alone, rule 4) — and only the third is a standing problem. The
+        # ratingKey is what makes it findable in Plex, where the title itself cannot be searched
+        # because it carries invisible marker characters. Best-effort: a failed lookup must never
+        # turn a survivable rename into a lost row, which is the whole point of this function.
+        squatter = ""
+        try:
+            match = next(
+                (c for c in collection.section().collections() if c.title == title),
+                None,
+            )
+            if match is not None:
+                squatter = (
+                    f" The title is held by ratingKey {match.ratingKey}"
+                    f"{' — also a Shortlist row' if has_marker(match.title) else ' — NOT a Shortlist row'}."
+                )
+        except Exception as lookup_error:  # diagnostics must never fail the delivery
+            squatter = f" (could not identify what holds it: {type(lookup_error).__name__})"
         logger.warning(
             "{}: Plex refused to rename '{}' to '{}' in '{}' (409 — a collection there already has "
-            "that title). Keeping the old name; the row's titles are still updated.",
+            "that title). Keeping the old name; the row's titles are still updated.{}",
             profile.username,
             log_title(collection.title),
             log_title(title),
             section_title,
+            squatter,
         )
 
 

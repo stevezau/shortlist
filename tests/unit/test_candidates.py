@@ -1643,3 +1643,46 @@ class TestStructuredExtractionPath:
         profile = SimpleNamespace(history=[SimpleNamespace(title="Mr. Robot")])
         out = web_recommendations(_Native(), None, "native", profile, [seed(1, "Dune")], 5, stats)
         assert [t["title"] for t in out] == ["Silo"]
+
+
+class TestAnUnparseableReplyIsDiagnosable:
+    """Two replies on SFLIX 2026-09-06 could not be parsed, and the log recorded only that fact.
+
+    The seed's candidates are gone either way; what matters is being able to tell WHICH failure it
+    was, because they have different fixes: a refusal ("I can't help with that"), a truncated
+    response, or a provider wrapping the array in a key we do not unwrap.
+
+    Uses a loguru sink, not `caplog`: this codebase logs through loguru, which does not propagate to
+    the stdlib handlers pytest captures — `caplog.text` is empty here however loud the line is.
+    """
+
+    @staticmethod
+    def _warnings(fn) -> str:
+        from loguru import logger
+
+        seen: list[str] = []
+        sink = logger.add(seen.append, level="WARNING")
+        try:
+            fn()
+        finally:
+            logger.remove(sink)
+        return "".join(seen)
+
+    def test_the_reply_is_logged_when_it_cannot_be_parsed(self):
+        text = self._warnings(lambda: parse_web_titles("I'm sorry, I can't help with that request.", 10))
+        assert "could not parse" in text
+        assert "can't help with that" in text, "the reply itself is the diagnosis"
+
+    def test_an_empty_reply_is_visibly_empty_rather_than_looking_like_a_missing_log(self):
+        """`repr` on purpose. The parser strips before it gets here, so a whitespace-only reply
+        arrives as the empty string — printed bare that is nothing at all, and the log line reads as
+        truncated rather than as "the model said nothing", which is the actual diagnosis."""
+        text = self._warnings(lambda: parse_web_titles("   ", 10))
+        assert "''" in text
+        assert "0 chars" in text
+
+    def test_a_very_long_reply_is_truncated(self):
+        """A reply can be thousands of tokens; the log must stay readable."""
+        text = self._warnings(lambda: parse_web_titles("z" * 5000, 10))
+        assert "\u2026" in text
+        assert len(text) < 2000

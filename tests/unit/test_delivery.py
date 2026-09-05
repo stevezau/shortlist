@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from plexapi.exceptions import BadRequest
 
 from shortlist.engine.clients.plex_pms import CollectionRejectedItems, PlexClient
 from shortlist.engine.delivery import DEFAULT_ROW_NAME, deliver_rows, render_row_name, row_marker, sweep_broken_rows
@@ -2095,6 +2096,58 @@ class TestAConflictingRenameDoesNotTakeThePersonDown:
         existing.items.return_value = [MagicMock(title="Movie 1", ratingKey=1001)]
         existing.editTitle.side_effect = raiser
         return existing
+
+    @staticmethod
+    def _warnings(fn) -> str:
+        """loguru sink — this codebase does not log through the stdlib, so `caplog` stays empty."""
+        from loguru import logger
+
+        seen: list[str] = []
+        sink = logger.add(seen.append, level="WARNING")
+        try:
+            fn()
+        finally:
+            logger.remove(sink)
+        return "".join(seen)
+
+    def test_the_conflict_warning_names_what_is_holding_the_title(self):
+        """A 409 that just says "a collection already has that title" is untriageable on its own.
+
+        The squatter is one of three things with three different answers: this person's other row
+        mid-cycle (self-healing), debris from an interrupted run (the sweep clears it), or something
+        a co-managing tool made (leave it alone, rule 4). Observed on SFLIX 2026-09-06 for
+        twistedstream with no way to tell which. The ratingKey is what makes it findable, because
+        the title carries invisible marker characters and cannot be searched for in Plex.
+        """
+        from shortlist.engine.delivery import _rename_or_keep
+
+        profile = make_profile()
+        target = "New Name" + row_marker(profile.plex_account_id)
+        squatter = MagicMock(ratingKey=99887, title=target)
+        collection = MagicMock()
+        collection.title = "Old Name" + row_marker(profile.plex_account_id)
+        collection.editTitle.side_effect = BadRequest(self.CONFLICT)
+        collection.section.return_value.collections.return_value = [squatter]
+
+        text = self._warnings(lambda: _rename_or_keep(collection, target, profile, "Movies"))
+
+        assert "99887" in text, "the ratingKey is the only way to find it in Plex"
+        assert "also a Shortlist row" in text
+
+    def test_identifying_the_squatter_never_costs_the_row(self):
+        """The lookup is diagnostics. A PMS that fails it must not turn a survivable rename into the
+        raised exception that once cost a person every row they had."""
+        from shortlist.engine.delivery import _rename_or_keep
+
+        profile = make_profile()
+        collection = MagicMock()
+        collection.title = "Old Name" + row_marker(profile.plex_account_id)
+        collection.editTitle.side_effect = BadRequest(self.CONFLICT)
+        collection.section.side_effect = RuntimeError("PMS down")
+
+        text = self._warnings(lambda: _rename_or_keep(collection, "New Name", profile, "Movies"))
+
+        assert "could not identify what holds it" in text
 
     def test_the_row_still_gets_its_titles_when_plex_refuses_the_rename(
         self, engine_config: EngineConfig, movies, shows
