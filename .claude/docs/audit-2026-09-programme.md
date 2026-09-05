@@ -1097,3 +1097,58 @@ migration freeze: 62 match.
 3. **`seo` FAQ schema** — shipped, but Google discontinued the FAQPage rich result; it is AI-crawler
    value only now.
 4. **Two manual actions**: Docker Hub categories, GitHub social-preview upload. Neither has an API.
+
+---
+
+## SHIPPED — 5 Sep 2026
+
+**All 35 items implemented, plus Wave 8. Pushed to `dev` (48 commits, `5ba2d88..c0b7d63`), CI green,
+and deployed to the live server.**
+
+### Verified live, not just green locally
+
+- CI: `lint`, `test-python` (3 shards), `test-web`, `e2e` (2 shards), `coverage`, `docker`,
+  `docker-smoke` — all success. Pages build and deploy: success.
+- Container recreated on `ghcr.io/stevezau/shortlist:dev`, running commit `c0b7d63`, healthy,
+  migrations to head, no errors in the boot log.
+- New endpoints answer **401, not 404** — registered and auth-gated.
+- `https://shortlistapp.dev` serves HTTP/2 200 with a valid cert (CN=shortlistapp.dev, issued 5 Sep,
+  expires 4 Dec). `/`, `/faq/`, `/reference/`, `/getting-started/` all 200. `www` 301s.
+- **Duplicate canonical confirmed fixed on the live page**: the count is 1, was 2.
+- Landing page opened in a real browser: the count-up lands on 1 / 8 / 0 / 10, the reveal fires, and
+  the guided tour's rail, pinned frame and fake `shortlist.local:5959/setup` URL bar all work under
+  natural scrolling. That was the one gap the Wave 8 agent could not verify (its tab was throttled).
+
+**Deploy safety note:** `docker run` was tested with `--rm --entrypoint echo` BEFORE stopping the
+container, per `verify-the-start-command-before-stopping` — a previous session had `stop`/`rm`
+permitted and `run` denied, which took the server down.
+
+### Four architecture review passes
+
+| Pass | Scope | Found |
+|---|---|---|
+| 1 | the whole 37-commit diff | 2 HIGH, 4 MED, 3 LOW |
+| 2 | pass 1's fixes | 3 MED, 3 LOW — **every one self-inflicted** |
+| 3 | the full merged state | 1 HIGH, 1 MED, 1 LOW |
+| 4 | pass 3's fixes | running |
+
+Agents ran their own reviews besides these; one found both of its first-round fixes were defective,
+including a regression guard that could never fail (it compared thread ids, but `TestClient` runs the
+loop on its own thread, so the assertion was vacuous).
+
+**The HIGH finding was the same shape three times: a privacy surface asserting a guarantee it had not
+verified.** The original `false-privacy` bug, then the restriction screen's headline contradicting its
+own red panel, then `_summary` escalating on `filters_not_enforced` while ignoring its sibling
+`unhideable_rows`. Worth remembering as this codebase's signature defect.
+
+### Still outstanding, all owner actions
+
+1. Tick **Enforce HTTPS** in Settings → Pages (mandatory on `.dev`, which is HSTS-preloaded).
+2. Add `shortlistapp.dev` as a new Search Console property and re-submit the sitemap — the apex is a
+   different property from the old subpath.
+3. Docker Hub categories (no API; the taxonomy has no home-media entry).
+4. GitHub social-preview upload (no API).
+5. **`secret.key` in backups** — still not there. Adding it makes a backup self-decrypting, so it was
+   not taken unilaterally. Back that file up by hand in the meantime.
+6. Engine constants remain reasoned, not measured. `scripts/replay_eval.py` exists and has never been
+   run against real data. Every engine dial defaults OFF, so nothing is at risk until one is turned up.
