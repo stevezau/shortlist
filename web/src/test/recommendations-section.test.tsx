@@ -269,4 +269,35 @@ describe("RecommendationsSection", () => {
       putSettings.mock.calls.at(-1)?.[0]?.["recommendations.min_history"],
     ).toBe(4);
   });
+
+  // The web-search count is a SLICE of the seed budget, not a peer of it — `candidates.py` searches
+  // `seeds[:recent_count]`. Rendered side by side, the only thing saying so was word order, and the
+  // narrower field had to spend a paragraph explaining the field above it. Asserted as containment
+  // rather than as copy: the relationship is what the fix is, and copy can be reworded without
+  // breaking it.
+  it("nests the web-search count inside the seed budget it slices", () => {
+    renderSection({
+      "recommendations.max_seeds": 40,
+      "recommendations.recent_count": 10,
+    });
+
+    const budget = screen.getByLabelText(/^Watches every source builds from$/i);
+    const slice = screen.getByLabelText(
+      /^Watches the AI web search looks up$/i,
+    );
+    const budgetBlock = budget.closest("div.border-t");
+
+    expect(budgetBlock).not.toBeNull();
+    expect(budgetBlock?.contains(slice)).toBe(true);
+  });
+
+  it("no longer restates the seed budget under the field that slices it", () => {
+    // The old helper opened "A narrower slice of the same list: …" and closed by repeating the
+    // AI web search card's own "cached for 7 days" line — 293 characters explaining the control
+    // above it, which nesting now says for free.
+    renderSection({ "recommendations.recent_count": 10 });
+
+    expect(screen.queryByText(/a narrower slice of the same list/i)).toBeNull();
+    expect(screen.queryByText(/cached for 7 days/i)).toBeNull();
+  });
 });

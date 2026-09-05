@@ -1,4 +1,4 @@
-import { Why } from "@/components/dashboard/engagement";
+import { Why } from "@/components/why";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -26,12 +26,25 @@ const WHY = {
     "Either still playing, or stopped too recently to call — and a series is always here, because one episode says nothing about a whole show.",
 } as const;
 
-const LABEL: Record<string, { text: string; className: string; why?: string }> = {
-  finished: { text: "Finished", className: "text-success" },
-  dropped: { text: "Gave up part-way", className: "text-destructive-text", why: WHY.gaveUp },
-  bounced: { text: "Barely started", className: "text-destructive-text", why: WHY.gaveUp },
-  watching: { text: "Still watching", className: "text-muted-foreground", why: WHY.watching },
-};
+const LABEL: Record<string, { text: string; className: string; why?: string }> =
+  {
+    finished: { text: "Finished", className: "text-success" },
+    dropped: {
+      text: "Gave up part-way",
+      className: "text-destructive-text",
+      why: WHY.gaveUp,
+    },
+    bounced: {
+      text: "Barely started",
+      className: "text-destructive-text",
+      why: WHY.gaveUp,
+    },
+    watching: {
+      text: "Still watching",
+      className: "text-muted-foreground",
+      why: WHY.watching,
+    },
+  };
 
 function Line({ pick }: { pick: UserPickOutcome }) {
   const label = LABEL[pick.outcome] ?? LABEL.watching;
@@ -56,7 +69,9 @@ function Line({ pick }: { pick: UserPickOutcome }) {
         {pick.row}
       </Badge>
       {pick.watched_at && (
-        <span className="text-muted-foreground">· {timeAgo(pick.watched_at)}</span>
+        <span className="text-muted-foreground">
+          · {timeAgo(pick.watched_at)}
+        </span>
       )}
     </li>
   );
@@ -65,7 +80,10 @@ function Line({ pick }: { pick: UserPickOutcome }) {
 export function PickOutcomes({ userId }: { userId: number }) {
   const query = useUserOutcomes(userId);
   return (
-    <QueryBoundary query={query} skeleton={<Skeleton className="h-32 w-full" />}>
+    <QueryBoundary
+      query={query}
+      skeleton={<Skeleton className="h-32 w-full" />}
+    >
       {(picks) => {
         if (picks.length === 0) {
           return (

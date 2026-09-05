@@ -118,6 +118,43 @@ export function webSearchSummary(count?: number): string {
   return ` · ${count} web search${count === 1 ? "" : "es"}`;
 }
 
+/**
+ * The breakdown behind a row's total time, as one sentence for a `title`.
+ *
+ * The line used to read "25ms · 8ms waiting · shared setup 159ms", which is three numbers and two
+ * engineer concepts: "waiting" is blocked on the Plex write lock, and "shared setup" is work
+ * amortised across everyone in the run. Neither is something the owner acts on, and neither is
+ * guessable. The total is what belongs on screen; this is what belongs behind it.
+ *
+ * @param durationMs This row's wall time, waiting included.
+ * @param blockedMs Of that, time spent waiting for the Plex write lock.
+ * @param setupMs Shared setup this row drew on, or 0/undefined when there was none. NOT part of
+ *   `durationMs` — it is one cost spread over every person in the run, so adding them would count
+ *   the same milliseconds once per person.
+ * @param format How to render a duration, so this stays consistent with the number on screen.
+ * @returns The sentence, or "" when there is nothing worth explaining.
+ */
+export function rowTimingTitle(
+  durationMs: number,
+  blockedMs: number,
+  setupMs: number | undefined,
+  format: (ms: number) => string,
+): string {
+  const parts: string[] = [];
+  if (blockedMs > 0) {
+    parts.push(
+      `${format(durationMs - blockedMs)} working, ${format(blockedMs)} waiting for the Plex write lock`,
+    );
+  }
+  if (setupMs && setupMs > 0) {
+    parts.push(
+      `a further ${format(setupMs)} of setup was shared across everyone in this run`,
+    );
+  }
+  if (parts.length === 0) return "";
+  return `${format(durationMs)} for this row: ${parts.join("; ")}.`;
+}
+
 /** What the run is doing right now, and whether that is the server-wide tail. */
 export type RunPhase = {
   /** The phrase itself — "merging share filters 12/46". */

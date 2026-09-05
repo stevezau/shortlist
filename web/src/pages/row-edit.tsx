@@ -6,6 +6,7 @@ import { RowEditor } from "@/components/rows/row-editor";
 import { Skeleton } from "@/components/ui/skeleton";
 import { findRowTemplate } from "@/lib/row-templates";
 import { useCollections, useUsers } from "@/lib/queries";
+import { useHashScroll } from "@/lib/use-hash-scroll";
 
 /**
  * The add/edit-a-row screen.
@@ -27,6 +28,10 @@ export function RowEditPage() {
   const template = isNew
     ? (findRowTemplate(params.get("template") ?? "") ?? null)
     : null;
+  // The editor's sections render behind the collections query, so the browser's own anchor jump
+  // finds nothing on a cold load — `/rows/3#remove-this-row` from the Rows list would just sit at
+  // the top of a very long form. Same hook, same reason, as the Settings page.
+  useHashScroll(collections.isSuccess);
 
   return (
     <div className="space-y-4">

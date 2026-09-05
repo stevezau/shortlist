@@ -45,6 +45,7 @@ import type { User } from "@/lib/types";
 import { formatHitRate, timeAgo } from "@/lib/format";
 import {
   queryKeys,
+  useHitRatesMatured,
   useRemoveUser,
   useSetAllUsersEnabled,
   usePatchUser,
@@ -65,6 +66,7 @@ export function UsersPage() {
   const usersQuery = useUsers();
   const navigate = useNavigate();
   const patchUser = usePatchUser();
+  const ratesMatured = useHitRatesMatured();
 
   /**
    * Toggle one person, and say so immediately.
@@ -183,7 +185,9 @@ export function UsersPage() {
                 and dismissing "you see everyone's rows" is how people say "yes, I know" rather than
                 "I never want the tool again". Before this, hiding the note hid the only way back to
                 it short of remembering the URL. */}
-            {(usersQuery.data ?? []).some((user) => user.user_type === "owner") && (
+            {(usersQuery.data ?? []).some(
+              (user) => user.user_type === "owner",
+            ) && (
               <Button variant="outline" asChild>
                 <Link to="/watching-account?setup=1">
                   <Eye aria-hidden="true" />
@@ -382,7 +386,11 @@ export function UsersPage() {
                         so the number is what yields. */}
                     <TableHead
                       className="hidden sm:table-cell"
-                      title="Share of Shortlist's picks this person has watched"
+                      title={
+                        ratesMatured
+                          ? "Share of Shortlist's picks this person has watched"
+                          : "Share of Shortlist's picks this person has watched. A pick gets a month to be watched before it counts, so this stays blank until your earliest picks are old enough."
+                      }
                     >
                       Picks watched
                     </TableHead>
@@ -426,8 +434,11 @@ export function UsersPage() {
                       <TableCell className="hidden text-muted-foreground lg:table-cell">
                         {timeAgo(user.last_run_at)}
                       </TableCell>
+                      {/* An em dash, not "0%", until a pick has actually had its chance. On day one
+                          this whole column read 0% for everybody — a number the dashboard itself
+                          refuses to compute yet. */}
                       <TableCell className="hidden text-muted-foreground tabular-nums sm:table-cell">
-                        {formatHitRate(user.hit_rate)}
+                        {formatHitRate(user.hit_rate, ratesMatured)}
                       </TableCell>
                       <TableCell className="text-right">
                         {/* Gated on the PRESET, not on `restricted` — plex.tv sets that for every Plex

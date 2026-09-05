@@ -136,6 +136,32 @@ describe("RowsPage", () => {
 
     expect(await screen.findByText(/sarah · 15 titles/i)).toBeTruthy();
   });
+
+  // A row name is a TEMPLATE, and the card marks each `{placeholder}` as a grey chip rather than
+  // printing braces — but nothing said what a chip was, so "✨ [library name] Picked for You" read
+  // as a stray tag stuck on the row (audit finding, Sep 2026). The row editor already answers this
+  // with a worked example; this is that example, once, under the list.
+  it("explains the placeholder chip when a row on screen has one", async () => {
+    getUsers.mockResolvedValue([]);
+    listCollections.mockResolvedValue([
+      { ...SUBSET_ROW, name: "✨ {library_name} Picked for You" },
+    ]);
+    renderPage();
+
+    expect(
+      await screen.findByText(/✨ Movies Picked for You/),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing about chips when no row has one", async () => {
+    // An explainer for something not on screen is noise on the page it explains.
+    getUsers.mockResolvedValue([]);
+    listCollections.mockResolvedValue([SUBSET_ROW]);
+    renderPage();
+
+    expect(await screen.findByText("Hidden Gems")).toBeInTheDocument();
+    expect(screen.queryByText(/✨ Movies Picked for You/)).toBeNull();
+  });
 });
 
 describe("RowsPage — the day-schedule badge", () => {
@@ -148,7 +174,9 @@ describe("RowsPage — the day-schedule badge", () => {
   it("says nothing for a row that appears every day", async () => {
     // The ordinary row must be untouched: a badge on every row would make the schedule look like
     // something every row has.
-    listCollections.mockResolvedValue([{ ...SUBSET_ROW, show_days: [], shown_today: true }]);
+    listCollections.mockResolvedValue([
+      { ...SUBSET_ROW, show_days: [], shown_today: true },
+    ]);
     renderPage();
 
     expect(await screen.findByText("Hidden Gems")).toBeInTheDocument();

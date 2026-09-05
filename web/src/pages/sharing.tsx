@@ -45,7 +45,10 @@ export function SharingPage() {
       <PageHeader
         icon={ShieldCheck}
         title="Sharing and privacy"
-        subtitle="Whether each person's Plex account is set to hide the rows that aren't theirs, read live from plex.tv."
+        // Promise first, mechanism second. It used to lead with what each account is "set to do",
+        // which is how the hiding WORKS — the reader has to already know about share filters for
+        // that sentence to mean anything. What they came for is whether it holds.
+        subtitle="Nobody should see anyone else's row. This page checks that account by account, read live from plex.tv rather than from what Shortlist last wrote."
       />
       <QueryBoundary
         query={query}
@@ -167,15 +170,14 @@ function Summary({
       <Banner tone="bad">
         <p>
           Plex will not hide other people&rsquo;s rows from{" "}
-          {blocked.length === 1
-            ? blocked[0]
-            : `${blocked.length} accounts`}{" "}
-          at all, and a run has confirmed they can see them. Accounts with a
+          {blocked.length === 1 ? blocked[0] : `${blocked.length} accounts`} at
+          all, and a run has confirmed they can see them. Accounts with a
           Restriction Profile in Plex reject hide rules outright.
         </p>
         <p>
           Set that account&rsquo;s Restriction Profile to <strong>None</strong>{" "}
-          in Plex, and the next run can hide their view. <ReadAt at={data.read_at} />
+          in Plex, and the next run can hide their view.{" "}
+          <ReadAt at={data.read_at} />
         </p>
       </Banner>
     );
@@ -229,16 +231,27 @@ function Summary({
       </Banner>
     );
   }
-  // A verdict this build does not know. Reached only if the server grows a sixth state and nobody
+  // A verdict this build does not know. Reached only if the server grows a seventh state and nobody
   // wires it up here — and the default has to be "I don't know", never the green banner. Falling
   // through to reassurance is the one direction this page's whole docstring says it must not take.
+  //
+  // The raw verdict is NOT interpolated into the sentence any more. `data.summary` is an internal
+  // enum ("rows_unknown", "not_enforced"), and dropping one mid-paragraph put a snake_case token in
+  // front of an owner as if it were English. It is still shown — a mismatch between server and SPA
+  // is exactly the thing a bug report needs — but labelled as a code to quote, not as prose.
   return (
     <Banner tone="neutral">
-      <p>
-        Shortlist couldn't interpret this reading ({data.summary}), so it isn't
-        saying whether anything is hidden. The accounts below are still a live
-        read. <ReadAt at={data.read_at} />
-      </p>
+      <div className="space-y-1">
+        <p>
+          This version of Shortlist doesn&rsquo;t recognise the verdict your
+          server sent back, so it isn&rsquo;t saying whether anything is hidden.
+          The accounts below are still a live read. <ReadAt at={data.read_at} />
+        </p>
+        <p className="text-muted-foreground">
+          Update Shortlist; if it keeps happening, report it and quote this
+          code: <code className="font-mono">{data.summary}</code>
+        </p>
+      </div>
     </Banner>
   );
 }
@@ -406,11 +419,15 @@ function AccountRow({ account }: { account: AccountPrivacy }) {
           )}
         </div>
       </div>
-      {/* A number, not a tick: "12 of 12" and "0 of 0" must not look alike. */}
+      {/* A number, not a tick: "12 of 12" and "0 of 0" must not look alike. With its NOUN — "Hides
+          2 of 2" left the reader to guess two of what, on the page where the thing being counted
+          is the whole point. */}
       <p className="shrink-0 whitespace-nowrap text-sm tabular-nums text-muted-foreground sm:pt-1">
         {account.state === "owner" || account.state === "unknown"
           ? "—"
-          : `Hides ${account.hides.length} of ${account.should_hide.length}`}
+          : `Hides ${account.hides.length} of ${account.should_hide.length} ${
+              account.should_hide.length === 1 ? "row" : "rows"
+            }`}
       </p>
     </li>
   );
@@ -438,12 +455,23 @@ function EnforcementPanel({ data }: { data: PrivacyStatus }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
+        {/* Staleness with something to DO about it. This used to report "not checked recently" and
+            stop — a status with no next step, on the panel an owner opens when they are already
+            worried. The check rides a RUN (it looks through one real account's eyes per kind), so
+            the honest action is to start one, not to press a button here that cannot exist. */}
         {!measured && (
-          <p className="text-muted-foreground">
-            <strong className="text-foreground">Not checked recently.</strong>{" "}
-            The last few runs didn't get as far as looking, so nothing here says
-            whether Plex is applying the rules.
-          </p>
+          <div className="space-y-2">
+            <p className="text-muted-foreground">
+              <strong className="text-foreground">Not checked recently.</strong>{" "}
+              The last few runs didn&rsquo;t get as far as looking, so nothing
+              here says whether Plex is applying the rules. Every run checks
+              again, so the next one will &mdash; or start one now and come
+              back.
+            </p>
+            <Button asChild variant="outline" size="sm">
+              <Link to="/runs">Go to Runs</Link>
+            </Button>
+          </div>
         )}
         {measured && exposed.length === 0 && (
           <p>

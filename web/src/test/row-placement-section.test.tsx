@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RowPlacementSection } from "@/components/settings/row-placement-section";
+import { DOCS_SHELF_CONTENTION_URL } from "@/lib/support";
 import type { Settings } from "@/lib/types";
 
 const { putSettings, getLibraries, getLibraryCollections } = vi.hoisted(() => ({
@@ -126,23 +127,30 @@ describe("RowPlacementSection", () => {
     );
   });
 
-  it("names the maintained Agregarr fork even with shelf ordering switched off", async () => {
-    // This is the ONLY place a "Wherever Plex puts them" owner sees it. The shelf-contention
-    // notification carries the same advice, but that notification only fires while Shortlist is
-    // ordering the shelf — and switching that off is the fix it recommends. Owners who take that
-    // advice would otherwise never be told the version they run re-promotes rows onto their own
-    // Home, which no share filter can cover.
+  it("links the co-managing-tool guide even with shelf ordering switched off", async () => {
+    // This is the ONLY place a "Wherever Plex puts them" owner is pointed at it. The
+    // shelf-contention notification carries the same advice, but that notification only fires
+    // while Shortlist is ordering the shelf — and switching that off is the fix it recommends.
+    //
+    // Changed by the audit: the advice used to be printed here in full — a 458-character
+    // paragraph with a fork recommendation, a GitHub URL and a Docker image name, shown to every
+    // owner whether or not they run any of those tools. It is a link now; the guide holds the
+    // detail, unabridged.
     renderSection({ "rows.manage_shelf_order": false });
 
-    const text = (await screen.findByText(/no longer actively released/i))
-      .textContent;
-    expect(text).toMatch(/re-promotes collections/i);
-    // The claim must stay hedged: converge clears the flag every run, so this is a gap between
-    // runs, not a standing leak. Overstating it in copy we ship is what the review caught.
-    expect(text).toMatch(/gap between runs/i);
+    const link = await screen.findByRole("link", {
+      name: /alongside Shortlist/i,
+    });
+    expect(link).toHaveAttribute("href", DOCS_SHELF_CONTENTION_URL);
+    expect(link).toHaveAttribute("target", "_blank");
+    // The apparatus goes; the WARNING stays, because it is the half that matters and the guide
+    // does not carry it. Hedged, as it always was — Shortlist clears the re-promotion every run.
     expect(
-      screen.getByRole("link", { name: /bitr8\/agregarr-dev/i }),
-    ).toHaveAttribute("href", "https://github.com/bitr8/agregarr-dev");
+      screen.getByText(/other people’s rows on/i, { exact: false }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/between runs/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no longer actively released/i)).toBeNull();
+    expect(screen.queryByText(/bitr8\/agregarr-dev/i)).toBeNull();
   });
   it("won't let the global default anchor to a collection that has no shelf position", async () => {
     // Same trap as the per-row picker (issue #106), reachable from Settings too.

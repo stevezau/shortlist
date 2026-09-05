@@ -547,8 +547,13 @@ describe("RunRowsTab — per-row cost", () => {
     await userEvent.click(
       screen.getByRole("button", { name: /Picked for You/ }),
     );
-    expect(screen.getByText(/shared setup/i)).toBeInTheDocument();
+    // "shared setup" moved into the line's `title` with the rest of the breakdown (audit finding,
+    // Sep 2026: it and "waiting" are engineer concepts). The TOKENS stay on screen — those are
+    // money, not internals — which is what this test is actually about.
     expect(screen.getByText(/15,917/)).toBeInTheDocument();
+    expect(
+      screen.getByTitle(/setup was shared across everyone in this run/i),
+    ).toBeInTheDocument();
   });
 
   it("says how many pools were shared, not 'one pool', when more than one contributed", async () => {
@@ -653,11 +658,17 @@ describe("RunRowsTab — per-row cost", () => {
     await userEvent.click(
       screen.getByRole("button", { name: /Picked for You/ }),
     );
-    // Work time and waiting are unaffected. Row-scoped time also appears in the person list beside
-    // the panel (see the "shows this row's own time" tests above), so "18ms" is expected twice.
-    expect(screen.getAllByText(/18ms/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/12ms waiting/)).toBeInTheDocument();
-    expect(screen.getByText(/shared setup 283ms/)).toBeInTheDocument();
+    // The TOTAL is what shows now, with the split behind it: "25ms · 8ms waiting · shared setup
+    // 159ms" put two engineer concepts on screen, neither of them something the owner acts on
+    // (audit finding, Sep 2026). 30ms total = 18ms working + 12ms waiting.
+    expect(screen.getAllByText(/30ms/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/12ms waiting/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/shared setup 283ms/)).not.toBeInTheDocument();
+    const timing = screen.getByTitle(/for this row:/i);
+    expect(timing.getAttribute("title")).toContain(
+      "18ms working, 12ms waiting for the Plex write lock",
+    );
+    expect(timing.getAttribute("title")).toContain("a further 283ms of setup");
     // No AI-token clause, and no pool parenthetical.
     expect(screen.queryByText(/AI tokens/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/shared by \d+ rows?/i)).not.toBeInTheDocument();
@@ -677,6 +688,9 @@ describe("RunRowsTab — per-row cost", () => {
       screen.getByRole("button", { name: /Picked for You/ }),
     );
     expect(screen.queryByText(/waiting/i)).not.toBeInTheDocument();
+    // And not in the breakdown behind it either — moving the clause into a `title` must not be a
+    // way for the 0ms-waiting claim to come back where nobody looks.
+    expect(screen.queryByTitle(/waiting for the Plex write lock/i)).toBeNull();
   });
 
   /** A run cancelled part-way through this person: "picked" was written, "because" never was —

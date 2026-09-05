@@ -248,9 +248,12 @@ export function rowOverrides(
 
   // Badged BEFORE the watched cap, and instead of it: on a rewatch row the cap is plumbing (it only
   // stops the pool dropping finished titles), so "Watched: no filter" describes the mechanism while
-  // "Rewatches first" describes the row. Showing both would read as two competing settings.
+  // this badge describes the row. Showing both would read as two competing settings.
+  //
+  // Worded as the row editor's own switch is ("Make this a 'watch it again' row"). "Rewatches
+  // first" was our internal name for the ordering rule and meant nothing on a card.
   if (collection.rewatch) {
-    parts.push("Rewatches first");
+    parts.push("“Watch it again” row");
   } else if (
     // null inherits the global recommendations.watched_pct, so there's nothing to badge. Unlike the
     // prompt, this override IS honoured on the default row, so it isn't gated on the slug.
@@ -277,18 +280,23 @@ export function rowOverrides(
     parts.push(recencyBadgeLabel(collection.recency));
   }
 
-  // null inherits the global recent_count (web-search recency), so only badge a per-row override.
+  // These two badges are the same unit — a number of watches — for two different scopes, and they
+  // used to read "Recent watches: 3" and "Built from 1 watch": two counts of watches, neither
+  // saying what counted them, on the same card. Named for the scope each governs instead, so the
+  // pair reads as one setting and the slice of it that it is (`candidates.py` searches
+  // `seeds[:recent_count]`). null inherits the global on both, so only an override is badged.
+  if (collection.max_seeds !== null && collection.max_seeds !== undefined) {
+    parts.push(
+      `All sources: ${collection.max_seeds} ${collection.max_seeds === 1 ? "watch" : "watches"}`,
+    );
+  }
+
   if (
     collection.recent_count !== null &&
     collection.recent_count !== undefined
   ) {
-    parts.push(`Recent watches: ${collection.recent_count}`);
-  }
-
-  // null inherits the engine's seed budget, so only badge a per-row override.
-  if (collection.max_seeds !== null && collection.max_seeds !== undefined) {
     parts.push(
-      `Built from ${collection.max_seeds} ${collection.max_seeds === 1 ? "watch" : "watches"}`,
+      `AI web search: ${collection.recent_count} ${collection.recent_count === 1 ? "watch" : "watches"}`,
     );
   }
 

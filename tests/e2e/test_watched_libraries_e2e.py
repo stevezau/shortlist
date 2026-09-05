@@ -187,7 +187,9 @@ class TestTheTagsOnAPhone:
         context = _phone(browser, app, width=width)
         try:
             page = context.new_page()
-            page.goto(f"/users/{sarah['id']}?tab=history")
+            # `watched`, matching the tab's label — `history` still works as a legacy alias, but a
+            # test should exercise the URL the app actually emits.
+            page.goto(f"/users/{sarah['id']}?tab=watched")
             page.get_by_text(DUPLICATED_TITLE, exact=True).first.wait_for(timeout=20_000)
             # The tags must actually BE on screen, or this measures a panel without the thing under
             # test and passes for the wrong reason — the sync is queued, so without waiting for the

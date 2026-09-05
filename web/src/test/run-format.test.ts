@@ -6,6 +6,7 @@ import {
   webSearchSummary,
   friendlyError,
   rankClass,
+  rowTimingTitle,
   runRefetchIntervalMs,
   runsListRefetchIntervalMs,
   tokenStepBreakdown,
@@ -99,6 +100,39 @@ describe("webSearchSummary", () => {
     // The stat counts external searches whichever backend ran them; saying "Exa" here would be
     // simply false on a self-hosted server.
     expect(webSearchSummary(3)).not.toMatch(/Exa/i);
+  });
+});
+
+describe("rowTimingTitle", () => {
+  // The line on screen used to read "25ms · 8ms waiting · shared setup 159ms" — three numbers and
+  // two engineer concepts, neither of which the owner acts on (audit finding, Sep 2026). The total
+  // goes on screen; this is the explanation behind it.
+  const ms = (n: number) => `${n}ms`;
+
+  it("says nothing when there is nothing to explain", () => {
+    // A row with no waiting and no shared setup — the number on screen IS the whole story, and a
+    // tooltip restating it is noise.
+    expect(rowTimingTitle(25, 0, 0, ms)).toBe("");
+    expect(rowTimingTitle(25, 0, undefined, ms)).toBe("");
+  });
+
+  it("splits waiting out of the total, naming what it waited for", () => {
+    expect(rowTimingTitle(33, 8, 0, ms)).toBe(
+      "33ms for this row: 25ms working, 8ms waiting for the Plex write lock.",
+    );
+  });
+
+  it("keeps shared setup OUTSIDE the row's total, because it is not this row's alone", () => {
+    // Adding it in would count the same milliseconds once per person in the run.
+    const title = rowTimingTitle(33, 8, 159, ms);
+    expect(title).toContain("33ms for this row");
+    expect(title).toContain("a further 159ms of setup was shared across");
+  });
+
+  it("explains shared setup on its own when nothing waited", () => {
+    expect(rowTimingTitle(25, 0, 159, ms)).toBe(
+      "25ms for this row: a further 159ms of setup was shared across everyone in this run.",
+    );
   });
 });
 

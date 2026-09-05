@@ -1,7 +1,7 @@
-import { AlertTriangle, CheckCircle2, Info } from "lucide-react";
-import { useState } from "react";
+import { AlertTriangle, CheckCircle2 } from "lucide-react";
 
 import { QueryBoundary } from "@/components/query-boundary";
+import { Why } from "@/components/why";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useEngagement } from "@/lib/queries";
@@ -166,40 +166,6 @@ function gaveUp(people: EngagementReport["people"]): Problem[] {
   }));
 }
 
-/**
- * The "why" behind a finding, behind an (i) rather than under it.
- *
- * These explanations were printed as a second grey line under every item, which doubled the height
- * of each and made the card's own findings harder to scan — the list is read at a glance and the
- * reasoning is consulted occasionally, so they do not deserve equal weight.
- *
- * A real `<button>`, not a `title` tooltip: a hover-only explanation does not exist on a phone, and
- * this app is read on one. Click or focus toggles it, `aria-expanded` says which, and the text lands
- * in the DOM where a screen reader can reach it rather than in an attribute it may skip.
- */
-export function Why({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      {" "}
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        aria-label={open ? "Hide why" : "Why?"}
-        className="inline-flex translate-y-px items-center rounded-full text-muted-foreground/60 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <Info className="h-3.5 w-3.5" aria-hidden="true" />
-      </button>
-      {open && (
-        <span className="mt-0.5 block text-xs leading-snug text-muted-foreground/70">
-          {text}
-        </span>
-      )}
-    </>
-  );
-}
-
 export function NeedsALook({
   report,
   reportWindow,
@@ -246,7 +212,9 @@ export function NeedsALook({
               report.coverage.users_idle === report.coverage.users_with_picks;
             const problems = [
               idle,
-              ...(tooEarly || idleCoversEveryone ? [] : deadRows(report.per_row)),
+              ...(tooEarly || idleCoversEveryone
+                ? []
+                : deadRows(report.per_row)),
               unwatchedRequests(report.requests),
               ...gaveUp(data.people),
             ].filter((p): p is Problem => p !== null);

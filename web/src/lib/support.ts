@@ -1,6 +1,16 @@
 /** Where Help / Report-a-bug send people: the project's GitHub. */
 export const GITHUB_REPO = "https://github.com/stevezau/shortlist";
 
+/** The documentation SITE, not the repo README. "Help & docs" used to open GitHub, which drops a
+ *  non-technical owner into a source tree with a long README at the bottom of it; the site has the
+ *  same material split into pages, searchable, and readable on a phone. */
+export const DOCS_URL = "https://shortlistapp.dev/";
+
+/** The guides page section on tools that fight Shortlist for the Plex Recommended shelf. Linked
+ *  from Settings → Row placement, which used to carry the whole explanation inline. */
+export const DOCS_SHELF_CONTENTION_URL =
+  "https://shortlistapp.dev/guides/#another-tool-keeps-moving-your-rows";
+
 /** Where "Support this project" goes. GitHub Sponsors rather than a direct payment link: it takes no
  *  platform fee, and it is the page that lists every other way to give (Ko-fi included) via the
  *  repo's FUNDING.yml — so the app never has to know or update the list. */

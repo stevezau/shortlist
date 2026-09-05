@@ -150,15 +150,17 @@ def test_the_default_row_can_be_deleted_like_any_other(page: Page, app: Shortlis
     picked = next(c for c in app.api("GET", "/api/collections").json() if c["slug"] == "picked")
 
     # Counted, not matched by name: the app is shared across this module and another test renames
-    # this row, so its rendered title is not stable. "Every row has a Delete button" is also the
-    # actual property — the bug was ONE card missing the control its neighbours had.
+    # this row, so its rendered title is not stable. "Every row has a way out" is also the actual
+    # property — the bug was ONE card missing the control its neighbours had.
     #
-    # Asserts the BUTTON only: deleting the seeded row here would pull it out from under every test
-    # that follows. The 204 and the row actually disappearing are covered in
-    # tests/integration/test_api_collections.py::test_the_default_row_can_be_deleted_like_any_other.
+    # A LINK now, not a button. "Remove from Plex" and "Delete" used to sit on the card side by
+    # side with nothing saying which one loses the row's settings; the card carries one honest
+    # "Remove or delete" that opens the editor's danger section, where that difference is already
+    # written out (audit finding, Sep 2026). The 204 and the row actually disappearing are covered
+    # in tests/integration/test_api_collections.py::test_the_default_row_can_be_deleted_like_any_other.
     assert picked, "the seeded default row must exist for this to mean anything"
     rows = app.api("GET", "/api/collections").json()
-    expect(page.get_by_role("button", name=re.compile(r"^Delete "))).to_have_count(len(rows))
+    expect(page.get_by_role("link", name=re.compile(r"^Remove or delete "))).to_have_count(len(rows))
 
 
 PLACEMENT_SWITCHES = (

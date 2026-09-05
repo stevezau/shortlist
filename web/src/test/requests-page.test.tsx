@@ -101,7 +101,7 @@ function candidate(
     title: "Dune: Part Two",
     year: 2024,
     imdb_id: "",
-  language: "",
+    language: "",
     poster_path: "",
     overview: "",
     rating: 8.3,
@@ -1502,7 +1502,9 @@ describe("RequestsPage — what Sonarr/Radarr has", () => {
     });
     renderPage();
 
-    expect(await screen.findByText(/calls it an import exclusion/)).toBeTruthy();
+    expect(
+      await screen.findByText(/calls it an import exclusion/),
+    ).toBeTruthy();
   });
 
   it("says a pending request is waiting for a person, not searching", async () => {
@@ -1525,6 +1527,34 @@ describe("RequestsPage — what Sonarr/Radarr has", () => {
 
     expect(await screen.findByText("Waiting for approval")).toBeInTheDocument();
     expect(screen.queryByText("Searching")).toBeNull();
+  });
+
+  it("puts the remedy for a stuck status behind a button, not behind hover", async () => {
+    // 246 characters of "here is what to do about it" lived in a `title` and nowhere else, on one
+    // of the two statuses an owner most needs explained (audit finding, Sep 2026). A hover-only
+    // explanation does not exist on a phone, and this app is read on one.
+    listRequests.mockResolvedValue([candidate({ id: 1, title: "Dune" })]);
+    getArrStatus.mockResolvedValue({
+      statuses: { "1": "awaiting_approval" },
+      radarr: "off",
+      sonarr: "off",
+      overseerr: "ok",
+    });
+    getSettings.mockResolvedValue({
+      "requests.enabled": true,
+      "requests.target": "overseerr",
+      "requests.overseerr.url": "http://overseerr.test",
+    });
+    renderPage();
+
+    expect(await screen.findByText("Waiting for approval")).toBeInTheDocument();
+    // Shut to begin with — it is an explanation, not a warning.
+    expect(screen.queryByText(/Overseerr is holding it/)).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: /^Why\?$/ }));
+
+    expect(screen.getByText(/Overseerr is holding it/)).toBeInTheDocument();
+    expect(screen.getByText(/Approve it there/)).toBeInTheDocument();
   });
 
   it("names Overseerr, never the Arrs, everywhere on that route", async () => {
@@ -1611,9 +1641,9 @@ describe("RequestsPage — what Sonarr/Radarr has", () => {
     });
     renderPage();
 
-    expect(
-      (await screen.findAllByText(/Can.t reach Overseerr/i)).length,
-    ).toBe(2);
+    expect((await screen.findAllByText(/Can.t reach Overseerr/i)).length).toBe(
+      2,
+    );
     expect(screen.queryByText(/Can.t reach Radarr/i)).toBeNull();
   });
 
@@ -1622,7 +1652,11 @@ describe("RequestsPage — what Sonarr/Radarr has", () => {
     // `!== "off"` made `undefined` mean YES, which sent every existing install down the Overseerr
     // branch and blanked its badges — caught by the two Arr tests above, pinned here on purpose.
     listRequests.mockResolvedValue([candidate({ id: 1, title: "Dune" })]);
-    getArrStatus.mockResolvedValue({ statuses: {}, radarr: "unreachable", sonarr: "ok" });
+    getArrStatus.mockResolvedValue({
+      statuses: {},
+      radarr: "unreachable",
+      sonarr: "ok",
+    });
     renderPage();
 
     expect(await screen.findByText(/Can.t reach Radarr/i)).toBeInTheDocument();

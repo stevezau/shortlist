@@ -256,8 +256,47 @@ describe("what the row list says about a template's row", () => {
       null,
     );
 
-    expect(parts).toContain("Rewatches first");
+    // Worded as the row editor's own switch is. "Rewatches first" was our name for the ordering
+    // rule and meant nothing on a card (audit finding, Sep 2026).
+    expect(parts).toContain("“Watch it again” row");
     expect(parts.some((p) => /Watched:/.test(p))).toBe(false);
+  });
+
+  it("names the scope of each seed-count badge, so two counts of watches cannot be confused", async () => {
+    // These read "Recent watches: 3" and "Built from 1 watch" — two numbers of watches on one card,
+    // neither saying what counted them. One governs every source; the other is the slice of it the
+    // AI web search looks up (`candidates.py` searches `seeds[:recent_count]`).
+    const { rowOverrides } = await import("@/lib/collections");
+    const parts = rowOverrides(
+      {
+        ...blankInput(),
+        max_seeds: 30,
+        recent_count: 3,
+      } as unknown as Parameters<typeof rowOverrides>[0],
+      null,
+    );
+
+    expect(parts).toContain("All sources: 30 watches");
+    expect(parts).toContain("AI web search: 3 watches");
+    // The broader one leads, as it does in Settings — the narrower is a slice of it.
+    expect(parts.indexOf("All sources: 30 watches")).toBeLessThan(
+      parts.indexOf("AI web search: 3 watches"),
+    );
+  });
+
+  it("keeps the singular for a one-watch row", async () => {
+    const { rowOverrides } = await import("@/lib/collections");
+    const parts = rowOverrides(
+      {
+        ...blankInput(),
+        max_seeds: 1,
+        recent_count: 1,
+      } as unknown as Parameters<typeof rowOverrides>[0],
+      null,
+    );
+
+    expect(parts).toContain("All sources: 1 watch");
+    expect(parts).toContain("AI web search: 1 watch");
   });
 
   it("badges an unstarted-only row", async () => {

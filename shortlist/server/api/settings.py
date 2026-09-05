@@ -645,7 +645,9 @@ async def test_connection(service: str, request: Request) -> dict:
                 from shortlist.engine.clients.plex_pms import PlexClient
 
                 plex = PlexClient(get("plex.url"), get("plex.token"))
-                return f"Connected to {plex.server_name} (PMS {plex.version})"
+                # "PMS" is our word for it, not Plex's own UI's — an owner reading this on the
+                # Connections card has no reason to know the abbreviation.
+                return f"Connected to {plex.server_name} (Plex Media Server {plex.version})"
             if service == "tautulli":
                 from shortlist.engine.clients.tautulli import TautulliClient
 

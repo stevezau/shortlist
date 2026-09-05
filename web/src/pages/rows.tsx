@@ -4,11 +4,12 @@ import { useNavigate } from "react-router";
 
 import { PageHeader } from "@/components/page-header";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
-import { RowCard } from "@/components/rows/row-card";
+import { hasRowNameToken, RowCard } from "@/components/rows/row-card";
 import { RowTemplateGallery } from "@/components/rows/row-template-gallery";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCollections, useUsers } from "@/lib/queries";
+import type { Collection } from "@/lib/types";
 
 function RowsSkeleton() {
   return (
@@ -17,6 +18,30 @@ function RowsSkeleton() {
         <Skeleton key={i} className="h-20 w-full" />
       ))}
     </div>
+  );
+}
+
+/**
+ * What the little grey chip inside a row's name is.
+ *
+ * A row name is a template, and the card marks each `{placeholder}` as a chip rather than printing
+ * the braces — but nothing said what a chip WAS, so "✨ [library name] Picked for You" read as a
+ * stray tag someone had attached to the row. The row editor answers this with a worked example
+ * ("ON PLEX IT READS ✨ Movies Picked for You — Example only…"); this is that example, once, under
+ * the list, and only when a row on screen actually has a chip in it.
+ */
+function RowNameChipLegend({ rows }: { rows: Collection[] }) {
+  if (!rows.some((row) => hasRowNameToken(row.name))) return null;
+  return (
+    <p className="px-1 pt-1 text-xs text-muted-foreground">
+      A chip like{" "}
+      <span className="rounded bg-muted px-1 py-0.5 font-normal">
+        library name
+      </span>{" "}
+      is a placeholder, filled in when the row is built &mdash; so on Plex that
+      row reads{" "}
+      <span className="text-foreground">✨ Movies Picked for You</span>.
+    </p>
   );
 }
 
@@ -80,6 +105,7 @@ export function RowsPage() {
                       onEdit={() => navigate(`/rows/${collection.id}`)}
                     />
                   ))}
+                  <RowNameChipLegend rows={rows} />
                 </div>
               )}
             </QueryBoundary>

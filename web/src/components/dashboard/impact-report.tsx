@@ -2,12 +2,9 @@ import { RefreshCw, Send, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 
-import {
-  NeedsALook,
-  WHY_GAVE_UP,
-  Why,
-} from "@/components/dashboard/engagement";
+import { NeedsALook, WHY_GAVE_UP } from "@/components/dashboard/engagement";
 import { QueryBoundary } from "@/components/query-boundary";
+import { Why } from "@/components/why";
 import { Segmented } from "@/components/segmented";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -340,7 +337,14 @@ function Verdict({
             <span
               className={cn(
                 "h-1.5 w-1.5 rounded-full",
-                sync.live_down_since ? "bg-destructive" : "bg-success",
+                // Three states, not two. "Not started" was painted with the SAME green as "on",
+                // so a listener that had never run once read as healthy — the one reading this
+                // line exists to catch.
+                sync.live_down_since
+                  ? "bg-destructive"
+                  : sync.live_since
+                    ? "bg-success"
+                    : "bg-muted-foreground/40",
               )}
               aria-hidden="true"
             />
@@ -762,11 +766,11 @@ function ByPerson({
           two only fit side by side once a card is ~500px, which is `xl`. */}
       {/* A link, because "who is this person and what else did they get" is the next question this
           line provokes, and the answer is a page that already exists. `/users/:id` takes the id,
-          which is why the report carries one — `slug` addresses nothing. `?tab=history` lands on
+          which is why the report carries one — `slug` addresses nothing. `?tab=watched` lands on
           what they WATCHED: arriving from a watch figure onto their row list is a second click for
           something the click already asked for. */}
       <Link
-        to={`/users/${p.id}?tab=history`}
+        to={`/users/${p.id}?tab=watched`}
         className="min-w-0 truncate rounded-sm underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring xl:flex-1"
       >
         {p.display_name || p.username}
@@ -1200,7 +1204,7 @@ function RecentlyWatched({
           rather than a link to a page that would 404. */}
       {w.user_id !== null ? (
         <Link
-          to={`/users/${w.user_id}?tab=history`}
+          to={`/users/${w.user_id}?tab=watched`}
           className="rounded-sm font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {w.display_name || w.username}

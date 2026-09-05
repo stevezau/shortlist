@@ -293,9 +293,12 @@ export function StepConnect({ data, update }: StepProps) {
           autoComplete="off"
           className="font-mono"
         />
+        {/* "Always editable — auto-discovery never traps you" was a design principle spoken
+            aloud: it describes a decision we made, not anything the reader does. The field being
+            editable is visible; what they need is the one case where they should edit it. */}
         <p className="text-sm text-muted-foreground">
-          Always editable — auto-discovery never traps you. If the secure
-          address won’t connect, use the plain{" "}
+          Filled in from Plex, and you can change it. If the secure address
+          won’t connect, use the plain{" "}
           <span className="font-mono">http://</span> address on your home
           network instead.
         </p>

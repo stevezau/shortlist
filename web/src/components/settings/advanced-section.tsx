@@ -148,11 +148,17 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
             {/* Kept apart from run history on purpose (`prune_events`): this is the record of what
                 changed on whose account, which an operator may want long after the run detail around
                 it has gone — so it defaults to Forever while runs default to three months. */}
+            {/* No raw API path in the sentence. It used to end "Read it at /api/events/log; it has
+                no screen yet", which hands the owner of the ONE lasting audit trail a URL to curl
+                as the answer. What they can act on is that it is kept, backed up, and safe to
+                leave alone — the path is in the reference docs for anyone who wants it. */}
             <p className="text-sm text-muted-foreground">
               How long to keep the record of every write to Plex and every
               settings change. <strong>Forever</strong> by default &mdash; it is
-              the only lasting account of what changed on whose account. Read it
-              at <code>/api/events/log</code>; it has no screen yet.
+              the only lasting account of what changed on whose account, and
+              it&rsquo;s what a support question gets answered from. It has no
+              screen of its own yet; it&rsquo;s kept in the database and comes
+              with every backup.
             </p>
           </div>
           <NumberPresets

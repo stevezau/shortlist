@@ -494,7 +494,9 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           // Two consumers, not one: `requests.rating_source` gates what gets requested, and
           // `recommendations.rating_source` orders any row set to "Highest rated". Naming only
           // Requests left the row-ordering setting looking like it needed nothing.
-          purpose="IMDb, Rotten Tomatoes, Metacritic and Trakt scores in one lookup. Only needed for “Highest rated” off TMDB, or to judge requests by those scores."
+          // "off TMDB" read two ways — scores taken FROM TMDB, or a row switched AWAY from TMDB —
+          // and it means the second. Say which score is being swapped for which instead.
+          purpose="IMDb, Rotten Tomatoes, Metacritic and Trakt scores in one lookup. Only needed if you want a “Highest rated” row ranked by one of those instead of by TMDB’s score, or requests judged by them."
           settings={settings}
           summary={
             settingString(settings, "requests.mdblist.apikey")

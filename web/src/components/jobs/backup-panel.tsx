@@ -116,8 +116,31 @@ export function BackupPanel() {
           )}
         </div>
       )}
+      {/* "Restore failed." was the whole message. The two ways this actually fails are worth
+          naming, because they have different answers: the file is gone (the retention limit above
+          cleared it out from under an open page), or Shortlist could not write over the live
+          database. Neither is guessable from two words. */}
       {restore.isError && (
-        <MutationAlert error={restore.error} fallback="Restore failed." />
+        <div className="space-y-1">
+          <MutationAlert
+            error={restore.error}
+            fallback="Couldn’t restore that backup."
+          />
+          {/* NOT "nothing was changed": `restore_backup` unlinks the WAL and copies over the live
+              database, so a failure part-way through is not provably harmless. What IS guaranteed
+              is the pre-restore copy taken before any of that, so the honest reassurance names it
+              rather than claiming an outcome nobody measured. */}
+          <p className="text-xs text-muted-foreground">
+            The backup may have been cleared out by the &ldquo;Backups
+            kept&rdquo; limit above &mdash; reload this page and pick another.
+            If it&rsquo;s still listed, check{" "}
+            <span className="font-mono">/config</span> is writable and has room,
+            then try again. Either way, a{" "}
+            <span className="font-mono">pre-restore</span> copy of your current
+            database is taken before anything is overwritten, and it&rsquo;s in
+            the list below.
+          </p>
+        </div>
       )}
 
       {/* Shown BEFORE the confirm, not after it — the un-hiding happens on the next run, long after
