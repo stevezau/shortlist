@@ -43,106 +43,114 @@
   </p>
 </div>
 
-## The problem: "what should I watch next?"
+<!-- The proof goes first, because "private per-user row" is the one claim everything else rests on
+     and it is the one nobody believes from a sentence. Both halves of this picture are the fake Plex
+     server's own answer to each account's token, captured by tests/e2e/test_marketing_assets.py, so
+     it cannot show a result the code does not actually produce. -->
 
-Everyone on your Plex server faces the same blank-screen problem — a huge library and no idea what
-to put on. Plex's built-in recommendation rows are the same for everyone and ignore what _you've_
-actually watched.
+![Two Plex home screens side by side on the same server and the same night. Sarah's has a Movies row and a TV Shows row; Mike's has only a TV Shows row, holding completely different titles. Each one notes that the other people's rows are not on this home screen.](docs/images/two-account.png)
 
-**Shortlist gives every user their own recommendations.** For each person it reads their own Plex
-watch history and builds a personalized collection — "Picked for You" — of titles from your library
-they haven't seen but probably want to, then puts it on their Plex home screen. Netflix-style
-per-user recommendations, self-hosted on your own server. It's **private**: each person sees only
-their own row, nobody else's. It refreshes automatically. It turns your library into something
-everyone can actually discover from.
+<sub>Two accounts, one server, the same night. Each home screen was read using that account's own
+Plex token, from a test library with made-up titles.</sub>
+
+## What it does
+
+Everyone on your Plex server faces the same blank-screen problem: a huge library and no idea what to
+put on. Plex's own recommendation rows are identical for every account and ignore what _you've_
+watched.
+
+**Shortlist gives every user their own row.** For each person it reads their own Plex watch history,
+picks titles from your library they haven't seen but probably want to, explains each one, and puts
+them on that person's Plex home screen as a **"Picked for You"** collection. It refreshes on a
+schedule you set, and each row is visible only to its owner.
 
 ![A "Movies Picked for You" row on Plex](docs/images/plex-picked-for-you.jpg)
 
-<sub>A "Picked for You" row on Plex — private to that user, built from their watch history.</sub>
+<sub>The result on a real server: a "Picked for You" row, private to that user.</sub>
 
-**It slots into the stack you already run.** Reads watch history straight from your Plex server
-(Tautulli optional), pulls candidates from TMDB and Trakt, and hands gaps to **Radarr/Sonarr** —
-while leaving Kometa's collections completely alone. One container, no database of its own to run.
+**It slots into the stack you already run.** Watch history comes straight from Plex (Tautulli
+optional), candidates from TMDB and Trakt, and gaps can be handed to **Radarr/Sonarr** — while
+Kometa's collections are left completely alone. One container, no database of its own to run.
 
 ## Why this couldn't exist before 2026
 
-A row that only one person can see was simply impossible until recently. Plex had no per-user
-collections, and the "hide this by label" setting it does have wasn't applied everywhere — so a
-row meant for one person still showed up for others.
+A row only one person can see was impossible until recently: Plex has no per-user collections, and
+its "hide this by label" setting wasn't applied everywhere, so a row meant for one person still
+turned up for others. Plex fixed that in 2026 — label hiding now works on the Home and Recommended
+shelves (v1.43.1) and on Related rows (v1.43.2). Shortlist is built on that fix. Each row is
+labelled, every other account is told to hide that label, and the **order** those steps happen in is
+what stops the row ever being visible before it is private.
 
-Plex fixed that in 2026: label hiding now works on the Home and Recommended shelves (v1.43.1) and
-on Related rows (v1.43.2). Shortlist is built on that fix — each row is labelled, and every other
-account is told to hide that label, so only its owner ever sees it.
+## What it looks like
+
+| Set up your Plex server once                                        | Add as many rows as you like           |
+| ------------------------------------------------------------------- | -------------------------------------- |
+| ![The setup wizard connecting Plex](docs/images/wizard-connect.png) | ![The rows page](docs/images/rows.png) |
+
+| Every pick, and _why_ it was picked                    | Watch every run, step by step                    |
+| ------------------------------------------------------ | ------------------------------------------------ |
+| ![A user's picks and why](docs/images/user-detail.png) | ![A run in progress](docs/images/run-detail.png) |
+
+<sub>App screenshots use a test library with placeholder titles; the Plex row above is a real
+server.</sub>
 
 ## Features
 
 **Personalized discovery**
 
 - 👤 **A private row for every user** — built from _their_ watch history, visible only to them. One
-  container serves your whole server. **Including you**: the server owner gets a row like anyone
-  else, so Shortlist is just as useful on a one-person server.
+  container serves your whole server, and the owner gets a row too, so it's worth running on a
+  one-person server.
 - 🧠 **Smart picks, no hallucinations** — every pick is a title verified to exist in your library,
   never invented. **No AI key required**: the built-in picker runs entirely in code. An optional LLM
-  (Claude / GPT / Gemini, or any local server: Ollama, llama.cpp, LM Studio, vLLM, LocalAI) adds one
-  extra source — a live web search for what to watch next.
-- 🌐 **Finds what to watch next from everywhere** — pools candidates from TMDB, Trakt, and an optional
-  **live web search** for current, well-reviewed titles.
+  (Claude / GPT / Gemini, or any local server: Ollama, llama.cpp, LM Studio, vLLM, LocalAI) writes
+  the reasons and adds one extra source, a live web search for what to watch next.
+- 🌐 **Candidates from more than one place** — TMDB, Trakt, and an optional web search for current,
+  well-reviewed titles those two miss.
 - 🔎 **Web search that works with _any_ model, even offline ones** — Shortlist runs the search
-  itself, so your model never needs internet access. Works with a local Ollama box just as well as
-  with Claude — via your provider's own web search, an [Exa](https://exa.ai) key, your own
-  self-hosted [SearXNG](https://docs.searxng.org) — one of them, not both.
+  itself, so your model never needs internet access. Via your provider's own web search, an
+  [Exa](https://exa.ai) key, or your own [SearXNG](https://docs.searxng.org).
   [How it works →](docs/guides/ai.md#the-one-ai-powered-source)
 - 💬 **Explains itself** — every pick says "Because you watched X".
-- 📚 **Watches whole shows, not episodes** — a 20-episode binge counts as one show, and it looks
-  back through your full history so both movies and TV shape the picks.
+- 📚 **Watches whole shows, not episodes** — a 20-episode binge counts as one show, so one series
+  can't drown out everything else.
 
 **Make it yours**
 
-- 🎞️ **Multiple rows per person + shared rows** — e.g. a personal row, a "New this week" shared
-  row, per-library rows — each with its own sources, size, libraries, rebuild cadence, and audience.
-  **Start from a template** — _Because you watched…_, _Happy to see again_, _Fresh finds_, _Popular on
-  this server_ and more — rather than a blank form, then change anything you like.
+- 🎞️ **Multiple rows per person, plus shared rows** — a personal row, a "New this week" everyone
+  sees, per-library rows. Each has its own sources, size, libraries, cadence and audience, and each
+  starts from a template rather than a blank form.
 - 🚫 **Block a bad seed** — a film someone put on for a friend shouldn't shape their picks. Block it
-  from a run's "How we picked" page; the watch stays in their history, it just stops seeding.
-- 🗓️ **A rebuild cadence you control** — set it in days (nightly, weekly, monthly, or never), so
-  people aren't shown a totally reshuffled row every day.
+  from a run's "How we picked" page; the watch stays in their Plex history, it just stops seeding.
+- 🗓️ **A rebuild cadence you control** — nightly, weekly, monthly or never, so nobody opens Plex to
+  a completely reshuffled row every day.
 - 📍 **Row placement** — choose which Plex shelf each row lands on (Home, the library's Recommended
-  tab, or both) and where it sits, per row.
+  tab, or both) and where it sits.
 - 🎨 **Custom row posters (optional)** — upload artwork or generate it from text, reusing your AI key.
 
 **Grow your library**
 
 - 📥 **Fills its own gaps (optional)** — when a great pick isn't in your library, Shortlist can ask
-  **Radarr/Sonarr** to grab it — or files a request in **Overseerr/Jellyseerr** and lets it do
-  the fetching. Off by default and cautious: the strongest picks auto-send (a few a
-  night); the rest wait in a **Requests** inbox for one-click approval.
+  **Radarr/Sonarr** for it, or file a request in **Overseerr/Jellyseerr**. Off by default and
+  cautious: the strongest few auto-send each night, the rest wait in a **Requests** inbox for
+  one-click approval.
 
 **Trust & safety**
 
-- 🔒 **Private by design** — share filters are snapshotted before the first change and fully
-  restored on uninstall; rows are delivered hidden and only revealed once the exclusions exist.
-- 📊 **Know if it's working** — a dashboard tracks what was delivered versus what people actually
-  watched, per user and per row — and separates a title they **started** from one they **finished**,
-  so a single episode of a series stops scoring like a whole film.
-- 🧹 **Kometa-friendly** — never touches collections it didn't create.
-- ↩️ **Provable uninstall** — one flow restores your server exactly as Shortlist found it.
+- 🔒 **Private by design** — rows are delivered hidden and only revealed once the exclusions that
+  hide them exist. Share filters are snapshotted before the first change, and one uninstall flow
+  restores your server exactly as Shortlist found it.
+- 📊 **Know if it's working** — a dashboard tracks what was delivered against what people actually
+  watched, per user and per row, and separates a title they **started** from one they **finished**.
 - 🧪 **Safe mode** — set `SHORTLIST_DRY_RUN=1` to try it against your real server without writing a
-  single change, until you're happy.
-- 📦 **Homelab-native** — one container, `/config` volume, GHCR multi-arch, healthcheck,
-  Unraid template.
-
-## Screenshots
-
-| Each person's row, and _why_ each pick                 | Watch every run, step by step                    |
-| ------------------------------------------------------ | ------------------------------------------------ |
-| ![A user's picks and why](docs/images/user-detail.png) | ![A run in progress](docs/images/run-detail.png) |
-
-<sub>App screenshots use placeholder titles (a test library); the Plex row above is a real server.</sub>
+  single change.
+- 📦 **Homelab-native** — one container, `/config` volume, GHCR multi-arch, healthcheck, Unraid
+  template.
 
 ## Where it fits
 
 Shortlist does one narrow thing the rest of the stack doesn't: build a **different** collection for
-each person and keep it private, inside Plex. It's designed to sit alongside what you already run:
+each person and keep it private, inside Plex. It is designed to sit alongside what you already run:
 
 - **It never touches what it didn't make.** Only collections carrying Shortlist's own `shortlist_*`
   label are ever modified — Kometa's collections, and anything you built by hand, are skipped.
@@ -154,7 +162,7 @@ each person and keep it private, inside Plex. It's designed to sit alongside wha
 - **It connects rather than duplicates.** Tautulli for richer history, Radarr/Sonarr for gaps, Trakt
   and MDBList for candidates — all optional. Only Plex and a free TMDB key are required.
 - **Plex-only.** The privacy model depends on Plex's label-based share filters (PMS 1.43.2+), so
-  there's no Jellyfin or Emby equivalent to port to.
+  there is no Jellyfin or Emby equivalent to port to.
 
 Curious how the per-user privacy actually works?
 See [How to make a Plex collection visible to only one user](docs/plex-per-user-collections.md).

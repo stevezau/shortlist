@@ -17,7 +17,6 @@
   --amber-bright: #f5c04a;
   --amber-deep: #b87d05;
 
-  --step: clamp(1rem, 0.6rem + 1.6vw, 1.5rem);
   --gutter: clamp(1.25rem, 1rem + 2vw, 2.5rem);
   --measure: 68ch;
   --wide: 1200px;
@@ -357,6 +356,31 @@ hr {
   }
 }
 
+/* Measured at 320: the brand, a worded search button and four 34px icons want
+   387px inside a 275px bar, and the row pushed every page 86px sideways. Shed
+   the parts that say something twice, widest first. The word goes before the
+   icon, which keeps its aria-label; the sponsor heart goes before anything
+   structural, and it is still in the footer. */
+@media (max-width: 600px) {
+  .search-btn {
+    width: 34px;
+    padding: 0;
+    justify-content: center;
+  }
+  .search-btn__label {
+    display: none;
+  }
+}
+
+@media (max-width: 420px) {
+  .nav__inner {
+    gap: 0.4rem;
+  }
+  .icon-btn--heart {
+    display: none;
+  }
+}
+
 /* --------------------------------------------------------------- buttons -- */
 
 .btn {
@@ -588,6 +612,10 @@ hr {
 
 .frame__title {
   margin-left: 0.5rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 0.76rem;
   color: var(--faint);
   font-family: var(--font-mono);
@@ -823,110 +851,276 @@ figcaption {
   line-height: 1.5;
 }
 
-/* ---------------------------------------------------------------- steps -- */
+/* ------------------------------------------------------------ stat band -- */
+/* Four numbers under the hero. Column counts are fixed rather than auto-fit
+   because auto-fit put three across and left the fourth alone on a second row
+   through the whole 900-1000px range. */
 
-.steps {
-  counter-reset: step;
+.stats-band {
+  background: var(--bg-soft);
+  border-block: 1px solid var(--border);
+  padding-block: clamp(1.75rem, 1rem + 2.5vw, 2.75rem);
+}
+
+.stats {
   display: grid;
-  gap: 1.1rem;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
-}
-
-.step {
-  position: relative;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.4rem;
-}
-
-.step::before {
-  counter-increment: step;
-  content: counter(step);
-  display: grid;
-  place-items: center;
-  width: 27px;
-  height: 27px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #1a1200;
-  font-size: 0.82rem;
-  font-weight: 700;
-  margin-bottom: 0.9rem;
-}
-
-.step h3 {
-  font-size: 1rem;
-  margin-bottom: 0.4rem;
-}
-
-.step p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.9rem;
-}
-
-/* ------------------------------------------------------------- privacy -- */
-
-.privacy {
-  display: grid;
-  gap: clamp(1.5rem, 1rem + 3vw, 3rem);
-  align-items: center;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
-}
-
-.order {
-  display: grid;
-  gap: 0.6rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(1.5rem, 0.75rem + 2vw, 2.25rem);
   margin: 0;
   padding: 0;
   list-style: none;
-  counter-reset: order;
 }
 
-.order li {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.85rem;
-  align-items: start;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent-line);
-  border-radius: var(--radius-sm);
-  padding: 0.85rem 1rem;
-  font-size: 0.92rem;
-}
-
-.order li::before {
-  counter-increment: order;
-  content: counter(order, lower-alpha);
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--accent-quiet);
-  color: var(--accent-text);
-  font-size: 0.75rem;
+.stat__value {
+  margin: 0;
+  font-size: clamp(2.1rem, 1.6rem + 2.2vw, 3rem);
+  line-height: 1;
   font-weight: 700;
-  font-family: var(--font-mono);
+  letter-spacing: -0.025em;
+  color: var(--accent-text);
+  font-variant-numeric: tabular-nums;
 }
 
-.order strong {
-  display: block;
-  color: var(--text);
-}
-
-.order span {
+.stat__unit {
+  margin-left: 0.22em;
+  font-size: 0.4em;
+  font-weight: 600;
+  letter-spacing: 0;
   color: var(--muted);
 }
 
+.stat__label {
+  margin: 0.5rem 0 0;
+  font-size: 0.98rem;
+  font-weight: 640;
+}
+
+.stat__note {
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  text-wrap: pretty;
+}
+
+@media (max-width: 479px) {
+  .stats {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 1000px) {
+  .stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0;
+  }
+  .stat {
+    padding-inline: clamp(1rem, 0.4rem + 1.6vw, 2rem);
+  }
+  .stat + .stat {
+    border-left: 1px solid var(--border);
+  }
+  .stat:first-child {
+    padding-left: 0;
+  }
+  .stat:last-child {
+    padding-right: 0;
+  }
+}
+
+/* ----------------------------------------------------------------- tour -- */
+/* One grid, three layouts, no duplicated content. The steps and the pictures are
+   siblings in reading order, so:
+     narrow            one column, each step followed by its own picture
+     wide, no script   two columns, each step beside its own picture
+     wide, with script every picture moves into one pinned frame that changes
+   Only the third is scoped under .js-tour-ready, and only site.js adds that class
+   (after proving it can drive it — same contract as .reveal at the foot of this
+   file). Nothing here is hidden or dimmed by CSS alone, so a blocked script leaves
+   five readable steps and five visible pictures instead of a page of grey. */
+
+/* `minmax(0, 1fr)`, not the implicit `auto`: an auto column is at least as wide
+   as its widest item's min-content, and at 320 the address bar's monospace path
+   pushed that to 321px inside a 275px page. Measured. */
+.tour {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: clamp(2rem, 1.25rem + 3vw, 3.25rem);
+}
+
+/* Decoration for the pinned layout only. Hidden until site.js turns that on, so
+   nobody else gets an empty groove down the page. */
+.tour__rail {
+  display: none;
+}
+
+.tour-step {
+  display: grid;
+  grid-template-columns: 2.25rem minmax(0, 1fr);
+  column-gap: 1.05rem;
+  row-gap: 0.5rem;
+  align-content: start;
+}
+
+.tour-step__num {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  margin: 0;
+  width: 2.25rem;
+  height: 2.25rem;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-soft);
+  font-size: 0.95rem;
+  font-weight: 680;
+  font-variant-numeric: tabular-nums;
+}
+
+.tour-step__title {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  margin: 0;
+  font-size: clamp(1.2rem, 1.05rem + 0.7vw, 1.5rem);
+  text-wrap: balance;
+}
+
+.tour-step__body {
+  grid-column: 2;
+  grid-row: 2;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.97rem;
+  text-wrap: pretty;
+}
+
+.tour-panel {
+  margin: 0;
+}
+
+.tour-panel img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+@media (min-width: 901px) {
+  .tour {
+    grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+    column-gap: clamp(2rem, 1rem + 3.5vw, 4rem);
+    align-items: center;
+  }
+
+  .tour-step {
+    grid-column: 1;
+  }
+
+  .tour-panel {
+    grid-column: 2;
+  }
+
+  /* --- pinned layout, script only ------------------------------------- */
+
+  .js-tour-ready .tour {
+    grid-template-rows: repeat(var(--tour-steps), auto);
+    align-items: start;
+  }
+
+  .js-tour-ready .tour__rail {
+    display: block;
+    position: absolute;
+    left: calc(1.125rem - 1px);
+    top: 0.5rem;
+    bottom: 0.5rem;
+    width: 2px;
+    border-radius: 2px;
+    background: var(--border);
+    overflow: hidden;
+  }
+
+  .js-tour-ready .tour__rail-fill {
+    display: block;
+    width: 100%;
+    height: 0;
+    background: var(--accent);
+    transition: height 0.12s linear;
+  }
+
+  .js-tour-ready .tour-step {
+    min-height: 66vh;
+    align-content: center;
+    opacity: 0.42;
+    transition: opacity 0.35s var(--ease);
+  }
+
+  .js-tour-ready .tour-step.is-active {
+    opacity: 1;
+  }
+
+  .js-tour-ready .tour-step.is-active .tour-step__num {
+    background: var(--accent);
+    border-color: transparent;
+    color: #1a1200;
+  }
+
+  /* Every panel occupies the whole second column and sticks inside it. `1 / -1`
+     needs the rows to be explicit, which is what --tour-steps is for. */
+  /* Stacked in one grid area, so each is its own box and none of them affects
+     any other's size. Measured: giving them all ONE fixed shape is the trap. The
+     five pictures run from 1.25:1 to 1.84:1, and a 16:10 frame shrank the
+     tallest until the app's own text was unreadable — `object-fit: contain`
+     stops it being cropped, not being shrunk. Each panel keeps its own shape
+     instead; only the height cap below ever makes one letterbox, and only on a
+     viewport too short to show it whole. */
+  .js-tour-ready .tour-panel {
+    grid-column: 2;
+    grid-row: 1 / -1;
+    align-self: start;
+    position: sticky;
+    top: calc(var(--nav-h) + 7vh);
+    /* One box for all five, with the picture centred in it, so the frame stops
+       jumping up and down the viewport as the pictures swap. */
+    height: calc(100vh - var(--nav-h) - 14vh);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity 0.35s var(--ease),
+      visibility 0.35s;
+  }
+
+  .js-tour-ready .tour-panel.is-active {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  .js-tour-ready .tour-panel .frame {
+    min-height: 0;
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface-2);
+  }
+
+  /* Only bites on a viewport too short to show a picture whole: the frame hits
+     the box height, the picture shrinks inside it, and `contain` letterboxes it
+     rather than cropping. */
+  .js-tour-ready .tour-panel img {
+    min-height: 0;
+    object-fit: contain;
+  }
+}
+
 /* ------------------------------------------------- privacy-order flow -- */
-/* The four-step diagram on /faq/. Same idea as `.order` above, one column over:
-   each step also states who can see the row at that moment, which is the part
-   the prose could never show at a glance. Kept separate from `.order` rather
-   than bolted onto it — that one is a compact aside beside a paragraph on the
-   landing page, this one is the figure a whole answer is built around. */
+/* The four-step diagram used by /faq/ and by the landing page's privacy
+   section, from one file, so the site can never end up describing the write
+   order two different ways. Each step also states who can see the row at that
+   moment, which is the part the prose could never show at a glance. */
 
 .flow {
   margin: 1.75rem 0;
@@ -1060,43 +1254,51 @@ figcaption {
   }
 }
 
-/* ------------------------------------------------------------ showcase -- */
+/* -------------------------------------------------------- closing call -- */
 
-.shots {
-  display: grid;
-  gap: clamp(1.75rem, 1rem + 3vw, 3rem);
+.cta {
+  position: relative;
+  overflow: hidden;
+  max-width: 46rem;
+  margin-inline: auto;
+  padding: clamp(2rem, 1.25rem + 3vw, 3.25rem)
+    clamp(1.25rem, 0.75rem + 2vw, 2.5rem);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  text-align: center;
 }
 
-.shot {
-  display: grid;
-  gap: clamp(1.25rem, 0.75rem + 2.5vw, 2.75rem);
-  align-items: center;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.55fr);
+/* The same warm bloom as the hero, so the page opens and closes on one light
+   source rather than fading out into a plain box. */
+.cta::before {
+  content: "";
+  position: absolute;
+  inset: -55% 15% auto;
+  height: 18rem;
+  background: radial-gradient(closest-side, var(--accent-quiet), transparent);
+  pointer-events: none;
 }
 
-.shot:nth-child(even) .shot__text {
-  order: 2;
+.cta > * {
+  position: relative;
 }
 
-.shot h3 {
-  font-size: clamp(1.15rem, 1rem + 0.6vw, 1.4rem);
-  margin-bottom: 0.55rem;
+.cta h2 {
+  font-size: clamp(1.5rem, 1.2rem + 1.4vw, 2.1rem);
+  margin-bottom: 0.75rem;
 }
 
-.shot p {
-  margin: 0;
+.cta p {
+  margin: 0 auto;
+  max-width: 34rem;
   color: var(--muted);
-  font-size: 0.95rem;
   text-wrap: pretty;
 }
 
-@media (max-width: 780px) {
-  .shot {
-    grid-template-columns: 1fr;
-  }
-  .shot:nth-child(even) .shot__text {
-    order: 0;
-  }
+.cta .hero__cta {
+  margin-top: 1.75rem;
 }
 
 /* --------------------------------------------------------------- table -- */

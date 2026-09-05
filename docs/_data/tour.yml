@@ -1,0 +1,78 @@
+# The landing page's guided tour: the five things that happen, in order, each with
+# the screen it happens on. Replaces the old split between a "how it works" list and
+# a separate screenshot showcase, which said the same thing twice and made the reader
+# match pictures to steps themselves.
+#
+# Every image is captured by tests/e2e/test_screenshots.py or
+# tests/e2e/test_marketing_assets.py against the fake-Plex harness, so the titles are
+# made up and no real account appears. Regenerating them is a test run, not a design
+# session, which is why the files are named here rather than described.
+#
+# `width`/`height` are the CSS size the page reserves, half each file's pixel size
+# (the harness captures at 2x). They exist to stop the page reflowing as images load,
+# so a stale value does the opposite of its job. Check them if you recapture.
+#
+# `path` is the app path shown in the fake address bar. Leave it out for a picture
+# that is not a Shortlist screen and the frame is drawn without a bar.
+#
+# House style, same as the rest of the page: plain words, one idea per step, almost
+# no em dashes.
+
+- title: Connect Plex once
+  body: >-
+    Sign in with your Plex account, pick your server, and choose who gets a row. The wizard asks for
+    nothing you have to look up first, and every answer can be changed later.
+  image: wizard-connect.png
+  alt: >-
+    The setup wizard's connect step, showing a Plex sign-in and the servers found on that account
+  path: /setup
+  width: 1440
+  height: 783
+
+- title: Decide what rows people get
+  body: >-
+    A row is a recipe: what goes in it, how big it is, who sees it, and how often it changes. Start
+    from a template rather than a blank form, then change anything. You can run as many at once as
+    you like.
+  image: rows.png
+  alt: >-
+    The Rows page listing four configured rows: the default Picked for You row, a Because you watched
+    row, a rewatch row, and one shared row
+  path: /rows
+  width: 1440
+  height: 860
+
+- title: It runs while everyone is asleep
+  body: >-
+    One person at a time, so a problem with one row never stops anyone else getting theirs. Read
+    their history, find things like it, throw away anything not in your library, then choose. If a
+    row does not turn up, this page names the step that failed.
+  image: run-detail.png
+  alt: A run detail page showing per-user timings, the picks delivered, and a live activity log
+  path: /runs/42
+  width: 1440
+  height: 947
+
+- title: Every pick carries its reason
+  body: >-
+    &ldquo;Because you watched Heat.&rdquo; You can see what led to each title, and if one looks
+    wrong you can tell Shortlist to ignore the watch behind it. That watch stays in their Plex
+    history, it just stops shaping their row.
+  image: user-detail.png
+  alt: A user detail page listing that person's ranked picks, each with the title that inspired it
+  path: /users/sarah
+  width: 1440
+  height: 1151
+
+- title: And nobody else can see it
+  body: >-
+    The row goes to Plex hidden, every other account is told to hide its label, and only then does it
+    appear. Here are two accounts on one server on the same night, each read using that account's own
+    Plex token.
+  image: two-account.png
+  alt: >-
+    Two Plex home screens side by side. Sarah's has a Movies row and a TV Shows row; Mike's has only
+    a TV Shows row, holding completely different titles. Each one notes that the other people's rows
+    are not on this home screen.
+  width: 1440
+  height: 785

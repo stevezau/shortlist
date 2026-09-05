@@ -6,10 +6,54 @@ description: >-
   person's Plex home screen — visible only to them. Self-hosted, one Docker
   container, no AI key required.
 
+# Where the site lives. Every page derives its links from these two through
+# `relative_url` / `absolute_url`, so moving the site is a change to these two lines
+# and nothing else INSIDE docs/. Verify that stays true with:
+#
+#     grep -rln "stevezau.github.io" docs/
+#
+# which should only ever match this file and docs/README.md — the latter is excluded
+# from the build, is the github.com folder view, and runs no Liquid.
+#
+# ---------------------------------------------------------------------------
+# Moving to a custom domain, e.g. shortlist.dev. Nothing here is bought or set up
+# yet; this is the checklist for the day it is, in the order that avoids an outage:
+#
+#  1. DNS first, before anything in this repo. Apex `shortlist.dev` needs the four
+#     GitHub Pages A records (and the AAAA records); `www` needs a CNAME to
+#     stevezau.github.io. Wait for them to resolve.
+#  2. Add `docs/CNAME` containing exactly `shortlist.dev`, and set the custom domain
+#     in the repo's Pages settings. Do NOT add that file before step 1: Pages starts
+#     serving the custom domain the moment it exists, and until DNS resolves the site
+#     is simply down. Turn on "Enforce HTTPS" once the certificate is issued.
+#  3. Only then change the two lines below to `url: https://shortlist.dev` and
+#     `baseurl: ""`. Getting this out of order is the careless failure mode: the site
+#     serves from the apex while every internal link still points at /shortlist/*,
+#     so every page on the site 404s while looking fine in the build.
+#  4. Fix the absolute links that live OUTSIDE the templates, because no Liquid
+#     rewrites them: two in `docs/README.md`, and four lines in the repo's root
+#     `README.md` (three header links, plus the Documentation heading, which carries
+#     the address as its link TEXT as well as its href).
+#  5. Re-submit the sitemap in Google Search Console for the new property, and keep
+#     the old github.io property until the new one is indexed. GitHub 301-redirects
+#     the old subpath URLs to the custom domain, so inbound links keep working, but
+#     Search Console treats the apex as a different site with no history.
+#  6. `docs/robots.txt` starts being read at all. On a project subpath it never was:
+#     only `stevezau.github.io/robots.txt` counts there, and this repo cannot write
+#     that file. Nothing to change, but that is the concrete SEO win.
+#
+# Not affected, because they resolve at request time or are already absolute:
+# the social-preview card (built from `image` + `absolute_url`), the JSON-LD in
+# _includes/head.html, the search index in search.json, and every shields.io badge.
 url: https://stevezau.github.io
 baseurl: /shortlist
 
 repo: https://github.com/stevezau/shortlist
+
+# The host shown in the landing page's fake address bars. A `.local` name says
+# "this runs on your own network" without a sentence about it, and 5959 is the
+# real default port, so it doubles as a hint about where the app turns up.
+demo_host: shortlist.local:5959
 # NOT named `image` — that key is already taken further down by the social-preview card that
 # jekyll-seo-tag reads off each page. Two different meanings under one name would be a trap.
 # The Docker Hub namespace doubles the z and is NOT the GitHub username `stevezau`; the
