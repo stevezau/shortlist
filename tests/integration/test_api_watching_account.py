@@ -532,7 +532,7 @@ class TestTheSourceCanBeAnAccountOtherThanTheOwner:
     def test_a_managed_source_falls_back_to_a_canary_exchanged_token(self, client):
         """The third cell of the `user_type` matrix, and the one the feature was built for.
 
-        `docs/reference.md` says to name a source when the history lives on "an account you already
+        `docs/reference/api.md` says to name a source when the history lives on "an account you already
         moved to" — and a watching account is enforced to be MANAGED, so the realistic non-owner
         source is precisely this one. It is also the only cell that takes the switch-and-exchange
         path rather than the shared roster.

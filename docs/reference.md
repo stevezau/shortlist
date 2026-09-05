@@ -22,7 +22,7 @@ and what changes on Plex the moment you save one. → **[Settings reference](ref
 - <span id="settings-keys-db-backed-settings-ui-or-put-apisettings"></span>[Settings keys, with every default](reference/settings.md#settings-keys-db-backed-settings-ui-or-put-apisettings)
 - <span id="per-row-request-overrides"></span>[Per-row request overrides](reference/settings.md#per-row-request-overrides)
 - <span id="how-settings-take-effect"></span>[How settings take effect](reference/settings.md#how-settings-take-effect)
-- <span id="when-a-row-appears-collectionsshow_days"></span>[When a row appears](reference/settings.md#when-a-row-appears-collectionsshow_days)
+- <span id="when-a-row-appears-collectionsshowdays"></span>[When a row appears](reference/settings.md#when-a-row-appears-collectionsshowdays)
 - <span id="files-under-config"></span>[Files under /config](reference/settings.md#files-under-config)
 
 ## The API
@@ -56,7 +56,7 @@ chosen, and how rows are kept private. → **[How Shortlist decides things](refe
 - <span id="watched-vs-finished"></span>[Watched vs finished](reference/concepts.md#watched-vs-finished)
 - <span id="why-you-see-everyones-rows-and-the-watching-account"></span>[Why you see everyone's rows](reference/concepts.md#why-you-see-everyones-rows-and-the-watching-account)
 - <span id="what-copies-your-watch-history-means-exactly"></span>[What "copies your watch history" means exactly](reference/concepts.md#what-copies-your-watch-history-means-exactly)
-- <span id="the-date-problem-and-source_viewed_at"></span>[The date problem](reference/concepts.md#the-date-problem-and-source_viewed_at)
+- <span id="the-date-problem-and-sourceviewedat"></span>[The date problem](reference/concepts.md#the-date-problem-and-sourceviewedat)
 - <span id="how-a-pick-is-chosen-and-why-a-row-can-be-short"></span>[How a pick is chosen, and why a row can be short](reference/concepts.md#how-a-pick-is-chosen-and-why-a-row-can-be-short)
 - <span id="how-rows-stay-private"></span>[How rows stay private](reference/concepts.md#how-rows-stay-private)
 

@@ -30,12 +30,24 @@ SKIP_PREFIXES = ("http://", "https://", "mailto:", "tel:", "{{", "{%", "#{{")
 
 
 def _slugify(text: str) -> str:
-    """kramdown's heading id: inline markup stripped, lowercased, runs of non-word to one hyphen."""
+    """kramdown's `basic_generate_id`, which is what GitHub Pages runs.
+
+    Transcribed from kramdown rather than approximated, and checked against kramdown itself over
+    every heading in `docs/` (180 of them, 180 agreeing). The detail worth keeping: it does NOT
+    collapse runs. Deleting a character that sat between two spaces leaves two spaces, and each
+    becomes its own hyphen — "Requests (Radarr / Sonarr, or Overseerr)" is
+    `requests-radarr--sonarr-or-overseerr`, with the double hyphen. A tidier regex that collapses
+    them disagrees on four of this site's headings and would call four working links broken.
+
+    Underscores are deleted, not hyphenated: `source_viewed_at` is `sourceviewedat`. That is what
+    made two links in the split reference wrong.
+    """
+    # kramdown slugs the RENDERED text, so inline code and link markup go first.
     text = re.sub(r"`([^`]*)`", r"\1", text)
     text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
-    text = re.sub(r"[*_]", "", text).lower().strip()
-    text = re.sub(r"[^\w\s-]", "", text)
-    return re.sub(r"[\s_]+", "-", text).strip("-")
+    text = re.sub(r"^[^a-zA-Z]+", "", text)
+    text = re.sub(r"[^a-zA-Z0-9 -]", "", text)
+    return text.replace(" ", "-").lower()
 
 
 def _anchors(path: Path) -> set[str]:

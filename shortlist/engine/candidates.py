@@ -344,7 +344,7 @@ def _web_via_search(
     # branch of `_web_search_capable` was unreachable — `gather_candidates` refused the whole source
     # without a real curator — so Exa-without-AI produced nothing. It did NOT bill: a claim that it
     # cost $7.94 a night was made and retracted — that figure is run 18's real, productive spend
-    # under Claude (see docs/reference.md). Only Exa reaches here with candidates; SearXNG returns
+    # under Claude (see docs/reference/settings.md). Only Exa reaches here with candidates; SearXNG returns
     # snippets something must still read, and native search IS the model.
     if not getattr(curator, "can_complete", True):
         return _titles_as_proposals(candidates, web_trace, reason="no AI provider configured")

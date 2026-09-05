@@ -48,3 +48,12 @@ package-lock.json
 
 # Scratch worktrees created by background agents — full repo copies, never committed.
 .claude/worktrees/
+
+# Jekyll, when the docs site is built locally to check a change. GitHub Pages builds the real
+# thing; these are a vendored Ruby toolchain and its output, and none of it belongs in the repo.
+docs/_site/
+docs/.jekyll-cache/
+docs/.jekyll-vendor/
+docs/.bundle/
+docs/Gemfile.local
+docs/Gemfile.local.lock
