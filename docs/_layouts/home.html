@@ -7,6 +7,10 @@ had 29 of them and read like machine-written marketing. Anything every self-host
 app already has (a dark UI, a healthcheck, multi-arch images) is not a selling point
 and doesn't appear. Each idea is stated once: the privacy guarantees live in the
 privacy section and nowhere else, because they used to be on the page twice.
+
+The tour below replaced two sections that overlapped, a numbered "how it works" list
+and a separate screenshot showcase. They described the same five things in two places
+and left the reader to work out which picture went with which step.
 {%- endcomment -%}
 <main id="main">
 
@@ -62,6 +66,39 @@ privacy section and nowhere else, because they used to be on the page twice.
     </div>
   </section>
 
+  {%- comment -%}
+  Four numbers, all of them checkable on this page. The template count is read from
+  _data/templates.yml rather than typed, so adding a template can't leave a wrong
+  number here. site.js counts them up on first view; the real value is in the HTML,
+  so with the script blocked the strip still reads correctly.
+  {%- endcomment -%}
+  <section class="stats-band" aria-label="Shortlist at a glance">
+    <div class="wrap">
+      <ul class="stats" role="list">
+        <li class="stat">
+          <p class="stat__value"><span data-countup>1</span></p>
+          <p class="stat__label">container to run</p>
+          <p class="stat__note">No database of its own, and nothing else to install.</p>
+        </li>
+        <li class="stat">
+          <p class="stat__value"><span data-countup>{{ site.data.templates | size }}</span></p>
+          <p class="stat__label">row templates</p>
+          <p class="stat__note">Start from one instead of a blank form, then change anything.</p>
+        </li>
+        <li class="stat">
+          <p class="stat__value"><span data-countup>0</span></p>
+          <p class="stat__label">AI keys required</p>
+          <p class="stat__note">It chooses and explains on its own. Add a model only if you want to.</p>
+        </li>
+        <li class="stat">
+          <p class="stat__value"><span data-countup>10</span><span class="stat__unit">min</span></p>
+          <p class="stat__label">to the first row</p>
+          <p class="stat__note">From starting the container to a row on somebody's home screen.</p>
+        </li>
+      </ul>
+    </div>
+  </section>
+
   <!-- ---------------------------------------------------------- problem -- -->
   <section class="section section--tint">
     <div class="wrap reveal">
@@ -81,53 +118,69 @@ privacy section and nowhere else, because they used to be on the page twice.
     </div>
   </section>
 
-  <!-- ------------------------------------------------------ how it works -- -->
+  <!-- ------------------------------------------------------------- tour -- -->
   <section class="section" id="how-it-works">
-    <div class="wrap reveal">
+    <div class="wrap">
       <div class="section__head section__head--center">
         <span class="eyebrow">How it works</span>
-        <h2>Four steps, every night</h2>
+        <h2>From an empty container to a private row</h2>
         <p class="section__lede">
-          Shortlist runs on a schedule you choose. It works through your users one at a time, so a
-          problem with one person's row never stops anyone else getting theirs.
+          You do the first two once. Shortlist does the other three every night, on a schedule you
+          choose.
         </p>
       </div>
 
-      <div class="steps">
-        <div class="step">
-          <h3>Read what they watched</h3>
-          <p>
-            Each person's own Plex history. A 20-episode binge counts as one show rather than twenty
-            episodes, so a single series doesn't drown out everything else.
-          </p>
+      {%- comment -%}
+      One element per step and one per picture, as siblings of a single grid, which is
+      what lets the same markup lay out three ways with no duplicated content:
+
+        narrow            one column, each step followed by its own picture
+        wide, no script   two columns, each step beside its own picture
+        wide, with script the pictures stack into one pinned frame that changes
+
+      Only the third needs JavaScript, and only site.js can turn it on (it adds
+      .js-tour-ready to <html> after it has confirmed it can drive it). Nothing here
+      is hidden or dimmed by CSS alone, so a blocked script leaves five readable steps
+      and five visible pictures rather than the grey half-opacity mess that a
+      .js-less scroll tour usually degrades into.
+
+      --tour-steps is the row count the pinned layout needs: `grid-row: 1 / -1` only
+      spans the whole column when the rows are explicit, and they are implicit here.
+      {%- endcomment -%}
+      <div class="tour" style="--tour-steps:{{ site.data.tour | size }}">
+        <div class="tour__rail" aria-hidden="true"><span class="tour__rail-fill"></span></div>
+
+        {%- for s in site.data.tour -%}
+        <div class="tour-step">
+          <p class="tour-step__num" aria-hidden="true">{{ forloop.index }}</p>
+          <h3 class="tour-step__title">{{ s.title }}</h3>
+          <p class="tour-step__body">{{ s.body }}</p>
         </div>
-        <div class="step">
-          <h3>Find things like it</h3>
-          <p>
-            Similar titles from TMDB and Trakt, plus an optional web search for recent ones. Anything
-            you don't already have in your library gets dropped.
-          </p>
-        </div>
-        <div class="step">
-          <h3>Choose and explain</h3>
-          <p>
-            Shortlist picks the best ones and writes the reason for each. This works with no AI at
-            all. Add an AI model and it writes the reasons instead.
-          </p>
-        </div>
-        <div class="step">
-          <h3>Put it on their home screen</h3>
-          <p>
-            The row goes to Plex hidden, everyone else is told not to show it, and only then does it
-            appear. That order is what keeps it private.
-          </p>
-        </div>
+
+        <figure class="tour-panel">
+          <div class="frame{% if s.path %} frame--chrome{% endif %}">
+            {%- if s.path -%}
+            <div class="frame__bar">
+              <span class="frame__dot"></span><span class="frame__dot"></span><span class="frame__dot"></span>
+              {%- comment -%}
+              A .local host rather than a real one: it says "this runs on your own network"
+              without anybody having to read a sentence about it. The port is the real
+              default, so it doubles as a hint about where the app turns up.
+              {%- endcomment -%}
+              <span class="frame__title">{{ site.demo_host }}{{ s.path }}</span>
+            </div>
+            {%- endif -%}
+            <img src="{{ s.image | prepend: '/images/' | relative_url }}" alt="{{ s.alt }}"
+                 loading="lazy" width="{{ s.width }}" height="{{ s.height }}">
+          </div>
+        </figure>
+        {%- endfor -%}
       </div>
     </div>
   </section>
 
   <!-- -------------------------------------------------------- templates -- -->
-  <section class="section" id="templates">
+  <section class="section section--tint" id="templates">
     <div class="wrap reveal">
       <div class="section__head section__head--center">
         <span class="eyebrow">Rows</span>
@@ -162,52 +215,28 @@ privacy section and nowhere else, because they used to be on the page twice.
   </section>
 
   <!-- ---------------------------------------------------------- privacy -- -->
-  <section class="section section--tint" id="privacy">
+  <section class="section" id="privacy">
     <div class="wrap reveal">
-      <div class="privacy">
-        <div>
-          <span class="eyebrow">Privacy</span>
-          <h2>A row nobody else can see</h2>
-          <p class="section__lede">
-            Plex can't share a collection with one person. What it can do is hide things by
-            <strong>label</strong>. So Shortlist labels each row, then tells every other account to
-            hide that label. What's left is a row only its owner sees.
-          </p>
-          <p class="section__lede" style="margin-top:1rem">
-            The order those steps happen in matters more than the trick itself. Do it the obvious way
-            round and the row is briefly visible to your whole server. Every run goes:
-          </p>
-          <p style="margin-top:1.5rem">
-            <a class="btn btn--ghost" href="{{ '/plex-per-user-collections/' | relative_url }}">
-              How the hiding works
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
-            </a>
-          </p>
-        </div>
-
-        <ol class="order">
-          <li><div><strong>Clear up first</strong><span>Remove any row Plex can't hide for that kind of library, before anything else happens.</span></div></li>
-          <li><div><strong>Send the row hidden</strong><span>It exists in Plex, but it isn't on anyone's home screen yet.</span></div></li>
-          <li><div><strong>Hide it from everyone else</strong><span>Every other account is told to hide that row's label. Their existing settings are left exactly as they were.</span></div></li>
-          <li><div><strong>Now show it</strong><span>Only now does the row appear, so it is never visible before it is private.</span></div></li>
-        </ol>
+      <div class="section__head section__head--center">
+        <span class="eyebrow">Privacy</span>
+        <h2>A row nobody else can see</h2>
+        <p class="section__lede">
+          Plex can't share a collection with one person. What it can do is hide things by
+          <strong>label</strong>. So Shortlist labels each row, then tells every other account to
+          hide that label. What's left is a row only its owner sees.
+        </p>
+        <p class="section__lede" style="margin-top:1rem">
+          The order those steps happen in matters more than the trick itself. Do it the obvious way
+          round and the row is briefly visible to your whole server.
+        </p>
       </div>
 
       {%- comment -%}
-      The proof, rather than another claim. Both halves of this picture are the fake Plex server's
-      own answer to each account's token, captured by tests/e2e/test_marketing_assets.py, so it
-      cannot show a privacy result the code does not actually produce.
+      The same drawing the FAQ uses, from one file, so the site can never end up
+      describing the write order two different ways. Its right-hand column is the
+      part that matters: three of the four steps leave the row on nobody's Home.
       {%- endcomment -%}
-      <figure class="mt-lg">
-        <div class="frame">
-          <img src="{{ '/images/two-account.png' | relative_url }}" width="1440" height="785" loading="lazy"
-               alt="Two Plex home screens side by side. Sarah's has a Movies row and a TV Shows row; Mike's has only a TV Shows row, holding completely different titles. Each one notes that the other people's rows are not on this home screen.">
-        </div>
-        <figcaption>
-          Two accounts on one server, on the same night. Each home screen was read using that
-          account&rsquo;s own Plex token, from a test library with made-up titles.
-        </figcaption>
-      </figure>
+      {% include privacy-order.html %}
 
       <div class="grid grid--3 mt-lg">
         <div class="card">
@@ -238,11 +267,18 @@ privacy section and nowhere else, because they used to be on the page twice.
           <p>Only the collections Shortlist made are ever touched. Anything else on your server is spotted and skipped.</p>
         </div>
       </div>
+
+      <p class="center mt-lg">
+        <a class="btn btn--ghost" href="{{ '/plex-per-user-collections/' | relative_url }}">
+          How the hiding works
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
+        </a>
+      </p>
     </div>
   </section>
 
   <!-- --------------------------------------------------------- features -- -->
-  <section class="section" id="features">
+  <section class="section section--tint" id="features">
     <div class="wrap reveal">
       <div class="section__head section__head--center">
         <span class="eyebrow">Features</span>
@@ -255,38 +291,6 @@ privacy section and nowhere else, because they used to be on the page twice.
           <div class="card__icon">{{ f.icon }}</div>
           <h3>{{ f.title }}</h3>
           <p>{{ f.body }}</p>
-        </div>
-        {%- endfor -%}
-      </div>
-    </div>
-  </section>
-
-  <!-- --------------------------------------------------------- showcase -- -->
-  <section class="section section--tint" id="screenshots">
-    <div class="wrap reveal">
-      <div class="section__head section__head--center">
-        <span class="eyebrow">Behind the row</span>
-        <h2>See the reasoning behind each row</h2>
-        <p class="section__lede">
-          These screenshots use a test library with made-up titles, so no real accounts appear. The
-          Plex row at the top of this page is from a real server.
-        </p>
-      </div>
-
-      <div class="shots">
-        {%- for s in site.data.screenshots -%}
-        <div class="shot">
-          <div class="shot__text">
-            <h3>{{ s.title }}</h3>
-            <p>{{ s.body }}</p>
-          </div>
-          <div class="frame frame--chrome">
-            <div class="frame__bar">
-              <span class="frame__dot"></span><span class="frame__dot"></span><span class="frame__dot"></span>
-              <span class="frame__title">{{ s.path }}</span>
-            </div>
-            <img src="{{ s.image | prepend: '/images/' | relative_url }}" alt="{{ s.alt }}" loading="lazy" width="{{ s.width }}" height="{{ s.height }}">
-          </div>
         </div>
         {%- endfor -%}
       </div>
@@ -440,13 +444,13 @@ docker compose up -d</code></pre>
   <!-- ---------------------------------------------------------- closing -- -->
   <section class="section section--tint">
     <div class="wrap reveal">
-      <div class="section__head section__head--center" style="margin-bottom:0">
+      <div class="cta">
         <h2>Give it a try</h2>
-        <p class="section__lede">
+        <p>
           Shortlist is new and still in beta, though it runs in production every night. If something
           breaks, please open an issue.
         </p>
-        <div class="hero__cta" style="margin-top:1.75rem">
+        <div class="hero__cta">
           <a class="btn btn--primary btn--lg" href="{{ '/getting-started/' | relative_url }}">Install Shortlist</a>
           <a class="btn btn--ghost btn--lg" href="{{ site.repo }}">Star it on GitHub</a>
         </div>

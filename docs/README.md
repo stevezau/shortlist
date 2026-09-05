@@ -7,6 +7,12 @@ are the docs. They're also published as a website, which is easier to read:
 This file exists only for the github.com folder view. The website's home page is
 index.md, and _config.yml excludes this file from the build so the two don't
 fight over the `/` URL.
+
+Because no Liquid runs here, the two links below are written out in full rather
+than built from site.url/site.baseurl. They are therefore switch points if the
+site ever moves to a custom domain: change them by hand, along with the four in
+the repo's root README.md. The full day-of checklist, in the order that avoids an
+outage, is the comment above `url:` in _config.yml.
 -->
 
 # Shortlist documentation
