@@ -400,6 +400,14 @@ class FakePlexState:
     #: code in every full-stack test — the "fake must be no easier than the real server" rule.
     invisible_to_show_read: set[int] = field(default_factory=set)
 
+    #: Show ratingKeys the show read RETURNS but with **no** `lastViewedAt` — the mark-as-watched
+    #: shape. A real PMS sets the show's own watch-state row only when the show itself was played;
+    #: marking a series or a season leaves `viewedLeafCount` correct and the date absent, and 19 of
+    #: 492 shows on a real server were in exactly this state. Without it `_movie_xml` dates every
+    #: watched show, no show is ever undated, and `_dates_from_episodes` — the whole reason the
+    #: episode roll-up exists — is dead code in every full-stack test.
+    undated_in_show_read: set[int] = field(default_factory=set)
+
     def watched_now(self, account_id: int) -> set[int]:
         """Every key this account currently counts as watched, from BOTH sources.
 
@@ -547,7 +555,10 @@ def _movie_xml(parent: Element, state: FakePlexState, movie: FakeMovie, *, watch
         librarySectionID=section.key if section else state.section_id,
     )
     if watched_by is not None:
-        element.set("lastViewedAt", str(state.last_viewed_at(watched_by, movie.rating_key)))
+        # Omitted for a show in `undated_in_show_read`: see the field. The episode read is then the
+        # only place its date exists, which is what the production date-repair path is built on.
+        if not (is_show and movie.rating_key in state.undated_in_show_read):
+            element.set("lastViewedAt", str(state.last_viewed_at(watched_by, movie.rating_key)))
         # Only for the account being read AS — the real PMS omits the attribute entirely for anyone
         # who hasn't rated it, which is what makes "never rated" distinguishable from a 0.
         rating = state.user_ratings.get((watched_by, movie.rating_key))

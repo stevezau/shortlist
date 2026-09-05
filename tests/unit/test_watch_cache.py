@@ -800,3 +800,82 @@ class TestLibraryNameIsCached:
         sync_pms(cache, sessions, user_id, [watched("Dune", tmdb_id=1)], name="Movies", force_full=True)
 
         assert self._names(sessions, user_id) == ["Movies"]
+
+
+class TestTheEpochNeverOverwritesARealDate:
+    """A show marked watched carries no `lastViewedAt` of its own and is dated from its newest
+    watched EPISODE. That repair is a second network read, so it can fail on its own — and when it
+    does the reader honestly degrades to 1970.
+
+    Writing that through would rewrite a correct cached date back to "finished 20697d ago" (the
+    reported symptom of #108) until some later sync happened to succeed. Worse, the date is what
+    `_drop_vanished_since` uses to decide whether a row is inside its window at all.
+    """
+
+    def test_a_failed_date_repair_does_not_reset_a_date_already_cached(self, sessions, user_id):
+        cache = WatchCache(sessions)
+        real = datetime.now(UTC) - timedelta(days=2)
+        sync(cache, sessions, user_id, [WatchedItem("Marked Series", MediaType.MOVIE, real, tmdb_id=7, rating_key=7)])
+
+        # The same title on a night the episode read failed: the reader can only offer the epoch.
+        epoch = datetime(1970, 1, 1, tzinfo=UTC)
+        sync(cache, sessions, user_id, [WatchedItem("Marked Series", MediaType.MOVIE, epoch, tmdb_id=7, rating_key=7)])
+
+        with sessions() as session:
+            row = session.query(WatchedTitle).filter_by(user_id=user_id, rating_key=7).one()
+            assert row.viewed_at.replace(tzinfo=UTC) != epoch, "a failed date repair reset a good date to 1970"
+            assert abs((row.viewed_at.replace(tzinfo=UTC) - real).total_seconds()) < 1
+
+    def test_a_first_sighting_still_records_the_epoch(self, sessions, user_id):
+        """The guard protects an EXISTING date; it must not refuse to store the only one there is.
+
+        A show nothing can date is genuinely unknown, and the epoch is how the rest of the system
+        reads "unknown" — it weighs zero as a seed. Dropping the write would leave `viewed_at` at
+        the insert-time default, i.e. today, which claims the opposite.
+        """
+        epoch = datetime(1970, 1, 1, tzinfo=UTC)
+        cache = WatchCache(sessions)
+        sync(
+            cache, sessions, user_id, [WatchedItem("No Date Anywhere", MediaType.MOVIE, epoch, tmdb_id=8, rating_key=8)]
+        )
+
+        with sessions() as session:
+            row = session.query(WatchedTitle).filter_by(user_id=user_id, rating_key=8).one()
+            assert row.viewed_at.replace(tzinfo=UTC) == epoch
+
+    def test_a_real_date_still_replaces_an_epoch(self, sessions, user_id):
+        """The guard is one-way. Once the episode read succeeds, the row must take the real date."""
+        epoch = datetime(1970, 1, 1, tzinfo=UTC)
+        cache = WatchCache(sessions)
+        sync(cache, sessions, user_id, [WatchedItem("Marked Series", MediaType.MOVIE, epoch, tmdb_id=9, rating_key=9)])
+
+        real = datetime.now(UTC) - timedelta(hours=3)
+        sync(cache, sessions, user_id, [WatchedItem("Marked Series", MediaType.MOVIE, real, tmdb_id=9, rating_key=9)])
+
+        with sessions() as session:
+            row = session.query(WatchedTitle).filter_by(user_id=user_id, rating_key=9).one()
+            assert abs((row.viewed_at.replace(tzinfo=UTC) - real).total_seconds()) < 1
+
+
+class TestAKeylessRowIsNotChurnedEveryPass:
+    """The targeted delete exists so a quiet night writes nothing. It keys on `_cache_key`, which
+    stores an item with no `ratingKey` under its NEGATED tmdb_id — so a key set built from
+    `item.rating_key` alone left those rows out of it, and every pass deleted and re-inserted them.
+
+    No data was lost (the upsert immediately put them back), which is exactly why nothing noticed.
+    """
+
+    def test_a_row_with_no_rating_key_survives_a_reconcile_intact(self, sessions, user_id):
+        cache = WatchCache(sessions)
+        items = [watched("Keyless", tmdb_id=42, rating_key=None), watched("Normal", tmdb_id=43)]
+        sync(cache, sessions, user_id, items, force_full=True, reconcile=True)
+
+        with sessions() as session:
+            before = {r.title: r.id for r in session.query(WatchedTitle).filter_by(user_id=user_id)}
+        assert set(before) == {"Keyless", "Normal"}
+
+        sync(cache, sessions, user_id, items, force_full=True, reconcile=True)
+
+        with sessions() as session:
+            after = {r.title: r.id for r in session.query(WatchedTitle).filter_by(user_id=user_id)}
+        assert after == before, "the keyless row was deleted and re-inserted rather than left alone"

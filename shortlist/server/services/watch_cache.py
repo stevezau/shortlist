@@ -26,13 +26,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-import sqlalchemy as sa
 from loguru import logger
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from shortlist.engine.models import MediaType, UserProfile, WatchedItem
 from shortlist.server.db.models import WatchedTitle, WatchSyncState, utcnow
+
+#: What the reader dates a row it can find no watch date for — a show marked watched rather than
+#: played carries no `lastViewedAt`, and when its episodes cannot date it either this is the honest
+#: answer. A real and common value, so it is compared against, never treated as corrupt.
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 #: How far BEHIND the newest thing seen the cursor is left.
 #:
@@ -191,17 +195,25 @@ class WatchCache:
             # transfer on the first sync — and `needs_full` is True for a brand-new watching account,
             # so that is the FIRST sync, every time.
             #
-            # A row with NO rating_key is deleted too: the read is keyed on it, so such a row can
-            # never be matched again and would otherwise linger for ever. The blanket delete used to
-            # clear those as a side effect.
-            keys = {item.rating_key for item in items if item.rating_key is not None}
+            # Keyed exactly as `_upsert` WRITES them — `_cache_key`, not `item.rating_key`. An item
+            # the PMS gave no `ratingKey` is stored under its negated tmdb_id, so building this set
+            # from `rating_key` alone left every such row out of it: they matched `notin_` on every
+            # pass and were deleted and re-inserted each time, which is the churn the targeted delete
+            # exists to avoid. `rating_key` is NOT NULL on the table, so there is no null case to
+            # handle here — the keyless rows are the negative ones.
+            keys = {key for key in (_cache_key(item) for item in items) if key is not None}
             stale = session.query(WatchedTitle).filter(
                 WatchedTitle.user_id == user_id,
                 WatchedTitle.section_key == section_key,
                 WatchedTitle.source_viewed_at.is_(None),
             )
             if keys:
-                stale = stale.filter(sa.or_(WatchedTitle.rating_key.is_(None), WatchedTitle.rating_key.notin_(keys)))
+                # `notin_` expands to one bound parameter per key, and the runtime image is
+                # python:3.12-slim on Debian, whose SQLite caps host parameters at 32,766 (upstream's
+                # own default is 250,000). The ceiling is on the number of watched TITLES in one
+                # section — bounded by the library's size, ~5k on the largest server measured — so it
+                # is out of reach here, unlike the returned-set diff `_drop_vanished_since` avoids.
+                stale = stale.filter(WatchedTitle.rating_key.notin_(keys))
             stale.delete(synchronize_session=False)
             session.flush()
         elif full and reconcile and not refused_by_confirm:
@@ -401,10 +413,14 @@ def _drop_vanished_since(
     un-watch of something viewed BEFORE the cursor leaves no trace in an incremental response at all,
     so that one still waits for the periodic full read.
 
-    Safe against the missing-timestamp case by construction: a title the PMS reports with no
-    `lastViewedAt` is stamped 1970 by the reader and cached as 1970, so it sits outside every window
-    and this can never delete it — which matters, because the incremental walk skips such a title
-    rather than returning it.
+    The missing-timestamp case used to be safe by construction — a title the PMS reports with no
+    `lastViewedAt` was stamped 1970 by the reader, sat outside every window, and so could never be
+    deleted here. That is no longer true on its own: a show marked watched carries no `lastViewedAt`
+    and the full read now dates it from its newest watched EPISODE, which puts it squarely inside the
+    window. Two things keep it safe instead, and both are needed. The reader RETURNS such a show on
+    an incremental walk rather than skipping it (`plex_pms.watched_titles`), so it is never absent
+    from one; and `_upsert` refuses to write the epoch over a real date, so a failed episode read
+    cannot push the row back outside the window and lose its date.
 
     Args:
         since: The cutoff handed to the reader. Must be UTC — SQLite strips tzinfo on bind rather
@@ -525,7 +541,15 @@ def _upsert(
     # someone who thumbs-downs a title and then changes their mind would keep the old value for ever,
     # and their row would stay quietly shaped by a judgement they withdrew.
     row.user_rating = item.user_rating
-    row.viewed_at = item.watched_at or utcnow()
+    # The epoch NEVER overwrites a real date. A show marked watched has no `lastViewedAt` of its own
+    # and is dated from its newest watched episode; when that episode read fails the reader honestly
+    # degrades to 1970, and writing that here would rewrite a correct cached date back to "finished
+    # 20697d ago" — the reported symptom of #108 — until some later sync happened to succeed. A first
+    # insert still records the epoch: it is the only thing known about the row.
+    incoming = item.watched_at or utcnow()
+    cached = _aware(row.viewed_at)
+    if not (incoming <= _EPOCH and cached is not None and cached > _EPOCH):
+        row.viewed_at = incoming
 
 
 def _to_item(row: WatchedTitle) -> WatchedItem:
@@ -534,7 +558,7 @@ def _to_item(row: WatchedTitle) -> WatchedItem:
         media_type=MediaType(row.media_type),
         # The true date, not the scrobble date — same reason `watched_set` orders on it. Everything
         # downstream (recency windows, "because you recently watched X") reads this field.
-        watched_at=_aware(row.source_viewed_at) or _aware(row.viewed_at) or datetime(1970, 1, 1, tzinfo=UTC),
+        watched_at=_aware(row.source_viewed_at) or _aware(row.viewed_at) or _EPOCH,
         tmdb_id=row.tmdb_id,
         year=row.year,
         # The negative fallback key is ours, not Plex's — hand back None rather than a rating key

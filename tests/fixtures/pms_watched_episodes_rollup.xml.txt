@@ -4,8 +4,11 @@
   real server (plex-safety rule 11). Titles and ids are sanitized; attribute NAMES, the container
   shape and the presence/absence of each attribute are verbatim.
 
-  WHY THIS FIXTURE EXISTS — issue #108. NOTHING READS IT ANY MORE; it is the EVIDENCE for the query
-  the show read now sends, kept because that reasoning is not reconstructable from the code.
+  WHY THIS FIXTURE EXISTS — issue #108. It is BOTH the evidence for the query the show read now
+  sends (reasoning that is not reconstructable from the code) and the recorded shape of a read
+  production makes again: `_newest_episode_stamps` walks this exact endpoint to date a show whose own
+  row carries no `lastViewedAt`. Its `totalSize` of 9563 is also the measurement behind that
+  function's per-page fold — retaining these rows instead cost ~14MB per user per library per sync.
 
   `?type=2&unwatched=0` asks Plex about the SHOW row, and that row can disagree with its own
   episodes. Measured on a real server, same library, same admin token, on the same day:

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import xml.etree.ElementTree as ET
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -2058,13 +2060,18 @@ class TestWatchedWindowCoverage:
         assert 222 not in {i.tmdb_id for i in incremental.items}, "an incremental read stops short of it"
 
     @respx.mock
-    def test_an_incremental_read_also_skips_a_show_with_no_date_at_all(self, mock_plex):
+    def test_an_incremental_read_RETURNS_a_show_with_no_date_at_all(self, mock_plex):
         """The same failure from the other direction, kept because the code guards it explicitly.
 
-        A row with no `lastViewedAt` is dated 1970 by `_watched_item`, so it can never clear a cutoff
-        — and it is passed over rather than ending the walk, because a data gap must not truncate the
-        read. Not observed on a real server (0 of 534 rows), unlike the stale-date case above, but
-        the guard is cheap and its absence would silently drop everything behind the gap.
+        A row with no `lastViewedAt` is dated 1970 by `_watched_item`, so it can never clear a cutoff.
+        Two things follow, and they are separate. It must not END the walk — a data gap behind which
+        everything is silently dropped reads exactly like a quiet night. And it must still be
+        RETURNED: the full read dates such a show from its newest watched episode and caches that
+        recent date, so a later incremental read that omitted the row would put it inside
+        `_drop_vanished_since`'s window and absent from the answer, which is the definition of an
+        un-watch. The cache would delete a series the person had just marked watched — #108 again,
+        by a different route. `viewedLeafCount!=0` already proved it watched; there is nothing to
+        weigh up.
         """
         self._mock_url(mock_plex)
         undated = (
@@ -2083,7 +2090,9 @@ class TestWatchedWindowCoverage:
         incremental = self._read(mock_plex, body, since_ago=1000)
 
         assert {i.tmdb_id for i in complete.items} == {111, 222}
-        assert 222 not in {i.tmdb_id for i in incremental.items}
+        assert 222 in {i.tmdb_id for i in incremental.items}, (
+            "the undated show was dropped — a later reconcile reads that as an un-watch and deletes it"
+        )
         assert incremental.covers_window is True, "the gap must not make the walk claim a truncated read"
 
     @respx.mock
@@ -2293,10 +2302,153 @@ class TestWatchedWindowCoverage:
 
         respx.get(self._URL).mock(side_effect=answer)
 
-        from datetime import UTC, datetime
-
         item = mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items[0]
         assert item.watched_at == datetime(1970, 1, 1, tzinfo=UTC)
+
+    @respx.mock
+    def test_the_recorded_episode_shape_dates_the_show_it_rolls_up_to(self, mock_plex):
+        """Replayed from the real recording rather than hand-built XML (testing.md).
+
+        `pms_watched_episodes_rollup.xml.txt` is the response this read actually gets — the fold has
+        to survive its real attribute set, not a three-attribute stand-in.
+        """
+        raw = (FIXTURES / "pms_watched_episodes_rollup.xml.txt").read_text()
+        eps_root = ET.fromstring(raw[raw.index("<MediaContainer") :])
+        # The recording keeps the real server's totalSize (9563) above a SAMPLE of its rows. Left as
+        # recorded, the walk would page for a total that never arrives; the rows are the point here,
+        # not the count, so make the container describe what it actually carries.
+        eps_root.set("size", str(len(list(eps_root))))
+        eps_root.set("totalSize", str(len(list(eps_root))))
+        episodes = ET.tostring(eps_root, encoding="unicode")
+        leaves = [el for el in eps_root if el.get("grandparentRatingKey") and el.get("lastViewedAt")]
+        assert leaves, "the fixture no longer carries dated episodes — this test proves nothing"
+        show_key = leaves[0].get("grandparentRatingKey")
+        newest = max(int(el.get("lastViewedAt")) for el in leaves if el.get("grandparentRatingKey") == show_key)
+        marked = (
+            f'<Directory ratingKey="{show_key}" type="show" title="From The Fixture" year="2023" '
+            f'leafCount="8" viewedLeafCount="8"><Guid id="tmdb://111"/></Directory>'
+        )
+        self._mock_url(mock_plex)
+
+        def answer(request):
+            if request.url.params.get("type") == "4":
+                return httpx.Response(200, text=episodes)
+            return httpx.Response(200, text=f'<MediaContainer size="1" totalSize="1">{marked}</MediaContainer>')
+
+        respx.get(self._URL).mock(side_effect=answer)
+
+        item = mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items[0]
+
+        assert int(item.watched_at.timestamp()) == newest
+
+    @respx.mock
+    def test_a_failed_episode_read_leaves_the_epoch_rather_than_losing_the_show(self, mock_plex):
+        """The repair is best-effort: losing it must cost the DATE, never the row or the coverage.
+
+        `covers_window` gates deletion, so a 404 on this secondary read must not make the primary
+        read look incomplete — and the item must still come back, or the show vanishes from the
+        watched set and is recommended straight back.
+        """
+        marked = (
+            '<Directory ratingKey="5001" type="show" title="Just Marked" year="2023" '
+            'leafCount="8" viewedLeafCount="8"><Guid id="tmdb://111"/></Directory>'
+        )
+        self._mock_url(mock_plex)
+
+        def answer(request):
+            if request.url.params.get("type") == "4":
+                return httpx.Response(404)
+            return httpx.Response(200, text=f'<MediaContainer size="1" totalSize="1">{marked}</MediaContainer>')
+
+        respx.get(self._URL).mock(side_effect=answer)
+
+        read = mock_plex.watched_titles("2", MediaType.SHOW, "TOK")
+
+        assert [i.title for i in read.items] == ["Just Marked"], "a failed date repair lost the row itself"
+        assert read.covers_window is True, "a failed date repair made the primary read look incomplete"
+        assert read.items[0].watched_at == datetime(1970, 1, 1, tzinfo=UTC)
+
+    @respx.mock
+    def test_the_newest_episode_date_is_found_on_a_LATER_page(self, mock_plex):
+        """The episode list is not ordered by `lastViewedAt`, so the answer can be on any page.
+
+        Stopping early here does not fail loudly — it produces an older date that looks perfectly
+        plausible, which is why the walk pages on the reported total rather than on a full page.
+        """
+        marked = (
+            '<Directory ratingKey="5001" type="show" title="Just Marked" year="2023" '
+            'leafCount="8" viewedLeafCount="8"><Guid id="tmdb://111"/></Directory>'
+        )
+        self._mock_url(mock_plex)
+        page_size = mock_plex._WATCHED_PAGE
+
+        def answer(request):
+            if request.url.params.get("type") != "4":
+                return httpx.Response(200, text=f'<MediaContainer size="1" totalSize="1">{marked}</MediaContainer>')
+            start = int(request.headers["X-Plex-Container-Start"])
+            # Page 1 is full and OLD; the newest stamp is the single row on page 2.
+            if start == 0:
+                rows = "".join(
+                    f'<Video ratingKey="{900 + n}" type="episode" title="Ep{n}" viewCount="1" '
+                    f'grandparentRatingKey="5001" lastViewedAt="{self._NOW - 99999}"/>'
+                    for n in range(page_size)
+                )
+                return httpx.Response(
+                    200, text=f'<MediaContainer size="{page_size}" totalSize="{page_size + 1}">{rows}</MediaContainer>'
+                )
+            row = (
+                f'<Video ratingKey="9999" type="episode" title="Newest" viewCount="1" '
+                f'grandparentRatingKey="5001" lastViewedAt="{self._NOW}"/>'
+            )
+            return httpx.Response(
+                200, text=f'<MediaContainer size="1" totalSize="{page_size + 1}">{row}</MediaContainer>'
+            )
+
+        respx.get(self._URL).mock(side_effect=answer)
+
+        item = mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items[0]
+
+        assert int(item.watched_at.timestamp()) == self._NOW, "the walk stopped before the newest episode"
+
+    @respx.mock
+    def test_a_server_that_caps_the_page_and_reports_no_total_gets_no_date_at_all(self, mock_plex):
+        """The truncation case, and the reason a short page cannot mean "the end" here.
+
+        A server that omits `totalSize` and caps the container below what we asked for answers EVERY
+        page short. Reading a short page as the end stops after one, and since the episode list is
+        unordered that first slice dates every show arbitrarily far in the past — a wrong date that
+        looks entirely plausible. An absent date says "unknown" and weighs zero; that is the honest
+        answer, so the walk keeps going until the server actually returns nothing.
+        """
+        marked = (
+            '<Directory ratingKey="5001" type="show" title="Just Marked" year="2023" '
+            'leafCount="8" viewedLeafCount="8"><Guid id="tmdb://111"/></Directory>'
+        )
+        self._mock_url(mock_plex)
+        cap = 200
+
+        def answer(request):
+            if request.url.params.get("type") != "4":
+                return httpx.Response(200, text=f'<MediaContainer size="1" totalSize="1">{marked}</MediaContainer>')
+            start = int(request.headers["X-Plex-Container-Start"])
+            # Caps at 200 however much is asked for, and NEVER reports a total — so no page is ever
+            # empty and no page is ever full. Nothing in the response can prove the end.
+            rows = "".join(
+                f'<Video ratingKey="{start + n}" type="episode" title="Ep" viewCount="1" '
+                f'grandparentRatingKey="5001" lastViewedAt="{self._NOW - 99999}"/>'
+                for n in range(cap)
+            )
+            return httpx.Response(200, text=f'<MediaContainer size="{cap}">{rows}</MediaContainer>')
+
+        respx.get(self._URL).mock(side_effect=answer)
+
+        read = mock_plex.watched_titles("2", MediaType.SHOW, "TOK")
+
+        assert read.items[0].watched_at == datetime(1970, 1, 1, tzinfo=UTC), (
+            "dated the show from a truncated, unordered slice of its episodes"
+        )
+        episode_calls = [c for c in respx.calls if c.request.url.params.get("type") == "4"]
+        assert len(episode_calls) == mock_plex._EPISODE_PAGE_LIMIT, "the safety stop did not bound the walk"
 
 
 class TestScrobbleAs:

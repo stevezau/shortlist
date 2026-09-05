@@ -1670,6 +1670,12 @@ class PlexClient:
     # single response to hold them all (a silent cap here would hide older watches from the
     # already-watched filter — the very 200-row bug the share-token read exists to end).
     _WATCHED_PAGE = 500
+
+    # Safety stop for the episode roll-up, which pages until the server returns an EMPTY page rather
+    # than trusting a short one (see `_newest_episode_stamps`). At 500 a page this is 100,000 watched
+    # episodes — an order of magnitude past the largest library measured (9,563) — so reaching it
+    # means the server is not terminating, not that someone watches a lot.
+    _EPISODE_PAGE_LIMIT = 200
     #: History pages. Both container headers are required — see `play_history`.
     _HISTORY_PAGE = 1000
 
@@ -1942,6 +1948,12 @@ class PlexClient:
                     # would look like a quiet night rather than a truncation. Skip it and keep going;
                     # only a real timestamp may end the walk.
                     if el.get("lastViewedAt") is None:
+                        # Returned, not just stepped over. The `continue` only has to stop the walk
+                        # ENDING here; dropping the row as well made an incremental read report a
+                        # show the full read had dated from its episodes as absent, which is
+                        # indistinguishable from an un-watch and let `_drop_vanished_since` delete it.
+                        # `viewedLeafCount!=0` already proved it watched, so returning it is right.
+                        items.append(item)
                         continue
                     # Sorted newest-first, so everything from here on is older. Stop reading — this
                     # is where the saving actually comes from, since the server ignores the filter.
@@ -2074,17 +2086,7 @@ class PlexClient:
         if not undated:
             return shows
         try:
-            newest: dict[int, int] = {}
-            for el in self._episode_rows(section_key, token):
-                raw = el.get("grandparentRatingKey")
-                if raw is None:
-                    continue
-                try:
-                    key, stamp = int(raw), int(el.get("lastViewedAt") or 0)
-                except ValueError:
-                    continue
-                if stamp > newest.get(key, 0):
-                    newest[key] = stamp
+            newest = self._newest_episode_stamps(section_key, token)
         except Exception as e:
             # Dates only — never worth losing a good read over. Degrades to the epoch, which is what
             # these rows carried before this existed.
@@ -2094,6 +2096,12 @@ class PlexClient:
                 len(undated),
                 type(e).__name__,
             )
+            return shows
+        if newest is None:
+            # Coverage unproven — see `_newest_episode_stamps`. Dating from an arbitrary prefix of an
+            # unordered list would put a wrong date on a real row, which is worse than none: the
+            # epoch at least says "unknown" and weighs zero, while a plausible-looking wrong date
+            # silently mis-weights the seed and the effectiveness report.
             return shows
 
         dated = 0
@@ -2113,13 +2121,33 @@ class PlexClient:
         )
         return out
 
-    def _episode_rows(self, section_key: str | int, token: str) -> list[ET.Element]:
-        """Every watched EPISODE in one show library, read as `token`. Paged like the show read."""
-        rows: list[ET.Element] = []
+    def _newest_episode_stamps(self, section_key: str | int, token: str) -> dict[int, int] | None:
+        """`{show ratingKey: newest watched episode lastViewedAt}` for one show library, read as `token`.
+
+        Folded per page rather than accumulating elements. The library this exists for holds 9,563
+        watched episodes (recorded: `pms_watched_episodes_rollup.xml.txt`) — retaining them was 14MB
+        held per user per library per sync to extract a handful of integers, while the dict is a few
+        hundred ints.
+
+        Returns:
+            The stamps, or **None** when the walk could not be proven complete — see below. Never a
+            partial answer: the episode list is not ordered by `lastViewedAt`, so a truncated read is
+            an arbitrary subset and every date taken from it is arbitrarily too old.
+        """
+        newest: dict[int, int] = {}
         start = 0
-        while True:
+        # A server that reports no `totalSize` AND caps the container below what we asked for
+        # answers every page short, so "short page" cannot mean "the end" — that read stops after one
+        # page and dates every show from the first 2% of an unordered list. Page until the server
+        # returns an EMPTY page instead, which costs one extra request and cannot be misread. The
+        # bound is a safety stop against a server that never empties, not an expected exit.
+        for _ in range(self._EPISODE_PAGE_LIMIT):
+            url = self._server.url(f"/library/sections/{section_key}/all", includeToken=False)
+            # `?` or `&`: plexapi appends `?X-Plex-Token=...` to `url()` even with `includeToken=False`
+            # whenever `log.show_secrets` is on, and a hardcoded `?` then made `type=4` part of the
+            # token value rather than a parameter — answered with the whole library, not its episodes.
             r = http_retry.get(
-                f"{self._server.url(f'/library/sections/{section_key}/all', includeToken=False)}?type=4&unwatched=0",
+                f"{url}{'&' if '?' in url else '?'}type=4&unwatched=0",
                 headers={
                     "X-Plex-Token": token,
                     "X-Plex-Container-Start": str(start),
@@ -2132,11 +2160,28 @@ class PlexClient:
             r.raise_for_status()
             root = ET.fromstring(r.text)
             page = list(root)
-            rows.extend(page)
-            reported = root.get("totalSize")
+            for el in page:
+                raw = el.get("grandparentRatingKey")
+                if raw is None:
+                    continue  # a season or show row — only leaves carry the key we fold on
+                try:
+                    key, stamp = int(raw), int(el.get("lastViewedAt") or 0)
+                except ValueError:
+                    continue
+                if stamp > newest.get(key, 0):
+                    newest[key] = stamp
+            if not page:
+                return newest
             start += len(page)
-            if not page or (start >= int(reported) if reported is not None else len(page) < self._WATCHED_PAGE):
-                return rows
+            reported = root.get("totalSize")
+            if reported is not None and start >= int(reported):
+                return newest
+        logger.warning(
+            "watched read: section {} — episode read did not terminate in {} pages, dates left unknown",
+            section_key,
+            self._EPISODE_PAGE_LIMIT,
+        )
+        return None
 
     def _read_watched_page(
         self,
@@ -2223,9 +2268,7 @@ class PlexClient:
         if tmdb_id is None:
             return None
         last_viewed = el.get("lastViewedAt")
-        watched_at = (
-            datetime.fromtimestamp(int(last_viewed), tz=UTC) if last_viewed else datetime(1970, 1, 1, tzinfo=UTC)
-        )
+        watched_at = datetime.fromtimestamp(int(last_viewed), tz=UTC) if last_viewed else _EPOCH
         year = el.get("year")
         # `userRating` belongs to the TOKEN this page was read with, not to the server — live-probed
         # 2026-08-06 across 50 accounts on a real server: a title reading 6.2 as the owner came back
