@@ -12,9 +12,15 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 import respx
+from plexapi.exceptions import BadRequest
 
 import shortlist.engine.clients.plextv as plextv_mod
-from shortlist.engine.clients.plex_pms import MIN_PMS_VERSION, PlexClient, parse_pms_version
+from shortlist.engine.clients.plex_pms import (
+    MIN_PMS_VERSION,
+    CollectionRejectedItems,
+    PlexClient,
+    parse_pms_version,
+)
 from shortlist.engine.clients.plextv import PlexTvClient
 from shortlist.engine.clients.tautulli import TautulliClient
 from shortlist.engine.clients.tmdb import TmdbClient
@@ -771,10 +777,13 @@ class TestPlexClient:
         collection.labels = [SimpleNamespace(tag="Shortlist_sarah")]
         added: list[str] = []
 
-        def add(label):
-            added.append(label)
+        def add(labels):
+            # `stored_label` always hands plexapi a LIST now (it may carry a second label in the
+            # same write); plexapi normalises a bare string to one anyway. What is asserted below is
+            # unchanged: the owner label must still be on the row afterwards.
+            added.extend(labels)
             # What a real PUT does: the union, written back as the whole set.
-            collection.labels = [*collection.labels, SimpleNamespace(tag=label.replace("s", "S", 1))]
+            collection.labels = [*collection.labels, *(SimpleNamespace(tag=x.replace("s", "S", 1)) for x in labels)]
 
         collection.addLabel.side_effect = add
 
@@ -1002,6 +1011,174 @@ class TestPlexClient:
         assert [i.ratingKey for i in collection.removeItems.call_args.args[0]] == [2]
         collection.sortUpdate.assert_called_once_with(sort="custom")
         collection.moveItem.assert_not_called()  # ordering happens later, in order_collection
+
+    def test_set_items_retries_a_transient_500_instead_of_failing_the_user(self, mock_plex: PlexClient, monkeypatch):
+        """A 5xx from addItems is Plex under load, not a rejected request.
+
+        SFLIX 2026-09-06: `PUT /library/collections/687180/items` answered 500 after exactly 10.0s
+        while that same collection served eight GETs and a children read as 200 either side of it.
+        It arrives as a plexapi BadRequest rather than a timeout, so the retry ladder never saw it
+        and user j.fm failed for the whole run after 9.5 minutes of work - having already had their
+        other row delivered.
+        """
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.time.sleep", lambda _s: None)
+        item = self._item
+        collection = MagicMock()
+        collection.addItems.side_effect = [BadRequest("(500) internal_server_error; http://pms/1500"), None]
+
+        mock_plex.set_items(collection, [item(1)], [item(4)], [1, 4])
+
+        assert collection.addItems.call_count == 2, "a 500 must be retried, not raised"
+        collection.sortUpdate.assert_called_once_with(sort="custom")
+
+    def test_set_items_does_not_retry_a_400_which_means_the_row_is_broken(self, mock_plex: PlexClient, monkeypatch):
+        """A 400 is a verdict about the request, so repeating it just wastes the ladder — and the
+        caller needs CollectionRejectedItems promptly to rebuild the row."""
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.time.sleep", lambda _s: None)
+        item = self._item
+        collection = MagicMock()
+        collection.addItems.side_effect = BadRequest("(400) bad_request; http://pms/500")
+
+        with pytest.raises(CollectionRejectedItems):
+            mock_plex.set_items(collection, [item(1)], [item(4)], [1, 4])
+
+        assert collection.addItems.call_count == 1, "a 400 must fail on the first attempt"
+
+    def test_a_ratingkey_containing_500_is_not_mistaken_for_a_server_error(self, mock_plex: PlexClient, monkeypatch):
+        """The url in a plexapi message carries the collection's own ratingKey, so a substring test
+        for "500" matches key 1500 and would retry a genuine 400 four times."""
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.time.sleep", lambda _s: None)
+        item = self._item
+        collection = MagicMock()
+        collection.addItems.side_effect = BadRequest("(400) bad_request; http://pms/library/collections/1500/items")
+
+        with pytest.raises(CollectionRejectedItems):
+            mock_plex.set_items(collection, [item(1)], [item(4)], [1, 4])
+
+        assert collection.addItems.call_count == 1
+
+    def test_set_items_retries_a_transient_500_on_REMOVAL_too(self, mock_plex: PlexClient, monkeypatch):
+        """The second failure of run 1 was a DELETE, not the add.
+
+        SFLIX 2026-09-06: user uid=20 died on
+        `DELETE /library/collections/687190/items/604259 -> 500`, on a collection that served 11
+        GETs and another DELETE as 200. Retrying only the add would have left this user failing.
+        """
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.time.sleep", lambda _s: None)
+        item = self._item
+        collection = MagicMock()
+        collection.removeItems.side_effect = [BadRequest("(500) internal_server_error; http://pms/1"), None]
+
+        mock_plex.set_items(collection, [item(1), item(2)], [], [1])
+
+        assert collection.removeItems.call_count == 2, "a 500 on removal must be retried"
+
+    def test_removals_go_one_at_a_time_so_a_retry_never_redeletes(self, mock_plex: PlexClient):
+        """plexapi's removeItems loops a DELETE per item, so batching the retry would re-send the
+        deletes that already succeeded. Each call must carry exactly one item."""
+        item = self._item
+        collection = MagicMock()
+
+        mock_plex.set_items(collection, [item(1), item(2), item(3)], [], [1])
+
+        sent = [c.args[0] for c in collection.removeItems.call_args_list]
+        assert [len(batch) for batch in sent] == [1, 1], "each removal must be its own call"
+        assert sorted(i.ratingKey for batch in sent for i in batch) == [2, 3]
+
+    def test_stored_label_writes_both_labels_in_one_call(self, mock_plex: PlexClient):
+        """Two labels, ONE PUT. Verified against the live PMS 2026-09-06 before this was written:
+        addLabel([a, b]) came back as a single PUT with both labels present."""
+        collection = MagicMock()
+        collection.labels = []
+
+        def _applied(tags):
+            collection.labels = [SimpleNamespace(tag=x.title()) for x in tags]
+
+        collection.addLabel.side_effect = _applied
+
+        stored = mock_plex.stored_label(collection, "shortlist_alice", extra="shortlist")
+
+        assert collection.addLabel.call_count == 1, "both labels must go in a single write"
+        assert collection.addLabel.call_args.args[0] == ["shortlist_alice", "shortlist"]
+        assert stored == "Shortlist_Alice", "the CRITICAL label's stored casing is what filters use"
+
+    def test_stored_label_returns_the_critical_labels_casing_not_the_extras(self, mock_plex: PlexClient):
+        """The returned string is written into every OTHER account's `label!=` exclude. Return the
+        wrong one and nobody's filter hides this row."""
+        collection = MagicMock()
+        collection.labels = [SimpleNamespace(tag="Shortlist_Alice"), SimpleNamespace(tag="Shortlist")]
+
+        stored = mock_plex.stored_label(collection, "shortlist_alice", extra="shortlist")
+
+        assert stored == "Shortlist_Alice"
+        assert collection.addLabel.call_count == 0, "both already present — no write at all"
+
+    def test_a_missing_critical_label_still_raises_so_the_caller_deletes_the_row(self, mock_plex: PlexClient):
+        """An unlabelled row is one no share filter can hide, so it must never survive."""
+        collection = MagicMock()
+        collection.labels = []
+        collection.addLabel.side_effect = lambda tags: None  # Plex accepts, nothing persists
+
+        with pytest.raises(RuntimeError, match="did not persist"):
+            mock_plex.stored_label(collection, "shortlist_alice", extra="shortlist")
+
+    def test_a_missing_EXTRA_label_is_not_fatal(self, mock_plex: PlexClient):
+        """The constant label is cosmetic (Kometa coexistence). Losing it must not fail a row that
+        already reached Plex with its privacy label intact."""
+        collection = MagicMock()
+        collection.labels = []
+        collection.addLabel.side_effect = lambda tags: setattr(
+            collection, "labels", [SimpleNamespace(tag="Shortlist_Alice")]
+        )
+
+        assert mock_plex.stored_label(collection, "shortlist_alice", extra="shortlist") == "Shortlist_Alice"
+
+    def test_a_batched_failure_falls_back_to_the_critical_label_alone(self, mock_plex: PlexClient, monkeypatch):
+        """Batching must not make a cosmetic failure fatal. Before this, `label` succeeding and
+        `extra` failing left the row alive and private; one combined write must not turn that into a
+        deleted row."""
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.time.sleep", lambda _s: None)
+        collection = MagicMock()
+        collection.labels = []
+
+        def _addLabel(tags):
+            if len(tags) > 1:
+                raise BadRequest("(400) bad_request; http://pms/1")
+            collection.labels = [SimpleNamespace(tag="Shortlist_Alice")]
+
+        collection.addLabel.side_effect = _addLabel
+
+        assert mock_plex.stored_label(collection, "shortlist_alice", extra="shortlist") == "Shortlist_Alice"
+        assert collection.addLabel.call_count == 2, "batched attempt, then the critical label alone"
+        assert collection.addLabel.call_args.args[0] == ["shortlist_alice"]
+
+    def test_stored_label_retries_a_transient_500_rather_than_losing_the_row(self, mock_plex: PlexClient, monkeypatch):
+        """A 5xx here makes the CALLER DELETE the row, so an un-retried wobble bins a good row.
+        SFLIX 2026-09-06: creating one collection needed four attempts under load."""
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.time.sleep", lambda _s: None)
+        collection = MagicMock()
+        collection.labels = []
+        calls = {"n": 0}
+
+        def _addLabel(tags):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise BadRequest("(500) internal_server_error; http://pms/1")
+            collection.labels = [SimpleNamespace(tag=x.title()) for x in tags]
+
+        collection.addLabel.side_effect = _addLabel
+
+        assert mock_plex.stored_label(collection, "shortlist_alice", extra="shortlist") == "Shortlist_Alice"
+        assert calls["n"] == 2, "the 500 must be retried, not surfaced as a lost row"
+
+    def test_stored_label_without_extra_is_unchanged(self, mock_plex: PlexClient):
+        """The backfill path still calls this with one label; it must behave exactly as before."""
+        collection = MagicMock()
+        collection.labels = []
+        collection.addLabel.side_effect = lambda tags: setattr(collection, "labels", [SimpleNamespace(tag="Shortlist")])
+
+        assert mock_plex.stored_label(collection, "shortlist") == "Shortlist"
+        assert collection.addLabel.call_args.args[0] == ["shortlist"]
 
     def test_order_collection_moves_only_displaced_items(self, mock_plex: PlexClient):
         """order_collection reorders with the FEWEST moveItem calls: only items out of place move,

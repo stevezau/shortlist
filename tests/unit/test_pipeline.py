@@ -72,7 +72,9 @@ def ctx(engine_config: EngineConfig, mock_plextv, mock_tmdb, mock_curator) -> En
     plex.build_library_index.return_value = {900: 999, 10: 1010, 20: 1020}
     plex.owned_collections.return_value = {}
     plex.find_owned_collections.return_value = []  # delivery finds by title; promotion enumerates rows
-    plex.stored_label.side_effect = lambda collection, label: label.replace("shortlist", "Shortlist", 1)
+    # `extra` is the constant `shortlist` label, which now rides along in the SAME write on a
+    # newly created row (one PUT instead of two).
+    plex.stored_label.side_effect = lambda collection, label, *, extra=None: label.replace("shortlist", "Shortlist", 1)
     # (items, missing) — the real client reports what Plex no longer has, because a partial batch
     # omits dead keys silently and delivery must not claim it delivered them.
     plex.fetch_items.side_effect = lambda keys: ([fake_media_item(k, f"item{k}") for k in keys], [])
@@ -151,8 +153,12 @@ class TestRun:
         # by label — finds it.
         created_by_label: dict[str, MagicMock] = {}
 
-        def stored_label(collection, label):
+        def stored_label(collection, label, *, extra=None):
             created_by_label[label.lower()] = collection
+            if extra is not None:
+                # Recorded too: the constant label goes on in the SAME write now, so a fake that
+                # dropped it would show fewer labelled rows than the real client produces.
+                created_by_label[extra.lower()] = collection
             return label.replace("shortlist", "Shortlist", 1)
 
         ctx.plex.stored_label.side_effect = stored_label
@@ -2364,8 +2370,12 @@ class TestPerRowOverrides:
 
         created_by_label: dict[str, MagicMock] = {}
 
-        def stored_label(collection, label):
+        def stored_label(collection, label, *, extra=None):
             created_by_label[label.lower()] = collection
+            if extra is not None:
+                # Recorded too: the constant label goes on in the SAME write now, so a fake that
+                # dropped it would show fewer labelled rows than the real client produces.
+                created_by_label[extra.lower()] = collection
             return label.replace("shortlist", "Shortlist", 1)
 
         def create_collection(section, title, items):
@@ -3377,8 +3387,10 @@ class TestParallelRuns:
 
         created: dict[str, object] = {}
 
-        def stored_label(collection, label):
+        def stored_label(collection, label, *, extra=None):
             created[label.lower()] = collection
+            if extra is not None:
+                created[extra.lower()] = collection  # same write, on a newly created row
             return label.replace("shortlist", "Shortlist", 1)
 
         ctx.plex.stored_label.side_effect = stored_label
@@ -3411,8 +3423,10 @@ class TestParallelRuns:
         ctx.concurrency = 3
         created: dict[str, object] = {}
 
-        def stored_label(collection, label):
+        def stored_label(collection, label, *, extra=None):
             created[label.lower()] = collection
+            if extra is not None:
+                created[extra.lower()] = collection  # same write, on a newly created row
             return label.replace("shortlist", "Shortlist", 1)
 
         ctx.plex.stored_label.side_effect = stored_label

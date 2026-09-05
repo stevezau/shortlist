@@ -277,6 +277,25 @@ _PMS_TIMEOUTS = (
     requests.exceptions.ConnectionError,
 )
 
+#: Plex answering with a server error rather than dropping the connection. Same transient overload
+#: as a read timeout — SFLIX 2026-09-06: `PUT /library/collections/687180/items` returned 500 after
+#: exactly 10.0s while that very collection served eight GETs and a children read as 200 either
+#: side of it — but it arrives as a `BadRequest`, not a timeout, so the retry ladder never saw it
+#: and one wobble failed a whole user for the run.
+_PMS_SERVER_ERROR_PREFIXES = ("(500)", "(502)", "(503)", "(504)")
+
+
+def _is_transient_pms_error(error: BaseException) -> bool:
+    """Whether a plexapi exception is a server-side wobble worth repeating.
+
+    Anchored on the LEADING token, never ``"500" in``: plexapi formats the message as
+    ``f'({status}) {codename}; {url} {errtext}'`` and that url carries the collection's own
+    ratingKey, so a substring test matches keys like 1500 or 45002 — the mistake that once swallowed
+    500s and 401s in ``delivery._rename_or_keep``.
+    """
+    return str(error).startswith(_PMS_SERVER_ERROR_PREFIXES)
+
+
 # How many times `order_owned_hubs` will re-read the managed shelf and re-place whatever did not end
 # up where it asked. A co-managing tool (agregarr, Kometa) reorders the same shelf on its own
 # schedule, so a pass can genuinely lose a race; each retry re-reads first, so the next pass moves
@@ -294,21 +313,49 @@ class CollectionRejectedItems(RuntimeError):
     """
 
 
-def _retry_idempotent(operation: Callable[[], None], *, label: str, attempts: int = 4) -> None:
+def _retry_idempotent(
+    operation: Callable[[], None],
+    *,
+    label: str,
+    attempts: int = 4,
+    already_done: type[BaseException] | tuple[type[BaseException], ...] | None = None,
+) -> None:
     """Retry an IDEMPOTENT PMS mutation (promotion, or a delivery collection upsert) on a read/connect
-    timeout, backing off between tries.
+    timeout OR a 5xx, backing off between tries.
 
-    The requests-level ``Retry`` only covers GETs (a create/label must never be blindly repeated), but
-    both callers here are safe to repeat: promotion (hide + set hub visibility) is a no-op re-applied,
-    and delivery re-reads current membership and re-applies only the delta. At scale a busy PMS pushes
-    these into read timeouts, and one un-retried timeout used to fail the whole user (SFLIX 48-user
-    rollout, 2026-07-18). The backoff also gives the server air.
+    A busy PMS expresses the same overload two ways — it drops the connection, or it answers 500 —
+    and only the first used to be retried. Both mean "try again", and neither says the request was
+    wrong; a 4xx still raises on the first attempt so a genuine rejection is never repeated.
+
+    The requests-level ``Retry`` only covers GETs, so every caller here has to carry its own reason
+    to be safe to repeat, and they are not all the same reason:
+
+    * promotion — hide + hub visibility is the same state re-applied, so a repeat is a no-op;
+    * ``addItems`` — one PUT with SET semantics, so re-adding a member changes nothing;
+    * a per-item removal — see ``set_items``; the repeat is bounded to the one item that failed,
+      and ``already_done`` covers the item the failed attempt had in fact removed;
+    * a label write — an ABSOLUTE tag set rebuilt from the same in-memory list, so re-sending it
+      writes the identical set;
+    * poster upload/reset — last write wins.
+
+    At scale a busy PMS pushes these into read timeouts, and one un-retried timeout used to fail the
+    whole user (SFLIX 48-user rollout, 2026-07-18). The backoff also gives the server air.
+
+    ``already_done`` is the exception type meaning "the thing you asked for is already true" on a
+    RETRY — never on the first attempt, where it is a genuine surprise worth raising.
     """
     for attempt in range(attempts):
         try:
             operation()
             return
-        except _PMS_TIMEOUTS as error:
+        except Exception as error:
+            if already_done is not None and attempt > 0 and isinstance(error, already_done):
+                # The first attempt applied it and then failed to say so — a 500 after Plex had
+                # already done the work. Asking again for a state that now holds is success.
+                logger.debug("{}: already applied on retry ({})", label, type(error).__name__)
+                return
+            if not isinstance(error, _PMS_TIMEOUTS) and not _is_transient_pms_error(error):
+                raise
             if attempt == attempts - 1:
                 raise
             # Jittered: eight users deliver in parallel, so a PMS wobble times out all of them within
@@ -743,18 +790,84 @@ class PlexClient:
             cached.append(collection)
         return collection
 
-    def stored_label(self, collection: Collection, label: str) -> str:
-        """Ensure `label` is on the collection and return it AS STORED (Plex title-cases it)."""
-        existing = next((tag.tag for tag in collection.labels if tag.tag.lower() == label.lower()), None)
-        if existing:
-            return existing
-        collection.addLabel(label)
+    def stored_label(self, collection: Collection, label: str, *, extra: str | None = None) -> str:
+        """Ensure `label` is on the collection and return it AS STORED (Plex title-cases it).
+
+        ``extra`` puts a SECOND label on in the same write. Measured on SFLIX 2026-09-06: a label PUT
+        costs ~9.3s whatever it carries, and every new row takes two of them (its ``shortlist_<user>``
+        and the constant ``shortlist``) — 64 PUTs, 593s, 21% of that run. plexapi's ``editTags``
+        concatenates ``existing + items`` and issues ONE ``PUT /library/sections/<key>/all``, so
+        passing both spends one write instead of two. Verified against the live PMS, not just the
+        source: two labels in one call came back as one PUT with both present.
+
+        ONLY safe on a row we have just created, and the reason is the whole leak this file guards.
+        A Plex label write REPLACES the label set; it reads as an append only because plexapi
+        re-sends ``collection.labels`` from memory. On an EXISTING row an empty/stale read would
+        therefore delete ``shortlist_<user>`` and leave the row visible to every shared account
+        (see ``delivery._apply_shortlist_label``, which keeps its own guard for exactly that). A
+        freshly created collection has no labels at all, so there is nothing a replace can drop —
+        and folding the second write in removes one read-modify-write from the create path rather
+        than adding one.
+
+        ``label`` is the one that matters and still raises if it does not persist: it is what other
+        accounts' share filters exclude, and the caller deletes the row when this raises. ``extra``
+        is cosmetic (Kometa coexistence), so a miss warns and returns normally — the same outcome as
+        the separate call it replaces.
+        """
+        present = {tag.tag.lower(): tag.tag for tag in collection.labels}
+        existing = present.get(label.lower())
+        wanted = [label] if existing is None else []
+        if extra is not None and extra.lower() not in present:
+            wanted.append(extra)
+        if not wanted:
+            return existing  # type: ignore[return-value]
+
+        try:
+            # Retried like any other idempotent PMS write: re-sending the same label set is a no-op,
+            # and a transient 5xx here makes the CALLER DELETE THE ROW (see
+            # `delivery._create_labelled_collection`). Plex answers 500-at-10.0s under load often
+            # enough that the self-test for this change needed four attempts to create one
+            # collection, so an un-retried label write would bin rows for no reason.
+            _retry_idempotent(lambda: collection.addLabel(wanted), label=log_title(collection.title))
+        except Exception:
+            # Gate on WHICH label failed, never on how many were sent. `wanted` omits whatever is
+            # already on the row, so a row that already carries its `shortlist_<user>` and needs
+            # only the cosmetic one sends `wanted == [extra]` — and counting would then re-raise,
+            # letting `_create_labelled_collection` DELETE a row over a label that is decorative.
+            # That is the precise outcome this fallback exists to prevent.
+            if label not in wanted:
+                logger.warning(
+                    "{}: could not add the '{}' label — the row is fine, but a co-managing tool may keep reordering it",
+                    log_title(collection.title),
+                    extra,
+                )
+            else:
+                if extra is None or len(wanted) == 1:
+                    raise
+                # Fall back to the critical label alone, so a batched failure is no worse than the
+                # two separate writes this replaced: there, `label` succeeding and `extra` failing
+                # left the row alive and private.
+                logger.warning(
+                    "{}: could not write labels {} together — retrying with {!r} alone",
+                    log_title(collection.title),
+                    wanted,
+                    label,
+                )
+                _retry_idempotent(lambda: collection.addLabel([label]), label=log_title(collection.title))
         collection.reload()
         stored = next((tag.tag for tag in collection.labels if tag.tag.lower() == label.lower()), None)
         if stored is None:
             raise RuntimeError(f"label {label!r} did not persist on collection {collection.title!r}")
         if stored != label:
             logger.debug("Plex stored label {!r} as {!r}", label, stored)
+        if extra is not None and not any(t.tag.lower() == extra.lower() for t in collection.labels):
+            # Never fatal, and never silent: the row is found, hidden and managed entirely through
+            # `label`. All this costs is a co-managing tool reordering this one row.
+            logger.warning(
+                "{}: the '{}' label did not persist — the row is fine, but a co-managing tool may keep reordering it",
+                log_title(collection.title),
+                extra,
+            )
         return stored
 
     def promote(
@@ -1275,7 +1388,9 @@ class PlexClient:
         to_remove = [i for i in existing_items if i.ratingKey not in wanted_set]
         if add_items:
             try:
-                collection.addItems(add_items)
+                # Safe to repeat: a Plex collection is a SET, so re-adding an item the first attempt
+                # already landed is a no-op, and a partially-applied add converges on the retry.
+                _retry_idempotent(lambda: collection.addItems(add_items), label=log_title(collection.title))
             except Exception as exc:
                 # Anchored on the leading token, never `"400" in`: plexapi formats the message as
                 # `f'({status}) {codename}; {url} {errtext}'` and that url carries the collection's
@@ -1288,8 +1403,24 @@ class PlexClient:
                 # different endpoints and a rebuild does not fix them.
                 raise CollectionRejectedItems(str(exc)) from exc
         if to_remove:
-            collection.removeItems(to_remove)
-        collection.sortUpdate(sort="custom")
+            # ONE ITEM AT A TIME, each with its own retry, because plexapi's `removeItems` loops and
+            # issues a separate DELETE per item. Retrying the whole BATCH would re-send the deletes
+            # that already succeeded; this re-sends only the one item that failed. Same PMS
+            # round-trip count as before.
+            #
+            # It is not fully idempotent even so, and saying otherwise would be a lie a future
+            # reader relies on: the failure being retried is a 500-after-10.0s, which is Plex
+            # timing out on work it may well have applied — so the retry can re-DELETE an item that
+            # is already gone, and Plex's answer to that is recorded nowhere (rule 11). A NotFound
+            # on a later attempt is therefore treated as the success it describes: the item is not
+            # in the collection, which is exactly what this call was asking for.
+            for item in to_remove:
+                _retry_idempotent(
+                    lambda it=item: collection.removeItems([it]),
+                    label=log_title(collection.title),
+                    already_done=NotFound,
+                )
+        _retry_idempotent(lambda: collection.sortUpdate(sort="custom"), label=log_title(collection.title))
         # INFO only when the membership actually MOVED. A steady row is the common case on a nightly
         # converge, and "items +0 -0" once per collection buried the lines that mattered — a
         # 96-collection server logged ~96 of them a night saying nothing happened.

@@ -893,7 +893,11 @@ def _create_labelled_collection(
         )
     collection = plex.create_collection(section, title, items)
     try:
-        stored = plex.stored_label(collection, label)
+        # BOTH labels in one PUT. A label write costs ~9.3s on a big library whatever it carries,
+        # and this row is brand new — it has no labels, so the replace-semantics hazard that
+        # `_apply_shortlist_label` guards against cannot apply here (nothing to drop). That guard
+        # still stands for EXISTING rows, which is where the hazard lives.
+        stored = plex.stored_label(collection, label, extra=LABEL_PREFIX)
     except Exception:
         # An unlabelled row must not be allowed to outlive this call.
         logger.error("{}: could not label the new row in '{}' — removing it", profile.username, section.title)
@@ -913,6 +917,10 @@ def _create_labelled_collection(
                 section.title,
             )
         raise
+    # Normally a FREE no-op now: the label went on in the create write above, so this sees it in the
+    # reloaded label list and returns without touching Plex. Kept rather than deleted because it is
+    # the second chance when that write fell back to the critical label alone — and it brings its own
+    # guard, so the retry is the safe read-modify-write rather than a bare replace.
     _apply_shortlist_label(plex, collection, profile.username)
     if order_work is not None:
         order_work.append((collection, [p.rating_key for p in picks]))

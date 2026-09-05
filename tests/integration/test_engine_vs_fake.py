@@ -2837,3 +2837,56 @@ def test_a_scoped_run_does_not_resurrect_a_scheduled_off_seeded_row(fakes, tmp_p
 
     assert later.ok
     assert not (seeded & on_home()), "the 03:30 run put a scheduled-off {top_seed} row back on Home"
+
+
+def test_two_labels_go_on_in_one_write_and_do_not_disturb_a_foreign_label(fakes):
+    """The claim the label batching rests on, proved against real plexapi + the fake PMS.
+
+    The unit tests can only assert what OUR code hands plexapi. The load-bearing behaviour is
+    plexapi's: `editTags` concatenates `existing + new` and PUTs an ABSOLUTE tag set. So a plexapi
+    upgrade that changed it would leave every mock-based test green while a batched write silently
+    dropped a co-managing tool's label — or, far worse, another user's `shortlist_<user>` label,
+    which is the only thing hiding that row from the rest of the server.
+
+    Two things are asserted, and the second is the safety one:
+      1. both labels arrive in a SINGLE PUT (the ~10%-of-a-run saving), and
+      2. a label already on the collection SURVIVES that write.
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    section = next(s for s in plex.sections() if s.type == "movie")
+    item = section.all(maxresults=1)[0]
+
+    puts: list[str] = []
+    session = plex._server._session
+    original = session.request
+
+    def counting(method, url, **kwargs):
+        if method.upper() == "PUT" and "/all" in url:
+            puts.append(url.split("?")[0])
+        return original(method, url, **kwargs)
+
+    session.request = counting
+    collection = None
+    try:
+        collection = plex.create_collection(section, "zz batched label probe", [item])
+        # A co-managing tool's label, already on the row before we touch it.
+        collection.addLabel("Kometa_managed")
+        collection.reload()
+        puts.clear()
+
+        stored = plex.stored_label(collection, "shortlist_bob", extra="shortlist")
+
+        assert len(puts) == 1, f"both labels must ride in ONE write, got {len(puts)}: {puts}"
+        assert stored.lower() == "shortlist_bob", "the CRITICAL label's casing is what filters exclude"
+        collection.reload()
+        tags = {t.tag.lower() for t in collection.labels}
+        assert "shortlist_bob" in tags
+        assert "shortlist" in tags
+        assert "kometa_managed" in tags, (
+            "a label write is an ABSOLUTE set — a foreign label must survive it, or this write "
+            "would be capable of dropping another user's shortlist_<user> label too"
+        )
+    finally:
+        if collection is not None:
+            collection.delete()

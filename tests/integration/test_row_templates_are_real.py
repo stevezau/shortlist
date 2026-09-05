@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -166,7 +167,24 @@ def engine_ctx(engine_config: EngineConfig, mock_plextv, mock_tmdb, mock_curator
     }
     plex.owned_collections.return_value = {}
     plex.find_owned_collections.return_value = []
-    plex.stored_label.side_effect = lambda collection, label: label.replace("shortlist", "Shortlist", 1)
+
+    def _stored_label(collection, label, *, extra=None):
+        """Leave the labels ON the collection, as the real client does.
+
+        Returning the casing without touching the object left every row tripping
+        `_apply_shortlist_label`'s "owner label is not in the labels Plex returned" guard — a state a
+        real PMS cannot produce, and the exact easier-than-real fake `test_delivery` avoids.
+        `extra` lands in the same write, because on a new row it does.
+        """
+        current = list(getattr(collection, "_labels", []))
+        for name in (label, extra):
+            if name is not None and not any(t.tag.lower() == name.lower() for t in current):
+                current.append(SimpleNamespace(tag=name.replace("shortlist", "Shortlist", 1)))
+        collection._labels = current
+        collection.labels = current
+        return label.replace("shortlist", "Shortlist", 1)
+
+    plex.stored_label.side_effect = _stored_label
     # (items, missing) — see PlexClient.fetch_items: a partial batch drops dead keys silently.
     plex.fetch_items.side_effect = lambda keys: ([fake_media_item(k, f"item{k}") for k in keys], [])
 

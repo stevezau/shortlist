@@ -291,11 +291,22 @@ def _labelling_plex_mock(plex: MagicMock) -> MagicMock:
     # would quietly yield nothing — the mock must carry the real shape.
     plex.fetch_items.return_value = ([], [])
 
-    def stored_label(collection, label):
-        stored = label.replace("shortlist", "Shortlist", 1)
+    def stored_label(collection, label, *, extra=None):
+        # `extra` lands in the SAME write, exactly as the real client does on a create — so the
+        # constant label is already present when `_apply_shortlist_label` runs and that call
+        # short-circuits without a write. A fake that ignored `extra` would leave the label absent
+        # and hide the fact that the second write is now redundant.
         current = list(getattr(collection, "_labels", []))
-        if not any(t.tag.lower() == label.lower() for t in current):
-            current.append(SimpleNamespace(tag=stored))
+
+        def _put(name: str) -> str:
+            stored_name = name.replace("shortlist", "Shortlist", 1)
+            if not any(t.tag.lower() == name.lower() for t in current):
+                current.append(SimpleNamespace(tag=stored_name))
+            return stored_name
+
+        stored = _put(label)  # the CRITICAL label's casing is what the caller reports
+        if extra is not None:
+            _put(extra)
         collection._labels = current
         collection.labels = current
         return stored
@@ -378,9 +389,11 @@ class TestDeliverRows:
         # Two labels per collection: the OWNER label everything keys off, and the constant one a
         # co-managing tool can be pointed at (ours are per person, so a 46-account server otherwise
         # needs 46 entries in agregarr's exclusion list, going stale on every roster change).
-        assert [c.args[1] for c in plex.stored_label.call_args_list] == [
-            "shortlist_sarah",
-            "shortlist",
+        # ONE labelling call carrying BOTH labels, not two. A label PUT costs ~9.3s on a large
+        # library whatever it carries, so the second write was 10% of a 46-user run; the row is new,
+        # so there are no existing labels a combined write could drop.
+        assert [(c.args[1], c.kwargs.get("extra")) for c in plex.stored_label.call_args_list] == [
+            ("shortlist_sarah", "shortlist"),
         ]
         # Promotion is the pipeline's job, AFTER filters are merged — never delivery's.
         plex.promote.assert_not_called()
@@ -1800,7 +1813,10 @@ class TestTheConstantLabel:
 
         _diff, stored = deliver_rows(plex, make_profile(), picks(), engine_config)
 
+        # Both labels still go on; the constant one now rides along as `extra` in the SAME write,
+        # so gather from both the positional label and that kwarg.
         applied = [c.args[1] for c in plex.stored_label.call_args_list]
+        applied += [c.kwargs["extra"] for c in plex.stored_label.call_args_list if c.kwargs.get("extra")]
         assert "shortlist_sarah" in applied, "the per-user label is what every share filter excludes"
         assert "shortlist" in applied
         assert stored == "Shortlist_sarah", "the reported label is the OWNER one, not the constant"
@@ -1820,9 +1836,14 @@ class TestTheConstantLabel:
         # was never reached, and deleting it would not have failed anything.
         labelling = plex.stored_label.side_effect
 
-        def boom(collection, label):
+        def boom(collection, label, *, extra=None):
             if label == LABEL_PREFIX:
                 raise RuntimeError("PMS said no")
+            # The create write lands the OWNER label but NOT the constant one — what the real client
+            # does when the batched write fails and it falls back to the critical label alone. That
+            # leaves `_apply_shortlist_label` with work to do, so its swallow is what this exercises;
+            # passing `extra` through here would apply the label and the delete path would never be
+            # approached at all.
             return labelling(collection, label)
 
         plex.stored_label.side_effect = boom
