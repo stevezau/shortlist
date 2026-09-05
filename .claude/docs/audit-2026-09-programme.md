@@ -914,10 +914,21 @@ re-running against HEAD; CI runs plain `eslint .` without `--max-warnings 0` any
 | `false-privacy` | ✅ done | `ebd4e48` |
 | `contrast` | ✅ done | `ebd4e48` |
 | `legend-bug` | ✅ done | `bcd8671` |
-| `wizard-dataloss` | ✅ done | `1179be2` |
+| `wizard-dataloss` | ✅ done | `1179be2` (+ lint fix in `5db61b8`) |
+| `oneclick-delete` | ✅ done | `85be899` |
+| `four-states` | ✅ done (all 6) | `95d650d`, `5db61b8` |
 | everything else | ☐ not started | — |
 
-**7 of 35 implemented, 35 of 35 designed.**
+**10 of 35 implemented, 35 of 35 designed.** Wave 1 complete except `dry-run-gap`;
+Wave 2 complete except `sse-dead`.
+
+Remaining: `dry-run-gap`, `sse-dead`, `evaluation` (Wave 0), the 5 engine items (Wave 3, blocked on
+`evaluation`), `notifications` (Wave 4), 8 Wave 5 items, 8 Wave 6 items, `migration-ci` (Wave 7).
+
+**A lint lesson worth keeping:** `eslint .` is part of CI's bar and vitest + `tsc -b` green is NOT
+enough. `react-hooks/set-state-in-effect` is an ERROR in this config, and a setState nested inside a
+conditional within an effect trips it — `1179be2` shipped one and it was only caught two commits
+later by running `eslint .` directly.
 
 ### Things found while implementing that the designs did not predict
 
