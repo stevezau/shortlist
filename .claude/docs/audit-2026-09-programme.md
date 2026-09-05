@@ -920,9 +920,10 @@ re-running against HEAD; CI runs plain `eslint .` without `--max-warnings 0` any
 | `evaluation` (Wave 0) | ✅ done | `5a8a49c` |
 | `affinity` + `dampener` | ✅ primitives done, wiring pending | `aac9b48` |
 | `migration-ci` | ✅ done | merged from worktree, `56adbfa` |
+| Wave 6 — all 8 items | ✅ done | merged from worktree, `0821a84` |
 | everything else | ☐ not started | — |
 
-**12 of 35 implemented, 35 of 35 designed.** (`affinity`/`dampener` are primitives only — nothing stamps `genre_penalty` yet, so the new term is inert until the wiring lands.) Wave 1 complete except `dry-run-gap`;
+**20 of 35 implemented, 35 of 35 designed.** (`affinity`/`dampener` are primitives only — nothing stamps `genre_penalty` yet, so the new term is inert until the wiring lands.) Wave 1 complete except `dry-run-gap`;
 Wave 2 complete except `sse-dead`.
 
 Remaining: `dry-run-gap`, `sse-dead`, `evaluation` (Wave 0), the 5 engine items (Wave 3, blocked on
@@ -961,3 +962,31 @@ later by running `eslint .` directly.
 5. **`legend-bug` dots vs badges** — left as dots, because `PickLine` uses dots too and changing only
    the legend makes the key disagree with what it is a key for.
 6. **`seo` FAQ schema** — the rich result is discontinued. Still worth doing for AI crawlers, or drop?
+
+
+### Two MANUAL actions for the owner (no API exists for either)
+
+1. **Docker Hub categories** — hub.docker.com → `stevezzau/shortlist` → Settings → Categories →
+   "Integration & delivery" + "Content management system". The sync workflow's Action has no
+   `categories` input and the taxonomy has no home-media entry, so this is not automatable.
+2. **GitHub social preview** — Settings → General → Social preview → upload
+   `docs/images/social-preview.png`. Repo-level social previews have no API.
+
+### Wave 6 decisions taken by the agent, recorded
+
+- **Badge amber is `#a06a00`** (4.61:1 with white, passes AA). `--amber-deep` (`#b87d05`) only
+  reaches 3.5:1 and was NOT used. This answers the owner decision that was outstanding.
+- **The privacy diagram is HTML + inline SVG icons, not one big SVG** — SVG text does not wrap, and a
+  fixed viewBox renders at ~8px inside the 68ch prose column at 320px. Measured at 320/1024/1280 in
+  both themes, no overflow.
+- **`.reveal` sits on the inner `.wrap`, not `<section>`** so tinted background bands do not slide,
+  and the FAQ is excluded because `<details>` deep-links into it.
+- **A bug in the design's own CSS was found and fixed**: the transition was on the HIDDEN rule, so
+  every below-the-fold section faded OUT for 0.5s on load before fading in (measured opacity 0.0166).
+  The transition now lives on `.is-visible`.
+
+### e2e note
+
+`pytest -m e2e` refuses to run when `web/dist` is older than `web/src` — it errors rather than
+passing against the previous UI. After merging any frontend work, rebuild first:
+`cd web && ./node_modules/.bin/tsc -b && ./node_modules/.bin/vite build`.
