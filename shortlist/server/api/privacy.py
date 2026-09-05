@@ -91,8 +91,9 @@ class PrivacyStatusOut(PassthroughModel):
     #: read failed) | "not_enforced" (a run looked through a real account's eyes and Plex was serving
     #: other people's rows anyway) | "missing" (a hide rule is absent from someone's share) | "clean".
     #:
-    #: "not_enforced" outranks "missing" because the two cannot co-occur on one account: the
-    #: enforcement check only runs where our excludes are already stored.
+    #: "missing" outranks "not_enforced": the two CAN co-occur (the engine's spot-check gate is
+    #: `any` of our labels, not all), and only a missing rule is something the owner's next run
+    #: fixes. The exposure still reaches the enforcement panel on its own either way.
     summary: str
     accounts: list[AccountPrivacyOut]
     #: The per-person row labels that exist on Plex right now — what the verdict was measured
@@ -219,23 +220,33 @@ def _summary(status: privacy_status.SharingStatus, accounts: list[dict], enforce
     A failed read comes first because everything below it is then meaningless, and a page that reads
     green off an outage is the failure this whole item exists to prevent.
 
-    **A measured exposure outranks a stored filter**, and that ordering is the whole point.
-    `_verify_filters_enforced` only spot-checks accounts that ALREADY carry our excludes
-    (`pipeline.py:602` skips the rest), so the state discussion #88 reported — Plex storing every
-    rule and serving other people's rows anyway — has `missing` EMPTY on every account. Ranking on
-    `missing` alone printed "Every account hides all N rows that aren't theirs" directly above the
-    red panel saying Plex is ignoring the filter. Stored is not enforced; the headline has to say so.
+    **A measured exposure beats a CLEAN filter set, and loses to a missing rule.** Both halves are
+    load-bearing and neither is obvious.
+
+    Against clean: `_verify_filters_enforced` only spot-checks accounts that already carry our
+    excludes, so the state discussion #88 reported — Plex storing every rule and serving other
+    people's rows anyway — has `missing` EMPTY on every account. Ranking on `missing` alone printed
+    "Every account hides all N rows that aren't theirs" above the red panel saying Plex is ignoring
+    the filter. Stored is not enforced.
+
+    Against missing: the two CAN co-occur, which a first pass here assumed they could not. The
+    engine's gate is `any(...)` — at least ONE of our labels, not all of them (`pipeline.py:602`) —
+    and `unhidden_rows_on_home` reports any of our rows on that Home whether or not that row's
+    exclude was ever stored. So an account carrying one exclude and missing another is both. When
+    that happens the missing rule is the one the owner can act on (the next run merges it back),
+    while "Plex is ignoring the filter" tells them to file an issue — so the actionable verdict
+    leads, and the measurement still reaches the enforcement panel on its own.
     """
     if status.error:
         return "unreadable"
     if status.rows_error:
         return "rows_unknown"
+    if any(a["state"] == "missing" for a in accounts):
+        return "missing"
     # Only a run that actually LOOKED can report an exposure. An unmeasured empty result is "nobody
     # checked", never "somebody is exposed" — the same distinction `measured` exists to hold.
     if enforcement["measured"] and enforcement["not_enforced"]:
         return "not_enforced"
-    if any(a["state"] == "missing" for a in accounts):
-        return "missing"
     return "clean"
 
 
