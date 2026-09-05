@@ -29,8 +29,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { GatedSwitch } from "@/components/ui/gated-switch";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -424,12 +424,11 @@ export function UsersPage() {
                         {/* Gated on the PRESET, not on `restricted` — plex.tv sets that for every Plex
                             Home user, so keying on it greyed out ordinary managed accounts that can
                             perfectly well have a row (#20). */}
-                        <Switch
+                        <GatedSwitch
                           checked={user.enabled && !user.restriction_profile}
-                          disabled={Boolean(user.restriction_profile)}
-                          title={
+                          reason={
                             user.restriction_profile
-                              ? `Plex's ${profileName(user)} restriction profile is set on this account — Plex refuses the privacy filters Shortlist writes for it, so set the profile to None in Plex to enable`
+                              ? `Plex's ${profileName(user)} restriction profile is set on this account — Plex won't let Shortlist hide anything from it, so a row here couldn't be kept private. Clear the Restriction Profile in Plex (Settings → Users & Sharing) to enable.`
                               : undefined
                           }
                           onCheckedChange={(enabled) =>

@@ -1115,3 +1115,44 @@ be dead code — only referenced by its own test, not by any page; noted, not fi
 (122-147), `web/openapi.snapshot.json` (`ReportRunsOut`), `web/src/test/impact-report.test.tsx`
 (370-400, and a live `vitest run` confirming 45/45 pass today), `grep` across `web/src` for
 `border-primary`, `bg-accent`/`text-accent`, `prefers-color-scheme`/`data-theme`/`ThemeProvider`.
+
+
+---
+
+## 5. Decisions taken at implementation (all four items shipped)
+
+Answers to the open questions above, and the two things that had changed since this was written.
+
+1. **§1.6 Q1 — chips vs. the Verdict card's dots: the Verdict line is authoritative, and both
+   stay.** They can disagree, because `run-failed-*` / `run-partial-*` are dismissable
+   (`notifications.py:162,173`) while the Verdict dots read raw `EffectivenessReport` fields no
+   dismissal can silence. Dropping the raw dots in favour of a chip that can be switched off would
+   trade ground truth for an acknowledgement flag — the failure the bell's own comment warns about
+   ("silence has to mean silence"). So the strip is worded as a summary of what is OUTSTANDING, not
+   a verdict on health: the list is labelled "Open alerts by area" and a quiet chip reads
+   "nothing outstanding", which stays true after a dismissal. Both files carry the reasoning.
+   Note the privacy alerts (`unhideable-rows-*`, `filters-not-enforced-*`) are NOT dismissable, so
+   the Privacy chip cannot be silenced at all.
+2. **§1.6 Q2 — always-on chips kept.** Six chips in fixed positions; a strip whose shape changes
+   with the weather is harder to scan than one that is always the same size.
+3. **A 14th builder now exists** — `_secrets_we_cannot_read` (`notifications.py:122`), added since
+   this design was written. Deliberately NOT mapped to a category: a lost `/config/secret.key`
+   breaks whichever features used the credentials it encrypted, not one subsystem. It surfaces
+   through the "Other" fallback with its own `/settings` destination, which is what that fallback
+   is for. `rows-unnamed-*` is mapped but is `info`, so it cannot reach a chip today; the mapping
+   exists so that raising its severity later files it under Rows rather than "Other".
+4. **One guard the design did not have**: a chip's href takes the alert's `action_url` only when it
+   is an in-app path. `update-*` carries an external release URL, and a router `Link` would resolve
+   that relative to the app.
+5. **§3.2 — the 404 became `web/src/pages/not-found.tsx`.** Every other route element in `App.tsx`
+   is a page component; the catch-all was the one inline `EmptyState`, and inline JSX inside a
+   `<Route>` cannot be rendered by a test on its own.
+6. **§4.2 Gap 2 copy** reads ", the run failed" / ", N people failed" / ", no errors" — the middle
+   tier names the count, so the amber is explained rather than merely coloured.
+7. **Measured, not reasoned** (`playwright`, real app + `fake_plex`): the strip is 3 rows / 94px at
+   320px, 2 rows / 60px at 390px, 1 row / 26px at 1024px and 1280px, with **no** horizontal
+   overflow at any width. `test_mobile_audit.py` still reports the one pre-existing 320px overflow
+   (row edit) and nothing new. The chips are 26px tall, which the audit reports as a small tap
+   target — in line with the app's existing controls at that density (20px switches, 20px
+   breadcrumbs, 32px tabs), so they were left as they are rather than made the tallest thing on the
+   dashboard.

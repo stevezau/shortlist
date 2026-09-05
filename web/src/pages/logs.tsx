@@ -81,8 +81,8 @@ function toPlainText(lines: LogLine[]): string {
 
 export function LogsPage() {
   const [level, setLevel] = useState<Level>("INFO");
-  // The next level DOWN, for the empty-state hint — suggesting a hardcoded "DEBUG" is useless
-  // advice when you are already on it, and wrong advice when you are on TRACE-like breadth.
+  // The next level DOWN, for the empty state's "show me more" button — a hardcoded "DEBUG" would be
+  // a no-op when you are already on it, and the button has to disappear rather than do nothing.
   const quieter = LEVELS[LEVELS.indexOf(level) - 1];
   const [search, setSearch] = useState("");
   const [follow, setFollow] = useState(true);
@@ -179,13 +179,40 @@ export function LogsPage() {
         query={query}
         skeleton={<Skeleton className="h-96 w-full" />}
         isEmpty={(page: LogPage) => page.lines.length === 0}
+        // The hint states the fact; the remedies are buttons. They were prose ("Try DEBUG, or clear
+        // the filter") naming two controls already on this page — an instruction to go and find
+        // something, where the thing itself fits in the same space.
         empty={
           <EmptyState
             title={search ? "Nothing matches that filter" : "No log lines yet"}
             hint={
               search
-                ? `No ${level}-or-louder lines contain “${search}”.${quieter ? ` Try ${quieter}, or clear the filter.` : " Try clearing the filter."}`
-                : `Nothing has been logged at ${level} or louder yet.${quieter ? ` Try ${quieter}, or run something first.` : " Run something first."}`
+                ? `No ${level}-or-louder lines contain “${search}”.`
+                : `Nothing has been logged at ${level} or louder yet.`
+            }
+            action={
+              search || quieter ? (
+                <div className="flex flex-wrap justify-center gap-2">
+                  {search && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSearch("")}
+                    >
+                      Clear filter
+                    </Button>
+                  )}
+                  {quieter && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setLevel(quieter)}
+                    >
+                      Show {quieter} and louder
+                    </Button>
+                  )}
+                </div>
+              ) : undefined
             }
           />
         }

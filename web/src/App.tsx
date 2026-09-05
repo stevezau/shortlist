@@ -6,7 +6,7 @@ import {
 import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 
 import { AppShell } from "@/components/layout/app-shell";
-import { EmptyState, ErrorState } from "@/components/query-boundary";
+import { ErrorState } from "@/components/query-boundary";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api";
 import { basePath } from "@/lib/base-path";
@@ -14,6 +14,7 @@ import { resolveArea } from "@/lib/auth";
 import { queryKeys, useSession, useSetupState } from "@/lib/queries";
 import { DashboardPage } from "@/pages/dashboard";
 import { LoginPage } from "@/pages/login";
+import { NotFoundPage } from "@/pages/not-found";
 import { RequestsPage } from "@/pages/requests";
 import { RowEditPage } from "@/pages/row-edit";
 import { RowRenamePage } from "@/pages/row-rename";
@@ -147,15 +148,7 @@ export default function App() {
             <Route path="issue" element={<IssuePage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="settings/uninstall" element={<UninstallPage />} />
-            <Route
-              path="*"
-              element={
-                <EmptyState
-                  title="Page not found"
-                  hint="That address doesn't exist. Use the navigation on the left."
-                />
-              }
-            />
+            <Route path="*" element={<NotFoundPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

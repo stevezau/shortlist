@@ -216,7 +216,8 @@ describe("ImpactReport", () => {
     // Each requests figure in its OWN slot. `/sent ·/` matched the label regardless of which number
     // sat beside it, and the fixture had two of the three equal — so any figure could appear in any
     // slot (mutation audit 2026-08-25). The three are now distinct and each is named.
-    const requestsLine = screen.getByText(/awaiting approval/).textContent ?? "";
+    const requestsLine =
+      screen.getByText(/awaiting approval/).textContent ?? "";
     expect(requestsLine).toMatch(/21\s*sent/);
     expect(requestsLine).toMatch(/23\s*watched since/);
     expect(requestsLine).toMatch(/22\s*awaiting approval/);
@@ -377,8 +378,15 @@ describe("ImpactReport", () => {
     // this line never rendered and "with errors" / ", no errors" could be swapped freely.
     getReport.mockResolvedValue({
       ...REPORT,
-      runs: { ...REPORT.runs, last_finished: new Date(Date.now() - 3600_000).toISOString(), errors_last: 0 },
-      watch_sync: { ...REPORT.watch_sync, last: new Date(Date.now() - 7200_000).toISOString() },
+      runs: {
+        ...REPORT.runs,
+        last_finished: new Date(Date.now() - 3600_000).toISOString(),
+        errors_last: 0,
+      },
+      watch_sync: {
+        ...REPORT.watch_sync,
+        last: new Date(Date.now() - 7200_000).toISOString(),
+      },
     });
     renderReport();
 
@@ -386,19 +394,84 @@ describe("ImpactReport", () => {
     expect(screen.getByText(/Watch status synced 2h ago/)).toBeTruthy();
   });
 
-  it("says a run had errors when it did, and colours the dot for it", async () => {
+  // The three tiers of "how did the last run go" are the same three `notifications.py` already
+  // draws (`_last_run_problem`: whole-run `error` vs. per-user `warning`). A binary red/green dot
+  // reported a run that finished with two people un-rebuilt identically to a run that died — while
+  // the bell, on the same screen, called it a warning.
+  it("colours the dot amber and counts the people when the run itself succeeded", async () => {
     getReport.mockResolvedValue({
       ...REPORT,
-      runs: { ...REPORT.runs, last_finished: new Date(Date.now() - 3600_000).toISOString(), errors_last: 2 },
+      runs: {
+        ...REPORT.runs,
+        last_status: "ok",
+        last_finished: new Date(Date.now() - 3600_000).toISOString(),
+        errors_last: 2,
+      },
     });
     renderReport();
 
-    const line = await screen.findByText(/Last run 1h ago, with errors/);
-    // The dot beside it is the at-a-glance half of the same claim; green next to "with errors" is
-    // worse than no dot at all.
+    const line = await screen.findByText(/Last run 1h ago, 2 people failed/);
+    const dot = line.querySelector("span[class*='rounded-full']");
+    expect(dot?.className).toMatch(/warning/);
+    expect(dot?.className).not.toMatch(/destructive/);
+    expect(dot?.className).not.toMatch(/success/);
+  });
+
+  it("says one person, not 1 people", async () => {
+    getReport.mockResolvedValue({
+      ...REPORT,
+      runs: {
+        ...REPORT.runs,
+        last_status: "ok",
+        last_finished: new Date(Date.now() - 3600_000).toISOString(),
+        errors_last: 1,
+      },
+    });
+    renderReport();
+
+    expect(
+      await screen.findByText(/Last run 1h ago, 1 person failed/),
+    ).toBeTruthy();
+  });
+
+  it("colours the dot destructive when the RUN failed, with nobody's row attempted", async () => {
+    getReport.mockResolvedValue({
+      ...REPORT,
+      runs: {
+        ...REPORT.runs,
+        last_status: "error",
+        last_finished: new Date(Date.now() - 3600_000).toISOString(),
+        errors_last: 0,
+      },
+    });
+    renderReport();
+
+    const line = await screen.findByText(/Last run 1h ago, the run failed/);
     const dot = line.querySelector("span[class*='rounded-full']");
     expect(dot?.className).toMatch(/destructive/);
-    expect(dot?.className).not.toMatch(/success/);
+    expect(dot?.className).not.toMatch(/warning/);
+    // "0 people failed" is the sentence a count-first implementation writes here.
+    expect(screen.queryByText(/0 people failed/)).toBeNull();
+  });
+
+  it("still reads as a failure when the run died AFTER some people had already errored", async () => {
+    // The ordering guard: checking `errors_last` before `last_status` downgrades a dead run to
+    // amber the moment anyone errored on the way down, which is the common shape of a real failure.
+    getReport.mockResolvedValue({
+      ...REPORT,
+      runs: {
+        ...REPORT.runs,
+        last_status: "error",
+        last_finished: new Date(Date.now() - 3600_000).toISOString(),
+        errors_last: 3,
+      },
+    });
+    renderReport();
+
+    const line = await screen.findByText(/Last run 1h ago, the run failed/);
+    const dot = line.querySelector("span[class*='rounded-full']");
+    expect(dot?.className).toMatch(/destructive/);
+    expect(dot?.className).not.toMatch(/warning/);
   });
 
   it("draws a gain as a gain and a loss as a loss", async () => {
@@ -441,7 +514,11 @@ describe("ImpactReport", () => {
     // A fresh install has no listener yet, which is not a fault and must not render as one.
     getReport.mockResolvedValue({
       ...REPORT,
-      watch_sync: { ...REPORT.watch_sync, live_since: null, live_down_since: null },
+      watch_sync: {
+        ...REPORT.watch_sync,
+        live_since: null,
+        live_down_since: null,
+      },
     });
     renderReport();
 
@@ -468,7 +545,9 @@ describe("ImpactReport", () => {
     // a link to a page that 404s is worse than plain text.
     getReport.mockResolvedValue({
       ...REPORT,
-      recent: [{ ...REPORT.recent[0], user_id: null, display_name: "departed" }],
+      recent: [
+        { ...REPORT.recent[0], user_id: null, display_name: "departed" },
+      ],
     });
     renderReport();
 
