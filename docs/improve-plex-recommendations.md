@@ -120,6 +120,9 @@ docker run -d --name shortlist -p 5959:5959 \
   stevezzau/shortlist:latest
 ```
 
+The doubled **z** in `stevezzau` is deliberate — it's the project's Docker Hub account, not a
+typo. The same image is on GHCR as `ghcr.io/stevezau/shortlist`.
+
 Add `-e SHORTLIST_DRY_RUN=1` to see every change it would make without writing one.
 
 Needs Plex Media Server 1.43.2.10687+ and a Plex Pass on the admin account. No AI key required —

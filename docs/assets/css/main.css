@@ -38,8 +38,11 @@
   --border-strong: rgba(255, 255, 255, 0.16);
   --text: #f4f4f5;
   --text-soft: #c9c9d1;
+  /* Three text tones, not four. A fainter tertiary grey used to sit below --muted and failed WCAG AA
+     wherever it was used — footer headings, frame titles, sidebar labels, all 12-13px (3.15:1 light,
+     3.69:1 dark on --bg-soft). Any tone dark/light enough to pass is indistinguishable from --muted,
+     so there is nothing between --muted and the background. */
   --muted: #94949f;
-  --faint: #6b6b76;
   --accent: var(--amber);
   --accent-text: var(--amber-bright);
   --accent-quiet: rgba(229, 160, 13, 0.12);
@@ -64,7 +67,6 @@
   --text: #18181b;
   --text-soft: #33333a;
   --muted: #5f5f6b;
-  --faint: #8a8a96;
   --accent: var(--amber-deep);
   --accent-text: #93630a;
   --accent-quiet: rgba(229, 160, 13, 0.14);
@@ -313,7 +315,7 @@ hr {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
-  color: var(--faint);
+  color: var(--muted);
   font: inherit;
   font-size: 0.85rem;
   cursor: pointer;
@@ -338,7 +340,7 @@ hr {
   border-radius: 4px;
   padding: 0.05rem 0.3rem;
   font-size: 0.72rem;
-  color: var(--faint);
+  color: var(--muted);
   background: var(--surface-2);
 }
 
@@ -617,7 +619,7 @@ hr {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.76rem;
-  color: var(--faint);
+  color: var(--muted);
   font-family: var(--font-mono);
 }
 
@@ -1356,7 +1358,7 @@ figcaption {
 }
 
 .no {
-  color: var(--faint);
+  color: var(--muted);
 }
 
 /* ---------------------------------------------------------------- code -- */
@@ -1552,14 +1554,14 @@ figcaption {
 }
 
 .footer h4 a:hover {
-  color: var(--ink);
+  color: var(--text);
 }
 
 .footer h4 {
   font-size: 0.78rem;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: var(--faint);
+  color: var(--muted);
   margin-bottom: 0.85rem;
   font-weight: 640;
 }
@@ -1602,7 +1604,7 @@ figcaption {
   align-items: center;
   border-top: 1px solid var(--border);
   padding-top: 1.5rem;
-  color: var(--faint);
+  color: var(--muted);
   font-size: 0.85rem;
 }
 
@@ -1633,7 +1635,7 @@ figcaption {
   font-size: 0.74rem;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: var(--faint);
+  color: var(--muted);
   margin: 0 0 0.75rem;
   font-weight: 640;
 }
@@ -1897,7 +1899,7 @@ figcaption {
 .prose .anchor {
   opacity: 0;
   margin-left: 0.4rem;
-  color: var(--faint);
+  color: var(--muted);
   text-decoration: none;
   font-weight: 400;
   transition: opacity 0.15s var(--ease);
@@ -1938,7 +1940,7 @@ figcaption {
 
 .pager small {
   display: block;
-  color: var(--faint);
+  color: var(--muted);
   font-size: 0.78rem;
   margin-bottom: 0.2rem;
 }
@@ -2002,7 +2004,7 @@ figcaption {
 .search-dialog__input svg {
   width: 17px;
   height: 17px;
-  color: var(--faint);
+  color: var(--muted);
   flex: none;
 }
 

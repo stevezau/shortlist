@@ -20,14 +20,16 @@ page could answer a whole question. `/schedule` still redirects here.
 Two jobs are worth knowing about there:
 
 - **Sync watch history** re-reads every watched title in every library, every time it runs — and so
-  does a run's own history top-up, so pressing Run now sees the same thing. It used
-  to read only what changed since the last pass, which missed a series you marked as watched by hand
-  — Plex can leave a show's own date behind when its episodes move, so the series sorted out of view.
-  Reading everything costs nothing measurable (27.4s against 27.3s on a 47-user server), because Plex
-  sends a whole page either way. **Un-watching** is separate and still periodic: dropping a title the
-  read no longer reports, sweeping a deleted library, and withdrawing pick credit all happen on the
-  `sync.watch_full_days` cadence, because each acts on something being ABSENT and one thin answer
-  from Plex should not be enough to act on.
+  does a run's own history top-up, so pressing Run now sees the same thing. Reading everything
+  rather than only what changed is what catches a series you marked as watched by hand: Plex can
+  leave a show's own date behind when its episodes move, so a "what's new since last time" read
+  sorts it out of view and never sees it. Reading everything costs nothing measurable — 27.4s
+  against 27.3s on a 47-user server — because Plex sends a whole page either way.
+
+  **Un-marking something takes effect on the very next sync.** The title leaves that person's
+  watched set, and any credit it was giving a pick is withdrawn with it. The one thing that stays
+  deliberately rare is sweeping a library that has disappeared from your server: that acts on a
+  single answer from Plex about everybody at once, so it runs weekly rather than nightly.
 - **Privacy sync** runs nightly (05:15 by default). It re-merges every account's share filter and
   builds, delivers and promotes nothing. So it can only ever make your server _more_ private. It is
   the cheapest safety net against drift.

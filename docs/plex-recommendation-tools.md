@@ -1,5 +1,8 @@
 ---
 title: Plex recommendation tools compared
+# Re-checking this page against the projects it names? Change this date and nothing else — the
+# paragraph below renders it. Every other tool fact on the page is meant to be true as of it.
+facts_checked: 2026-08-14
 description: Kometa, SuggestArr, Recommendarr, Curatarr and Shortlist compared — what each actually does, and which ones give every Plex user their own recommendations.
 heading: Plex recommendation tools compared
 ---
@@ -9,8 +12,8 @@ recommendations". This page is an attempt at a straight comparison of what each 
 
 **Disclosure:** Shortlist is my project, so read the row about it with that in mind. I've tried to be
 accurate about everything else and to say plainly where another tool is the better pick. Facts
-checked **14 August 2026** against each project's repository — this space moves fast, so verify
-anything that matters to you.
+checked **{{ page.facts_checked | date: "%-d %B %Y" }}** against each project's repository — this
+space moves fast, so verify anything that matters to you.
 [Corrections welcome.](https://github.com/stevezau/shortlist/issues/new/choose)
 
 ## Sent here after trying Kometa or SuggestArr?
@@ -21,18 +24,18 @@ the three names you were almost certainly given first are **Kometa**, **SuggestA
 being precise about why none of them answer that particular question — because working it out by
 installing all three takes an evening.
 
-**[Kometa](https://kometa.wiki/)** (3,400+ stars, formerly Plex Meta Manager) is a metadata and
-collection builder. It creates collections from rules you write in YAML — by genre, by decade, by
-Trakt list, by almost anything — and manages artwork and metadata beautifully. It is the right tool
-for shaping a library, and it's excellent at it.
+**[Kometa](https://kometa.wiki/)** (formerly Plex Meta Manager) is a metadata and collection
+builder. It creates collections from rules you write in YAML — by genre, by decade, by Trakt list,
+by almost anything — and manages artwork and metadata beautifully. It is the right tool for shaping
+a library, and it's excellent at it.
 
 It is not a recommender. It doesn't read anyone's watch history to decide what to suggest, and its
 collections are library-wide: everyone with access sees the same ones. Shortlist is built to run
 alongside Kometa rather than instead of it — it never touches a collection it didn't create.
 
-**[SuggestArr](https://github.com/giuseppe99barchetta/SuggestArr)** (1,200+ stars) watches what you
-recently played and automatically requests similar content through Jellyseerr/Overseerr, so your
-library keeps growing with things you'll probably like. Works with Plex, Jellyfin and Emby.
+**[SuggestArr](https://github.com/giuseppe99barchetta/SuggestArr)** watches what you recently
+played and automatically requests similar content through Jellyseerr/Overseerr, so your library
+keeps growing with things you'll probably like. Works with Plex, Jellyfin and Emby.
 
 It's about **acquisition**, not presentation. Its output is new files on your disk, not a row on
 anyone's home screen — and the "recently watched" trigger is server-wide rather than a per-person

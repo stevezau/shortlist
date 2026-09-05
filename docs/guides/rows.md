@@ -100,7 +100,7 @@ recommend from. **Settings → Finding titles → Enough watch history** is wher
 
 | Choice                                     | What lands on their Plex                                                                                                  |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| **Show the server's highest-rated titles** | They still get the row, filled with what rates highest on this server. The default, and how Shortlist has always behaved. |
+| **Show the server's highest-rated titles** | They still get the row, filled with what rates highest on this server. This is the default.                                 |
 | **Don't build their row**                  | No row is created — and any row they already have is **removed**, so "skip" means gone rather than left to go stale.      |
 
 Either way it resolves itself: the row appears (or returns) on its own the night they cross the

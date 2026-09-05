@@ -9,8 +9,8 @@ your server. Recommended, Home and every pinned collection are library-wide — 
 account. Getting rows built from a person's own viewing means reading that history yourself and
 creating collections from it.
 
-This page covers what Plex genuinely does, the two manual approaches people are usually pointed at,
-and where each one runs out.
+This page covers what Plex genuinely does, why the advice people are usually given doesn't get them
+there, and what reading the history yourself actually involves.
 
 ## What Plex does with watch history today
 
@@ -33,42 +33,29 @@ That last point is the whole problem. On a server with any number of users, the 
 watched every sci-fi film you own and the person who has watched nothing but comedies are looking at
 an identical home screen.
 
-## Manual approach 1: smart collections
+## The one thing smart collections can't do
 
-This is the advice you'll get most often, and it's worth understanding exactly what it buys you.
+"Make a smart collection" is the advice you'll get most often, and it is worth doing — a saved filter
+like "highly rated thrillers you haven't seen" gives your shelf real shape for no cost. It just
+doesn't read anyone's watch history. The filter runs against the library rather than the viewer, so
+`Unplayed` means unplayed **by the admin account**, and every user sees the same row whatever they
+have watched. [How to improve Plex
+recommendations](improve-plex-recommendations.md#smart-collections-the-real-ceiling-of-the-built-in-tools)
+covers what to build and exactly where it stops.
 
-A smart collection is a saved filter. In Plex Web: open a library → **Collections** → create a
-collection → set it to **Smart**, then pick criteria — unwatched, genre, rating above some
-threshold, added in the last year, and so on. Plex keeps it up to date as the library changes, and
-you can promote it to the Home or Recommended shelf.
+Everything below is about the thing smart collections can't reach: a row built from one person's own
+viewing.
 
-```
-Unplayed = true
-AND Genre = Thriller
-AND Audience Rating >= 7.5
-AND Year >= 2015
-```
-
-**What it gets you:** structure. "Highly rated thrillers you haven't seen" is a genuinely better
-starting point than an alphabetical wall of posters, and it costs nothing.
-
-**Where it stops:** the filter is evaluated against the library, not against a person. `Unplayed`
-means unplayed **by the admin account** — smart collection criteria don't follow the viewer. So
-every user sees the same thriller row, including the ones who've already watched everything in it
-and the ones who hate thrillers. You're organising the library, not personalising it.
-
-That's a real improvement and it is where most people should start. It just isn't recommendations.
-
-## Manual approach 2: read the history and build collections yourself
+## Read the history and build collections yourself
 
 The data you need does exist and is reachable.
 
 Each account's watch history lives on the Plex Media Server and can be read per user, which is what
 every tool in this space is doing under the hood. There are two routes:
 
-- **The PMS API, using each share's own token.** When someone accepts a share, that share carries a
-  token scoped to them, and history read with it is genuinely that person's. This is the accurate
-  route, and it's the one Shortlist uses.
+- **Ask the Plex server directly, using each share's own access key.** When someone accepts a share,
+  that share comes with a key that identifies them, and history read with it is genuinely that
+  person's. This is the accurate route, and it's the one Shortlist uses.
 - **[Tautulli](https://tautulli.com/).** Tautulli has watched your server for as long as it's been
   installed and exposes per-user history over its API. Widely used and easy to query. Its
   identifiers are display names rather than stable account IDs, which matters if anyone on your
@@ -77,7 +64,8 @@ every tool in this space is doing under the hood. There are two routes:
 From there the shape of the job is: take what a person watched, find similar titles **that are
 already in your library**, drop anything they've seen, and put the result in a collection. Similarity
 usually comes from [TMDB](https://www.themoviedb.org/) — shared genres, keywords, cast, crew — or
-from a recommendations API like Trakt's, optionally with an LLM ranking the shortlist at the end.
+from a recommendations service like Trakt, optionally with an AI model ranking the shortlist at
+the end.
 
 **Where it stops:** the collection you just built is visible to everyone with access to that
 library. You've made a personal row and published it to the whole server, which is both a privacy
@@ -111,7 +99,7 @@ library-popular or recently-added is fine; producing an empty row is not.
 
 [**Shortlist**](https://github.com/stevezau/shortlist) is a self-hosted container that does this for
 every user on your server, on a schedule. It reads each person's own watch history through their
-share's token, finds similar titles verified to exist in your library, and builds them a
+own share's access key, finds similar titles verified to exist in your library, and builds them a
 "Picked for You" collection that only they can see.
 
 Every pick carries its reason. AI is optional — the built-in picker runs entirely in code with no
@@ -124,6 +112,9 @@ docker run -d --name shortlist -p 5959:5959 \
   -v /path/to/config:/config \
   stevezzau/shortlist:latest
 ```
+
+The doubled **z** in `stevezzau` is deliberate — it's the project's Docker Hub account, not a
+typo. The same image is on GHCR as `ghcr.io/stevezau/shortlist`.
 
 Set `-e SHORTLIST_DRY_RUN=1` to see every change it would make without writing one.
 

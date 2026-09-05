@@ -59,15 +59,16 @@ That's it. Alice sees the collection; nobody else does.
 
 ### Two things to watch out for
 
-**The server owner can't be restricted.** Plex doesn't apply share filters to the admin account, because
-there's no share to filter. If you're the owner, you will see every labelled collection on the
-server no matter what you do. That's a Plex limitation, not something to debug.
+**The server owner can't be restricted.** Plex doesn't apply share filters to the admin account,
+because there's no share to filter. If you're the owner, you will see every labelled collection on
+the server no matter what you do. That's a Plex limitation, not something to debug — so check your
+work from a non-owner test account, because the admin session will always show you everything.
 
-**Movies and TV need separate rows.** A collection lives in one library, and Plex applies label
-restrictions per library (`filterMovies` and `filterTelevision` are distinct). If you want someone to
+**Movies and TV need separate rows.** A collection lives in one library, and Plex keeps the label
+restrictions for a movie library and a TV library as two separate settings. If you want someone to
 have a private row of films _and_ one of shows, that's two collections with the same label. A
-collection holding the wrong type for its library matches neither restriction, which makes it
-impossible to hide from anyone.
+collection holding the wrong type for its library matches neither setting, which makes it impossible
+to hide from anyone.
 
 ## Do it in the wrong order and it leaks
 
@@ -99,23 +100,22 @@ contentRating!=R,label!=picks_bob,label!=picks_carol
 ```
 
 If you overwrite that string with just your own exclusion, you have silently removed someone's
-parental-control restriction or another tool's rules. Parse it, union your label into the existing
-`label!=` values, and leave every other condition exactly as they were.
+parental-control restriction or another tool's rules. Read what's there, add your label alongside the
+`label!=` entries already in it, and leave every other condition exactly as it was.
 
 **Snapshot the original values before your first change.** It's the only way to put a server back
 the way you found it.
 
 ## Why this doesn't scale by hand
 
-The mechanism is sound. The arithmetic isn't.
+The mechanism is sound. The arithmetic isn't. Every private collection needs an exclusion on every
+_other_ account, so the work grows with the square of your user count — twenty users with a row each
+is 380 filter entries, every one of them a string you must edit without corrupting. Add a user, or a
+second row, and you touch them all again.
 
-Every private collection needs an exclusion on every _other_ account. For **n** users each with their
-own row, that's **n × (n−1)** share-filter entries. Twenty users is 380 of them, and each one is a
-read-modify-write against a filter string you must not corrupt. Add a user and you touch every
-existing share. Add a row and you touch them all again. Rebuild the rows nightly and it's a
-non-starter.
-
-Doing it by hand is realistic for one or two collections. Past that you want it automated.
+Doing it by hand is realistic for one or two collections. Past that you want it automated. [A
+different home screen per user](plex-per-user-home-screen.md#what-it-costs-at-your-servers-size) has
+the numbers for a server your size.
 
 ## The automated version
 
@@ -134,6 +134,9 @@ docker run -d --name shortlist -p 5959:5959 \
   stevezzau/shortlist:latest
 ```
 
+The doubled **z** in `stevezzau` is deliberate — it's the project's Docker Hub account, not a
+typo. The same image is on GHCR as `ghcr.io/stevezau/shortlist`.
+
 Set `-e SHORTLIST_DRY_RUN=1` to see every change it _would_ make to your server without writing one.
 
 ## Related
@@ -145,4 +148,4 @@ Set `-e SHORTLIST_DRY_RUN=1` to see every change it _would_ make to your server 
 - [Plex recommendation tools compared](plex-recommendation-tools.md) — which project fits which server
 - [FAQ — How is this private?](faq.md#how-is-this-private-plex-doesnt-have-per-user-collections)
 - [Getting started](getting-started.md) — install and the setup wizard
-- [Reference](reference.md) — settings, API, environment variables
+- [Reference](reference.md) — settings, the API, and how Shortlist decides things

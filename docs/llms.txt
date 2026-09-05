@@ -67,7 +67,10 @@ them as restored.
 - [Home]({{ '/' | absolute_url }}): what Shortlist is, how it works, screenshots, quick start
 - [Getting started]({{ '/getting-started' | absolute_url }}): requirements, Docker install, the setup wizard, first run
 - [Guides]({{ '/guides' | absolute_url }}): the web interface, rows, schedules, per-user overrides, troubleshooting, AI cost control
-- [Reference]({{ '/reference' | absolute_url }}): every configuration key, REST API endpoint, environment variable and default
+- [Reference]({{ '/reference' | absolute_url }}): index of the three reference pages
+- [Settings reference]({{ '/reference/settings' | absolute_url }}): every configuration key, container environment variable, per-row override and default
+- [API reference]({{ '/reference/api' | absolute_url }}): every REST endpoint and its request and response shape
+- [How Shortlist decides things]({{ '/reference/concepts' | absolute_url }}): what "already watched" means, watched vs finished, why the owner sees every row, how a pick is chosen, how rows stay private
 - [FAQ]({{ '/faq' | absolute_url }}): privacy model, what the owner can see, Kometa coexistence, uninstalling
 - [Plex how-to]({{ '/plex-how-to' | absolute_url }}): what Plex itself can and cannot do about recommendations and per-user rows
 - [How to make a Plex collection visible to only one user]({{ '/plex-per-user-collections' | absolute_url }}): the label + share-filter mechanism, the manual steps, and the ordering mistake that leaks

@@ -37,7 +37,7 @@ from the person looking at it. Two people opening the same shared library see th
 same order, whatever either of them has watched. There is no per-account personalisation of library
 shelves anywhere in Plex's settings, and that's the gap every tool in this space is trying to fill.
 
-The one Plex primitive that _is_ evaluated per account is the **share filter**, and specifically its
+The one Plex setting that _is_ evaluated per account is the **share filter**, and specifically its
 label restrictions. That's the lever. It's not a recommendation feature — it's an access-control
 feature — but pointed the right way it's what makes a per-user row possible at all. The
 [per-user collections](plex-per-user-collections.md) page is the full explanation, including the
