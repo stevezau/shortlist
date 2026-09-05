@@ -1673,7 +1673,17 @@ class RowPolicy:
         if key not in self.recency_cuts:
             kinds = [MediaType.MOVIE, MediaType.SHOW] if spec.media == "both" else [MediaType(spec.media)]
             self.recency_cuts[key] = ranking.cut_for_recency(
-                in_library, kinds, self.cfg.candidates_pre_rank, recency, _run_year(self.ctx.run_day)
+                in_library,
+                kinds,
+                self.cfg.candidates_pre_rank,
+                recency,
+                _run_year(self.ctx.run_day),
+                # The same three dials `_candidate_pool` passes. Threading them into only one of the
+                # two cut sites gave a row that overrides `recency` a different ranking function from
+                # its siblings — on the same server, for the same person, on the same night.
+                self.cfg.genre_avoidance,
+                self.cfg.franchise,
+                self.cfg.cast,
             )
         return self.recency_cuts[key]
 

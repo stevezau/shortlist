@@ -303,6 +303,14 @@ VALIDATORS = {
     "exa.search_type": _one_of(*EXA_SEARCH_TYPES),
     "searxng.url": _url_without_credentials,
     "recommendations.watched_pct": _bounded_float(0.0, 1.0),
+    "recommendations.genre_avoidance": _bounded_float(0.0, 1.0),
+    "recommendations.franchise": _bounded_float(0.0, 1.0),
+    "recommendations.cast": _bounded_float(0.0, 1.0),
+    # Bounded, and not only for tidiness. `ContextBuilder.build` consumes this with a bare
+    # `float()`, so an unvalidated "30s" wedges every run and every context-building job with
+    # no way back except editing the DB — and the sweep sleeps this PER CANDIDATE while holding
+    # the Plex writer lock, so a large value stalls the run and everything queued behind it.
+    "plex.orphan_confirm_delay_s": _bounded_float(0.0, 300.0),
     # Refresh cadence in days. 0 = frozen; the ceiling is a validation bound, not a behaviour cap —
     # the old 0..1 fraction could not express anything slower than a fortnight, and a monthly or
     # quarterly row is a legitimate thing to want.

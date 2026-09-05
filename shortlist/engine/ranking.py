@@ -195,7 +195,15 @@ def cut_for_recency(
     return [
         c
         for kind in kinds
-        for c in pre_rank([x for x in in_library if x.media_type is kind], keep, recency, year_now, genre_avoidance)
+        for c in pre_rank(
+            [x for x in in_library if x.media_type is kind],
+            keep,
+            recency,
+            year_now,
+            genre_avoidance,
+            franchise,
+            cast,
+        )
     ]
 
 

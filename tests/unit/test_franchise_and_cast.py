@@ -248,3 +248,41 @@ class TestReasonFor:
         c.attributions.append(Attribution("franchise", "Dune", 1, "x" * 300))
 
         assert reason_for(c) == "Because you watched Dune"
+
+
+class TestTheDialsReachTheLayerRowsActuallyCalls:
+    """`rows.py` calls `cut_for_recency`, never `score` directly.
+
+    Every other test in this file drives `score` or the factor functions, so all of them passed while
+    `cut_for_recency` accepted `franchise` and `cast` and forwarded neither — the dials were inert at
+    every value, not just at their defaults, and the suite could not see it. That is a bug-blind
+    LAYER rather than a bug-blind assertion: the tests were right about the thing they tested.
+    """
+
+    def _pool(self) -> list[Candidate]:
+        plain = Candidate(tmdb_id=1, title="plain", media_type=MediaType.MOVIE, rating=7.0)
+        sequel = Candidate(tmdb_id=2, title="sequel", media_type=MediaType.MOVIE, rating=7.0, in_seed_franchise=True)
+        shared_cast = Candidate(
+            tmdb_id=3, title="shares-cast", media_type=MediaType.MOVIE, rating=7.0, cast_overlap=1.0
+        )
+        return [plain, sequel, shared_cast]
+
+    def _order(self, **dials) -> list[str]:
+        return [c.title for c in ranking.cut_for_recency(self._pool(), [MediaType.MOVIE], 3, 0.0, 0, **dials)]
+
+    def test_the_franchise_dial_changes_the_order_through_cut_for_recency(self):
+        assert self._order(franchise=1.0)[0] == "sequel"
+
+    def test_the_cast_dial_changes_the_order_through_cut_for_recency(self):
+        assert self._order(cast=1.0)[0] == "shares-cast"
+
+    def test_both_dials_off_leaves_the_order_alone(self):
+        """The backward-compatibility half: identical ratings, so nothing may reorder on the signals
+        alone when the dials are down."""
+        assert self._order() == self._order(franchise=0.0, cast=0.0)
+
+    def test_a_dial_at_full_strength_is_not_identical_to_off(self):
+        """The assertion that would have caught the silent no-op: if turning a dial to 1.0 produces
+        the same order as 0.0 on a pool built to be reordered by it, it is not wired up."""
+        assert self._order(franchise=1.0) != self._order(franchise=0.0)
+        assert self._order(cast=1.0) != self._order(cast=0.0)

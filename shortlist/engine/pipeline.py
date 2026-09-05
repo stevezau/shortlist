@@ -243,11 +243,19 @@ def _library_index(ctx: EngineContext, section, genre_counts: Counter[str] | Non
     cache_key = f"index3:{section.key}:{signature}" if signature else None
     if cache_key and (cached := ctx.index_cache.get(cache_key)):
         payload = json.loads(cached)
-        index = {int(k): v for k, v in payload["index"].items()}
-        if genre_counts is not None:
-            genre_counts.update(payload.get("genres", {}))
-        _emit(ctx, section.title, "indexed (cached)", {"items": len(index)})
-        return index
+        # A run with the dial OFF writes `genres: {}` under this same key. Serving that to a later run
+        # with the dial ON is worse than useless: with every section cached the tally is empty and the
+        # dial silently does nothing, and with only SOME sections re-scanned the baseline becomes
+        # whichever libraries happened to miss — so movie candidates get scored against a TV-only
+        # population and are demoted on arithmetic derived from the wrong library. Treat a
+        # genre-less entry as a miss when genres are wanted. An empty library legitimately writing
+        # `{}` costs one harmless re-scan of an empty index.
+        if genre_counts is None or payload.get("genres"):
+            index = {int(k): v for k, v in payload["index"].items()}
+            if genre_counts is not None:
+                genre_counts.update(payload["genres"])
+            _emit(ctx, section.title, "indexed (cached)", {"items": len(index)})
+            return index
     _emit(ctx, section.title, "indexing", {})
     section_genres: Counter[str] = Counter()
     # Only ask for the tally when someone wants it. Passing `genre_counts=` unconditionally would

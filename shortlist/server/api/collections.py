@@ -874,6 +874,12 @@ async def list_collections(request: Request) -> list[dict]:
 
 @router.post("", status_code=201, response_model=CollectionOut)
 async def create_collection(body: CollectionIn, request: Request) -> dict:
+    # `CollectionIn` is the body model for PATCH as well, which is where `dry_run` belongs — but that
+    # makes it part of the POST schema too, and creation has nothing to preview. Silently ignoring it
+    # would mean `POST {"dry_run": true}` answers 201 having created the row: a documented preview
+    # flag that writes, which is the exact shape plex-safety rule 8 exists to prevent.
+    if body.dry_run:
+        raise HTTPException(status_code=422, detail="dry_run is only supported on PATCH and DELETE")
     _validate(body)
     with request.app.state.sessions() as session:
         # The template this row will actually be titled from, not the bare name — a POST may set both.

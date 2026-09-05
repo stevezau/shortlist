@@ -141,7 +141,16 @@ def migrations() -> dict[str, tuple[Path, str]]:
     found: dict[str, tuple[Path, str]] = {}
     for path in sorted(VERSIONS_DIR.glob("[0-9]*.py")):
         source = path.read_text(encoding="utf-8")
-        found[revision_of(source, path.stem[:4])] = (path, fingerprint(source))
+        revision = revision_of(source, path.stem[:4])
+        # Last-file-wins would leave the EARLIER file entirely unchecked — the same badly-resolved
+        # merge `read_manifest` already refuses, one layer down, where it is easier to miss because
+        # the check still reports success for everything it did look at.
+        if revision in found:
+            sys.exit(
+                f"two migration files declare revision {revision}: {found[revision][0].name} and "
+                f"{path.name}. Resolve the duplicate before this check can mean anything."
+            )
+        found[revision] = (path, fingerprint(source))
     return found
 
 

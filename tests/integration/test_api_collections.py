@@ -1684,6 +1684,24 @@ class TestCollectionsApi:
         assert client.post("/api/collections", json={"name": "Movie Night"}).status_code == 201
         assert client.post("/api/collections", json={"name": "Movie Night"}).status_code == 422
 
+    def test_post_refuses_a_dry_run_it_cannot_honour(self, client: TestClient):
+        """`CollectionIn` is shared with PATCH, so `dry_run` is in the POST schema too — and creation
+        has nothing to preview. Ignoring it silently would mean `POST {"dry_run": true}` answers 201
+        having created the row: a documented preview flag that writes, which is the shape
+        plex-safety rule 8 exists to prevent."""
+        r = client.post(
+            "/api/collections",
+            json={"name": "Preview Me", "build": "per_person", "dry_run": True},
+        )
+
+        assert r.status_code == 422
+        assert "dry_run" in r.json()["detail"]
+
+    def test_post_still_creates_a_row_without_the_flag(self, client: TestClient):
+        r = client.post("/api/collections", json={"name": "Real Row", "build": "per_person"})
+
+        assert r.status_code in (200, 201)
+
 
 class TestNoTwoRowsShareATitle:
     """Every door that sets a row's title refuses one another row already renders.

@@ -1048,7 +1048,7 @@ def _queue_retention_prune(sessions: sessionmaker[Session]) -> None:
 # copies whole. `websearch:` was retired for `websearch2:` when the payload changed shape to carry
 # extracted titles beside the raw results — 711 stranded rows on a 46-user server, none of them
 # expired, all of them unreadable. Expiry alone clears these eventually; naming them clears them now.
-_RETIRED_CACHE_PREFIXES = ("websearch:",)
+_RETIRED_CACHE_PREFIXES = ("websearch:", "index2:")
 
 
 def prune_expired_cache(session: Session) -> int:

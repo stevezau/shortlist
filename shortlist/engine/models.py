@@ -1168,14 +1168,6 @@ class EngineConfig:
     # the two don't fight. True (default) -> apply the configured anchors. Independent of delivery and
     # promotion — turning it off still delivers and hides rows; it only stops the reordering.
     manage_shelf_order: bool = True
-    # Wall-clock gap, in seconds, between the two independent "still unlabelled?" reads that
-    # `delivery.sweep_broken_rows` demands before DELETING an orphan row — the one irreversible write
-    # in the engine. A transient PMS miss (a mid library-index rebuild) clears within seconds; a
-    # genuine orphan's label never arrives however long you wait, so the wait is real discriminating
-    # power that a same-instant re-read does not have.
-    #
-    # The DATACLASS defaults to 0 (immediate, so tests stay fast and a library caller inherits no
-    # opinion). `settings_store` defaults the PRODUCT to a real delay.
     # How much a person's measured genre avoidance counts when ranking, 0.0 (ignore it, the default
     # and every existing install) .. 1.0. A WEIGHT, never a filter: an avoided genre is only ever
     # asked to be a better match, and `ranking.negative_multiplier` floors the total so it can shade
@@ -1189,6 +1181,14 @@ class EngineConfig:
     # How much shared top-billed cast counts, 0.0 (off, the default) .. 1.0. Prolific actors are
     # discounted before this applies, so it means "shares someone NOTABLE", not "shares anyone".
     cast: float = 0.0
+    # Wall-clock gap, in seconds, between the two independent "still unlabelled?" reads that
+    # `delivery.sweep_broken_rows` demands before DELETING an orphan row — the one irreversible write
+    # in the engine. A transient PMS miss (a mid library-index rebuild) clears within seconds; a
+    # genuine orphan's label never arrives however long you wait, so the wait is real discriminating
+    # power that a same-instant re-read does not have.
+    #
+    # The DATACLASS defaults to 0 (immediate, so tests stay fast and a library caller inherits no
+    # opinion). `settings_store` defaults the PRODUCT to a real delay.
     orphan_confirm_delay_s: float = 0.0
     dry_run: bool = False
     # The curated rows to deliver. Empty -> a single default per-person row synthesized from
