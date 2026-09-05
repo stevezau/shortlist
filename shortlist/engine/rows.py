@@ -1332,6 +1332,43 @@ def _why_no_rows(user: UserProfile, cfg: EngineConfig) -> str:
     return "None of this person's rows were due to rebuild in this run."
 
 
+def _why_nothing_rebuilt(selection: list[dict]) -> str | None:
+    """Why this person's rows hold exactly what they held last night, as one sentence.
+
+    The run page shows a carried-forward person their picks and nothing else, so a second run of the
+    night reads as a run that silently did nothing — the owner's question about run #2 was literally
+    "should it say because they watched nothing since the last run? it's not clear". The trace page
+    has always explained it per row; this is the same answer at the level the run page asks it.
+
+    None as soon as anything was actually rebuilt: there is then a change on the page to look at, and
+    a sentence about the rows that did not move is noise. A cold-start row is `cold_start` here, not
+    one of these two, so it returns None as well.
+
+    Args:
+        selection: The user's `trace["selection"]` entries, one per (row, library).
+
+    Returns:
+        The sentence, or None when this person had something rebuilt.
+    """
+    decisions = [str(entry.get("decision") or "") for entry in selection]
+    if not decisions or any(decision not in ("held_idle", "carried_forward") for decision in decisions):
+        return None
+    held = decisions.count("held_idle")
+    waiting = decisions.count("carried_forward")
+    if not waiting:
+        return (
+            "Their rows were due to rebuild tonight, but they haven't watched anything since those rows "
+            "were built — so last run's titles were redelivered unchanged."
+        )
+    if not held:
+        return "It wasn't any of their rows' night to rebuild, so last run's titles were redelivered unchanged."
+    return (
+        f"Nothing was re-picked for them tonight: {waiting} {'row was' if waiting == 1 else 'rows were'} "
+        f"not due to rebuild, and {held} {'was' if held == 1 else 'were'} held because they haven't "
+        "watched anything since."
+    )
+
+
 def _why_cold_skipped(user: UserProfile, cfg: EngineConfig, specs: list[RowSpec], removed: int) -> str:
     """Plain-English reason a cold-start user got no row, for the same reason `_why_no_rows` exists:
     a bare status word reads as a failure, and this one is a deliberate setting.
@@ -2761,6 +2798,10 @@ def _run_user(
     all_picks = [_with_resolved_rating_key(ctx, pick) for pick in all_picks]
     user_report.picks = all_picks
     user_report.counts.picks = len(all_picks)
+    # Only when nothing else already explains this person: the skip and cancellation reasons are more
+    # specific than anything this can say, and they are set before the rows are walked.
+    if user_report.reason is None:
+        user_report.reason = _why_nothing_rebuilt(user_report.trace.get("selection") or [])
     if not all_picks:
         # "My row is empty / hasn't changed" is the most common thing an operator gets asked, and
         # the answer is always somewhere in this chain — no watch history, no seeds from it, no

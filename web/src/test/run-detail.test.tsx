@@ -140,6 +140,46 @@ describe("RunDetailPage — grouped by library", () => {
     getRunLog.mockResolvedValue([]);
   });
 
+  it("says why a person's rows are identical to last night's, above their picks", async () => {
+    // The second run of a night redelivers most people unchanged. Without this the panel shows the
+    // same titles as the run before it and says nothing, which reads as a run that did nothing
+    // rather than one that decided there was nothing to do.
+    const detail = run([
+      {
+        row_slug: "picked",
+        row_title: "✨ Picked for You",
+        library_key: "1",
+        library_title: "Movies",
+        added: [],
+        removed: [],
+        kept: ["Saving Private Ryan"],
+        deleted: [],
+        created: false,
+        picks: [
+          {
+            rank: 1,
+            rating_key: 0,
+            title: "Saving Private Ryan",
+            reason: "war epic",
+            seed_title: "Pressure",
+            sources: ["tmdb_similar"],
+            affinity: 0.42,
+          },
+        ],
+      },
+    ]);
+    detail.users[0].reason =
+      "It wasn't any of their rows' night to rebuild, so last run's titles were redelivered unchanged.";
+    getRun.mockResolvedValue(detail);
+    renderDetail();
+
+    await expandRows();
+
+    expect(
+      await screen.findByText(/night to rebuild, so last run's titles/),
+    ).toBeInTheDocument();
+  });
+
   it("shows each library as its own group with its own picks, not one merged list", async () => {
     getRun.mockResolvedValue(
       run([

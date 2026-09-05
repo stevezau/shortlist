@@ -542,6 +542,14 @@ function UserPanelBody({
   }
   return (
     <div className="space-y-6">
+      {/* Why their rows look identical to last night's, when that is the answer. A second run of a
+          night redelivers most people unchanged, and without this the panel shows the same titles
+          as the run before it and says nothing at all — which reads as a run that did nothing
+          rather than as a run that decided there was nothing to do. The engine sets this only when
+          NO row of theirs was rebuilt, so it never argues with a change shown below it. */}
+      {result.reason && (
+        <p className="text-sm text-muted-foreground">{result.reason}</p>
+      )}
       <ResultsLegend />
       {[...rows.values()].map((entries) => (
         <RowSection key={entries[0]?.row_slug} entries={entries} />

@@ -5187,6 +5187,32 @@ class TestIdleHoldInARun:
         picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
         assert [p["tmdb_id"] for p in picks] == [17, 18, 19], "the row is redelivered exactly as it was"
 
+    def test_the_person_is_told_why_their_row_looks_identical(self, ctx: EngineContext, mock_plextv):
+        """The run page shows a held person their picks and nothing else.
+
+        Without this the second run of a night reads as a run that silently did nothing, which is
+        exactly how the owner read it. The trace explains it per row; the run page needs the same
+        answer at the level it asks the question.
+        """
+        self._ctx(ctx, hold_days=28, built_days_ago=5, watched_days_ago=30)
+
+        report, _entry = self._run(ctx, mock_plextv)
+
+        assert report.users[0].reason == (
+            "Their rows were due to rebuild tonight, but they haven't watched anything since those "
+            "rows were built — so last run's titles were redelivered unchanged."
+        )
+
+    def test_nothing_is_explained_away_when_a_row_actually_rebuilt(self, ctx: EngineContext, mock_plextv):
+        """A rebuilt row puts a change on the page, and a sentence about rows that did not move
+        would then be noise on top of it."""
+        self._ctx(ctx, hold_days=0, built_days_ago=5, watched_days_ago=30)
+
+        report, entry = self._run(ctx, mock_plextv)
+
+        assert entry["decision"] != "held_idle"
+        assert report.users[0].reason is None
+
     def test_a_held_row_is_never_re_picked(self, ctx: EngineContext, mock_plextv, monkeypatch):
         """The saving this feature exists for: no re-selection, so delivery's unchanged-skip then
         avoids the Plex membership write too."""
