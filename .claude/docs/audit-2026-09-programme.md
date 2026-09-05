@@ -990,3 +990,48 @@ later by running `eslint .` directly.
 `pytest -m e2e` refuses to run when `web/dist` is older than `web/src` — it errors rather than
 passing against the previous UI. After merging any frontend work, rebuild first:
 `cd web && ./node_modules/.bin/tsc -b && ./node_modules/.bin/vite build`.
+
+---
+
+## Wave 8 — landing page, README and domain (added 5 Sep, owner request)
+
+**Not in the original 35.** The owner asked: *"their website was more polished than mine... We need to
+update my website as well and repolish all of that, even the docs on the GitHub page and the README...
+I could even get the shortlist.dev domain."*
+
+He is half right, and the correction matters — see dossier §9 and §13.
+
+**Shortlist's site is AHEAD of theirs on fundamentals:** light + dark themes (theirs is dark-only),
+shadows tuned per theme, ZERO third-party font requests, a universal `:focus-visible` rule (they have
+almost none), and real per-page docs URLs with unique metadata + FAQ JSON-LD. Theirs is **~45 topics
+behind `display:none` in ONE html file** sharing one `<title>`, addressed only by hash — close to
+invisible to search.
+
+**The audit named exactly ONE design gap: motion.** Wave 6 shipped it.
+
+**Where they are genuinely ahead is landing-page RICHNESS, and that was never a picked item:** a
+scroll tour (sticky visual, `IntersectionObserver` per step at `rootMargin: -45% 0px -45% 0px`, rAF
+rail fill), a 12-tile bento grid with a mouse-tracked spotlight and live micro-demos, count-up stat
+cards, two opposing marquees, a typing-terminal setup section, a 3D-tilting browser frame.
+
+Their no-JS fallback is BAD — 6 of 7 tour steps stick at 28% opacity because the dimming rule is not
+scoped to a `.js` class. Shortlist can beat that for free by scoping under `.js`.
+
+Worth copying outright: **their fake URL bar reads `diskovarr.local`**, which quietly says "this runs
+on your own network".
+
+| Item | Notes |
+|---|---|
+| `landing` | Scroll tour + richer structure, `.js`-scoped so no-JS degrades to readable, not dimmed |
+| `readme` | 277 lines, 12 images, and it does not yet use Wave 6's new assets (`rows.png`, `two-account.png`, `wizard-connect.png`) |
+| `domain` | `shortlist.dev` — OWNER DECISION (costs money). Build so switching is config, not a rewrite |
+| `aspect-ratios` | The three screenshots are 3.79:1, 1.23:1 and 1.65:1 — a fixed-ratio pinned frame crops the Plex banner to a sliver. Use `object-fit: contain` or re-export |
+| `dead-token` | `--step` declared at `main.css:20`, never used |
+
+**Why the domain is worth it, concretely:** a GitHub Pages PROJECT site lives on a subpath, and
+`robots.txt` is never read there — that is already recorded in `docs-site-seo-plumbing`, and the
+sitemap needed manual submission before Google fetched it. A root domain removes that whole class of
+problem and makes the social preview and README links read as a product rather than a repo.
+
+**Do NOT regress what is already ahead:** no third-party fonts, keep both themes, keep
+`:focus-visible`, keep per-page docs URLs. A richer landing page must not cost any of those.
