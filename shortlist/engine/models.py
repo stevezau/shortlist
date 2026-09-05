@@ -282,6 +282,12 @@ class UserProfile:
     # moves, so renaming someone can't strand the exclusions that keep their row private.
     nickname: str = ""
     history: list[WatchedItem] = field(default_factory=list)
+    #: Whether `history` came from a read that can be trusted to have returned EVERYTHING — the only
+    #: thing that makes ABSENCE from it evidence. False by default, and deliberately so: withdrawing
+    #: pick credit acts on absence and cannot be undone, so a caller that has not proved completeness
+    #: must not be able to get it wrong by omission. A fail-soft read that skipped one unreadable
+    #: library still returns the other libraries' titles, which is non-empty and looks complete.
+    history_complete: bool = False
     excluded_genres: set[str] = field(default_factory=set)
     blocked_seeds: set[int] = field(default_factory=set)
     row_name_template: str | None = None

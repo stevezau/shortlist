@@ -118,6 +118,12 @@ class WatchSync:
         Returns the full cached set (not just what this read fetched), so callers see the same thing
         a direct complete read would have given them.
 
+        Also stamps ``profile.history_complete`` — whether this read proved it saw everything. Only
+        the cache path does: it deletes on absence only once coverage is proven, so absence from the
+        cached set means something. Both fallbacks below return a raw ``history_source.fetch``, which
+        swallows an unreadable library as "nothing watched there" and hands back the OTHER libraries'
+        titles — non-empty, and indistinguishable from a complete read unless someone says so.
+
         There is no longer a switch to bypass the cache. `sync.watch_incremental=false` used to send
         this straight to the PMS instead — which also meant nothing refreshed `watched_titles`, so
         the user page's watched list silently went stale while the setting sounded like it was making
@@ -131,6 +137,7 @@ class WatchSync:
                 user_id = row.id if row else None
         if user_id is None:
             # A profile with no DB row — there is nothing to cache against.
+            profile.history_complete = False
             return ctx.history_source.fetch(profile, min_completion=ctx.config.min_completion)
 
         cache = self._watch_cache()
@@ -224,10 +231,16 @@ class WatchSync:
             # confusing regression. Fall back to the direct complete read — exactly the behaviour
             # before this cache existed, so it cannot be worse, only slower.
             logger.warning(
-                "watch cache: {} — {} section(s) unreadable, falling back to a complete read",
+                "watch cache: {} — {} section(s) unreadable, falling back to a direct read",
                 profile.username,
                 len(failed),
             )
+            # NOT complete, despite the name this fallback used to carry. `ShareTokenWatchSource.fetch`
+            # catches a per-section failure and moves on, so the very library that just failed here
+            # contributes nothing and the result still comes back non-empty. Serving that as complete
+            # let credit withdrawal read "absent" as "un-watched" and permanently clear the credit on
+            # every pick in the unreadable library.
+            profile.history_complete = False
             return ctx.history_source.fetch(profile, min_completion=ctx.config.min_completion)
 
         fetched = sum(o.fetched for o in outcomes)
@@ -239,6 +252,9 @@ class WatchSync:
             fetched,
             len(history),
         )
+        # Every section read succeeded and the cache owns the answer. The cache only deletes on
+        # absence once a read has proven it covered the window, so absence from this set is evidence.
+        profile.history_complete = True
         return history
 
     def prefill_history(self, ctx, profiles, run_id: int | None = None) -> None:
@@ -381,17 +397,15 @@ class WatchSync:
                 logger.warning(
                     "watch-sync: play-history read failed ({}) — watched state is still fresh", type(e).__name__
                 )
-            # `complete_read=True` unconditionally: every read above is complete (`force_full=True`),
-            # so absence from one is real evidence of an un-watch rather than a narrow cursor.
+            # No completeness flag passed: each profile carries its own, stamped by `refresh_watched`
+            # above, and withdrawal consults that per person. A single roster-wide claim cannot be
+            # true — one person's library being unreadable makes only THEIR read fail soft.
             #
-            # This used to be gated on the WEEKLY sweep, which is what made a pick keep its credit for
-            # up to seven days after the person un-marked it in Plex — reported on #108, where the
-            # dashboard went on calling a title "finished" that Plex no longer had as watched. The
-            # gate was protecting against incremental reads, which no longer exist. Withdrawal's real
-            # guards are unchanged and are the ones that matter: it never touches a credit we watched
-            # happen (a play-log row or a watch percentage), never one older than 30 days, and never
-            # runs for a person whose history came back empty.
-            reconcile_watched(profiles, complete_read=True)
+            # Withdrawal used to be gated on the WEEKLY sweep, which is what made a pick keep its
+            # credit for up to seven days after the person un-marked it in Plex — reported on #108,
+            # where the dashboard went on calling a title "finished" that Plex no longer had as
+            # watched. That gate was protecting against incremental reads, which no longer exist.
+            reconcile_watched(profiles)
             with self._sessions() as session:
                 store = SettingsStore(session)
                 # Stamp the sync so the dashboard can show "watch status synced N ago".

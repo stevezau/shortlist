@@ -525,10 +525,11 @@ class TestTheReportMeansWhatItSays:
                 user_type=UserType.SHARED,
                 slug=f"u{u}",
                 history=[WatchedItem(title="X", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=99999)],
+                history_complete=True,
             )
             for u in range(1, users + 1)
         ]
-        reconcile_watched(factory, profiles, complete_read=True)
+        reconcile_watched(factory, profiles)
 
         with factory() as s:
             after = {p.id for p in s.query(PR).filter(PR.watched_at.isnot(None))}

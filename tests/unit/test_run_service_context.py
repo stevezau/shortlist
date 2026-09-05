@@ -1019,19 +1019,18 @@ class TestSyncWatched:
         assert len(reads) == 3, "the confirming re-read never happened"
 
     def test_credit_withdrawal_runs_on_EVERY_sync_now_that_every_read_is_complete(self, service, sessions, monkeypatch):
-        """`complete_read` decides whether the sync WITHDRAWS pick credit — the one consequence around
-        here that does not self-heal on the next good read, since it edits `picks.watched_at`.
+        """Whether the sync lets a pass WITHDRAW pick credit — the one consequence around here that
+        does not self-heal on the next good read, since it edits `picks.watched_at`.
 
         Withdrawal acts on ABSENCE, so it is only sound when the read was complete. It used to be
         gated on the WEEKLY dead-sweep instead, because incremental reads could not tell "they
         un-watched it" from "this pass did not look" — and that made the dashboard go on calling a
         title "finished" for up to seven days after the person un-marked it in Plex, reported on
-        issue #108. Since #108 every read is complete (`force_full=True`), so the gate protected
-        nothing and now every pass withdraws.
+        issue #108. Since #108 every read is complete, so the cadence gate protected nothing.
 
-        Asserts the KWARG on every pass, not the call count — the call happens either way, so a
-        regression here is invisible to a count. The periodic cadence still exists; it just gates the
-        dead-library sweep alone now.
+        Asserts the flag on the PROFILE, which is what withdrawal actually consults, on every pass —
+        the reconcile call happens either way, so a regression here is invisible to a call count.
+        The periodic cadence still exists; it just gates the dead-library sweep alone now.
         """
         import asyncio
         from datetime import UTC, datetime, timedelta
@@ -1062,7 +1061,7 @@ class TestSyncWatched:
         monkeypatch.setattr(service, "enabled_profiles", lambda session, user_ids=None: [profile])
         seen: list = []
         monkeypatch.setattr(
-            service, "_reconcile_watched", lambda profiles, complete_read=False: seen.append(complete_read)
+            service, "_reconcile_watched", lambda profiles, live_picks=None: seen.append(profiles[0].history_complete)
         )
 
         # First pass: nothing has ever reconciled.
@@ -1274,6 +1273,89 @@ class TestSyncWatched:
         history = service.refresh_watched(ctx, profile)
 
         assert [i.title for i in history] == ["From the complete read"]
+        assert profile.history_complete is False, (
+            "the fallback read claimed completeness — it fail-softs past an unreadable library, so "
+            "absence from it is not evidence and credit withdrawal must not act on it"
+        )
+
+    def test_a_fallback_read_that_lost_a_library_does_not_withdraw_that_librarys_credits(
+        self, service, sessions, monkeypatch
+    ):
+        """The reason `history_complete` exists, end to end: a partial read must not erase credit.
+
+        `ShareTokenWatchSource.fetch` catches a per-section failure and carries on, so a person with
+        two libraries whose second one is unreadable gets back the FIRST library's titles — non-empty,
+        and indistinguishable from a complete read. Withdrawal acts on absence and clears
+        `picks.watched_at`/`finished_at`, which have no other copy, so believing that read once
+        permanently erases every credited pick in the library that failed.
+
+        Uses the real `ShareTokenWatchSource` with the failure injected at the SECTION boundary — a
+        stub of `fetch` itself cannot produce a partial answer, which is why this went unnoticed.
+        """
+        from datetime import UTC, datetime, timedelta
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from shortlist.engine.history import ShareTokenWatchSource
+        from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
+        from shortlist.server.db.models import PickRow, User
+        from shortlist.server.services.run_persistence import reconcile_watched
+
+        with sessions() as session:
+            session.add(User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True))
+            session.commit()
+        with sessions() as session:
+            user = session.query(User).one()
+            # Credited, no observed playback, well inside the 30-day window — i.e. withdrawable if
+            # the read is believed. It lives in the library that is about to fail.
+            session.add(
+                PickRow(
+                    user_id=user.id,
+                    tmdb_id=77,
+                    media_type="movie",
+                    title="In The Broken Library",
+                    collection_slug="picked",
+                    rating_key=555,
+                    rank=1,
+                    watched_at=datetime.now(UTC) - timedelta(days=1),
+                    finished_at=datetime.now(UTC) - timedelta(days=1),
+                )
+            )
+            session.commit()
+
+        plex = MagicMock()
+        plex.sections.return_value = [SimpleNamespace(key="1", type="movie"), SimpleNamespace(key="2", type="movie")]
+
+        def read(section_key, media_type, token, since=None):
+            if str(section_key) == "2":
+                raise RuntimeError("PMS refused this library")
+            return SimpleNamespace(
+                items=[
+                    WatchedItem(
+                        title="Still Readable", media_type=MediaType.MOVIE, watched_at=datetime.now(UTC), tmdb_id=1
+                    )
+                ],
+                covers_window=True,
+            )
+
+        plex.watched_titles.side_effect = read
+        source = ShareTokenWatchSource(plex, MagicMock(), owner_token="OWNER")
+        monkeypatch.setattr(source, "_token_for", lambda user: "TOK")
+
+        profile = UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED, slug="sarah")
+        profile.history = source.fetch(profile, min_completion=0.7)
+
+        assert profile.history, "precondition: the fail-soft read comes back NON-empty, so it looks fine"
+        assert profile.history_complete is False, "a raw fetch must never assert completeness"
+
+        reconcile_watched(sessions, [profile])
+
+        with sessions() as session:
+            pick = session.query(PickRow).filter_by(tmdb_id=77).one()
+            assert pick.watched_at is not None, (
+                "a partial read withdrew the credit for a pick in the library it could not read"
+            )
+            assert pick.finished_at is not None
 
     def test_an_unshared_library_is_skipped_and_keeps_the_cache(self, service, sessions, monkeypatch):
         """A 403 is "not shared with them", NOT an unreadable section.

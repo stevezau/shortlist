@@ -43,11 +43,14 @@ repairing a STALE one means taking `max(show date, newest episode date)`, which 
 read on every library rather than only on libraries holding an undated show — roughly +2.4s per
 person per library on a 47-user server. Cost/benefit call.
 
-**3. A pick stays "finished" on the dashboard after being unmarked in Plex.** Working as designed:
-credit withdrawal (`_withdraw_unwatched`) is gated on the `sync.watch_full_days` pass because it
-edits `picks.watched_at` and does not self-heal, so it lags by up to a week. `a829724` deliberately
-kept it there while moving the watched-set deletion to every sync. Revisit only with that reasoning
-in hand.
+**3. A pick stays "finished" on the dashboard after being unmarked in Plex.** CLOSED by `ea33454`.
+Withdrawal was gated on the `sync.watch_full_days` pass to protect against INCREMENTAL reads, which
+could not tell "they un-watched it" from "this pass did not look". Since #108 no read is
+incremental, so the gate bought nothing but the seven-day lag. Completeness is now a property of
+each person's own read (`UserProfile.history_complete`, stamped by `refresh_watched`) rather than a
+roster-wide claim — the Architecture Review on the first attempt found that a roster-wide `True`
+would erase credit for every pick in a library that failed to read, because `ShareTokenWatchSource.
+fetch` fail-softs past an unreadable section and returns a non-empty answer that looks complete.
 
 **Also outstanding, unrelated to the reporter:**
 
@@ -55,7 +58,8 @@ in hand.
   users x their libraries — not any single query. Two levers, neither tried: fetch the static half of
   a library's metadata once instead of once per user, and run users in parallel (`run.concurrency`
   already exists for other work).
-* **`545a340` and `83cf07a` never had an Architecture Review.** Both touch watch history —
+* ~~**`545a340` and `83cf07a` never had an Architecture Review.**~~ DONE — reviewed, no HIGH
+  findings; its five MED and four LOW are fixed in `5d75496`. Original note: both touch watch history —
   `545a340` changes which rows are DELETED — which the risk list in `.claude/CLAUDE.md` says is not
   optional. Do this before the next release tag.
 

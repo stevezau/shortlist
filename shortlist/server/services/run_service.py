@@ -485,10 +485,8 @@ class RunService:
 
     # -- persistence + audit (delegated to run_persistence) -------------------------------
 
-    def _reconcile_watched(
-        self, profiles, live_picks: dict[int, set[int]] | None = None, *, complete_read: bool = False
-    ) -> None:
-        run_persistence.reconcile_watched(self._sessions, profiles, live_picks, complete_read=complete_read)
+    def _reconcile_watched(self, profiles, live_picks: dict[int, set[int]] | None = None) -> None:
+        run_persistence.reconcile_watched(self._sessions, profiles, live_picks)
 
     def _live_pick_ids(self) -> dict[int, set[int]]:
         """What is in everyone's rows right now — read BEFORE a run rebuilds them (see

@@ -603,7 +603,7 @@ def _withdraw_unwatched(
     observed: set[tuple[int, str]],
     *,
     now: datetime,
-) -> int:
+) -> list[str]:
     """Take back credits that Plex's flag was the ONLY evidence for, once that flag is gone.
 
     Someone can un-watch a title, and Plex marks things watched wrongly often enough that correcting
@@ -622,10 +622,11 @@ def _withdraw_unwatched(
     * **Anything settled.** See `UNWATCH_WITHDRAW_DAYS`: past that, a title missing from the read is
       far more likely to have left the library than to have been un-watched.
 
-    Returns how many were withdrawn, for the log.
+    Returns the titles withdrawn, sorted — the log names them, because the two columns this clears
+    have no other copy and a wrong withdrawal is otherwise undiagnosable.
     """
     cutoff = now - timedelta(days=UNWATCH_WITHDRAW_DAYS)
-    withdrawn = 0
+    withdrawn: list[str] = []
     for pick in session.query(PickRow).filter(PickRow.user_id == user.id, PickRow.watched_at.isnot(None)).all():
         key = (pick.tmdb_id, pick.media_type)
         if key in latest_watch or key in observed:
@@ -642,12 +643,12 @@ def _withdraw_unwatched(
             continue  # settled history — see UNWATCH_WITHDRAW_DAYS
         pick.watched_at = None
         pick.finished_at = None
+        withdrawn.append(pick.title or f"tmdb:{pick.tmdb_id}")
         # The percentage is NOT cleared here, and cannot need to be: the guard above means a pick
         # carrying one is never withdrawn at all. What protects against a percentage outliving its
         # credit — which happens when the credited row is deleted and its history cleared — is
         # `resolve_outcomes`, which refuses to call a percentage with no credit an outcome.
-        withdrawn += 1
-    return withdrawn
+    return sorted(withdrawn)
 
 
 @dataclass
@@ -797,8 +798,6 @@ def reconcile_watched(
     sessions: sessionmaker[Session],
     profiles,
     live_picks: dict[int, set[int]] | None = None,
-    *,
-    complete_read: bool = False,
 ) -> None:
     """Mark the picks a person actually watched — the hit rate, and the whole point of the app.
 
@@ -902,14 +901,19 @@ def reconcile_watched(
             )
             _apply_outcomes(session, user, desired)
 
-            # Only on a FULL re-read, and only for someone whose history actually came back. An
-            # incremental read sees an un-watch only inside the window it covered (see
-            # `WatchSync._complete_read_due`), so "absent from this read" would withdraw half a
-            # roster's credits on any night the cursor was narrow. An EMPTY history is excluded for
-            # the same reason from the other direction: a read that failed and a person who has
-            # watched nothing are indistinguishable here, and wrongly wiping real history is far
-            # worse than leaving one stale credit for someone who un-watched their only title.
-            if complete_read and profile.history:
+            # PER PERSON, never per batch, and only for someone whose history actually came back.
+            # Withdrawal acts on ABSENCE and cannot be undone, so it runs only when THIS person's own
+            # read proved it saw everything — `history_complete`, stamped by `refresh_watched`.
+            #
+            # A roster-wide flag was wrong and provably so: `ShareTokenWatchSource.fetch` swallows an
+            # unreadable library as "nothing watched there" and returns the other libraries' titles,
+            # which is non-empty and looks exactly like a complete read. Every credited pick in the
+            # unreadable library then read as un-watched and lost its credit for good.
+            #
+            # An EMPTY history is excluded from the other direction: a read that failed and a person
+            # who has watched nothing are indistinguishable here, and wrongly wiping real history is
+            # far worse than leaving one stale credit for someone who un-watched their only title.
+            if getattr(profile, "history_complete", False) and profile.history:
                 gone = _withdraw_unwatched(
                     session,
                     user,
@@ -918,7 +922,15 @@ def reconcile_watched(
                     now=datetime.now(UTC),
                 )
                 if gone:
-                    logger.info("watch-sync: withdrew {} un-watched credit(s) for {}", gone, user.username)
+                    # WHICH, not just how many. `watched_at`/`finished_at` have no other copy, so this
+                    # line is the entire forensic trail if it ever takes back something it shouldn't
+                    # — the standard plex-safety rule 10 already sets for writes that reach Plex.
+                    logger.info(
+                        "watch-sync: withdrew {} un-watched credit(s) for {}: {}",
+                        len(gone),
+                        user.username,
+                        ", ".join(gone),
+                    )
 
             existing = shared_rows[user.id]
             _apply_shared(
