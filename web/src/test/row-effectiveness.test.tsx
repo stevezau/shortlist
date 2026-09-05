@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { RowEffectivenessPanel } from "@/components/rows/row-effectiveness";
 import type { RowEffectiveness } from "@/lib/types";
@@ -130,5 +130,45 @@ describe("RowEffectivenessPanel", () => {
 
     expect(screen.getByText(/hasn’t delivered anything yet/i)).toBeTruthy();
     expect(screen.queryByRole("link", { name: /Runs/i })).toBeNull();
+  });
+});
+
+describe("RowEffectivenessPanel when the fetch fails", () => {
+  it("shows an error with a retry instead of a skeleton that never resolves", () => {
+    // `isLoading || !data` reads a FAILED fetch as "still loading": isLoading is false, data stays
+    // undefined, so the panel rendered its skeleton for ever. That is worse than showing nothing —
+    // it looks like something is actively working and gives no way to discover it is not.
+    const retry = vi.fn();
+    render(
+      <MemoryRouter>
+        <RowEffectivenessPanel
+          data={undefined}
+          isLoading={false}
+          isError
+          onRetry={retry}
+          rowSlug="picked for you"
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent(/couldn.t load/i);
+    expect(
+      screen.getByRole("button", { name: /try again/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("still shows the skeleton while genuinely loading", () => {
+    const { container } = render(
+      <MemoryRouter>
+        <RowEffectivenessPanel
+          data={undefined}
+          isLoading
+          rowSlug="picked for you"
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(container.querySelector('[class*="animate-pulse"]')).not.toBeNull();
   });
 });

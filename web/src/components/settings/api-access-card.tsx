@@ -12,6 +12,7 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { apiErrorMessage, apiUrl } from "@/lib/api";
 import { formatDate, timeAgo } from "@/lib/format";
 import { useCopy } from "@/lib/use-copy";
@@ -112,7 +113,26 @@ export function ApiAccessCard() {
           </p>
 
           {status.isLoading ? (
-            <p className="text-sm text-muted-foreground">Loading…</p>
+            <Skeleton className="h-9 w-40" />
+          ) : status.isError ? (
+            /* NOT the "Generate token" fallback. `status.data?.token ?? null` makes a failed fetch
+               look exactly like "no token exists yet", so the card offered a Generate button that
+               would have silently REPLACED a working token — invalidating every script using it,
+               presented as a first-time setup step. Failing closed here costs one retry; failing
+               open costs an integration nobody knows they broke. */
+            <div className="space-y-2">
+              <p className="text-sm text-destructive-text" role="alert">
+                Couldn&rsquo;t check whether an API token exists. Nothing has
+                been changed.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => status.refetch()}
+              >
+                Try again
+              </Button>
+            </div>
           ) : enabled && token ? (
             <div className="space-y-3">
               <TokenField token={token} />

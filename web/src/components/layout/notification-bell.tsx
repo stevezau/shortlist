@@ -138,7 +138,28 @@ export function NotificationBell({
               <X aria-hidden="true" />
             </Button>
           </div>
-          {count === 0 ? (
+          {/* A failed fetch is NOT good news. `data?.notifications ?? []` made an error and a
+              genuinely quiet server identical, so an unreachable API rendered "You're all caught
+              up." — the most reassuring sentence in the app, shown at the exact moment nothing is
+              known. This is the bell that reports privacy problems, so silence has to mean silence. */}
+          {notifications.isPending ? (
+            <p className="px-3 py-8 text-center text-sm text-muted-foreground">
+              Checking&hellip;
+            </p>
+          ) : notifications.isError ? (
+            <div className="space-y-2 px-3 py-6 text-center">
+              <p className="text-sm text-destructive-text">
+                Couldn&rsquo;t load notifications.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => notifications.refetch()}
+              >
+                Try again
+              </Button>
+            </div>
+          ) : count === 0 ? (
             <p className="px-3 py-8 text-center text-sm text-muted-foreground">
               You&rsquo;re all caught up.
             </p>

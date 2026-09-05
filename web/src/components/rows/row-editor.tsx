@@ -518,6 +518,8 @@ export function RowEditor({
         <RowEffectivenessPanel
           data={effectiveness.data}
           isLoading={effectiveness.isLoading}
+          isError={effectiveness.isError}
+          onRetry={() => effectiveness.refetch()}
           rowSlug={collection.slug}
         />
       )}

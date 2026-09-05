@@ -122,3 +122,46 @@ describe("NotificationBell", () => {
     expect(body.textContent).toBe("First paragraph.\n\nSecond paragraph.");
   });
 });
+
+describe("NotificationBell when the fetch fails", () => {
+  it("does not report an error as 'all caught up'", async () => {
+    // `data?.notifications ?? []` made a failed fetch and a genuinely quiet server identical, so an
+    // unreachable API rendered the most reassuring sentence in the app. This is the bell that
+    // surfaces privacy problems and failed runs — silence has to mean silence.
+    getNotifications.mockRejectedValue(new Error("network"));
+    renderBell();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /notifications/i }),
+    );
+
+    expect(
+      await screen.findByText(/couldn.t load notifications/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/all caught up/i)).not.toBeInTheDocument();
+  });
+
+  it("offers a retry when it fails", async () => {
+    getNotifications.mockRejectedValue(new Error("network"));
+    renderBell();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /notifications/i }),
+    );
+
+    expect(
+      await screen.findByRole("button", { name: /try again/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("still says all caught up when the server really is quiet", async () => {
+    getNotifications.mockResolvedValue({ notifications: [] });
+    renderBell();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /notifications/i }),
+    );
+
+    expect(await screen.findByText(/all caught up/i)).toBeInTheDocument();
+  });
+});

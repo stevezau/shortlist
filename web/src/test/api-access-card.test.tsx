@@ -90,3 +90,46 @@ describe("ApiAccessCard", () => {
     await waitFor(() => expect(revokeApiToken).toHaveBeenCalledOnce());
   });
 });
+
+describe("ApiAccessCard when the status fetch fails", () => {
+  it("does not offer to generate a token it could not check for", async () => {
+    // `status.data?.token ?? null` made a failed fetch look exactly like "no token yet", so the card
+    // offered Generate — which REPLACES an existing token and invalidates every script using it,
+    // presented as first-time setup. Failing closed costs a retry; failing open costs an
+    // integration nobody knows they broke.
+    getApiToken.mockRejectedValue(new Error("network"));
+    renderCard();
+
+    expect(
+      await screen.findByText(/couldn.t check whether an api token exists/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /generate token/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says plainly that nothing was changed, and offers a retry", async () => {
+    getApiToken.mockRejectedValue(new Error("network"));
+    renderCard();
+
+    expect(
+      await screen.findByText(/nothing has been changed/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /try again/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("still offers Generate when the server says there is no token", async () => {
+    getApiToken.mockResolvedValue({
+      enabled: false,
+      token: null,
+      created_at: null,
+    } as ApiTokenStatus);
+    renderCard();
+
+    expect(
+      await screen.findByRole("button", { name: /generate token/i }),
+    ).toBeInTheDocument();
+  });
+});

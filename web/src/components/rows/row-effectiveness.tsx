@@ -1,6 +1,7 @@
 import { CalendarClock, Eye, History, Send, TrendingUp } from "lucide-react";
 
 import { StatTile } from "@/components/stat-tile";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { RowEffectiveness } from "@/lib/types";
 
@@ -86,10 +87,18 @@ function LibraryBar({
 export function RowEffectivenessPanel({
   data,
   isLoading,
+  isError,
+  onRetry,
   rowSlug,
 }: {
   data: RowEffectiveness | undefined;
   isLoading: boolean;
+  /** A failed fetch leaves `isLoading` false and `data` undefined — which the old `isLoading ||
+   *  !data` test read as "still loading", so the panel showed its skeleton FOREVER. That is worse
+   *  than showing nothing: it looks like something is actively working, and gives no way to find
+   *  out that it is not. */
+  isError?: boolean;
+  onRetry?: () => void;
   /** The row's SLUG, not its id: `/runs?row=` filters on the slug picks are stamped with. */
   rowSlug: string;
 }) {
@@ -98,7 +107,18 @@ export function RowEffectivenessPanel({
     <div className="space-y-4 rounded-lg border bg-card p-5">
       <h2 className="text-base font-semibold">How this row is doing</h2>
 
-      {isLoading || !data ? (
+      {isError ? (
+        <div className="space-y-2">
+          <p className="text-sm text-destructive-text" role="alert">
+            Couldn&rsquo;t load how this row is doing.
+          </p>
+          {onRetry && (
+            <Button variant="outline" size="sm" onClick={onRetry}>
+              Try again
+            </Button>
+          )}
+        </div>
+      ) : isLoading || !data ? (
         <Skeleton className="h-24 w-full" />
       ) : data.first_delivered_at === null ? (
         <p className="text-sm text-muted-foreground">
