@@ -280,12 +280,16 @@ function ResultsLegend() {
         />
         Kept from last run
       </span>
+      {/* The `{" "}` is load-bearing. JSX drops the newline between a tag and the text after it, so
+          without it the accessible text and any copy-paste read "TitleRotated out for variety" —
+          flexbox `gap` spaces the two apart visually, which is why this survived review, but a
+          screen reader announces the run-together string. The sibling entries above are unaffected
+          because their first child is an aria-hidden dot, not a word. */}
       <span className="inline-flex items-center gap-1.5">
-        <span className="line-through">Title</span>
-        Rotated out for variety
+        <span className="line-through">Title</span> Rotated out for variety
       </span>
       <span className="inline-flex items-center gap-1.5">
-        <span className="font-semibold tabular-nums text-amber-400">#1–3</span>
+        <span className="font-semibold tabular-nums text-amber-400">#1–3</span>{" "}
         Top picks
       </span>
     </div>

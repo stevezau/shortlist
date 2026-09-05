@@ -694,6 +694,16 @@ describe("RunDetailPage — grouped by library", () => {
     expect(screen.getByText("Rotated out for variety")).toBeInTheDocument();
     expect(screen.getByText("Top picks")).toBeInTheDocument();
 
+    // getByText matches a TEXT NODE, so every assertion above passes even when the legend's
+    // accessible text runs two labels together — which is exactly what JSX does to
+    // `<span>Title</span>` followed by bare text on the next line: the newline adjacent to the tag
+    // is dropped, giving "TitleRotated out for variety". Flexbox `gap` hides it visually, so this is
+    // a screen-reader and copy-paste defect rather than a layout one, and only a textContent
+    // assertion can see it at all.
+    const legend = screen.getByText(/What changed/i).parentElement!;
+    expect(legend.textContent).toContain("Title Rotated out for variety");
+    expect(legend.textContent).toContain("#1\u20133 Top picks");
+
     // "removed" now reads as rotation with the reason, not a bare scary count.
     expect(screen.getByText(/2 rotated out/)).toBeInTheDocument();
     expect(
