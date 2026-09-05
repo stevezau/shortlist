@@ -893,3 +893,57 @@ decision — leave as dots, or change both.
 `text-destructive-text` exists with a documented WCAG rationale (3.51–4.02:1 vs 4.84–5.53:1). Exactly
 **8** occurrences of bare `text-destructive` on body text — matches the audit precisely. Mechanical
 rename. Open question: should this become a permanent lint rule?
+
+---
+
+## Implementation progress — 5 Sep, overnight session
+
+**NOT PUSHED.** All commits are local on `dev`. A `dev` push publishes `:dev` and watchtower
+recreates the maintainer's container within ~4h, so pushing unattended is a production deploy to a
+server 40 people use. The owner types `push` when they are back.
+
+Full `pytest` (3984 passed) and the full web suite (1421 passed) plus `tsc -b` were green before each
+commit. `ruff check` clean. ESLint's 5 warnings are pre-existing — verified by stashing and
+re-running against HEAD; CI runs plain `eslint .` without `--max-warnings 0` anyway.
+
+| Item | Status | Commit |
+|---|---|---|
+| `secret-key` | ✅ done | `c9885e9` |
+| `backend-small` (all 5) | ✅ done | `de01565`, `a50d4a6` |
+| `orphan-guard` | ✅ done, incl. the missing e2e test | `9bb5127` |
+| `false-privacy` | ✅ done | `ebd4e48` |
+| `contrast` | ✅ done | `ebd4e48` |
+| `legend-bug` | ✅ done | `bcd8671` |
+| `wizard-dataloss` | ✅ done | `1179be2` |
+| everything else | ☐ not started | — |
+
+**7 of 35 implemented, 35 of 35 designed.**
+
+### Things found while implementing that the designs did not predict
+
+- **`false-privacy`'s existing test was passing BECAUSE of the bug.** It awaited the button (present
+  and disabled from the first render) then asserted the copy synchronously, so both assertions were
+  satisfied while the query was still pending — by the very defect it was meant to cover. Fixed to
+  wait for the answer. Same shape as the `absence-assertions-go-green-too-early` memory.
+- **`legend-bug` is NOT a visible rendering bug.** The design said "no space renders". Probed it
+  directly: `textContent` really is `"TitleRotated out for variety"`, but the parent is
+  `inline-flex ... gap-1.5`, so flexbox spaces them on screen. The defect is in the accessible text
+  and copy-paste only. Fixed and described accurately.
+- **`backend-small`'s off-by-one was left as-is deliberately.** The failure is recorded before the
+  budget is checked, so `_TOKEN_MAX_FAILS` is one STRICTER than its name suggests. "Correcting" it
+  would loosen a security control to fix a naming inaccuracy. Documented in the code instead.
+- **`tsc -b` caught four strict-mode errors vitest did not** in a new test file. The
+  `verify-web-with-tsc-b` memory is right; scoped vitest runs are not enough.
+
+### Owner decisions still outstanding (batched, none blocking)
+
+1. **`secret.key` in backups** — it is not there today, and adding it makes a backup
+   self-decrypting. Real trade-off; not taken unilaterally. Until then: back that file up by hand.
+2. **Badge amber** — white on `#e5a00d` is ~2.24:1 and fails WCAG. Pick the amber, or `--amber-deep`.
+3. **`bulk3state`** — the bulk-edit screen does not exist. Build it as a new feature, or just take
+   the one-line `users.py:431` fix and stop?
+4. **`restriction-status` scope** — confirm the three existing verifications at the cited lines
+   before deciding how much the screen may claim.
+5. **`legend-bug` dots vs badges** — left as dots, because `PickLine` uses dots too and changing only
+   the legend makes the key disagree with what it is a key for.
+6. **`seo` FAQ schema** — the rich result is discontinued. Still worth doing for AI crawlers, or drop?
