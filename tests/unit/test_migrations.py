@@ -131,6 +131,81 @@ class TestAnInterruptedRebuildDoesNotBrickTheContainer:
         assert real == 0, "the REAL table is untouched — only the abandoned copy is dropped"
 
 
+class TestMigration0038DropsTheWatchHistoryMirror:
+    """0038 removes the `watch_events` table, `users.watch_synced_at` and the `plex.db_path` setting.
+
+    The setting DELETE is the half no schema test can see — `compare_metadata` compares tables, not
+    rows — and it is the shape that made 0032 a no-op on every real database. So the row is seeded in
+    the envelope `SettingsStore` actually writes, and a second setting rides along to prove the
+    DELETE is aimed at one key rather than at the table.
+    """
+
+    @staticmethod
+    def _settings_at_0037(config_dir: Path) -> None:
+        command.upgrade(_alembic(config_dir), "0037")
+        _write_setting(config_dir, "plex.db_path", "/config/Library/…/com.plexapp.plugins.library.db")
+        _write_setting(config_dir, "plex.url", "http://pms:32400")
+
+    @staticmethod
+    def _setting_keys(config_dir: Path) -> set[str]:
+        con = sqlite3.connect(config_dir / "shortlist.db")
+        try:
+            return {row[0] for row in con.execute("SELECT key FROM settings")}
+        finally:
+            con.close()
+
+    def test_the_pms_database_path_setting_is_deleted(self, tmp_path: Path):
+        self._settings_at_0037(tmp_path)
+        assert "plex.db_path" in self._setting_keys(tmp_path), "the fixture must seed what it claims to"
+
+        command.upgrade(_alembic(tmp_path), "0038")
+
+        keys = self._setting_keys(tmp_path)
+        assert "plex.db_path" not in keys, "the mount path outlived the code that read it"
+        assert "plex.url" in keys, "the DELETE must name one key — not clear the settings table"
+
+    def test_the_mirror_table_and_its_high_water_mark_are_gone(self, tmp_path: Path):
+        self._settings_at_0037(tmp_path)
+
+        command.upgrade(_alembic(tmp_path), "0038")
+
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        try:
+            tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        finally:
+            con.close()
+        assert "watch_events" not in tables
+        assert "watch_synced_at" not in _not_null(tmp_path, "users")
+
+    def test_re_running_it_over_an_already_dropped_database_is_a_no_op(self, tmp_path: Path):
+        """The `stamp` is what gives this teeth: winding the version back with the table already gone
+        is the shape a `dev` build lands on, and it is what the existence guards are for."""
+        self._settings_at_0037(tmp_path)
+        command.upgrade(_alembic(tmp_path), "0038")
+        command.stamp(_alembic(tmp_path), "0037")
+
+        command.upgrade(_alembic(tmp_path), "0038")
+
+        assert "plex.db_path" not in self._setting_keys(tmp_path)
+
+    def test_the_downgrade_restores_the_structure_but_not_the_setting(self, tmp_path: Path):
+        """The docstring's own claim: the mirrored plays cannot be reconstructed, the structure can.
+        The setting is deliberately not re-seeded — absence reads as the app default."""
+        self._settings_at_0037(tmp_path)
+        command.upgrade(_alembic(tmp_path), "0038")
+
+        command.downgrade(_alembic(tmp_path), "0037")
+
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        try:
+            tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        finally:
+            con.close()
+        assert "watch_events" in tables
+        assert "watch_synced_at" in _not_null(tmp_path, "users")
+        assert "plex.db_path" not in self._setting_keys(tmp_path)
+
+
 class TestMigration0053BackfillsBeforeItTightens:
     """0053 rebuilds three tables. An ALTER that fails halfway through boot is worse than a
     defensive UPDATE, and the backfilled values have to be the honest ones — a `viewed_at` set to

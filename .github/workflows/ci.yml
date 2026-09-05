@@ -38,6 +38,15 @@ jobs:
       - run: pip install ruff
       - run: ruff check .
       - run: ruff format --check .
+      # A migration already applied to a database is never replayed there, so an edit to one reaches
+      # FRESH installs only — the machine it was developed against keeps the old behaviour for ever.
+      # Four occurrences in this repo's history (0070 twice, 0078, 0081); see
+      # .claude/docs/migration-ci-design.md. Standard library only, and it needs no git history, so
+      # it runs as a step in THIS job at the default fetch-depth rather than as a new status context
+      # — master's required contexts are lint/test-python/test-web/e2e and adding to that list is
+      # what blocked the v1.7.0 release PR with every check green.
+      - name: No merged migration's content has changed
+        run: python scripts/check_migration_freeze.py
       # Catches "added a dependency to pyproject.toml but forgot to regenerate the lock" — which
       # would otherwise only surface as an ImportError inside the built image. Deliberately checks
       # COVERAGE, not equality with a fresh resolution: re-resolving would report drift every time

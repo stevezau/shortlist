@@ -17,3 +17,19 @@ repos:
       - id: check-added-large-files
       - id: detect-private-key
       - id: check-merge-conflict
+  # Local, because it must run against the WORKING TREE with no network and no install. A migration
+  # is frozen the moment its revision is stamped on a database that will not replay it, and that can
+  # happen before the first commit — 0082 gained a column after an earlier version of it had already
+  # run, and shipped without it. CI cannot see a pre-commit tree, so this is the only place that
+  # edit is catchable.
+  - repo: local
+    hooks:
+      - id: migration-freeze
+        name: no merged migration's content has changed
+        # `python3`, not `python`: a `language: system` hook inherits whatever PATH pre-commit was
+        # launched with, and an unactivated venv has no bare `python`. The script is stdlib-only and
+        # runs on 3.9+, so any interpreter on the box will do.
+        entry: python3 scripts/check_migration_freeze.py
+        language: system
+        pass_filenames: false
+        files: ^shortlist/server/db/alembic/
