@@ -181,6 +181,10 @@ class WatchedTitleOut(PassthroughModel):
     """
 
     title: str
+    # The Plex ratingKey of the copy `title` and `year` came from, so the page can draw its artwork
+    # through `GET /api/picks/{rating_key}/poster`. That route serves any library item the owner's
+    # token can read, not only delivered picks — a watched title has never been a pick by definition.
+    rating_key: int
     tmdb_id: int | None
     media_type: str
     watched_at: str

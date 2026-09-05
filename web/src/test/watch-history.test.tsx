@@ -34,6 +34,9 @@ function lib(name: string, media_type: string) {
 function title(over: Partial<WatchedTitle>): WatchedTitle {
   return {
     title: "Teacup",
+    // Any key the poster proxy would accept; the tests stub no image, so what matters is only that
+    // the row has one to draw with.
+    rating_key: 90210,
     tmdb_id: 1,
     media_type: "show",
     watched_at: "2026-08-03T00:00:00+00:00",
@@ -182,6 +185,21 @@ describe("WatchHistory", () => {
     renderPanel();
 
     expect(await screen.findByText(/3 of 8 episodes/)).toBeInTheDocument();
+  });
+
+  it("draws each watch's own artwork, so a half-remembered title is recognisable", async () => {
+    // The rating key has to be the one the row's title came from. Before the payload carried it at
+    // all there was nothing to draw, and a list of 25 bare titles is the slowest possible way to
+    // answer "have they seen this?" — which is the only question this panel exists for.
+    const { container } = renderPanel();
+    await screen.findByText("Teacup");
+
+    // Queried out of the DOM rather than by role: the artwork is decorative (`alt=""`, the title is
+    // right beside it as text), so it has no img role to find it by.
+    expect(container.querySelector("img")).toHaveAttribute(
+      "src",
+      "/api/picks/90210/poster",
+    );
   });
 
   it("says how complete the cached set is", async () => {

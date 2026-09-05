@@ -2039,6 +2039,19 @@ class TestUserWatchedMergesLibraryCopies:
         assert bear["watched_at"].startswith("2026-08-20")
         assert (bear["viewed_leaf_count"], bear["leaf_count"]) == (28, 28)
 
+    def test_the_artwork_key_comes_from_the_copy_whose_title_is_shown(self, service, sessions):
+        """The poster the watched page draws must be the artwork of the copy it is naming.
+
+        The Bear's two copies carry different rating keys, and a title in an HD and a 4K library can
+        carry different art in each — so taking the key independently of the title and year would
+        show one library's poster over another library's watch date.
+        """
+        self._seed(sessions)
+
+        bear = next(i for i in service.user_watched(1)["items"] if i["title"] == "The Bear")
+
+        assert bear["rating_key"] == 100  # the 2026-08-20 copy, the same one `watched_at` came from
+
     def test_progress_is_taken_as_a_pair_from_one_copy(self, service, sessions):
         """Both numbers come from the SAME copy — the one furthest through.
 

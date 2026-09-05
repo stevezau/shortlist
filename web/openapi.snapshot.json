@@ -7679,6 +7679,10 @@
             "title": "Media Type",
             "type": "string"
           },
+          "rating_key": {
+            "title": "Rating Key",
+            "type": "integer"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -7738,6 +7742,7 @@
         },
         "required": [
           "title",
+          "rating_key",
           "tmdb_id",
           "media_type",
           "watched_at",

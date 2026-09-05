@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { Segmented } from "@/components/segmented";
+import { TitlePoster } from "@/components/title-poster";
 import { WatchRating } from "@/components/user-detail/watch-rating";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -179,79 +180,95 @@ export function WatchHistory({
               {page.items.map((item, i) => {
                 const depth = watchDepth(item);
                 return (
-                  <li
-                    key={i}
-                    className="flex items-baseline justify-between gap-3 py-2"
-                  >
-                    <span className="min-w-0 text-sm">
-                      <span className="font-medium">{item.title}</span>
-                      {item.year ? (
-                        <span className="text-muted-foreground">
-                          {" "}
-                          ({item.year})
-                        </span>
-                      ) : null}
-                      {/* Which Plex libraries hold it — on EVERY row, not only where it
-                          disambiguates. Two tags is a title stored twice: this row used to be two
-                          rows, each with its own Block button that did the same thing. Absent only
-                          for a watch cached before the name was recorded; the next sync fills that
-                          in, and no tag is better than a guessed one.
+                  <li key={i} className="flex items-center gap-3 py-2">
+                    {/* The artwork is how you recognise a title you only half-remember watching,
+                        which is the question this list exists to answer. Smaller than the 58x87 the
+                        pick lists use: this page shows 25 rows at once, and a full-size tile turns
+                        that into three screens of scrolling for the same information.
 
-                          `flex-wrap` because a title can sit in many libraries (nine, on a server
-                          built to test it) and the tags must wrap inside the row rather than push
-                          the page sideways. */}
-                      {/* `align-middle`, not a length: the tag is bigger than the text beside it, so
-                          aligning their BASELINES leaves it floating ~5px high (measured). Centring
-                          the box lands within 1.5px of the title's optical centre and stays right if
-                          the tag's padding or font size ever change — a tuned `align-[-0.4em]` hits
-                          0.3px today and drifts the moment either does. */}
-                      {item.libraries.map((name) => (
-                        <span
-                          key={name}
-                          className="ml-1.5 inline-block max-w-full truncate rounded border border-border bg-elevated px-1.5 py-px align-middle text-[0.7rem] leading-4 text-muted-foreground"
-                          title={name}
-                        >
-                          {name}
-                        </span>
-                      ))}
-                    </span>
-                    <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                      {item.media_type === "show" ? "Show" : "Movie"}
-                      {depth ? ` · ${depth}` : ""} · {timeAgo(item.watched_at)}
-                      <WatchRating rating={item.user_rating} page={page} />
-                      {/* No tmdb:// GUID means nothing a block could key on, so no button rather than one
-                          that fails. */}
-                      {item.tmdb_id !== null &&
-                        (alreadyBlocked.has(item.tmdb_id) ? (
-                          <span
-                            className="inline-flex items-center gap-1 text-muted-foreground/70"
-                            title="Already blocked — it stays in their history but no longer shapes their picks"
-                          >
-                            <Ban className="h-3 w-3" aria-hidden />
-                            blocked
+                        `items-center` rather than the baseline this row used before — with a tile in
+                        it there is no shared baseline to align to, and the meta column would hang off
+                        the top of the poster. */}
+                    <TitlePoster
+                      ratingKey={item.rating_key}
+                      className="h-[45px] w-[30px] sm:h-[54px] sm:w-[36px]"
+                    />
+                    {/* Title over meta below `sm`, side by side above it. The meta column cannot
+                        shrink — it holds a Block button — so on a 320px screen the poster's 42px
+                        pushed it 2px past the viewport (measured) and the whole page scrolled
+                        sideways. Stacking is what buys those pixels back without shrinking the
+                        artwork to something you cannot recognise a film by. */}
+                    <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                      <span className="min-w-0 text-sm">
+                        <span className="font-medium">{item.title}</span>
+                        {item.year ? (
+                          <span className="text-muted-foreground">
+                            {" "}
+                            ({item.year})
                           </span>
-                        ) : (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 px-1.5 text-xs text-muted-foreground hover:text-foreground"
-                            disabled={block.isPending}
-                            title={`Stop "${item.title}" shaping their picks`}
-                            aria-label={`Block ${item.title} — stop it shaping their picks`}
-                            onClick={() =>
-                              block.mutate({
-                                tmdbId: item.tmdb_id as number,
-                                title: item.title,
-                                mediaType: item.media_type,
-                                year: item.year ?? undefined,
-                              })
-                            }
+                        ) : null}
+                        {/* Which Plex libraries hold it — on EVERY row, not only where it
+                            disambiguates. Two tags is a title stored twice: this row used to be two
+                            rows, each with its own Block button that did the same thing. Absent only
+                            for a watch cached before the name was recorded; the next sync fills that
+                            in, and no tag is better than a guessed one.
+
+                            `flex-wrap` because a title can sit in many libraries (nine, on a server
+                            built to test it) and the tags must wrap inside the row rather than push
+                            the page sideways. */}
+                        {/* `align-middle`, not a length: the tag is bigger than the text beside it, so
+                            aligning their BASELINES leaves it floating ~5px high (measured). Centring
+                            the box lands within 1.5px of the title's optical centre and stays right if
+                            the tag's padding or font size ever change — a tuned `align-[-0.4em]` hits
+                            0.3px today and drifts the moment either does. */}
+                        {item.libraries.map((name) => (
+                          <span
+                            key={name}
+                            className="ml-1.5 inline-block max-w-full truncate rounded border border-border bg-elevated px-1.5 py-px align-middle text-[0.7rem] leading-4 text-muted-foreground"
+                            title={name}
                           >
-                            <Ban className="h-3 w-3" aria-hidden />
-                            Block
-                          </Button>
+                            {name}
+                          </span>
                         ))}
-                    </span>
+                      </span>
+                      <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground sm:shrink-0">
+                        {item.media_type === "show" ? "Show" : "Movie"}
+                        {depth ? ` · ${depth}` : ""} · {timeAgo(item.watched_at)}
+                        <WatchRating rating={item.user_rating} page={page} />
+                        {/* No tmdb:// GUID means nothing a block could key on, so no button rather than one
+                            that fails. */}
+                        {item.tmdb_id !== null &&
+                          (alreadyBlocked.has(item.tmdb_id) ? (
+                            <span
+                              className="inline-flex items-center gap-1 text-muted-foreground/70"
+                              title="Already blocked — it stays in their history but no longer shapes their picks"
+                            >
+                              <Ban className="h-3 w-3" aria-hidden />
+                              blocked
+                            </span>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                              disabled={block.isPending}
+                              title={`Stop "${item.title}" shaping their picks`}
+                              aria-label={`Block ${item.title} — stop it shaping their picks`}
+                              onClick={() =>
+                                block.mutate({
+                                  tmdbId: item.tmdb_id as number,
+                                  title: item.title,
+                                  mediaType: item.media_type,
+                                  year: item.year ?? undefined,
+                                })
+                              }
+                            >
+                              <Ban className="h-3 w-3" aria-hidden />
+                              Block
+                            </Button>
+                          ))}
+                      </span>
+                    </div>
                   </li>
                 );
               })}

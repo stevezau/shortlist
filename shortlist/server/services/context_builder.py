@@ -339,6 +339,10 @@ def _merge_watched_copies(rows: list[WatchedTitle]) -> dict:
     ratings = [value for value in rated if is_human_rating(value)] or rated
     return {
         "title": newest.title,
+        # The newest copy's key, chosen with the title and year rather than independently: the poster
+        # the page draws has to be the artwork of the copy it is naming, and a title held in an HD and
+        # a 4K library can carry different art in each.
+        "rating_key": newest.rating_key,
         "tmdb_id": newest.tmdb_id,
         "media_type": newest.media_type,
         "watched_at": (newest.source_viewed_at or newest.viewed_at).isoformat(),

@@ -5849,6 +5849,8 @@ export interface components {
             libraries: string[];
             /** Media Type */
             media_type: string;
+            /** Rating Key */
+            rating_key: number;
             /** Title */
             title: string;
             /** Tmdb Id */
