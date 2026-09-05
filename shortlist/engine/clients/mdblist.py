@@ -147,6 +147,17 @@ class MdbListClient:
             # A quota verdict, not an outage — it has its own handling and must not trip the breaker,
             # or a rate-limited run would look like a dead provider to the next caller.
             raise MdbListRateLimitError("MDBList daily request limit reached")
+        if r.status_code == 404:
+            # "We don't carry this title", not "we are down" — MDBList 404s per title and its
+            # catalogue is thinner than TMDB's, so obscure seeds miss routinely. This is a real
+            # answer from a live server (a dead path or bad key answers 401), so it CLEARS the
+            # failure run rather than counting toward it. Counting 404s cost a full night of
+            # ratings on 2026-09-05: five unstocked titles in a row opened the breaker at 03:37
+            # and every remaining title in the run went unrated, silently dropping request
+            # ordering back to TMDB.
+            logger.debug("MDBList has no entry for {} {}", kind, tmdb_id)
+            self._consecutive_failures = 0
+            return None
         if r.status_code != 200:
             logger.warning("MDBList returned HTTP {} for {} {}", r.status_code, kind, tmdb_id)
             self._note_failure(f"HTTP {r.status_code}")

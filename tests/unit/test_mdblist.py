@@ -7,7 +7,12 @@ import pytest
 import respx
 
 from shortlist.engine.clients import http_retry
-from shortlist.engine.clients.mdblist import RATING_CACHE_TTL_S, MdbListClient, MdbListRateLimitError
+from shortlist.engine.clients.mdblist import (
+    _BREAKER_TRIP,
+    RATING_CACHE_TTL_S,
+    MdbListClient,
+    MdbListRateLimitError,
+)
 from shortlist.engine.models import MediaType
 
 pytestmark = pytest.mark.integration
@@ -129,6 +134,44 @@ class TestMdbListRating:
         for _ in range(6):
             with pytest.raises(MdbListRateLimitError):
                 client.rating(9, MediaType.MOVIE, "imdb")
+        assert client._circuit_open is False
+
+    @respx.mock
+    def test_a_404_does_not_trip_the_breaker(self):
+        """A 404 means "not in our catalogue", not "we are down".
+
+        Observed on the live server 2026-09-05: five unstocked titles in a row opened the breaker at
+        03:37, so MDBList went dark for the REST of that run and every remaining title went unrated
+        — which silently drops request ordering back to TMDB. The endpoint was healthy throughout
+        (probed the same morning: a bad key answers 401, a retired path answers 404, and production
+        was getting 404 with a valid key — i.e. a genuine per-title miss).
+        """
+        route = respx.get(url__regex=r"https://api\.mdblist\.com/tmdb/movie/\d+").mock(return_value=httpx.Response(404))
+        client = MdbListClient("k", cache=_DictCache())
+
+        for tmdb_id in range(1, 21):
+            assert client.rating(tmdb_id, MediaType.MOVIE, "imdb") is None
+
+        assert client._circuit_open is False
+        # The real regression was invisible in the return values — every lookup answers None either
+        # way. It only shows in whether the client KEPT ASKING, so assert the call count: with 404
+        # counted as a failure this stopped at 5.
+        assert route.call_count == 20, route.call_count
+
+    @respx.mock
+    def test_a_404_clears_the_failures_behind_it(self):
+        """A miss proves the server is answering, so it resets the run of failures like a 200 does.
+
+        Without this, four real failures plus a scattering of misses would still creep the client to
+        the trip point over a long run.
+        """
+        respx.get("https://api.mdblist.com/tmdb/movie/9").mock(return_value=httpx.Response(404))
+        client = MdbListClient("k", cache=_DictCache())
+        client._consecutive_failures = _BREAKER_TRIP - 1
+
+        assert client.rating(9, MediaType.MOVIE, "imdb") is None
+
+        assert client._consecutive_failures == 0
         assert client._circuit_open is False
 
     @respx.mock
