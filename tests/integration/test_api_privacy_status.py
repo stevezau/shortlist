@@ -388,7 +388,15 @@ class TestEnforcement:
         from shortlist.server.services.privacy_status import SharingStatus
 
         clean = SharingStatus(read_at="now")
-        exposure = {"measured": False, "run_id": None, "measured_at": None, "not_enforced": {"sarah": [21]}}
+        exposure = {
+            "measured": False,
+            "run_id": None,
+            "measured_at": None,
+            "not_enforced": {"sarah": [21]},
+            # Its own flag, because the two measurements are selected from different runs.
+            "unhideable": {},
+            "unhideable_measured": False,
+        }
 
         assert _summary(clean, [], exposure) == "clean"
 
@@ -437,10 +445,16 @@ class TestEnforcement:
             "run_id": run_id,
             "measured_at": enforcement["measured_at"],
             "not_enforced": {},
-            # Its sibling, read from the same run and the same look: a row Plex refuses to hide from
-            # an account at all. Empty here for the same reason `not_enforced` is — a run that looked
-            # and found nothing, which is what clears the alert.
+            # Its sibling, selected from its OWN newest measuring run — the two flags are
+            # independent, so they routinely land on different nights. Empty here for the same reason
+            # `not_enforced` is: a run that looked and found nothing, which is what clears the alert.
             "unhideable": {},
+            # FALSE, not True, and that is the fix working: this run recorded only
+            # `filters_not_enforced`. The two measurements have independent flags and are selected
+            # from independent runs, so a night that measured one has not measured the other.
+            "unhideable_measured": False,
+            "unhideable_run_id": None,
+            "unhideable_measured_at": None,
         }
         assert enforcement["measured_at"], "an owner has to know how old the reading is"
 
@@ -524,17 +538,24 @@ class TestAMeasuredUnhideableRowIsNeverPaintedGreen:
 
     def test_it_ranks_below_a_missing_rule(self, client: TestClient, monkeypatch):
         """A missing rule is the one the next run fixes; an unhideable row needs the owner to change
-        a Plex parental profile. The actionable verdict leads."""
+        a Plex parental profile. The actionable verdict leads.
+
+        The setup has to make an account genuinely `missing`, or this asserts nothing: with no rows
+        and an empty roster the summary is `unhideable` whichever way the ranking is written, and
+        moving `unhideable` above `missing` would leave the test green.
+        """
         TestEnforcement._run(
             client,
             stats={"filters_not_enforced": {}, "unhideable_rows": {"kid": [31]}},
             minutes_ago=10,
         )
-        _rows_on_plex(monkeypatch, [])
-        _roster(monkeypatch, {})
+        _rows_on_plex(monkeypatch, ["sarah", "mike"])
+        # sarah's filter carries none of mike's excludes, so she is `missing`.
+        _roster(monkeypatch, {"sarah": {"filterMovies": ""}}, ids={"sarah": 1000})
 
         body = client.get("/api/privacy/status").json()
 
+        assert body["summary"] == "missing", "the fixable verdict must lead"
         assert body["enforcement"]["unhideable"] == {"kid": [31]}, "the measurement still reaches the panel"
 
     def test_an_unmeasured_run_reports_nothing_rather_than_exposure(self, client: TestClient, monkeypatch):

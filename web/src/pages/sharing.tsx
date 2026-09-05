@@ -158,6 +158,28 @@ function Summary({
       </Banner>
     );
   }
+  if (data.summary === "unhideable") {
+    // Without this branch the sixth verdict fell through to "Shortlist couldn't interpret this
+    // reading", printed above an all-clear enforcement panel — so the one thing the escalation
+    // exists to surface appeared nowhere on the page.
+    const blocked = Object.keys(data.enforcement?.unhideable ?? {});
+    return (
+      <Banner tone="bad">
+        <p>
+          Plex will not hide other people&rsquo;s rows from{" "}
+          {blocked.length === 1
+            ? blocked[0]
+            : `${blocked.length} accounts`}{" "}
+          at all, and a run has confirmed they can see them. Accounts with a
+          Restriction Profile in Plex reject hide rules outright.
+        </p>
+        <p>
+          Set that account&rsquo;s Restriction Profile to <strong>None</strong>{" "}
+          in Plex, and the next run can hide their view. <ReadAt at={data.read_at} />
+        </p>
+      </Banner>
+    );
+  }
   if (data.summary === "clean" && data.rows_on_plex.length === 0) {
     return (
       <Banner tone="neutral">
@@ -173,26 +195,34 @@ function Summary({
     // leave alone (`manage_sharing = 0`) is not a fault — the verdict deliberately stays clean — but
     // it does not hide anyone's rows, so it cannot be counted in a universal claim. Saying "every"
     // over the top of it is the same over-claim this whole page exists to stop making.
-    const leftAlone = data.accounts.filter(
-      (account) => account.state === "left_alone",
+    // Every account that hides NOTHING, not just the ones you chose to leave alone. A
+    // parental-profile account has `manage_sharing = 1`, so it IS an account Shortlist manages — it
+    // simply cannot be given the rule, because plex.tv rejects the write. Counting it in "every
+    // account hides…" is the same over-claim, and `_account_out` ranks `refused_by_plex` above
+    // `missing`, so the server-side summary never sees it either.
+    const excluded = data.accounts.filter(
+      (account) =>
+        account.state === "left_alone" || account.state === "refused_by_plex",
     );
-    const rows = data.rows_on_plex.length;
     return (
       <Banner tone="good">
         <p>
-          {leftAlone.length > 0 ? (
+          {excluded.length > 0 ? (
             <>
-              Every account Shortlist manages hides all {rows}{" "}
-              {rows === 1 ? "row" : "rows"} that aren't theirs.{" "}
-              {leftAlone.length === 1
-                ? `${leftAlone[0]?.username} is left alone at your request, so Shortlist does not hide anything from them.`
-                : `${leftAlone.length} accounts are left alone at your request, so Shortlist does not hide anything from them.`}{" "}
+              {/* No count. "all N rows" read off `rows_on_plex` counted the account's OWN row too,
+                  so the banner claimed "hides all 40" while every line in the table below read
+                  "Hides 39 of 39". */}
+              Every other account hides the rows that aren&rsquo;t theirs.{" "}
+              {excluded.length === 1
+                ? `${excluded[0]?.display_name} is excluded from that: ${
+                    excluded[0]?.state === "left_alone"
+                      ? "you chose to leave their Plex sharing alone."
+                      : "Plex refuses hide rules for accounts with a restriction profile."
+                  }`
+                : `${excluded.length} accounts are excluded from that — see the table below for which and why.`}{" "}
             </>
           ) : (
-            <>
-              Every account hides all {rows} {rows === 1 ? "row" : "rows"} that
-              aren't theirs.{" "}
-            </>
+            <>Every account hides the rows that aren&rsquo;t theirs. </>
           )}
           <ReadAt at={data.read_at} />
         </p>

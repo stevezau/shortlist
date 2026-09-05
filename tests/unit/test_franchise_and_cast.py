@@ -286,3 +286,108 @@ class TestTheDialsReachTheLayerRowsActuallyCalls:
         the same order as 0.0 on a pool built to be reordered by it, it is not wired up."""
         assert self._order(franchise=1.0) != self._order(franchise=0.0)
         assert self._order(cast=1.0) != self._order(cast=0.0)
+
+
+class TestACarriedForwardPickKeepsItsRatingKey:
+    """A reused pick is rebuilt from the database with `rating_key=0`, because the right key is
+    per-library and only known once a section is chosen. Delivery corrected a COPY on its way to
+    Plex, so Plex was always right — but the list that gets RECORDED kept the zero, and on a settled
+    server that is most picks (94.6% of one real run).
+
+    Nothing depended on the stored value until pick artwork started keying on it, at which point
+    almost every row showed a placeholder instead of a poster. This is the regression test for that.
+    """
+
+    def _pick(self, *, rating_key: int, section_key: str = "1") -> object:
+        from shortlist.engine.models import Pick
+
+        return Pick(
+            tmdb_id=42,
+            rating_key=rating_key,
+            title="Dune",
+            rank=1,
+            reason="because",
+            media_type=MediaType.MOVIE,
+            section_key=section_key,
+        )
+
+    def _ctx(self):
+        from unittest.mock import MagicMock
+
+        ctx = MagicMock()
+        ctx.section_index = {"1": {42: 998877}}
+        return ctx
+
+    def test_a_zero_key_is_resolved_from_that_sections_index(self):
+        from shortlist.engine.rows import _with_resolved_rating_key
+
+        resolved = _with_resolved_rating_key(self._ctx(), self._pick(rating_key=0))
+
+        assert resolved.rating_key == 998877, "a carried-forward pick was recorded without its key"
+
+    def test_a_real_key_is_never_overwritten(self):
+        """The pick may be offered to several sections; only a MISSING key may be filled, or a row
+        could be recorded against the wrong library's object."""
+        from shortlist.engine.rows import _with_resolved_rating_key
+
+        resolved = _with_resolved_rating_key(self._ctx(), self._pick(rating_key=123456))
+
+        assert resolved.rating_key == 123456
+
+    def test_a_title_absent_from_that_library_is_left_alone(self):
+        from shortlist.engine.rows import _with_resolved_rating_key
+
+        pick = self._pick(rating_key=0, section_key="9")  # a section with no index entry
+
+        assert _with_resolved_rating_key(self._ctx(), pick).rating_key == 0
+
+    def test_a_pick_with_no_section_is_left_alone(self):
+        from shortlist.engine.rows import _with_resolved_rating_key
+
+        assert _with_resolved_rating_key(self._ctx(), self._pick(rating_key=0, section_key="")).rating_key == 0
+
+
+class TestCastEnrichmentIsIdempotentAndLossless:
+    """Both cut sites enrich the SAME shared Candidate objects — `_candidate_pool` on the pool's cut,
+    and `RowPolicy.cut_at_recency` on an overlapping subset for a row overriding recency."""
+
+    def _tmdb(self, casts: dict[int, list[str]], *, fail: bool = False):
+        tmdb = MagicMock()
+        if fail:
+            tmdb.top_cast.side_effect = RuntimeError("tmdb 429")
+        else:
+            tmdb.top_cast.side_effect = lambda tid, _mt, _n=5: casts.get(tid, [])
+        return tmdb
+
+    def test_enriching_twice_leaves_exactly_one_cast_reason(self):
+        """Appending blindly produced "shares Zendaya with Dune, and shares Zendaya with Dune", and a
+        third row overriding recency stacked a third copy."""
+        c = candidate(10)
+        tmdb = self._tmdb({1: ["Zendaya"], 10: ["Zendaya"]})
+
+        candidates_mod.enrich_cast_affinity([c], tmdb, [seed(1, "Dune")])
+        candidates_mod.enrich_cast_affinity([c], tmdb, [seed(1, "Dune")])
+
+        assert len([a for a in c.attributions if a.signal == "cast"]) == 1
+        assert reason_for(c).count("shares Zendaya") == 1
+
+    def test_a_failed_second_read_does_not_strip_the_reason_it_cannot_rebuild(self):
+        """The boost rides on `cast_overlap`, which survives a failed pass. Clearing the attribution
+        first meant ranking kept the boost while the row stopped explaining it."""
+        c = candidate(10)
+        candidates_mod.enrich_cast_affinity([c], self._tmdb({1: ["Zendaya"], 10: ["Zendaya"]}), [seed(1, "Dune")])
+        before = c.cast_overlap
+
+        candidates_mod.enrich_cast_affinity([c], self._tmdb({}, fail=True), [seed(1, "Dune")])
+
+        assert c.cast_overlap == before, "the boost survived"
+        assert [a for a in c.attributions if a.signal == "cast"], "so the explanation must survive too"
+
+    def test_a_second_pass_that_finds_nothing_shared_clears_the_reason(self):
+        """The honest case: a real read that finds no shared cast must remove a stale claim."""
+        c = candidate(10)
+        candidates_mod.enrich_cast_affinity([c], self._tmdb({1: ["Zendaya"], 10: ["Zendaya"]}), [seed(1, "Dune")])
+
+        candidates_mod.enrich_cast_affinity([c], self._tmdb({1: ["Zendaya"], 10: ["Someone Else"]}), [seed(1, "Dune")])
+
+        assert [a for a in c.attributions if a.signal == "cast"] == []

@@ -335,3 +335,23 @@ def test_the_client_exposes_both_halves():
     place, and that place is the client."""
     assert callable(PlexClient.item_thumb_path)
     assert callable(PlexClient.read_artwork)
+
+
+def test_a_non_image_content_type_from_the_pms_is_not_echoed_back():
+    """The proxy serves from the app's OWN origin, so a `text/html` body coming back from a
+    compromised or misbehaving PMS would render as HTML on a direct navigation. Owner-gated and an
+    `<img>` would not execute it, so this is hardening — but the fake always returns `image/png`,
+    which left the guard's else-branch dead in the whole suite."""
+    from shortlist.server.api.picks import _safe_media_type
+
+    assert _safe_media_type("text/html") == "image/jpeg"
+    assert _safe_media_type("image/png") == "image/png"
+    assert _safe_media_type("image/jpeg") == "image/jpeg"
+
+
+def test_svg_is_refused_even_though_it_is_an_image_type():
+    """SVG executes script. An allowlist by `image/` prefix alone still admits the one type the
+    guard exists to exclude."""
+    from shortlist.server.api.picks import _safe_media_type
+
+    assert _safe_media_type("image/svg+xml") == "image/jpeg"

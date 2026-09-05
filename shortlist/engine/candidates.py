@@ -685,9 +685,6 @@ def enrich_cast_affinity(ranked: list[Candidate], tmdb: TmdbClient, seeds: list[
     # blindly made a reason read "shares Zendaya with Dune, and shares Zendaya with Dune", and a
     # third row stacked a third copy. Ordering the call sites would be the fragile fix; being
     # idempotent lets either run in any order, which is what "ORDERS, NEVER SELECTS" already implies.
-    for candidate in ranked:
-        if candidate.attributions:
-            candidate.attributions = [a for a in candidate.attributions if a.signal != "cast"]
     candidate_casts = [cast_for(c.tmdb_id, c.media_type) for c in ranked]
     idf = cast_idf([c for c in candidate_casts if c])
     for candidate, own_cast in zip(ranked, candidate_casts, strict=True):
@@ -705,6 +702,12 @@ def enrich_cast_affinity(ranked: list[Candidate], tmdb: TmdbClient, seeds: list[
                 best, best_seed = score, seed
                 best_actor = max(shared, key=lambda a: idf.get(a, 0.0))
         candidate.cast_overlap = best
+        # REPLACE, never delete-then-maybe-replace. Dropping the old attribution up front lost the
+        # reason whenever the rebuild could not run — a transient TMDB failure between the two
+        # enrichment call sites left the cast BOOST applied (`cast_overlap` survives) while the row
+        # stopped explaining it. Same hazard plex-safety rule 3 codifies for filters: never clear
+        # something before you know what replaces it.
+        candidate.attributions = [a for a in candidate.attributions if a.signal != "cast"]
         if best_seed is not None and best > 0:
             # The single highest-IDF shared name, because "shares Timothée Chalamet with Dune" is an
             # explanation and a list of five co-stars is not.

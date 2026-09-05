@@ -52,6 +52,10 @@ function status(overrides: Partial<PrivacyStatus> = {}): PrivacyStatus {
       run_id: 418,
       measured_at: "2026-09-05T01:00:00+00:00",
       not_enforced: {},
+      unhideable: {},
+      unhideable_measured: false,
+      unhideable_run_id: null,
+      unhideable_measured_at: null,
     },
     ...overrides,
   };
@@ -106,12 +110,16 @@ describe("the sharing page's four states", () => {
     expect(await screen.findByText(/no plex accounts to check/i)).toBeVisible();
   });
 
-  it("reports a healthy server with the number of rows and when it was read", async () => {
+  it("reports a healthy server without over-counting the rows", async () => {
+    // No NUMBER any more. "hides all N rows" was read off `rows_on_plex`, which includes each
+    // account's OWN row — so on a 40-user server the banner claimed "hides all 40" while every line
+    // in the table below read "Hides 39 of 39". The claim is qualitative because the honest number
+    // is per-account.
     renderPage();
 
     expect(
       await screen.findByText(
-        /every account hides all 1 row that aren't theirs/i,
+        /every account hides the rows that aren.t theirs/i,
       ),
     ).toBeVisible();
     expect(screen.getByText(/read from plex.tv at/i)).toBeVisible();
@@ -277,7 +285,11 @@ describe("the enforcement panel", () => {
           run_id: null,
           measured_at: null,
           not_enforced: {},
-        },
+      unhideable: {},
+      unhideable_measured: false,
+      unhideable_run_id: null,
+      unhideable_measured_at: null,
+    },
       }),
     );
 
@@ -307,7 +319,11 @@ describe("the enforcement panel", () => {
           run_id: 419,
           measured_at: "2026-09-05T01:00:00+00:00",
           not_enforced: { sarah: [21, 22] },
-        },
+      unhideable: {},
+      unhideable_measured: false,
+      unhideable_run_id: null,
+      unhideable_measured_at: null,
+    },
       }),
     );
 
@@ -333,7 +349,11 @@ describe("the enforcement panel", () => {
           run_id: 419,
           measured_at: "2026-09-05T01:00:00+00:00",
           not_enforced: { sarah: [21, 22] },
-        },
+      unhideable: {},
+      unhideable_measured: false,
+      unhideable_run_id: null,
+      unhideable_measured_at: null,
+    },
       }),
     );
 

@@ -122,6 +122,19 @@ def _memoised_thumb(rating_key: int) -> str | None:
     return entry[0]
 
 
+def _safe_media_type(content_type: str) -> str:
+    """The content type to serve, never the PMS's verbatim.
+
+    This proxy answers from the app's OWN origin, so a non-image body from a compromised or
+    misbehaving PMS would render as that type on a direct navigation. SVG is excluded even though it
+    is an `image/*`: it executes script, so a prefix allowlist alone still admits the one type this
+    guard exists to keep out.
+    """
+    if content_type.startswith("image/") and not content_type.startswith("image/svg"):
+        return content_type
+    return "image/jpeg"
+
+
 @router.get("/{rating_key}/poster")
 async def pick_poster(rating_key: int, request: Request) -> Response:
     """One delivered pick's artwork, streamed from the PMS.
@@ -169,7 +182,7 @@ async def pick_poster(rating_key: int, request: Request) -> Response:
     # non-image type coming back from a compromised or misbehaving PMS would be rendered as that type
     # on a direct navigation. An `<img>` would not execute it and the route is owner-gated, so this
     # is hardening rather than a live hole — but it costs one line.
-    safe_type = content_type if content_type.startswith("image/") else "image/jpeg"
+    safe_type = _safe_media_type(content_type)
     return Response(body, media_type=safe_type, headers={"ETag": etag, "Cache-Control": _CACHE_CONTROL})
 
 

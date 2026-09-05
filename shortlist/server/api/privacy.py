@@ -81,6 +81,15 @@ class EnforcementOut(PassthroughModel):
     measured_at: str | None
     #: username -> ratingKeys of other people's rows visible on THEIR Home. Empty + measured = clean.
     not_enforced: dict[str, list[int]]
+    #: username -> ratingKeys of rows Plex refuses to hide from them AT ALL — a parental profile,
+    #: where plex.tv rejects the filter write outright. Its own three fields, not shared with the
+    #: pair above, because the two measurements have independent flags and land on different runs.
+    #: Declared rather than left to `extra="allow"`, or the SPA can only reach it as `unknown` and
+    #: the frontend rule forbids hand-writing the type.
+    unhideable: dict[str, list[int]]
+    unhideable_measured: bool
+    unhideable_run_id: int | None
+    unhideable_measured_at: str | None
 
 
 class PrivacyStatusOut(PassthroughModel):
@@ -89,7 +98,9 @@ class PrivacyStatusOut(PassthroughModel):
     read_at: str
     #: The headline, in priority order: "unreadable" (plex.tv failed) | "rows_unknown" (the PMS row
     #: read failed) | "not_enforced" (a run looked through a real account's eyes and Plex was serving
-    #: other people's rows anyway) | "missing" (a hide rule is absent from someone's share) | "clean".
+    #: other people's rows anyway) | "missing" (a hide rule is absent from someone's share) |
+    #: "unhideable" (a run looked through a parental-profile account's eyes and SAW other people's
+    #: rows — Plex refuses the hide rule for that account entirely) | "clean".
     #:
     #: "missing" outranks "not_enforced": the two CAN co-occur (the engine's spot-check gate is
     #: `any` of our labels, not all), and only a missing rule is something the owner's next run
@@ -253,7 +264,7 @@ def _summary(status: privacy_status.SharingStatus, accounts: list[dict], enforce
     # profiled account's eyes and SAW other people's rows is a measured exposure, and printing
     # "every account hides every row" over the top of it is the exact defect this page exists to
     # prevent. `filters_not_enforced` was given this treatment and its sibling was missed.
-    if enforcement["measured"] and enforcement["unhideable"]:
+    if enforcement["unhideable_measured"] and enforcement["unhideable"]:
         return "unhideable"
     # `left_alone` deliberately does NOT escalate. It is the owner's own per-account choice
     # (`manage_sharing=0`), not a fault, and `test_a_left_alone_account_is_reported_as_a_setting_not_a_fault`
@@ -273,34 +284,57 @@ def _enforcement(session) -> dict:
     `notifications._filters_not_enforced`, which pins this shape for the notification card.
     """
     run = next(
-        (
-            r
-            for r in session.query(Run)
-            .filter(Run.finished_at.isnot(None))
-            .order_by(Run.finished_at.desc())
-            .limit(_ENFORCEMENT_RUN_LOOKBACK)
-            if "filters_not_enforced" in (r.stats or {})
-        ),
+        (r for r in _recent_runs(session) if "filters_not_enforced" in (r.stats or {})),
         None,
     )
+    # Selected from its OWN newest measuring run. The two flags are INDEPENDENT — `run_persistence`
+    # writes `unhideable_rows` on `report.unhideable_measured` and `filters_not_enforced` on
+    # `report.filters_enforcement_measured` — so they routinely land on different nights. Reading one
+    # off the other's run reported "nothing unhideable" from a night that never looked, which is how
+    # a measured exposure rendered as a clean bill of health. Both other readers
+    # (`notifications._rows_we_cannot_hide`, `api/users.py`) already select independently.
+    #
+    # The starkest case is the FIRST run on any server: the enforcement spot-check reads the
+    # PRE-write roster, so no account carries our excludes yet and it measures nothing — while the
+    # 422 that records an unhideable row fires normally.
+    unhideable_run = next(
+        (r for r in _recent_runs(session) if "unhideable_rows" in (r.stats or {})),
+        None,
+    )
+    unhideable_out = (
+        {name: list(keys) for name, keys in ((unhideable_run.stats or {}).get("unhideable_rows") or {}).items()}
+        if unhideable_run
+        else {}
+    )
+    unhideable_fields = {
+        "unhideable": unhideable_out,
+        "unhideable_measured": unhideable_run is not None,
+        "unhideable_run_id": unhideable_run.id if unhideable_run else None,
+        "unhideable_measured_at": iso_utc(unhideable_run.finished_at) if unhideable_run else None,
+    }
     if run is None:
         return {
             "measured": False,
             "run_id": None,
             "measured_at": None,
             "not_enforced": {},
-            "unhideable": {},
+            **unhideable_fields,
         }
     exposed = (run.stats or {}).get("filters_not_enforced") or {}
-    # Its sibling, written by `pipeline._record_unhideable` on the same run, from the same look: a
-    # row Plex refuses to hide from an account at all — a parental profile, where plex.tv rejects the
-    # filter write outright. Read here rather than left to the accounts table, because a summary that
-    # ignores it prints a green universal claim over a measured exposure.
-    unhideable = (run.stats or {}).get("unhideable_rows") or {}
     return {
         "measured": True,
         "run_id": run.id,
         "measured_at": iso_utc(run.finished_at),
         "not_enforced": {name: list(keys) for name, keys in exposed.items()},
-        "unhideable": {name: list(keys) for name, keys in unhideable.items()},
+        **unhideable_fields,
     }
+
+
+def _recent_runs(session) -> list[Run]:
+    """The newest finished runs, once, so both measurements can be selected from the same window."""
+    return list(
+        session.query(Run)
+        .filter(Run.finished_at.isnot(None))
+        .order_by(Run.finished_at.desc())
+        .limit(_ENFORCEMENT_RUN_LOOKBACK)
+    )

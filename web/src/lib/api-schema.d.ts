@@ -3460,6 +3460,16 @@ export interface components {
             };
             /** Run Id */
             run_id: number | null;
+            /** Unhideable */
+            unhideable: {
+                [key: string]: number[];
+            };
+            /** Unhideable Measured */
+            unhideable_measured: boolean;
+            /** Unhideable Measured At */
+            unhideable_measured_at: string | null;
+            /** Unhideable Run Id */
+            unhideable_run_id: number | null;
         } & {
             [key: string]: unknown;
         };

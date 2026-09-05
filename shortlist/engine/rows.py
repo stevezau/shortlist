@@ -907,6 +907,20 @@ def row_library_index(
     return narrowed
 
 
+def _with_resolved_rating_key(ctx: EngineContext, pick: Pick) -> Pick:
+    """`pick` with its ratingKey filled in from its own section's index, when it is missing.
+
+    Only ever fills a MISSING key — a pick that already resolved is returned untouched, so this can
+    never move a row onto the wrong library's object. Returns the pick unchanged when the section is
+    unknown or the title is not in that library's index, which is the same "leave it at 0" the caller
+    already tolerated.
+    """
+    if pick.rating_key or not pick.section_key:
+        return pick
+    resolved = ctx.section_index.get(pick.section_key, {}).get(pick.tmdb_id)
+    return replace(pick, rating_key=resolved) if resolved else pick
+
+
 def _candidate_pool(
     ctx: EngineContext,
     seeds: list,
@@ -2732,6 +2746,19 @@ def _run_user(
             all_picks.extend(picks)
             delivered_any = delivered_any or bool(picks)
 
+    # Resolve the ratingKey of every pick before it is RECORDED, not just before it is delivered.
+    #
+    # A carried-forward pick is rebuilt from the database with `rating_key=0`
+    # (`context_builder._previous_picks`), because the right key is per-library and only known once a
+    # section is chosen. `delivery.deliver_rows` already corrects a COPY on its way to Plex, so
+    # delivery was always right — but this list is what `run_persistence` writes back, so every reused
+    # pick was stored with 0. On a settled server that is most of them: 94.6% of one real run.
+    #
+    # Nothing depended on the stored value until the pick list grew artwork keyed on `rating_key`, at
+    # which point the posters silently fell back to a placeholder for almost every row. Each pick
+    # carries its own `section_key`, so the lookup here is unambiguous — unlike at delivery, where a
+    # pick can be offered to several sections in turn.
+    all_picks = [_with_resolved_rating_key(ctx, pick) for pick in all_picks]
     user_report.picks = all_picks
     user_report.counts.picks = len(all_picks)
     if not all_picks:
@@ -2983,6 +3010,7 @@ def _shared_row(
             )
     picks = [pick for sp in section_picks.values() for pick in sp]
 
+    picks = [_with_resolved_rating_key(ctx, pick) for pick in picks]
     user_report.picks = picks
     user_report.counts.picks = len(picks)
     user_report.status = "ok"

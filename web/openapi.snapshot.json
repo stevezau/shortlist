@@ -2059,13 +2059,53 @@
               }
             ],
             "title": "Run Id"
+          },
+          "unhideable": {
+            "additionalProperties": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "title": "Unhideable",
+            "type": "object"
+          },
+          "unhideable_measured": {
+            "title": "Unhideable Measured",
+            "type": "boolean"
+          },
+          "unhideable_measured_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unhideable Measured At"
+          },
+          "unhideable_run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unhideable Run Id"
           }
         },
         "required": [
           "measured",
           "run_id",
           "measured_at",
-          "not_enforced"
+          "not_enforced",
+          "unhideable",
+          "unhideable_measured",
+          "unhideable_run_id",
+          "unhideable_measured_at"
         ],
         "title": "EnforcementOut",
         "type": "object"

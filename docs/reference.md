@@ -333,7 +333,7 @@ POST /api/watching-account/undo {snapshot_id, dry_run?} -> (same shape as /trans
 ### Privacy status
 
 ```
-GET  /api/privacy/status -> {summary, accounts[], checked_at, run_id}
+GET  /api/privacy/status -> {read_at, summary, accounts[], rows_on_plex, rows_error, error, enforcement}
      What can be VERIFIED about row hiding right now, for an ordinary shared account — the same
      computation the support page ran, out from behind support mode and rendered at /sharing.
      It reports three things, each a live read: that plex.tv is storing each exclude now, that the rows
@@ -343,8 +343,10 @@ GET  /api/privacy/status -> {summary, accounts[], checked_at, run_id}
      answer, and plex-safety rule 11 forbids guessing one), anything for a parental-profile account
      (plex.tv refuses the write), anything about the owner (no share exists — a Plex limitation, not a
      fault), and "all clear" from a check that did not run or a read that failed.
-     A measured exposure outranks every other verdict except a failed read. The page never derives
-     "hidden" from what Shortlist WROTE — every cell is a live read or the words "not checked".
+     Verdicts rank: unreadable > rows_unknown > missing > not_enforced > unhideable > clean. A
+     MISSING rule outranks a measured exposure on purpose — it is the one the next run fixes, where
+     an exposure needs the owner to change something in Plex. The page never derives "hidden" from
+     what Shortlist WROTE — every cell is a live read or the words "not checked".
 ```
 
 ### Rows
