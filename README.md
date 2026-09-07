@@ -49,9 +49,9 @@
 
 ![A "Movies Picked for You" row on Plex](docs/images/plex-picked-for-you.jpg)
 
-<sub>What lands on Plex: a "Picked for You" row, private to that user. A real row on the
-maintainer's server, with Plex's watched ticks edited out — the run that produced it predates the
-freshness work, and the picture should show what the row is for rather than a bug since fixed.</sub>
+<sub>What lands on Plex: a real "Picked for You" row on the maintainer's server, visible only to
+its owner. Four watched ticks were painted out — that run predates the freshness fix, and rows built
+today carry none.</sub>
 
 ## What it does
 

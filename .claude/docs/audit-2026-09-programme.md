@@ -504,10 +504,14 @@ contexts previously blocked a release with every check green.
 
 - Is the live DB actually stamped past `0078` / `0081`? Inferred, not confirmed. One read-only
   `SELECT version_num FROM alembic_version` would settle it — needs the owner's go-ahead.
-- `scripts/deploy.sh` and `CLAUDE.local.md` **contradict each other** on watchtower and on which path
-  deploys first. One of them is wrong and should be corrected.
+- ~~`scripts/deploy.sh` and `CLAUDE.local.md` **contradict each other** on watchtower.~~ **Settled
+  2026-09-08:** `deploy.sh` is wrong. The live container carries no
+  `com.centurylinklabs.watchtower.enable=false` label, and watchtower (`WATCHTOWER_SCHEDULE=0 30 4 *
+  * *`, nightly 04:30, not label-scoped, `shortlist` absent from `WATCHTOWER_DISABLE_CONTAINERS`)
+  owns it. `deploy.sh` is referenced by nothing and is currently unused.
 - The pinned cross-version fingerprint literal must be generated on Python 3.12 (the image's
-  interpreter). This machine has only 3.9.6 and 3.14.6.
+  interpreter). The dev machine is now the plex host, which has only 3.14.4 — but `uv python install
+  3.12` can provide one, so this is no longer blocked.
 
 ### Wave 5 core — two picks have FALSE premises. Owner decision needed on both.
 

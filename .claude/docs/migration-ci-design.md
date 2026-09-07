@@ -217,9 +217,14 @@ to 3.12).
 
 The audit's hypothesis was _"frozen once merged to dev"_. **That is the wrong boundary, and `0082`
 proves it.** `0082`'s dangerous edit happened before its first commit — the fast dev loop
-(`CLAUDE.local.md`) rsyncs the **working tree** to the plex host and builds an image from it, so a
-migration runs against the maintainer's live `/config/shortlist` database with no commit, no push, no
-CI and no registry image involved.
+(`CLAUDE.local.md`) builds and runs the **working tree** on the maintainer's host, so a migration runs
+against the live `/config/shortlist` database with no commit, no push, no CI and no registry image
+involved.
+
+**This got sharper on 2026-09-08**, when the repo moved onto the host itself and the loop stopped
+rsyncing and building an image at all: the default is now a local `uvicorn` boot, and boot runs
+Alembic to head. The gap between "I wrote a migration" and "it has run against a real database" is
+now a single command, so the pre-commit half of this design matters more, not less.
 
 The boundary that actually matters is: **a migration is frozen the moment its revision has been
 stamped on any database that will not replay it.** For this project that is the first `docker build`
@@ -232,7 +237,7 @@ CI cannot observe either. So the rule splits in two:
 `amended:` line with a written reason.
 
 **The rule the developer enforces:** run `python scripts/check_migration_freeze.py --write`
-**when you create the migration** — before you run it anywhere, before the rsync, before the first
+**when you create the migration** — before you run it anywhere, before any build, before the first
 boot. That puts the line in the working tree at the moment the migration becomes real, so the local
 `pytest tests/unit/test_migration_freeze.py` (a 40 ms test, runnable in the fast loop) catches the
 `0082` edit _pre-commit_, which is the only place it can be caught.
@@ -953,11 +958,15 @@ review should read first.
   fast-loop workflow, not confirmed. Confirming it is a read-only `SELECT version_num FROM
 alembic_version` plus the dates — worth doing before deciding whether any of them still needs a
   fix-forward migration today.
-- **Whether `scripts/deploy.sh` or the ad-hoc rsync loop is the current deploy path.** `deploy.sh`
-  pulls `ghcr.io/stevezau/shortlist:dev` and disables watchtower on the container; `CLAUDE.local.md`
-  describes watchtower recreating every container on a 4h poll. Both cannot be current. §4's
-  `scripts/devbuild.sh` recommendation assumes the rsync loop is what actually runs migrations first;
-  if it isn't, the pre-commit half of this design needs re-siting.
+- ~~**Whether `scripts/deploy.sh` or the ad-hoc rsync loop is the current deploy path.**~~
+  **Settled 2026-09-08 by inspecting the host.** Neither. The live `shortlist` container carries no
+  `com.centurylinklabs.watchtower.enable=false` label, so it was not created by `deploy.sh`, and
+  watchtower — `WATCHTOWER_SCHEDULE=0 30 4 * * *`, nightly at 04:30, not label-scoped, with
+  `shortlist` absent from `WATCHTOWER_DISABLE_CONTAINERS` — owns it. So the deploy path is: push to
+  `dev` → CI publishes `:dev` → watchtower recreates the container at the next 04:30. `deploy.sh` is
+  currently unused and its header is stale. The pre-commit half of this design still stands: the
+  developer loop now runs migrations via a local `uvicorn` boot (see §4), which is even earlier than
+  the build it used to assume.
 - **The literal in `test_the_fingerprint_does_not_depend_on_the_python_minor`** is written as `"0f1a…"`
   above. It must be generated on 3.12 when the file is written; I did not have a 3.12 interpreter
   available (this machine has 3.9.6 and 3.14.6, which is what the cross-version check used).

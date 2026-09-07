@@ -43,8 +43,12 @@ pnpm -C web dev              # Vite dev server (proxies /api to :5959)
 pnpm -C web test             # vitest
 pnpm -C web build
 
-# Run (dev) — module-level `app` only exists when SHORTLIST_CONFIG is set
-SHORTLIST_CONFIG=./devconfig uvicorn --factory shortlist.server.main:create_app --reload --port 5959
+# Run (dev) — throwaway config, safe mode, port 5960. Refuses to start if a running container
+# already mounts that config dir (two schedulers on one DB duplicates real Plex writes).
+bash scripts/devrun.sh
+# Overridable: PORT=... SHORTLIST_CONFIG=... SHORTLIST_DRY_RUN=0 bash scripts/devrun.sh
+# Under the hood — module-level `app` only exists when SHORTLIST_CONFIG is set:
+SHORTLIST_CONFIG=./devconfig uvicorn --factory shortlist.server.main:create_app --reload --port 5960
 
 # Docker
 docker build -t shortlist:dev .   # multi-stage: node web build → python runtime
