@@ -164,7 +164,12 @@ export function PlacementToggles({
           collection, so it cannot differ by audience) — and with auto columns "Everyone else · 49
           other people" is far wider than "Just me · S_FLIX", so the centred switch drifted under the
           right-hand header and read as applying to everyone-but-you. */}
-      <div className="grid grid-cols-[minmax(0,1fr)_7.5rem_7.5rem] items-center gap-x-6 gap-y-3">
+      {/* Narrower columns and gap below `sm`: at 7.5rem each the two fixed columns plus the
+          gaps plus this card's padding come to 320px on their own, which is the whole viewport
+          on a small phone — the row editor scrolled sideways by 22px (measured). They stay
+          EQUAL to each other at both sizes, which is what keeps the shared-row switch centred
+          under both headers rather than drifting under the right-hand one. */}
+      <div className="grid grid-cols-[minmax(0,1fr)_4.5rem_4.5rem] items-center gap-x-3 gap-y-3 sm:grid-cols-[minmax(0,1fr)_7.5rem_7.5rem] sm:gap-x-6">
         <span />
         <div className="text-center">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">

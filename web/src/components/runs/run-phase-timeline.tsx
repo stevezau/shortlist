@@ -99,14 +99,20 @@ export function RunPhaseTimeline({ entries }: { entries: RunLogEntry[] }) {
       {open && (
       <CardContent className="space-y-1.5">
         {phases.map(({ stage, seconds }) => (
-          <div
-            key={stage}
-            className="flex items-center justify-between gap-3 text-sm"
-          >
-            <span className="w-56 shrink-0 truncate text-muted-foreground">
-              {STAGE_LABELS[stage] ?? stage}
-            </span>
-            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+          // Label and seconds share a line with the bar under them below `sm`, three columns above
+          // it. The single row was `w-56` + `w-16` + two `gap-3` — 312px of fixed width in a card
+          // that has about 224px to give on a 320px screen, so the bar collapsed to nothing and the
+          // page scrolled sideways regardless.
+          <div key={stage} className="text-sm sm:flex sm:items-center sm:gap-3">
+            <div className="flex items-baseline justify-between gap-3 sm:contents">
+              <span className="min-w-0 truncate text-muted-foreground sm:w-56 sm:shrink-0">
+                {STAGE_LABELS[stage] ?? stage}
+              </span>
+              <span className="shrink-0 tabular-nums text-muted-foreground sm:order-last sm:w-16 sm:text-right">
+                {seconds === null ? "—" : `${seconds}s`}
+              </span>
+            </div>
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted sm:mt-0 sm:flex-1">
               <div
                 className={cn(
                   "h-full rounded-full",
@@ -117,9 +123,6 @@ export function RunPhaseTimeline({ entries }: { entries: RunLogEntry[] }) {
                 }}
               />
             </div>
-            <span className="w-16 shrink-0 text-right tabular-nums text-muted-foreground">
-              {seconds === null ? "—" : `${seconds}s`}
-            </span>
           </div>
         ))}
       </CardContent>
