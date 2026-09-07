@@ -18,22 +18,22 @@ from playwright.sync_api import Page, expect
 
 from tests.e2e.conftest import ShortlistApp
 from tests.e2e.test_ratings_e2e import _sync_and_open_history
-from tests.fakes.fake_plex import FakeHistoryEntry, FakePlexState
+from tests.fakes.fake_plex import FakeHistoryEntry, FakePlexState, movie_title
 
 pytestmark = pytest.mark.e2e
 
 #: One of sarah's watched movies in `seed_state`, and the ratingKey its second copy gets. RatingKeys
 #: are server-unique, so the copy must have its own — while carrying the SAME tmdb_id, which is what
 #: makes the two rows one title.
-DUPLICATED_TITLE = "Movie 03"
+DUPLICATED_TITLE = movie_title(3)
 ORIGINAL_KEY = 103
 COPY_KEY = 103_000
-#: What `seed_state` gives Movie 03 — both copies carry it, which is what makes them one title.
+#: What `seed_state` gives that title — both copies carry it, which is what makes them one title.
 MOVIE_03_TMDB_ID = 9003
 
 
 def _hold_movie_03_in_two_libraries(state: FakePlexState) -> None:
-    """Add a "4K Movies" library holding a second copy of Movie 03, and have sarah watch it."""
+    """Add a "4K Movies" library holding a second copy of that film, and have sarah watch it."""
     fourk = state.add_section(key=3, kind="movie", title="4K Movies")
     fourk.items[COPY_KEY] = replace(state.movies[ORIGINAL_KEY], rating_key=COPY_KEY)
     # Watched EARLIER than the original, so a merge that kept the wrong copy would show the wrong
@@ -66,7 +66,7 @@ class TestATitleInTwoLibraries:
         _hold_movie_03_in_two_libraries(state)
 
         _sync_and_open_history(page, app)
-        row = page.locator("li").filter(has_text="Movie 04")
+        row = page.locator("li").filter(has_text=movie_title(4))
 
         expect(row).to_have_count(1, timeout=15_000)
         expect(row.get_by_title("Movies", exact=True)).to_be_visible()
@@ -82,7 +82,7 @@ class TestATitleInTwoLibraries:
         again.
         """
         _sync_and_open_history(page, app)
-        row = page.locator("li").filter(has_text="Movie 04")
+        row = page.locator("li").filter(has_text=movie_title(4))
 
         expect(row).to_have_count(1, timeout=15_000)
         expect(row.get_by_title("Movies", exact=True)).to_be_visible()
@@ -106,7 +106,7 @@ class TestATitleInTwoLibraries:
         expect(page.get_by_title("Movies", exact=True)).to_be_visible()
         # Every other title sarah watched lives only in "Movies" or "TV Shows", so the filter left
         # exactly one row — proof it narrowed rather than merely reordering.
-        expect(page.get_by_text("Movie 04", exact=True)).to_have_count(0)
+        expect(page.get_by_text(movie_title(4), exact=True)).to_have_count(0)
 
 
 class TestBlockingAMergedRow:
@@ -173,7 +173,7 @@ class TestTheTagsOnAPhone:
 
     @staticmethod
     def _busy_libraries(state: FakePlexState) -> None:
-        """Movie 03 in four movie libraries, one of them punishingly named."""
+        """That film in four movie libraries, one of them punishingly named."""
         for key, name in enumerate((TestTheTagsOnAPhone.LONG_LIBRARY, "4K Movies", "Kids Movies"), start=3):
             section = state.add_section(key=key, kind="movie", title=name)
             copy_key = key * 100_000

@@ -48,7 +48,7 @@
      server's own answer to each account's token, captured by tests/e2e/test_marketing_assets.py, so
      it cannot show a result the code does not actually produce. -->
 
-![Two Plex home screens side by side on the same server and the same night. Sarah's has a Movies row and a TV Shows row; Mike's has only a TV Shows row, holding completely different titles. Each one notes that the other people's rows are not on this home screen.](docs/images/two-account.png)
+![Two Plex home screens side by side on the same server and the same night. Sarah's has a Movies row and a TV Shows row; Mike's has only a TV Shows row, holding completely different titles. Each one notes that the other people's rows are not on this home screen.](docs/images/two-account.webp)
 
 <sub>Two accounts, one server, the same night. Each home screen was read using that account's own
 Plex token, from a test library with made-up titles.</sub>
@@ -87,11 +87,11 @@ what stops the row ever being visible before it is private.
 
 | Set up your Plex server once                                        | Add as many rows as you like           |
 | ------------------------------------------------------------------- | -------------------------------------- |
-| ![The setup wizard connecting Plex](docs/images/wizard-connect.png) | ![The rows page](docs/images/rows.png) |
+| ![The setup wizard connecting Plex](docs/images/wizard-connect.webp) | ![The rows page](docs/images/rows.webp) |
 
 | Every pick, and _why_ it was picked                    | Watch every run, step by step                    |
 | ------------------------------------------------------ | ------------------------------------------------ |
-| ![A user's picks and why](docs/images/user-detail.png) | ![A run in progress](docs/images/run-detail.png) |
+| ![A user's picks and why](docs/images/user-detail.webp) | ![A run in progress](docs/images/run-detail.webp) |
 
 <sub>App screenshots use a test library with placeholder titles; the Plex row above is a real
 server.</sub>

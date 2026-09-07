@@ -416,6 +416,10 @@ class TestRunsApi:
 
         assert entry["sources"] == ["tmdb_similar"]
         assert entry["affinity"] == 0.28
+        # The artwork key travels with it. Without this every pick on the run page drew a
+        # placeholder tile, on every install — the breakdown blob simply never carried the field,
+        # and a missing poster reads as a title with no artwork rather than as a bug.
+        assert entry["rating_key"] == 1
 
     def test_a_breakdown_pick_with_no_matching_row_is_left_alone(self, client: TestClient):
         """Never invent provenance: a pick the picks table doesn't know about stays blank, which the

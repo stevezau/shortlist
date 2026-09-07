@@ -22,7 +22,7 @@
   body: >-
     Sign in with your Plex account, pick your server, and choose who gets a row. The wizard asks for
     nothing you have to look up first, and every answer can be changed later.
-  image: wizard-connect.png
+  image: wizard-connect.webp
   alt: >-
     The setup wizard's connect step, showing a Plex sign-in and the servers found on that account
   path: /setup
@@ -34,7 +34,7 @@
     A row is a recipe: what goes in it, how big it is, who sees it, and how often it changes. Start
     from a template rather than a blank form, then change anything. You can run as many at once as
     you like.
-  image: rows.png
+  image: rows.webp
   alt: >-
     The Rows page listing four configured rows: the default Picked for You row, a Because you watched
     row, a rewatch row, and one shared row
@@ -47,7 +47,7 @@
     One person at a time, so a problem with one row never stops anyone else getting theirs. Read
     their history, find things like it, throw away anything not in your library, then choose. If a
     row does not turn up, this page names the step that failed.
-  image: run-detail.png
+  image: run-detail.webp
   alt: A run detail page showing per-user timings, the picks delivered, and a live activity log
   path: /runs/42
   width: 1440
@@ -58,7 +58,7 @@
     &ldquo;Because you watched Heat.&rdquo; You can see what led to each title, and if one looks
     wrong you can tell Shortlist to ignore the watch behind it. That watch stays in their Plex
     history, it just stops shaping their row.
-  image: user-detail.png
+  image: user-detail.webp
   alt: A user detail page listing that person's ranked picks, each with the title that inspired it
   path: /users/sarah
   width: 1440
@@ -69,7 +69,7 @@
     The row goes to Plex hidden, every other account is told to hide its label, and only then does it
     appear. Here are two accounts on one server on the same night, each read using that account's own
     Plex token.
-  image: two-account.png
+  image: two-account.webp
   alt: >-
     Two Plex home screens side by side. Sarah's has a Movies row and a TV Shows row; Mike's has only
     a TV Shows row, holding completely different titles. Each one notes that the other people's rows

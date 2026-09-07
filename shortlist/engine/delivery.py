@@ -505,6 +505,12 @@ def deliver_rows(
                         {
                             "rank": p.rank,
                             "title": p.title,
+                            # The run page draws each pick's artwork from this key. Without it every
+                            # pick on the one screen built to review a run showed a placeholder tile
+                            # — the same shape as the bug that made the flat pick list do it, and
+                            # invisible for the same reason: a missing poster looks like a title
+                            # with no artwork rather than like a field nobody filled in.
+                            "rating_key": p.rating_key,
                             "reason": p.reason,
                             "seed_title": p.seed_title,
                             "tmdb_id": p.tmdb_id,

@@ -57,3 +57,7 @@ docs/.jekyll-vendor/
 docs/.bundle/
 docs/Gemfile.local
 docs/Gemfile.local.lock
+
+# Real cover art for the demo library, fetched by scripts/fetch_demo_posters.py. Third-party
+# posters: the repo ships the finished screenshots, never a library of them.
+tests/e2e/assets/posters/

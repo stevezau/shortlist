@@ -11,12 +11,14 @@ Shots are captured at 2x device scale: the docs site renders them at half their 
 from __future__ import annotations
 
 import contextlib
+import io
 import os
 import re
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from PIL import Image
 from playwright.sync_api import Browser, Page, expect
 
 from shortlist.server.auth import SESSION_COOKIE, session_serializer
@@ -55,9 +57,18 @@ def fresh_shot_page(browser: Browser, fresh_app: ShortlistApp) -> Iterator[Page]
 
 
 def _shot(page: Page, name: str) -> None:
+    """Write one capture as WebP.
+
+    These are UI text over real cover art, and each format is bad at one half of that: PNG stores
+    the posters losslessly and costs 4x, JPEG rings around the small type. WebP is better at both —
+    `user-detail` measures 828KB as a PNG, 387KB as a JPEG and 187KB here. The tour on the home page
+    loads four of these, so it is the difference between a 2.2MB landing page and a 600KB one.
+
+    Playwright only writes PNG or JPEG, so the encode goes through Pillow.
+    """
     out = Path(SHOTS_DIR) / name
     out.parent.mkdir(parents=True, exist_ok=True)
-    page.screenshot(path=str(out))
+    Image.open(io.BytesIO(page.screenshot())).convert("RGB").save(out, "WEBP", quality=88, method=6)
 
 
 def _users_by_name(app: ShortlistApp) -> dict:
@@ -158,13 +169,13 @@ def test_capture_app_screenshots(shot_page: Page, app: ShortlistApp) -> None:
     sarah = _users_by_name(app)["sarah"]["id"]
     run_id = app.api("GET", "/api/runs").json()[0]["id"]
 
-    _capture(shot_page, "/", "dashboard.png", wait="picked|watched|run")
-    _capture(shot_page, f"/users/{sarah}", "user-detail.png", wait="Because you watched")
-    _capture(shot_page, "/users", "users.png", wait="sarah")
-    _capture(shot_page, "/runs", "runs.png", wait="succeeded|ok")
-    _capture(shot_page, f"/runs/{run_id}", "run-detail.png", wait="AI tokens")
-    _capture(shot_page, "/requests", "requests.png", wait="request")
-    _capture(shot_page, "/settings", "settings.png", wait="Connections")
+    _capture(shot_page, "/", "dashboard.webp", wait="picked|watched|run")
+    _capture(shot_page, f"/users/{sarah}", "user-detail.webp", wait="Because you watched")
+    _capture(shot_page, "/users", "users.webp", wait="sarah")
+    _capture(shot_page, "/runs", "runs.webp", wait="succeeded|ok")
+    _capture(shot_page, f"/runs/{run_id}", "run-detail.webp", wait="AI tokens")
+    _capture(shot_page, "/requests", "requests.webp", wait="request")
+    _capture(shot_page, "/settings", "settings.webp", wait="Connections")
 
     # rows.png needs row VARIETY, and the seeded install has exactly one row, so it came out as one
     # card in an empty frame. The extra rows go in HERE rather than in `build_real_rows`, which is
@@ -175,7 +186,7 @@ def test_capture_app_screenshots(shot_page: Page, app: ShortlistApp) -> None:
     for payload in EXTRA_ROWS:
         created = app.api("POST", "/api/collections", json=payload)
         assert created.status_code == 201, created.text
-    _capture(shot_page, "/rows", "rows.png", wait="Picked for You")
+    _capture(shot_page, "/rows", "rows.webp", wait="Picked for You")
 
 
 @skip_unless_capturing
@@ -195,7 +206,7 @@ def test_capture_wizard_screenshot(fresh_shot_page: Page, fresh_app: ShortlistAp
     expect(page.get_by_role("heading", name="Welcome")).to_be_visible(timeout=LOAD)
     page.wait_for_timeout(1000)
     _fit_viewport(page)
-    _shot(page, "wizard.png")
+    _shot(page, "wizard.webp")
 
     # The same sequence test_wizard_e2e.py::_connect_plex asserts, minus its assertions: if the
     # wizard's labels ever change, that test fails first and says so, and this capture breaks with
@@ -210,4 +221,4 @@ def test_capture_wizard_screenshot(fresh_shot_page: Page, fresh_app: ShortlistAp
     expect(page.get_by_text("Plex Pass active")).to_be_visible(timeout=LOAD)
     page.wait_for_timeout(500)
     _fit_viewport(page)
-    _shot(page, "wizard-connect.png")
+    _shot(page, "wizard-connect.webp")

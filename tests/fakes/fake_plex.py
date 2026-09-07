@@ -21,6 +21,7 @@ import io
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
+from pathlib import Path
 from xml.etree.ElementTree import Element, SubElement, tostring
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -433,6 +434,96 @@ class FakePlexState:
         return excludes
 
 
+#: The demo library the docs screenshots are taken against. Real titles, because every one of
+#: them sits beside its own poster in a published image, and a placeholder name under real cover
+#: art reads as a mock-up — the owner's verdict on the drawn version was "it looks a bit odd".
+#:
+#: The ARTWORK is not in this repo. `scripts/fetch_demo_posters.py` downloads it from TMDB into
+#: `tests/e2e/assets/posters/` (gitignored) and `_fake_poster` serves it when present, falling
+#: back to a drawn placeholder — so an ordinary test run still needs no network and no key. Only
+#: the finished screenshots are committed, which is the posture the hero image already has.
+#:
+#: Index order is load-bearing: item N keeps rating_key 100+N (movies) or 300+N (shows), so every
+#: fixture, seeded watch and recorded expectation that addresses an item by KEY is untouched by
+#: what it is called. Tests that need a name should ask `movie_title()` / `show_title()` rather
+#: than hardcoding one.
+DEMO_MOVIES: tuple[tuple[str, int], ...] = (
+    ("The Shawshank Redemption", 1994),
+    ("The Godfather", 1972),
+    ("The Dark Knight", 2008),
+    ("Pulp Fiction", 1994),
+    ("Inception", 2010),
+    ("Interstellar", 2014),
+    ("The Matrix", 1999),
+    ("GoodFellas", 1990),
+    ("Se7en", 1995),
+    ("Fight Club", 1999),
+    ("Forrest Gump", 1994),
+    ("Gladiator", 2000),
+    ("The Departed", 2006),
+    ("Whiplash", 2014),
+    ("Parasite", 2019),
+    ("Mad Max: Fury Road", 2015),
+    ("Blade Runner 2049", 2017),
+    ("Arrival", 2016),
+    ("Dune", 2021),
+    ("Heat", 1995),
+    ("No Country for Old Men", 2007),
+    ("There Will Be Blood", 2007),
+    ("The Prestige", 2006),
+    ("Casino Royale", 2006),
+    ("Sicario", 2015),
+    ("Prisoners", 2013),
+    ("Nightcrawler", 2014),
+    ("Ex Machina", 2015),
+    ("Her", 2013),
+    ("Drive", 2011),
+)
+
+DEMO_SHOWS: tuple[tuple[str, int], ...] = (
+    ("Breaking Bad", 2008),
+    ("The Sopranos", 1999),
+    ("The Wire", 2002),
+    ("Chernobyl", 2019),
+    ("Band of Brothers", 2001),
+    ("True Detective", 2014),
+    ("Better Call Saul", 2015),
+    ("Succession", 2018),
+    ("Severance", 2022),
+    ("The Bear", 2022),
+    ("Fargo", 2014),
+    ("MINDHUNTER", 2017),
+    ("Dark Matter", 2024),
+    ("Stranger Things", 2016),
+    ("The Last of Us", 2023),
+    ("Andor", 2022),
+    ("The Expanse", 2015),
+    ("Peaky Blinders", 2013),
+    ("Sherlock", 2010),
+    ("Black Mirror", 2011),
+    ("Ted Lasso", 2020),
+    ("The Crown", 2016),
+    ("Ozark", 2017),
+    ("Narcos", 2015),
+    ("Westworld", 2016),
+    ("House of the Dragon", 2022),
+    ("Yellowstone", 2018),
+    ("Slow Horses", 2022),
+    ("Shōgun", 2024),
+    ("The Boys", 2019),
+)
+
+
+def movie_title(index: int) -> str:
+    """The demo library's Nth film, 1-based — the title on rating_key ``100 + index``."""
+    return DEMO_MOVIES[index - 1][0]
+
+
+def show_title(index: int) -> str:
+    """The demo library's Nth show, 1-based — the title on rating_key ``300 + index``."""
+    return DEMO_SHOWS[index - 1][0]
+
+
 def seed_state() -> FakePlexState:
     """Two libraries (30 movies, 30 shows), 3 users (one Home canary without a PIN), history.
 
@@ -443,10 +534,11 @@ def seed_state() -> FakePlexState:
     state = FakePlexState()
     base_added = 1_700_000_000
     for i in range(1, 31):
+        title, year = DEMO_MOVIES[i - 1]
         state.movies[100 + i] = FakeMovie(
             rating_key=100 + i,
-            title=f"Movie {i:02d}",
-            year=1990 + i,
+            title=title,
+            year=year,
             added_at=base_added + i * 86_400,
             tmdb_id=9000 + i,
             audience_rating=5.0 + (i * 7) % 40 / 10,
@@ -455,10 +547,11 @@ def seed_state() -> FakePlexState:
     # watched starves the candidate pool and makes row sizes a property of the fixture, not the
     # engine.
     for i in range(1, 31):
+        title, year = DEMO_SHOWS[i - 1]
         state.shows[300 + i] = FakeMovie(
             rating_key=300 + i,
-            title=f"Show {i:02d}",
-            year=2000 + i,
+            title=title,
+            year=year,
             added_at=base_added + i * 86_400,
             tmdb_id=7000 + i,
             audience_rating=5.0 + (i * 3) % 40 / 10,
@@ -716,6 +809,10 @@ def _poster_title_lines(draw, title: str, font, max_width: int) -> list[str]:
     return lines
 
 
+#: Where `scripts/fetch_demo_posters.py` puts real cover art. Gitignored and usually absent.
+_DEMO_POSTERS = Path(__file__).resolve().parents[1] / "e2e" / "assets" / "posters"
+
+
 @lru_cache(maxsize=256)
 def _fake_poster(rating_key: int, title: str = "") -> bytes:
     """A poster-SHAPED, per-title-COLOURED image carrying its own title, not a stretched single pixel.
@@ -731,6 +828,14 @@ def _fake_poster(rating_key: int, title: str = "") -> bytes:
     and does not churn the repo. Falls back to the flat pixel if Pillow is missing, so the fake never
     becomes the reason a test cannot run.
     """
+    # Real cover art when it has been fetched, which is what the published screenshots are taken
+    # against — see `scripts/fetch_demo_posters.py`. Absent (an ordinary test run, CI, a fresh
+    # clone) this falls through to the drawn placeholder below, so nothing here needs the network,
+    # a TMDB key, or third-party art in the repo.
+    real = _DEMO_POSTERS / f"{rating_key}.jpg"
+    if real.is_file():
+        return real.read_bytes()
+
     try:
         from PIL import Image, ImageDraw, ImageFont
     except ImportError:  # pragma: no cover - Pillow ships in requirements.lock via the posters extra

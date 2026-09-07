@@ -61,7 +61,7 @@ Open `http://your-host:5959`. A fresh install goes straight into the wizard. The
 nothing to sign in to yet. Step 1 connects your Plex account (that's the sign-in, and it's
 what claims the instance for you); from then on Shortlist only opens for that account.
 
-<img src="{{ '/images/wizard.png' | relative_url }}" width="1440" height="588"
+<img src="{{ '/images/wizard.webp' | relative_url }}" width="1440" height="588"
      alt="The Shortlist setup wizard on its Welcome step, with a seven-segment progress bar and a Get started button">
 
 Every screenshot on this page is of a throwaway test server, so no real account, address or
@@ -77,7 +77,7 @@ The wizard has **7 steps**, and the progress bar counts them the same way this l
 2. **Connect Plex** — sign in with a PIN, then pick your server. Shortlist checks your Plex
    version, Plex Pass, and libraries, and tells you in plain English whether each one is OK.
 
-   <img src="{{ '/images/wizard-connect.png' | relative_url }}" width="1440" height="783"
+   <img src="{{ '/images/wizard-connect.webp' | relative_url }}" width="1440" height="783"
         alt="The Connect Plex step after running checks: the discovered server with its reachable and unreachable addresses, and a checklist confirming the Plex version, Plex Pass and two libraries">
 
    Every address Plex advertises for your server is tried from where Shortlist actually runs, and

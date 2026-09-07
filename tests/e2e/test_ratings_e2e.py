@@ -13,14 +13,15 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from tests.e2e.conftest import ShortlistApp
+from tests.fakes.fake_plex import movie_title
 
 pytestmark = pytest.mark.e2e
 
 #: One of sarah's watched movies in `seed_state` (she has 101..108).
 DISLIKED_KEY = 103
-DISLIKED_TITLE = "Movie 03"
+DISLIKED_TITLE = movie_title(3)
 LIKED_KEY = 104
-LIKED_TITLE = "Movie 04"
+LIKED_TITLE = movie_title(4)
 
 
 def _sync_and_open_history(page: Page, app: ShortlistApp, user_slug: str = "sarah") -> None:

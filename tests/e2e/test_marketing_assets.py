@@ -10,7 +10,7 @@ because neither picture is a Shortlist screen.
                       `tests/unit/test_hero_image.py` — which also means its checks run on every
                       commit rather than only when someone regenerates it. Its source screenshot is
                       `assets/plex-shelf-source.jpg`.
-- `two-account.png`   two accounts' Plex Home hubs, side by side, read through their OWN server
+- `two-account.webp`   two accounts' Plex Home hubs, side by side, read through their OWN server
                       tokens. Every poster on it is the fake PMS's real answer to that account's
                       token, so the picture cannot claim a privacy result the harness doesn't have.
 - `social-preview.png` the og:image card. No live data at all, so it needs no Plex fixture.
@@ -19,6 +19,7 @@ because neither picture is a Shortlist screen.
 from __future__ import annotations
 
 import html
+import io
 import os
 import re
 from pathlib import Path
@@ -26,6 +27,7 @@ from xml.etree import ElementTree
 
 import httpx
 import pytest
+from PIL import Image
 from playwright.sync_api import Browser
 
 from tests.e2e.conftest import ShortlistApp, build_real_rows
@@ -270,7 +272,15 @@ def test_capture_two_account_image(browser: Browser, app: ShortlistApp, reset_fa
     page.set_content(_two_account_html(columns))
     # Posters come off the fake PMS over HTTP, so the columns are empty until they land.
     page.wait_for_load_state("networkidle")
-    page.locator("body").screenshot(path=str(_shot_path("two-account.png")))
+    # JPEG, not the PNG the app screenshots use: this one is almost entirely photographic cover art,
+    # which costs 1.8MB as a PNG against 0.5MB here, and it sits on the home page. The app shots stay
+    # PNG — they are dense small text, where JPEG ringing is visible and the saving is much smaller.
+    # WebP for the same reason as the app captures: this one is almost entirely photographic cover
+    # art, which costs 1.8MB as a PNG and 0.5MB as a JPEG against 0.2MB here, and it sits on the
+    # home page. `social-preview` stays a PNG — it is an og:image, and the platforms that unfurl it
+    # are the one place WebP support is still not safe to assume.
+    shot = page.locator("body").screenshot()
+    Image.open(io.BytesIO(shot)).convert("RGB").save(_shot_path("two-account.webp"), "WEBP", quality=88, method=6)
     context.close()
 
 

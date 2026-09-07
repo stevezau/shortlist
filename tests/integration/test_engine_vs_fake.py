@@ -41,7 +41,9 @@ from tests.fakes.fake_plex import (
     FakeSection,
     make_fake_plex,
     make_fake_plextv,
+    movie_title,
     seed_state,
+    show_title,
 )
 from tests.fakes.file_stores import FileSnapshotStore
 
@@ -2127,7 +2129,7 @@ class TestPlexRatingsEndToEnd:
 
     #: One of sarah's watched movies (`seed_state` gives her 101..108).
     DISLIKED = 103
-    DISLIKED_TITLE = "Movie 03"
+    DISLIKED_TITLE = movie_title(3)
 
     def test_a_title_sarah_rated_low_stops_seeding_her_row(self, fakes, tmp_path):
         state, pms_url, _ = fakes
@@ -2140,7 +2142,7 @@ class TestPlexRatingsEndToEnd:
         seeds = _seed_titles(report, "sarah")
         assert seeds, "sarah produced no seeds at all, so the absence below proves nothing"
         assert self.DISLIKED_TITLE not in seeds
-        assert "Movie 04" in seeds, "her other watches must still seed — this is not a blanket drop"
+        assert movie_title(4) in seeds, "her other watches must still seed — this is not a blanket drop"
 
     def test_the_same_title_still_seeds_when_the_feature_is_off(self, fakes, tmp_path):
         """The control. Without it, a title missing from the seeds could be the fixture, the cap, or
@@ -2173,9 +2175,9 @@ class TestPlexRatingsEndToEnd:
 
         report = engine_run(ctx, _users(plextv))
 
-        assert "Show 05" not in _seed_titles(report, "mike"), "mike's own rating must act on mike"
+        assert show_title(5) not in _seed_titles(report, "mike"), "mike's own rating must act on mike"
         # sarah never rated it, so nothing about it changed for her.
-        sarah_watched = {"Show 01", "Show 02", "Show 03", "Show 04"}
+        sarah_watched = {show_title(n) for n in (1, 2, 3, 4)}
         assert sarah_watched & _seed_titles(report, "sarah") == sarah_watched
 
     def test_a_tool_written_rating_is_ignored_over_the_real_wire(self, fakes, tmp_path):
@@ -2203,7 +2205,7 @@ class TestPlexRatingsEndToEnd:
         dropped = next(w for w in recent if w["title"] == self.DISLIKED_TITLE)
         assert dropped["rating"] == 2.0
         assert dropped["rating_blocked"] is True
-        kept = next(w for w in recent if w["title"] == "Movie 04")
+        kept = next(w for w in recent if w["title"] == movie_title(4))
         assert kept["rating"] is None and kept["rating_blocked"] is False
 
     def test_the_trace_records_the_policy_the_run_actually_used(self, fakes, tmp_path):
@@ -2290,7 +2292,7 @@ class TestPlexRatingsCannotReachSharedRows:
 
         assert report.ok, [(u.username, u.error) for u in report.users]
         shared = next(u for u in report.users if u.slug == "shared_popular")
-        # Show 01 is the ONLY title two people share in this fixture (see
+        # Show 1 is the ONLY title two people share in this fixture (see
         # `test_a_solo_watched_title_never_reaches_a_shared_row`: sarah/mike overlap is otherwise
         # zero), so it is the single seed the shared row can be built from. If sarah's 1-star reached
         # the aggregate, the row derives nothing and comes back empty — which makes "does it still
@@ -2336,7 +2338,7 @@ class TestPlexRatingsCannotReachSharedRows:
 
         report = engine_run(ctx, users)
 
-        assert "Show 01" not in _seed_titles(report, "sarah"), "her own row must respect her rating"
+        assert show_title(1) not in _seed_titles(report, "sarah"), "her own row must respect her rating"
         # …while the shared row, whose only possible seed is that same title, still builds. A shared
         # row records no seed trace of its own, so its contents are the observable (see the sibling
         # test for why "has picks" is exact here rather than a proxy).
@@ -2390,7 +2392,7 @@ class TestTrustIsJudgedPerPersonNotPerRow:
 
         report = engine_run(ctx, users)
 
-        assert "Show 01" in _seed_titles(report, "sarah"), (
+        assert show_title(1) in _seed_titles(report, "sarah"), (
             "the TV row judged its own slice, abstained, and acted on a rating the account-level "
             "verdict rejects — the row and the person disagree about whose ratings are real"
         )
@@ -2411,7 +2413,7 @@ class TestTrustIsJudgedPerPersonNotPerRow:
         for watch in sarah.trace["history"]["recent"]:
             if watch["rating_blocked"]:
                 assert watch["title"] not in seeds, f"trace calls {watch['title']} blocked, but it seeded"
-            elif watch["title"] in ("Show 01",):
+            elif watch["title"] in (show_title(1),):
                 assert watch["title"] in seeds, "trace stayed silent about a title the run kept — consistent"
 
 

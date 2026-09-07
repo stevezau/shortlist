@@ -41,6 +41,7 @@ import pytest
 from shortlist.engine.context import EngineContext
 from shortlist.engine.models import EngineConfig, MediaType, RowSpec
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
+from tests.fakes.fake_plex import movie_title, show_title
 
 # The `client` fixture comes from tests/integration/conftest.py — the same app fixture the
 # `test_api_*.py` files use, so the two can never drift apart.
@@ -304,7 +305,7 @@ class TestEveryTemplateDelivers:
         engine_ctx.history_source.fetch.return_value = [
             *[make_watched("Seed", days_ago=i, rating_key=999) for i in range(1, 5)],
             # Already finished, and the LOWEST rated — only the rewatch preference can put it first.
-            make_watched("Movie 20", days_ago=8, tmdb_id=20),
+            make_watched(movie_title(20), days_ago=8, tmdb_id=20),
         ]
         engine_ctx.tmdb.suggestions.return_value = _movies(10, 20)
         engine_ctx.config.rows = [_spec("seen-it-already")]
@@ -324,7 +325,7 @@ class TestEveryTemplateDelivers:
         engine_ctx.config.max_seeds = 1
         engine_ctx.history_source.fetch.return_value = [
             *[make_watched("Seed", days_ago=i, rating_key=999) for i in range(1, 5)],
-            make_watched("Movie 20", days_ago=8, tmdb_id=20),  # finished
+            make_watched(movie_title(20), days_ago=8, tmdb_id=20),  # finished
         ]
         engine_ctx.tmdb.suggestions.return_value = _movies(10, 20)
         spec = _spec("fresh-finds")
@@ -414,7 +415,7 @@ class TestEveryTemplateDelivers:
             *_mixed_history(),
             # One episode of forty: STARTED, nowhere near finished, so only `unstarted_only` excludes it.
             make_watched(
-                "Show 30", days_ago=8, media_type=MediaType.SHOW, tmdb_id=30, viewed_leaf_count=1, leaf_count=40
+                show_title(30), days_ago=8, media_type=MediaType.SHOW, tmdb_id=30, viewed_leaf_count=1, leaf_count=40
             ),
         ]
         engine_ctx.tmdb.suggestions.side_effect = _both_types

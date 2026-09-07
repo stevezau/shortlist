@@ -147,6 +147,10 @@ def _with_provenance(breakdown: list[dict], picks: list) -> list[dict]:
                 filled["year"] = row.year
             if "rating" not in filled:
                 filled["rating"] = row.rating
+            # Backfilled for the same reason as the fields above: every run recorded before the
+            # engine started storing it would otherwise show a page of placeholder tiles for ever.
+            if not filled.get("rating_key"):
+                filled["rating_key"] = row.rating_key
             enriched.append(filled)
         out.append({**entry, "picks": enriched})
     return out
