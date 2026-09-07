@@ -14,6 +14,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from tests.e2e.conftest import ShortlistApp, build_real_rows
+from tests.fakes.fake_plex import DEMO_MOVIES, DEMO_SHOWS
 
 pytestmark = pytest.mark.e2e
 
@@ -254,7 +255,11 @@ class TestRuns:
         # removed. Picks render as a ranked list, and their titles are answerable from here.
         expect(page.get_by_text(re.compile(r"\+\d+ new")).first).to_be_visible()
         expect(page.get_by_text(re.compile(r"\d+ removed"))).to_have_count(0)
-        expect(page.locator("body")).to_contain_text(re.compile(r"(Movie|Show) \d+"))
+        # Asserted against a title the API says was actually delivered, rather than a pattern the
+        # demo library's names happen to match — those are real film and show titles now, chosen so
+        # the docs screenshots look like a real library, and they will change again.
+        delivered = next(p["title"] for u in run["users"] for b in u["breakdown"] for p in b["picks"])
+        expect(page.locator("body")).to_contain_text(delivered)
 
         def row_sizes() -> dict[str, int]:
             sizes: dict[str, int] = {}
@@ -307,10 +312,14 @@ class TestRuns:
         # library — as "Because you watched <genres> like <seed>" when the candidate carries genres,
         # or the bare "Because you watched <seed>" otherwise. sarah watches movies AND TV, so both
         # appear.
-        reason_re = re.compile(r"Because you watched (?:[\w, ]+ like )?(?:Movie|Show) \d+")
+        reason_re = re.compile(r"Because you watched (?:.+ like )?.+")
         reasons = page.get_by_role("listitem").filter(has_text=reason_re)
         expect(reasons).to_have_count(len(sarah_picks))
-        assert {p["title"].split()[0] for p in sarah_picks} == {"Movie", "Show"}, (
+        # Checked against the demo library rather than by reading the title: those are real film and
+        # show names now, so "does it start with Movie or Show" is no longer a question the data can
+        # answer, and this list carries no media_type of its own (only the breakdown does).
+        titles = {p["title"] for p in sarah_picks}
+        assert titles & {t for t, _ in DEMO_MOVIES} and titles & {t for t, _ in DEMO_SHOWS}, (
             "sarah's row should mix both libraries — otherwise this test proves nothing about them"
         )
 

@@ -18,6 +18,7 @@ from playwright.sync_api import Page, expect
 
 from shortlist.engine.delivery import row_marker
 from tests.e2e.conftest import ShortlistApp, stub_plex_pin
+from tests.fakes.fake_plex import DEMO_MOVIES, DEMO_SHOWS
 
 pytestmark = pytest.mark.e2e
 
@@ -234,10 +235,26 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
     # row says "Because you watched <a show>", not whatever movie happened to rank first.
     assert len(rows["shortlist_sarah"]) == 2, "sarah watches movies and TV: one row in each library"
     assert {c.section_id for c in rows["shortlist_sarah"]} == {state.section_id, state.show_section_id}
+    # Checked against the demo library rather than a "Movie NN" / "Show NN" prefix: those are real
+    # film and show titles now, chosen so the docs screenshots look like a real library.
+    films = {title for title, _year in DEMO_MOVIES}
+    shows = {title for title, _year in DEMO_SHOWS}
+
+    def seed_of(title: str) -> str:
+        """The title a row is named after, with Shortlist's invisible ownership marker taken off.
+
+        Every delivered row carries `row_marker`'s zero-width run, which a `startswith` check never
+        had to think about and an exact match does.
+        """
+        return title.removeprefix("Because you watched ").rstrip("\u200b\u200c")
+
     for collection in rows["shortlist_sarah"]:
-        kind = "Movie" if collection.section_id == state.section_id else "Show"
-        assert collection.title.startswith(f"Because you watched {kind}"), collection.title
-    assert rows["shortlist_mike"][0].title.startswith("Because you watched Show")  # mike only watches TV
+        wanted = films if collection.section_id == state.section_id else shows
+        seed = seed_of(collection.title)
+        assert seed in wanted, f"a {'movie' if wanted is films else 'TV'} row is named after {seed!r}"
+    # mike only watches TV, so his row must be named after a show and never after a film.
+    seeded_by = seed_of(rows["shortlist_mike"][0].title)
+    assert seeded_by in shows, f"mike's row is seeded by {seeded_by!r}, which is not a show"
     # And the canary — no watch history, so nothing to fill {top_seed} with — gets NO row rather than
     # one Shortlist named for itself (issue #84). It used to land as the hardcoded English
     # "✨ Picked for You", which on a server with a row name in another language read as a stray row

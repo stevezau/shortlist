@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import io
+import os
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -811,6 +812,9 @@ def _poster_title_lines(draw, title: str, font, max_width: int) -> list[str]:
 
 #: Where `scripts/fetch_demo_posters.py` puts real cover art. Gitignored and usually absent.
 _DEMO_POSTERS = Path(__file__).resolve().parents[1] / "e2e" / "assets" / "posters"
+#: Only a capture run draws on that art; every other run gets the drawn placeholder, so the
+#: bytes a test sees never depend on what somebody happened to download.
+_CAPTURING = bool(os.environ.get("SHOTS_DIR"))
 
 
 @lru_cache(maxsize=256)
@@ -828,12 +832,13 @@ def _fake_poster(rating_key: int, title: str = "") -> bytes:
     and does not churn the repo. Falls back to the flat pixel if Pillow is missing, so the fake never
     becomes the reason a test cannot run.
     """
-    # Real cover art when it has been fetched, which is what the published screenshots are taken
-    # against — see `scripts/fetch_demo_posters.py`. Absent (an ordinary test run, CI, a fresh
-    # clone) this falls through to the drawn placeholder below, so nothing here needs the network,
-    # a TMDB key, or third-party art in the repo.
-    real = _DEMO_POSTERS / f"{rating_key}.jpg"
-    if real.is_file():
+    # Real cover art, but ONLY while capturing the docs images — see `scripts/fetch_demo_posters.py`.
+    #
+    # Gated on SHOTS_DIR rather than on the file simply being there, which is how it was written
+    # first and was wrong: whether a developer had ever run the fetch script then decided what these
+    # bytes were, so `test_a_delivered_pick_serves_the_artwork_the_server_actually_holds` passed on
+    # CI and failed on the machine that had. A fixture must not depend on untracked local state.
+    if _CAPTURING and (real := _DEMO_POSTERS / f"{rating_key}.jpg").is_file():
         return real.read_bytes()
 
     try:
@@ -1167,7 +1172,10 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
         item = state.item(rating_key)
         if item is None or stamp != str(item.added_at):
             raise HTTPException(status_code=404, detail=f"no artwork at {rating_key}/thumb/{stamp}")
-        return Response(_fake_poster(rating_key, item.title), media_type="image/png")
+        # Sniffed, not assumed: a real PMS serves whatever the artwork happens to be, and while
+        # capturing this is a JPEG off TMDB rather than the drawn PNG.
+        art = _fake_poster(rating_key, item.title)
+        return Response(art, media_type="image/jpeg" if art[:2] == b"\xff\xd8" else "image/png")
 
     @app.get("/hubs/sections/{section_id}/manage")
     def manage_hubs(section_id: int, request: Request) -> Response:
