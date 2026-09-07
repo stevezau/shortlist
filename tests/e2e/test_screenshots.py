@@ -135,12 +135,18 @@ EXTRA_ROWS = (
         "watched_pct": 1,
         "refresh_days": 11,
         "size": 15,
+        # Two of the four rows carry a poster, and two deliberately do not. Every row on this page
+        # used to show the same empty dashed placeholder, which reads as a broken page rather than
+        # as a feature nobody has switched on — and it hid the row-poster feature entirely. Showing
+        # both states says which it is.
+        "poster": {"mode": "text", "title": "Seen it?", "subtitle": "Worth another look"},
     },
     {
         "name": "👥 Popular {library_name} on this server",
         "build": "shared",
         "min_watchers": 3,
         "size": 20,
+        "poster": {"mode": "text", "title": "Popular here", "subtitle": "What everyone is watching"},
     },
 )
 

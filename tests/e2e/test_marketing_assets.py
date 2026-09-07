@@ -6,12 +6,10 @@ because neither picture is a Shortlist screen.
 
     SHOTS_DIR=docs/images .venv/bin/python -m pytest tests/e2e/test_marketing_assets.py -m e2e --no-cov -n0
 
-- `plex-picked-for-you.png` the hero: one delivered row as a Plex Home shelf. Replaces a real
-                      screenshot of the maintainer's own server, on which four of the eight visible
-                      titles carried Plex's watched tick — a "Picked for You" row advertising films
-                      the viewer had already seen, which is the exact failure the product exists to
-                      prevent. Built from the harness instead, so the shelf holds what the engine
-                      actually delivered and the test can ASSERT nothing on it is watched.
+- `plex-picked-for-you.jpg` is NOT captured here. It needs no browser and no Plex, so it lives in
+                      `tests/unit/test_hero_image.py` — which also means its checks run on every
+                      commit rather than only when someone regenerates it. Its source screenshot is
+                      `assets/plex-shelf-source.jpg`.
 - `two-account.png`   two accounts' Plex Home hubs, side by side, read through their OWN server
                       tokens. Every poster on it is the fake PMS's real answer to that account's
                       token, so the picture cannot claim a privacy result the harness doesn't have.
@@ -61,99 +59,6 @@ def _shot_path(name: str) -> Path:
     out = Path(SHOTS_DIR) / name
     out.parent.mkdir(parents=True, exist_ok=True)
     return out
-
-
-#: Tiles across the hero shelf. Eight fit at a readable size in the 1600px the docs site reserves,
-#: and a ninth is rendered deliberately half-clipped by the right edge — a Plex shelf always
-#: continues past the fold, and one ending flush reads as a short row rather than a scrollable one.
-HERO_TILES = 8
-
-
-def _hero_shelf(app: ShortlistApp, account_id: int) -> tuple[str, list[dict[str, str]]]:
-    """That account's first Shortlist row, as (row title, tiles)."""
-    for _key, title, tiles in _rows_visible_to(app, account_id):
-        if tiles:
-            return title, tiles
-    raise AssertionError(f"account {account_id} has no Shortlist row to photograph")
-
-
-def _hero_html(pms_url: str, row_title: str, tiles: list[dict[str, str]]) -> str:
-    cards = "".join(
-        f"""
-      <li class="tile">
-        <img src="{html.escape(pms_url + tile["thumb"])}" alt="">
-        <p class="tile__title">{html.escape(tile["title"])}</p>
-        <p class="tile__year">{html.escape(tile["year"])}</p>
-      </li>"""
-        for tile in tiles
-    )
-    return f"""<!doctype html>
-<html><head><meta charset="utf-8"><style>
-  :root {{{PALETTE}
-    --font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  }}
-  * {{ box-sizing: border-box; }}
-  /* Plex's own shelf background, not the docs site's: the picture is meant to read as Plex. */
-  body {{
-    margin: 0; padding: 26px 0 22px 28px; width: 1600px; overflow: hidden;
-    background: #101013; color: #f4f4f5; font-family: var(--font); -webkit-font-smoothing: antialiased;
-  }}
-  .shelf {{ display: flex; align-items: center; gap: 12px; margin: 0 28px 18px 0; }}
-  .shelf h2 {{ margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.01em; }}
-  .shelf .chevrons {{ margin-left: auto; display: flex; gap: 18px; color: #6f6f7a; }}
-  .shelf svg {{ width: 22px; height: 22px; }}
-  /* One row that overflows on purpose — see HERO_TILES. */
-  .tiles {{ display: flex; gap: 16px; margin: 0; padding: 0; list-style: none; }}
-  .tile {{ flex: 0 0 168px; }}
-  .tile img {{
-    display: block; width: 168px; height: 252px; object-fit: cover;
-    border-radius: 6px; background: var(--surface-2);
-  }}
-  .tile__title {{
-    margin: 10px 0 2px; font-size: 15px; font-weight: 500; color: #e8e8ec;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }}
-  .tile__year {{ margin: 0; font-size: 14px; color: #86868f; }}
-</style></head>
-<body>
-  <div class="shelf">
-    <h2>{html.escape(row_title)}</h2>
-    <span class="chevrons">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 6l-6 6 6 6"/></svg>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
-    </span>
-  </div>
-  <ul class="tiles">{cards}</ul>
-</body></html>"""
-
-
-@skip_unless_capturing
-def test_capture_hero_shelf(browser: Browser, app: ShortlistApp, reset_fake_plex) -> None:
-    """Sarah's delivered movie row, drawn as the Plex shelf it becomes.
-
-    The assertion is the point of doing this from the harness rather than by hand: every title on
-    the hero must be one Sarah has NOT watched. The image it replaces failed that, and nothing could
-    have told anyone, because it was a photograph.
-    """
-    state = reset_fake_plex
-    build_real_rows(app)
-
-    row_title, tiles = _hero_shelf(app, 201)
-    assert len(tiles) >= HERO_TILES, f"the row holds {len(tiles)} titles — too few to fill the hero"
-    tiles = tiles[: HERO_TILES + 1]
-
-    watched = state.watched_now(201)
-    already_seen = [tile["title"] for tile in tiles if int(tile["key"]) in watched]
-    assert not already_seen, f"the hero would advertise titles Sarah has already watched: {already_seen}"
-    assert all(tile["thumb"] for tile in tiles), "a tile has no artwork path — the hero would show a gap"
-
-    context = browser.new_context(viewport={"width": 1600, "height": 440}, device_scale_factor=2)
-    page = context.new_page()
-    page.set_content(_hero_html(app.pms_url, row_title, tiles))
-    # Posters come off the fake PMS over HTTP, so the shelf is empty until they land.
-    page.wait_for_load_state("networkidle")
-    page.locator("body").screenshot(path=str(_shot_path("plex-picked-for-you.png")))
-    context.close()
 
 
 def _rows_visible_to(app: ShortlistApp, account_id: int) -> list[tuple[int, str, list[dict[str, str]]]]:
