@@ -43,7 +43,7 @@ class TestRowsStayPrivateAcrossLibraries:
                 if label.lower().startswith("shortlist_"):
                     owned.setdefault(label.lower().removeprefix("shortlist_"), []).append(collection.rating_key)
 
-        assert set(owned) == {"sarah", "mike", "canary"}
+        assert set(owned) == {"sarah", "mike", "jess"}
         # sarah watches movies AND TV, so she has a row in each library — the case that leaked.
         assert len(owned["sarah"]) == 2, "a both-types watcher must get one row per library"
         libraries = {state.collections[key].section_id for key in owned["sarah"]}
@@ -58,7 +58,7 @@ class TestRowsStayPrivateAcrossLibraries:
                 )
 
         # Now look through each user's OWN eyes: their row, and nobody else's.
-        for account_id, slug in ((201, "sarah"), (202, "mike"), (203, "canary")):
+        for account_id, slug in ((201, "sarah"), (202, "mike"), (203, "jess")):
             hubs = app.plex_hubs_as(account_id)
             visible = {
                 int(match.group(1))
@@ -76,9 +76,9 @@ class TestUninstall:
         """The typed-confirmation path, all the way through: rows deleted, filters restored."""
         state = reset_fake_plex
         build_real_rows(app)
-        # 5 rows for 3 users: sarah and the cold-start canary each get one per library; mike watches only TV.
+        # 5 rows for 3 users: sarah and the cold-start jess each get one per library; mike watches only TV.
         assert len(state.collections) == 5
-        assert state.users[201].filters["filterMovies"] == "label!=Shortlist_canary,Shortlist_mike"
+        assert state.users[201].filters["filterMovies"] == "label!=Shortlist_jess,Shortlist_mike"
 
         # Uninstall is its own page now (with a live per-step log), reached from the Danger Zone link.
         page.goto("/settings")

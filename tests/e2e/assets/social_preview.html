@@ -137,7 +137,7 @@
         bottom: 0;
         display: grid;
         gap: 15px;
-        mask-image: linear-gradient(to bottom, transparent, #000 42%);
+        mask-image: linear-gradient(to bottom, transparent, #000 58%);
       }
 
       .shelf {
@@ -145,18 +145,25 @@
         gap: 14px;
       }
 
+      /* 2:3, because these are meant to read as posters. They were 92x72 landscape, which reads
+         as nothing in particular — and once every other image on the site carried real cover art,
+         a grid of empty grey boxes on the card that gets unfurled into Slack and Discord looked
+         unfinished rather than abstract. The capture fills them in when the demo posters have been
+         fetched (scripts/fetch_demo_posters.py); with no posters on disk this file still renders
+         standalone from any directory, which is the whole point of it having no external refs. */
       .shelf i {
         display: block;
         width: 92px;
-        height: 72px;
+        height: 138px;
         border-radius: 9px;
         border: 1px solid var(--border);
         background: linear-gradient(160deg, #191920, #0e0e12);
+        background-size: cover;
+        background-position: center;
       }
 
       .shelf i:first-child {
         border-color: rgba(229, 160, 13, 0.34);
-        background: linear-gradient(160deg, rgba(229, 160, 13, 0.22), #0e0e12);
       }
     </style>
   </head>
@@ -203,9 +210,6 @@
     </ul>
 
     <div class="shelves" aria-hidden="true">
-      <div class="shelf">
-        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
-      </div>
       <div class="shelf">
         <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
       </div>

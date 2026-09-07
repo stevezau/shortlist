@@ -45,15 +45,18 @@ ghcr: ghcr.io/stevezau/shortlist
 permalink: pretty
 
 # The card Reddit, Discord, Slack and X render when someone shares a docs link.
-# social-preview.png is the real Plex row with the name and pitch composited over
-# it, at the 2:1 those platforms actually want — the bare row screenshot is 3:1 and
-# gets its top and bottom cropped away. This has to go through `defaults` rather
-# than a top-level `image:` — jekyll-seo-tag only reads page.image, never site.image.
+# social-preview.jpg is the name and pitch over a shelf of cover art fading up from
+# the bottom, at the 2:1 those platforms actually want — a bare row screenshot is
+# 3:1 and gets its top and bottom cropped away. Built by
+# tests/e2e/test_marketing_assets.py from assets/social_preview.html. JPEG, not
+# WebP: this is the one image fetched by every unfurler, which is the last place
+# WebP support is safe to assume. This has to go through `defaults` rather than a
+# top-level `image:` — jekyll-seo-tag only reads page.image, never site.image.
 defaults:
   - scope:
       path: ""
     values:
-      image: /images/social-preview.png
+      image: /images/social-preview.jpg
       layout: doc
 
 # Ownership proof for Google Search Console (where the sitemap is submitted).

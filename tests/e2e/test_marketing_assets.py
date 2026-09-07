@@ -13,7 +13,7 @@ because neither picture is a Shortlist screen.
 - `two-account.webp`   two accounts' Plex Home hubs, side by side, read through their OWN server
                       tokens. Every poster on it is the fake PMS's real answer to that account's
                       token, so the picture cannot claim a privacy result the harness doesn't have.
-- `social-preview.png` the og:image card. No live data at all, so it needs no Plex fixture.
+- `social-preview.jpg` the og:image card. No live data at all, so it needs no Plex fixture.
 """
 
 from __future__ import annotations
@@ -229,9 +229,9 @@ def _two_account_html(columns: str) -> str:
 def test_capture_two_account_image(browser: Browser, app: ShortlistApp, reset_fake_plex) -> None:
     """Two accounts' real Home hubs, side by side.
 
-    Sarah and mike, not the canary: the harness gives them deliberately disjoint watch sets (sarah
+    Sarah and mike, not jess: the harness gives them deliberately disjoint watch sets (sarah
     movies plus some TV, mike a different set of shows), so their rows always hold different
-    titles, while the canary has no history and falls back to the cold-start row.
+    titles, while jess has no history and falls back to the cold-start row.
     """
     state = reset_fake_plex
     build_real_rows(app)
@@ -296,6 +296,27 @@ def test_capture_social_preview(browser: Browser) -> None:
     context = browser.new_context(viewport={"width": 1280, "height": 640}, device_scale_factor=1)
     page = context.new_page()
     page.goto(source.as_uri())
+
+    # Fill the shelf motif with real cover art if it has been fetched. Injected here rather than
+    # written into the HTML so that file keeps its one useful property — no external references, so
+    # it renders standalone from any directory — while the card that actually gets unfurled into
+    # Slack and Discord stops being a grid of empty boxes.
+    posters = sorted((Path(__file__).parent / "assets" / "posters").glob("*.jpg"))
+    if posters:
+        page.eval_on_selector_all(
+            ".shelf i",
+            "(tiles, urls) => tiles.forEach((t, i) => { t.style.backgroundImage = `url(${urls[i % urls.length]})`; })",
+            [p.as_uri() for p in posters],
+        )
+        page.wait_for_timeout(600)
+
     page.wait_for_timeout(300)
-    page.screenshot(path=str(_shot_path("social-preview.png")))
+    # JPEG rather than PNG, and NOT WebP: real cover art costs 549KB as a PNG against 152KB here,
+    # and this is the one image fetched by every service that unfurls a link — the same place WebP
+    # support is still not safe to assume. Non-progressive on purpose: some unfurlers read only the
+    # first bytes of the response to size the image.
+    shot = page.screenshot()
+    Image.open(io.BytesIO(shot)).convert("RGB").save(
+        _shot_path("social-preview.jpg"), "JPEG", quality=90, optimize=True, progressive=False
+    )
     context.close()

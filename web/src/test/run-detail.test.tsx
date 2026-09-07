@@ -803,7 +803,7 @@ describe("RunDetail — a skipped person is not a success", () => {
         status: "error",
         reason: null,
       },
-      skippedUser("canary", 3),
+      skippedUser("jess", 3),
     ] as unknown as RunDetail["users"];
     getRun.mockResolvedValue(r);
 
@@ -826,7 +826,7 @@ describe("RunDetail — a skipped person is not a success", () => {
       users_skipped: 3,
       titles_requested: 0,
     };
-    r.users = ["sarah", "mike", "canary"].map((u, i) =>
+    r.users = ["sarah", "mike", "jess"].map((u, i) =>
       skippedUser(u, i),
     ) as unknown as RunDetail["users"];
     getRun.mockResolvedValue(r);
@@ -850,7 +850,7 @@ describe("RunDetail — a skipped person is not a success", () => {
       users_skipped: 3,
       titles_requested: 0,
     };
-    r.users = ["sarah", "mike", "canary"].map((u, i) =>
+    r.users = ["sarah", "mike", "jess"].map((u, i) =>
       skippedUser(u, i),
     ) as unknown as RunDetail["users"];
     getRun.mockResolvedValue(r);
@@ -881,7 +881,7 @@ describe("RunDetail — a skipped person is not a success", () => {
     };
     r.users = [
       {
-        ...skippedUser("canary", 1),
+        ...skippedUser("jess", 1),
         status: "cold_start",
         reason:
           "Not enough watch history yet — 0 of 10 titles. The row due in this run is set to build nothing until then, so 1 already on Plex was removed.",

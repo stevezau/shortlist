@@ -13,6 +13,7 @@ the one flow whose contract is "the SPA polls until plex.tv says linked".
 
 from __future__ import annotations
 
+import os
 import socket
 import threading
 import time
@@ -76,7 +77,7 @@ PMS_VERSION = "1.43.3.10793"
 # seed_state() gives sarah/mike 8 watches each — below EngineConfig.min_history (10), which would
 # push every user down the cold-start path and never exercise seeds -> TMDB -> curator. Top both
 # up to 12 distinct titles so the real recommendation path runs (and reasons say "Because you
-# watched …"); the canary keeps its empty history, which is exactly the cold-start case.
+# watched …"); jess keeps an empty history, which is exactly the cold-start case.
 #
 # Sarah watches movies AND TV, mike watches only TV: a suite where everyone watches movies can
 # never catch a show being delivered into the movie library, which is the one leak that reached
@@ -88,7 +89,22 @@ MIKE_WATCHED = [*range(305, 317)]
 OWNER_WATCHED = [*range(109, 117), *range(313, 317)]
 
 
-def _free_port() -> int:
+def _free_port(preferred: int | None = None) -> int:
+    """A bindable localhost port, taking `preferred` when it happens to be free.
+
+    Only the capture run asks for one. The wizard screenshot shows the address it actually probed,
+    and an ephemeral port made the docs site advertise `http://127.0.0.1:58041` — which is not a
+    number any Plex install has ever used, on the screen whose job is "this is what connecting
+    looks like". 32400 is, and a Plex on the same box really is reachable there.
+    """
+    if preferred is not None:
+        with socket.socket() as sock:
+            try:
+                sock.bind(("127.0.0.1", preferred))
+            except OSError:
+                pass  # already taken — fall through to an ephemeral one rather than fail the run
+            else:
+                return preferred
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
@@ -172,7 +188,9 @@ class ShortlistApp:
 def fake_plex() -> Iterator[tuple[str, str, FakePlexState]]:
     """Fake PMS + fake plex.tv, booted once for the session."""
     state = seed_state()
-    pms = _ThreadedServer(make_fake_plex(state), _free_port())
+    # Plex's own port while capturing, so the wizard screenshot shows an address a reader
+    # recognises. Ordinary runs stay ephemeral: parallel workers would otherwise all want 32400.
+    pms = _ThreadedServer(make_fake_plex(state), _free_port(32400 if os.environ.get("SHOTS_DIR") else None))
     plextv = _ThreadedServer(make_fake_plextv(state), _free_port())
     pms.start()
     plextv.start()

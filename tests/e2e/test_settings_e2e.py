@@ -13,6 +13,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from tests.e2e.conftest import ShortlistApp, build_real_rows
+from tests.fakes.fake_plex import FakePlexState
 
 pytestmark = pytest.mark.e2e
 
@@ -38,7 +39,10 @@ class TestConnectionCards:
         plex.get_by_role("button", name="Test").click()
         # Spelled out, not "PMS": the abbreviation is ours, and the owner reading this card has no
         # reason to know it (audit finding, Sep 2026).
-        expect(plex).to_contain_text("Connected to FakePlex (Plex Media Server 1.43.3.10793)", timeout=LOAD)
+        expect(plex).to_contain_text(
+            f"Connected to {FakePlexState.friendly_name} (Plex Media Server {FakePlexState.version})",
+            timeout=LOAD,
+        )
 
         tmdb = page.get_by_test_id("connection-tmdb")
         tmdb.get_by_role("button", name="Test").click()
@@ -164,7 +168,7 @@ class TestDangerZone:
         build_real_rows(app)
         before_collections = {c.rating_key: c.title for c in state.collections.values()}
         before_filters = {user.id: dict(user.filters) for user in state.users.values()}
-        # 5 rows for 3 users: sarah and the cold-start canary each get one per library; mike watches only TV.
+        # 5 rows for 3 users: sarah and the cold-start jess each get one per library; mike watches only TV.
         assert len(before_collections) == 5
 
         _open_settings(page)

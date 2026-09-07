@@ -18,7 +18,7 @@ from playwright.sync_api import Page, expect
 
 from shortlist.engine.delivery import row_marker
 from tests.e2e.conftest import ShortlistApp, stub_plex_pin
-from tests.fakes.fake_plex import DEMO_MOVIES, DEMO_SHOWS
+from tests.fakes.fake_plex import DEMO_MOVIES, DEMO_SHOWS, FakePlexState
 
 pytestmark = pytest.mark.e2e
 
@@ -50,7 +50,7 @@ def _connect_plex(page: Page, pms_url: str) -> None:
     # also advertises must be offered but disabled — a guess would have picked the wrong one.
     # SLOW, not LOAD: proving an address is unreachable means waiting for it to time out, which is
     # the entire point of testing rather than guessing.
-    expect(page.get_by_text("FakePlex", exact=True).first).to_be_visible(timeout=SLOW)
+    expect(page.get_by_text(FakePlexState.friendly_name, exact=True).first).to_be_visible(timeout=SLOW)
     working = page.locator("button", has_text=pms_url).first
     expect(working).to_be_enabled(timeout=LOAD)
     # An unreachable address stays CLICKABLE by design — the probe only tried the plex.direct URL
@@ -73,7 +73,7 @@ def _connect_plex(page: Page, pms_url: str) -> None:
     expect(page.get_by_text("TV Shows (30 shows)")).to_be_visible()
 
     page.get_by_role("button", name="Link this server").click()
-    expect(page.get_by_text("Linked to FakePlex")).to_be_visible(timeout=LOAD)
+    expect(page.get_by_text(f"Linked to {FakePlexState.friendly_name}")).to_be_visible(timeout=LOAD)
 
 
 def _skip_history(page: Page) -> None:
@@ -109,7 +109,7 @@ def _choose_no_curator(page: Page) -> None:
 
 #: Everyone step 4 offers: the three accounts plex.tv shares the server with, plus the owner —
 #: whom plex.tv's user list never returns and Shortlist has to add itself (issue #1).
-WIZARD_USERS = ("sarah", "mike", "canary", "steve")
+WIZARD_USERS = ("sarah", "mike", "jess", "steve")
 
 
 def _pick_users(page: Page, *usernames: str) -> None:
@@ -150,9 +150,9 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
     _connect_plex(page, pms_url)
     _skip_history(page)
     _choose_no_curator(page)
-    # Enable the canary too: with no watch history they exercise the cold-start path, where the row
+    # Enable the jess too: with no watch history they exercise the cold-start path, where the row
     # falls back to the default "✨ Picked for You" title (asserted below).
-    _pick_users(page, "sarah", "mike", "canary")
+    _pick_users(page, "sarah", "mike", "jess")
 
     # --- No privacy step: rows are made private by the share-filter excludes the run writes, so the
     # wizard goes Users -> Make it yours directly. --------------------------------------------------
@@ -188,7 +188,7 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
     # a card falls back to a bare "done" with no counts. Asserting the streamed detail (not a
     # mid-run stage) is race-free — the earlier "parked on delivering" check flaked because the run
     # completes and transitions the card to done before the assertion runs.
-    for username in ("sarah", "mike", "canary"):
+    for username in ("sarah", "mike", "jess"):
         expect(page.get_by_text(username, exact=True)).to_be_visible()
     expect(page.get_by_text(re.compile(r"^row built — \d+ picks"))).to_have_count(3)
 
@@ -210,9 +210,9 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
             if label.lower().startswith("shortlist_"):
                 rows.setdefault(label.lower(), []).append(collection)
 
-    # The canary has NO watch history, and this wizard set the row name to "Because you watched
+    # The jess has NO watch history, and this wizard set the row name to "Because you watched
     # {top_seed}" — a name that needs a watch. Since issue #84 Shortlist will not invent one, so the
-    # canary gets no row rather than one titled something the operator never wrote. The two people who
+    # jess gets no row rather than one titled something the operator never wrote. The two people who
     # HAVE watched are unaffected, which is the line this asserts: the rule costs exactly the rows it
     # cannot name honestly, and no others.
     assert set(rows) == {"shortlist_sarah", "shortlist_mike"}, (
@@ -255,12 +255,12 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
     # mike only watches TV, so his row must be named after a show and never after a film.
     seeded_by = seed_of(rows["shortlist_mike"][0].title)
     assert seeded_by in shows, f"mike's row is seeded by {seeded_by!r}, which is not a show"
-    # And the canary — no watch history, so nothing to fill {top_seed} with — gets NO row rather than
+    # And the jess — no watch history, so nothing to fill {top_seed} with — gets NO row rather than
     # one Shortlist named for itself (issue #84). It used to land as the hardcoded English
     # "✨ Picked for You", which on a server with a row name in another language read as a stray row
     # appearing from nowhere, and claimed a watch that never happened over a list of merely popular
     # titles. The operator gives the row a fallback name if they want these people to have one.
-    assert "shortlist_canary" not in rows
+    assert "shortlist_jess" not in rows
     assert not any(c.title.startswith("✨ Picked for You") for c in state.collections.values()), (
         "no collection may wear a title Shortlist invented"
     )
@@ -280,9 +280,9 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
         assert len(titles) == len(set(titles)), f"two rows share a collection tag in library {library}"
 
     # Every user's share now excludes the OTHER users' labels — the whole point of the product.
-    # The canary is excluded from nobody's filter, because the canary HAS no row — excludes are built
+    # The jess is excluded from nobody's filter, because the jess HAS no row — excludes are built
     # from the rows that exist on the server, not from the roster, so a person Shortlist could not
-    # name has nothing to hide. 203 is the canary: they are still excluded from both of the others.
+    # name has nothing to hide. 203 is the jess: they are still excluded from both of the others.
     assert state.users[201].filters["filterMovies"] == "label!=Shortlist_mike"
     assert state.users[202].filters["filterMovies"] == "label!=Shortlist_sarah"
     assert state.users[203].filters["filterMovies"] == "label!=Shortlist_mike,Shortlist_sarah"
@@ -348,4 +348,4 @@ def test_wizard_resumes_on_the_same_step_after_a_reload(fresh_page: Page, fresh_
     expect(page.get_by_role("button", name=re.compile(r"^None\b"))).to_have_attribute("aria-pressed", "true")
     page.get_by_role("button", name="Back").click()
     page.get_by_role("button", name="Back").click()
-    expect(page.get_by_text("Linked to FakePlex")).to_be_visible()
+    expect(page.get_by_text(f"Linked to {FakePlexState.friendly_name}")).to_be_visible()

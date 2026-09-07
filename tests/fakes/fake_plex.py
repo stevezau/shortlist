@@ -138,7 +138,10 @@ class FakePlexState:
     """Shared in-memory truth for both fake servers; tests assert on it directly."""
 
     machine_id: str = "fake-machine-1"
-    friendly_name: str = "FakePlex"
+    #: What the wizard screenshots show as the server's name, so it has to read like a name somebody
+    #: would actually give their server. It was "FakePlex", which told every visitor to the docs site
+    #: that the picture was staged — on the one screen whose job is "this is what setup looks like".
+    friendly_name: str = "Home Server"
     version: str = "1.43.3.10793"
     owner_token: str = "owner-token"
     owner_account_id: int = 555000001  # the owner's plex.tv id
@@ -526,7 +529,7 @@ def show_title(index: int) -> str:
 
 
 def seed_state() -> FakePlexState:
-    """Two libraries (30 movies, 30 shows), 3 users (one Home canary without a PIN), history.
+    """Two libraries (30 movies, 30 shows), 3 users (one Home user without a PIN), history.
 
     The TV library is not decoration: a server with only movies cannot exhibit the class of bug
     where a show is delivered into a movie collection, so every test would pass while the real
@@ -561,7 +564,7 @@ def seed_state() -> FakePlexState:
         )
     state.users[201] = FakeUser(id=201, username="sarah")
     state.users[202] = FakeUser(id=202, username="mike")
-    state.users[203] = FakeUser(id=203, username="canary", home=True, uuid="uuid-203")
+    state.users[203] = FakeUser(id=203, username="jess", home=True, uuid="uuid-203")
     # A managed account with a parental preset. Plex refuses a label filter for one, so Shortlist
     # writes it no excludes — and this account can still SEE collections, which is the whole point:
     # `little_kid` sees none, `older_kid` sees them (measured on a real server, 2026-08-11, #76).
@@ -570,7 +573,7 @@ def seed_state() -> FakePlexState:
     state.users[204] = FakeUser(id=204, username="kid", home=True, uuid="uuid-204", restriction_profile="older_kid")
     base_viewed = 1_752_000_000
     # One run then covers the whole delivery matrix: sarah watches both types (two rows), mike
-    # watches only TV (one row, in the TV library), the canary has no history (cold start).
+    # watches only TV (one row, in the TV library), the jess has no history (cold start).
     watched = {
         201: list(range(101, 109)) + list(range(301, 305)),
         202: list(range(305, 313)),
@@ -1343,7 +1346,14 @@ def make_fake_plextv(state: FakePlexState) -> FastAPI:
                 protected=int(user.protected),
                 **user.filters,
             )
-            _el(user_el, "Server", id=user.id, serverId="1", machineIdentifier=state.machine_id, name="FakePlex")
+            _el(
+                user_el,
+                "Server",
+                id=user.id,
+                serverId="1",
+                machineIdentifier=state.machine_id,
+                name=state.friendly_name,
+            )
         return _xml(root)
 
     @app.get("/api/servers/{machine_id}/shared_servers")

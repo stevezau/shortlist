@@ -192,7 +192,7 @@ def test_engine_run_end_to_end(fakes, tmp_path):
         for u in sorted(plextv.list_users(), key=lambda u: u.id)
         if not u.restriction_profile  # the server never passes the engine a profiled account
     ]
-    assert [u.username for u in users] == ["sarah", "mike", "canary"]
+    assert [u.username for u in users] == ["sarah", "mike", "jess"]
 
     report = engine_run(ctx, users)
 
@@ -215,7 +215,7 @@ def test_engine_run_end_to_end(fakes, tmp_path):
     by_slug = {u.slug: u for u in report.users}
     assert by_slug["sarah"].status == "ok"
     assert by_slug["mike"].status == "ok"
-    assert by_slug["canary"].status == "cold_start"  # no watch history seeded for the canary
+    assert by_slug["jess"].status == "cold_start"  # no watch history seeded for the jess
 
     # Every user's rows, found by title-cased label. A user gets one collection per library they
     # have picks in — never one collection holding both types, which no share filter can hide.
@@ -223,7 +223,7 @@ def test_engine_run_end_to_end(fakes, tmp_path):
     assert {slug: row.label for slug, row in owned.items()} == {
         "sarah": "Shortlist_sarah",
         "mike": "Shortlist_mike",
-        "canary": "Shortlist_canary",
+        "jess": "Shortlist_jess",
     }
     rows_by_library = {
         slug: sorted(state.collections[key].section_id for key in row.rating_keys) for slug, row in owned.items()
@@ -233,7 +233,7 @@ def test_engine_run_end_to_end(fakes, tmp_path):
         "mike": [state.show_section_id],  # watched only TV -> only a TV row
         # Cold start draws from EVERY library, so a thin-history TV watcher gets shows rather
         # than a row of films they never asked for.
-        "canary": [state.section_id, state.show_section_id],
+        "jess": [state.section_id, state.show_section_id],
     }
     user_by_slug = {u.username.lower(): u for u in users}
     for slug, row in owned.items():
@@ -260,8 +260,8 @@ def test_engine_run_end_to_end(fakes, tmp_path):
     # Filters merged on the fake plex.tv: every user excludes the OTHER two users' stored labels.
     remote = {u.id: u for u in plextv.list_users()}
     expected = {
-        201: "label!=Shortlist_canary,Shortlist_mike",
-        202: "label!=Shortlist_canary,Shortlist_sarah",
+        201: "label!=Shortlist_jess,Shortlist_mike",
+        202: "label!=Shortlist_jess,Shortlist_sarah",
         203: "label!=Shortlist_mike,Shortlist_sarah",
     }
     for account_id, merged in expected.items():
@@ -292,14 +292,14 @@ def test_engine_run_end_to_end(fakes, tmp_path):
     assert not (other_ids & owner_hub_ids), "nobody else's row may appear on the owner's Home"
     assert owner_ids <= owner_hub_ids, "the owner's own rows should appear on their Home"
 
-    # Canary /hubs (switch -> resources -> server token) shows its own row and NONE of the others'
+    # Jess /hubs (switch -> resources -> server token) shows its own row and NONE of the others'
     # — including sarah's TV row, which lives in a different library than her movie row.
-    canary_token = plextv.canary_server_token(203)
-    assert canary_token == "server-203"
-    canary_hub_ids = {collection_id_from_hub(h) for h in plex.user_hubs(canary_token)}
-    assert set(owned["canary"].rating_keys) <= canary_hub_ids
+    jess_token = plextv.canary_server_token(203)
+    assert jess_token == "server-203"
+    jess_hub_ids = {collection_id_from_hub(h) for h in plex.user_hubs(jess_token)}
+    assert set(owned["jess"].rating_keys) <= jess_hub_ids
     foreign = set(owned["sarah"].rating_keys) | set(owned["mike"].rating_keys)
-    assert not (foreign & canary_hub_ids), "another user's row is visible to the canary"
+    assert not (foreign & jess_hub_ids), "another user's row is visible to the jess"
 
     # Second run is a steady-state no-op: same rows, zero filter writes, update path exercised
     # (sortUpdate + moveItem run against the existing collections instead of createCollection).
@@ -454,7 +454,7 @@ def test_a_row_builds_in_every_movie_library_with_that_librarys_own_rating_keys(
         )
         assert state.filterable(row)
 
-    # And the excludes hide every one of them from everyone else — through the canary's own eyes.
+    # And the excludes hide every one of them from everyone else — through the jess's own eyes.
     for account_id in (202, 203):
         assert "Shortlist_sarah" in state.users[account_id].filters["filterMovies"]
         visible = {collection_id_from_hub(h) for h in plex.user_hubs(f"server-{account_id}")}
@@ -811,7 +811,7 @@ def test_shared_row_restricted_to_a_subset_is_hidden_from_the_rest(fakes, tmp_pa
     # In the audience (sarah 201, mike 202) -> not excluded.
     assert "shared" not in remote[201].filters.get("filterTelevision", "").lower()
     assert "shared" not in remote[202].filters.get("filterTelevision", "").lower()
-    # Outside it (canary 203) -> the shared label IS excluded, hiding the row from them.
+    # Outside it (jess 203) -> the shared label IS excluded, hiding the row from them.
     assert "Shortlist__shared_staff" in remote[203].filters["filterTelevision"]
 
 
@@ -901,7 +901,7 @@ def test_a_run_heals_the_leaking_rows_a_previous_version_left_behind(fakes, tmp_
         user.filters["filterMovies"] = f"label!={excludes}"
         user.filters["filterTelevision"] = f"label!={excludes}"
 
-    # Sanity: these really are leaks today — the canary sees both rows despite excluding both labels.
+    # Sanity: these really are leaks today — the jess sees both rows despite excluding both labels.
     for collection in broken.values():
         assert not state.filterable(collection)
     before = {collection_id_from_hub(h) for h in plex.user_hubs("server-203")}
@@ -919,7 +919,7 @@ def test_a_run_heals_the_leaking_rows_a_previous_version_left_behind(fakes, tmp_
 
     # And now nobody sees anyone else's row.
     owned = plex.owned_collections()
-    for account_id, slug in ((201, "sarah"), (202, "mike"), (203, "canary")):
+    for account_id, slug in ((201, "sarah"), (202, "mike"), (203, "jess")):
         visible = {collection_id_from_hub(h) for h in plex.user_hubs(f"server-{account_id}")}
         foreign = {key for other, row in owned.items() if other != slug for key in row.rating_keys}
         assert not (foreign & visible), f"{slug} can still see another user's row"
@@ -1426,7 +1426,7 @@ def test_every_account_that_shares_the_server_gets_the_excludes_not_just_the_man
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
     )
 
-    # Only sarah is processed. mike and the canary share the server but are not in this run.
+    # Only sarah is processed. mike and the jess share the server but are not in this run.
     sarah = UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED)
     report = engine_run(ctx, [sarah])
 
@@ -1545,7 +1545,7 @@ def test_each_users_row_contains_only_their_own_picks(fakes, tmp_path):
         history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
-        known_slugs={201: "sarah", 202: "mike", 203: "canary"},
+        known_slugs={201: "sarah", 202: "mike", 203: "jess"},
     )
     users = [
         UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
@@ -1589,7 +1589,7 @@ def test_migration_night_rebuilds_every_shared_row_in_one_run(fakes, tmp_path):
         history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
-        known_slugs={201: "sarah", 202: "mike", 203: "canary"},
+        known_slugs={201: "sarah", 202: "mike", 203: "jess"},
     )
     users = [
         UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
@@ -1600,7 +1600,7 @@ def test_migration_night_rebuilds_every_shared_row_in_one_run(fakes, tmp_path):
     # The legacy state: every user's row titled the same, in the same library, sharing one tag.
     legacy = {}
     for rating_key, (slug, items) in enumerate(
-        {"sarah": [101, 102], "mike": [103, 104], "canary": [105]}.items(), start=98000
+        {"sarah": [101, 102], "mike": [103, 104], "jess": [105]}.items(), start=98000
     ):
         collection = FakeCollection(
             rating_key=rating_key,
@@ -1626,7 +1626,7 @@ def test_migration_night_rebuilds_every_shared_row_in_one_run(fakes, tmp_path):
     for slug, collection in legacy.items():
         assert collection.rating_key not in state.collections, f"{slug}'s shared row survived"
     by_slug = {u.slug: u for u in report.users}
-    for slug in ("sarah", "mike", "canary"):
+    for slug in ("sarah", "mike", "jess"):
         assert "✨ Picked for You" in (by_slug[slug].diff.deleted or []), f"{slug}'s destroyed row was not recorded"
 
     # And every rebuilt row holds only its owner's picks.
@@ -2029,7 +2029,7 @@ def test_a_profiled_account_that_can_see_other_peoples_rows_is_measured_and_repo
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
     )
     # What the server always supplies: the PMS as ONE user sees it. Mirrors
-    # `ContextBuilder._pms_for_user`, including its canary fallback for a managed account that was
+    # `ContextBuilder._pms_for_user`, including its jess fallback for a managed account that was
     # never separately shared — which is precisely the archetype here.
     ctx.pms_for_user = lambda profile: PlexClient(pms_url, token) if (token := history._token_for(profile)) else None
 
@@ -2754,8 +2754,8 @@ def test_a_filter_plex_stores_but_ignores_is_caught_and_reported(fakes, tmp_path
 
     # Both account KINDS must be represented: the check samples one per type, and the managed
     # (Plex Home) arm is the exact shape #88 reported. Asserting only "something was reported" would
-    # stay green if the canary/managed path broke entirely.
-    assert sorted(report.filters_not_enforced) == ["canary", "sarah"]
+    # stay green if the jess/managed path broke entirely.
+    assert sorted(report.filters_not_enforced) == ["jess", "sarah"]
     assert report.filters_enforcement_measured is True, "a filter that is stored but ignored has to be reported"
     exposed = next(iter(report.filters_not_enforced.values()))
     assert exposed, "the finding names the rows the account can actually see"

@@ -131,18 +131,18 @@ class TestTheOwnerIsAUserToo:
 class TestUsers:
     def test_disabling_a_user_persists_and_leaves_the_others_alone(self, page: Page, app: ShortlistApp):
         page.goto("/users")
-        canary = page.get_by_role("switch", name="Shortlist row for canary")
-        expect(canary).to_be_checked(timeout=LOAD)
+        jess = page.get_by_role("switch", name="Shortlist row for jess")
+        expect(jess).to_be_checked(timeout=LOAD)
 
-        canary.click()
-        expect(canary).not_to_be_checked(timeout=LOAD)
+        jess.click()
+        expect(jess).not_to_be_checked(timeout=LOAD)
 
         page.reload()
-        expect(page.get_by_role("switch", name="Shortlist row for canary")).not_to_be_checked(timeout=LOAD)
+        expect(page.get_by_role("switch", name="Shortlist row for jess")).not_to_be_checked(timeout=LOAD)
 
         # Exactly one user changed — a broadcast PATCH would pass a "it persisted" test too.
         users = _users_by_name(app)
-        assert users["canary"]["enabled"] is False
+        assert users["jess"]["enabled"] is False
         assert users["sarah"]["enabled"] is True
         assert users["mike"]["enabled"] is True
 
@@ -194,13 +194,13 @@ class TestUsers:
 
         run = build_real_rows(app)
         built = {result["slug"] for result in app.api("GET", f"/api/runs/{run['id']}").json()["users"]}
-        assert built == {"mike", "canary"}, "a paused user must not be rebuilt"
+        assert built == {"mike", "jess"}, "a paused user must not be rebuilt"
 
         labels = {label.lower() for c in state.collections.values() for label in c.labels}
         # sarah's OWNER label is the one that must be absent — that is what "not rebuilt" looks like
         # on the server. The constant `shortlist` label is on every row we write and names nobody, so
         # it is expected here and says nothing about who was built.
-        assert labels == {"shortlist", "shortlist_mike", "shortlist_canary"}, (
+        assert labels == {"shortlist", "shortlist_mike", "shortlist_jess"}, (
             "sarah's OWNER label must be absent — that is what 'not rebuilt' looks like on the server"
         )
         assert "shortlist_sarah" not in labels
@@ -227,7 +227,7 @@ class TestRuns:
         # page's stats bar also shows "OK" as the last-run status. The users cell keeps the "3 ok" count.
         expect(page.get_by_role("table").get_by_text("OK", exact=True)).to_be_visible(timeout=LOAD)
         expect(page.get_by_role("cell", name="3 ok")).to_be_visible()
-        # 5 rows for 3 users: sarah and the cold-start canary each get one per library; mike watches only TV.
+        # 5 rows for 3 users: sarah and the cold-start jess each get one per library; mike watches only TV.
         assert len(state.collections) == 5
 
         page.get_by_role("link", name="#1").click()
@@ -236,7 +236,7 @@ class TestRuns:
         # built them, so open every row before reading them.
         open_rows(page)
         # Every user is a clickable tab in the run's nav; the selected one's rows show below it.
-        for username in ("sarah", "mike", "canary"):
+        for username in ("sarah", "mike", "jess"):
             expect(page.get_by_role("tab", name=re.compile(username, re.IGNORECASE))).to_be_visible()
 
     def test_run_detail_shows_what_changed(self, page: Page, app: ShortlistApp, reset_fake_plex):
@@ -326,12 +326,12 @@ class TestRuns:
         # Ranked, and the rank the engine chose is the rank shown.
         expect(page.get_by_text(sarah_picks[0]["title"], exact=True).first).to_be_visible()
 
-    def test_the_canary_gets_the_cold_start_row_and_says_so(self, page: Page, app: ShortlistApp):
+    def test_the_jess_gets_the_cold_start_row_and_says_so(self, page: Page, app: ShortlistApp):
         """No history -> the popular-titles fallback, labelled honestly rather than faked."""
         build_real_rows(app)
-        canary_id = _users_by_name(app)["canary"]["id"]
+        jess_id = _users_by_name(app)["jess"]["id"]
 
-        page.goto(f"/users/{canary_id}")
-        expect(page.get_by_role("heading", name="canary")).to_be_visible(timeout=LOAD)
+        page.goto(f"/users/{jess_id}")
+        expect(page.get_by_role("heading", name="jess")).to_be_visible(timeout=LOAD)
         expect(page.get_by_text("New viewer").first).to_be_visible()
         expect(page.get_by_text("Popular on this server").first).to_be_visible()

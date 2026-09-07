@@ -2,7 +2,7 @@
 
 Skipped in CI (writes only when SHOTS_DIR is set). Regenerate with:
     SHOTS_DIR=docs/images .venv/bin/python -m pytest tests/e2e/test_screenshots.py -m e2e --no-cov -n0
-Fake data: the users are sarah/mike/canary and nobody real watched anything. The library names real
+Fake data: the users are sarah/mike/jess and nobody real watched anything. The library names real
 films and shows so the screens look like what an owner would actually see — see `DEMO_MOVIES` in
 `tests/fakes/fake_plex.py`, and `scripts/fetch_demo_posters.py` for the cover art.
 
@@ -25,6 +25,7 @@ from playwright.sync_api import Browser, Page, expect
 
 from shortlist.server.auth import SESSION_COOKIE, session_serializer
 from tests.e2e.conftest import OWNER_ACCOUNT_ID, ShortlistApp, build_real_rows, stub_plex_pin
+from tests.fakes.fake_plex import FakePlexState
 
 pytestmark = pytest.mark.e2e
 
@@ -217,7 +218,7 @@ def test_capture_wizard_screenshot(fresh_shot_page: Page, fresh_app: ShortlistAp
     expect(page.get_by_role("heading", name="Connect Plex")).to_be_visible()
     page.get_by_role("button", name="Sign in with Plex").click()
     expect(page.get_by_role("button", name="Sign in with Plex")).to_have_count(0, timeout=LOAD)
-    expect(page.get_by_text("FakePlex", exact=True).first).to_be_visible(timeout=PROBE)
+    expect(page.get_by_text(FakePlexState.friendly_name, exact=True).first).to_be_visible(timeout=PROBE)
     expect(page.locator("button", has_text=pms_url).first).to_be_enabled(timeout=LOAD)
     page.get_by_role("button", name="Run checks").click()
     expect(page.get_by_text("Plex Pass active")).to_be_visible(timeout=LOAD)
