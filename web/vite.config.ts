@@ -15,8 +15,12 @@ export default defineConfig({
   },
   server: {
     proxy: {
+      // Defaults to the port a deployed container uses, which is the common case: hack on the UI
+      // against a real backend with real data. Point it somewhere else when the backend is also
+      // changing, or when you don't want clicks landing on a live server:
+      //   SHORTLIST_API_PROXY=http://localhost:5960 pnpm dev   (see scripts/devrun.sh)
       "/api": {
-        target: "http://localhost:5959",
+        target: process.env.SHORTLIST_API_PROXY ?? "http://localhost:5959",
         changeOrigin: true,
       },
     },

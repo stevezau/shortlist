@@ -39,7 +39,8 @@ uv pip compile pyproject.toml \
 
 # Frontend
 pnpm -C web install
-pnpm -C web dev              # Vite dev server (proxies /api to :5959)
+pnpm -C web dev              # Vite dev server on :5173; proxies /api to :5959 by default
+SHORTLIST_API_PROXY=http://localhost:5960 pnpm -C web dev   # ...or to a scripts/devrun.sh backend
 pnpm -C web test             # vitest
 pnpm -C web build
 
