@@ -2,7 +2,9 @@
 
 Skipped in CI (writes only when SHOTS_DIR is set). Regenerate with:
     SHOTS_DIR=docs/images .venv/bin/python -m pytest tests/e2e/test_screenshots.py -m e2e --no-cov -n0
-Fake data (users sarah/mike/canary, placeholder titles) — no real people, safe for a public repo.
+Fake data: the users are sarah/mike/canary and nobody real watched anything. The library names real
+films and shows so the screens look like what an owner would actually see — see `DEMO_MOVIES` in
+`tests/fakes/fake_plex.py`, and `scripts/fetch_demo_posters.py` for the cover art.
 
 Shots are captured at 2x device scale: the docs site renders them at half their pixel width, so a
 1x capture looks soft on every laptop sold in the last decade.

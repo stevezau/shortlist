@@ -43,15 +43,17 @@
   </p>
 </div>
 
-<!-- The proof goes first, because "private per-user row" is the one claim everything else rests on
-     and it is the one nobody believes from a sentence. Both halves of this picture are the fake Plex
-     server's own answer to each account's token, captured by tests/e2e/test_marketing_assets.py, so
-     it cannot show a result the code does not actually produce. -->
+<!-- The product first, the proof second. These two pictures answer different questions — "what is
+     this?" and "is it really private?" — and the second one is meaningless until the first is
+     answered, so leading with the side-by-side comparison made a reader work through a two-column
+     diagram before a single word had said what a row is. Back to back they also read as the same
+     picture twice, which is what they were. -->
 
-![Two Plex home screens side by side on the same server and the same night. Sarah's has a Movies row and a TV Shows row; Mike's has only a TV Shows row, holding completely different titles. Each one notes that the other people's rows are not on this home screen.](docs/images/two-account.webp)
+![A "Movies Picked for You" row on Plex](docs/images/plex-picked-for-you.jpg)
 
-<sub>Two accounts, one server, the same night. Each home screen was read using that account's own
-Plex token, from a test library with made-up titles.</sub>
+<sub>What lands on Plex: a "Picked for You" row, private to that user. A real row on the
+maintainer's server, with Plex's watched ticks edited out — the run that produced it predates the
+freshness work, and the picture should show what the row is for rather than a bug since fixed.</sub>
 
 ## What it does
 
@@ -64,11 +66,15 @@ picks titles from your library they haven't seen but probably want to, explains 
 them on that person's Plex home screen as a **"Picked for You"** collection. It refreshes on a
 schedule you set, and each row is visible only to its owner.
 
-![A "Movies Picked for You" row on Plex](docs/images/plex-picked-for-you.jpg)
+<!-- Sitting directly under the sentence it proves. "Visible only to its owner" is the one claim
+     everything else rests on and the one nobody believes from a sentence, and both halves of this
+     picture are the fake Plex server's own answer to each account's token, captured by
+     tests/e2e/test_marketing_assets.py — so it cannot show a result the code does not produce. -->
 
-<sub>What lands on Plex: a "Picked for You" row, private to that user. A real row on the
-maintainer's server, with Plex's watched ticks edited out — the run that produced it predates the
-freshness work, and the picture should show what the row is for rather than a bug since fixed.</sub>
+![Two Plex home screens side by side on the same server and the same night. Sarah's has a Movies row and a TV Shows row; Mike's has only a TV Shows row, holding completely different titles. Each one notes that the other people's rows are not on this home screen.](docs/images/two-account.webp)
+
+<sub>The same claim, checked: two accounts, one server, the same night. Neither home screen carries
+the other's row. Each was read using that account's own Plex token, from a test library.</sub>
 
 **It slots into the stack you already run.** Watch history comes straight from Plex (Tautulli
 optional), candidates from TMDB and Trakt, and gaps can be handed to **Radarr/Sonarr** — while
@@ -93,8 +99,9 @@ what stops the row ever being visible before it is private.
 | ------------------------------------------------------ | ------------------------------------------------ |
 | ![A user's picks and why](docs/images/user-detail.webp) | ![A run in progress](docs/images/run-detail.webp) |
 
-<sub>App screenshots use a test library with placeholder titles; the Plex row above is a real
-server.</sub>
+<sub>App screenshots come from a test library, not a real server &mdash; the titles are real films
+and shows so the screens look like what you would actually see, but nobody pictured here watched
+anything.</sub>
 
 ## Features
 
