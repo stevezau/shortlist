@@ -15,8 +15,11 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 IMAGES = ROOT / "docs" / "images"
-#: `images/<name>.<ext>` however it is written — Liquid, Markdown, HTML or a raw GitHub URL.
-REFERENCE = re.compile(r"images/([A-Za-z0-9._-]+\.(?:png|jpg|jpeg|webp|svg))")
+#: Two shapes, because the sources write them differently and an expression that only knew the first
+#: had a blind spot big enough to hide a whole file: `images/<name>.<ext>` covers Liquid, Markdown,
+#: HTML and raw GitHub URLs, while `_data/tour.yml` names a bare `image: <name>.<ext>` that the
+#: layout prefixes for it. Missing that form meant a broken tour reference would never have failed.
+REFERENCE = re.compile(r"(?:images/|image:\s*)([A-Za-z0-9._-]+\.(?:png|jpg|jpeg|webp|svg))")
 SOURCES = (
     "README.md",
     "docs/_config.yml",

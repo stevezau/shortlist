@@ -43,11 +43,9 @@
   </p>
 </div>
 
-<!-- The product first, the proof second. These two pictures answer different questions — "what is
-     this?" and "is it really private?" — and the second one is meaningless until the first is
-     answered, so leading with the side-by-side comparison made a reader work through a two-column
-     diagram before a single word had said what a row is. Back to back they also read as the same
-     picture twice, which is what they were. -->
+<!-- One picture up here, and it is the product rather than a diagram of it. This used to open with
+     a two-account comparison, so a reader met a two-column infographic before a single word had said
+     what a row is — and back to back with this one they read as the same picture twice. -->
 
 ![A "Movies Picked for You" row on Plex](docs/images/plex-picked-for-you.jpg)
 
@@ -66,15 +64,20 @@ picks titles from your library they haven't seen but probably want to, explains 
 them on that person's Plex home screen as a **"Picked for You"** collection. It refreshes on a
 schedule you set, and each row is visible only to its owner.
 
-<!-- Sitting directly under the sentence it proves. "Visible only to its owner" is the one claim
-     everything else rests on and the one nobody believes from a sentence, and both halves of this
-     picture are the fake Plex server's own answer to each account's token, captured by
-     tests/e2e/test_marketing_assets.py — so it cannot show a result the code does not produce. -->
+<!-- No side-by-side "two accounts" picture here, deliberately. It is a diagram composed in HTML —
+     avatar circles, "Plex Home" captions, a "Not on this Home" footer the real UI has no equivalent
+     of — so a reader sees an infographic asserting privacy, not Plex demonstrating it. Its actual
+     evidential weight is in HOW the data was gathered (each shelf read with that account's own Plex
+     token, so it cannot show a result the code does not produce), and none of that is visible in
+     the image. A picture that has to be trusted is worth no more than the sentence above it, and it
+     cost the reader a two-column comparison before they had finished learning what a row is.
 
-![Two Plex home screens side by side on the same server and the same night. Sarah's has a Movies row and a TV Shows row; Mike's has only a TV Shows row, holding completely different titles. Each one notes that the other people's rows are not on this home screen.](docs/images/two-account.webp)
+     It still earns its place in the docs-site tour (docs/_data/tour.yml), where it is one step
+     among several with the mechanism explained around it — which is what a diagram is for.
 
-<sub>The same claim, checked: two accounts, one server, the same night. Neither home screen carries
-the other's row. Each was read using that account's own Plex token, from a test library.</sub>
+     What would belong here: two REAL Plex screenshots of the same Home, taken from two accounts on
+     the maintainer's own server. That looks like Plex because it is Plex, and it would prove the
+     claim instead of illustrating it. -->
 
 **It slots into the stack you already run.** Watch history comes straight from Plex (Tautulli
 optional), candidates from TMDB and Trakt, and gaps can be handed to **Radarr/Sonarr** — while
