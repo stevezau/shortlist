@@ -229,10 +229,11 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
                     ", ".join(unreadable),
                 )
             # State the console level plainly at boot, so `docker logs` answers "is DEBUG on?" at a
-            # glance (the file at /config/logs is always DEBUG regardless).
+            # glance (the log file is always DEBUG regardless).
             logger.info(
-                "logging ready — console at {} (docker logs), file always DEBUG at /config/logs/shortlist.log",
+                "logging ready — console at {} (docker logs), file always DEBUG at {}",
                 normalize_level(store.get("log.level")),
+                config_dir / "logs" / "shortlist.log",
             )
             stale = session.query(Run).filter(Run.status.in_(("queued", "running"))).all()
             for run in stale:
