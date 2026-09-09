@@ -80,7 +80,8 @@ Added" and the like — always work as anchors.
 Shortlist leaves the rows where they are until then, and says so. On the **Logs** page, search for
 `hub order`: the line names the library and the anchor. The same outcome is recorded in the change
 log as well, which has no screen yet — read it at `/api/events/log?scope=run.hub_unplaced` after a
-nightly run, or `?scope=shelf.unplaced` after **Check and fix rows on Plex** or a privacy sync.
+nightly run, or `?scope=shelf.unplaced` after **Check and fix rows on Plex**. (A privacy sync no
+longer touches shelf order, so it records nothing here.)
 
 A row that has never been built in that library yet looks the same from the shelf, but is not the
 same thing: there is nothing to position until the row exists. Run it once and it lands in place.

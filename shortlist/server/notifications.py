@@ -650,6 +650,18 @@ def _shelf_contention(session: Session) -> dict | None:
         message = event.message if isinstance(event.message, dict) else {}
         if message.get("dry_run"):
             continue  # a preview moved nothing, so it is no evidence of anything
+        if message.get("verified") is not True:
+            # We asked, and the re-read said the shelf did NOT end up as asked — so the row was never
+            # put back, and there is nothing here for another tool to have undone. Counting these was
+            # reading our own failures as somebody else's interference: on the maintainer's server
+            # (2026-09-08) all 50 records in the window were `verified: False`, Plex was answering 200
+            # to every move and applying none, and the bell reported "Shortlist has had to put the same
+            # row back 50 times ... so something else is moving it" and named Kometa and Agregarr.
+            #
+            # `is not True` rather than `is False`: a record with no verdict at all — an older row, a
+            # shape from before this field existed — is not evidence either. `_shelf_unreachable` is
+            # where the failures are reported, in their own words.
+            continue
         library = message.get("library") or "a library"
         moved = message.get("moved")
         if not isinstance(moved, list):

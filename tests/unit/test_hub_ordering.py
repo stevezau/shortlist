@@ -225,6 +225,52 @@ def test_to_top_moves_our_rows_to_position_zero_ignoring_any_anchor():
     assert kometa.moved_after == _UNSET  # foreign hub untouched
 
 
+class AnchoredMovesIgnoredSection(FakeSection):
+    """A shelf where Plex applies ``move(after=None)`` and silently ignores ``move(after=<hub>)``.
+
+    Not invented: measured on the maintainer's server over ~60 controlled moves (2026-09-08). Plex
+    answers 200 to every ``?after=`` and applies it only when the anchor is far from the row being
+    moved; the immediate-neighbour case — the only one a chained placement ever produces — did
+    nothing, 19 identical requests a pass, three passes an hour, for five days. ``move`` with NO
+    anchor landed exactly every time (5/5 by hand, then 93/93 rebuilding that shelf).
+
+    So this is the shelf the top-placement path has to work on, and the reason it no longer chains.
+    """
+
+    def apply(self, hub: FakeHub, after) -> None:
+        if after is None:
+            super().apply(hub, after)
+
+
+def test_to_top_places_the_block_without_chaining_off_its_own_rows():
+    """Three rows to the top on a shelf that ignores anchored moves.
+
+    Chaining put row 1 at the top and then asked for "row 2 after row 1", "row 3 after row 2" — and
+    on that shelf rows 2 and 3 never moved, so the pass reported `verified: False` and repeated
+    itself for ever. Every move here names no anchor, applied in reverse so each lands at index 0
+    and pushes the previous one down.
+    """
+    kometa = FakeHub("Kometa Genre", "g")
+    r1, r2, r3 = FakeHub("Row One", "o1"), FakeHub("Row Two", "o2"), FakeHub("Row Three", "o3")
+    section = AnchoredMovesIgnoredSection([kometa, r1, r2, r3])
+    client = _client(
+        [
+            FakeColl("Row One", ["shortlist_sarah"]),
+            FakeColl("Row Two", ["shortlist_mike"]),
+            FakeColl("Row Three", ["shortlist_dave"]),
+            FakeColl("Kometa Genre", ["kometa"]),
+        ]
+    )
+
+    result = client.order_owned_hubs(section, label_prefix="shortlist", to_top=True)
+
+    assert result["verified"] is True
+    assert section.titles() == ["Row One", "Row Two", "Row Three", "Kometa Genre"]
+    # The contract, not just the outcome: no move may name one of our own rows as its anchor.
+    assert [h.moved_after for h in (r1, r2, r3)] == [None, None, None]
+    assert kometa.moved_after == _UNSET  # foreign hub still untouched
+
+
 def test_to_top_is_idempotent_when_already_at_the_top():
     r1 = FakeHub("Picked for You", "o1")  # already first
     section = FakeSection([r1, FakeHub("Genre", "g")])

@@ -204,9 +204,9 @@ CATALOG: tuple[JobKind, ...] = (
             "\n\nIt builds no rows, delivers nothing, puts nothing on anyone's Home screen and deletes "
             "nothing, so the worst it can do to who-sees-what is make your server more private — which "
             "is why it is safe to press at any time."
-            "\n\nThe one other thing it does is cosmetic: it puts your rows back where you asked for "
-            "them in each library's Recommended shelf, if something has shuffled them. That changes "
-            "the order they appear in, never who can see them."
+            "\n\nIt does NOT move your rows around the Recommended shelf — the nightly run does that, "
+            "and so does Check and fix rows on Plex. This pass only ever changes who can see a row, "
+            "never where it sits."
             "\n\nRuns at 05:15 by default, after the two syncs above, so it works from a list of "
             "people that has just been refreshed."
         ),
@@ -1060,17 +1060,26 @@ def _privacy_sync(state, payload: dict) -> dict:
     touches nobody else's filter, so every other account still excludes that person's row. Anything else that
     widens visibility needs its own argument; rule 1 does not cover it.
 
-    It DOES write one more thing to Plex: the Recommended-shelf position of our own hubs. That is a
-    real PUT, so it is named here rather than left to be discovered — but it is position-only, on hubs
-    already promoted and already covered by the excludes this pass merges, so it cannot make anything
-    visible to anyone. Before 2026-08-12 this pass ordered nothing at all, which is why a shelf left in
-    pieces could not be repaired by any job.
+    It writes NOTHING to Plex beyond the share filters. It used to also move our hubs on the
+    Recommended shelf — added 2026-08-12 so a shelf left in pieces could be repaired by a job rather
+    than only by a run — and that was removed on 2026-09-10. On a server whose owner had set
+    `privacy.sync_cron` to `*/30 * * * *` it ran the whole placement phase 49 times a day (measured on
+    SFLIX: 200 hub-order writes in 24h against the nightly run's 5) for a position that only changes
+    when a row is built. `sync.check` still repairs a broken shelf on demand, which is the job that
+    advertises it.
     """
     from shortlist.engine.pipeline import run as engine_run
 
     requested = payload.get("dry_run", False)
     ctx = state.run_service.build_context(dry_run=requested)
     dry_run = ctx.config.dry_run or requested
+    # The shelf ORDER is not this job's business — the nightly run owns it, exactly as
+    # `rows.visibility` already says of itself. This job has BOTH a cron and a mutation trigger, so an
+    # owner who sets `privacy.sync_cron` to `*/30 * * * *` gets the whole placement phase 49 times a
+    # day on top of the run — measured on SFLIX 2026-09-10: 200 hub-order records in 24 hours against
+    # the nightly run's 5, each pass re-issuing every move three times. Who can SEE a row is this
+    # job's business and still runs; where it sits on the shelf is not.
+    ctx.config.manage_shelf_order = False
     report = engine_run(ctx, [])
     _require_filters_merged(report, "reporting the filters as merged")
     _audit_hub_orderings(state, report, dry_run)
@@ -1090,10 +1099,10 @@ def _privacy_sync(state, payload: dict) -> dict:
     if report.left_alone_failures:
         failed = len(report.left_alone_failures)
         detail += f"; could NOT clear Shortlist's exclusions from {failed} left-alone account(s)"
-    # This job repositions rows on the shelf now, and its own description promises it does. Reported
-    # here in the same words `sync.check` uses, so the two jobs do not describe the same write
-    # differently — the audit event is written either way (`_audit_hub_orderings`, rule 10); this is
-    # the line an operator actually reads on the Jobs page.
+    # Kept, though this job no longer orders: `report.hub_orderings` is empty when
+    # `manage_shelf_order` is off, so this adds nothing to the detail line — and it is the one place
+    # that would say so if that ever changed back. The audit event is written either way
+    # (`_audit_hub_orderings`, rule 10).
     moved_in = [e for e in report.hub_orderings if e.get("placed") is not False]
     if moved_in:
         libraries = ", ".join(entry.get("library", "?") for entry in moved_in)

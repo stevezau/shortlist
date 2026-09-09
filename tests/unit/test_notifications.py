@@ -794,15 +794,56 @@ class TestShelfContention:
     """
 
     @staticmethod
-    def _ordered(session, library: str, moved: list[str], *, when=None, dry_run: bool = False) -> None:
+    def _ordered(
+        session,
+        library: str,
+        moved: list[str],
+        *,
+        when=None,
+        dry_run: bool = False,
+        verified: bool = True,
+    ) -> None:
         session.add(
             Event(
                 scope="shelf.order",
                 level="info",
                 ts=when or datetime.now(UTC),
-                message={"library": library, "moved": moved, "verified": True, "dry_run": dry_run},
+                message={"library": library, "moved": moved, "verified": verified, "dry_run": dry_run},
             )
         )
+
+    def test_a_pass_that_never_landed_is_not_contention(self, session):
+        """`verified: False` means the shelf did NOT end up as we asked — so we never put the row back.
+
+        Measured on the maintainer's server (2026-09-08): 50 records in a day, every one of them
+        `verified: False`, and the bell said "Shortlist has had to put the same row back 50 times ...
+        so something else is moving it" and named Kometa and Agregarr. Nothing had moved it. Plex was
+        answering 200 to every move and applying none, and 50 failures were being read as 50
+        successes somebody else undid.
+
+        Contention is "our write landed and did not STAY". A write that never landed is a different
+        fault with a different remedy, and it belongs to `_shelf_unreachable`, not here.
+        """
+        for _ in range(5):
+            self._ordered(session, "Movies", ["Picked for You"], verified=False)
+        session.commit()
+
+        assert notif._shelf_contention(session) is None
+
+    def test_failed_passes_cannot_top_up_a_real_fight(self, session):
+        """The mixed shelf: two genuine re-placements and three that never landed.
+
+        Two is under the threshold, and the three failures must not carry it over — otherwise a shelf
+        Plex is refusing reads as a shelf another tool is contesting, which is the exact
+        misattribution this whole change exists to remove.
+        """
+        for _ in range(2):
+            self._ordered(session, "Movies", ["Picked for You"])
+        for _ in range(3):
+            self._ordered(session, "Movies", ["Picked for You"], verified=False)
+        session.commit()
+
+        assert notif._shelf_contention(session) is None
 
     def test_fires_when_the_same_row_keeps_being_put_back(self, session):
         for _ in range(3):
@@ -967,7 +1008,10 @@ class TestShelfContention:
                     scope="run.hub_order",
                     level="info",
                     ts=datetime.now(UTC),
-                    message={"library": "Movies", "moved": ["Picked for You"]},
+                    # Explicit `verified`, because the production writers always set it
+                    # (`run_persistence._emit_hub_ordering_events`) and only a landed move is
+                    # evidence of contention. This test is about the two SCOPES being one fact.
+                    message={"library": "Movies", "moved": ["Picked for You"], "verified": True},
                 )
             )
         session.commit()

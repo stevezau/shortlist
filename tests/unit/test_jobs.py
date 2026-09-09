@@ -662,6 +662,35 @@ class TestRestoreAfterUnpause:
 
         assert promoted == [], "nothing may be promoted while any account's excludes are unwritten"
 
+    def test_privacy_sync_leaves_the_recommended_shelf_order_alone(self, sessions):
+        """Who can SEE a row is this job's business; where it SITS on the shelf is the nightly run's.
+
+        `rows.visibility` already says so of itself and turns ordering off; this handler was missed.
+        It is on a `*/30 * * * *` cron AND fires on every who-sees-what change, so it ran the whole
+        placement phase 48 times a day on top of the run — ~7,000 hub-move requests a day against the
+        maintainer's Plex (2026-09-08) for a position that only changes when a row is built.
+        """
+        seen: list[bool] = []
+        state = self._state(sessions, promoted=[], merged=[])
+        import shortlist.engine.pipeline as pipeline_mod
+
+        def fake_run(ctx, users):
+            seen.append(ctx.config.manage_shelf_order)
+            return SimpleNamespace(
+                error=None,
+                promotion_blockers=[],
+                swept_rows={},
+                converged=0,
+                hub_orderings=[],
+                left_alone_failures=[],
+            )
+
+        pipeline_mod.run = fake_run
+
+        jobs._HANDLERS["privacy.sync"](state, {"reason": "someone left a shared row"})
+
+        assert seen == [False], "the privacy pass must not reorder the shelf"
+
     def test_privacy_sync_does_not_report_success_when_no_filter_was_written(self, sessions):
         """It read only `swept_rows`/`converged` and returned a result dict, so `_finish` marked the
         job `done` — "Share filters merged for every account" — and retired an owed HIDE from the

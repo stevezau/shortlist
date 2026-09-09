@@ -1338,14 +1338,33 @@ class PlexClient:
             # separately is what lets the dry run report the REAL cost: it used to say "would move 46
             # rows" for a shelf needing nineteen, which is the same overstatement the live pass made.
             planned: list[tuple[str, object]] = []
-            previous = target
-            for ident in our_idents:
-                want = 0 if previous is None else idents.index(previous.identifier) + 1
-                if idents.index(ident) != want:
-                    planned.append((ident, previous))
-                    idents.remove(ident)
-                    idents.insert(0 if previous is None else idents.index(previous.identifier) + 1, ident)
-                previous = by_ident[ident]
+            if to_top and target is None:
+                # THE TOP IS PLACED BY `move(after=None)`, ONE ROW AT A TIME, IN REVERSE.
+                #
+                # Chaining (`move(after=the row we just moved)`) is what every other branch does, and
+                # on a real shelf Plex frequently accepts those and applies nothing: measured on SFLIX
+                # 2026-09-08 over ~60 controlled moves, `after=` lands exactly when the anchor is far
+                # from the row being moved and silently no-ops when it is the immediate neighbour —
+                # which is the only case chaining ever produces. `move` with NO anchor was exact every
+                # time (5/5, then 93/93 rebuilding the Movies shelf by hand), so the top is the one
+                # position that can be asserted rather than hoped for.
+                #
+                # Reverse order, because each move lands at index 0 and pushes the last one down. It
+                # writes the whole block instead of only the rows out of place, which is why it is
+                # confined to the branch that has no anchor to be relative to: the check above still
+                # short-circuits a settled shelf to zero writes, so the cost lands on the pass that
+                # was already failing, not on the nightly no-op.
+                planned = [(ident, None) for ident in reversed(our_idents)]
+                idents = our_idents + [i for i in idents if i not in set(our_idents)]
+            else:
+                previous = target
+                for ident in our_idents:
+                    want = 0 if previous is None else idents.index(previous.identifier) + 1
+                    if idents.index(ident) != want:
+                        planned.append((ident, previous))
+                        idents.remove(ident)
+                        idents.insert(0 if previous is None else idents.index(previous.identifier) + 1, ident)
+                    previous = by_ident[ident]
 
             if dry_run:
                 logger.info(

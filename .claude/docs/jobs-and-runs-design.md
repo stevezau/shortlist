@@ -986,9 +986,16 @@ no rows at all, so it cannot depend on who ran. Only genuinely diverging rows ar
 durable ledger's ratingKeys. A test asserted the bug as a requirement
 (`test_order_phase_skips_an_overridden_row_with_no_delivered_titles`); it is now inverted.
 
-With both fixed, `privacy.sync` and `sync.check` order the shelf too — so Shortlist re-applies at the
-end of every run, at `privacy.sync_cron` (05:15 by default), at `sync.check_cron` (05:45, and
-off-able), and whenever a change to who-sees-what triggers a privacy sync.
+With both fixed, `sync.check` orders the shelf too — so Shortlist re-applies at the end of every run
+and at `sync.check_cron` (05:45, and off-able).
+
+`privacy.sync` ordered the shelf as well until 2026-09-10, and that was removed. It is the one job
+with BOTH a cron and a mutation trigger, so its pass count is set by the owner rather than by this
+design: on the maintainer's server `privacy.sync_cron` had been set to `*/30 * * * *`, which put the
+whole placement phase through 49 times a day — 200 hub-order writes in 24 hours against the nightly
+run's 5, every one of them failing, for a position that only changes when a row is built. The
+paragraph below that reasons about "three passes a night" assumed the 05:15 default; do not rely on
+it for a server whose owner has changed that cron.
 
 **That is roughly three passes a night against agregarr's forty-eight, so it is still a loss.** An
 earlier draft of this section said "every 30 minutes instead of once a night — an even fight"; there
