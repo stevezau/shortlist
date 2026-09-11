@@ -9,7 +9,7 @@
   deliver -> privacy sync). Never imports shortlist/server.
 - shortlist/server/: FastAPI + SQLAlchemy/Alembic + APScheduler + SSE adapter over the engine;
   the built-in scheduler runs the engine nightly (no external cron).
-- web/: React 18 + Vite + TypeScript + Tailwind + shadcn/ui SPA.
+- web/: React 19 + Vite + TypeScript + Tailwind + shadcn/ui SPA.
 - tests/: pytest (unit/integration, no network), tests/fakes/fake_plex.py stub server,
   recorded fixtures in tests/fixtures/.
 

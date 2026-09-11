@@ -7,6 +7,7 @@
 [![Docker Pulls][docker-shield]][docker-url]
 [![Image Size][size-shield]][size-url]
 [![Stargazers][stars-shield]][stars-url]
+[![Featured in XDA][xda-shield]][xda-url]
 [![Issues][issues-shield]][issues-url]
 [![MIT License][license-shield]][license-url]
 [![AI-Assisted][ai-shield]][ai-url]
@@ -287,6 +288,8 @@ MIT © Steven Adams
 [size-url]: https://hub.docker.com/r/stevezzau/shortlist/tags
 [stars-shield]: https://img.shields.io/github/stars/stevezau/shortlist.svg?style=for-the-badge&color=a06a00
 [stars-url]: https://github.com/stevezau/shortlist/stargazers
+[xda-shield]: https://img.shields.io/badge/Featured%20in-XDA-a06a00?style=for-the-badge
+[xda-url]: https://www.xda-developers.com/plex-library-recommendations-open-source-media/
 [issues-shield]: https://img.shields.io/github/issues/stevezau/shortlist.svg?style=for-the-badge&labelColor=a06a00
 [issues-url]: https://github.com/stevezau/shortlist/issues
 [license-shield]: https://img.shields.io/github/license/stevezau/shortlist.svg?style=for-the-badge&color=a06a00

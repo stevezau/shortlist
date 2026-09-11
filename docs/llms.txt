@@ -64,6 +64,8 @@ them as restored.
 
 ## Docs
 
+Every page below, concatenated into one file, is at [llms-full.txt]({{ '/llms-full.txt' | absolute_url }}) — one fetch instead of twenty-five.
+
 - [Home]({{ '/' | absolute_url }}): what Shortlist is, how it works, screenshots, quick start
 - [Getting started]({{ '/getting-started' | absolute_url }}): requirements, Docker install, the setup wizard, first run
 - [Guides]({{ '/guides' | absolute_url }}): the web interface, rows, schedules, per-user overrides, troubleshooting, AI cost control

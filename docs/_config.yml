@@ -19,9 +19,11 @@ description: >-
 # Moved to shortlistapp.dev on 5 Sep 2026. DNS (Route 53) first, then docs/CNAME + the Pages
 # setting, then the two lines below, then the hand-written links in README.md and
 # docs/README.md and .github/dockerhub-overview.md.
-# Still outstanding for the owner: tick Enforce HTTPS in Settings -> Pages (mandatory on
-# .dev, which is HSTS-preloaded), and add the apex as a NEW Search Console property and
-# re-submit the sitemap — it is a different property from the old /shortlist/ subpath.
+# Enforce HTTPS is on (verified 2026-09-11: http://shortlistapp.dev 301s to https).
+# Still outstanding for the owner: add the apex as a NEW Search Console property and re-submit
+# the sitemap — it is a different property from the old /shortlist/ subpath. The
+# google_site_verification tag below is already served on every page of the new domain, so the
+# property verifies on the spot; nothing here needs changing for it.
 
 url: https://shortlistapp.dev
 baseurl: ""

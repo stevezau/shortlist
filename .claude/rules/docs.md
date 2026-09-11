@@ -19,6 +19,18 @@ outdated.
 - **docs/guides.md**: Web interface, schedules, troubleshooting
 - **Code examples**: Verify snippets still work after signature changes; update imports
 
+## After any docs/ change
+
+Regenerate the agent-facing corpus and commit it with the same change:
+
+```bash
+python scripts/build_llms_full.py
+```
+
+`docs/llms-full.txt` is every page's text in one file, for AI agents that would otherwise crawl 25
+pages. GitHub Pages runs only its allow-listed plugins, so nothing builds it at deploy time — it is
+committed, and `tests/unit/test_llms_full.py` fails if it drifts from `docs/`.
+
 ## Breaking Changes
 
 Document what changed, provide before/after examples, and include migration steps (+ Alembic
