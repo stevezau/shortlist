@@ -84,14 +84,15 @@ Long sessions are the single biggest cost: every turn re-sends the whole convers
 - **Say when a `/clear` is due.** When the next request is a genuinely new task — a different
   feature, a different bug, a different area — say so in one line before starting, and let the owner
   decide. Don't nag mid-task; the cost of losing context you still need is higher than the tokens.
-- **Tests run at the END, not during the edit loop** (owner decision 2026-09-12). Write the change,
-  show it to the owner, iterate on what he says — then test once, when the work has settled. Do not
-  punctuate the edit loop with test runs; the suites are slow enough that they set the pace of
-  development, and CI runs everything regardless.
-  The end-of-work pass is the full one: `pytest`, `pnpm test`, `tsc -b --force`, `eslint .`, plus
-  `-m e2e` when a UI flow or the wizard changed. That pass is the bar before any commit.
-  The exception is a bug you are actively diagnosing — a failing test IS the investigation there, so
-  run it as often as it takes.
+- **Write the test first, then run only that test** (owner decision 2026-09-12). What made testing
+  feel like it set the pace of development was running the WHOLE suite mid-edit. Writing the test
+  before the code fixes that: it gives you one file to run, and one file is ~3.5s.
+  So, during the edit loop: `superpowers:test-driven-development`, then
+  `pytest tests/unit/test_foo.py` or `-k <name>` — that file, nothing else. Never `pytest` bare,
+  never `-m e2e`, never the whole `pnpm test`, until the work has settled.
+  At the END, once: `pytest`, `pnpm test`, `tsc -b --force`, `eslint .`, plus `-m e2e` when a UI flow
+  or the wizard changed. That pass is the bar before any commit — CI runs it all regardless, so a
+  green full pass immediately before the commit is what counts, not a green one mid-edit.
 - **One pytest at a time on this host.** Several agent sessions share it, and each run fans out to
   `PYTEST_XDIST_AUTO_NUM_WORKERS` processes — four overlapping runs is four times that, which is the
   shape that took the plex host down (2026-09-12: 189 workers, ~30 GB into swap). A `PreToolUse` hook
