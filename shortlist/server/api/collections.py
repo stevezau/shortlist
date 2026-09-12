@@ -8,7 +8,6 @@ import re
 from datetime import UTC, datetime
 from typing import Annotated
 
-from apscheduler.triggers.cron import CronTrigger
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from loguru import logger
@@ -49,7 +48,7 @@ from shortlist.server.api.row_changes import (
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import DEFAULT_SLUG, Collection, CollectionAudience, Event, PickRow, User
-from shortlist.server.scheduler import rebuild_schedule
+from shortlist.server.scheduler import crontab_trigger, rebuild_schedule
 from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services import jobs, poster_service, report_service
 from shortlist.server.services.poster_service import load_upload
@@ -527,7 +526,7 @@ def _validate(body: CollectionIn) -> None:
         raise HTTPException(status_code=422, detail=f"poster mode must be one of {sorted(POSTER_MODES)}")
     if body.schedule.strip():
         try:
-            CronTrigger.from_crontab(body.schedule.strip())
+            crontab_trigger(body.schedule.strip())
         except ValueError as e:
             raise HTTPException(
                 status_code=422, detail=f"invalid schedule — needs a 5-field cron (e.g. '30 3 * * *'): {e}"

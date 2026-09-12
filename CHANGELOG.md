@@ -25,6 +25,13 @@ All notable changes to this project are documented here. This project follows
 
 ### Fixed
 
+- **Schedules with a day of the week now run on that day, not the day after.** `0 4 * * 1,4` is
+  Mondays and Thursdays, but it ran on Tuesdays and Fridays: the scheduler library counts weekdays
+  from Monday where cron counts from Sunday. The same slip moved every **Weekly** row from Sunday
+  to Monday, and "mondays at 9pm" to Tuesday. Saved schedules are unchanged and simply run on the
+  day they always said. If you shifted a day number to work around this, shift it back. `7` is now
+  accepted as Sunday too. (#123)
+
 - **"Something else is reordering your shelf" no longer fires because two people watched the same
   film.** A "Because you watched X" row is named after the film, so everyone who watched that film
   gets a row with the *same* name. The check that spots another tool fighting Shortlist for the shelf

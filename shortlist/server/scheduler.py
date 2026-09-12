@@ -8,6 +8,7 @@ the whole "when does this run" question is answered per row.
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import tzinfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -73,6 +74,52 @@ def effective_cron(app, key: str) -> str:
     return _resolve_cron(app, key, DEFAULT_CRONS.get(key, ""), blank_means_off=key in _OFF_ABLE)
 
 
+_WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+
+
+def _weekday_number(token: str) -> int:
+    if token.lower() in _WEEKDAYS:
+        return _WEEKDAYS.index(token.lower())
+    if not token.isdigit() or int(token) > 7:
+        raise ValueError(f"invalid day of week {token!r}")
+    return int(token)
+
+
+def crontab_trigger(expr: str, timezone: tzinfo | str | None = None) -> CronTrigger:
+    """A trigger for a standard five-field crontab, weekdays numbered the way cron numbers them.
+
+    Use this, never `CronTrigger.from_crontab`: APScheduler 3 counts weekdays from 0 = MONDAY where cron
+    counts from 0 = Sunday (its own docstring admits it; only 4.x fixes it), so `0 4 * * 1,4` ran on
+    Tuesday and Friday (issue #123). The day-of-week field is expanded here and handed over as day
+    NAMES, which APScheduler reads correctly.
+
+    Raises:
+        ValueError: the expression is not a valid five-field cron.
+    """
+    fields = expr.split()
+    if len(fields) != 5:
+        raise ValueError(f"Wrong number of fields; got {len(fields)}, expected 5")
+    minute, hour, day, month, day_of_week = fields
+    if day_of_week != "*":
+        days: set[int] = set()
+        for part in day_of_week.split(","):
+            span, _, step = part.partition("/")
+            if "/" in part and (not step.isdigit() or int(step) < 1):
+                raise ValueError(f"invalid step in day of week {part!r}")
+            if span == "*":
+                first, last = 0, 6
+            elif "-" in span:
+                first, last = (_weekday_number(bound) for bound in span.split("-", 1))
+            else:
+                first = _weekday_number(span)
+                last = 6 if step else first
+            if first > last:
+                raise ValueError(f"invalid day-of-week range {part!r}")
+            days.update(number % 7 for number in range(first, last + 1, int(step or 1)))  # 7 is Sunday too
+        day_of_week = ",".join(_WEEKDAYS[number] for number in sorted(days))
+    return CronTrigger(minute=minute, hour=hour, day=day, month=month, day_of_week=day_of_week, timezone=timezone)
+
+
 def _job_id(cron: str) -> str:
     return f"{_JOB_PREFIX}{cron}"
 
@@ -86,7 +133,7 @@ def schedule_groups(app) -> dict[str, list[int]]:
             if not cron:
                 continue
             try:
-                CronTrigger.from_crontab(cron)
+                crontab_trigger(cron)
             except ValueError:
                 # A bad cron must never crash-loop the container; it just means that row won't fire.
                 logger.error("row {!r} has an invalid cron {!r} — skipping its schedule", row.slug, cron)
@@ -112,9 +159,7 @@ def _make_job(app, cron: str, collection_ids: list[int]):
 
 def _register(scheduler: AsyncIOScheduler, app, groups: dict[str, list[int]]) -> None:
     for cron, ids in groups.items():
-        scheduler.add_job(
-            _make_job(app, cron, ids), CronTrigger.from_crontab(cron), id=_job_id(cron), replace_existing=True
-        )
+        scheduler.add_job(_make_job(app, cron, ids), crontab_trigger(cron), id=_job_id(cron), replace_existing=True)
 
 
 async def _queue_and_drain(app, kind: str, payload: dict | None = None) -> None:
@@ -159,7 +204,7 @@ def _resolve_cron(app, key: str, fallback: str, *, blank_means_off: bool = False
     custom = (row.value or {}).get("v") if row is not None else None
     if custom and isinstance(custom, str) and custom.strip():
         try:
-            CronTrigger.from_crontab(custom.strip())
+            crontab_trigger(custom.strip())
             return custom.strip()
         except ValueError:
             logger.warning("invalid {} {!r} — falling back to default", key, custom)
@@ -186,7 +231,7 @@ def _register_watch_sync(scheduler: AsyncIOScheduler, app) -> None:
         # degrades picks server-wide while everything still looks healthy.
         await _queue_and_drain(app, "sync.history")
 
-    scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=WATCH_SYNC_JOB_ID, replace_existing=True)
+    scheduler.add_job(fire, crontab_trigger(cron), id=WATCH_SYNC_JOB_ID, replace_existing=True)
 
 
 def _resolve_users_cron(app) -> str:
@@ -205,7 +250,7 @@ def _register_user_sync(scheduler: AsyncIOScheduler, app) -> None:
         # on the Jobs page, and raises a notification if it gives up.
         await _queue_and_drain(app, "sync.users")
 
-    scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=USER_SYNC_JOB_ID, replace_existing=True)
+    scheduler.add_job(fire, crontab_trigger(cron), id=USER_SYNC_JOB_ID, replace_existing=True)
 
 
 def _resolve_backup_settings(app) -> tuple[str, int]:
@@ -231,7 +276,7 @@ def _register_backup(scheduler: AsyncIOScheduler, app) -> None:
         # possible moment to discover a month of unread log lines.
         await _queue_and_drain(app, "backup.take", {"label": "scheduled", "max_keep": max_keep})
 
-    scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=BACKUP_JOB_ID, replace_existing=True)
+    scheduler.add_job(fire, crontab_trigger(cron), id=BACKUP_JOB_ID, replace_existing=True)
 
 
 def _register_privacy_sync(scheduler: AsyncIOScheduler, app) -> None:
@@ -255,7 +300,7 @@ def _register_privacy_sync(scheduler: AsyncIOScheduler, app) -> None:
     async def fire() -> None:
         await _queue_and_drain(app, "privacy.sync")
 
-    scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=PRIVACY_SYNC_JOB_ID, replace_existing=True)
+    scheduler.add_job(fire, crontab_trigger(cron), id=PRIVACY_SYNC_JOB_ID, replace_existing=True)
 
 
 def _register_row_visibility(scheduler: AsyncIOScheduler, app) -> None:
@@ -276,7 +321,7 @@ def _register_row_visibility(scheduler: AsyncIOScheduler, app) -> None:
     async def fire() -> None:
         await _queue_and_drain(app, "rows.visibility")
 
-    scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=ROW_VISIBILITY_JOB_ID, replace_existing=True)
+    scheduler.add_job(fire, crontab_trigger(cron), id=ROW_VISIBILITY_JOB_ID, replace_existing=True)
 
 
 def _register_sync_check(scheduler: AsyncIOScheduler, app) -> None:
@@ -298,7 +343,7 @@ def _register_sync_check(scheduler: AsyncIOScheduler, app) -> None:
     async def fire() -> None:
         await _queue_and_drain(app, "sync.check")
 
-    scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=SYNC_CHECK_JOB_ID, replace_existing=True)
+    scheduler.add_job(fire, crontab_trigger(cron), id=SYNC_CHECK_JOB_ID, replace_existing=True)
 
 
 def _register_maintenance_prune(scheduler: AsyncIOScheduler, app) -> None:
@@ -314,7 +359,7 @@ def _register_maintenance_prune(scheduler: AsyncIOScheduler, app) -> None:
     async def fire() -> None:
         await _queue_and_drain(app, "maintenance.prune")
 
-    scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=MAINTENANCE_PRUNE_JOB_ID, replace_existing=True)
+    scheduler.add_job(fire, crontab_trigger(cron), id=MAINTENANCE_PRUNE_JOB_ID, replace_existing=True)
 
 
 def _register_jobs_worker(scheduler: AsyncIOScheduler, app) -> None:

@@ -404,3 +404,50 @@ class TestRowVisibilitySchedule:
         from shortlist.server.scheduler import DEFAULT_CRONS
 
         assert DEFAULT_CRONS["rows.visibility_cron"] == "0 0 * * *"
+
+
+class TestCrontabWeekdays:
+    """Cron counts weekdays from 0 = Sunday; APScheduler 3's `from_crontab` counts from 0 = Monday, so
+    every numeric weekday fired a day late (issue #123: `0 4 * * 1,4` ran Tuesday and Friday)."""
+
+    @pytest.mark.parametrize(
+        ("cron", "expected"),
+        [
+            ("0 4 * * 1,4", ["Mon", "Thu", "Mon", "Thu"]),
+            ("0 4 * * 0", ["Sun", "Sun", "Sun", "Sun"]),
+            ("0 4 * * 7", ["Sun", "Sun", "Sun", "Sun"]),
+            ("0 4 * * 1-5", ["Mon", "Tue", "Wed", "Thu"]),
+            ("0 4 * * 0-2", ["Mon", "Tue", "Sun", "Mon"]),
+            ("0 4 * * 5-7", ["Fri", "Sat", "Sun", "Fri"]),
+            ("0 4 * * 0,6", ["Sat", "Sun", "Sat", "Sun"]),
+            ("0 4 * * */2", ["Tue", "Thu", "Sat", "Sun"]),
+            ("0 4 * * mon,thu", ["Mon", "Thu", "Mon", "Thu"]),
+            ("0 4 * * *", ["Mon", "Tue", "Wed", "Thu"]),
+        ],
+    )
+    def test_weekdays_fire_on_the_day_cron_means_when_numbered_from_sunday(self, cron, expected):
+        from datetime import UTC, datetime, timedelta
+
+        from shortlist.server.scheduler import crontab_trigger
+
+        trigger = crontab_trigger(cron, timezone=UTC)
+        now, previous, fired = datetime(2026, 9, 6, 12, tzinfo=UTC), None, []  # a Sunday, after 04:00
+        for _ in expected:
+            previous = trigger.get_next_fire_time(previous, now)
+            fired.append(previous.strftime("%a"))
+            now = previous + timedelta(seconds=1)
+        assert fired == expected
+
+    @pytest.mark.parametrize(
+        "cron", ["0 4 * * 8", "0 4 * * 5-2", "0 4 * *", "0 4 * * funday", "0 4 * * 1/", "0 4 * * */0"]
+    )
+    def test_an_invalid_weekday_raises_value_error_when_parsed(self, cron):
+        from shortlist.server.scheduler import crontab_trigger
+
+        with pytest.raises(ValueError):
+            crontab_trigger(cron)
+
+    def test_nothing_calls_from_crontab_directly_when_the_wrapper_exists(self):
+        root = Path(__file__).resolve().parents[2] / "shortlist"
+        offenders = [str(p) for p in root.rglob("*.py") if "from_crontab(" in p.read_text()]
+        assert offenders == []
