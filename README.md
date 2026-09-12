@@ -11,7 +11,7 @@
 [![Issues][issues-shield]][issues-url]
 [![MIT License][license-shield]][license-url]
 [![AI-Assisted][ai-shield]][ai-url]
-[![Sponsor][sponsor-shield]][sponsor-url]
+[![Buy me a coffee][kofi-shield]][kofi-url]
 
 </div>
 
@@ -245,17 +245,20 @@ yourself, because most advice on the subject predates Plex's 2026 fixes and quie
 
 ## Support the project
 
-Shortlist is free and MIT-licensed, and built in evenings. The free way to help is a
-[star on GitHub](https://github.com/stevezau/shortlist) — it is how other Plex owners find it. If it
-saved you some evenings too, you can [buy me a coffee](https://ko-fi.com/stevezau) (no account
-needed) or [sponsor it on GitHub](https://github.com/sponsors/stevezau) — entirely optional, and it
-buys time rather than features on request.
+Shortlist is free, MIT-licensed, and built in evenings. Helping is entirely optional.
 
-Bug reports are worth just as much. The **Have an issue?** page runs read-only checks that often name
-the cause outright, then opens a pre-filled issue with a secrets-free diagnostic to attach.
+- **[Star it on GitHub](https://github.com/stevezau/shortlist)** — free, and it is how other Plex
+  owners find Shortlist.
+- **[Buy me a coffee on Ko-fi](https://ko-fi.com/stevezau)** — no account needed. It buys time, not
+  features on request.
 
-Not sure it's a bug? Ask in **[Discussions → Q&A](https://github.com/stevezau/shortlist/discussions/categories/q-a)**.
-Answers there get marked as answers, so the next person searching the same problem finds one.
+## Get help
+
+- **Something broken?** Open the **Have an issue?** page in Shortlist. It runs read-only checks that
+  often name the cause outright, then opens a pre-filled issue with a secrets-free diagnostic.
+- **Not sure it's a bug?** Ask in
+  **[Discussions → Q&A](https://github.com/stevezau/shortlist/discussions/categories/q-a)**. Answers
+  get marked as answers, so the next person with the same problem finds one.
 
 ## License
 
@@ -298,5 +301,5 @@ MIT © Steven Adams
 [license-url]: https://github.com/stevezau/shortlist/blob/master/LICENSE
 [ai-shield]: https://img.shields.io/badge/AI--Assisted-Claude%20Code-8A2BE2?style=for-the-badge&logo=anthropic&logoColor=white
 [ai-url]: https://claude.com/claude-code
-[sponsor-shield]: https://img.shields.io/badge/Sponsor-db61a2?style=for-the-badge&logo=githubsponsors&logoColor=white
-[sponsor-url]: https://github.com/sponsors/stevezau
+[kofi-shield]: https://img.shields.io/badge/Buy%20me%20a%20coffee-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white
+[kofi-url]: https://ko-fi.com/stevezau
