@@ -140,16 +140,17 @@ function SessionFooter() {
 const supportLinkClass =
   "flex items-center gap-2 rounded-md px-1 py-0.5 text-xs text-muted-foreground transition-colors hover:text-foreground";
 
-/** A star and a coffee, in the sidebar's quiet footer. Exported for its test. */
+/** A star and a coffee, in the sidebar's quiet footer. Only the icons take colour: enough to be
+ *  seen, while the words stay as quiet as the build line above them. Exported for its test. */
 export function SupportLinks() {
   return (
     <>
       <a href={STAR_URL} target="_blank" rel="noopener noreferrer" className={supportLinkClass}>
-        <Star className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        <Star className="h-3.5 w-3.5 shrink-0 fill-primary text-primary" aria-hidden="true" />
         Star on GitHub
       </a>
       <a href={COFFEE_URL} target="_blank" rel="noopener noreferrer" className={supportLinkClass}>
-        <Coffee className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        <Coffee className="h-3.5 w-3.5 shrink-0 text-support" aria-hidden="true" />
         Buy me a coffee
       </a>
     </>

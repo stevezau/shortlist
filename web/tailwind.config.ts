@@ -39,6 +39,7 @@ export default {
           DEFAULT: "hsl(var(--plex))",
           foreground: "hsl(var(--plex-foreground))",
         },
+        support: "hsl(var(--support))",
         elevated: {
           DEFAULT: "hsl(var(--elevated))",
           foreground: "hsl(var(--elevated-foreground))",

@@ -22,6 +22,18 @@ describe("SupportLinks", () => {
     expect(coffee.getAttribute("href")).toBe("https://ko-fi.com/stevezau");
   });
 
+  it("colours the icons, not the words, so the links are visible without shouting", () => {
+    render(<SupportLinks />);
+
+    const star = screen.getByRole("link", { name: /star on github/i });
+    const coffee = screen.getByRole("link", { name: /buy me a coffee/i });
+
+    expect(star.querySelector("svg")?.getAttribute("class")).toContain("fill-primary");
+    expect(coffee.querySelector("svg")?.getAttribute("class")).toContain("text-support");
+    expect(star.className).toContain("text-muted-foreground");
+    expect(coffee.className).toContain("text-muted-foreground");
+  });
+
   it("opens both in a new tab without handing the app's window to the other site", () => {
     render(<SupportLinks />);
 

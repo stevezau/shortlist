@@ -39,6 +39,9 @@
     --warning-foreground: 30 90% 8%;
     --plex: 40 96% 47%;
     --plex-foreground: 40 60% 6%;
+    /* The coffee link's cup. Pink, near GitHub Sponsors' heart: the one hue here that carries no
+       status meaning (red is an error, green is OK, amber a warning or the brand). */
+    --support: 330 70% 68%;
     --border: 240 5% 17%;
     --input: 240 5% 19%;
     --ring: 43 92% 55%;
