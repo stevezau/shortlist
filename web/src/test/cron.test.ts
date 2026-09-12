@@ -111,6 +111,13 @@ describe("describeCron", () => {
     ["30 4 * * 7", "Every Sunday at 4:30 AM"], // cron's second Sunday
     ["0 6 * * 1-5", "Every weekday at 6:00 AM"],
     ["0 10 * * 0,6", "Every Saturday and Sunday at 10:00 AM"],
+    // A list of days (issue #123: "0 4 * * 1,4" showed no description at all).
+    ["0 4 * * 1,4", "Every Monday and Thursday at 4:00 AM"],
+    ["0 4 * * 1,3,5", "Every Monday, Wednesday and Friday at 4:00 AM"],
+    ["0 4 * * 0,1", "Every Monday and Sunday at 4:00 AM"],
+    ["0 4 * * 4,1,4", "Every Monday and Thursday at 4:00 AM"],
+    ["0 4 * * mon,thu", "Every Monday and Thursday at 4:00 AM"],
+    ["0 4 * * fri", "Every Friday at 4:00 AM"],
   ])("describes %s as %s", (expression, expected) => {
     expect(describeCron(expression)).toBe(expected);
   });

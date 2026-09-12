@@ -35,7 +35,8 @@ All notable changes to this project are documented here. This project follows
   from Monday where cron counts from Sunday. The same slip moved every **Weekly** row from Sunday
   to Monday, and "mondays at 9pm" to Tuesday. Saved schedules are unchanged and simply run on the
   day they always said. If you shifted a day number to work around this, shift it back. `7` is now
-  accepted as Sunday too. (#123)
+  accepted as Sunday too, and a list of days now gets a description ("Every Monday and Thursday at
+  4:00 AM") instead of none. (#123)
 
 - **"Something else is reordering your shelf" no longer fires because two people watched the same
   film.** A "Because you watched X" row is named after the film, so everyone who watched that film

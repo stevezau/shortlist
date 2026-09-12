@@ -181,10 +181,21 @@ function formatClock(hour: number, minute: number): string {
 function describeDayOfWeek(dow: string): string | null {
   if (dow === "*") return "Every day";
   if (dow === "1-5") return "Every weekday";
-  if (dow === "0,6" || dow === "6,0") return "Every Saturday and Sunday";
-  const day = Number(dow);
-  if (/^\d$/.test(dow) && day <= 7) return `Every ${DAY_NAMES[day % 7]}`;
-  return null;
+  // A single day or a list of them ("1,4", "mon,thu"); ranges and steps stay undescribed.
+  const days = new Set<number>();
+  for (const token of dow.toLowerCase().split(",")) {
+    const day = /^[0-7]$/.test(token)
+      ? Number(token) % 7
+      : DOW_TOKENS.indexOf(token);
+    if (day < 0) return null;
+    days.add(day);
+  }
+  // Monday first, Sunday last, the way a week reads ("Saturday and Sunday", not "Sunday and Saturday").
+  const names = [...days]
+    .sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7))
+    .map((day) => DAY_NAMES[day]);
+  const last = names.pop();
+  return `Every ${names.length ? `${names.join(", ")} and ${last}` : last}`;
 }
 
 /**
