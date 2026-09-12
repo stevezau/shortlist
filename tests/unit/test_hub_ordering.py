@@ -1,4 +1,4 @@
-"""Unit tests for PlexClient.order_owned_hubs — the Recommended-shelf placement of Shortlist rows.
+"""Unit tests for PlexClient.place_rows — the Recommended-shelf placement of Shortlist rows.
 
 These pin the DECISION logic: only our hubs move, the anchor is read-only (Kometa coexistence), it's
 idempotent, dry-run is inert — and, since 2026-08-12, that it moves only hubs actually OUT OF PLACE
@@ -23,7 +23,7 @@ class FakeHub:
 
     They default to promoted-on-shared-Home because that is what a row on the shelf looks like, and
     because a fake WITHOUT these attributes would have hidden the fact that `managedHubs()` also
-    lists hubs promoted nowhere — which is exactly what `order_owned_hubs` was wasting moves on.
+    lists hubs promoted nowhere — which is exactly what placement used to waste moves on.
     """
 
     def __init__(self, title: str, ident: str, *, promoted: bool = True, collection: bool = True, identifier: str = ""):

@@ -1211,7 +1211,7 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
         after = request.query_params.get("after")
         # And REALLY reorder. `manage_hubs` serves `state.collections` in insertion order, so this
         # used to answer 200 while the shelf never moved — which is precisely the misbehaviour a real
-        # PMS was caught in (2026-08-12), and which `order_owned_hubs` now retries and reports as
+        # PMS was caught in (2026-08-12), and which `place_rows` now retries and reports as
         # unverified. A fake that behaves like the bug makes every shelf-order assertion vacuous and
         # would have had e2e re-issuing moves three times and finishing on a warning. Testing rule:
         # the fake must be no easier than the real server.

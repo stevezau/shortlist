@@ -1465,7 +1465,7 @@ def _anchor_group_order(
     collection or to the top depend on nothing and keep their input order — which is the owner's row
     order, so a shelf stays in the order the Rows page shows. With one exception: when several groups
     resolve to the TOP, the second and later ones land after the rows already there rather than
-    displacing them (see `order_owned_hubs`), so the existing order BETWEEN those groups is preserved
+    displacing them (see `place_rows`), so the existing order BETWEEN those groups is preserved
     instead of being re-imposed — two of them already at the top stay as they are.
 
     Two things are dropped rather than guessed at: a CYCLE ("A after B, B after A", including a row

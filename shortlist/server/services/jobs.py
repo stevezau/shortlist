@@ -1031,6 +1031,10 @@ def _audit_hub_orderings(state, report, dry_run: bool) -> None:
             library=entry.get("library"),
             anchor=entry.get("anchor"),
             moved=entry.get("moved", []),
+            # How many hubs the pass repositioned in TOTAL. A bottom-build writes to the backbone as
+            # well as to our rows, and `moved` names only ours — so without this the feed understates
+            # what reached Plex (plex-safety rule 10).
+            repositioned=entry.get("repositioned"),
             verified=verified,
             reason=entry.get("reason"),
             # The row that could not be placed, when the record is about one. Kept apart from

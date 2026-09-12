@@ -1392,6 +1392,32 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
         assert ctx.plex.place_rows.call_args.kwargs["dry_run"] is False
         assert "repositioned rows on the shelf in Movies" in result["detail"]
 
+    def test_the_audit_records_how_many_hubs_were_repositioned_in_total(self, monkeypatch):
+        """`moved` names only OUR rows. A bottom-build writes to the backbone as well, so without the
+        total the events feed understates what reached Plex (plex-safety rule 10)."""
+        self._converge_spy(monkeypatch)
+        state = self._state(sections=[MagicMock(type="movie", key="1", title="Movies")])
+        original = state.run_service.build_context
+
+        def build(dry_run: bool, plex_only: bool = False):
+            ctx = original(dry_run=dry_run, plex_only=plex_only)
+            ctx.plex.place_rows.return_value = {
+                "skipped": False,
+                "moved": ["row"],
+                "repositioned": 94,
+                "verified": True,
+            }
+            return ctx
+
+        state.run_service.build_context = build
+        written: list = []
+        monkeypatch.setattr(jobs, "write_audit", lambda st, scope, level, **kw: written.append((scope, kw)))
+
+        jobs._HANDLERS["sync.check"](state, {"confirmed": True})
+
+        shelf = [kw for scope, kw in written if scope == "shelf.order"]
+        assert shelf and shelf[0]["repositioned"] == 94
+
     def test_the_shelf_pass_is_audited_even_though_no_run_is_persisted(self, monkeypatch):
         """`run_persistence` only audits a PERSISTED run, and this handler persists none.
 

@@ -297,7 +297,7 @@ def _is_transient_pms_error(error: BaseException) -> bool:
     return str(error).startswith(_PMS_SERVER_ERROR_PREFIXES)
 
 
-# How many times `order_owned_hubs` will re-read the managed shelf and re-place whatever did not end
+# How many times `place_rows` will re-read the managed shelf and re-place whatever did not end
 # up where it asked. A co-managing tool (agregarr, Kometa) reorders the same shelf on its own
 # schedule, so a pass can genuinely lose a race; each retry re-reads first, so the next pass moves
 # only what is still wrong. Three is enough for a shelf that converges and cheap for one that doesn't.
