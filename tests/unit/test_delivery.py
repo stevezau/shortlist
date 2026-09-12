@@ -400,6 +400,31 @@ class TestDeliverRows:
         # Promotion is the pipeline's job, AFTER filters are merged — never delivery's.
         plex.promote.assert_not_called()
 
+    def test_a_new_row_is_hidden_from_library_browse_as_soon_as_it_is_labelled(self, engine_config, movies, shows):
+        """A person's FIRST row has no `label!=` exclude in anyone's share filter until the merge phase,
+        which waits for every later person's delivery. The browse-hiding
+        mode promote() sets is applied as soon as the label lands instead; promote() sets it again."""
+        plex = self._plex(movies, shows)
+
+        deliver_rows(plex, make_profile(), picks(), engine_config)
+
+        created = plex.create_collection.return_value
+        plex.hide_from_browse.assert_called_once_with(created)
+        names = [c[0] for c in plex.mock_calls]
+        assert names.index("stored_label") < names.index("hide_from_browse")
+
+    def test_a_row_is_created_even_when_hiding_it_from_browse_fails(self, engine_config, movies, shows):
+        """Best-effort: promote() hides it again after the filters merge, so a failed early hide is no
+        worse than before — and must not cost the person their row."""
+        plex = self._plex(movies, shows)
+        plex.hide_from_browse.side_effect = RuntimeError("(500) internal_server_error")
+
+        diff, stored = deliver_rows(plex, make_profile(), picks(), engine_config)
+
+        assert diff.created is True
+        assert stored == "Shortlist_sarah"
+        plex.create_collection.return_value.delete.assert_not_called()
+
     def test_show_picks_go_to_the_tv_library_not_the_movie_one(self, engine_config: EngineConfig, movies, shows):
         """A show delivered into a movie collection is matched by neither filterMovies nor
         filterTelevision, so its label exclude does nothing and the row leaks to every user."""
@@ -576,7 +601,7 @@ class TestDeliverRows:
     def test_a_full_turnover_updates_the_row_in_place_and_keeps_its_plex_identity(self, engine_config, movies, shows):
         """Issue #119: a row losing many titles used to be deleted and recreated to save per-item
         removes. The new collection had a new ratingKey, so every tool that keys on it (agregarr's
-        custom summary and sort title) lost its settings every night. The row must stay the SAME
+        custom summary and sort title) lost its settings each time. The row must stay the SAME
         Plex object however much of it changes."""
         plex = self._plex(movies, shows)
         profile = make_profile()
@@ -584,7 +609,8 @@ class TestDeliverRows:
         existing.ratingKey = 4242
         stale = existing.items.return_value
         plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
-
+        fetched = [MagicMock(ratingKey=1001), MagicMock(ratingKey=1002)]
+        plex.fetch_items.return_value = (fetched, [])
         breakdown: list[dict] = []
 
         diff, stored = deliver_rows(plex, profile, picks(), engine_config, breakdown=breakdown)
@@ -592,7 +618,7 @@ class TestDeliverRows:
         plex.delete_owned_collection.assert_not_called()
         plex.create_collection.assert_not_called()
         plex.fetch_items.assert_called_once_with([1001, 1002])  # only the delta is fetched
-        plex.set_items.assert_called_once_with(existing, stale, [], [1001, 1002])
+        plex.set_items.assert_called_once_with(existing, stale, fetched, [1001, 1002])
         assert breakdown[0]["rating_key"] == 4242  # the ledger keeps pointing at the same collection
         assert diff.removed == [f"Stale {k}" for k in range(20)]
         assert diff.created is False
@@ -696,6 +722,7 @@ class TestDeliverRows:
         profile = make_profile()
         existing = self._existing_with_stale(profile, 3)
         plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+        plex.fetch_items.return_value = ([MagicMock(ratingKey=1001), MagicMock(ratingKey=1002)], [])
         events: list = []
         plex.set_items.side_effect = lambda *args: events.append("set_items")
 
@@ -706,19 +733,78 @@ class TestDeliverRows:
             "set_items",
         ]
 
+    def test_the_announced_add_count_leaves_out_picks_that_have_vanished(self, engine_config, movies, shows):
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        existing = self._existing_with_stale(profile, 1)
+        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+        plex.fetch_items.return_value = ([MagicMock(ratingKey=1001)], [1002])  # Movie 2 deleted from Plex
+        events: list = []
+
+        deliver_rows(plex, profile, picks(), engine_config, on_write=events.append)
+
+        assert events == [{"row": "✨ Movies Picked for You", "library": "Movies", "adding": 1, "removing": 1}]
+
+    def test_announces_nothing_when_every_title_to_add_has_vanished_and_nothing_is_removed(
+        self, engine_config, movies, shows
+    ):
+        """An announcement with nothing to add and nothing to remove would render as a line with no verb."""
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        existing = MagicMock()
+        existing.title = "✨ Movies Picked for You" + row_marker(profile.plex_account_id)
+        existing.items.return_value = [MagicMock(title="Movie 1", ratingKey=1001)]
+        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+        plex.fetch_items.return_value = ([], [1002])  # the one title to add was deleted from Plex
+        events: list = []
+
+        deliver_rows(plex, profile, picks(), engine_config, on_write=events.append)
+
+        assert events == []
+
+    def test_the_announced_new_row_size_leaves_out_picks_that_have_vanished(self, engine_config, movies, shows):
+        plex = self._plex(movies, shows)
+        plex.fetch_items.return_value = ([MagicMock(ratingKey=1001)], [1002])
+        events: list = []
+
+        deliver_rows(plex, make_profile(), picks(), engine_config, on_write=events.append)
+
+        assert events == [{"row": "✨ Movies Picked for You", "library": "Movies", "creating": 1}]
+
+    def test_says_it_is_creating_the_row_when_a_broken_one_has_to_be_recreated(self, engine_config, movies, shows):
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        existing = self._existing_with_stale(profile, 0)
+        existing.items.return_value = []
+        existing.childCount = 0
+        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+        plex.set_items.side_effect = CollectionRejectedItems("(400) bad_request; .../collections/9/items")
+        plex.fetch_items.return_value = ([MagicMock(ratingKey=1001), MagicMock(ratingKey=1002)], [])
+        events: list = []
+
+        deliver_rows(plex, profile, picks(), engine_config, on_write=events.append)
+
+        assert events[-1] == {"row": "✨ Movies Picked for You", "library": "Movies", "creating": 2}
+
     def test_says_it_is_creating_a_row_before_creating_it(self, engine_config, movies, shows):
         plex = self._plex(movies, shows)
+        plex.fetch_items.return_value = ([MagicMock(ratingKey=1001), MagicMock(ratingKey=1002)], [])
         profile = make_profile()
         events: list = []
         create = plex.create_collection.side_effect
-        plex.create_collection.side_effect = lambda *args: (events.append("create"), create(*args))[1]
+
+        def create_and_record(*args):
+            events.append("create")
+            return create(*args)
+
+        plex.create_collection.side_effect = create_and_record
 
         deliver_rows(plex, profile, picks(), engine_config, on_write=events.append)
 
         assert events == [{"row": "✨ Movies Picked for You", "library": "Movies", "creating": 2}, "create"]
 
-    def test_says_nothing_when_nothing_is_written(self, engine_config, movies, shows):
-        """An unchanged row and a dry run write nothing, so announcing a write would be a lie."""
+    def test_says_nothing_when_the_row_is_unchanged(self, engine_config, movies, shows):
+        """An unchanged row writes nothing, so announcing a write would be a lie."""
         plex = self._plex(movies, shows)
         profile = make_profile()
         unchanged = MagicMock()
@@ -731,8 +817,14 @@ class TestDeliverRows:
         events: list = []
 
         deliver_rows(plex, profile, picks(), engine_config, on_write=events.append)
-        plex.find_owned_collections.side_effect = lambda section, label: []
-        deliver_rows(plex, profile, picks(), engine_config, dry_run=True, on_write=events.append)
+
+        assert events == []
+
+    def test_a_dry_run_create_announces_nothing(self, engine_config, movies, shows):
+        plex = self._plex(movies, shows)
+        events: list = []
+
+        deliver_rows(plex, make_profile(), picks(), engine_config, dry_run=True, on_write=events.append)
 
         assert events == []
 
@@ -2144,8 +2236,7 @@ class TestAConflictingRenameDoesNotTakeThePersonDown:
     """A Plex collection is keyed by TITLE within a library, so renaming onto a title that already
     exists there answers 409 Conflict.
 
-    The rebuild path deletes first precisely to avoid this. The in-place rename did not, and an
-    unguarded `editTitle` propagated — recorded on a real 46-user server (run 4, 2026-08-15):
+    An unguarded `editTitle` propagated — recorded on a real 46-user server (run 4, 2026-08-15):
     `users_ok: 45, users_error: 1`, the one error being
 
         BadRequest: (409) conflict; …title.value=🎯 Because you watched Ted Lasso…&type=18

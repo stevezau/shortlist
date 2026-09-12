@@ -953,6 +953,14 @@ class TestPlexClient:
         assert vis.updateVisibility.call_args.kwargs == {"recommended": True, "home": False, "shared": True}
         vis.reload.return_value.move.assert_not_called()  # not pinned by default
 
+    def test_hide_from_browse_hides_the_collection_and_touches_nothing_else(self, mock_plex: PlexClient):
+        collection = MagicMock()
+
+        mock_plex.hide_from_browse(collection)
+
+        collection.modeUpdate.assert_called_once_with(mode="hide")
+        assert [c[0] for c in collection.method_calls] == ["modeUpdate"]  # where it is SHOWN is promotion's
+
     def test_promote_passes_placement_flags_through(self, mock_plex: PlexClient):
         """A library-only row must be hidden from Home and friends' Home — recommended only."""
         collection = MagicMock()

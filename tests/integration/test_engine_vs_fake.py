@@ -403,11 +403,11 @@ def test_a_row_builds_in_every_movie_library_with_that_librarys_own_rating_keys(
 
     * Each collection holds its OWN library's ratingKeys for the same picks — the other library's
       keys name items this library does not have.
-    * BOTH collections are promoted. `promote()` is the only call that hides a collection from the
-      library's normal browse view (`modeUpdate(mode="hide")`), so a row promoted in only the
-      lowest-keyed library sits browse-visible to every user in whatever other library it landed in
-      — a leak that the `label!=` excludes, which govern browse, do nothing about while the mode is
-      still "library default".
+    * BOTH collections are promoted. `promote()` is the only call that guarantees a collection is
+      hidden from the library's normal browse view (`modeUpdate(mode="hide")`; the hide at creation is
+      best-effort, and only for new rows), so a row promoted in only the lowest-keyed library sits
+      browse-visible to every user in whatever other library it landed in — a leak that the `label!=`
+      excludes, which govern browse, do nothing about while the mode is still "library default".
     """
     state, pms_url, _tmdb_app = fakes
     movies_4k = _add_4k_movie_library(state)
@@ -1702,6 +1702,74 @@ def test_delivery_records_the_rating_key_of_the_collection_it_built(fakes, tmp_p
             assert collection.title == entry["row_title"] + marker
             checked += 1
     assert checked, "nothing was delivered, so there is no ledger input to check"
+
+
+def test_a_row_that_loses_most_of_its_titles_stays_the_same_plex_collection(fakes, tmp_path):
+    """Issue #119, against the real request shapes: a big turnover used to delete the row and create a
+    new one, and every tool that keys on a collection's ratingKey (agregarr's custom summary and sort
+    title) lost its settings. The row must come out of the run as the SAME collection, holding the
+    new titles."""
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(row_size=12, min_history=5, candidates_pre_rank=40, max_seeds=12),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+    sarah = UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED)
+    assert engine_run(ctx, [sarah]).ok
+    movie_row = next(
+        state.collections[key]
+        for key in plex.owned_collections()["sarah"].rating_keys
+        if state.collections[key].section_id == state.section_id
+    )
+    delivered = list(movie_row.item_keys)
+    # Swap the row's membership for titles it does not want, as if a refresh had rotated most of it.
+    stale = [key for key in state.movies if key not in delivered][:6]
+    assert len(stale) == 6, "the fake library needs spare movies to rotate in"
+    movie_row.item_keys = stale
+    before = set(state.collections)
+
+    assert engine_run(ctx, [sarah]).ok
+
+    assert state.collections.get(movie_row.rating_key) is movie_row, "the row was deleted and recreated"
+    assert set(state.collections) == before, "a new collection was created for a row that already existed"
+    assert set(movie_row.item_keys) == set(delivered), "the row does not hold the titles it was given"
+
+
+def test_a_new_row_is_already_hidden_from_library_browse_before_it_is_promoted(fakes, tmp_path, monkeypatch):
+    """Over the real request shapes: the early hide must actually land, not just be attempted. Every
+    other test promotes, and promote() hides again, so a hide that silently failed would pass them all."""
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(row_size=12, min_history=5, candidates_pre_rank=40, max_seeds=12),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+    modes_at_promotion: dict[int, int] = {}
+    promote = PlexClient.promote
+
+    def spy(self, collection, **kwargs):
+        modes_at_promotion[int(collection.ratingKey)] = state.collections[int(collection.ratingKey)].mode
+        return promote(self, collection, **kwargs)
+
+    monkeypatch.setattr(PlexClient, "promote", spy)
+
+    assert engine_run(ctx, [UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED)]).ok
+
+    assert modes_at_promotion, "nothing was promoted, so the test proved nothing"
+    assert set(modes_at_promotion.values()) == {0}, f"rows reached promotion still browsable: {modes_at_promotion}"
 
 
 def test_a_scoped_run_never_rebuilds_another_row_as_itself(fakes, tmp_path):

@@ -43,7 +43,7 @@ All notable changes to this project are documented here. This project follows
   accepted as Sunday too, and a list of days now gets a description ("Every Monday and Thursday at
   4:00 AM") instead of none. (#123)
 
-- **A row keeps its Plex collection when its titles change, so agregarr and Kometa settings stick.**
+- **A row keeps its Plex collection when its titles change, so agregarr settings stick.**
   A row that lost five or more titles in a run used to be deleted and created again, because that
   was quicker on a large TV library. The new collection had a new Plex id, and tools that remember a
   collection by its id lost what you had set on it: agregarr's custom summary and sort title were

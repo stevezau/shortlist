@@ -548,8 +548,8 @@ function UserPanelBody({
     const stageLabel = latest
       ? (STAGE_LABELS[latest.stage] ?? latest.stage)
       : null;
-    // The full counts only for a row's pending write ("TV Shows · adding 10 titles"). Earlier
-    // stages carry tallies that read wrongly mid-flight, so they name just the row.
+    // The full counts only for a row's pending write ("Picked · TV Shows · adding 10 titles"). Earlier
+    // stages' tallies are noise in a one-line status, so they name just the row.
     const counts = latest?.counts ?? {};
     const detail = counts.library ? describeCounts(counts) : counts.row;
     return (

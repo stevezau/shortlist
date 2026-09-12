@@ -946,12 +946,13 @@ def live_delivered_keys(ctx: EngineContext, report: RunReport) -> dict[tuple[str
     """The delivery ledger with THIS run's own deliveries laid over the top.
 
     ``(user_slug, row_slug, library_key) -> ratingKey``. ``ctx.delivered_keys`` is a SNAPSHOT taken
-    when the context was built — before this run delivered anything — so a row rebuilt tonight
-    (delete + create, which is how a changed pick list lands) has a ratingKey the snapshot cannot
-    know. The overlay replays the adapter's ledger write in ITS order: forget what the run removed,
-    then record what it delivered. Recording alone is not the same write — Plex ratingKeys are rowids
-    and get reused, so an id freed by an in-run removal can be handed to a collection created later in
-    the same run, and keeping the dead entry claims one collection for two rows.
+    when the context was built — before this run delivered anything — so a row created tonight (a
+    first delivery, or a repair that recreates one: wrong type, or refusing every add) has a ratingKey
+    the snapshot cannot know. The overlay replays the adapter's ledger write in ITS order: forget what
+    the run removed, then record what it delivered. Recording alone is not the same write — Plex
+    ratingKeys are rowids and get reused, so an id freed by an in-run removal can be handed to a
+    collection created later in the same run, and keeping the dead entry claims one collection for two
+    rows.
 
     Shared rows come through here too: their report is filed under `shared_<row slug>`, the same
     string the ledger's `user_slug` holds for them, so the overlay replaces rather than duplicates.
@@ -1008,9 +1009,10 @@ def _promote_phase(
     """Promote delivered rows onto shared Home — never before the excludes that hide them exist.
 
     Promotion runs across EVERY delivery library, not just one per type: promote() is the only call
-    that hides a collection from that library's normal browse view (modeUpdate), and a row can now be
-    delivered into any library (library_keys). A row promoted in only the lowest-key library would sit
-    unhidden — and browse-visible to everyone — in whatever other library it actually landed in.
+    that GUARANTEES a collection is hidden from that library's normal browse view (modeUpdate) — the
+    hide at creation is best-effort, and only for new rows — and a row can now be delivered into any
+    library (library_keys). A row promoted in only the lowest-key library would sit unhidden — and
+    browse-visible to everyone — in whatever other library it actually landed in.
 
     Returns the ratingKeys actually promoted, so the converge phase can tell "this row was set
     correctly tonight" from "nothing has touched this row in weeks" and only walk the remainder.

@@ -1376,7 +1376,7 @@ class TestPerRowOverrides:
     def test_row_pinned_to_a_non_lowest_key_library_is_delivered_and_promoted_there(
         self, ctx: EngineContext, mock_plextv
     ):
-        # Regression: promotion is the only thing that hides a collection from LIBRARY BROWSE
+        # Regression: promotion is the only thing that GUARANTEES a collection is hidden from LIBRARY BROWSE
         # (share filters only cover Home/Recommended/Related), so a row delivered to a library that
         # isn't the lowest-key one of its type must still be promoted there — or it leaks into browse.
         lib1 = MagicMock()

@@ -1370,8 +1370,8 @@ def _persist_user_report(session: Session, run_id: int, user: User, user_report,
         )
     )
     if not dry_run:
-        # Forget BEFORE recording: a row removed and then re-delivered in the same run (a retitle that
-        # went through delete+create) must end up with the entry the delivery just wrote, not without one.
+        # Forget BEFORE recording: a row removed and then re-delivered in the same run (a repair that
+        # recreates it) must end up with the entry the delivery just wrote, not without one.
         _forget_removed_deliveries(session, user.slug, user_report.removed_deliveries)
         _record_deliveries(session, user.slug, user_report.breakdown)
         for pick in user_report.picks:

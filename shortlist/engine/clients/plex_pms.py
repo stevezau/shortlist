@@ -955,6 +955,15 @@ class PlexClient:
             time.monotonic() - start,
         )
 
+    def hide_from_browse(self, collection: Collection) -> None:
+        """Hide a collection from its library's normal browse view, without promoting it anywhere.
+
+        The browse-hiding half of ``promote``, for a row that must not wait for promotion: a person's
+        first row has no ``label!=`` exclude in anyone's share filter until the run's merge phase. Not
+        retried — callers treat it as best-effort, and ``promote`` applies the same mode again.
+        """
+        collection.modeUpdate(mode="hide")
+
     def reads_as_on_owner_home(self, collection: Collection) -> bool:
         """Is this collection currently on the owner's Home shelf? A read, never a write.
 

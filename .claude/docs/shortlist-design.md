@@ -274,8 +274,8 @@ users are independent (`try/except` per user), shared caches across the loop.
                              head left the tail alphabetical and read as broken ranking) ·
                              label shortlist_<slug> · poster ·
                              collection mode = "hide" (modeUpdate — row shows on Home but the
-                             collection stays out of library browsing, so 40 collections never
-                             clutter anyone's Collections tab; same trick Kometa uses) ·
+                             collection stays out of library browsing; same trick Kometa uses. It
+                             stays reachable from the Collections tab, where share filters hide it) ·
                              promote via collection.visibility() → ManagedHub.updateVisibility
                              (shared=True, recommended=True) — visibility() verified in plexapi
                              source 2026-07-12
@@ -388,7 +388,7 @@ mutations. Docs firmly recommend not exposing Shortlist publicly; subpath + reve
 | plex.tv 429s                            | response codes                | 1 req/s throttle + exponential backoff + resume; runs never half-apply (per-user transaction)                                                                                                                 |
 | TMDB down / LLM down                    | health probes per run         | degrade gracefully: reuse last candidates / heuristic mode; warn, never fail the whole run                                                                                                                    |
 | Very large libraries                    | index once/run + SQLite cache | O(library) once, O(user-history) per user; 10k-item library ≈ seconds                                                                                                                                         |
-| ~40 collections on owner's Home         | —                             | only the owner sees all (verified); collection mode "hide" keeps them out of everyone's Collections tab; incremental rollout guidance in docs; no evidence of Home-render degradation (researched July 2026)  |
+| ~40 collections on owner's Home         | —                             | only the owner sees all (verified); collection mode "hide" keeps them out of library browse, and the `label!=` excludes keep other accounts off them in the Collections tab (the owner has no share, so sees every row there — docs/faq.md); incremental rollout guidance in docs; no evidence of Home-render degradation (researched July 2026)  |
 | Row POSITION on a user's Home           | —                             | not server-controllable per user: promoted rows land in Plex's hub order; each user can pin/reorder it in their own client ("Manage Home Screen"). Documented honestly — the row appears, its position varies |
 
 ---

@@ -347,7 +347,7 @@ class TestBuildContext:
 
     def test_a_ratingkey_two_rows_claim_is_dropped_rather_than_arbitrated(self, service, sessions, configured):
         """The safety valve that makes a bad ledger self-heal. Two rows naming one collection is
-        reachable if a run died between the delete and the persist on delivery's rebuild path — and
+        reachable if a run died between the delete and the persist of a repair that recreates a row — and
         picking a winner would let the loser's build retitle the winner's live collection.
 
         Dropping BOTH sends delivery back to matching by title, which is where it was before the

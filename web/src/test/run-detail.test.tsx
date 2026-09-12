@@ -665,10 +665,8 @@ describe("RunDetailPage — grouped by library", () => {
     expect(screen.queryByText(/Finishing up/)).toBeNull();
   });
 
-  it("tells you what a person's row is getting while it is being written", async () => {
-    // An in-place update on a big library runs for minutes (Plex removes titles one at a time).
-    // "writing the row to Plex" alone could not say whether that was a new row or ten titles being
-    // swapped, so the panel reads the pending change off the live log.
+  /** A run mid-flight with sarah not finished yet, whose latest live-log line is `line`. */
+  function sarahMidRun(line: Pick<RunLogEntry, "stage" | "counts">) {
     const base = run([]);
     getRun.mockResolvedValue({
       ...base,
@@ -687,15 +685,18 @@ describe("RunDetailPage — grouped by library", () => {
       ],
     });
     getRunLog.mockResolvedValue([
-      {
-        seq: 1,
-        ts: "2026-08-17T03:30:00Z",
-        run_id: 2,
-        user: "sarah",
-        stage: "delivering",
-        counts: { row: "Picked", library: "TV Shows", adding: 10, removing: 3 },
-      },
+      { seq: 1, ts: "2026-08-17T03:30:00Z", run_id: 2, user: "sarah", ...line },
     ]);
+  }
+
+  it("tells you what a person's row is getting while it is being written", async () => {
+    // An in-place update on a big library runs for minutes (Plex removes titles one at a time).
+    // "writing the row to Plex" alone could not say whether that was a new row or ten titles being
+    // swapped, so the panel reads the pending change off the live log.
+    sarahMidRun({
+      stage: "delivering",
+      counts: { row: "Picked", library: "TV Shows", adding: 10, removing: 3 },
+    });
 
     renderDetail("");
     await expandRows();
@@ -708,34 +709,9 @@ describe("RunDetailPage — grouped by library", () => {
   });
 
   it("names only the row for a person's other stages", async () => {
-    // The counts are shown for a row's pending write only. Earlier stages carry tallies that read
-    // wrongly mid-flight — "0 favourites to match" is emitted before the favourites are counted.
-    const base = run([]);
-    getRun.mockResolvedValue({
-      ...base,
-      finished_at: null,
-      status: "running",
-      stats: { ...base.stats, expected_users: [{ slug: "sarah" }] },
-      users: [
-        {
-          ...base.users[0]!,
-          username: "sarah",
-          slug: "sarah",
-          display_name: "sarah",
-          status: "pending",
-        },
-      ],
-    });
-    getRunLog.mockResolvedValue([
-      {
-        seq: 1,
-        ts: "2026-08-17T03:30:00Z",
-        run_id: 2,
-        user: "sarah",
-        stage: "curating",
-        counts: { candidates: 160, row: "Picked" },
-      },
-    ]);
+    // The counts are shown for a row's pending write only. Earlier stages' tallies are noise in a
+    // one-line status; the full detail is in the run log.
+    sarahMidRun({ stage: "curating", counts: { candidates: 160, row: "Picked" } });
 
     renderDetail("");
     await expandRows();

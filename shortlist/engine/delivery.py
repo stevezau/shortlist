@@ -897,14 +897,16 @@ def _create_labelled_collection(
     poster: PosterSpec | None = None,
     artist: PosterArtist | None = None,
     order_work: list[tuple] | None = None,
-) -> tuple[str, int]:
+    on_write: Callable[[dict], None] | None = None,
+) -> tuple[str, int, list[int]]:
     """Create the collection, apply its label, and delete it if the label doesn't stick.
 
     A collection with no shortlist_* label is invisible to every lookup we have — all of them key off
     that prefix — so nothing would ever find it again, no filter could hide it, and it would be
     visible to everyone forever. Create and label must therefore succeed together or not at all.
-    Returns the stored (Plex title-cased) label and the new collection's ratingKey — the ledger's
-    handle on it, and the only one that survives a title the next run renders differently.
+    Returns the stored (Plex title-cased) label, the new collection's ratingKey — the ledger's handle
+    on it, and the only one that survives a title the next run renders differently — and the ratingKeys
+    of picks that had vanished from Plex, which the new collection does not hold.
     """
     items, vanished = plex.fetch_items([p.rating_key for p in picks])
     if vanished:
@@ -918,6 +920,8 @@ def _create_labelled_collection(
             title,
             ", ".join(sorted(gone)),
         )
+    if on_write is not None:
+        on_write({"row": display, "library": section.title, "creating": len(items)})
     collection = plex.create_collection(section, title, items)
     try:
         # BOTH labels in one PUT. A label write costs ~9.3s on a big library whatever it carries,
@@ -949,6 +953,20 @@ def _create_labelled_collection(
     # the second chance when that write fell back to the critical label alone — and it brings its own
     # guard, so the retry is the safe read-modify-write rather than a bare replace.
     _apply_shortlist_label(plex, collection, profile.username)
+    # A person's FIRST row has no `label!=` exclude in anyone's share filter until the merge phase, which
+    # waits for every later person's delivery. Set the browse-hiding mode promote() sets now rather than
+    # then. By the documented model a browse-hidden row still shows in the Collections tab (see the
+    # PLACEMENTS note in server/api/collections.py), so that window stays open — .claude/docs/review-backlog.md.
+    # Best-effort: promote() hides it again.
+    try:
+        plex.hide_from_browse(collection)
+    except Exception as e:
+        logger.warning(
+            "{}: could not hide the new row in '{}' from library browse ({}) — it is hidden when promoted",
+            profile.username,
+            section.title,
+            type(e).__name__,
+        )
     if order_work is not None:
         order_work.append((collection, [p.rating_key for p in picks]))
     apply_poster(plex, collection, poster, profile, picks, library_name=section.title, artist=artist, dry_run=False)
@@ -1082,7 +1100,7 @@ def _deliver_one(
 
     An existing row is ALWAYS updated in place, however much of it changes (issue #119). Deleting and
     recreating it is faster on a huge library, but the new collection gets a new ratingKey, and every
-    tool that keys on that (agregarr's custom summary and sort title, Kometa) loses its settings for
+    tool that keys on that (agregarr's custom summary and sort title) loses its settings for
     the row. It also leaves the new collection unlabelled — hidden by no share filter — until its label
     write lands. `on_write` is told what is about to change before the membership writes, because an
     in-place update on a big library takes minutes.
@@ -1146,8 +1164,6 @@ def _deliver_one(
             )
             apply_poster(plex, None, poster, profile, picks, library_name=section.title, artist=artist, dry_run=True)
             return diff, label
-        if on_write is not None:
-            on_write({"row": display, "library": section.title, "creating": len(picks)})
         stored, diff.rating_key, vanished = _create_labelled_collection(
             plex,
             section,
@@ -1159,6 +1175,7 @@ def _deliver_one(
             poster=poster,
             artist=artist,
             order_work=order_work,
+            on_write=on_write,
         )
         if vanished:
             # Deleted from Plex between the picks being made and the row being created. The row holds
@@ -1223,8 +1240,6 @@ def _deliver_one(
         )
         return diff, stored
 
-    if on_write is not None:
-        on_write({"row": display, "library": section.title, "adding": len(to_add_keys), "removing": to_remove_count})
     # Fetch ONLY the items being added (the delta), not all N picks — most are already in the
     # collection on a steady run, so this is a handful of items instead of the whole row. An empty
     # delta short-circuits inside `fetch_items`, which also absorbs the case where every key in the
@@ -1249,6 +1264,8 @@ def _deliver_one(
             display,
             ", ".join(sorted(gone)),
         )
+    if on_write is not None and (add_items or to_remove_count):
+        on_write({"row": display, "library": section.title, "adding": len(add_items), "removing": to_remove_count})
     try:
         plex.set_items(collection, existing_items, add_items, wanted_keys)
     except CollectionRejectedItems:
@@ -1293,6 +1310,7 @@ def _deliver_one(
             poster=poster,
             artist=artist,
             order_work=order_work,
+            on_write=on_write,
         )
         if vanished:
             dead = set(vanished)

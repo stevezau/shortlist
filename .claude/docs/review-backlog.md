@@ -10,6 +10,61 @@ below is later work.
 
 ---
 
+## OPEN — a person's first row has no exclude until the merge (2026-09-13)
+
+Found auditing #119. A person with no row yet has no `label!=shortlist_<slug>` in anyone's share
+filter: `desired_excludes` builds excludes from `stored_labels` (labels already on the server plus
+what delivery just stored), and `_privacy_sync_phase` runs after EVERY person's delivery
+(`pipeline.py`). From the moment their first row is created until then, the only thing standing
+between that row and other accounts is its collection mode. A run that stops before the merge
+(plex.tv roster unreadable) leaves it that way until the next run.
+
+Not new: it has existed as long as the deliver-then-merge order has. #119 made it LONGER — rows now
+update in place, so every removal on a very large TV library is its own slow write (estimate below).
+
+What is done: `delivery._create_labelled_collection` sets the browse-hiding collection mode as soon
+as the label lands (`PlexClient.hide_from_browse`), instead of waiting for promote(). That covers
+library browse only.
+
+The Collections tab is believed EXPOSED in that window. The repo's documented model is that a
+browse-hidden collection stays reachable from the Collections tab and only share filters keep other
+accounts off it: `server/api/collections.py` (PLACEMENTS note), `engine/models.py` (`placement`),
+`docs/reference/settings.md` ("off" rows), and `docs/faq.md` (the owner, who has no filter, sees every
+row there). A first row has no exclude yet, so it is in the owner's position. There is no recorded
+fixture of another account's view (`audit-2026-09-programme.md`, rule 11); a read-only probe as a
+shared account against a real PMS would settle it. Two older test comments disagree on whether share
+filters cover browse at all (`test_pipeline.py` "only cover Home/Recommended/Related",
+`test_engine_vs_fake.py` "govern browse") — the probe should settle those too.
+
+How long: removals are one ~15-16.5s Plex write each on a very large TV library (measured per write,
+not per run), so a person's first row can wait roughly (titles removed across every later person's
+rows) × 16s before the merge — an estimate, not a measured run.
+
+Options if it is exposed, needing an owner decision:
+1. Deliver people with no existing label FIRST, merge, then deliver everyone else. Shortens the
+   window to those people's own deliveries.
+2. One batched merge BEFORE delivery carrying every new person's exclude — one plex.tv write per
+   account, not per person. Two unknowns: Plex title-cases stored labels, and `desired_excludes`
+   deliberately refuses to guess a casing ("guessing their label's casing would poison filters");
+   and whether Plex accepts an exclude for a label that does not exist yet (rule 11 fixture).
+3. Accept it, and document it in the privacy FAQ.
+
+---
+
+## OPEN — every pick vanishing before a create fails the person (2026-09-13)
+
+Found auditing #119, LOW, pre-existing. If every pick for a library is deleted from Plex in the seconds
+between curation and `_create_labelled_collection`'s `fetch_items`, `create_collection(section, title,
+[])` reaches plexapi's `Collection._create`, which raises `BadRequest('Must include items…')` before
+any request. It is not transient, so the person's delivery fails that night and heals the next.
+
+A fix was tried and reverted in the same session: returning "nothing created" made the
+refuses-every-add repair delete the broken row, create nothing, and report success with a ledger entry
+still naming the deleted ratingKey, and made the run page show a row that was never created. A correct
+fix has to resolve the picks BEFORE the repair's delete, and keep the breakdown out of the run record.
+
+---
+
 ## OPEN — issue #108 watch-status follow-ups (2026-09-02)
 
 Six commits landed for #108 (`dd2614a`, `a829724`, `1c61a9c`, `ac0a165`, `545a340`, `83cf07a`), and

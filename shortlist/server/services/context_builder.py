@@ -777,8 +777,8 @@ class ContextBuilder:
         `_previous_picks`, so the two read alike at the call site.
 
         An ambiguous key (two rows naming one collection — reachable if a run died between the delete
-        and the persist on the rebuild path) is dropped rather than arbitrated: delivery then falls back
-        to the title, which is where it was before the ledger.
+        and the persist of a repair that recreates a row) is dropped rather than arbitrated: delivery then
+        falls back to the title, which is where it was before the ledger.
         """
         rows = list(session.query(Delivery).filter(Delivery.rating_key != 0))
         claims: dict[int, int] = {}

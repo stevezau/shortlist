@@ -1391,7 +1391,7 @@ def _user_restore(state, payload: dict) -> dict:
         # Through the engine's shared rule rather than a second copy of it: a ratingKey two rows claim
         # is DROPPED and falls back to the title map, instead of whichever row the query returned last
         # winning arbitrarily. Reachable if a run crashed between the delete and the persist on
-        # delivery's rebuild path.
+        # a repair that recreates a row (wrong type, or refusing every add).
         keys = identity_map({(d.user_slug, d.collection_slug, d.library_key): d.rating_key for d in ledger}).get(
             slug, {}
         )

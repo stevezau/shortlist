@@ -376,9 +376,9 @@ export function RunDetailPage() {
                     </p>
                     <p className="text-muted-foreground">
                       Plex removes titles from a collection one at a time, and
-                      that is especially slow on TV Shows, so a row dropping ten
-                      titles can take a few minutes. Rows whose titles haven't
-                      changed are skipped. Each person's panel shows what their
+                      on a very large TV library that is slow — a row dropping
+                      ten titles there can take a few minutes. Rows whose titles haven't
+                      changed skip that. Each person's panel shows what their
                       row is adding and removing while it happens.
                     </p>
                   </div>
