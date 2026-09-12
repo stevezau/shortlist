@@ -204,7 +204,9 @@ One item described an "AI-from-library" source that has never existed (`sources.
    llm_web — and llm_web searches the WEB, not the library. Someone could hunt for a toggle that
    isn't there. Also "discovery engines" → "where this row looks for titles".
 5. **Settings paths that don't say what is there** (repeated): `row-editor.tsx:553,647,858-861`,
-   `row-shelf-placement.tsx:66` ("Use the default (Settings)"), `row-sources-field.tsx:143-145`.
+   `row-sources-field.tsx:143-145`. The `row-shelf-placement.tsx` case ("Use the default (Settings)")
+   is MOOT as of 2026-09-12 — the global per-library placement default was retired, so the control no
+   longer offers it and there is no Settings path left to name.
 6. **"MDBList" dropped in with no gloss** (`row-editor.tsx:816-817`) — IMDb/RT/Metacritic are
    recognisable, the service supplying them is not.
 7. **Trakt and Exa named with no context** (`sources.ts:39-40,46-48`); "Search backend below" is a
