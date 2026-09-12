@@ -1,5 +1,7 @@
 /* Shortlist docs — the site dresses like the app it documents: near-black
    surfaces, one amber accent (Plex's own #e5a00d), no second hue competing.
+   One exception, also the app's: the coffee link's cup is pink (--cup), because
+   every other hue here already means something. It colours that icon only.
    Dark is the default because the product is dark; light exists because the
    reference page is 68k of prose and some people read long docs in daylight. */
 
@@ -53,6 +55,8 @@
   --code-bg: #0f0f13;
   --good: #4ade80;
   --warn: #fbbf24;
+  --star: var(--amber);
+  --cup: #e882b4;
   color-scheme: dark;
 }
 
@@ -78,6 +82,8 @@
   --code-bg: #f6f6f4;
   --good: #15803d;
   --warn: #a16207;
+  --star: var(--amber-deep);
+  --cup: #b8327a;
   color-scheme: light;
 }
 
@@ -329,6 +335,45 @@ hr {
   border-color: var(--border-strong);
 }
 
+.nav-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  height: 34px;
+  flex: none;
+  padding: 0 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 520;
+  text-decoration: none;
+  transition: border-color 0.15s var(--ease);
+}
+
+.nav-pill:hover {
+  border-color: var(--border-strong);
+}
+
+.nav-pill svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.nav-pill--star svg,
+.footer__star {
+  color: var(--star);
+  fill: var(--star);
+}
+
+.nav-pill--coffee svg,
+.footer__cup {
+  color: var(--cup);
+}
+
+
 .search-btn svg {
   width: 14px;
   height: 14px;
@@ -361,8 +406,22 @@ hr {
 /* Measured at 320: the brand, a worded search button and four 34px icons want
    387px inside a 275px bar, and the row pushed every page 86px sideways. Shed
    the parts that say something twice, widest first. The word goes before the
-   icon, which keeps its aria-label; the sponsor heart goes before anything
+   icon, which keeps its aria-label; the coffee goes before anything
    structural, and it is still in the footer. */
+/* The Star and Coffee words need ~110px the full nav row does not have below 1180px (measured: 24px
+   over at 1100, 215px at 901). Once the nav links collapse into the burger at 900 there is room for
+   the words again, until the 600px pass sheds every label. */
+@media (min-width: 901px) and (max-width: 1180px), (max-width: 600px) {
+  .nav-pill {
+    width: 34px;
+    padding: 0;
+    justify-content: center;
+  }
+  .nav-pill__label {
+    display: none;
+  }
+}
+
 @media (max-width: 600px) {
   .search-btn {
     width: 34px;
@@ -378,7 +437,7 @@ hr {
   .nav__inner {
     gap: 0.4rem;
   }
-  .icon-btn--heart {
+  .nav-pill--coffee {
     display: none;
   }
 }
@@ -1539,13 +1598,6 @@ figcaption {
   margin-bottom: 2.25rem;
 }
 
-.icon-btn--heart:hover svg {
-  /* Fills on hover only — a permanently red heart in the header reads as a notification badge, and
-     an unread count is the last thing a docs page should imply. */
-  fill: currentColor;
-  color: #e25555;
-}
-
 .footer h4 a {
   /* "Plex how-to" is both a column heading and a real page, so its heading is a link. It must still
      read as a heading rather than as the first item in its own list. */
@@ -1577,6 +1629,18 @@ figcaption {
 .footer a {
   color: var(--muted);
   text-decoration: none;
+}
+
+.footer__support {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.footer__support svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
 }
 
 /* Sub-pages sit under their section rather than reading as siblings of it. */
