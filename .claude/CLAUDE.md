@@ -88,6 +88,12 @@ Long sessions are the single biggest cost: every turn re-sends the whole convers
   `-k`) during the edit loop; the FULL suite once before committing, plus `pnpm test`/`pnpm build`
   when web files changed and `-m e2e` when a UI flow or the wizard changed. CI runs everything
   regardless, so a green full suite immediately before the commit is the bar — not after each edit.
+- **One pytest at a time on this host.** Several agent sessions share it, and each run fans out to
+  `PYTEST_XDIST_AUTO_NUM_WORKERS` processes — four overlapping runs is four times that, which is the
+  shape that took the plex host down (2026-09-12: 189 workers, ~30 GB into swap). A `PreToolUse` hook
+  (`.claude/hooks/pytest-serialize.sh`) denies a `pytest` command while another one is in flight; when
+  it fires, wait and retry rather than working around it. Scoped runs stay cheap and stay encouraged —
+  it is the OVERLAP that costs, not the frequency.
 - **Don't re-verify what a tool already told you.** No re-reading a file you just wrote, no re-running
   a suite after a formatting-only change, no full-suite run to confirm a docs edit.
 - **Keep tool output small**: `-q`, `| tail`, targeted `grep`/`sed -n` over dumping whole files.

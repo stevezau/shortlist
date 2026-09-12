@@ -10,8 +10,8 @@
 # disabled here and that this script was "the single deployer"; both were false, and the
 # `watchtower.enable=false` label that made the second claim true-by-force has been removed.
 #
-# Usage:  bash scripts/deploy.sh
-#         (the repo now lives on the plex host; this used to be `ssh plex 'bash -s' < …`)
+# Usage:  bash scripts/deploy.sh                     (on the Docker host that runs the container)
+#         ssh <host> 'bash -s' < scripts/deploy.sh   (when the checkout lives elsewhere)
 set -uo pipefail
 
 readonly IMAGE="ghcr.io/stevezau/shortlist:dev"   # published by CI on every master push
