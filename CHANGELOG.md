@@ -28,6 +28,11 @@ All notable changes to this project are documented here. This project follows
   one — and some Plex apps only notice the change once you leave the Home screen and come back. A
   Roku re-reads it on its own; a Shield needs the nudge. (#102)
 
+### Changed
+
+- **The Dashboard no longer shows a row of "needs attention" chips.** Each chip repeated an alert
+  the notification bell already lists, so the bell is now the one place to look.
+
 ### Fixed
 
 - **Schedules with a day of the week now run on that day, not the day after.** `0 4 * * 1,4` is
