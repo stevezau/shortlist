@@ -487,6 +487,35 @@ class TestPreferWatchedPadding:
         assert len(out) == 10
         assert len(rewatches) == 10, f"every slot had a rewatch available, got {[p.tmdb_id for p in out]}"
 
+    def test_a_full_row_of_mostly_fresh_picks_still_gives_way_to_spare_rewatches(self):
+        """`build_picks` hands back a FULL row interleaved across seeds, so there is nothing to pad — and
+        cutting `[*seen, *fresh]` to k kept the fresh titles while finished spares sat unused (#114:
+        three finished candidates for four slots delivered one)."""
+        from shortlist.engine.picker import build_picks
+        from shortlist.engine.rows import _prefer_watched
+
+        seeds = [seed(s, 1.0) for s in (1, 2, 3, 4)]
+        candidates = [
+            make_candidate(100 + n * 10 + j, f"c{n}{j}", seeds=[s]) for n, s in enumerate(seeds) for j in range(3)
+        ]
+        watched = {(c.tmdb_id, c.media_type) for c in candidates if c.seeds[0].tmdb_id == 1}
+
+        out = _prefer_watched(build_picks(candidates, 4), candidates, watched, k=4)
+
+        assert sum((p.tmdb_id, p.media_type) in watched for p in out) == 3, [p.tmdb_id for p in out]
+
+    def test_a_carried_row_is_not_reshuffled_to_make_room(self):
+        """On a carry-forward night the row is meant to stay byte-identical, so delivery skips the Plex
+        write. Evicting a fresh title for a spare rewatch there would re-write it for nothing."""
+        from shortlist.engine.rows import _prefer_watched
+
+        watched = {(1, MediaType.MOVIE), (2, MediaType.MOVIE)}
+        carried = [self._pick(1), self._pick(9)]
+
+        out = _prefer_watched(carried, [make_candidate(2, "spare")], watched, k=2, reselect=False)
+
+        assert [p.tmdb_id for p in out] == [1, 9]
+
 
 class TestReusablePrior:
     """Which carried-forward picks may be redelivered on a reuse night — the privacy-adjacent filter

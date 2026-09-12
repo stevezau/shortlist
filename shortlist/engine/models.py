@@ -413,7 +413,14 @@ class RowSpec:
     # first and merely PERMITS up to that fraction of finished ones — so on a library with plenty of
     # unwatched candidates even 1.0 yields a mostly-unwatched row. A row named "Happy to see again"
     # needs the opposite preference, which is this flag.
+    #
+    # Its finished titles come from the person's own HISTORY (`rows._rewatch_candidates`), never from
+    # the similar-titles pool: that pool only holds a finished title when a different watch's search
+    # happens to name it, so a person with hundreds of finished films got a row of two (issue #114).
     rewatch: bool = False
+    # Rewatch rows only: leave out anything they finished within this many days, so the shelf holds
+    # old favourites rather than last night's film. 0 = no cooldown.
+    rewatch_cooldown_days: int = 30
     # Shows only: drop any series this person has STARTED, however little of it. Stricter than the
     # normal watched filter, which only drops shows they have FINISHED (>= watched_show_pct) — one they
     # are three episodes into is otherwise still eligible. This is what makes "a series to start" true.

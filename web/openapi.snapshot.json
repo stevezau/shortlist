@@ -1042,6 +1042,13 @@
             "title": "Rewatch",
             "type": "boolean"
           },
+          "rewatch_cooldown_days": {
+            "default": 30,
+            "maximum": 365.0,
+            "minimum": 0.0,
+            "title": "Rewatch Cooldown Days",
+            "type": "integer"
+          },
           "schedule": {
             "default": "30 3 * * *",
             "maxLength": 64,
@@ -1573,6 +1580,10 @@
             "title": "Rewatch",
             "type": "boolean"
           },
+          "rewatch_cooldown_days": {
+            "title": "Rewatch Cooldown Days",
+            "type": "integer"
+          },
           "schedule": {
             "title": "Schedule",
             "type": "string"
@@ -1642,6 +1653,7 @@
           "candidate_sources",
           "watched_pct",
           "rewatch",
+          "rewatch_cooldown_days",
           "unstarted_only",
           "refresh_days",
           "idle_hold_days",

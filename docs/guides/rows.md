@@ -92,6 +92,23 @@ it writes to Plex most nights, per person, per library, where an ordinary row on
 writes about weekly. It does not cost any extra AI usage: candidates are gathered once per run
 however often a row refreshes, so how often a row refreshes has no bearing on it.
 
+## Watch-it-again rows
+
+Turn on **Make this a "watch it again" row** (the _Happy to see again_ template does) and the row is
+built from what each person has already **finished** in that library — not from titles similar to
+what they watch. New suggestions only fill the row when they haven't finished enough titles.
+
+What leads the row:
+
+1. Titles they rated 4 stars or more in Plex, highest first (when Plex ratings are switched on).
+2. Titles close to what they've been watching lately.
+3. Whatever they've gone longest without seeing.
+
+What stays out: anything they finished in the last **30 days** (change it with **Skip titles
+finished in the last**, or set 0 to allow everything), titles they rated low (again, only when Plex
+ratings are on), and genres you excluded for them. Someone with too little history still gets their
+finished titles first, with the server's top-rated titles filling any room left.
+
 ## People without enough watch history
 
 Someone new to the server, or someone who barely watches, has too little history for Shortlist to

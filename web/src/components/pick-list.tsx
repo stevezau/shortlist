@@ -17,7 +17,8 @@ import { cn } from "@/lib/utils";
  */
 function seedNote(pick: Pick): string {
   const seed = pick.seed_title;
-  if (!seed) return "";
+  // A rewatch pick is its own seed; its reason already says why it is here.
+  if (!seed || pick.sources?.includes("history")) return "";
   const escaped = seed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const named = new RegExp(`(^|\\W)${escaped}(\\W|$)`).test(pick.reason);
   return named ? "" : ` · inspired by ${seed}`;

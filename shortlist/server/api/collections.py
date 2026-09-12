@@ -185,6 +185,8 @@ class CollectionIn(BaseModel):
     dry_run: bool = False
     # Lead the row with already-finished titles (a rewatch shelf) rather than merely permitting them.
     rewatch: bool = False
+    # Rewatch rows only: leave out titles finished within this many days. 0 = no cooldown.
+    rewatch_cooldown_days: int = Field(default=30, ge=0, le=MAX_REFRESH_DAYS)
     # Shows only: exclude every series this person has started, not just the ones they finished.
     unstarted_only: bool = False
     refresh_days: int | None = Field(default=None, ge=0, le=MAX_REFRESH_DAYS)  # None -> inherit the global cadence
@@ -328,6 +330,7 @@ class CollectionOut(PassthroughModel):
     candidate_sources: list[str]
     watched_pct: float | None
     rewatch: bool
+    rewatch_cooldown_days: int
     unstarted_only: bool
     refresh_days: int | None
     idle_hold_days: int | None
@@ -727,6 +730,7 @@ def _serialize(session, collection: Collection, now: datetime | None = None) -> 
         "candidate_sources": list(collection.candidate_sources or []),
         "watched_pct": collection.watched_pct,
         "rewatch": bool(collection.rewatch),
+        "rewatch_cooldown_days": collection.rewatch_cooldown_days,
         "unstarted_only": bool(collection.unstarted_only),
         "refresh_days": collection.refresh_days,
         "idle_hold_days": collection.idle_hold_days,
@@ -919,6 +923,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             candidate_sources=body.candidate_sources,
             watched_pct=body.watched_pct,
             rewatch=body.rewatch,
+            rewatch_cooldown_days=body.rewatch_cooldown_days,
             unstarted_only=body.unstarted_only,
             refresh_days=body.refresh_days,
             idle_hold_days=body.idle_hold_days,
@@ -962,6 +967,7 @@ _PATCHABLE_COLUMNS = (
     "candidate_sources",
     "watched_pct",
     "rewatch",
+    "rewatch_cooldown_days",
     "unstarted_only",
     "refresh_days",
     "idle_hold_days",

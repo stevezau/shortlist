@@ -3104,6 +3104,11 @@ export interface components {
              */
             rewatch: boolean;
             /**
+             * Rewatch Cooldown Days
+             * @default 30
+             */
+            rewatch_cooldown_days: number;
+            /**
              * Schedule
              * @default 30 3 * * *
              */
@@ -3283,6 +3288,8 @@ export interface components {
             request_tag: string;
             /** Rewatch */
             rewatch: boolean;
+            /** Rewatch Cooldown Days */
+            rewatch_cooldown_days: number;
             /** Schedule */
             schedule: string;
             /** Seed Window */

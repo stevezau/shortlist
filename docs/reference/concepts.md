@@ -47,7 +47,9 @@ treated as fresh while three episodes of a 200-episode run isn't treated as fini
 > five of ten started shows there were still eligible. At 0%, started now means watched. Rows above
 > 0% are unchanged. If you relied on the old behaviour, set the cap above 0.
 
-A row that should LEAD with rewatches needs the per-row `rewatch` flag instead. `unstarted_only`
+A row that should LEAD with rewatches needs the per-row `rewatch` flag instead. That row is built
+from the person's own finished titles, not from the similar-titles search, and skips anything they
+finished within its cooldown (30 days by default). `unstarted_only`
 still exists and still matters — but only on a row whose cap is **above** 0%, since a 0% row now
 drops started series anyway.
 

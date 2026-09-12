@@ -365,17 +365,20 @@ class TestTheCheckerCatchesTheRealThing:
         whatever the tree says and bless any real edit hiding among them. Same aggregate guard as
         `.claude/rules/plex-safety.md` §4's "not one row reads as labelled"."""
         manifest = sandbox / "shortlist/server/db/alembic/frozen_migrations.txt"
+        lines = manifest.read_text().splitlines()
+        # Counted, not written down: a literal went stale the moment the next migration landed.
+        frozen = sum(1 for line in lines if re.search(r"  [0-9a-f]{64}  ", line) and not line.startswith("#"))
         manifest.write_text(
             "\n".join(
                 re.sub(r"  [0-9a-f]{64}  ", "  " + "0" * 64 + "  ", line) if not line.startswith("#") else line
-                for line in manifest.read_text().splitlines()
+                for line in lines
             )
         )
 
         result = self._run(sandbox)
 
         assert result.returncode == 1
-        assert "That is not 62 edits" in result.stderr
+        assert f"That is not {frozen} edits" in result.stderr
         assert "Do NOT regenerate the manifest" in result.stderr
         assert "executable content of migration" not in result.stderr, "62 separate reports is the failure mode"
 

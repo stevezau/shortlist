@@ -1101,6 +1101,7 @@ class ContextBuilder:
                     candidate_sources=list(collection.candidate_sources or []),
                     watched_pct=collection.watched_pct,  # None -> inherit the global watched cap
                     rewatch=bool(collection.rewatch),
+                    rewatch_cooldown_days=collection.rewatch_cooldown_days,
                     unstarted_only=bool(collection.unstarted_only),
                     refresh_days=collection.refresh_days,  # None -> inherit the global cadence
                     idle_hold_days=collection.idle_hold_days,  # None -> inherit the global idle ceiling

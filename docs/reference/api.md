@@ -171,8 +171,10 @@ GET  /api/collections/{id}/effectiveness -> {delivered, watched, finished, first
      both and finish almost none of the TV — that gap is the panel's most useful line, and it is invisible in `watched` alone.
      `rewatch` (bool, default false) makes a REWATCH row: already-finished titles are ordered FIRST and unwatched ones only fill what is left.
      `watched_pct` cannot express this — it is a ceiling, so the ranking shows unwatched titles first and merely PERMITS finished ones; even at 1.0 a
-     library with plenty of unwatched candidates yields a mostly-unwatched row. Setting `rewatch` also keeps finished titles in the row's candidate
-     POOL regardless of `watched_pct`, so the two rows do not share one pool.
+     library with plenty of unwatched candidates yields a mostly-unwatched row. A rewatch row's finished titles come from the person's own history
+     in that library (favourites by their Plex rating, then titles close to tonight's taste, then longest unseen), and its candidate pool supplies
+     only the unseen top-up — the same pool a 0% row uses, so the two share one gather.
+     `rewatch_cooldown_days` (int 0–365, default 30) leaves out anything finished within that many days, on a rewatch row only; 0 disables it.
      `unstarted_only` (bool, default false; accepted on any row that can hold shows) drops every series the person has started, however little of it.
      It only changes anything on a row whose `watched_pct` is ABOVE 0: such a row caps FINISHED titles and so still admits a series someone is three
      episodes into, and this is what makes "a series to start" literally true there. At `watched_pct` 0 the row already excludes started series (see

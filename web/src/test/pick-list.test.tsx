@@ -34,6 +34,25 @@ describe("PickList", () => {
     expect(screen.getByText("#3").className).not.toMatch(/text-primary/);
   });
 
+  it("never says a rewatch was inspired by itself", () => {
+    // A watch-it-again pick is its own seed (so a {top_seed} name can render), and its reason already
+    // says why it is there — "inspired by Heat" under Heat is noise.
+    render(
+      <PickList
+        picks={[
+          {
+            ...pick(1, "Heat"),
+            reason: "Last watched March 2024",
+            seed_title: "Heat",
+            sources: ["history"],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.queryByText(/inspired by/)).not.toBeInTheDocument();
+  });
+
   it("accents #1 even when the picks arrive out of rank order", () => {
     // The component sorts before it renders. If the accent were keyed on position rather than on
     // `rank`, an unsorted caller would highlight whatever happened to be first.

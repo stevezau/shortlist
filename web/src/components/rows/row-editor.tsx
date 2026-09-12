@@ -796,9 +796,9 @@ export function RowEditor({
                         onCheckedChange={(rewatch) =>
                           set({
                             rewatch,
-                            // A rewatch row needs finished titles in its pool at all, so lift a 0% cap
-                            // off the global default in the same click — otherwise the switch silently
-                            // does nothing.
+                            // The engine ignores the cap on a rewatch row, but a slider left at 0%
+                            // ("all new suggestions") beside a switch saying the opposite reads as a
+                            // contradiction — so lift it in the same click.
                             ...(rewatch && input.watched_pct === 0
                               ? { watched_pct: 1 }
                               : {}),
@@ -809,6 +809,36 @@ export function RowEditor({
                         }
                       />
                     </div>
+
+                    {/* Only on a rewatch row — nothing else reads it. Last night's film is not an
+                    old favourite, so the default keeps a month of recent watches out of the shelf. */}
+                    {input.rewatch && (
+                      <div className="space-y-2 rounded-md border p-3">
+                        <Label htmlFor="row-rewatch-cooldown">
+                          Skip titles finished in the last (days)
+                        </Label>
+                        <Input
+                          id="row-rewatch-cooldown"
+                          type="number"
+                          min={0}
+                          max={365}
+                          value={input.rewatch_cooldown_days}
+                          onChange={(event) =>
+                            set({
+                              rewatch_cooldown_days: Math.min(
+                                365,
+                                Math.max(0, Math.round(Number(event.target.value) || 0)),
+                              ),
+                            })
+                          }
+                          className="w-24"
+                        />
+                        <p className="text-sm text-muted-foreground">
+                          Keeps something they watched last night out of the
+                          row. 0 lets anything they&rsquo;ve finished back in.
+                        </p>
+                      </div>
+                    )}
 
                     {/* Anything that can hold shows, which is what the API accepts — it refuses this
                     only on a movies-only row. It used to be gated on `=== "show"`, which hid it from

@@ -61,6 +61,7 @@ function row(patch: Partial<Collection> = {}): Collection {
     library_keys: [],
     watched_pct: null,
     rewatch: false,
+    rewatch_cooldown_days: 30,
     unstarted_only: false,
     refresh_days: null,
     idle_hold_days: null,
@@ -1407,6 +1408,31 @@ describe("RowEditor — a typed row says so", () => {
     cleanup();
     renderEditor(row({ media: "both", library_keys: [] }));
     expect(screen.getByText(/every library/)).toBeInTheDocument();
+  });
+
+  it("offers the recently-finished cooldown only on a watch-it-again row", () => {
+    // It only changes a rewatch row; on any other row it would be a dial that does nothing.
+    renderEditor(row({ rewatch: false }));
+    expect(
+      screen.queryByLabelText(/Skip titles finished in the last/i),
+    ).not.toBeInTheDocument();
+
+    cleanup();
+    renderEditor(row({ rewatch: true, watched_pct: 1 }));
+    expect(screen.getByLabelText(/Skip titles finished in the last/i)).toHaveValue(30);
+  });
+
+  it("saves a changed cooldown", async () => {
+    renderEditor(row({ rewatch: true, watched_pct: 1 }));
+
+    const input = screen.getByLabelText(/Skip titles finished in the last/i);
+    await userEvent.clear(input);
+    await userEvent.type(input, "90");
+    await userEvent.click(screen.getByRole("button", { name: /Save changes/i }));
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    const body = updateCollection.mock.calls.at(-1)?.[1] as Collection;
+    expect(body.rewatch_cooldown_days).toBe(90);
   });
 
   it("names the rewatch switch after the row someone wants", () => {

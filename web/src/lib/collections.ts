@@ -36,6 +36,8 @@ export function blankInput(): CollectionInput {
     library_keys: [],
     watched_pct: null,
     rewatch: false,
+    // Mirrors the API default, so a row created as a rewatch row starts where the server would.
+    rewatch_cooldown_days: 30,
     unstarted_only: false,
     refresh_days: null,
     idle_hold_days: null,
@@ -98,6 +100,7 @@ export function toInput(collection: Collection): CollectionInput {
     unstarted_only: collection.unstarted_only ?? false,
     refresh_days: collection.refresh_days ?? null,
     idle_hold_days: collection.idle_hold_days ?? null,
+    rewatch_cooldown_days: collection.rewatch_cooldown_days ?? 30,
     recency: collection.recency ?? null,
     recent_count: collection.recent_count ?? null,
     max_seeds: collection.max_seeds ?? null,

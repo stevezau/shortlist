@@ -47,6 +47,7 @@ const SUBSET_ROW: Collection = {
   library_keys: [],
   watched_pct: null,
   rewatch: false,
+  rewatch_cooldown_days: 30,
   unstarted_only: false,
   refresh_days: null,
   idle_hold_days: null,

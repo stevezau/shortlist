@@ -1160,25 +1160,27 @@ class TestPerRowOverrides:
         assert 30 not in delivered, "a show they have started must not reach a 0% row"
         assert 40 in delivered, "the unwatched one still should — the rule must not empty the row"
 
-    def test_a_rewatch_row_shares_the_pool_of_a_watched_pct_row(self, ctx: EngineContext, mock_plextv):
+    def test_a_rewatch_row_shares_the_pool_of_a_zero_pct_row(self, ctx: EngineContext, mock_plextv):
         """The OTHER direction of `excludes_watched`, which no membership assertion can catch.
 
-        Both rows want watched titles kept in the pool, so they must share ONE gather. Without this,
-        `excludes_watched` could regress to keying on the raw percentage — splitting the pool and
-        paying a second time for every rate-limited/LLM source — and every other test still passes.
+        A rewatch row takes its finished titles from history (#114), so all it wants from the pool is
+        the unseen top-up — exactly a 0% row's pool, so the two must share ONE gather. It used to share
+        with the >0 rows instead, back when it drew finished titles from the pool itself. Without this,
+        `excludes_watched` could regress to keying on the raw percentage — splitting the pool and paying
+        a second time for every rate-limited/LLM source — and every other test still passes.
         """
         ctx.config.max_seeds = 1
         ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=i, rating_key=999) for i in range(1, 5)]
         ctx.config.rows = [
-            RowSpec(slug="again", name_template="Again", size=2, rewatch=True),
-            RowSpec(slug="capped", name_template="Capped", size=2, watched_pct=0.5),
+            RowSpec(slug="again", name_template="Again", size=2, rewatch=True, watched_pct=1.0),
+            RowSpec(slug="fresh", name_template="Fresh", size=2, watched_pct=0.0),
         ]
         mock_plextv.users = [plextv_user(100, "sarah")]
 
         pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
 
         # One suggestions() call per seed per pool. One seed, one shared pool = exactly one call.
-        assert ctx.tmdb.suggestions.call_count == 1, "a rewatch row and a >0 row must share one pool"
+        assert ctx.tmdb.suggestions.call_count == 1, "a rewatch row and a 0% row must share one pool"
 
     def test_a_zero_pct_row_and_an_unstarted_only_row_share_one_pool(self, ctx: EngineContext, mock_plextv):
         """Found by architecture review 2026-08-05, and invisible to any membership assertion.

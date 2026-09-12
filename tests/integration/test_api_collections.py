@@ -40,6 +40,7 @@ COLLECTION_KEYS = {
     "candidate_sources",
     "watched_pct",
     "rewatch",
+    "rewatch_cooldown_days",
     "unstarted_only",
     "refresh_days",
     "idle_hold_days",
@@ -353,6 +354,30 @@ class TestCollectionsSeed:
         assert next(s for s in specs if s.slug == "patient_row").idle_hold_days == 28
         # An untouched row still inherits, so one row's ceiling reaches no other.
         assert next(s for s in specs if s.slug == "picked").idle_hold_days is None
+
+    def test_rewatch_cooldown_defaults_to_thirty_round_trips_and_reaches_the_spec(self, client: TestClient):
+        """How long a rewatch row keeps a just-finished title out (#114)."""
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        plain = client.post("/api/collections", json={"name": "Old Favourites", "rewatch": True, "watched_pct": 1})
+        assert plain.status_code == 201 and plain.json()["rewatch_cooldown_days"] == 30
+        tuned = client.post(
+            "/api/collections", json={"name": "Anything Goes", "rewatch": True, "rewatch_cooldown_days": 0}
+        )
+        assert tuned.status_code == 201 and tuned.json()["rewatch_cooldown_days"] == 0, "0 means no cooldown"
+        assert client.post("/api/collections", json={"name": "X", "rewatch_cooldown_days": -1}).status_code == 422
+        assert client.post("/api/collections", json={"name": "X", "rewatch_cooldown_days": 400}).status_code == 422
+        patched = client.patch(
+            f"/api/collections/{plain.json()['id']}", json={"name": "Old Favourites", "rewatch_cooldown_days": 90}
+        )
+        assert patched.status_code == 200 and patched.json()["rewatch_cooldown_days"] == 90, patched.text
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+        assert next(s for s in specs if s.slug == "old_favourites").rewatch_cooldown_days == 90
+        assert next(s for s in specs if s.slug == "anything_goes").rewatch_cooldown_days == 0
 
     def test_per_row_recency_round_trips_and_reaches_the_spec(self, client: TestClient):
         from shortlist.server.services.context_builder import ContextBuilder

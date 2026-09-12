@@ -109,8 +109,9 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     values: {
       name: "☕ {library_name} you've already seen",
       build: "per_person",
-      // `rewatch` is what actually delivers this row; `watched_pct: 1` only stops the pool from
-      // dropping finished titles before the ordering ever sees them.
+      // `rewatch` is what delivers this row: the engine builds it from their finished titles. The
+      // engine ignores `watched_pct` on a rewatch row; 1 keeps the slider honest ("already-watched
+      // titles can fill the whole row") if someone opens the editor.
       rewatch: true,
       watched_pct: 1,
       refresh_days: 11,

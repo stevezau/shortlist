@@ -805,6 +805,23 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
     expect(screen.getByText(/28 days/i)).toBeInTheDocument();
   });
 
+  it("says what a watch-it-again row was built from, and what the cooldown held back", () => {
+    // "Why is my rewatch row topped up with new titles?" is answered by these two numbers.
+    render(
+      <TraceView
+        data={withSelection({
+          decision: "rebuilt",
+          rewatch: true,
+          rewatches: 3,
+          cooling: 2,
+          rewatch_cooldown_days: 30,
+        })}
+      />,
+    );
+    expect(screen.getByText(/3 titles they've finished/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 finished in the last 30 days/i)).toBeInTheDocument();
+  });
+
   it("names a settings change as the reason a row rebuilt early", () => {
     render(
       <TraceView data={withSelection({ decision: "settings_changed" })} />,

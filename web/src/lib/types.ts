@@ -816,6 +816,11 @@ export interface TraceSelection {
   watched_pct?: number;
   pick_order?: string;
   rewatch?: boolean;
+  /** Rewatch rows only: finished titles this library could offer tonight, and how many of those the
+   *  cooldown held back because they were finished within `rewatch_cooldown_days`. */
+  rewatches?: number;
+  cooling?: number;
+  rewatch_cooldown_days?: number;
   unstarted_only?: boolean;
 }
 

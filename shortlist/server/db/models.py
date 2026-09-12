@@ -189,6 +189,9 @@ class Collection(Base):
     # A REWATCH row: already-finished titles lead it, unwatched ones only fill what's left. Not
     # expressible with `watched_pct`, which is a ceiling that never PROMOTES a finished title.
     rewatch: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
+    # Rewatch rows only: leave out titles finished within this many days (0 = no cooldown), so the
+    # shelf holds old favourites rather than last night's film.
+    rewatch_cooldown_days: Mapped[int] = mapped_column(Integer, default=30, nullable=False, server_default="30")
     # Shows only: drop any series this person has STARTED, however little. Stricter than the normal
     # filter, which only drops FINISHED ones — so this is what makes "a series to start" true.
     unstarted_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")

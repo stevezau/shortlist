@@ -446,6 +446,23 @@ function deliveryNote(
 }
 
 function decisionLine(entry: TraceSelection): string {
+  const line = cadenceLine(entry);
+  return entry.rewatch && entry.rewatches !== undefined
+    ? `${line} ${rewatchLine(entry)}`
+    : line;
+}
+
+/** A watch-it-again row is built from history, so the count of finished titles is what explains a
+ *  row topped up with new ones — and the cooldown is the other half of that count. */
+function rewatchLine(entry: TraceSelection): string {
+  const n = entry.rewatches ?? 0;
+  const held = entry.cooling
+    ? ` (${entry.cooling} finished in the last ${entry.rewatch_cooldown_days} days were left out)`
+    : "";
+  return `It had ${n} title${n === 1 ? "" : "s"} they've finished to choose from${held}; new suggestions fill any room left.`;
+}
+
+function cadenceLine(entry: TraceSelection): string {
   const every = entry.rebuild_every_days;
   switch (entry.decision) {
     case "carried_forward":
@@ -463,7 +480,9 @@ function decisionLine(entry: TraceSelection): string {
     case "refreshed":
       return "— refresh night: the strongest picks stayed, the weakest were swapped for new ones.";
     case "cold_start":
-      return "— too little watch history, so it was filled from the server's top-rated titles.";
+      return entry.rewatch
+        ? "— too little watch history to search from, so the server's top-rated titles stand in for new suggestions."
+        : "— too little watch history, so it was filled from the server's top-rated titles.";
     default:
       return "— built fresh.";
   }
@@ -1670,8 +1689,12 @@ function OrderingEvidence({ entry }: { entry: RunLibraryBreakdown }) {
   const sources = new Set<string>();
   for (const p of entry.picks)
     for (const src of p.sources ?? []) sources.add(src);
+  // A rewatch pick is its own seed, so counting those would call every one of them a separate taste.
   const seedTitles = new Set(
-    entry.picks.map((p) => p.seed_title).filter((t): t is string => Boolean(t)),
+    entry.picks
+      .filter((p) => !p.sources?.includes("history"))
+      .map((p) => p.seed_title)
+      .filter((t): t is string => Boolean(t)),
   );
   return (
     <details className="rounded-md border bg-muted/30 px-3 py-2">
