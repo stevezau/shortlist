@@ -3561,7 +3561,8 @@ export interface components {
          * HubAnchorIn
          * @description A per-library shelf placement for one row: the very TOP (``top``), or after/before either
          *     another Shortlist ROW (``row``, a row slug) or a foreign collection (``anchor``, a title).
-         *     ``top`` needs neither; otherwise exactly one of ``row``/``anchor`` must be set.
+         *     ``top`` needs neither; otherwise exactly one of ``row``/``anchor`` must be set. ``enabled``
+         *     false is a placement in its own right — "never position this row" — and needs neither.
          *
          *     ``row`` is a slug rather than a title because a per-person row is one Plex collection PER PERSON:
          *     a title names one account's copy and is meaningless for everyone else, which is what made the
@@ -3578,6 +3579,11 @@ export interface components {
              * @default false
              */
             before: boolean;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
             /**
              * Row
              * @default

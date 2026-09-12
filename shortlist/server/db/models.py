@@ -244,7 +244,8 @@ class Collection(Base):
     # Pin the row to the TOP of its library's Recommended shelf (server-wide order, not per-user).
     pin_top: Mapped[bool] = mapped_column(Boolean, default=False)
     # Per-library override of where THIS row sits in the Recommended shelf: {sectionKey: {anchor, before}}.
-    # {} -> inherit the global default (settings `rows.hub_anchor`). A library absent here inherits too.
+    # {} -> the default for every library this row builds in, which is the top of the shelf. A
+    # library absent here gets that default too; `{"enabled": false}` is how a row opts out.
     hub_anchor: Mapped[dict] = mapped_column(JSON, default=dict)
     # Dead as of the curate removal (migration 0036 clears it): the LLM no longer ranks a candidate
     # pool, so there is no per-row curation recipe. Column kept — dropping it would rebuild the whole

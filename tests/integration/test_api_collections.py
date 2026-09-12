@@ -618,7 +618,13 @@ class TestCollectionsSeed:
             json={"name": "Because Row", "hub_anchor": {"2": {"row": picked}}},
         )
         assert ok.status_code == 201
-        assert ok.json()["hub_anchor"]["2"] == {"anchor": "", "row": picked, "before": False, "top": False}
+        assert ok.json()["hub_anchor"]["2"] == {
+            "anchor": "",
+            "row": picked,
+            "before": False,
+            "top": False,
+            "enabled": True,
+        }
         because = ok.json()["slug"]
 
         missing = client.post(
@@ -708,7 +714,9 @@ class TestCollectionsSeed:
         body = {"name": "Gems Row", "hub_anchor": {"2": {"anchor": "New Series", "before": True}}}
         created = client.post("/api/collections", json=body)
         assert created.status_code == 201
-        assert created.json()["hub_anchor"] == {"2": {"anchor": "New Series", "row": "", "before": True, "top": False}}
+        assert created.json()["hub_anchor"] == {
+            "2": {"anchor": "New Series", "row": "", "before": True, "top": False, "enabled": True}
+        }
         # A blank anchor with no top is rejected by the shape.
         blank = client.post("/api/collections", json={"name": "X", "hub_anchor": {"2": {"anchor": ""}}})
         assert blank.status_code == 422

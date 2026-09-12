@@ -45,7 +45,7 @@ REDACTED_PLACEHOLDER = "•••••"
 # (rule 10); the value never is, in either direction (rule 9).
 _AUDIT_SECRET = "<redacted>"
 
-# A few settings hold whole objects (`rows.hub_anchor`, `candidates.sources`). The audit wants the
+# A few settings hold whole objects (`candidates.sources`). The audit wants the
 # fact and the shape of a change, not a second copy of the config, so long values are summarised.
 _MAX_AUDIT_VALUE_CHARS = 200
 
@@ -193,27 +193,6 @@ def _is_bool(value: object) -> str | None:
     return None if isinstance(value, bool) else "must be true or false"
 
 
-def _hub_anchors(value: object) -> str | None:
-    """`{sectionKey: {"top": true} | {"anchor": str, "before": bool}}` — the per-library
-    Recommended-shelf placement. A `top` entry needs no anchor; otherwise `anchor` must be non-empty.
-    An empty dict clears it. Bad shapes reached the engine and skipped ordering silently."""
-    if not isinstance(value, dict):
-        return "must be an object keyed by library id"
-    for key, entry in value.items():
-        if not isinstance(key, str):
-            return "library ids must be strings"
-        if not isinstance(entry, dict):
-            return f"{key}: must be an object with 'top', or 'anchor' and 'before'"
-        if entry.get("top"):
-            continue  # top mode ignores anchor/before
-        anchor = entry.get("anchor")
-        if not isinstance(anchor, str) or not anchor.strip():
-            return f"{key}: needs 'top', or a non-empty 'anchor' title"
-        if not isinstance(entry.get("before", False), bool):
-            return f"{key}: 'before' must be true or false"
-    return None
-
-
 def _int_list(value: object) -> str | None:
     """A list of TMDB ids. Reached only by API/config today (there is no UI for it), which is exactly
     why it needs validating — an untyped blob here would reach the engine as a set of whatever."""
@@ -295,7 +274,6 @@ VALIDATORS = {
     "requests.target": _one_of(*REQUEST_TARGETS),
     "requests.auto_send": _is_bool,
     "candidates.sources": _known_sources,
-    "rows.hub_anchor": _hub_anchors,
     "llm_web.search_provider": _one_of("native", "exa", "searxng"),
     # Validated here as well as clamped in the client: a typo saved through the API would otherwise
     # be a 400 from Exa on every seed of every run, and the owner would see an empty row, not a bad

@@ -69,9 +69,9 @@ nightly run.
 
 ## Your rows sit at the bottom of the shelf
 
-Check what the row is anchored to. **Rows → the row → Placement**, or **Settings → Row placement**
-for the default, can be set to sit right after a collection — and that collection has to be on one of
-the library's own Plex shelves, or there is no position to sit after.
+Check what the row is anchored to: **Rows → the row → Where it sits**. If it is set to sit right
+after a collection, that collection has to be on one of the library's own Plex shelves, or there is
+no position to sit after. A row set to **Don't place this row** sinks to the bottom by design.
 
 Open the library in Plex → **Manage Recommendations**. If the collection you anchored to is in that
 list with every toggle off, turn one on, or pick a different anchor. Plex's own rows — "Recently
@@ -102,8 +102,9 @@ as people join and leave, and needs no updating.
 That field is newer than Agregarr's v2.9.1 release — at the time of writing it is on the maintained
 fork's `:develop` image (`bitr8/agregarr:develop`).
 
-Shortlist's own side is **Settings → Row placement**, which decides where it puts rows and whether
-it manages shelf order at all — turning that off leaves the order entirely to the other tool.
+Shortlist's own side is one switch, **Settings → Row placement → Let Shortlist order the Recommended
+shelf**; turning it off leaves the order entirely to the other tool. Where each row goes is set on
+the row itself.
 
 ## Your AI web search finds nothing new
 

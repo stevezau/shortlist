@@ -104,7 +104,8 @@ def _closed_set_out(values: set[str], description: str) -> Field:
 class HubAnchorIn(BaseModel):
     """A per-library shelf placement for one row: the very TOP (``top``), or after/before either
     another Shortlist ROW (``row``, a row slug) or a foreign collection (``anchor``, a title).
-    ``top`` needs neither; otherwise exactly one of ``row``/``anchor`` must be set.
+    ``top`` needs neither; otherwise exactly one of ``row``/``anchor`` must be set. ``enabled``
+    false is a placement in its own right — "never position this row" — and needs neither.
 
     ``row`` is a slug rather than a title because a per-person row is one Plex collection PER PERSON:
     a title names one account's copy and is meaningless for everyone else, which is what made the
@@ -114,6 +115,11 @@ class HubAnchorIn(BaseModel):
     row: str = Field(default="", max_length=255)
     before: bool = False
     top: bool = False
+    #: The owner's per-row switch for this library. False means Shortlist never positions this row.
+    #: That is NOT "leave it where it is": Plex appends a new hub at the bottom of the shelf, and a
+    #: row losing five or more titles is deleted and recreated (`delivery._REBUILD_MIN_REMOVES`), so
+    #: an unplaced row sinks there within days. The UI has to say so.
+    enabled: bool = True
 
 
 class PosterIn(BaseModel):
@@ -251,7 +257,7 @@ class CollectionIn(BaseModel):
     )
     pin_top: bool = False  # pin to top of the library's Recommended shelf
     # Per-library Recommended-shelf override for this row, keyed by section key. {} -> inherit the
-    # global default (settings `rows.hub_anchor`).
+    # the default, which is the top of the shelf.
     hub_anchor: dict[str, HubAnchorIn] = Field(default_factory=dict)
     poster: PosterIn = Field(default_factory=PosterIn)
 
@@ -527,6 +533,8 @@ def _validate(body: CollectionIn) -> None:
                 status_code=422, detail=f"invalid schedule — needs a 5-field cron (e.g. '30 3 * * *'): {e}"
             ) from e
     for lib, anchor in body.hub_anchor.items():
+        if not anchor.enabled:
+            continue  # "never position this row" needs no anchor of any kind
         if not anchor.top and not anchor.anchor.strip() and not anchor.row.strip():
             raise HTTPException(
                 status_code=422, detail=f"hub_anchor[{lib}]: needs 'top', a 'row' slug, or a non-empty 'anchor'"

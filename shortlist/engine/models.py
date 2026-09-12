@@ -1034,10 +1034,15 @@ class HubAnchor:
     anchor_title: str = ""
     before: bool = False
     to_top: bool = False
-    # LAST, and it must stay last: `HubAnchor(title, before, to_top)` is constructed positionally in
-    # places, so a new field anywhere earlier silently re-binds their arguments — inserting this one
+    # LAST, and they must stay last: `HubAnchor(title, before, to_top)` is constructed positionally in
+    # places, so a new field anywhere earlier silently re-binds their arguments — inserting one
     # second turned `HubAnchor("Gems Anchor", False)` into a row anchor of `False`.
     anchor_row: str = ""
+    #: The owner's per-row switch. OFF means Shortlist never positions this row — and that is not the
+    #: same as "leave it where it is": Plex appends a newly created hub to the BOTTOM of the shelf, and
+    #: a row losing five or more titles is deleted and recreated (`delivery._REBUILD_MIN_REMOVES`), so
+    #: an unplaced row sinks there within days. The UI has to say that, not imply it stays put.
+    enabled: bool = True
 
 
 # The seeded default row title. ``{library_name}`` renders each library's own name at delivery, so a
@@ -1159,10 +1164,6 @@ class EngineConfig:
     # web-search tool, Claude/GPT/Gemini only), 'exa', or 'searxng'. Either external is the only path
     # for a local Ollama model. ('auto', which unioned native with an external, was removed in 1.3.)
     web_search_provider: str = "native"
-    # Per-library placement of Shortlist's rows in Plex's Recommended shelf, keyed by section key
-    # (str). Empty -> leave Plex's default order (rows land wherever they're created — last, under a
-    # co-managing tool's collections). Applied at end of run, read-only against the anchor.
-    hub_anchors: dict[str, HubAnchor] = field(default_factory=dict)
     # Master switch for touching the Recommended-shelf ORDER. False -> Shortlist never reorders the
     # shelf (skips the whole order phase), so a co-managing tool (agregarr/Kometa) owns the order and
     # the two don't fight. True (default) -> apply the configured anchors. Independent of delivery and

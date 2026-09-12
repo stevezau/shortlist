@@ -118,10 +118,20 @@ describe("RowShelfPlacement", () => {
     ]);
   });
 
-  it("defaults each targeted library to inheriting the global setting (no entry)", async () => {
+  it("defaults each targeted library to the top of the shelf", async () => {
+    // Not "inherit a per-library default" any more: that default was a second source of truth and
+    // disagreed with the engine about what its own "Wherever Plex puts them" option meant.
     renderControl();
     expect(await screen.findByText("TV Shows")).toBeTruthy();
-    expect(screen.getByLabelText("Position")).toHaveValue("default");
+    expect(screen.getByLabelText("Position")).toHaveValue("top");
+  });
+
+  it("offers 'don't place this row', and says it sinks rather than staying put", async () => {
+    const latest = renderControl();
+    await screen.findByText("TV Shows");
+
+    await userEvent.selectOptions(screen.getByLabelText("Position"), "off");
+    await waitFor(() => expect(latest.value).toEqual({ "2": { enabled: false } }));
   });
 
   it("sets a per-row anchor when a collection is chosen, and clears it back to default", async () => {
@@ -139,8 +149,8 @@ describe("RowShelfPlacement", () => {
       }),
     );
 
-    await userEvent.selectOptions(screen.getByLabelText("Position"), "default");
-    await waitFor(() => expect(latest.value).toEqual({}));
+    await userEvent.selectOptions(screen.getByLabelText("Position"), "top");
+    await waitFor(() => expect(latest.value).toEqual({ "2": { top: true } }));
   });
 
   it("offers the OTHER Shortlist rows as anchors, and never the row being edited", async () => {
@@ -281,8 +291,8 @@ describe("RowShelfPlacement", () => {
     await screen.findByText("TV Shows");
     await waitFor(() => expect(latest.value).toEqual({ "2": { top: true } }));
 
-    await userEvent.selectOptions(screen.getByLabelText("Position"), "default");
+    await userEvent.selectOptions(screen.getByLabelText("Position"), "off");
     await new Promise((r) => setTimeout(r, 0)); // give the effect a chance to (wrongly) re-materialize
-    expect(latest.value).toEqual({}); // the ref guard keeps it from coming back
+    expect(latest.value).toEqual({ "2": { enabled: false } }); // the ref guard keeps Top from coming back
   });
 });

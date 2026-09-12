@@ -1546,86 +1546,6 @@ def _we_place(
     return rest is not None and bool(keys_by_slug.get(anchor_row, set()) - placed_keys)
 
 
-def _apply_order(
-    ctx: EngineContext,
-    report: RunReport,
-    section,
-    anchor,
-    only_keys: set[int] | None,
-    anchor_keys: set[int] | None = None,
-    anchor_label: str = "",
-    exclude_keys: set[int] | None = None,
-    anchor_exclude_keys: set[int] | None = None,
-    pinned_keys: set[int] | None = None,
-) -> None:
-    """One best-effort, gated reorder call + its audit. A shelf reorder is cosmetic and privacy-neutral
-    (hubs are already promoted and browse-hidden; only position changes), so a failure never fails the
-    run — next run re-applies. Only our hubs move; the anchor is read-only (Kometa coexistence)."""
-    try:
-        with ctx.write_lock:
-            result = ctx.plex.order_owned_hubs(
-                section,
-                label_prefix=LABEL_PREFIX,
-                anchor_title=anchor.anchor_title,
-                anchor_keys=anchor_keys,
-                anchor_exclude_keys=anchor_exclude_keys,
-                anchor_label=anchor_label,
-                before=anchor.before,
-                to_top=anchor.to_top,
-                dry_run=ctx.config.dry_run,
-                only_keys=only_keys,
-                exclude_keys=exclude_keys,
-                pinned_keys=pinned_keys,
-            )
-        # Recorded when anything MOVED, verified or not. An unverified pass (Plex took the moves and
-        # dropped them) is exactly the case the report has to be able to show, so it is not filtered
-        # out here for looking like a failure.
-        if result.get("moved") and not result.get("skipped"):
-            report.hub_orderings.append({"library": section.title, **result})
-        elif result.get("reason") == "no rows in this library" and only_keys:
-            # We named ratingKeys and the shelf has none of them: the ledger entry is STALE — the
-            # collection was deleted and recreated since it was written. The catch-all has already
-            # swept this row to the library default (its real hubs are not in `exclude_keys`, because
-            # the stale key is what went in there), so the owner's chosen slot was silently overridden.
-            # Recorded for the same reason the missing-entry case is.
-            report.hub_orderings.append(
-                {
-                    "library": section.title,
-                    "placed": False,
-                    "row": anchor_label or "",
-                    "anchor": anchor.anchor_title or ("top" if anchor.to_top else ""),
-                    "moved": [],
-                    "reason": "the delivery ledger points at a collection that no longer exists — "
-                    "placed at the library default",
-                }
-            )
-        elif result.get("reason") in UNPLACEABLE:
-            # A placement the owner CONFIGURED that we could not honour — the anchor is gone from the
-            # shelf, or is a collection that is not on it at all (issue #106). Recorded so it reaches
-            # the events audit and the Jobs detail line, because the alternative is a warning in the
-            # container log and a Rows page that shows a setting doing nothing, for good, with nothing
-            # on screen saying why. The ordinary skips ("already in place", "rows not promoted yet")
-            # are NOT in that set: they are the steady state of a converged server and would bury this
-            # under a nightly warning per library.
-            #
-            # `placed: False` and NOT `verified: False`. `verified` answers "we asked Plex to move
-            # these and it stuck", the distinction the whole shelf audit was rebuilt around; nothing
-            # was asked here, so an answer to that question would be a fabricated one.
-            report.hub_orderings.append({"library": section.title, "placed": False, **result})
-    except Exception as e:
-        # `redact` because this is plexapi error text (rule 9). plexapi raises
-        # `f'({status}) {codename}; {response.url} {errtext}'`, and `response.url` carries the
-        # X-Plex-Token whenever `log.show_secrets` is on — which `PlexConfig.get` reads from the
-        # environment first, so `PLEXAPI_LOG_SHOW_SECRETS=true` on the container turns this into a
-        # token in the logs without touching our code. Safe by default is not the same as guarded.
-        logger.warning(
-            "{}: hub ordering failed ({}: {}) — left Plex's order",
-            section.title,
-            type(e).__name__,
-            redact(str(e)),
-        )
-
-
 def _collection_order_phase(ctx: EngineContext, order_work: list[tuple]) -> None:
     """Order each delivered row's items to its ranked list — the expensive one-move-per-item step, run
     ONCE here, AFTER promotion. Best-effort and privacy-neutral: rows are already delivered, hidden and
@@ -1686,13 +1606,13 @@ def _row_keys_by_slug(ctx: EngineContext, report: RunReport, section_key: str) -
 
 
 def _order_phase(ctx: EngineContext, report: RunReport) -> None:
-    """Place each library's Shortlist rows in its Recommended shelf per the configured anchors.
+    """Place each library's Shortlist rows in its Recommended shelf, per that row's own placement.
 
-    Each row's effective anchor is its own per-library override (``RowSpec.hub_anchors``) if set, else
-    the global default (``EngineConfig.hub_anchors``). When every row in a library resolves to the SAME
-    anchor — which is every ordinary server, and every server with one row — they all move together in
-    one call that names no rows at all, so it works identically on a full run and on a `privacy.sync`
-    with no users. Only when rows genuinely disagree are they partitioned, by delivery-ledger ratingKey.
+    Each row carries its placement per library (``RowSpec.hub_anchors``); a row with none configured
+    defaults to the top. There is no global per-library default any more — it was a second source of
+    truth for the same decision, and it disagreed with the screen that set it: "Wherever Plex puts
+    them" wrote no entry, and no entry anywhere meant "top of the shelf", while the moment one
+    library WAS configured every other one silently meant "leave alone".
     """
     if not ctx.config.manage_shelf_order:
         # The owner turned shelf ordering off (a co-managing tool like agregarr/Kometa owns the order),
@@ -1702,310 +1622,159 @@ def _order_phase(ctx: EngineContext, report: RunReport) -> None:
     _apply_shelf_anchors(ctx, report)
 
 
+def _shelf_sequence(
+    rows_here: list,
+    key: str,
+    keys_by_slug: dict[str, set[int]],
+    section_title: str,
+    names: dict[str, str],
+    report: RunReport,
+) -> list[tuple[str, object]]:
+    """The wanted arrangement of this library's shelf, top first, as ``place_rows`` takes it.
+
+    One entry per row (``("rows", ratingKeys)``) plus the foreign collections the owner named as
+    landmarks (``("anchor", title)``). A row's collections are a SET: one per person, nobody sees
+    anyone else's, so their order among themselves is not a thing to maintain.
+
+    This replaces the group/cycle/refusal machinery that used to live here. That existed to sequence
+    many separate ``move(after=…)`` calls, and those are exactly what breaks Plex: an anchored move
+    halves the float gap between two hubs, so a shelf dies after ~50 of them. One sequence, realised
+    from the top, needs no sequencing of calls at all.
+    """
+    placements: dict[str, object] = {}
+    for spec in rows_here:
+        # NO entry means the shipped default: on, at the top. Not "leave it alone" — Plex appends a
+        # new hub at the BOTTOM and a row losing five titles is deleted and recreated, so a row
+        # nothing positions sinks out of sight within days. Opting out is `enabled=False`, which the
+        # owner sets deliberately per row.
+        #
+        # This replaced a per-LIBRARY default that also decided it, and decided it differently
+        # depending on whether any other library had been configured: with none configured it meant
+        # "top", and the moment one was, every unconfigured library silently meant "leave alone" —
+        # while the UI read "Wherever Plex puts them" in both cases.
+        entry = spec.hub_anchors.get(key) or HubAnchor(to_top=True)
+        if not entry.enabled:
+            continue
+        if not keys_by_slug.get(spec.slug):
+            # Nothing delivered for this row here yet. Said out loud and recorded, because an
+            # unplaced row does not stay put — Plex appends new hubs at the bottom.
+            logger.info(
+                "hub order: row '{}' has nothing recorded in {} yet, so it is not placed this run",
+                spec.slug,
+                section_title,
+            )
+            report.hub_orderings.append(
+                {
+                    "library": section_title,
+                    "placed": False,
+                    "row": names.get(spec.slug, spec.slug),
+                    "anchor": "",
+                    "moved": [],
+                    "reason": "row not in the delivery ledger — not placed this run",
+                }
+            )
+            continue
+        placements[spec.slug] = entry
+
+    if not placements:
+        return []
+
+    # Row order: a row placed relative to ANOTHER row follows (or precedes) it; everything else keeps
+    # the owner's own row order. A cycle is impossible to honour, so it is reported and the rows fall
+    # back to declaration order rather than being dropped — an unplaced row sinks to the bottom.
+    order = [spec.slug for spec in rows_here if spec.slug in placements]
+    for _pass in range(len(order)):
+        moved_any = False
+        for slug in list(order):
+            target = getattr(placements[slug], "anchor_row", "")
+            if not target or target not in placements:
+                continue
+            want = order.index(target) + (0 if placements[slug].before else 1)
+            have = order.index(slug)
+            if have != want:
+                order.pop(have)
+                order.insert(want if want <= len(order) else len(order), slug)
+                moved_any = True
+        if not moved_any:
+            break
+    else:
+        logger.warning(
+            "hub order: the row placements in {} refer to each other in a loop — using the row order you set instead",
+            section_title,
+        )
+        order = [spec.slug for spec in rows_here if spec.slug in placements]
+
+    sequence: list[tuple[str, object]] = []
+    seen_anchors: set[str] = set()
+    for slug in order:
+        entry = placements[slug]
+        block = ("rows", keys_by_slug[slug])
+        title = getattr(entry, "anchor_title", "")
+        if title and title not in seen_anchors:
+            seen_anchors.add(title)
+            if entry.before:
+                sequence += [block, ("anchor", title)]
+            else:
+                sequence += [("anchor", title), block]
+        else:
+            sequence.append(block)
+    return sequence
+
+
 def _apply_shelf_anchors(ctx: EngineContext, report: RunReport) -> None:
-    """The ordering itself: resolve each library's anchor and move our rows there."""
-    global_anchors = ctx.config.hub_anchors
-
-    def library_default(section_key: str) -> HubAnchor | None:
-        """This library's default placement: what a row with no override of its own gets.
-
-        An explicit Settings entry wins. With NO entry, the answer depends on whether Settings has
-        been configured at all — and that distinction is the whole point of this function. Nothing
-        configured anywhere means the shipped default, which is "move our rows to the top of every
-        library"; without it, aborted runs and new promotions scatter rows to wherever Plex appends
-        them and the shelf looks broken. Some libraries configured but not this one is a per-library
-        choice the owner made in Settings, and it means leave this shelf alone.
-
-        This used to be decided ONCE for the whole server, and only when no row had an override
-        either — so giving a single row its own placement in one library silently switched ordering
-        off in every library the owner had never touched, with one DEBUG line and no audit. Their
-        rows then sank below the standard Plex hubs. That is issue #106's opening sentence:
-        "setting even a single row to a relative position breaks the ordering chain and sends rows to
-        the bottom."
-        """
-        entry = global_anchors.get(section_key)
-        if entry is not None:
-            return entry
-        return HubAnchor(anchor_title="", before=False, to_top=True) if not global_anchors else None
-
+    """Put each library's Recommended shelf into the arrangement the owner configured."""
+    names = {spec.slug: (spec.name_template or ctx.config.row_name_template or spec.slug) for spec in ctx.config.rows}
     for section in ctx.delivery_sections:
         key = str(section.key)
-        this_default = library_default(key)
-        # Only rows that actually DELIVER here. A row's media type and `library_keys` decide which
-        # libraries it builds in, and without that filter a movies-only row picked up this TV
-        # library's anchor, never had a ledger entry for it, and logged "no delivered collection in
-        # TV Shows yet — it will be placed once that row has been built here" on every run, privacy
-        # sync and Fix, for ever. That line is INFO and owner-visible; a promise that can never come
-        # true is worse than the silence it replaced. It also dragged the library off the one-block
-        # path onto the ledger-partitioned one, so any hub of ours the ledger does not name — a
-        # retired row's leftovers — stopped being repositioned at all.
-        here = [spec for spec in ctx.config.rows if target_sections([section], spec)]
-        anchors_by_slug = {}
-        for spec in here:
-            effective = spec.hub_anchors.get(key) or this_default
-            if effective is not None:
-                anchors_by_slug[spec.slug] = effective
-        if not anchors_by_slug:
-            # No ROW resolves to an anchor here — but the library may still have one, and rows of ours
-            # may still be sitting on its shelf: every row switched off or deleted leaves its retired
-            # collections behind, and `ctx.config.rows` is then empty while `rows.hub_anchor` is not.
-            # Falling through to `continue` skipped the library in silence, which is the same shape of
-            # quiet nothing this whole function was just fixed for.
-            if this_default is not None:
-                _apply_order(ctx, report, section, this_default, only_keys=None)
-            else:
-                logger.debug("hub order: no anchor configured for {} — leaving its shelf alone", section.title)
+        rows_here = [spec for spec in ctx.config.rows if target_sections([section], spec)]
+        if not rows_here:
             continue
-        distinct = {(a.to_top, a.anchor_title, a.anchor_row, a.before) for a in anchors_by_slug.values()}
-        unanchored = [spec.slug for spec in here if spec.slug not in anchors_by_slug]
-        # A ROW anchor can never take the one-block path: the anchor is itself one of the things being
-        # moved, so the rows have to be placed in dependency order, one group at a time.
-        any_row_anchor = any(a.anchor_row for a in anchors_by_slug.values())
-        if len(distinct) == 1 and not unanchored and not any_row_anchor:
-            # Every row here wants the same slot, so there is nothing to tell apart: move ALL our rows
-            # in this library with one call. Naming no rows is what makes this independent of who was
-            # delivered tonight — the bug that left a run with no users ordering nothing at all.
-            _apply_order(ctx, report, section, next(iter(anchors_by_slug.values())), only_keys=None)
-            continue
-        # Rows genuinely disagree about where they belong (or some have no anchor at all), so ours have
-        # to be partitioned. The ledger is the only durable link from a collection back to its row.
-        #
-        # ENUMERATE ONLY THE ROWS THE OWNER MOVED ELSEWHERE. Everything else is placed by exclusion —
-        # "all our rows here except those" — which is what stops a gap in the ledger stranding a row.
-        # It used to enumerate every group from the ledger, so any collection of ours the ledger did
-        # not name was in no group, was never passed to the client, and stayed exactly where Plex
-        # appended it: the bottom, under the standard Plex hubs. That is issue #106's real complaint —
-        # "a few rows ended up at the top, others got pushed all the way down" — and it appeared the
-        # moment ONE row was given its own placement, because that is what switches this library off
-        # the single-call path onto this one. The ledger is now load-bearing only for the rows the
-        # owner just configured by hand, which are the ones it reliably names.
         keys_by_slug = _row_keys_by_slug(ctx, report, key)
-        by_slug = {spec.slug: spec for spec in here}
-        # What the audit CALLS each row. The default row carries no template of its own — its title is
-        # the global one — so without that fallback the most likely anchor of all audits as a bare
-        # internal slug, which is not an answer to "what moved where" (rule 10).
-        names = {
-            spec.slug: (spec.name_template or ctx.config.row_name_template or spec.slug) for spec in ctx.config.rows
-        }
-        overridden = {slug for slug in anchors_by_slug if by_slug[slug].hub_anchors.get(key)}
-        groups: dict[tuple[bool, str, str, bool], set[int]] = {}
-        group_of_slug: dict[str, tuple[bool, str, str, bool]] = {}
-        for slug, effective in anchors_by_slug.items():
-            if slug not in overridden:
-                # A row that follows the library default. It joins the catch-all below, which names no
-                # ratingKeys at all, so it needs nothing from the ledger — and it is deliberately kept
-                # OUT of `group_of_slug`: that map drives the topological sort over `groups`, and an
-                # entry pointing at a group that does not exist there would put a phantom into the
-                # placement order. A row anchored to one of these falls through to `keys_by_slug`
-                # below, which is right, because the catch-all is placed first and has settled.
-                continue
-            keys = keys_by_slug.get(slug, set())
-            if not keys:
-                # Nothing delivered for this row here yet (a first run, or a row that has never
-                # reached this library). Said out loud rather than skipped in silence — silence here
-                # is exactly what made the original bug invisible. The next run places it.
-                #
-                # INFO, not DEBUG. This branch is reachable ONLY once rows disagree about where they
-                # belong: the one-block path above needs no ledger at all. So the first thing an owner
-                # does after giving one row its own placement can turn the whole library's ordering
-                # off, and at DEBUG the only trace was a line nobody runs the container verbose enough
-                # to see — which is half of issue #106's "it just stopped ordering anything".
-                #
-                # Say what actually HAPPENS to it, which is not "nothing". Its collections cannot be
-                # excluded from the catch-all either — identifying them is exactly what the missing
-                # ledger entry would have done — so they are swept to the library default instead of
-                # the slot the owner chose. That is better than the stranding this replaced, and it
-                # is still not what was asked for, so it is recorded rather than described as a
-                # no-op. `placed: False` puts it in the events audit and the Jobs detail line beside
-                # the other placements we could not honour (rule 10).
-                logger.info(
-                    "hub order: row '{}' has no delivered collection recorded in {}, so its rows go to "
-                    "the library default rather than the slot it asks for; the next run that builds it "
-                    "here puts that right",
-                    slug,
-                    section.title,
-                )
-                report.hub_orderings.append(
-                    {
-                        "library": section.title,
-                        "placed": False,
-                        # The row that was displaced, in its OWN key. `anchor` means "the thing we
-                        # anchored to" in every other entry, and both audit writers emit it under that
-                        # name — reusing it here would make one field mean two opposite things (rule 10).
-                        "row": names.get(slug, slug),
-                        "anchor": "",
-                        "moved": [],
-                        "reason": "row not in the delivery ledger — placed at the library default",
-                    }
-                )
-                continue
-            group = (effective.to_top, effective.anchor_title, effective.anchor_row, effective.before)
-            groups.setdefault(group, set()).update(keys)
-            group_of_slug[slug] = group
-        rest = this_default
-        # Which groups ask for something that cannot hold, decided BEFORE the catch-all's exclusion
-        # set is fixed. "Right before <a row we also place>" is unsatisfiable: we put that row's block
-        # at a point of its own and keep it contiguous, so anything inserted ahead of it is evicted on
-        # the next pass and re-inserted by this one (measured 6,6,6,6 and 4,4,4,4 moves per pass).
-        #
-        # A refused group is DROPPED rather than skipped, so its rows fall into the catch-all and get
-        # the library default. Skipping left them excluded from every call — nothing moved them, ever —
-        # and Plex appends a new hub at the BOTTOM, so a row created after this shipped would sit under
-        # every built-in hub permanently. That is issue #106's own complaint, rebuilt by its fix.
-        placed_keys = {k for keys in groups.values() for k in keys}
-        refused = {
-            group
-            for group in groups
-            if group[3] and group[2] and _we_place(group[2], group_of_slug, keys_by_slug, placed_keys, rest)
-        }
-        for group in refused:
-            rows_refused = sorted(names.get(s, s) for s, g in group_of_slug.items() if g == group)
-            logger.warning(
-                "hub order: {} cannot be placed BEFORE '{}' in {} — Shortlist positions that row too, so "
-                "the two requests cannot both hold; {}",
-                ", ".join(repr(r) for r in rows_refused),
-                names.get(group[2], group[2]),
-                section.title,
-                # Only true when there IS a catch-all to fall into. With no default for this library
-                # the rows are moved by nothing and stay where Plex left them, which is what the
-                # `pinned_keys` comment below relies on.
-                "using this library's default placement instead"
-                if rest is not None
-                else "this library has no default placement, so they are left where they are",
-            )
-            report.hub_orderings.append(
-                {
-                    "library": section.title,
-                    "placed": False,
-                    "row": ", ".join(rows_refused),
-                    "anchor": f"the {names.get(group[2], group[2])!r} row",
-                    "moved": [],
-                    "reason": "cannot sit before a row Shortlist also places — choose 'after', or anchor "
-                    "to a collection instead",
-                }
-            )
-            del groups[group]
-            for slug in [s for s, g in group_of_slug.items() if g == group]:
-                del group_of_slug[slug]
-        # Resolve the placement ORDER before the exclusion set, because a group `_anchor_group_order`
-        # drops — one in a placement cycle, or downstream of one — is placed by nothing. Left in
-        # `groups` its keys stayed in `excluded`, so the catch-all skipped those rows too and NOTHING
-        # moved them: a newly created hub then sat at the bottom of the shelf permanently, with only a
-        # container-log warning. That is issue #106's own complaint, and it is the third instance of
-        # this shape in this function, so it is dropped like a refused group instead.
-        placement_order = _anchor_group_order(groups, group_of_slug, section.title)
-        for group in [g for g in groups if g not in placement_order]:
-            rows_broken = sorted(names.get(s, s) for s, g in group_of_slug.items() if g == group)
-            logger.warning(
-                "hub order: {} in {} — {}",
-                ", ".join(repr(r) for r in rows_broken),
-                section.title,
-                "using this library's default placement instead"
-                if rest is not None
-                else "this library has no default placement, so they are left where they are",
-            )
-            report.hub_orderings.append(
-                {
-                    "library": section.title,
-                    "placed": False,
-                    "row": ", ".join(rows_broken),
-                    "anchor": f"the {names.get(group[2], group[2])!r} row" if group[2] else "",
-                    "moved": [],
-                    # "or behind" because a group is dropped when it is IN a cycle or merely
-                    # downstream of one — a row pointing at a cycle member is named here too, and it
-                    # has no cycle of its own for the owner to go looking for.
-                    "reason": "part of, or behind, a placement cycle — two rows cannot each sit after the other",
-                }
-            )
-            del groups[group]
-            for slug in [s for s, g in group_of_slug.items() if g == group]:
-                del group_of_slug[slug]
-        # The catch-all: every row of ours in this library that the owner did NOT place by hand, moved
-        # by exclusion. Placed FIRST, so the explicitly-placed rows anchor against a settled shelf —
-        # and a row anchored to one of these follows a block that is already where it belongs.
-        excluded: set[int] = {k for keys in groups.values() for k in keys}
-        if rest is not None:
-            _apply_order(ctx, report, section, rest, only_keys=None, exclude_keys=excluded)
-        for group in placement_order:
-            to_top, anchor_title, anchor_row, before = group
-            # Anchor to the GROUP the anchor row was placed as part of, not to that row's own keys.
-            # Rows sharing a slot are moved in one call and land contiguously, so a follower aimed at
-            # just the anchor row's last hub is inserted INSIDE that block — and the next run's group
-            # pass, restoring contiguity, evicts it again. Neither call ever converges, both report
-            # `verified: True` every night, and on a 40-account server that is ~40 needless PUTs per
-            # library forever. Following the whole block is stable, and "after Picked" when Picked
-            # shares its slot with another row can only sensibly mean after that slot.
-            anchor_group = group_of_slug.get(anchor_row) if anchor_row else None
-            # A row anchored to one that FOLLOWS THE LIBRARY DEFAULT. That row is in no enumerated
-            # group — it is placed by exclusion — so its block has to be named the same way, or the
-            # follower is aimed at one row's hubs inside a larger contiguous block and the two calls
-            # fight for ever (see `order_owned_hubs`). Not `keys_by_slug` either: that is the anchor
-            # row alone, which is the same mistake by another route, and it re-introduces the ledger
-            # dependency this commit removed.
-            # Is the anchor row's block moved by the CATCH-ALL? Asked of placement, not of config: a
-            # row retargeted away from this library (its `media` or `library_keys` narrowed) is absent
-            # from `here` and from `anchors_by_slug`, yet its old collections are still on this shelf,
-            # still in the ledger, and still swept by the catch-all every run. Reading it as "a row we
-            # do not move" aimed the follower at its own hubs and churned for ever, 4 writes a pass.
-            follows_default = (
-                bool(anchor_row) and rest is not None and bool(keys_by_slug.get(anchor_row, set()) - excluded)
-            )
-            anchor_keys = None
-            if anchor_group:
-                anchor_keys = groups.get(anchor_group)
-            elif anchor_row and not follows_default:
-                anchor_keys = keys_by_slug.get(anchor_row)
-            if anchor_row and not anchor_keys and not follows_default:
-                # The row someone anchored to has nothing in this library. Left alone rather than
-                # quietly falling back to the library default: reinterpreting where a row was asked to
-                # go is worse than not moving it, and the next run places it once that row delivers.
-                #
-                # Log-only for the same reason as the ledger gap above: normally transient, and
-                # self-clearing once the named row delivers here. It is not reachable from the editor
-                # in its permanent form — `RowShelfPlacement` only offers rows that target THIS library
-                # — though `_validate_anchor_rows` checks existence and cycles, not targeting, so a
-                # hand-written API call can still set one. The outcome is the same either way: leave
-                # the shelf alone rather than reinterpret where the row was asked to go.
-                logger.info(
-                    "hub order: anchor row '{}' has nothing in {} yet — leaving the rows that follow it "
-                    "where they are this run",
-                    anchor_row,
-                    section.title,
-                )
-                continue
-            anchor = HubAnchor(anchor_title=anchor_title, anchor_row=anchor_row, before=before, to_top=to_top)
-            _apply_order(
-                ctx,
-                report,
+        sequence = _shelf_sequence(rows_here, key, keys_by_slug, section.title, names, report)
+        if not sequence:
+            logger.debug("hub order: nothing to place in {} — leaving its shelf alone", section.title)
+            continue
+        _apply_placement(ctx, report, section, sequence)
+
+
+def _apply_placement(ctx: EngineContext, report: RunReport, section, sequence: list[tuple[str, object]]) -> None:
+    """One best-effort placement call plus its audit.
+
+    A shelf reorder is cosmetic and privacy-neutral — the hubs are already promoted and already
+    covered by the share-filter excludes, and the only Plex call made here changes a position — so a
+    failure never fails the run; the next run re-applies it.
+    """
+    try:
+        with ctx.write_lock:
+            result = ctx.plex.place_rows(
                 section,
-                anchor,
-                only_keys=groups[group],
-                anchor_keys=anchor_keys,
-                anchor_exclude_keys=excluded if follows_default else None,
-                # Which rows THIS RUN puts somewhere, so a `to_top` group yields the top only to rows
-                # another call is really claiming it for. `None` means "all of ours": with a catch-all
-                # every row of ours is placed by something. Without one, only the enumerated groups
-                # are — a row nobody positions is not contending, and landing behind it is losing.
-                # `excluded`, not `placed_keys`: the latter is snapshotted BEFORE the refusal loop
-                # deletes refused groups. Without a catch-all a refused group's rows are positioned by
-                # nothing at all, so counting them as pinned made a Top row land below rows no call
-                # was claiming the slot for — permanently, and audited as though another call held it.
-                #
-                # Two weaker instances of the same shape are left as they are: a group `continue`d
-                # because its anchor row has nothing here (self-clears next run), and one whose client
-                # call comes back skipped, e.g. "anchor not found" after a foreign collection is
-                # renamed. The latter does not self-clear, and it is the one case where "with a
-                # catch-all everything of ours is placed by something" is not quite true.
-                pinned_keys=None if rest is not None else (excluded - groups[group]),
-                # A default-following anchor is a BLOCK, not one row — and that row may have nothing on
-                # this shelf yet while the block does. Naming the row would assert a landmark that is
-                # not there (rule 10).
-                anchor_label=(
-                    f"the {names.get(anchor_row, anchor_row)!r} row"
-                    if anchor_row and not follows_default
-                    else ("the rows that follow this library's default" if follows_default else "")
-                ),
+                label_prefix=LABEL_PREFIX,
+                sequence=sequence,
+                dry_run=ctx.config.dry_run,
             )
+        if result.get("moved") and not result.get("skipped"):
+            report.hub_orderings.append({"library": section.title, **result})
+        elif result.get("reason") in UNPLACEABLE:
+            report.hub_orderings.append({"library": section.title, "placed": False, **result})
+    except Exception as e:
+        logger.warning(
+            "{}: hub ordering failed ({}: {}) — left Plex's order",
+            section.title,
+            type(e).__name__,
+            redact(str(e)),
+        )
+        # A raise can land MID-SEQUENCE: some hubs moved, the rest not. Recorded, because the events
+        # feed otherwise says the run touched no shelf at all (plex-safety rule 10).
+        report.hub_orderings.append(
+            {
+                "library": section.title,
+                "placed": False,
+                "row": "",
+                "anchor": "",
+                "moved": [],
+                "reason": f"the shelf write failed part-way ({type(e).__name__}) — order left as Plex has it",
+            }
+        )
 
 
 def _rows_to_request(ctx: EngineContext, demand: requests_mod.RowDemand) -> list[requests_mod.RowRequest]:

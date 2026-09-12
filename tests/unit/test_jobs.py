@@ -691,6 +691,36 @@ class TestRestoreAfterUnpause:
 
         assert seen == [False], "the privacy pass must not reorder the shelf"
 
+    def test_user_restore_leaves_the_recommended_shelf_order_alone(self, sessions):
+        """Un-pausing one person ran the WHOLE placement phase and audited none of it.
+
+        This handler never calls `_audit_hub_orderings`, so every hub it moved on Plex was a write
+        with no events row (plex-safety rule 10) — and its own docstring said it only merged filters.
+        Restoring someone's rows is about who can see them, not where they sit; the nightly run owns
+        the order, as `privacy.sync` and `rows.visibility` already say of themselves.
+        """
+        seen: list[bool] = []
+        self._add_user(sessions)
+        state = self._state(sessions, promoted=[], merged=[])
+        import shortlist.engine.pipeline as pipeline_mod
+
+        def fake_run(ctx, users):
+            seen.append(ctx.config.manage_shelf_order)
+            return SimpleNamespace(
+                error=None,
+                promotion_blockers=[],
+                swept_rows={},
+                converged=0,
+                hub_orderings=[],
+                left_alone_failures=[],
+            )
+
+        pipeline_mod.run = fake_run
+
+        jobs._HANDLERS["user.restore"](state, {"slug": "sarah"})
+
+        assert seen == [False], "restoring a user must not reorder the shelf"
+
     def test_privacy_sync_does_not_report_success_when_no_filter_was_written(self, sessions):
         """It read only `swept_rows`/`converged` and returned a result dict, so `_finish` marked the
         job `done` — "Share filters merged for every account" — and retired an owed HIDE from the
@@ -1283,7 +1313,7 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
         def build_context(dry_run: bool, plex_only: bool = False):
             plex = MagicMock()
             plex.sections.return_value = list(sections or [])
-            plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["row"], "verified": True}
+            plex.place_rows.return_value = {"skipped": False, "moved": ["row"], "verified": True}
             ctx = SimpleNamespace(
                 config=EngineConfig(
                     dry_run=dry_run or forced_dry_run,
@@ -1292,7 +1322,10 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
                 ),
                 plex=plex,
                 delivery_sections=[],
-                delivered_keys={},
+                # A ledger entry, because a row with no delivered collection has nothing to place —
+                # the handler reports that rather than moving hubs, and a fake without one was
+                # asserting against a state no live server is ever in.
+                delivered_keys={("sarah", "picked", "1"): 4242},
                 write_lock=threading.Lock(),
             )
             built.append(ctx)
@@ -1334,7 +1367,7 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
         # "Press Check now and it tells you what it would change without touching anything" — the
         # shelf pass is inside that promise too, so it must be asked for as a DRY RUN and worded so.
         ctx = state.contexts[0]
-        assert ctx.plex.order_owned_hubs.call_args.kwargs["dry_run"] is True
+        assert ctx.plex.place_rows.call_args.kwargs["dry_run"] is True
         assert "would reposition rows on the shelf in Movies" in result["detail"]
 
     def test_it_also_puts_the_rows_back_in_place_on_the_shelf(self, monkeypatch):
@@ -1355,8 +1388,8 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
         assert [s.title for s in ctx.delivery_sections] == ["Movies"]
         ctx.plex.build_library_index.assert_not_called()
         # ...and the shelf placement really was asked for, not just reported.
-        ctx.plex.order_owned_hubs.assert_called_once()
-        assert ctx.plex.order_owned_hubs.call_args.kwargs["dry_run"] is False
+        ctx.plex.place_rows.assert_called_once()
+        assert ctx.plex.place_rows.call_args.kwargs["dry_run"] is False
         assert "repositioned rows on the shelf in Movies" in result["detail"]
 
     def test_the_shelf_pass_is_audited_even_though_no_run_is_persisted(self, monkeypatch):
@@ -1393,7 +1426,7 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
 
         def unverified_context(dry_run: bool, plex_only: bool = False):
             ctx = original(dry_run, plex_only)
-            ctx.plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["row"], "verified": False}
+            ctx.plex.place_rows.return_value = {"skipped": False, "moved": ["row"], "verified": False}
             return ctx
 
         state.run_service.build_context = unverified_context
@@ -1420,7 +1453,7 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
 
         def unplaceable_context(dry_run: bool, plex_only: bool = False):
             ctx = original(dry_run, plex_only)
-            ctx.plex.order_owned_hubs.return_value = {
+            ctx.plex.place_rows.return_value = {
                 "anchor": "Archive 2019",
                 "moved": [],
                 "skipped": True,
@@ -1493,7 +1526,7 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
         assert "1 orphaned collection(s) to remove" in result["detail"]
         assert "removed" not in result["detail"]
         # Safe mode has to reach the shelf pass too — it is a Plex write like any other here.
-        assert state.contexts[0].plex.order_owned_hubs.call_args.kwargs["dry_run"] is True
+        assert state.contexts[0].plex.place_rows.call_args.kwargs["dry_run"] is True
         assert "would reposition" in result["detail"]
 
 

@@ -1402,6 +1402,12 @@ def _user_restore(state, payload: dict) -> dict:
     # merge is CHECKED, not assumed. `promote_user_rows` has no `filters_ok` guard of its own (only
     # `_promote_phase` does), so an unchecked failure here promotes a private row with nothing
     # hiding it.
+    # The shelf ORDER is not this job's business — the nightly run owns it, as `privacy.sync` and
+    # `rows.visibility` already say of themselves. Left on, un-pausing one person ran the whole
+    # placement phase, moved hubs on Plex, and wrote NO audit event, because this handler never calls
+    # `_audit_hub_orderings` (plex-safety rule 10). Restoring someone's rows is about who can see
+    # them, not where they sit.
+    ctx.config.manage_shelf_order = False
     report = engine_run(ctx, [])
     _require_filters_merged(report, f"promoting {slug}'s rows")
     restored = promote_user_rows(ctx, profile, placements, placement_keys=keys)

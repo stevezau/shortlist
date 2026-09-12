@@ -194,35 +194,64 @@ shelf, everyone else gets theirs on their Home, and nobody's row clutters anybod
 
 By default Plex adds new collections at the **end** of a library's _Recommended_ shelf, so if another
 tool (like **Kometa**) manages collections on the same server, Shortlist's rows can end up buried at
-the bottom. Settings → **Row placement** sets a server-wide default; you get three choices per library:
+the bottom.
 
-- **Wherever Plex puts them**. Leave the order alone (the default).
-- **Top of the shelf** — put Shortlist's rows at the very top. No anchor needed. (This replaces the
-  old "pin to top" switch.)
-- **Right before / after a collection**. Pick an existing collection and sit the rows next to it.
+Each row chooses its own spot, per library, in the **Row editor** under "Where it sits":
 
-Any individual row can override the default in the **Row editor** ("Position in the Recommended
-shelf"), per library, so "Picked for You" can sit at the top while another row sits right after New
-Series. Since each person only sees their own row, moving rows up lifts everyone's at once.
+- **Top of the shelf** — the default, and the one position that always works.
+- **Right after / before a collection**. Pick an existing collection and sit the row next to it.
+- **Right after / before another Shortlist row**, so "Because you watched" can follow "Picked for
+  You" wherever that ends up.
+- **Don't place this row**. Shortlist never positions it. Be aware this does not mean "leave it where
+  it is": Plex adds new collections at the end of the shelf, and a row that loses five or more titles
+  in a night is rebuilt from scratch, so an unplaced row sinks to the bottom within days.
 
-Behind the scenes Shortlist re-applies your choice at the end of every run (so a co-managing tool
-can't re-bury the rows), only ever moves its own rows, and never touches the collection you anchored
-to. It works with or without Kometa. Kometa is only _why_ this matters, because it fills the shelf, not
-_how_ it works; the anchor can be any collection, Kometa's or one of Plex's own.
+Settings → **Row placement** now holds one switch, **Let Shortlist order the Recommended shelf**.
+Turn it off and Shortlist leaves the order entirely alone. (It used to also hold a per-library
+default, which was a second place to set the same thing and disagreed with the engine about what its
+own "Wherever Plex puts them" option meant.)
+
+Since each person only sees their own row, moving rows up lifts everyone's at once.
+
+Behind the scenes Shortlist re-applies your choice at the end of every run, only ever moves its own
+rows plus any collection you named as an anchor, and checks the shelf first — if it is already right,
+it writes nothing.
+
+### Why every move goes to the bottom
+
+Plex stores each row's shelf position as a decimal number, and "put this row after that one" works by
+picking the number halfway between two neighbours. Halve a gap fifty times and there is no number
+left that fits: from then on Plex accepts every move and applies none, for every tool including its
+own web app, until that library's positions are spread out again.
+
+Two moves never halve anything. "To the very top" takes a number below the lowest, and "after
+whichever row is currently last" takes one above the highest. The top one is not usable, because a
+library's built-in row — "Recently Added" — can hold the lowest number and refuses to be moved, so
+everything sent above it lands *on* its number instead. One rebuild done that way collapsed 72 rows
+onto a single value.
+
+So Shortlist builds the arrangement from the **bottom**: it walks your wanted order and sends each
+row to the end of the shelf in turn. The shelf finishes in exactly that order with the numbers spread
+1000 apart, which means the pass repairs a library whose numbers have collapsed rather than wearing
+it down further.
+
+The trade-off is that it repositions every row on that shelf, not only Shortlist's. Their order
+relative to each other is preserved exactly — the only thing that changes is where Shortlist's rows
+sit among them — and it is the only way to honour "put my row after that collection" without the
+halving insert. Rows that are on no shelf at all are left alone.
 
 ### If you also run Agregarr
 
 Agregarr arranges the same shelf, and it re-applies its own stored order roughly every 30 minutes.
-Shortlist re-applies yours at the end of every run and at the nightly privacy sync — roughly three
-passes a night against Agregarr's forty-eight. So the two take turns, and Agregarr wins on volume:
-what you see during the day is Agregarr's layout.
+Shortlist applies yours once, at the end of the nightly run, and does nothing at all if the shelf is
+already right. So Agregarr wins on volume: what you see during the day is Agregarr's layout.
 
 There are two ways to settle it, and both are configuration rather than something Shortlist can do
 for you:
 
 - **Exclude Shortlist's rows in Agregarr**, or stop its "Randomize Home Order" job, so it stops
   moving collections labelled `shortlist_*`.
-- **Set Row placement to "Wherever Plex puts them"** so Shortlist never touches the shelf order and
+- **Turn off "Let Shortlist order the Recommended shelf"** so Shortlist never touches the order and
   Agregarr owns it outright.
 
 Either way your rows are still built, delivered and kept private — only their position on the shelf

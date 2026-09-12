@@ -15,7 +15,7 @@ const selectClass =
   "focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60";
 
 type Entry = HubAnchorMap[string];
-type Mode = "default" | "top" | "after" | "before";
+type Mode = "top" | "after" | "before" | "off";
 
 /** A row targets a library when it lists it, or (when it lists none) any library of its media type. */
 function targetsLibrary(
@@ -29,9 +29,15 @@ function targetsLibrary(
     : libraryKeys.includes(library.key);
 }
 
-/** No entry = inherit the global default; `top` = the very top; else after/before its anchor. */
+/** No entry = the default, which is the top of the shelf. `enabled: false` = never positioned.
+ *
+ * "No entry" used to mean "inherit the per-library default from Settings", and that default was
+ * itself decided two ways: with no library configured it meant the top, and the moment one was
+ * configured every other library silently meant "leave alone" — while the screen read "Wherever
+ * Plex puts them" in both cases. One default, stated here, replaces it. */
 function modeOf(entry: Entry | undefined): Mode {
-  if (!entry) return "default";
+  if (!entry) return "top";
+  if (entry.enabled === false) return "off";
   if (entry.top) return "top";
   return entry.before ? "before" : "after";
 }
@@ -85,8 +91,8 @@ function LibraryAnchor({
   const anchorOffShelf = offShelf.some((c) => c.title === entry?.anchor);
 
   const setMode = (next: Mode) => {
-    if (next === "default") return onChange(undefined);
     if (next === "top") return onChange({ top: true });
+    if (next === "off") return onChange({ enabled: false });
     // Keep whichever anchor is already chosen when only flipping after/before.
     onChange({
       anchor: entry?.anchor ?? "",
@@ -114,10 +120,10 @@ function LibraryAnchor({
             value={mode}
             onChange={(event) => setMode(event.target.value as Mode)}
           >
-            <option value="default">Follow the default from Settings</option>
             <option value="top">Top of the shelf</option>
             <option value="after">Right after…</option>
             <option value="before">Right before…</option>
+            <option value="off">Don’t place this row</option>
           </select>
         </div>
         {relative && (

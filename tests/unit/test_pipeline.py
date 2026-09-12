@@ -3697,7 +3697,7 @@ class TestCollectionOrderPhase:
 
         _order_phase(ctx, report)
 
-        ctx.plex.order_owned_hubs.assert_not_called()
+        ctx.plex.place_rows.assert_not_called()
         assert report.hub_orderings == []
 
 
@@ -5890,3 +5890,159 @@ class TestRowTiming:
         with rows_mod._timed_lock(ctx, report):
             pass
         assert report.row_timing == {}
+
+
+class TestShelfOrderFailureIsAudited:
+    """A shelf write that RAISES can land mid-sequence, and used to leave no record at all."""
+
+    def test_a_raised_move_is_recorded_rather_than_swallowed(self):
+        """`place_rows` moves hubs one at a time. A raise part-way through — a collection
+        deleted between the read and the move, a Plex 500 — leaves some hubs moved and some not.
+        The failure path that RETURNS records itself (`verified: False`); this one recorded nothing,
+        so the events feed said the run touched no shelf at all (plex-safety rule 10).
+        """
+        import threading
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from shortlist.engine.models import EngineConfig
+        from shortlist.engine.pipeline import RunReport, _apply_placement
+
+        plex = SimpleNamespace(place_rows=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("plex 500")))
+        ctx = SimpleNamespace(plex=plex, config=EngineConfig(dry_run=False), write_lock=threading.Lock())
+        report = RunReport(started_at=datetime.now(UTC))
+        section = SimpleNamespace(title="Movies", key=1)
+
+        _apply_placement(ctx, report, section, [("rows", {11})])
+
+        assert len(report.hub_orderings) == 1, "a failed shelf write must leave a record"
+        entry = report.hub_orderings[0]
+        assert entry["library"] == "Movies"
+        assert entry["placed"] is False
+        assert "RuntimeError" in entry["reason"]
+
+
+class TestShelfSequence:
+    """`_shelf_sequence` — the wanted arrangement of one library's shelf, top first.
+
+    Replaces the group/cycle/refusal machinery that used to sequence many `move(after=…)` calls.
+    Those calls are what breaks Plex: each halves the float gap between two hubs, and a gap dies
+    after ~50 inserts. One sequence, realised from the top, needs no call sequencing at all.
+    """
+
+    @staticmethod
+    def _spec(slug, anchors):
+        from shortlist.engine.models import RowSpec
+
+        return RowSpec(slug=slug, name_template=slug, size=10, hub_anchors=anchors)
+
+    def _seq(self, specs, keys, **kw):
+        from datetime import UTC, datetime
+
+        from shortlist.engine.pipeline import RunReport, _shelf_sequence
+
+        report = kw.get("report") or RunReport(started_at=datetime.now(UTC))
+        return _shelf_sequence(specs, "1", keys, "Movies", {s.slug: s.slug for s in specs}, report), report
+
+    def test_a_row_after_a_collection_puts_the_anchor_first(self):
+        from shortlist.engine.models import HubAnchor
+
+        specs = [self._spec("picked", {"1": HubAnchor(anchor_title="Recently Added Movies")})]
+        seq, _ = self._seq(specs, {"picked": {11, 12}})
+
+        assert seq == [("anchor", "Recently Added Movies"), ("rows", {11, 12})]
+
+    def test_before_a_collection_puts_the_rows_first(self):
+        from shortlist.engine.models import HubAnchor
+
+        specs = [self._spec("picked", {"1": HubAnchor(anchor_title="Recently Added Movies", before=True)})]
+        seq, _ = self._seq(specs, {"picked": {11}})
+
+        assert seq == [("rows", {11}), ("anchor", "Recently Added Movies")]
+
+    def test_a_row_placed_after_another_row_follows_it(self):
+        from shortlist.engine.models import HubAnchor
+
+        specs = [
+            self._spec("picked", {"1": HubAnchor(anchor_title="Recently Added Movies")}),
+            self._spec("because", {"1": HubAnchor(anchor_row="picked")}),
+        ]
+        seq, _ = self._seq(specs, {"picked": {11}, "because": {21}})
+
+        assert seq == [("anchor", "Recently Added Movies"), ("rows", {11}), ("rows", {21})]
+
+    def test_a_chain_of_row_anchors_is_resolved_in_dependency_order(self):
+        """The maintainer's own config: picked after a collection, because after picked, popular
+        after because. Declared in a different order than they must appear."""
+        from shortlist.engine.models import HubAnchor
+
+        specs = [
+            self._spec("popular", {"1": HubAnchor(anchor_row="because")}),
+            self._spec("because", {"1": HubAnchor(anchor_row="picked")}),
+            self._spec("picked", {"1": HubAnchor(anchor_title="Recently Added Movies")}),
+        ]
+        seq, _ = self._seq(specs, {"picked": {11}, "because": {21}, "popular": {31}})
+
+        assert seq == [
+            ("anchor", "Recently Added Movies"),
+            ("rows", {11}),
+            ("rows", {21}),
+            ("rows", {31}),
+        ]
+
+    def test_a_row_with_placement_switched_off_is_not_placed_at_all(self):
+        from shortlist.engine.models import HubAnchor
+
+        specs = [
+            self._spec("picked", {"1": HubAnchor(to_top=True)}),
+            self._spec("because", {"1": HubAnchor(enabled=False)}),
+        ]
+        seq, _ = self._seq(specs, {"picked": {11}, "because": {21}})
+
+        assert seq == [("rows", {11})], "an off row must not appear in the arrangement"
+
+    def test_a_row_with_no_placement_configured_defaults_to_the_top(self):
+        """Not "leave it alone" — Plex appends new hubs at the BOTTOM, and a row losing five titles is
+        deleted and recreated, so a row nothing positions sinks out of sight within days. Opting out
+        is the per-row switch, set deliberately."""
+        specs = [self._spec("picked", {})]
+        seq, _ = self._seq(specs, {"picked": {11}})
+
+        assert seq == [("rows", {11})]
+
+    def test_a_row_the_ledger_does_not_name_is_reported_not_silently_skipped(self):
+        """An unplaced row does NOT stay put: Plex appends new hubs at the bottom, and a row losing
+        five titles is deleted and recreated, so it sinks there within days."""
+        from shortlist.engine.models import HubAnchor
+
+        specs = [self._spec("picked", {"1": HubAnchor(to_top=True)})]
+        seq, report = self._seq(specs, {})
+
+        assert seq == []
+        assert len(report.hub_orderings) == 1
+        assert report.hub_orderings[0]["placed"] is False
+        assert "delivery ledger" in report.hub_orderings[0]["reason"]
+
+    def test_two_rows_pointing_at_each_other_fall_back_to_row_order(self):
+        """A loop cannot be honoured. Dropping the rows instead would let them sink to the bottom."""
+        from shortlist.engine.models import HubAnchor
+
+        specs = [
+            self._spec("a", {"1": HubAnchor(anchor_row="b")}),
+            self._spec("b", {"1": HubAnchor(anchor_row="a")}),
+        ]
+        seq, _ = self._seq(specs, {"a": {11}, "b": {21}})
+
+        assert [kind for kind, _ in seq] == ["rows", "rows"]
+        assert {frozenset(v) for _, v in seq} == {frozenset({11}), frozenset({21})}
+
+    def test_one_anchor_named_by_two_rows_appears_once(self):
+        from shortlist.engine.models import HubAnchor
+
+        specs = [
+            self._spec("picked", {"1": HubAnchor(anchor_title="Recently Added Movies")}),
+            self._spec("gems", {"1": HubAnchor(anchor_title="Recently Added Movies")}),
+        ]
+        seq, _ = self._seq(specs, {"picked": {11}, "gems": {21}})
+
+        assert seq == [("anchor", "Recently Added Movies"), ("rows", {11}), ("rows", {21})]

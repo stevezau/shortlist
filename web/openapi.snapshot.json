@@ -2328,7 +2328,7 @@
         "type": "object"
       },
       "HubAnchorIn": {
-        "description": "A per-library shelf placement for one row: the very TOP (``top``), or after/before either\nanother Shortlist ROW (``row``, a row slug) or a foreign collection (``anchor``, a title).\n``top`` needs neither; otherwise exactly one of ``row``/``anchor`` must be set.\n\n``row`` is a slug rather than a title because a per-person row is one Plex collection PER PERSON:\na title names one account's copy and is meaningless for everyone else, which is what made the\npicker offer forty identical-looking options and place none of them (issue #81).",
+        "description": "A per-library shelf placement for one row: the very TOP (``top``), or after/before either\nanother Shortlist ROW (``row``, a row slug) or a foreign collection (``anchor``, a title).\n``top`` needs neither; otherwise exactly one of ``row``/``anchor`` must be set. ``enabled``\nfalse is a placement in its own right \u2014 \"never position this row\" \u2014 and needs neither.\n\n``row`` is a slug rather than a title because a per-person row is one Plex collection PER PERSON:\na title names one account's copy and is meaningless for everyone else, which is what made the\npicker offer forty identical-looking options and place none of them (issue #81).",
         "properties": {
           "anchor": {
             "default": "",
@@ -2339,6 +2339,11 @@
           "before": {
             "default": false,
             "title": "Before",
+            "type": "boolean"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
             "type": "boolean"
           },
           "row": {

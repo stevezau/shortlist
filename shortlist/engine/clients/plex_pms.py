@@ -997,410 +997,195 @@ class PlexClient:
         logger.info("{}: demoted off the owner's Home (converge)", log_title(collection.title))
         return True
 
-    def order_owned_hubs(
+    def place_rows(
         self,
         section: LibrarySection,
         *,
         label_prefix: str,
-        anchor_title: str = "",
-        anchor_keys: set[int] | None = None,
-        anchor_exclude_keys: set[int] | None = None,
-        anchor_label: str = "",
-        before: bool = False,
+        sequence: list[tuple[str, object]],
         dry_run: bool = False,
-        only_keys: set[int] | None = None,
-        exclude_keys: set[int] | None = None,
-        pinned_keys: set[int] | None = None,
-        to_top: bool = False,
         attempts: int = _HUB_ORDER_ATTEMPTS,
     ) -> dict:
-        """Place this section's Shortlist rows in Plex's Managed Recommendations shelf: at the very TOP
-        (``to_top``) or right after/before the ``anchor_title`` collection, so a co-managing tool
-        (Kometa) can't bury them.
+        """Arrange this library's Recommended shelf so our rows sit where the owner asked.
 
-        Only OUR hubs are moved — those labelled ``label_prefix``_* OR carrying the Shortlist title
-        marker; a FOREIGN anchor is read-only. ``only_keys`` restricts the move to the rows with those
-        collection ratingKeys (used when different rows anchor to different collections) — ``None``
-        moves them all.
+        ``sequence`` is the wanted arrangement of OUR rows and the landmarks they are placed against,
+        top first. Each entry is either ``("anchor", "Recently Added Movies")`` — a hub we did not
+        create, named by the owner as the thing to sit next to — or ``("rows", {ratingKeys})``, one
+        row's collections, whose order among themselves is meaningless and is left as it is.
 
-        An anchor that is a COLLECTION must itself be promoted. One promoted nowhere is in
-        ``managedHubs()`` but on no shelf, so it names no position a viewer can see, and following it
-        buries the row (issue #106); the row is then left where it is rather than placed somewhere
-        nobody asked for. Plex's own built-in hubs are never refused — see the branch for why.
+        HOW, AND WHY IT IS THE ONLY WAY THAT LASTS. Plex stores each hub's position as a float
+        (``hub_templates."order"``) and inserts by halving a gap, so a gap dies after ~50 inserts and
+        every later move is accepted and silently dropped — for every client, Plex's own web app
+        included — until the values are re-spaced. Two operations never halve: "to the top" takes
+        ``min - 1000`` and "after the last hub" takes ``max + 1000``.
 
-        ``exclude_keys`` is the OTHER way to name a subset, and it exists because enumerating one is
-        fragile. It means "every row of ours here EXCEPT these ratingKeys" — used for the rows that
-        follow the library default, so they are defined by what they are not, and a row missing from
-        the delivery ledger lands in that set instead of being stranded wherever Plex left it. Only
-        the rows the owner explicitly placed elsewhere have to be enumerated. Ignored when
-        ``only_keys`` is given; both ``None`` means every row of ours, as before.
+        To-the-top is not usable. A library's built-in hub (``movie.recentlyadded``) can hold the
+        minimum and refuses to move, so everything sent above it lands ON its value instead: measured
+        on a real server, one 94-hub rebuild collapsed 72 hubs onto a single float (2026-09-12).
 
-        ``anchor_keys`` anchors to one of OUR OWN rows instead of a foreign collection: the ratingKeys
-        of that row's collections in this section, from the delivery ledger. The anchor hub is then the
-        last of them in current shelf order (or the first, for ``before``) rather than a title match —
-        a per-person row has one collection per person, so no single title names it. Passing it lifts
-        the "never one of ours" rule for exactly those keys, which is safe only because the caller
-        places that row's block FIRST; anchoring to a row not yet in position would chase a moving
-        target. ``only_keys`` and ``anchor_keys`` must not overlap — a row cannot follow itself.
-        ``anchor_label`` is what the audit and logs CALL the anchor, since a row anchor has no title.
+        So the shelf is built from the BOTTOM. Walk the wanted order and send each hub to the end in
+        turn; every move takes ``max + 1000``, so the shelf finishes in exactly that order with values
+        1000 apart. It re-spaces as a side effect, which means it REPAIRS a collapsed library instead
+        of eroding it — verified on both of that server's libraries: 130 and 137 moves, exact
+        arrangement, every hub left with its own value.
 
-        Returns an audit dict ``{anchor, moved: [titles], skipped: bool, reason?}``,
-        plus ``verified: bool`` once anything has actually been written (a dry run returns
-        ``dry_run: True`` and no ``verified``: it asked for nothing, so there is nothing to confirm).
+        The cost is that it repositions hubs we did not create. Their order relative to each other is
+        preserved exactly — only our rows move within them — and it is the only way to honour "put my
+        row after that collection" without the halving insert. Owner decision, 2026-09-12.
 
-        Moves ONLY hubs actually out of place, and VERIFIES by re-reading the shelf (SFLIX, 2026-08-12).
-        The old loop chained ``move(after=previous)`` over every one of our hubs whenever any single one
-        was out of place — 47 unpaced PUTs in 344ms, ~27 of them re-asserting rows already in position —
-        and then logged ``moved 47`` having never looked at the result. It counted requests ISSUED.
-
-        That is what made this shelf unreadable: another tool on the same host (agregarr) reorders every
-        managed hub every 30 minutes, so the shelf genuinely was not ours, and a function that cannot
-        tell "we asked" from "it happened" reported success throughout. Re-reading is what stops us
-        claiming a shelf we lost. ``order_collection`` orders items the same way.
+        Writes NOTHING when the shelf already matches: the comparison happens before any move, so a
+        settled shelf costs one read.
         """
         prefix = f"{label_prefix}_".lower()
-        # title -> ratingKey for every row of ours here. Titles carry the invisible per-account marker,
-        # so within one section they are unique per user; the key is what `only_keys` partitions on.
-        #
-        # Ours by label OR by title marker. `collection.labels` makes plexapi silently re-read each
-        # collection, and a read that comes back carrying no <Label> is indistinguishable from a
-        # genuinely unlabelled row (plex-safety rule 4) — which here would empty this map and skip the
-        # whole library in silence, the same shape of quiet nothing that hid the ordering bug. Ordering
-        # only ever changes a POSITION, so the marker alone is safe proof of ownership: rule 4's two
-        # guards exist because a wrong answer there DELETES, and nothing here can.
         key_by_title = {
             c.title: c.ratingKey
             for c in self._section_collections(section)
             if has_shortlist_marker(c.title) or any(label.tag.lower().startswith(prefix) for label in c.labels)
         }
-        owned_all = set(key_by_title)
-        #: Hub identifiers of EVERY row of ours here, whether or not this call moves them — used to
-        #: spot a request for a slot another of our calls already owns.
-        owned_idents: set[str] = set()
-        #: hub identifier -> ratingKey, for the rows of ours on this shelf.
-        key_by_ident: dict[str, int] = {}
-        #: True when THIS attempt's read shows a `to_top` request yielding to rows already holding the
-        #: top — the audit must not then claim the top for itself. Decided fresh each attempt, because
-        #: the shelf is re-read each attempt and the rows it yielded to may since have gone.
-        retargeted = False
-        # What the audit and the logs CALL this anchor. A row anchor has no title of its own — one
-        # collection per person — so without a label every ordering record for one would read
-        # 'anchor: ""', which is not an answer to "what moved where" (rule 10).
-        audit_anchor = anchor_label or anchor_title or ("another Shortlist row" if anchor_keys else "")
-        # The subset to MOVE: enumerated (`only_keys`), everything-but (`exclude_keys`), or all of ours.
-        if only_keys is not None:
-            owned_titles = {t for t, key in key_by_title.items() if key in only_keys}
-        elif exclude_keys:
-            owned_titles = {t for t, key in key_by_title.items() if key not in exclude_keys}
-        else:
-            owned_titles = owned_all
-        if not owned_titles:
-            return {"anchor": audit_anchor, "moved": [], "skipped": True, "reason": "no rows in this library"}
-        # The titles a ROW anchor resolves to here — its collections, one per person. Everything else
-        # of ours stays barred from being an anchor: without `anchor_keys` this set is empty and the
-        # rule is exactly what it was. A row that named ITSELF would be asked to move relative to its
-        # own hubs, which is meaningless and would thrash the shelf; the caller rejects that, and the
-        # subtraction here means a slip cannot reach Plex.
-        anchor_titles: set[str] = set()
-        if anchor_keys:
-            anchor_titles = {t for t, key in key_by_title.items() if key in anchor_keys} - owned_titles
-        elif anchor_exclude_keys is not None:
-            # The anchor row is itself placed BY EXCLUSION (it follows the library default), so its
-            # block is every row of ours here minus the hand-placed ones — the same set the catch-all
-            # call moves. Naming it by exclusion is what makes this converge: aimed at the anchor
-            # row's own hubs instead, the follower lands INSIDE that contiguous block, the next
-            # catch-all restores contiguity and evicts it, and neither call ever settles while both
-            # report `verified: True`. That is the churn the group-anchoring comment below describes,
-            # and it costs one PUT per account per library every run, for ever.
-            anchor_titles = {t for t, key in key_by_title.items() if key not in anchor_exclude_keys} - owned_titles
-        if (anchor_keys or anchor_exclude_keys is not None) and not anchor_titles:
-            # Named row has nothing on this shelf (never delivered here, or its collections are gone).
-            # Leaving the shelf alone beats falling back to a different slot: a silent reinterpretation
-            # of where someone asked their row to go is worse than not moving it, and the next run
-            # places it once the row exists.
-            return {"anchor": audit_anchor, "moved": [], "skipped": True, "reason": "anchor row not on this shelf"}
-
-        where = "to the top" if to_top else f"{'before' if before else 'after'} {audit_anchor!r}"
-        # Hub identifier -> title, so a row re-moved on a later attempt is audited once, not once per
-        # attempt. Titles are unique per section (the marker), the identifier more so.
+        audit_anchor = ", ".join(t for kind, t in sequence if kind == "anchor") or "top"
+        ours_keys = {k for kind, v in sequence if kind == "rows" for k in v}
         moved: dict[str, str] = {}
+        #: EVERY hub this call repositioned, ours or not. `moved` holds only our row titles, because
+        #: that is what the events feed is read for — but the skipped/verified decision has to know a
+        #: write happened at all, and a bottom-build moves the backbone too. Counting only our rows
+        #: made a pass that moved one foreign hub report "already in place" on its next attempt.
+        writes = 0
 
-        def top_anchor() -> str:
-            """What a `to_top` call CALLS its landing point. Not always "top": a request that yielded
-            to rows already holding the slot landed below them, and every return used to claim the top
-            regardless — including the dry-run preview an owner is told to trust.
-
-            One reads `False` by construction rather than by fact: every `outcome()` call site sits
-            ABOVE the retarget block in the same attempt, so a give-up that carries writes from an
-            earlier attempt reports the top even if that attempt yielded. It is already flagged
-            `verified: False`, so the record does not assert the shelf ended that way."""
-            return "after the rows already at the top" if retargeted else "top"
-
-        def outcome(reason: str) -> dict:
-            """Give up, without discarding the record of writes already made.
-
-            An early exit on attempt 2+ has already moved hubs, and returning ``moved: []`` there put a
-            real Plex write outside the audit entirely — `_apply_order` drops skipped results, so
-            `report.hub_orderings` never saw it (plex-safety rule 10).
-            """
-            if not moved:
-                return {"anchor": audit_anchor, "moved": [], "skipped": True, "reason": reason}
-            return {
-                "anchor": top_anchor() if to_top else audit_anchor,
-                "moved": list(moved.values()),
-                "skipped": False,
-                "verified": False,
-                "reason": reason,
-            }
-
-        # `attempts` write passes, then ONE more read that only verifies. Without that extra pass the
-        # final attempt wrote and fell straight through to `verified: False` — so a shelf this fixed on
-        # its last try was reported as a failure, which is the very defect this function exists to
-        # remove, pointed the other way.
         for attempt in range(1, attempts + 2):
-            order = list(section.managedHubs())  # the live shelf order, re-read each attempt
-            retargeted = False  # decided fresh from that read, like everything else below
-            # Rows promoted NOWHERE are skipped. `managedHubs()` lists every managed hub, promoted or
-            # not, so a paused/disabled user's dormant row was being moved into place on every pass —
-            # a position nobody can see, since all three promotion flags are off. On SFLIX that was 4
-            # wasted moves per library per pass, and it kept a reconciled shelf looking contested: a
-            # co-managing tool (agregarr) rightly ignores those rows, so we alone kept shuffling them.
-            # PROMOTED only. An unpromoted hub of ours is moved by no call at all (`ours` filters on
-            # exactly this), so it contends for nothing — counting it made the guard below fire on the
-            # plain single-call path of every ordinary server the moment a paused user's dormant row
-            # happened to sit first, and the whole library then stopped being ordered, for ever.
-            owned_idents = {
-                h.identifier for h in order if (getattr(h, "title", "") or "") in owned_all and is_promoted(h)
-            }
-            key_by_ident = {
-                h.identifier: key_by_title[getattr(h, "title", "") or ""]
-                for h in order
-                if (getattr(h, "title", "") or "") in key_by_title
-            }
-            ours = [h for h in order if (getattr(h, "title", "") or "") in owned_titles and is_promoted(h)]
-            if not ours:
-                return outcome("rows not promoted yet")
-
-            if to_top:
-                target = None  # move(after=None) -> the very top of the shelf
-            elif anchor_titles:
-                # A ROW anchor is a BLOCK of hubs — one collection per person — not a single
-                # collection, so it has two edges: sit after its LAST hub, or before its FIRST.
-                # Re-resolved every attempt because that block was itself placed moments ago.
-                #
-                # PROMOTED hubs only, exactly like `ours` above. A paused or disabled person's copy of
-                # the anchor row is still on the shelf and still in the ledger, but we never move it —
-                # so it sits wherever Plex appended it, at the bottom. Anchoring to it dragged the
-                # follower down there with it, underneath the co-managing tool's hubs: precisely the
-                # burial this whole function exists to undo, reported as a verified success.
-                block = [h for h in order if (getattr(h, "title", "") or "") in anchor_titles and is_promoted(h)]
-                if not block:
-                    # Every copy of the anchor row here is dormant. Same answer as "not on this shelf":
-                    # there is no position to be relative to, and inventing one puts the follower
-                    # somewhere nobody asked for.
-                    logger.warning(
-                        "hub order: anchor row has no promoted hub in {} — {}",
-                        section.title,
-                        f"stopping after {len(moved)} move(s)" if moved else "leaving the shelf order unchanged",
-                    )
-                    return outcome("anchor row not on this shelf")
-                if before:
-                    # Skip only the hubs we are ABOUT TO MOVE: their current position is about to
-                    # change, so landing on one aims at a slot that is disappearing. Other rows of ours
-                    # are already in place and are legitimate landmarks — which only matters here,
-                    # because a row anchor is the one case where our own hubs are the neighbourhood.
-                    anchor_idx = order.index(block[0])
-                    target = next(
-                        (
-                            h
-                            for h in reversed(order[:anchor_idx])
-                            if (getattr(h, "title", "") or "") not in owned_titles
-                        ),
-                        None,
-                    )
-                else:
-                    target = block[-1]
-            else:
-                named = [
-                    h
-                    for h in order
-                    if (getattr(h, "title", "") or "") == anchor_title
-                    and (getattr(h, "title", "") or "") not in owned_all
-                ]
-
-                # Issue #106: `managedHubs()` lists every manageable hub, and a COLLECTION promoted
-                # nowhere has no position on the shelf anyone can see. Following one landed our rows
-                # wherever Plex keeps it — in practice below every standard Plex hub — and the verify
-                # pass then agreed the shelf was exactly what we asked for, so the run reported
-                # `verified: True` over a buried row. The picker offered these, because they are real
-                # collections in the library.
-                #
-                # Judged ONLY for collections, and that limit is the point. Plex sends the promotion
-                # booleans for a collection — the app reads them on every promote — but a built-in hub
-                # ("Recently Added") is an ordinary anchor that nothing in this repo has ever read
-                # those flags from, and for which there is no recorded fixture (plex-safety rule 11).
-                # Refusing to place a row needs positive evidence that its anchor is off the shelf, and
-                # a collection is where we have it; an attribute we cannot vouch for must never be the
-                # reason a working placement stops.
-                anchor = next((h for h in named if can_anchor(h)), None)
-                if anchor is None:
-                    logger.warning(
-                        "hub order: anchor {!r} {} in {} — {}",
-                        anchor_title,
-                        "is a collection that is not on any Plex shelf" if named else "not found",
-                        section.title,
-                        f"stopping after {len(moved)} move(s)" if moved else "leaving the shelf order unchanged",
-                    )
-                    return outcome("anchor not on the shelf" if named else "anchor not found")
-                # 'after anchor' -> the anchor; 'before anchor' -> the hub just before it that this
-                # call is not about to move (None -> the very top of the shelf).
-                #
-                # `owned_titles`, not `owned_all` — the same rule the row-anchor branch states above,
-                # and for the same reason: only the hubs we are ABOUT to move are disappearing from
-                # their slots. OTHER rows of ours are already in place and are legitimate landmarks.
-                # Skipping them too turned "immediately before Letzte Chance" into "the very top" the
-                # moment any row of ours sat above the anchor — which then collides with a top-anchored
-                # default and either churns for ever or, once the guard below existed, is refused and
-                # never placed at all. Landing behind our own rows and in front of the anchor is both
-                # what was asked for and stable.
-                if before:
-                    anchor_idx = order.index(anchor)
-                    target = next(
-                        (
-                            h
-                            for h in reversed(order[:anchor_idx])
-                            if (getattr(h, "title", "") or "") not in owned_titles
-                        ),
-                        None,
-                    )
-                else:
-                    target = anchor
-
+            order = list(section.managedHubs())
             idents = [h.identifier for h in order]
             by_ident = {h.identifier: h for h in order}
-            our_idents = [h.identifier for h in ours]
+            title_of = {h.identifier: (getattr(h, "title", "") or "") for h in order}
+            ours_here = {
+                h.identifier for h in order if key_by_title.get(title_of[h.identifier]) in ours_keys and is_promoted(h)
+            }
 
-            if to_top and target is None:
-                # We have been asked for the VERY TOP. If rows of ours that this call does NOT move
-                # are already pinned there, both cannot hold position 0: whoever writes second wins,
-                # the other call puts it back next pass, and neither settles — 4 moves a pass, for
-                # ever, both reporting `verified: True`.
-                #
-                # So land immediately after that leading run instead of fighting it. Refusing was the
-                # first answer here and it was worse: the refused call is the only one that would ever
-                # move those rows, so the setting silently did nothing and they stayed wherever Plex
-                # left them — the bottom, for anything newly created. Sharing the top is what both
-                # requests actually meant.
-                # `to_top` ONLY. `before` also resolves to None when its anchor sits at position 0 —
-                # and the anchor's own hubs are ours and not in `our_idents`, so this loop walked
-                # straight over them and landed the row AFTER the row it was asked to precede. Stable,
-                # and reported `verified: True`, so nothing ever corrected it. Requesting "the very
-                # top unconditionally" is the only request that can share the top; "before X" has an
-                # answer of its own. (For a foreign `before`, `leading` is provably empty anyway.)
-                #
-                # And only past hubs ANOTHER CALL THIS RUN is placing there. A row Shortlist positions
-                # nowhere is not contending for the slot, so yielding to it is not sharing, it is
-                # losing — `pinned_keys` is how the caller says which rows tonight actually claims.
-                leading = []
-                for ident in idents:
-                    if ident in our_idents or ident not in owned_idents:
-                        break
-                    if pinned_keys is not None and key_by_ident.get(ident) not in pinned_keys:
-                        break
-                    leading.append(ident)
-                if leading:
-                    target = by_ident[leading[-1]]
-                    retargeted = True
-            start = idents.index(target.identifier) + 1 if target is not None else 0
-            if idents[start : start + len(our_idents)] == our_idents:
-                if not moved:
+            #: Our rows, grouped as the sequence asks and each group in its CURRENT shelf order — the
+            #: order inside a row is one collection per person and nobody sees anyone else's, so
+            #: re-sorting it would be writes nobody asked for.
+            blocks: dict[int, list[str]] = {}
+            for n, (kind, value) in enumerate(sequence):
+                if kind == "rows":
+                    blocks[n] = [
+                        h.identifier
+                        for h in order
+                        if key_by_title.get(title_of[h.identifier]) in value and is_promoted(h)
+                    ]
+
+            # Every named anchor has to actually be on the shelf. A collection promoted nowhere names
+            # no position a viewer can see, so following it buries the row (issue #106); refused here
+            # rather than silently reinterpreted. Plex's own built-ins are always usable.
+            anchor_ident: dict[str, str] = {}
+            for kind, value in sequence:
+                if kind != "anchor":
+                    continue
+                hit = next(
+                    (
+                        h
+                        for h in order
+                        if title_of[h.identifier] == value and h.identifier not in ours_here and can_anchor(h)
+                    ),
+                    None,
+                )
+                if hit is None:
+                    logger.info(
+                        "hub order: anchor {!r} is not on {}'s shelf — leaving the order as it is",
+                        value,
+                        section.title,
+                    )
+                    return {"anchor": audit_anchor, "moved": [], "skipped": True, "reason": "anchor not found"}
+                # Keyed by IDENTIFIER from here on. Splicing by title would attach the block to
+                # whichever hub shares that title first in shelf order — not necessarily the one just
+                # validated as being on a shelf.
+                anchor_ident[value] = hit.identifier
+
+            # The backbone is every hub that is not ours, in the order the shelf already has them, so
+            # a co-managing tool's rows keep their own arrangement. Our blocks are spliced in at the
+            # point the owner named; a block with no anchor before it goes to the very top.
+            after_anchor: dict[str, list[str]] = {}
+            seen_anchor = ""
+            leading: list[str] = []
+            for n, (kind, value) in enumerate(sequence):
+                if kind == "anchor":
+                    seen_anchor = anchor_ident[value]
+                    after_anchor.setdefault(seen_anchor, [])
+                elif seen_anchor:
+                    after_anchor[seen_anchor] += blocks[n]
+                else:
+                    leading += blocks[n]
+            if not leading and not any(after_anchor.values()):
+                return {"anchor": audit_anchor, "moved": [], "skipped": True, "reason": "no rows in this library"}
+            wanted = list(leading)
+            for ident in idents:
+                if ident in ours_here:
+                    continue
+                if not is_promoted(by_ident[ident]):
+                    # Promoted nowhere, so on no shelf at all. Arranging it spends a write on a hub we
+                    # do not own for a position nobody can see.
+                    continue
+                wanted.append(ident)
+                wanted += after_anchor.pop(ident, [])
+
+            # Compare only the hubs this call is arranging. A hub left OUT — a paused person's row,
+            # or anyone's hub promoted nowhere — sits on no shelf, so where it falls is not a reason
+            # to rewrite anything. Comparing the whole list made every pass find a difference it could
+            # never fix and rewrite the shelf for ever.
+            in_play = set(wanted)
+            if [i for i in idents if i in in_play] == wanted:
+                if not writes:
                     return {"anchor": audit_anchor, "moved": [], "skipped": True, "reason": "already in place"}
                 logger.info(
-                    "hub order: placed {} row(s) {} in {} — {} move(s) over {} attempt(s), verified",
-                    len(ours),
-                    where,
+                    "hub order: arranged {} hub(s) in {} — {} move(s) over {} attempt(s), verified",
+                    len(wanted),
                     section.title,
-                    len(moved),
+                    writes,
                     attempt - 1,
                 )
                 return {
-                    "anchor": top_anchor() if to_top else audit_anchor,
+                    "anchor": audit_anchor,
                     "moved": list(moved.values()),
+                    "repositioned": writes,
                     "skipped": False,
                     "verified": True,
                 }
-
             if attempt > attempts:
-                break  # the extra pass is verify-only: the shelf has just been read and is not right
-
-            # PLAN first, then write — `idents` is our model of the live order, advanced as if each
-            # move had landed, so a hub already in its wanted slot is never touched. Planning it
-            # separately is what lets the dry run report the REAL cost: it used to say "would move 46
-            # rows" for a shelf needing nineteen, which is the same overstatement the live pass made.
-            planned: list[tuple[str, object]] = []
-            if to_top and target is None:
-                # THE TOP IS PLACED BY `move(after=None)`, ONE ROW AT A TIME, IN REVERSE.
-                #
-                # Chaining (`move(after=the row we just moved)`) is what every other branch does, and
-                # on a real shelf Plex frequently accepts those and applies nothing: measured on SFLIX
-                # 2026-09-08 over ~60 controlled moves, `after=` lands exactly when the anchor is far
-                # from the row being moved and silently no-ops when it is the immediate neighbour —
-                # which is the only case chaining ever produces. `move` with NO anchor was exact every
-                # time (5/5, then 93/93 rebuilding the Movies shelf by hand), so the top is the one
-                # position that can be asserted rather than hoped for.
-                #
-                # Reverse order, because each move lands at index 0 and pushes the last one down. It
-                # writes the whole block instead of only the rows out of place, which is why it is
-                # confined to the branch that has no anchor to be relative to: the check above still
-                # short-circuits a settled shelf to zero writes, so the cost lands on the pass that
-                # was already failing, not on the nightly no-op.
-                planned = [(ident, None) for ident in reversed(our_idents)]
-                idents = our_idents + [i for i in idents if i not in set(our_idents)]
-            else:
-                previous = target
-                for ident in our_idents:
-                    want = 0 if previous is None else idents.index(previous.identifier) + 1
-                    if idents.index(ident) != want:
-                        planned.append((ident, previous))
-                        idents.remove(ident)
-                        idents.insert(0 if previous is None else idents.index(previous.identifier) + 1, ident)
-                    previous = by_ident[ident]
-
+                break
             if dry_run:
-                logger.info(
-                    "[dry-run] hub order: would move {} of {} row(s) {} in {}",
-                    len(planned),
-                    len(ours),
-                    where,
-                    section.title,
-                )
+                logger.info("[dry-run] hub order: would arrange {} hub(s) in {}", len(wanted), section.title)
                 return {
-                    "anchor": top_anchor() if to_top else audit_anchor,
-                    "moved": [by_ident[ident].title for ident, _ in planned],
+                    "anchor": audit_anchor,
+                    "moved": [title_of[i] for i in wanted if i in ours_here],
+                    # The preview must state what a real pass would WRITE, backbone included — an
+                    # owner told to trust it should not be shown a smaller number than the truth.
+                    "repositioned": sum(1 for i in wanted if i != idents[-1]),
                     "skipped": False,
                     "dry_run": True,
                 }
 
-            for ident, after in planned:
-                by_ident[ident].reload().move(after=after)  # after=None -> top of the shelf
-                moved[ident] = by_ident[ident].title
+            # Bottom-build: each hub in turn to the END of the shelf, which is the one insert with
+            # room to spare. `tail` tracks the hub currently last so the model never re-reads.
+            tail = idents[-1]
+            for ident in wanted:
+                if ident == tail:
+                    continue
+                by_ident[ident].reload().move(after=by_ident[tail])
+                writes += 1
+                if ident in ours_here:
+                    moved[ident] = title_of[ident]
+                tail = ident
 
-        # Every attempt moved rows and the shelf still is not what we asked for — and the read that
-        # ended the loop confirms that, rather than assuming it. The likeliest reason by far is another
-        # tool reordering the same shelf between our passes, so the message says so: an operator who
-        # sees this needs to go looking OUTSIDE Shortlist. Cosmetic, so the run carries on, but it is
-        # reported as UNVERIFIED rather than as success, which is how this hid for weeks.
         logger.warning(
-            "hub order: the Shortlist rows in {} are still not {} after {} attempts and {} move(s) — "
-            "something else is very likely reordering this shelf (Kometa, agregarr); leaving it as it is",
+            "hub order: {}'s shelf is still not in the wanted order after {} attempts and {} move(s) — "
+            "Plex accepted the moves and did not apply them, which is what a library whose hub "
+            "positions have collapsed onto one float value looks like from here",
             section.title,
-            where,
             attempts,
-            len(moved),
+            writes,
         )
         return {
-            "anchor": top_anchor() if to_top else audit_anchor,
+            "anchor": audit_anchor,
             "moved": list(moved.values()),
+            "repositioned": writes,
             "skipped": False,
             "verified": False,
         }

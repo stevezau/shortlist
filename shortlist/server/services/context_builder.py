@@ -1009,7 +1009,6 @@ class ContextBuilder:
                 tid for tid in (store.get("recommendations.blocked_shared_seeds") or []) if isinstance(tid, int)
             },
             web_search_provider=store.get("llm_web.search_provider") or "native",
-            hub_anchors=self._build_hub_anchors(store),
             manage_shelf_order=bool(store.get("rows.manage_shelf_order")),
             # The `or` fallbacks below are safe only because the validators exclude the falsy
             # value: `min_history` is bounded 1-100, `recent_count` 1-25, `max_seeds` 5-100
@@ -1224,7 +1223,11 @@ class ContextBuilder:
             for key, entry in raw.items():
                 if not isinstance(entry, dict):
                     continue
-                if entry.get("top"):
+                # OFF is a real placement choice, not an absent one: it means "never position this
+                # row". Read FIRST so it cannot be overridden by a stale anchor left in the row's JSON.
+                if entry.get("enabled") is False:
+                    anchors[str(key)] = HubAnchor(enabled=False)
+                elif entry.get("top"):
                     anchors[str(key)] = HubAnchor(to_top=True)
                 elif str(entry.get("row") or "").strip():
                     anchors[str(key)] = HubAnchor(
@@ -1236,23 +1239,6 @@ class ContextBuilder:
                         anchor_title=str(entry["anchor"]).strip(),
                         before=bool(entry.get("before", False)),
                     )
-        return anchors
-
-    @classmethod
-    def _build_hub_anchors(cls, store: SettingsStore) -> dict[str, HubAnchor]:
-        """The GLOBAL per-library Recommended-shelf default from `rows.hub_anchor`.
-
-        A ROW anchor is dropped here, not honoured. The global default applies to every row, so "all
-        rows go after row X" includes X itself; and the paths that use this default pass no
-        `anchor_keys`, so a row anchor would reach the client's FOREIGN branch with an empty title and
-        match any hub whose title is empty. `_hub_anchors` in the settings API rejects it on the way
-        in — this is the second guard, so a future relaxation there cannot open that door silently.
-        """
-        anchors = cls._parse_hub_anchors(store.get("rows.hub_anchor") or {})
-        dropped = [key for key, anchor in anchors.items() if anchor.anchor_row]
-        for key in dropped:
-            logger.warning("rows.hub_anchor[{}] names a row — only a per-ROW placement can do that; ignoring it", key)
-            del anchors[key]
         return anchors
 
     @staticmethod

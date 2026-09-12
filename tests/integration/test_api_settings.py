@@ -229,20 +229,15 @@ class TestSettingsValidation:
         assert client.put("/api/settings", json={"values": {"row.size": 41}}).status_code == 422
         assert client.put("/api/settings", json={"values": {"row.size": 4}}).status_code == 422
 
-    def test_hub_anchor_shape_is_validated(self, client: TestClient):
-        # Bad shapes used to reach the engine and skip ordering silently.
-        bad = {"2": {"before": True}}  # missing 'anchor'
-        assert client.put("/api/settings", json={"values": {"rows.hub_anchor": bad}}).status_code == 422
-        assert (
-            client.put("/api/settings", json={"values": {"rows.hub_anchor": {"2": {"anchor": ""}}}}).status_code == 422
-        )
-        good = {"2": {"anchor": "New Series (Unwatched)", "before": False}}
-        assert client.put("/api/settings", json={"values": {"rows.hub_anchor": good}}).status_code == 200
-        # A 'top' entry is valid without an anchor.
-        assert (
-            client.put("/api/settings", json={"values": {"rows.hub_anchor": {"2": {"top": True}}}}).status_code == 200
-        )
-        assert client.put("/api/settings", json={"values": {"rows.hub_anchor": {}}}).status_code == 200  # clears it
+    def test_the_retired_hub_anchor_setting_is_no_longer_writable(self, client):
+        """`rows.hub_anchor` was a per-LIBRARY default for shelf placement. It was a second source of
+        truth for the same decision and disagreed with its own screen — "Wherever Plex puts them"
+        wrote no entry, and no entry anywhere meant *top of the shelf*, while the moment one library
+        was configured every other one silently meant *leave alone*. Placement now lives on the row,
+        so the key is refused rather than quietly accepted and ignored."""
+        entry = {"2": {"anchor": "New Series (Unwatched)", "before": False}}
+
+        assert client.put("/api/settings", json={"values": {"rows.hub_anchor": entry}}).status_code == 422
 
     def test_request_year_bounds_are_validated(self, client: TestClient):
         # Both ends of the request year window share the 0..2100 bound (0 = that end disabled).
