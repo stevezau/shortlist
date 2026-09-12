@@ -16,10 +16,16 @@ export const DOCS_URL = "https://shortlistapp.dev/";
 export const DOCS_SHELF_CONTENTION_URL =
   "https://shortlistapp.dev/guides/rows/#check-which-agregarr-you-are-running";
 
-/** Where "Support this project" goes. GitHub Sponsors rather than a direct payment link: it takes no
- *  platform fee, and it is the page that lists every other way to give (Ko-fi included) via the
- *  repo's FUNDING.yml — so the app never has to know or update the list. */
-export const SPONSOR_URL = "https://github.com/sponsors/stevezau";
+/** Where "Star on GitHub" goes. There is no URL that stars a repo — Orca can offer one click only
+ *  because it drives the `gh` CLI on a developer's machine — so this opens the repo, where the Star
+ *  button is. */
+export const STAR_URL = GITHUB_REPO;
+
+/** Where "Buy me a coffee" goes. Ko-fi rather than GitHub Sponsors: Sponsors needs a GitHub account
+ *  and a card, which most Plex owners reading this sidebar do not have to hand, while Ko-fi takes a
+ *  guest checkout (card, Apple/Google Pay, PayPal) and charges no fee on one-time tips. GitHub
+ *  Sponsors is still offered on the repo, via FUNDING.yml, to the people who arrive there. */
+export const COFFEE_URL = "https://ko-fi.com/stevezau";
 
 /** Where "Ask a question" goes: the Q&A category, NOT `discussions/new`.
  *

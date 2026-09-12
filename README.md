@@ -245,9 +245,11 @@ yourself, because most advice on the subject predates Plex's 2026 fixes and quie
 
 ## Support the project
 
-Shortlist is free and MIT-licensed, and built in evenings. If it saved you some, you can
-[sponsor it on GitHub](https://github.com/sponsors/stevezau) — entirely optional, and it buys time
-rather than features on request.
+Shortlist is free and MIT-licensed, and built in evenings. The free way to help is a
+[star on GitHub](https://github.com/stevezau/shortlist) — it is how other Plex owners find it. If it
+saved you some evenings too, you can [buy me a coffee](https://ko-fi.com/stevezau) (no account
+needed) or [sponsor it on GitHub](https://github.com/sponsors/stevezau) — entirely optional, and it
+buys time rather than features on request.
 
 Bug reports are worth just as much. The **Have an issue?** page runs read-only checks that often name
 the cause outright, then opens a pre-filled issue with a secrets-free diagnostic to attach.

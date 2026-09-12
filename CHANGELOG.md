@@ -8,6 +8,11 @@ All notable changes to this project are documented here. This project follows
 
 ### Added
 
+- **Star on GitHub, or buy me a coffee.** The sidebar's "Support this project" link opened GitHub
+  Sponsors, which only works if you have a GitHub account and a card to hand. It is now two links: a
+  star, which is free and is how other Plex owners find Shortlist, and a Ko-fi coffee, which takes a
+  guest checkout with card, Apple Pay, Google Pay or PayPal. GitHub Sponsors is still on the repo.
+
 - **A row can now take days off.** Rows were permanent fixtures: once built, one sat on everybody's
   Home until you switched it off or deleted it. Open a row and set **When it appears → Only on these
   days**, and it shows on the days you pick and is hidden the rest of the time.
