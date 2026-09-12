@@ -910,7 +910,8 @@ It is exactly as right as the ledger is. Three guards bound that:
   (Kometa) collection. The label is untouched, so hiding and promotion are unaffected either way.
 - **Ambiguity.** `_delivered_keys` drops any ratingKey two rows claim rather than arbitrating; delivery
   falls back to the title, which is where it was before the ledger. Reachable if a run died between
-  the delete and the persist on the rebuild path, and it self-heals on the next successful run.
+  the delete and the persist on a repair that recreates a row (wrong type, or refusing every add), and
+  it self-heals on the next successful run.
 - **In-run reuse.** Plex ratingKeys are reused rowids. The sweep can free row A's id at the top of a
   run, row B create and be handed it, and row A then match B's brand-new collection. So a key this run
   has ALREADY delivered to is withheld — `_claimed_this_run` reads the run's own breakdown.

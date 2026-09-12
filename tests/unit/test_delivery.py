@@ -573,27 +573,30 @@ class TestDeliverRows:
         existing.items.return_value = [MagicMock(title=f"Stale {k}", ratingKey=2000 + k) for k in range(n_stale)]
         return existing
 
-    def test_large_turnover_rebuilds_instead_of_firing_per_item_removes(self, engine_config, movies, shows):
-        """A big turnover (>= _REBUILD_MIN_REMOVES stale items) rebuilds the collection — one batched
-        create — instead of N slow per-item removeItems DELETEs. set_items is never called."""
+    def test_a_full_turnover_updates_the_row_in_place_and_keeps_its_plex_identity(self, engine_config, movies, shows):
+        """Issue #119: a row losing many titles used to be deleted and recreated to save per-item
+        removes. The new collection had a new ratingKey, so every tool that keys on it (agregarr's
+        custom summary and sort title) lost its settings every night. The row must stay the SAME
+        Plex object however much of it changes."""
         plex = self._plex(movies, shows)
         profile = make_profile()
-        existing = self._existing_with_stale(profile, 6)  # 6 removes >= threshold -> rebuild
+        existing = self._existing_with_stale(profile, 20)  # every current item is unwanted
+        existing.ratingKey = 4242
+        stale = existing.items.return_value
         plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
 
-        diff, stored = deliver_rows(plex, profile, picks(), engine_config)
+        breakdown: list[dict] = []
 
-        plex.delete_owned_collection.assert_called_once()
-        assert plex.delete_owned_collection.call_args.args[0] is existing
-        # The ownership-guard prefix (rule 4) — LABEL_PREFIX is the one hardcoded source of truth now
-        # that EngineConfig no longer carries a (never-set) label_prefix knob of its own.
-        assert plex.delete_owned_collection.call_args.args[1] == LABEL_PREFIX
-        plex.create_collection.assert_called_once()  # rebuilt via one batched create
-        plex.set_items.assert_not_called()  # NOT the per-item update path
-        existing.editTitle.assert_not_called()  # nothing to rename — it's being deleted
-        plex.fetch_items.assert_called_once_with([1001, 1002])  # the fresh row holds the wanted picks
+        diff, stored = deliver_rows(plex, profile, picks(), engine_config, breakdown=breakdown)
+
+        plex.delete_owned_collection.assert_not_called()
+        plex.create_collection.assert_not_called()
+        plex.fetch_items.assert_called_once_with([1001, 1002])  # only the delta is fetched
+        plex.set_items.assert_called_once_with(existing, stale, [], [1001, 1002])
+        assert breakdown[0]["rating_key"] == 4242  # the ledger keeps pointing at the same collection
+        assert diff.removed == [f"Stale {k}" for k in range(20)]
+        assert diff.created is False
         assert stored == "Shortlist_sarah"
-        assert diff.removed == [f"Stale {k}" for k in range(6)]
 
     def test_a_collection_that_refuses_every_item_is_rebuilt(self, engine_config, movies, shows):
         """Observed on a real server: an EMPTY collection of ours 400'd on a batch of 30 valid shows
@@ -672,55 +675,66 @@ class TestDeliverRows:
             deliver_rows(plex, profile, picks(), engine_config)
         plex.delete_owned_collection.assert_not_called()
 
-    def test_exactly_the_threshold_rebuilds_boundary(self, engine_config, movies, shows):
-        """Boundary: removing exactly _REBUILD_MIN_REMOVES items rebuilds (the branch is `>=`)."""
-        from shortlist.engine.delivery import _REBUILD_MIN_REMOVES
-
+    def test_a_dry_run_update_writes_and_announces_nothing(self, engine_config, movies, shows):
         plex = self._plex(movies, shows)
         profile = make_profile()
-        existing = self._existing_with_stale(profile, _REBUILD_MIN_REMOVES)
+        existing = self._existing_with_stale(profile, 6)
         plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+        events: list = []
 
-        deliver_rows(plex, profile, picks(), engine_config)
+        deliver_rows(plex, profile, picks(), engine_config, dry_run=True, on_write=events.append)
 
-        plex.delete_owned_collection.assert_called_once()
         plex.set_items.assert_not_called()
-
-    def test_rebuild_deletes_the_old_row_before_creating_the_new_one(self, engine_config, movies, shows):
-        """Leak-safe order: delete-first, then create+label. Nothing exists between the two steps
-        (nothing to leak), and it avoids a duplicate-title 409 from two live collections."""
-        plex = self._plex(movies, shows)
-        profile = make_profile()
-        existing = self._existing_with_stale(profile, 6)
-        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
-
-        deliver_rows(plex, profile, picks(), engine_config)
-
-        names = [c[0] for c in plex.mock_calls]
-        assert names.index("delete_owned_collection") < names.index("create_collection")
-
-    def test_a_small_delta_still_updates_in_place_no_rebuild(self, engine_config, movies, shows):
-        """Just under the threshold stays on the cheap in-place update — no needless delete+recreate."""
-        plex = self._plex(movies, shows)
-        profile = make_profile()
-        existing = self._existing_with_stale(profile, 4)  # 4 removes < threshold -> update
-        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
-
-        deliver_rows(plex, profile, picks(), engine_config)
-
-        plex.delete_owned_collection.assert_not_called()
-        plex.set_items.assert_called_once()
-
-    def test_dry_run_never_rebuilds(self, engine_config, movies, shows):
-        plex = self._plex(movies, shows)
-        profile = make_profile()
-        existing = self._existing_with_stale(profile, 6)
-        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
-
-        deliver_rows(plex, profile, picks(), engine_config, dry_run=True)
-
         plex.delete_owned_collection.assert_not_called()
         plex.create_collection.assert_not_called()
+        assert events == []
+
+    def test_says_what_it_will_add_and_remove_before_updating_a_row(self, engine_config, movies, shows):
+        """Plex removes titles one DELETE at a time, so an in-place update on a big library runs for
+        minutes — the run page is told what is about to change BEFORE the writes start, not after."""
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        existing = self._existing_with_stale(profile, 3)
+        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+        events: list = []
+        plex.set_items.side_effect = lambda *args: events.append("set_items")
+
+        deliver_rows(plex, profile, picks(), engine_config, on_write=events.append)
+
+        assert events == [
+            {"row": "✨ Movies Picked for You", "library": "Movies", "adding": 2, "removing": 3},
+            "set_items",
+        ]
+
+    def test_says_it_is_creating_a_row_before_creating_it(self, engine_config, movies, shows):
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        events: list = []
+        create = plex.create_collection.side_effect
+        plex.create_collection.side_effect = lambda *args: (events.append("create"), create(*args))[1]
+
+        deliver_rows(plex, profile, picks(), engine_config, on_write=events.append)
+
+        assert events == [{"row": "✨ Movies Picked for You", "library": "Movies", "creating": 2}, "create"]
+
+    def test_says_nothing_when_nothing_is_written(self, engine_config, movies, shows):
+        """An unchanged row and a dry run write nothing, so announcing a write would be a lie."""
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        unchanged = MagicMock()
+        unchanged.title = "✨ Movies Picked for You" + row_marker(profile.plex_account_id)
+        unchanged.items.return_value = [
+            MagicMock(title="Movie 1", ratingKey=1001),
+            MagicMock(title="Movie 2", ratingKey=1002),
+        ]
+        plex.find_owned_collections.side_effect = lambda section, label: [unchanged] if section is movies else []
+        events: list = []
+
+        deliver_rows(plex, profile, picks(), engine_config, on_write=events.append)
+        plex.find_owned_collections.side_effect = lambda section, label: []
+        deliver_rows(plex, profile, picks(), engine_config, dry_run=True, on_write=events.append)
+
+        assert events == []
 
     def test_records_order_work_on_create_for_the_deferred_ordering_pass(
         self, engine_config: EngineConfig, movies, shows

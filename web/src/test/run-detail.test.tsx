@@ -665,6 +665,86 @@ describe("RunDetailPage — grouped by library", () => {
     expect(screen.queryByText(/Finishing up/)).toBeNull();
   });
 
+  it("tells you what a person's row is getting while it is being written", async () => {
+    // An in-place update on a big library runs for minutes (Plex removes titles one at a time).
+    // "writing the row to Plex" alone could not say whether that was a new row or ten titles being
+    // swapped, so the panel reads the pending change off the live log.
+    const base = run([]);
+    getRun.mockResolvedValue({
+      ...base,
+      finished_at: null,
+      status: "running",
+      stats: { ...base.stats, expected_users: [{ slug: "sarah" }] },
+      // The API synthesises a `pending` entry for anyone not finished yet.
+      users: [
+        {
+          ...base.users[0]!,
+          username: "sarah",
+          slug: "sarah",
+          display_name: "sarah",
+          status: "pending",
+        },
+      ],
+    });
+    getRunLog.mockResolvedValue([
+      {
+        seq: 1,
+        ts: "2026-08-17T03:30:00Z",
+        run_id: 2,
+        user: "sarah",
+        stage: "delivering",
+        counts: { row: "Picked", library: "TV Shows", adding: 10, removing: 3 },
+      },
+    ]);
+
+    renderDetail("");
+    await expandRows();
+
+    expect(
+      await screen.findByText(
+        "writing the row to Plex — Picked · TV Shows · adding 10 titles · removing 3 titles…",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("names only the row for a person's other stages", async () => {
+    // The counts are shown for a row's pending write only. Earlier stages carry tallies that read
+    // wrongly mid-flight — "0 favourites to match" is emitted before the favourites are counted.
+    const base = run([]);
+    getRun.mockResolvedValue({
+      ...base,
+      finished_at: null,
+      status: "running",
+      stats: { ...base.stats, expected_users: [{ slug: "sarah" }] },
+      users: [
+        {
+          ...base.users[0]!,
+          username: "sarah",
+          slug: "sarah",
+          display_name: "sarah",
+          status: "pending",
+        },
+      ],
+    });
+    getRunLog.mockResolvedValue([
+      {
+        seq: 1,
+        ts: "2026-08-17T03:30:00Z",
+        run_id: 2,
+        user: "sarah",
+        stage: "curating",
+        counts: { candidates: 160, row: "Picked" },
+      },
+    ]);
+
+    renderDetail("");
+    await expandRows();
+
+    expect(
+      await screen.findByText("curating with AI — Picked…"),
+    ).toBeInTheDocument();
+  });
+
   it("falls back to the flat pick list for legacy runs with no breakdown", async () => {
     // A legacy run has no per-library breakdown, but its picks still render as a plain list.
     getRun.mockResolvedValue({

@@ -71,7 +71,8 @@ nightly run.
 
 Check what the row is anchored to: **Rows → the row → Where it sits**. If it is set to sit right
 after a collection, that collection has to be on one of the library's own Plex shelves, or there is
-no position to sit after. A row set to **Don't place this row** sinks to the bottom by design.
+no position to sit after. A new row set to **Don't place this row** starts at the bottom, where Plex
+adds every new collection, and stays there.
 
 Open the library in Plex → **Manage Recommendations**. If the collection you anchored to is in that
 list with every toggle off, turn one on, or pick a different anchor. Plex's own rows — "Recently

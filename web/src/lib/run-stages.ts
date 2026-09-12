@@ -108,7 +108,7 @@ export function matchesLogFilter(
  * titles — never shown as "28 seeds").
  */
 export function countLabel(key: string, value: number | string): string {
-  if (key === "row") return String(value);
+  if (key === "row" || key === "library") return String(value);
   switch (key) {
     case "position":
       return `#${value} in line`;
@@ -136,9 +136,38 @@ export function countLabel(key: string, value: number | string): string {
       return `${value} taken down`;
     case "removed":
       return `${value} removed`;
+    // A row's pending write, announced before it starts — an in-place update on a big library
+    // runs for minutes, so the log says what is changing while it happens.
+    case "creating":
+      return `new row, ${titles(value)}`;
+    case "adding":
+      return `adding ${titles(value)}`;
+    case "removing":
+      return `removing ${titles(value)}`;
     default:
       return `${value} ${key}`;
   }
+}
+
+const UPDATE_KEYS = new Set(["adding", "removing"]);
+
+function titles(count: number | string): string {
+  return `${count} ${count === 1 ? "title" : "titles"}`;
+}
+
+/** One log event's counts as a readable phrase: "3/5" for a counted phase, otherwise each count in
+ *  plain English joined with " · ". */
+export function describeCounts(
+  counts: Record<string, number | string>,
+): string {
+  return (
+    progressLabel(counts) ??
+    Object.entries(counts)
+      // An update that only removes should not also claim to be "adding 0 titles".
+      .filter(([key, value]) => !(UPDATE_KEYS.has(key) && value === 0))
+      .map(([key, value]) => countLabel(key, value))
+      .join(" · ")
+  );
 }
 
 /** "3/5" for the phases that count out per-account work, so a long phase reads as moving rather

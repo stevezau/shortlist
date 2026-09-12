@@ -375,11 +375,11 @@ export function RunDetailPage() {
                       Why a refresh can take a while
                     </p>
                     <p className="text-muted-foreground">
-                      Building everyone's rows means updating Plex one change at
-                      a time — Plex only accepts them one-by-one, and it's
-                      especially slow to update TV Shows. A big refresh across
-                      all users can take a while. It's much quicker after the
-                      first run, when most rows only need small tweaks.
+                      Plex removes titles from a collection one at a time, and
+                      that is especially slow on TV Shows, so a row dropping ten
+                      titles can take a few minutes. Rows whose titles haven't
+                      changed are skipped. Each person's panel shows what their
+                      row is adding and removing while it happens.
                     </p>
                   </div>
                 </div>

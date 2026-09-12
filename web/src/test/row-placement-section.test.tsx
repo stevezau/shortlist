@@ -79,7 +79,7 @@ describe("RowPlacementSection", () => {
     expect(await screen.findByText(/Where it sits/)).toBeTruthy();
   });
 
-  it("says what happens when ordering is off — it sinks, it does not stay put", async () => {
+  it("says what happens when ordering is off — new rows land at the end of the shelf", async () => {
     renderSection({ "rows.manage_shelf_order": false });
 
     const note = await screen.findByText(/Shelf ordering is off/);

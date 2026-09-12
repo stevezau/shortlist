@@ -2793,6 +2793,7 @@ def _deliver_row(
                 breakdown=user_report.breakdown,
                 poster_artist=ctx.poster_artist,
                 order_work=order_work,
+                on_write=lambda counts: _emit(ctx, user.slug, "delivering", counts),
             )
             logger.debug(
                 "{}: row '{}' delivery — waited {:.1f}s for write-lock, wrote {} librar(ies) in {:.1f}s",
@@ -3061,7 +3062,7 @@ def _run_user(
                     "{}: cancelled — stopping before '{}', rows already written are intact", user.slug, spec.slug
                 )
                 break
-            _emit(ctx, user.slug, "delivering", {"picks": len(picks), "row": spec.name_template or spec.slug})
+            _emit(ctx, user.slug, "delivering", {"row": spec.name_template or spec.slug, "picks": len(picks)})
             if not _deliver_row(
                 policy,
                 spec,
@@ -3367,6 +3368,7 @@ def _shared_row(
         section_picks=section_picks,
         breakdown=user_report.breakdown,
         order_work=order_work,
+        on_write=lambda counts: _emit(ctx, slug, "delivering", counts),
     )
     return agg if picks else None
 

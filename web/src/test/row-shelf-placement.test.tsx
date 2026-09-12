@@ -126,7 +126,7 @@ describe("RowShelfPlacement", () => {
     expect(screen.getByLabelText("Position")).toHaveValue("top");
   });
 
-  it("offers 'don't place this row', and says it sinks rather than staying put", async () => {
+  it("offers 'don't place this row'", async () => {
     const latest = renderControl();
     await screen.findByText("TV Shows");
 

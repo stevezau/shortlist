@@ -114,10 +114,8 @@ class HubAnchorIn(BaseModel):
     row: str = Field(default="", max_length=255)
     before: bool = False
     top: bool = False
-    #: The owner's per-row switch for this library. False means Shortlist never positions this row.
-    #: That is NOT "leave it where it is": Plex appends a new hub at the bottom of the shelf, and a
-    #: row losing five or more titles is deleted and recreated (`delivery._REBUILD_MIN_REMOVES`), so
-    #: an unplaced row sinks there within days. The UI has to say so.
+    #: The owner's per-row switch for this library. False means Shortlist never positions this row,
+    #: so it sits wherever Plex put it — a new row starts at the bottom of the shelf.
     enabled: bool = True
 
 

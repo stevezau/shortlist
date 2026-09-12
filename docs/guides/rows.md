@@ -224,9 +224,9 @@ Each row chooses its own spot, per library, in the **Row editor** under "Where i
   You" wherever that ends up — including when that row is itself anchored to a collection. The other
   row needs its own position switched on in that library too: Shortlist can only hold two rows
   together if it is placing both. If it isn't, this row goes to the top instead, in your Rows order.
-- **Don't place this row**. Shortlist never positions it. Be aware this does not mean "leave it where
-  it is": Plex adds new collections at the end of the shelf, and a row that loses five or more titles
-  in a night is rebuilt from scratch, so an unplaced row sinks to the bottom within days.
+- **Don't place this row**. Shortlist never positions it, so it stays wherever Plex put it. Be aware
+  that Plex adds new collections at the end of the shelf, so a new row that nothing places starts at
+  the bottom.
 
 Settings → **Row placement** now holds one switch, **Let Shortlist order the Recommended shelf**.
 Turn it off and Shortlist leaves the order entirely alone. (It used to also hold a per-library

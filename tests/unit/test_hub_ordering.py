@@ -291,8 +291,8 @@ class TestPlaceRows:
         assert section.titles() == ["Picked Sarah", "Kometa Genre"]
 
     def test_a_rebuilt_collection_at_the_bottom_is_pulled_back_into_its_row(self):
-        """The case that happens every night: a row losing 5+ titles is deleted and recreated, and
-        Plex appends the new hub to the BOTTOM. 20-70 of these a night on the maintainer's server."""
+        """A newly created row — a first delivery, or a repair that has to recreate one — is appended
+        to the BOTTOM of the shelf by Plex, and has to be pulled back into its place."""
         anchor = FakeHub("Recently Added", "ra", collection=False)
         r1 = FakeHub("Picked Sarah", "p1")
         kometa = FakeHub("Kometa Genre", "k")

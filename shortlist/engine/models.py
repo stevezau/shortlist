@@ -526,8 +526,8 @@ class RowSpec:
     # A library ABSENT here means the top of the shelf, which is the shipped default — there is no
     # global default to inherit any more (`EngineConfig.hub_anchors` and the `rows.hub_anchor` setting
     # were retired: they were a second place to set the same thing and disagreed with their own
-    # screen). Not "leave it alone" either — Plex appends new hubs at the bottom, so a row nothing
-    # positions sinks out of sight; opting out is `HubAnchor.enabled`, set deliberately per row.
+    # screen). Not "leave it alone" either — Plex appends new hubs at the bottom, so a new row nothing
+    # positions starts out of sight; opting out is `HubAnchor.enabled`, set deliberately per row.
     hub_anchors: dict[str, HubAnchor] = field(default_factory=dict)
     # Optional custom poster for this row's Plex collection(s). None -> leave Plex's own artwork alone.
     poster: PosterSpec | None = None
@@ -1051,10 +1051,8 @@ class HubAnchor:
     # places, so a new field anywhere earlier silently re-binds their arguments — inserting one
     # second turned `HubAnchor("Gems Anchor", False)` into a row anchor of `False`.
     anchor_row: str = ""
-    #: The owner's per-row switch. OFF means Shortlist never positions this row — and that is not the
-    #: same as "leave it where it is": Plex appends a newly created hub to the BOTTOM of the shelf, and
-    #: a row losing five or more titles is deleted and recreated (`delivery._REBUILD_MIN_REMOVES`), so
-    #: an unplaced row sinks there within days. The UI has to say that, not imply it stays put.
+    #: The owner's per-row switch. OFF means Shortlist never positions this row, so it sits wherever
+    #: Plex put it: a newly created hub goes to the BOTTOM of the shelf and stays there.
     enabled: bool = True
 
 

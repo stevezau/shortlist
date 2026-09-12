@@ -18,7 +18,7 @@ import {
 import { formatDuration, runStatusLabel, runStatusVariant } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { githubIssueSnippet } from "@/lib/github";
-import { STAGE_LABELS } from "@/lib/run-stages";
+import { describeCounts, STAGE_LABELS } from "@/lib/run-stages";
 import { useCopy } from "@/lib/use-copy";
 import { cn } from "@/lib/utils";
 import type {
@@ -548,11 +548,14 @@ function UserPanelBody({
     const stageLabel = latest
       ? (STAGE_LABELS[latest.stage] ?? latest.stage)
       : null;
-    const rowName = latest?.counts?.row as string | undefined;
+    // The full counts only for a row's pending write ("TV Shows · adding 10 titles"). Earlier
+    // stages carry tallies that read wrongly mid-flight, so they name just the row.
+    const counts = latest?.counts ?? {};
+    const detail = counts.library ? describeCounts(counts) : counts.row;
     return (
       <p className="text-sm text-muted-foreground">
         {stageLabel
-          ? `${stageLabel}${rowName ? ` — ${rowName}` : ""}…`
+          ? `${stageLabel}${detail ? ` — ${detail}` : ""}…`
           : "Working on this person…"}
       </p>
     );

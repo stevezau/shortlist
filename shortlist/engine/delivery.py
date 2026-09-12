@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import replace
 
 from loguru import logger
@@ -28,9 +29,8 @@ def _rename_or_keep(collection, title: str, profile: UserProfile, section_title:
     """Rename a row in place, keeping its old name if Plex refuses the new one.
 
     A Plex collection is keyed by TITLE within a library, so a rename onto a title that already
-    exists there answers 409 Conflict. The rebuild path a few lines below already knows this and
-    deletes first to avoid it; this path did not, and an unguarded `editTitle` took the whole PERSON
-    down with it — recorded on a real server (run 4, 2026-08-15):
+    exists there answers 409 Conflict. An unguarded `editTitle` took the whole PERSON down with it —
+    recorded on a real server (run 4, 2026-08-15):
 
         BadRequest: (409) conflict; …title.value=🎯 Because you watched Ted Lasso…&type=18
 
@@ -84,12 +84,6 @@ def _rename_or_keep(collection, title: str, profile: UserProfile, section_title:
             squatter,
         )
 
-
-# When a row's update would remove at least this many items, rebuild the collection (delete + one
-# batched create) instead of firing that many per-item removeItems DELETEs. plexapi has no bulk
-# remove, and on a slow library each DELETE is expensive (SFLIX TV rows ~15s each), so a big turnover
-# is far cheaper as a single create. Small deltas keep the in-place update path (no needless rebuild).
-_REBUILD_MIN_REMOVES = 5
 
 # Zero-width space / zero-width non-joiner. Both render as nothing.
 _INVISIBLE = ("​", "‌")
@@ -365,6 +359,7 @@ def deliver_rows(
     breakdown: list[dict] | None = None,
     poster_artist: PosterArtist | None = None,
     order_work: list[tuple] | None = None,
+    on_write: Callable[[dict], None] | None = None,
 ) -> tuple[CollectionDiff, str | None]:
     """Deliver one row's picks as one collection per targeted library. Returns (diff, stored label).
 
@@ -374,6 +369,10 @@ def deliver_rows(
     `delivered_keys` is {section key -> ratingKey} for THIS row and user, from the delivery ledger. It
     is how a title that no longer renders is recognised as this row's rather than orphaned and rebuilt
     — see `_deliver_one`. Empty is always safe: delivery falls back to matching by title.
+
+    `on_write` receives each library's pending change (``{"row", "library"}`` plus ``"creating"`` or
+    ``"adding"``/``"removing"`` counts) just before its membership writes start, so a run can show what
+    it is doing while a slow write is in flight. Never called for an unchanged row or a dry run.
 
     `stored_labels` and `diff` are caller-owned accumulators, written the moment the PMS confirms
     each library's row. A user gets a row per library, so delivery can half-succeed: if the second
@@ -468,6 +467,7 @@ def deliver_rows(
             poster=spec.poster if spec else None,
             artist=poster_artist,
             order_work=order_work,
+            on_write=on_write,
         )
         logger.debug(
             "{}: delivered library '{}' (+{} -{} ={}) in {:.1f}s",
@@ -1069,15 +1069,23 @@ def _deliver_one(
     poster: PosterSpec | None = None,
     artist: PosterArtist | None = None,
     order_work: list[tuple] | None = None,
+    on_write: Callable[[dict], None] | None = None,
 ) -> tuple[CollectionDiff, str]:
     """Upsert one library's collection to exactly `picks`, in order. Returns (diff, stored_label).
 
     Finds this row's existing collection via `_find_this_rows_collection` (title match, then the
     ledger's ratingKey, then the sole-row fallback — see its docstring for why, in that order), then
-    applies whichever of four write strategies fits: create, rebuild (large turnover), in-place
-    update, or a no-op when membership already matches. `wanted_label` is this user's own label, so
-    every candidate the identity match can land on is one of THEIR rows — never another user's row
-    and never a foreign (e.g. Kometa) collection, which never carries our label at all.
+    applies whichever of three write strategies fits: create, in-place update, or a no-op when
+    membership already matches. `wanted_label` is this user's own label, so every candidate the
+    identity match can land on is one of THEIR rows — never another user's row and never a foreign
+    (e.g. Kometa) collection, which never carries our label at all.
+
+    An existing row is ALWAYS updated in place, however much of it changes (issue #119). Deleting and
+    recreating it is faster on a huge library, but the new collection gets a new ratingKey, and every
+    tool that keys on that (agregarr's custom summary and sort title, Kometa) loses its settings for
+    the row. It also leaves the new collection unlabelled — hidden by no share filter — until its label
+    write lands. `on_write` is told what is about to change before the membership writes, because an
+    in-place update on a big library takes minutes.
     """
     # This library's own name fills {library_name}; every match/promote/retire caller renders with the
     # same section title, so the titles stay in lockstep (a mismatch would leave a row unhidden).
@@ -1138,6 +1146,8 @@ def _deliver_one(
             )
             apply_poster(plex, None, poster, profile, picks, library_name=section.title, artist=artist, dry_run=True)
             return diff, label
+        if on_write is not None:
+            on_write({"row": display, "library": section.title, "creating": len(picks)})
         stored, diff.rating_key, vanished = _create_labelled_collection(
             plex,
             section,
@@ -1178,13 +1188,9 @@ def _deliver_one(
     to_remove_count = sum(1 for i in existing_items if i.ratingKey not in wanted_set)
 
     if dry_run:
-        # Say what a real run WOULD do: a big turnover rebuilds (delete + recreate), not an in-place
-        # update — a dry-run reviewer should see the row would be rebuilt (rule 8).
-        verb = "would rebuild" if to_remove_count >= _REBUILD_MIN_REMOVES else "would update"
         logger.info(
-            "[dry-run] {}: {} '{}' in '{}' (+{} -{} ={})",
+            "[dry-run] {}: would update '{}' in '{}' (+{} -{} ={})",
             profile.username,
-            verb,
             display,
             section.title,
             len(diff.added),
@@ -1193,43 +1199,6 @@ def _deliver_one(
         )
         apply_poster(plex, collection, poster, profile, picks, library_name=section.title, artist=artist, dry_run=True)
         return diff, label
-
-    # Large turnover: per-item removeItems DELETEs are the dominant delivery cost on a slow library
-    # (plexapi has no bulk remove, and SFLIX TV rows cost ~15s PER delete). Rebuilding replaces N
-    # deletes with ONE batched create. Delete the old collection FIRST, then create+label a fresh one:
-    # delete-first avoids a duplicate-title 409 (two collections can't share the marked title) and is
-    # leak-safe — nothing exists between the two steps (nothing to leak), and the brief create->label
-    # window is the same one the normal first-create path already has. (perf: SFLIX 2026-07-19)
-    if to_remove_count >= _REBUILD_MIN_REMOVES:
-        logger.info(
-            "{}: rebuilding '{}' in '{}' (+{} -{}) — avoids {} per-item removes",
-            profile.username,
-            display,
-            section.title,
-            len(to_add_keys),
-            to_remove_count,
-            to_remove_count,
-        )
-        plex.delete_owned_collection(collection, label_prefix)
-        stored, diff.rating_key, vanished = _create_labelled_collection(
-            plex,
-            section,
-            profile,
-            picks,
-            title=title,
-            label=label,
-            display=display,
-            poster=poster,
-            artist=artist,
-            order_work=order_work,
-        )
-        if vanished:
-            # Deleted from Plex between the picks being made and the row being created. The row holds
-            # the survivors, so the diff must name only those — otherwise the run reports having
-            # delivered a title the row does not contain (plex-safety rule 10).
-            dead = set(vanished)
-            diff.added = [p.title for p in picks if p.rating_key not in dead]
-        return diff, stored
 
     if collection.title != title:
         _rename_or_keep(collection, title, profile, section.title)
@@ -1254,6 +1223,8 @@ def _deliver_one(
         )
         return diff, stored
 
+    if on_write is not None:
+        on_write({"row": display, "library": section.title, "adding": len(to_add_keys), "removing": to_remove_count})
     # Fetch ONLY the items being added (the delta), not all N picks — most are already in the
     # collection on a steady run, so this is a handful of items instead of the whole row. An empty
     # delta short-circuits inside `fetch_items`, which also absorbs the case where every key in the

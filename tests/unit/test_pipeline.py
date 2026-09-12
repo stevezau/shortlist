@@ -1664,6 +1664,28 @@ class TestPerRowOverrides:
             assert len(entry["picks"]) == 5, "each library's row has its own full set of picks"
             assert [p["rank"] for p in entry["picks"]] == [1, 2, 3, 4, 5], "picks ranked 1..k within the library"
 
+    def test_the_run_log_says_what_each_library_is_about_to_get(self, ctx: EngineContext, mock_plextv):
+        """Delivery narrates each library's pending change under the person, before the write — an
+        in-place update on a big library runs for minutes, and "writing the row to Plex" alone could
+        not say whether it was creating a row or swapping titles in one."""
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, **{i: 1000 + i for i in range(10, 16)}}
+        pool = [{"id": i, "title": f"T{i}", "genre_ids": [], "vote_average": 8.0} for i in range(10, 16)]
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        ctx.config.rows = [RowSpec(slug="picked", name_template="Picked", size=5, media="movie")]
+        ctx.config.min_history = 1
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        emitted: list[tuple[str, str, dict]] = []
+        ctx.progress = lambda slug, stage, counts, reason=None: emitted.append((slug, stage, counts))
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        writes = [(slug, counts) for slug, stage, counts in emitted if stage == "delivering" and "library" in counts]
+        assert writes == [("sarah", {"row": "Picked", "library": "Movies", "creating": 5})]
+
     def _movie_row_ctx(self, ctx, refresh_days, run_day):
         """A single Movies library holding tmdb 10-19, one 'picked' movie row at the given cadence."""
         movies = MagicMock(type="movie", key="1", title="Movies")
@@ -2261,6 +2283,22 @@ class TestPerRowOverrides:
         shared_report = next(u for u in report.users if u.slug == "shared_popular")
         assert shared_report.breakdown, "the shared row records a breakdown"
         assert all(e["row_slug"] == "popular" for e in shared_report.breakdown)
+
+    def test_a_shared_row_narrates_its_writes_under_its_own_slug(self, ctx: EngineContext, mock_plextv):
+        """A shared row is delivered by a separate path from a person's row, so it needs its own proof
+        that the run log says what it is about to write."""
+        ctx.config.rows = [RowSpec(slug="popular", name_template="Popular", size=5, shared=True, min_watchers=2)]
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        emitted: list[tuple[str, str, dict]] = []
+        ctx.progress = lambda slug, stage, counts, reason=None: emitted.append((slug, stage, counts))
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
+
+        writes = [(slug, counts) for slug, stage, counts in emitted if stage == "delivering" and "library" in counts]
+        assert writes, "the shared row announced no write"
+        assert all(slug == "shared_popular" and counts["row"] == "Popular" for slug, counts in writes)
+        assert all(counts.get("creating", 0) > 0 for _, counts in writes)
 
     def test_a_shared_row_honours_the_server_wide_block_list(self, ctx: EngineContext, mock_plextv):
         """A blocked title must not appear in a public row.
@@ -6270,17 +6308,16 @@ class TestShelfSequence:
         assert seq == [("top", ""), ("rows", {11})], "an off row must not appear in the arrangement"
 
     def test_a_row_with_no_placement_configured_defaults_to_the_top(self):
-        """Not "leave it alone" — Plex appends new hubs at the BOTTOM, and a row losing five titles is
-        deleted and recreated, so a row nothing positions sinks out of sight within days. Opting out
-        is the per-row switch, set deliberately."""
+        """Not "leave it alone" — Plex appends new hubs at the BOTTOM, so a new row nothing positions
+        starts out of sight. Opting out is the per-row switch, set deliberately."""
         specs = [self._spec("picked", {})]
         seq, _ = self._seq(specs, {"picked": {11}})
 
         assert seq == [("top", ""), ("rows", {11})]
 
     def test_a_row_the_ledger_does_not_name_is_reported_not_silently_skipped(self):
-        """An unplaced row does NOT stay put: Plex appends new hubs at the bottom, and a row losing
-        five titles is deleted and recreated, so it sinks there within days."""
+        """A row with nothing recorded is not placed this run, and a new one sits where Plex put it —
+        at the bottom of the shelf — so the skip is reported rather than silent."""
         from shortlist.engine.models import HubAnchor
 
         specs = [self._spec("picked", {"1": HubAnchor(to_top=True)})]

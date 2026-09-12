@@ -1546,9 +1546,8 @@ def _shelf_sequence(
     placements: dict[str, object] = {}
     for spec in rows_here:
         # NO entry means the shipped default: on, at the top. Not "leave it alone" — Plex appends a
-        # new hub at the BOTTOM and a row losing five titles is deleted and recreated, so a row
-        # nothing positions sinks out of sight within days. Opting out is `enabled=False`, which the
-        # owner sets deliberately per row.
+        # new hub at the BOTTOM, so a new row nothing positions starts out of sight. Opting out is
+        # `enabled=False`, which the owner sets deliberately per row.
         #
         # This replaced a per-LIBRARY default that also decided it, and decided it differently
         # depending on whether any other library had been configured: with none configured it meant

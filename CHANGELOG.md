@@ -43,6 +43,18 @@ All notable changes to this project are documented here. This project follows
   accepted as Sunday too, and a list of days now gets a description ("Every Monday and Thursday at
   4:00 AM") instead of none. (#123)
 
+- **A row keeps its Plex collection when its titles change, so agregarr and Kometa settings stick.**
+  A row that lost five or more titles in a run used to be deleted and created again, because that
+  was quicker on a large TV library. The new collection had a new Plex id, and tools that remember a
+  collection by its id lost what you had set on it: agregarr's custom summary and sort title were
+  wiped every time the row refreshed. Shortlist now always updates the existing collection in place.
+
+  The trade is time. Plex removes titles from a collection one at a time, and on a very large TV
+  library each removal is slow, so a nightly run there can take a lot longer than before. Nothing
+  changes for a row whose titles did not change. While a row is being written, the run page now says
+  what it is doing: which library, and how many titles it is adding and removing, or that it is
+  creating a new row. (#119)
+
 - **"Something else is reordering your shelf" no longer fires because two people watched the same
   film.** A "Because you watched X" row is named after the film, so everyone who watched that film
   gets a row with the *same* name. The check that spots another tool fighting Shortlist for the shelf
