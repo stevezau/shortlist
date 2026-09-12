@@ -84,10 +84,14 @@ Long sessions are the single biggest cost: every turn re-sends the whole convers
 - **Say when a `/clear` is due.** When the next request is a genuinely new task — a different
   feature, a different bug, a different area — say so in one line before starting, and let the owner
   decide. Don't nag mid-task; the cost of losing context you still need is higher than the tokens.
-- **Test what you changed, not everything, while iterating.** `pytest tests/unit/test_foo.py` (or
-  `-k`) during the edit loop; the FULL suite once before committing, plus `pnpm test`/`pnpm build`
-  when web files changed and `-m e2e` when a UI flow or the wizard changed. CI runs everything
-  regardless, so a green full suite immediately before the commit is the bar — not after each edit.
+- **Tests run at the END, not during the edit loop** (owner decision 2026-09-12). Write the change,
+  show it to the owner, iterate on what he says — then test once, when the work has settled. Do not
+  punctuate the edit loop with test runs; the suites are slow enough that they set the pace of
+  development, and CI runs everything regardless.
+  The end-of-work pass is the full one: `pytest`, `pnpm test`, `tsc -b --force`, `eslint .`, plus
+  `-m e2e` when a UI flow or the wizard changed. That pass is the bar before any commit.
+  The exception is a bug you are actively diagnosing — a failing test IS the investigation there, so
+  run it as often as it takes.
 - **One pytest at a time on this host.** Several agent sessions share it, and each run fans out to
   `PYTEST_XDIST_AUTO_NUM_WORKERS` processes — four overlapping runs is four times that, which is the
   shape that took the plex host down (2026-09-12: 189 workers, ~30 GB into swap). A `PreToolUse` hook
