@@ -907,7 +907,7 @@ class TestShelfContention:
                     scope="shelf.unplaced",
                     level="warning",
                     ts=datetime.now(UTC),
-                    message={"library": "Movies", "moved": [], "reason": "anchor not on the shelf"},
+                    message={"library": "Movies", "moved": [], "reason": "anchor not found"},
                 )
             )
         session.commit()

@@ -954,7 +954,7 @@ def _sync_check(state, payload: dict) -> dict:
     # A row stranded at the bottom of the Recommended shelf IS a row "in the wrong place", which is
     # what this button says it fixes — so put the shelf right here too, not only on a full run. It is
     # cosmetic and privacy-neutral (positions only, on hubs already promoted and browse-hidden), so it
-    # needs no privacy gate and `_apply_order` swallows its own failures. `_build_indexes` with no
+    # needs no privacy gate and `_apply_placement` swallows its own failures. `_build_indexes` with no
     # users names the libraries rows live in without reading a single item inside them.
     _build_indexes(ctx, [], ctx.plex.sections())
     _order_phase(ctx, report)
@@ -974,7 +974,7 @@ def _sync_check(state, payload: dict) -> dict:
     if moved_in:
         libraries = ", ".join(entry.get("library", "?") for entry in moved_in)
         detail += f"; {'would reposition' if dry_run else 'repositioned'} rows on the shelf in {libraries}"
-    # Placements we could NOT honour (`pipeline.UNPLACEABLE`). Said out loud rather than folded into
+    # Placements we could NOT honour (`place_rows`'s `refused`). Said out loud rather than folded into
     # the line above, which would report a burial as a reposition.
     unplaced = [e for e in report.hub_orderings if e.get("placed") is False]
     if unplaced:
@@ -1008,7 +1008,7 @@ def _require_filters_merged(report, what: str) -> None:
 
 def _audit_hub_orderings(state, report, dry_run: bool) -> None:
     """Audit each library whose Recommended-shelf order we moved, and each one whose configured
-    placement could not be applied at all (`pipeline.UNPLACEABLE`) — plex-safety rule 10.
+    placement could not be applied at all (an anchor that is on no shelf) — plex-safety rule 10.
 
     `run_persistence._emit_hub_ordering_events` only fires for a persisted RUN, and the two handlers
     that now order — `privacy.sync` and `sync.check` — persist no run. Without this the `verified: False`
@@ -1111,7 +1111,7 @@ def _privacy_sync(state, payload: dict) -> dict:
     if moved_in:
         libraries = ", ".join(entry.get("library", "?") for entry in moved_in)
         detail += f"; {'would reposition' if dry_run else 'repositioned'} rows on the shelf in {libraries}"
-    # Placements we could NOT honour (`pipeline.UNPLACEABLE`). Said out loud rather than folded into
+    # Placements we could NOT honour (`place_rows`'s `refused`). Said out loud rather than folded into
     # the line above, which would report a burial as a reposition.
     unplaced = [e for e in report.hub_orderings if e.get("placed") is False]
     if unplaced:

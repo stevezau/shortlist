@@ -473,8 +473,10 @@ class LibraryCollectionOut(PassthroughModel):
     whether it has a position on a Plex shelf at all, which decides if it can anchor anything."""
 
     title: str
-    #: False ONLY for a collection Plex reports as promoted nowhere. Plex's own built-in hubs are
-    #: always True: the engine never refuses one, so the editor must not grey one out either.
+    #: False for ANY hub Plex reports as promoted nowhere, built-in or collection — it occupies no
+    #: position a viewer can see, so there is nothing to sit beside. Built-ins used to be exempt
+    #: ("the engine never refuses one"); it now does, because accepting one placed nothing at all and
+    #: said nothing about it. Both sides read `can_anchor`, so this can only drift if that does.
     on_shelf: bool
 
 

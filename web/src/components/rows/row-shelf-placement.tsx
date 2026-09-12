@@ -198,17 +198,19 @@ function LibraryAnchor({
           {mode === "before" ? "before" : "after"}, or nothing moves.
         </p>
       )}
-      {/* Narrow, because the engine's rule is narrow: it refuses this only when Shortlist ALSO
-          positions the anchor row — which it does whenever that row has its own placement or
-          Settings places every row in this library. When nobody positions it, sitting before it is
-          stable and works. The editor cannot see the other row's settings, so it states the
-          condition rather than guessing the outcome. */}
-      {mode === "before" && entry?.row && (
+      {/* The engine's rule, the right way round and for BOTH directions. `_shelf_sequence` resolves
+          a row-to-row relation by walking to the head of the chain, and gives up to "top of the
+          shelf" whenever the named row is not one Shortlist places — which is direction-agnostic, so
+          gating this note on `before` left "right after <row>" with no warning at all. The earlier
+          wording was also inverted ("only works if Shortlist isn't also positioning that row") and
+          named a library default that no longer exists. */}
+      {entry?.row && (
         <p className="text-sm text-muted-foreground">
-          This only works if Shortlist isn’t also positioning that row. If it is,
-          Shortlist can’t hold both places at once, so this row falls back to the
-          library default and the run log says so. <strong>Right after…</strong>
-          always works.
+          The other row needs its own placement switched on in this library too —
+          Shortlist can only hold two rows together if it is placing both. If that
+          one is set to <strong>Don’t position</strong>, or has nothing in this
+          library yet, this row goes to the top of the shelf instead, in your Rows
+          order.
         </p>
       )}
       {anchorOffShelf && (
@@ -228,9 +230,11 @@ function LibraryAnchor({
   );
 }
 
-/** Per-library placement of THIS row in the Recommended shelf. Each targeted library can inherit the
- *  global default, sit at the Top, or anchor after/before a collection. `pinnedTop` carries a legacy
- *  row-level pin over into per-library "Top" once, then `onConsumePin` lets the editor clear it. */
+/** Per-library placement of THIS row in the Recommended shelf. Each targeted library sits at the Top
+ *  (the default when nothing is set), anchors after/before a collection or another row, or is left
+ *  unpositioned. There is no global default to inherit any more — it was a second place to set the
+ *  same thing and disagreed with its own screen. `pinnedTop` carries a legacy row-level pin over into
+ *  per-library "Top" once, then `onConsumePin` lets the editor clear it. */
 export function RowShelfPlacement({
   value,
   libraryKeys,

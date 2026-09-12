@@ -20,7 +20,7 @@ from loguru import logger
 import shortlist.engine.rows as rows
 from shortlist.engine import requests as requests_mod
 from shortlist.engine.clients.http_retry import redact
-from shortlist.engine.clients.plex_pms import log_title
+from shortlist.engine.clients.plex_pms import TOP, log_title
 from shortlist.engine.clients.plextv import FilterWriteRefused
 from shortlist.engine.context import EngineContext, _emit
 from shortlist.engine.delivery import (
@@ -1444,106 +1444,7 @@ def _promote_one(ctx: EngineContext, collection, spec: RowSpec | None, user_type
         home = spec.show_home
         shared = False
         recommended = spec.show_owner_library
-    ctx.plex.promote(
-        collection,
-        shared=shared,
-        home=home,
-        recommended=recommended,
-        pin_top=spec.pin_top,
-    )
-
-
-def _anchor_group_order(
-    groups: dict[tuple, set[int]],
-    group_of_slug: dict[str, tuple],
-    section_title: str,
-) -> list[tuple]:
-    """The order anchor-groups must be applied in, with any that cannot be resolved left out.
-
-    A group anchored to one of OUR rows can only be placed once that row is where it belongs, so this
-    is a topological sort over "group G follows the group holding row R". Groups anchored to a foreign
-    collection or to the top depend on nothing and keep their input order — which is the owner's row
-    order, so a shelf stays in the order the Rows page shows. With one exception: when several groups
-    resolve to the TOP, the second and later ones land after the rows already there rather than
-    displacing them (see `place_rows`), so the existing order BETWEEN those groups is preserved
-    instead of being re-imposed — two of them already at the top stay as they are.
-
-    Two things are dropped rather than guessed at: a CYCLE ("A after B, B after A", including a row
-    naming itself), and anything downstream of one. Placing half a cycle would produce a shelf order
-    that changes every run depending on which half won, and a co-managing tool reordering the same
-    shelf makes that indistinguishable from losing the race.
-
-    Dropped from this ORDER only — what then happens to those rows is the caller's decision, and it
-    takes the library default when there is one rather than leaving them wherever Plex put them.
-    """
-    ordered: list[tuple] = []
-    state: dict[tuple, str] = {}
-
-    def visit(group: tuple) -> bool:
-        seen = state.get(group)
-        if seen == "done":
-            return True
-        if seen == "visiting":
-            return False  # closes a cycle
-        if seen == "broken":
-            return False
-        state[group] = "visiting"
-        anchor_row = group[2]
-        dependency = group_of_slug.get(anchor_row) if anchor_row else None
-        # A row we do NOT move is a fine anchor and imposes no ordering — it is already wherever it
-        # is. Only a sibling this run also places creates a dependency.
-        if dependency is not None and (dependency == group or not visit(dependency)):
-            state[group] = "broken"
-            # States the finding, not the outcome: this function does not know whether the library
-            # has a default for those rows to fall back to, and the caller says so straight after.
-            logger.warning(
-                "hub order: row {!r} is part of, or behind, a placement cycle in {} — not placing "
-                "these rows relative to each other rather than picking a winner",
-                anchor_row,
-                section_title,
-            )
-            return False
-        state[group] = "done"
-        ordered.append(group)
-        return True
-
-    for group in groups:
-        visit(group)
-    return ordered
-
-
-#: Reorder outcomes that mean "the owner asked for a placement and we could not honour it", as
-#: opposed to the ordinary skips a converged server produces every night. These are the ones worth a
-#: warning in the audit: each names a setting on the Rows page that is silently doing nothing.
-UNPLACEABLE = frozenset(
-    {
-        "anchor not found",
-        "anchor not on the shelf",
-        "anchor row not on this shelf",
-    }
-)
-
-
-def _we_place(
-    anchor_row: str,
-    group_of_slug: dict[str, tuple],
-    keys_by_slug: dict[str, set[int]],
-    placed_keys: set[int],
-    rest,
-) -> bool:
-    """Whether Shortlist itself positions ``anchor_row``'s hubs in this library.
-
-    Two ways it can: the row has its own placement (it is in an enumerated group), or the catch-all
-    sweeps it (a library default exists and the row has hubs the enumerated groups do not claim).
-    Either way its block is pinned to a point and kept contiguous, so nothing can hold the slot
-    immediately before it — which is the one placement this has to be able to recognise.
-
-    A row nobody positions is a fine anchor and imposes nothing: it is already wherever it is, so
-    sitting before it is stable. That is the case this must NOT catch.
-    """
-    if anchor_row in group_of_slug:
-        return True
-    return rest is not None and bool(keys_by_slug.get(anchor_row, set()) - placed_keys)
+    ctx.plex.promote(collection, shared=shared, home=home, recommended=recommended)
 
 
 def _collection_order_phase(ctx: EngineContext, order_work: list[tuple]) -> None:
@@ -1632,9 +1533,10 @@ def _shelf_sequence(
 ) -> list[tuple[str, object]]:
     """The wanted arrangement of this library's shelf, top first, as ``place_rows`` takes it.
 
-    One entry per row (``("rows", ratingKeys)``) plus the foreign collections the owner named as
-    landmarks (``("anchor", title)``). A row's collections are a SET: one per person, nobody sees
-    anyone else's, so their order among themselves is not a thing to maintain.
+    Two entries per row: a POSITION marker — ``("anchor", title)``, ``("anchor_before", title)`` or
+    ``("top", "")`` — followed by that row's block, ``("rows", ratingKeys)``. A row's collections are a
+    SET: one per person, nobody sees anyone else's, so their order among themselves is not a thing to
+    maintain.
 
     This replaces the group/cycle/refusal machinery that used to live here. That existed to sequence
     many separate ``move(after=…)`` calls, and those are exactly what breaks Plex: an anchored move
@@ -1682,42 +1584,129 @@ def _shelf_sequence(
     # Row order: a row placed relative to ANOTHER row follows (or precedes) it; everything else keeps
     # the owner's own row order. A cycle is impossible to honour, so it is reported and the rows fall
     # back to declaration order rather than being dropped — an unplaced row sinks to the bottom.
-    order = [spec.slug for spec in rows_here if spec.slug in placements]
-    for _pass in range(len(order)):
-        moved_any = False
-        for slug in list(order):
-            target = getattr(placements[slug], "anchor_row", "")
-            if not target or target not in placements:
-                continue
-            want = order.index(target) + (0 if placements[slug].before else 1)
-            have = order.index(slug)
-            if have != want:
-                order.pop(have)
-                order.insert(want if want <= len(order) else len(order), slug)
-                moved_any = True
-        if not moved_any:
-            break
-    else:
-        logger.warning(
-            "hub order: the row placements in {} refer to each other in a loop — using the row order you set instead",
-            section_title,
-        )
-        order = [spec.slug for spec in rows_here if spec.slug in placements]
+    declared = [spec.slug for spec in rows_here if spec.slug in placements]
 
-    sequence: list[tuple[str, object]] = []
-    seen_anchors: set[str] = set()
-    for slug in order:
-        entry = placements[slug]
-        block = ("rows", keys_by_slug[slug])
-        title = getattr(entry, "anchor_title", "")
-        if title and title not in seen_anchors:
-            seen_anchors.add(title)
-            if entry.before:
-                sequence += [block, ("anchor", title)]
+    def follows(slug: str, ancestor: str) -> bool:
+        """Whether ``slug`` is somewhere in ``ancestor``'s chain of followers.
+
+        The sibling scan below needs the whole SUBTREE, not the direct children: with two rows
+        following one row and one of them carrying a follower of its own, scanning past direct
+        children only inserted the second sibling INSIDE the first one's subtree, breaking that
+        deeper row's "right after <row>" silently.
+        """
+        seen: set[str] = set()
+        current = target_of(slug)
+        while current and current not in seen:
+            if current == ancestor:
+                return True
+            seen.add(current)
+            current = target_of(current)
+        return False
+
+    def target_of(slug: str) -> str:
+        """The row this one is placed against, or "" — a row naming ITSELF included.
+
+        The editor refuses self-reference for the row being saved but deliberately tolerates one
+        further down a chain it did not create, so it reaches here and must not be followed.
+        """
+        target = getattr(placements[slug], "anchor_row", "")
+        return target if target and target != slug and target in placements else ""
+
+    # Built by INSERTION, not by settling a fixpoint. A row is placed next to its target's group as
+    # soon as that target has a place, so "after X" is expressed by construction — immediately so,
+    # unless two rows name the same target, which no single arrangement can satisfy for both; they
+    # then sit together on the named side in the owner's row order. Asking
+    # for it as an index could not express two rows following one target — that is unsatisfiable for
+    # two distinct positions, so the loop oscillated, burned its passes, and reported the owner's
+    # perfectly legal config as a placement cycle before dropping both followers ABOVE their target.
+    order: list[str] = []
+    pending = list(declared)
+    while pending:
+        progress = False
+        for slug in list(pending):
+            target = target_of(slug)
+            if not target:
+                order.append(slug)  # a landmark of its own, or none — keeps the owner's row order
+            elif target in order:
+                at = order.index(target)
+                if placements[slug].before:
+                    # Immediately above the target — which is the target's own index, so an earlier
+                    # sibling that also sits above it stays above this one, in the owner's row order.
+                    order.insert(at, slug)
+                else:
+                    at += 1
+                    # Below the target, and below everything already following it — its whole
+                    # subtree, so several rows sharing one target keep the order the Rows page has
+                    # them in without either of them landing inside the other's chain.
+                    while at < len(order) and follows(order[at], target) and not placements[order[at]].before:
+                        at += 1
+                    order.insert(at, slug)
             else:
-                sequence += [("anchor", title), block]
-        else:
-            sequence.append(block)
+                continue  # its target has no place yet — settle that first
+            pending.remove(slug)
+            progress = True
+        if not progress:
+            # Nothing left can be resolved, so the remainder point at each other. A cycle cannot be
+            # honoured; dropping the rows would let them sink to the bottom, so they take the owner's
+            # row order — recorded, not just logged, because a setting doing nothing has to be
+            # answerable from the UI (plex-safety rule 10).
+            logger.warning(
+                "hub order: the row placements in {} refer to each other in a loop — using your row order instead",
+                section_title,
+            )
+            report.hub_orderings.append(
+                {
+                    "library": section_title,
+                    "placed": False,
+                    "row": ", ".join(names.get(slug, slug) for slug in pending),
+                    "anchor": "",
+                    "moved": [],
+                    "repositioned": 0,
+                    "reason": "these rows are placed relative to each other in a loop — put in your row order instead",
+                }
+            )
+            order.extend(pending)
+            pending = []
+
+    def marker_for(slug: str) -> tuple[str, str]:
+        """This row's POSITION marker: its own landmark, or the one at the head of its chain.
+
+        A row placed relative to ANOTHER row names no landmark itself, so it has to adopt whatever
+        the chain it belongs to ends at. `order` above has already put chain members next to each
+        other in the right sequence, and `place_rows` accumulates repeated markers for one anchor in
+        sequence order, so repeating the head's marker realises the whole chain.
+
+        Walking the chain is what makes "after another row" work at all. It used to work by
+        INHERITANCE — a block with no marker fell into whatever bucket the block before it had left
+        open — and that mechanism was load-bearing for exactly this and silently wrong for everything
+        else: a row on Top after an anchored row landed under that row's collection. Emitting each
+        row's own marker fixed that and broke this, until the chain was resolved here instead.
+
+        A chain that leads nowhere Shortlist places — the head is on Top, or names a row whose own
+        placement is off, or one with nothing in this library yet — means the top of the shelf, in
+        your row order. NOT "left alone": Plex appends new hubs at the bottom.
+        """
+        seen: set[str] = set()
+        current = slug
+        while current not in seen:
+            seen.add(current)
+            entry = placements[current]
+            title = getattr(entry, "anchor_title", "")
+            if title:
+                return ("anchor_before" if entry.before else "anchor", title)
+            target = getattr(entry, "anchor_row", "")
+            if not target or target == current or target not in placements:
+                break
+            current = target
+        return (TOP, "")
+
+    # One POSITION marker per block, always, and never de-duplicated. `place_rows` accumulates
+    # repeats of the same anchor correctly, whereas dropping a repeated marker made that block
+    # inherit whatever position the block before it had.
+    sequence: list[tuple[str, object]] = []
+    for slug in order:
+        sequence.append(marker_for(slug))
+        sequence.append(("rows", keys_by_slug[slug]))
     return sequence
 
 
@@ -1752,10 +1741,30 @@ def _apply_placement(ctx: EngineContext, report: RunReport, section, sequence: l
                 sequence=sequence,
                 dry_run=ctx.config.dry_run,
             )
-        if result.get("moved") and not result.get("skipped"):
+        # One record per anchor we could not use, naming it. `place_rows` refuses only the rows
+        # pointed at that anchor and places the rest, so several can be refused in one pass and the
+        # owner needs to know WHICH of their settings is doing nothing — the single joined `anchor`
+        # string could not say.
+        refused = result.pop("refused", None) or []
+        for title in refused:
+            report.hub_orderings.append(
+                {
+                    "library": section.title,
+                    "placed": False,
+                    "anchor": title,
+                    "moved": [],
+                    "repositioned": 0,
+                    "reason": "anchor not found",
+                }
+            )
+        # Then the pass itself, gated on WORK rather than on our titles: a bottom-build moves the
+        # backbone too, and when our only row here is already the shelf's last hub the move loop skips
+        # it — so `moved` comes back empty while real hub moves went to Plex. Gating on `moved` left
+        # those unaudited, including the `verified: False` shape this whole change exists to fix
+        # (plex-safety rule 10). Both facts can hold at once — hubs moved AND a placement refused —
+        # so this runs alongside the loop above rather than instead of it.
+        if not result.get("skipped") and (result.get("moved") or result.get("repositioned")):
             report.hub_orderings.append({"library": section.title, **result})
-        elif result.get("reason") in UNPLACEABLE:
-            report.hub_orderings.append({"library": section.title, "placed": False, **result})
     except Exception as e:
         logger.warning(
             "{}: hub ordering failed ({}: {}) — left Plex's order",

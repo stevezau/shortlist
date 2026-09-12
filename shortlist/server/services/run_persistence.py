@@ -1457,7 +1457,7 @@ def _emit_hub_ordering_events(session: Session, run_id: int, report) -> None:
     # Recommended-shelf reorders. Moving a managed hub shifts every collection's position on a
     # server-wide shelf that a co-managing tool (Kometa) also cares about, so each library we
     # actually moved rows in is audited — "what changed on the shelf at 03:31" (plex-safety rule 10)
-    # — and so is each one whose configured placement could not be applied (`pipeline.UNPLACEABLE`).
+    # — and so is each one whose configured placement could not be applied (a refused anchor).
     for entry in report.hub_orderings:
         # `verified` is the whole point of the record. "We asked" and "it happened" are different
         # facts — a co-managing tool (agregarr, Kometa) reorders the same shelf on its own clock — and an

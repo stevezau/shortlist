@@ -332,7 +332,7 @@ That is fine for most settings, but not for the ones that change what Plex shoul
 | Setting                                       | What should happen on change                                                                                                                                    |
 | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `privacy.hide_shared_from_disabled`           | every disabled account's filter needs rewriting → `privacy.sync`                                                                                                |
-| `rows.manage_shelf_order` / `rows.hub_anchor` | shelf order should be re-applied, or left alone if switched off                                                                                                 |
+| `rows.manage_shelf_order`                     | shelf order should be re-applied, or left alone if switched off (`rows.hub_anchor` was retired 2026-09-12 — placement is set per row)                            |
 | `row.name_template`                           | existing collections carry a title no future run will write (the rename reconcile exists for the per-user nickname case; the global template has no equivalent) |
 | `label_prefix` (if ever exposed)              | every label and every exclude in every filter changes — a migration, not a job                                                                                  |
 

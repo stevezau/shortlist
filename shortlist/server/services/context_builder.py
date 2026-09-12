@@ -1153,8 +1153,13 @@ class ContextBuilder:
 
     @classmethod
     def _row_hub_anchors(cls, collection) -> dict[str, HubAnchor]:
-        """This row's per-library Recommended-shelf overrides (`collection.hub_anchor`). A library not
-        overridden here falls back to the global default (legacy `pin_top` still pins in promote)."""
+        """This row's per-library Recommended-shelf placement (`collection.hub_anchor`).
+
+        A library with no entry here means "top of the shelf", which is the shipped default — not
+        "leave it alone", and no longer a global default read from Settings (`rows.hub_anchor` was
+        retired: it was a second place to set the same thing). Legacy `pin_top` is not read by the
+        engine at all any more; the editor migrates it into a per-library "Top" when the row is saved.
+        """
         return cls._parse_hub_anchors(collection.hub_anchor or {})
 
     def _retired_rows(self, session: Session, store: SettingsStore) -> list[RowSpec]:

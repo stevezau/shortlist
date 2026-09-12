@@ -241,18 +241,36 @@ describe("RowShelfPlacement", () => {
   });
 
   it("keeps a saved 'before <row>' selected, and states the condition it needs", async () => {
-    // The engine refuses this only when Shortlist ALSO positions the anchor row. Suppressing the
-    // row optgroup made the <select> match no option, so the browser fell back to the first enabled
-    // one and the screen showed "New Series" — a placement the owner never chose — directly above
-    // text saying it could not work.
+    // Suppressing the row optgroup made the <select> match no option, so the browser fell back to
+    // the first enabled one and the screen showed "New Series" — a placement the owner never chose.
+    //
+    // The condition stated here used to be the INVERSE of the engine's ("only works if Shortlist
+    // isn't also positioning that row"). `_shelf_sequence` honours a row-to-row relation only when
+    // it is placing BOTH rows, so the requirement is that the other row's placement is ON.
     renderControl({ "2": { row: "picked", anchor: "", before: true } });
     await screen.findByText("TV Shows");
 
     const select = await screen.findByLabelText<HTMLSelectElement>("Before");
     expect(select.value).toBe("row:picked");
     expect(
-      screen.getByText(/only works if Shortlist isn’t also positioning that row/),
+      screen.getByText(/other row needs its own placement switched on/),
     ).toBeTruthy();
+    expect(screen.queryByText(/library default/)).toBeNull();
+  });
+
+  it("states the same condition for 'after <row>', not only 'before'", async () => {
+    // The engine's fallback is direction-agnostic: a row whose named row is not placed goes to the
+    // top of the shelf whichever side it asked to sit on. Gating the note on `before` left the more
+    // common setting with nothing on screen saying so.
+    renderControl({ "2": { row: "picked", anchor: "", before: false } });
+    await screen.findByText("TV Shows");
+
+    const select = await screen.findByLabelText<HTMLSelectElement>("After");
+    expect(select.value).toBe("row:picked");
+    expect(
+      screen.getByText(/other row needs its own placement switched on/),
+    ).toBeTruthy();
+    expect(screen.getByText(/goes to the top of the shelf instead/)).toBeTruthy();
   });
 
   it("sets a per-row 'Top' with no collection needed", async () => {

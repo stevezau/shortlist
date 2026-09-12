@@ -199,9 +199,14 @@ the bottom.
 Each row chooses its own spot, per library, in the **Row editor** under "Where it sits":
 
 - **Top of the shelf** — the default, and the one position that always works.
-- **Right after / before a collection**. Pick an existing collection and sit the row next to it.
+- **Right after / before a collection**. Pick an existing collection and sit the row next to it. It
+  has to be a collection that is actually showing on one of that library's shelves — one switched off
+  in Plex's *Manage Recommendations* has no position to sit beside, and Shortlist tells you so rather
+  than guessing a spot.
 - **Right after / before another Shortlist row**, so "Because you watched" can follow "Picked for
-  You" wherever that ends up.
+  You" wherever that ends up — including when that row is itself anchored to a collection. The other
+  row needs its own position switched on in that library too: Shortlist can only hold two rows
+  together if it is placing both. If it isn't, this row goes to the top instead, in your Rows order.
 - **Don't place this row**. Shortlist never positions it. Be aware this does not mean "leave it where
   it is": Plex adds new collections at the end of the shelf, and a row that loses five or more titles
   in a night is rebuilt from scratch, so an unplaced row sinks to the bottom within days.
@@ -213,9 +218,13 @@ own "Wherever Plex puts them" option meant.)
 
 Since each person only sees their own row, moving rows up lifts everyone's at once.
 
-Behind the scenes Shortlist re-applies your choice at the end of every run, only ever moves its own
-rows plus any collection you named as an anchor, and checks the shelf first — if it is already right,
-it writes nothing.
+Behind the scenes Shortlist re-applies your choice at the end of every run, and checks the shelf
+first — if it is already right, it writes nothing at all.
+
+When it does have work to do, it rebuilds the whole shelf in one pass, so other tools' rows are
+moved too. Their order **relative to each other** is preserved exactly; they shift only as far as
+placing your rows among them requires. Nothing else about them is touched — no collection is edited,
+renamed or promoted, only positions. The reason it works this way is the next section.
 
 ### Why every move goes to the bottom
 

@@ -305,17 +305,34 @@ of the two `library` settings.
 WHERE in that shelf it sits is the **Position** control (`collections.hub_anchor`, per library:
 `{"top": true}`, `{"row": "<row slug>", "before": bool}`, or
 `{"anchor": "<collection>", "before": bool}`); it
-replaces the old `pin_top` toggle (still honoured for rows not yet re-saved). This order is Plex's
-Managed Recommendations, which are **server-wide**, because Plex exposes no per-viewing-user hub order.
+replaces the old `pin_top` toggle, which is no longer acted on at all — a row with no Position set
+already sits at the top, so the flag said nothing new, and it worked by asking Plex to move the row
+to the very top, which is the one move that can collapse a library's shelf order (see *Why every move
+goes to the bottom* in the Rows guide). `pin_top` is still accepted and returned by
+`POST`/`PATCH /api/collections` so existing clients keep working, and the row editor converts it into
+a per-library *Top* the first time you save that row — but nothing reads it, so an old value left in
+the database changes nothing on Plex. This order is Plex's Managed Recommendations, which are
+**server-wide**, because Plex exposes no per-viewing-user hub order.
 
 A row can be positioned relative to **another Shortlist row** (`row`, a row slug) or to a foreign
 collection (`anchor`, a title) — one or the other, never both; `row` is what the engine reads first.
 It is a slug and not a title because a per-person row is one Plex collection PER PERSON, so a title
 names one account's copy and would place the row for that account alone. The rows of a library are
 then applied in dependency order, so a row always lands after the one it follows has itself been
-placed. Two rows pointing at each other, or a row pointing at itself, is refused when you save it;
-if an anchor row has nothing in that library yet, the rows following it are left where they are for
-that run rather than falling back to a different slot.
+placed. Two rows pointing at each other, or a row pointing at itself, is refused when you save it.
+
+A relation between two rows is only honoured when Shortlist is placing **both** of them — it cannot
+hold one row against another it never moves. So if the row you named has its own Position switched
+off, or has nothing in that library yet, the following row falls back to the **top of the shelf, in
+your Rows order**. Not "left where it is": Plex appends new hubs at the bottom, and a row that loses
+five or more titles in a night is rebuilt from scratch, so a row nothing positions sinks out of sight
+within days.
+
+A foreign `anchor` has to be **on** one of that library's Plex shelves. A collection — or one of
+Plex's own built-in rows — switched off in the library's *Manage Recommendations* screen occupies no
+position anyone can see, so there is nothing to sit next to. Only the rows pointed at that anchor are
+affected: they keep their current place, every other row in the library is still positioned, and the
+events feed names the anchor that could not be used so you can tell which setting is doing nothing.
 
 Request tags are three-layered: the global `requests.tag` setting, a per-user `request_tag`
 (`PATCH /api/users/{id}`), and a per-row `request_tag` (`collections`, per-person rows only:

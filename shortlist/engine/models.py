@@ -509,12 +509,18 @@ class RowSpec:
     # schedule could be hiding one. Set by the server when it resolves the schedule; the engine never
     # reads a clock.
     hidden_by_schedule: bool = False
-    # Pin the row to the TOP of its library's Recommended shelf (ManagedHub.move). This is a
-    # server-wide managed-recommendations order, NOT per-viewing-user — Plex exposes no per-user order.
+    # LEGACY, and the engine no longer reads it. It used to pin the row to the top of its library's
+    # Recommended shelf with `ManagedHub.move(after=None)` on every promote — the one insert that can
+    # collapse a library's hub order (see `place_rows`), and redundant besides, since a row with no
+    # placement already sits at the top. Carried only so the row editor can migrate it into a
+    # per-library "Top" the first time that row is saved.
     pin_top: bool = False
-    # Per-library override of where THIS row sits in the Recommended shelf, keyed by section key ->
-    # HubAnchor. A library absent here inherits the global default (EngineConfig.hub_anchors); empty
-    # -> inherit everywhere. Lets one row anchor differently from the rest (global default + override).
+    # Where THIS row sits in the Recommended shelf, per library, keyed by section key -> HubAnchor.
+    # A library ABSENT here means the top of the shelf, which is the shipped default — there is no
+    # global default to inherit any more (`EngineConfig.hub_anchors` and the `rows.hub_anchor` setting
+    # were retired: they were a second place to set the same thing and disagreed with their own
+    # screen). Not "leave it alone" either — Plex appends new hubs at the bottom, so a row nothing
+    # positions sinks out of sight; opting out is `HubAnchor.enabled`, set deliberately per row.
     hub_anchors: dict[str, HubAnchor] = field(default_factory=dict)
     # Optional custom poster for this row's Plex collection(s). None -> leave Plex's own artwork alone.
     poster: PosterSpec | None = None
@@ -1397,7 +1403,7 @@ class RunReport:
     # write (plex-safety rule 10). TWO kinds of entry, and a consumer has to branch on them:
     #   * a MOVE — `moved` (the row titles) and `verified` (did the shelf actually end up that way);
     #   * a placement that could NOT be applied — `placed: False`, `moved: []`, `reason` in
-    #     `pipeline.UNPLACEABLE`, and deliberately NO `verified`, because nothing was asked of Plex.
+    #     a refused anchor, and deliberately NO `verified`, because nothing was asked of Plex.
     # Reporting the second as the first is exactly what the Jobs detail line used to do: a buried row
     # announced as "repositioned". Empty when every library was already in place, when none holds a
     # row of ours, or when `manage_shelf_order` is off — NOT when no anchor is configured, which

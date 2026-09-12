@@ -42,6 +42,21 @@ violate them.
    modified or deleted. Detect and skip anything else — Kometa and other tools manage collections
    on the same servers; coexistence is mandatory.
 
+   **One bounded exception, and only this one: shelf POSITION** (owner decision 2026-09-12).
+   `PlexClient.place_rows` rewrites the position of every promoted hub on a library's Recommended
+   shelf, foreign hubs included, because Plex offers no way to place a row without doing so: the only
+   two inserts that do not halve a float gap are "to the very top" and "after the hub currently last",
+   and ~50 halvings exhaust double precision, after which Plex answers 200 to every move and applies
+   none — for every client, including Plex Web. Measured on a real server: one top-rebuild collapsed
+   72 of 94 hubs onto the single value `1000`. Arranging the shelf from the bottom is what avoids that,
+   and it necessarily moves the backbone.
+
+   The exception covers position and nothing else. A foreign collection's items, title, labels,
+   artwork and promotion flags stay untouched, and foreign hubs keep their order **relative to each
+   other** — they shift only as far as seating our rows among them requires. A row of ours whose
+   anchor is unusable is treated as foreign for this purpose: left in place, not dropped. Anything
+   beyond position needs its own decision; do not extend this by analogy.
+
    Every row also carries a constant `shortlist` label beside its `shortlist_<userslug>` one, so a
    co-managing tool can exclude all of ours with a single entry. It is ADDITIVE and names nobody.
    Everything that resolves an owner from a label matches `shortlist_` **with the underscore** — and

@@ -960,13 +960,24 @@ class TestPlexClient:
         vis = collection.visibility.return_value
         assert vis.updateVisibility.call_args.kwargs == {"recommended": True, "home": False, "shared": False}
 
-    def test_promote_pins_to_top_when_requested(self, mock_plex: PlexClient):
+    def test_promote_never_moves_the_hub(self, mock_plex):
+        """Promotion sets surfaces; it must not set POSITION.
+
+        It used to honour `pin_top` with `hub.reload().move(after=None)` — the one primitive
+        `place_rows` documents as unusable on its own (a built-in stuck at the minimum float makes
+        everything sent above it land on that value; one rebuild collapsed 72 of 94 hubs). The
+        argument is gone, so assert the write is gone with it rather than that the flag is unread.
+        """
+        import inspect
+
+        from shortlist.engine.clients.plex_pms import PlexClient
+
         collection = MagicMock()
-        vis = collection.visibility.return_value
-        vis.reload.return_value = vis
-        mock_plex.promote(collection, pin_top=True)
-        # modeUpdate + visibility happen first, THEN the move to the top (after=None).
-        vis.move.assert_called_once_with(after=None)
+        mock_plex.promote(collection)
+
+        collection.visibility.return_value.reload.assert_not_called()
+        collection.visibility.return_value.move.assert_not_called()
+        assert "pin_top" not in inspect.signature(PlexClient.promote).parameters
 
     def test_owned_collections_maps_slug_to_stored_label_and_id(self, mock_plex: PlexClient):
         ours = MagicMock(ratingKey=571285)

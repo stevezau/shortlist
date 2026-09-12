@@ -12,6 +12,8 @@ from typing import ClassVar
 from unittest.mock import MagicMock
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 import shortlist.engine.picker as picker_mod
 import shortlist.engine.pipeline as pipeline_mod
@@ -2753,20 +2755,24 @@ class TestPlacement:
             "shared": False,
             "home": False,
             "recommended": True,
-            "pin_top": False,
         }
 
-    def test_home_placement_with_pin_shows_on_home_and_pins(self, ctx: EngineContext):
+    def test_a_legacy_pinned_row_is_promoted_without_being_positioned(self, ctx: EngineContext):
+        """`pin_top` no longer reaches `promote`.
+
+        It used to add one `move(after=None)` per collection per run — the "to the top" primitive
+        `place_rows` documents as unusable alone, because a built-in stuck at the minimum float makes
+        everything sent above it land ON that value. It also fired with shelf ordering switched OFF,
+        contradicting that setting. Placement owns position now, and an unconfigured library already
+        defaults to the top, so nothing is lost by ignoring the flag.
+        """
         from shortlist.engine.models import RowSpec
         from shortlist.engine.pipeline import _promote_one
 
         _promote_one(ctx, MagicMock(), RowSpec(slug="x", name_template="", size=10, placement="home", pin_top=True))
-        assert ctx.plex.promote.call_args.kwargs == {
-            "shared": True,
-            "home": True,
-            "recommended": False,
-            "pin_top": True,
-        }
+
+        assert ctx.plex.promote.call_args.kwargs == {"shared": True, "home": True, "recommended": False}
+        assert "pin_top" not in ctx.plex.promote.call_args.kwargs
 
     def test_recommended_is_chosen_per_collection_not_ored_across_audiences(self, ctx: EngineContext):
         """The Recommended flag comes from WHOSE row the collection is (issue #6).
@@ -2786,7 +2792,6 @@ class TestPlacement:
             "shared": False,
             "home": True,
             "recommended": False,
-            "pin_top": False,
         }
 
         _promote_one(ctx, MagicMock(), spec, UserType.SHARED)
@@ -2794,7 +2799,6 @@ class TestPlacement:
             "shared": True,
             "home": False,
             "recommended": True,
-            "pin_top": False,
         }
 
     def test_owner_keeps_the_shelf_while_friends_rows_stay_off_it(self, ctx: EngineContext):
@@ -2810,7 +2814,6 @@ class TestPlacement:
             "shared": False,
             "home": True,
             "recommended": True,
-            "pin_top": False,
         }
 
         _promote_one(ctx, MagicMock(), spec, UserType.SHARED)
@@ -2818,7 +2821,6 @@ class TestPlacement:
             "shared": True,
             "home": False,
             "recommended": False,
-            "pin_top": False,
         }
 
     def test_a_managed_user_collection_uses_the_friends_side(self, ctx: EngineContext):
@@ -2841,7 +2843,6 @@ class TestPlacement:
             "shared": True,
             "home": False,
             "recommended": True,
-            "pin_top": False,
         }
 
         # The owner, on the same spec, gets nothing — proving the two sides really are independent.
@@ -2850,7 +2851,6 @@ class TestPlacement:
             "shared": False,
             "home": False,
             "recommended": False,
-            "pin_top": False,
         }
 
     def test_an_unmapped_managed_collection_never_lands_on_the_owners_home(self, ctx: EngineContext):
@@ -2929,7 +2929,6 @@ class TestPlacement:
             "shared": False,
             "home": False,
             "recommended": False,
-            "pin_top": False,
         }
 
     def test_the_no_spec_fallback_never_forces_a_row_onto_the_recommended_shelf(self, ctx: EngineContext):
@@ -2968,7 +2967,6 @@ class TestPlacement:
                 "shared": False,
                 "home": False,
                 "recommended": False,
-                "pin_top": False,
             }, user_type
 
     def test_a_shared_row_unions_both_audiences(self, ctx: EngineContext):
@@ -2984,7 +2982,6 @@ class TestPlacement:
             "shared": False,
             "home": True,
             "recommended": True,
-            "pin_top": False,
         }
 
     def test_an_unmatched_collection_is_hidden_from_browse_and_claims_nothing_else(self, ctx: EngineContext):
@@ -3028,7 +3025,6 @@ class TestPlacement:
             "shared": False,
             "home": False,
             "recommended": True,
-            "pin_top": False,
         }
 
     def test_undelivered_library_name_row_maps_each_library_to_its_spec(self, ctx: EngineContext):
@@ -3061,7 +3057,7 @@ class TestPlacement:
         assert ctx.plex.promote.call_count == 2  # each library's lingering row mapped to its spec
         for call in ctx.plex.promote.call_args_list:
             # placement="library" -> hidden from Home, shown only in the library's Recommended shelf.
-            assert call.kwargs == {"shared": False, "home": False, "recommended": True, "pin_top": False}
+            assert call.kwargs == {"shared": False, "home": False, "recommended": True}
 
     def test_an_undelivered_dynamic_titled_row_keeps_the_safe_fallback(self, ctx: EngineContext):
         """A {top_seed} row's title can't be predicted without picks, so an un-delivered one has no
@@ -5892,6 +5888,59 @@ class TestRowTiming:
         assert report.row_timing == {}
 
 
+class TestShelfSequenceIsTotal:
+    """Whatever the config, the arrangement is well-formed. A property test, because the ordering is
+    now a real algorithm: it inserts each row next to its target's group, and the config space that
+    reaches it includes self-references, cycles, ties and mixed directions that the editor tolerates
+    when it did not create them. The fixpoint loop it replaced did NOT have this property — a tie
+    made it oscillate until it ran out of passes."""
+
+    @given(
+        st.lists(
+            st.tuples(
+                st.sampled_from(["a", "b", "c", "d", "e"]),
+                st.sampled_from(["top", "title-after", "title-before", "row-after", "row-before"]),
+                st.sampled_from(["a", "b", "c", "d", "e"]),
+            ),
+            min_size=1,
+            max_size=5,
+            unique_by=lambda t: t[0],
+        )
+    )
+    def test_every_row_is_placed_exactly_once_behind_exactly_one_marker(self, rows):
+        from datetime import UTC, datetime
+
+        from shortlist.engine.clients.plex_pms import POSITION_KINDS
+        from shortlist.engine.models import HubAnchor, RowSpec, RunReport
+        from shortlist.engine.pipeline import _shelf_sequence
+
+        specs, keys = [], {}
+        for n, (slug, kind, target) in enumerate(rows):
+            if kind == "top":
+                anchor = HubAnchor(to_top=True)
+            elif kind.startswith("title"):
+                anchor = HubAnchor(anchor_title="Gems", before=kind.endswith("before"))
+            else:
+                anchor = HubAnchor(anchor_row=target, before=kind.endswith("before"))
+            specs.append(RowSpec(slug=slug, name_template=slug, size=10, hub_anchors={"1": anchor}))
+            keys[slug] = {n + 1}
+
+        sequence = _shelf_sequence(specs, "1", keys, "Movies", {}, RunReport(started_at=datetime.now(UTC)))
+
+        kinds = [kind for kind, _ in sequence]
+        blocks = [frozenset(value) for kind, value in sequence if kind == "rows"]
+        # Alternating marker, block, marker, block … — never a block without a position of its own,
+        # which is what made a row on Top inherit the previous row's anchor.
+        assert all(kinds[n] in POSITION_KINDS for n in range(0, len(kinds), 2)), kinds
+        assert all(kinds[n] == "rows" for n in range(1, len(kinds), 2)), kinds
+        assert len(kinds) == 2 * len(rows), kinds
+        # Every row exactly once: none dropped (it would sink to the bottom of the shelf) and none
+        # duplicated (a repeated identifier can never satisfy the in-place check, so every pass would
+        # rewrite the whole shelf). Compared as a multiset — `sorted` on frozensets is not a total
+        # order, and an assertion built on it fails on a correct answer in a different order.
+        assert Counter(blocks) == Counter(frozenset(v) for v in keys.values())
+
+
 class TestShelfOrderFailureIsAudited:
     """A shelf write that RAISES can land mid-sequence, and used to leave no record at all."""
 
@@ -5920,6 +5969,80 @@ class TestShelfOrderFailureIsAudited:
         assert entry["library"] == "Movies"
         assert entry["placed"] is False
         assert "RuntimeError" in entry["reason"]
+
+    def test_a_pass_that_moved_only_foreign_hubs_is_still_audited(self):
+        """The audit used to be gated on `moved`, which holds OUR row titles only.
+
+        A bottom-build moves the backbone as well, and when our one row here is already the shelf's
+        last hub the move loop skips it (`if ident == tail: continue`) — so a pass that wrote three
+        real hub moves to Plex came back `moved: []`, `repositioned: 3`, and recorded NOTHING. The
+        precondition is the ordinary one, not an exotic one: Plex appends a new or rebuilt hub at the
+        bottom, and the default placement is the top (plex-safety rule 10).
+        """
+        import threading
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from shortlist.engine.models import EngineConfig
+        from shortlist.engine.pipeline import RunReport, _apply_placement
+
+        result = {"anchor": "top", "moved": [], "repositioned": 3, "skipped": False, "verified": True}
+        ctx = SimpleNamespace(
+            plex=SimpleNamespace(place_rows=lambda *a, **k: result),
+            config=EngineConfig(dry_run=False),
+            write_lock=threading.Lock(),
+        )
+        report = RunReport(started_at=datetime.now(UTC))
+
+        _apply_placement(ctx, report, SimpleNamespace(title="Movies", key=1), [("rows", {11})])
+
+        assert len(report.hub_orderings) == 1, "three hub moves went to Plex with no audit record"
+        assert report.hub_orderings[0]["repositioned"] == 3
+
+    def test_a_pass_that_wrote_moves_and_did_not_converge_is_still_audited(self):
+        """The `verified: False` shape — moves accepted by Plex and not applied, which is the exact
+        production failure this whole change exists to fix. It was unaudited for the same reason."""
+        import threading
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from shortlist.engine.models import EngineConfig
+        from shortlist.engine.pipeline import RunReport, _apply_placement
+
+        result = {"anchor": "top", "moved": [], "repositioned": 9, "skipped": False, "verified": False}
+        ctx = SimpleNamespace(
+            plex=SimpleNamespace(place_rows=lambda *a, **k: result),
+            config=EngineConfig(dry_run=False),
+            write_lock=threading.Lock(),
+        )
+        report = RunReport(started_at=datetime.now(UTC))
+
+        _apply_placement(ctx, report, SimpleNamespace(title="Movies", key=1), [("rows", {11})])
+
+        assert len(report.hub_orderings) == 1
+        assert report.hub_orderings[0]["verified"] is False
+
+    def test_a_pass_with_nothing_to_do_records_nothing(self):
+        """The other half of the gate. A settled shelf must stay silent, or the events feed fills with
+        a nightly "we changed nothing" and the contention detector counts its own noise."""
+        import threading
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from shortlist.engine.models import EngineConfig
+        from shortlist.engine.pipeline import RunReport, _apply_placement
+
+        result = {"anchor": "top", "moved": [], "repositioned": 0, "skipped": True, "reason": "already in place"}
+        ctx = SimpleNamespace(
+            plex=SimpleNamespace(place_rows=lambda *a, **k: result),
+            config=EngineConfig(dry_run=False),
+            write_lock=threading.Lock(),
+        )
+        report = RunReport(started_at=datetime.now(UTC))
+
+        _apply_placement(ctx, report, SimpleNamespace(title="Movies", key=1), [("rows", {11})])
+
+        assert report.hub_orderings == []
 
 
 class TestShelfSequence:
@@ -5952,13 +6075,149 @@ class TestShelfSequence:
 
         assert seq == [("anchor", "Recently Added Movies"), ("rows", {11, 12})]
 
-    def test_before_a_collection_puts_the_rows_first(self):
+    def test_before_a_collection_names_the_direction_rather_than_relying_on_list_order(self):
+        """`before` used to be encoded as [block, anchor] — the block ahead of its marker. The client
+        reads a block with no marker ahead of it as "the very top", and those two cases are
+        indistinguishable in that encoding, so "right before New Series" sent the row to the top of
+        the shelf while the audit recorded New Series as its anchor. The direction is now explicit."""
         from shortlist.engine.models import HubAnchor
 
         specs = [self._spec("picked", {"1": HubAnchor(anchor_title="Recently Added Movies", before=True)})]
         seq, _ = self._seq(specs, {"picked": {11}})
 
-        assert seq == [("rows", {11}), ("anchor", "Recently Added Movies")]
+        assert seq == [("anchor_before", "Recently Added Movies"), ("rows", {11})]
+
+    def test_one_collection_can_have_a_row_above_it_and_another_below_it(self):
+        """The anchor marker is de-duplicated per DIRECTION, not per title. Keyed by title alone, the
+        second row's marker was dropped and it was placed on the first row's side."""
+        from shortlist.engine.models import HubAnchor
+
+        specs = [
+            self._spec("above", {"1": HubAnchor(anchor_title="Recently Added Movies", before=True)}),
+            self._spec("below", {"1": HubAnchor(anchor_title="Recently Added Movies")}),
+        ]
+        seq, _ = self._seq(specs, {"above": {11}, "below": {21}})
+
+        assert seq == [
+            ("anchor_before", "Recently Added Movies"),
+            ("rows", {11}),
+            ("anchor", "Recently Added Movies"),
+            ("rows", {21}),
+        ]
+
+    def test_a_row_placed_before_another_row_precedes_it(self):
+        """The missing cell of anchor-kind x direction. `want` was measured on a list still holding
+        the row itself, so "before" asked for two distinct positions to be equal: the fixpoint loop
+        oscillated, exhausted its passes, logged the owner's good config as a placement cycle, and
+        fell back to declaration order — making `before` a silent no-op wherever it was set."""
+        from shortlist.engine.models import HubAnchor
+
+        specs = [
+            self._spec("picked", {"1": HubAnchor(to_top=True)}),
+            self._spec("because", {"1": HubAnchor(anchor_row="picked", before=True)}),
+        ]
+        seq, _ = self._seq(specs, {"picked": {11}, "because": {21}})
+
+        assert seq == [("top", ""), ("rows", {21}), ("top", ""), ("rows", {11})]  # both chain to a Top head
+
+    def test_two_rows_after_the_same_row_both_follow_it_in_row_order(self):
+        """The missing cell of the row-chain matrix: N rows sharing one `anchor_row`.
+
+        "Immediately after X" cannot be true of two rows at once, so the old fixpoint loop oscillated
+        between them, exhausted its passes and reported the owner's perfectly legal config as a
+        placement cycle — then fell back to declaration order, which put both followers ABOVE the row
+        they were told to follow. The editor allows this (it offers every other row as a candidate and
+        only refuses self-reference and true cycles), so it is reachable.
+        """
+        from loguru import logger as loguru_logger
+
+        from shortlist.engine.models import HubAnchor
+
+        lines: list[str] = []
+        sink = loguru_logger.add(lines.append, level="WARNING")
+        try:
+            specs = [
+                self._spec("second", {"1": HubAnchor(anchor_row="head")}),
+                self._spec("third", {"1": HubAnchor(anchor_row="head")}),
+                self._spec("head", {"1": HubAnchor(anchor_title="Gems")}),
+            ]
+            seq, _ = self._seq(specs, {"head": {11}, "second": {21}, "third": {31}})
+        finally:
+            loguru_logger.remove(sink)
+
+        assert seq == [
+            ("anchor", "Gems"),
+            ("rows", {11}),
+            ("anchor", "Gems"),
+            ("rows", {21}),
+            ("anchor", "Gems"),
+            ("rows", {31}),
+        ], "both followers sit below the head, in the order the Rows page has them"
+        assert not [line for line in lines if "loop" in line.lower()], lines
+
+    def test_a_fork_does_not_split_a_deeper_chain(self):
+        """Two rows following one row, where one of them has a follower of its own.
+
+        The sibling scan stepped over the target's DIRECT children only, so the second sibling was
+        inserted inside the first sibling's subtree — breaking that deeper row's explicit "right after
+        <row>" with nothing reported. Asserted in BOTH declared orders, because the insert is only
+        wrong in one of them. `a` anchors the chain to a collection; `b` follows `a`, `c` follows `b`,
+        `d` also follows `a`.
+        """
+        from shortlist.engine.models import HubAnchor
+
+        def spec(slug, target):
+            return self._spec(slug, {"1": HubAnchor(anchor_row=target)})
+
+        head = self._spec("a", {"1": HubAnchor(anchor_title="Kometa Picks")})
+        keys = {"a": {1}, "b": {2}, "c": {3}, "d": {4}}
+        for declared in (
+            [head, spec("b", "a"), spec("c", "b"), spec("d", "a")],
+            [head, spec("d", "a"), spec("b", "a"), spec("c", "b")],
+        ):
+            seq, _ = self._seq(declared, keys)
+            blocks = [next(iter(v)) for kind, v in seq if kind == "rows"]
+            order = {1: "a", 2: "b", 3: "c", 4: "d"}
+            names = [order[b] for b in blocks]
+            assert names.index("c") == names.index("b") + 1, f"c must follow b directly, got {names}"
+            assert names[0] == "a", names
+
+    def test_two_rows_before_the_same_row_both_precede_it_in_row_order(self):
+        """The same tie in the other direction."""
+        from shortlist.engine.models import HubAnchor
+
+        specs = [
+            self._spec("first", {"1": HubAnchor(anchor_row="tail", before=True)}),
+            self._spec("second", {"1": HubAnchor(anchor_row="tail", before=True)}),
+            self._spec("tail", {"1": HubAnchor(anchor_title="Gems")}),
+        ]
+        seq, _ = self._seq(specs, {"tail": {11}, "first": {21}, "second": {31}})
+
+        assert [v for kind, v in seq if kind == "rows"] == [{21}, {31}, {11}]
+
+    def test_a_row_before_another_row_does_not_report_a_cycle(self):
+        """The same bug from the owner's side: the run log blamed a loop that did not exist.
+
+        A loguru SINK, not pytest's `caplog` — this codebase logs through loguru, which does not feed
+        the stdlib handler `caplog` reads, so an absence assertion against `caplog.text` passes on
+        broken code as readily as on fixed code.
+        """
+        from loguru import logger as loguru_logger
+
+        from shortlist.engine.models import HubAnchor
+
+        lines: list[str] = []
+        sink = loguru_logger.add(lines.append, level="WARNING")
+        try:
+            specs = [
+                self._spec("picked", {"1": HubAnchor(to_top=True)}),
+                self._spec("because", {"1": HubAnchor(anchor_row="picked", before=True)}),
+            ]
+            self._seq(specs, {"picked": {11}, "because": {21}})
+        finally:
+            loguru_logger.remove(sink)
+
+        assert not [line for line in lines if "loop" in line.lower()], lines
 
     def test_a_row_placed_after_another_row_follows_it(self):
         from shortlist.engine.models import HubAnchor
@@ -5969,7 +6228,12 @@ class TestShelfSequence:
         ]
         seq, _ = self._seq(specs, {"picked": {11}, "because": {21}})
 
-        assert seq == [("anchor", "Recently Added Movies"), ("rows", {11}), ("rows", {21})]
+        assert seq == [
+            ("anchor", "Recently Added Movies"),
+            ("rows", {11}),
+            ("anchor", "Recently Added Movies"),
+            ("rows", {21}),
+        ], "the follower adopts the landmark at the head of its chain, or it has no landmark at all"
 
     def test_a_chain_of_row_anchors_is_resolved_in_dependency_order(self):
         """The maintainer's own config: picked after a collection, because after picked, popular
@@ -5986,7 +6250,9 @@ class TestShelfSequence:
         assert seq == [
             ("anchor", "Recently Added Movies"),
             ("rows", {11}),
+            ("anchor", "Recently Added Movies"),
             ("rows", {21}),
+            ("anchor", "Recently Added Movies"),
             ("rows", {31}),
         ]
 
@@ -5999,7 +6265,7 @@ class TestShelfSequence:
         ]
         seq, _ = self._seq(specs, {"picked": {11}, "because": {21}})
 
-        assert seq == [("rows", {11})], "an off row must not appear in the arrangement"
+        assert seq == [("top", ""), ("rows", {11})], "an off row must not appear in the arrangement"
 
     def test_a_row_with_no_placement_configured_defaults_to_the_top(self):
         """Not "leave it alone" — Plex appends new hubs at the BOTTOM, and a row losing five titles is
@@ -6008,7 +6274,7 @@ class TestShelfSequence:
         specs = [self._spec("picked", {})]
         seq, _ = self._seq(specs, {"picked": {11}})
 
-        assert seq == [("rows", {11})]
+        assert seq == [("top", ""), ("rows", {11})]
 
     def test_a_row_the_ledger_does_not_name_is_reported_not_silently_skipped(self):
         """An unplaced row does NOT stay put: Plex appends new hubs at the bottom, and a row losing
@@ -6031,12 +6297,24 @@ class TestShelfSequence:
             self._spec("a", {"1": HubAnchor(anchor_row="b")}),
             self._spec("b", {"1": HubAnchor(anchor_row="a")}),
         ]
-        seq, _ = self._seq(specs, {"a": {11}, "b": {21}})
+        seq, report = self._seq(specs, {"a": {11}, "b": {21}})
 
-        assert [kind for kind, _ in seq] == ["rows", "rows"]
-        assert {frozenset(v) for _, v in seq} == {frozenset({11}), frozenset({21})}
+        assert [kind for kind, _ in seq] == ["top", "rows", "top", "rows"]
+        assert {frozenset(v) for kind, v in seq if kind == "rows"} == {frozenset({11}), frozenset({21})}
+        # RECORDED, not just logged: a setting that is quietly doing nothing has to be answerable
+        # from the UI (plex-safety rule 10). This was a container-log warning and nothing else.
+        assert len(report.hub_orderings) == 1, report.hub_orderings
+        entry = report.hub_orderings[0]
+        assert entry["placed"] is False
+        assert "loop" in entry["reason"]
+        assert "a" in entry["row"] and "b" in entry["row"], entry["row"]
 
-    def test_one_anchor_named_by_two_rows_appears_once(self):
+    def test_one_anchor_named_by_two_rows_is_marked_for_each_of_them(self):
+        """The marker repeats on purpose. It used to be emitted once and the second row's block simply
+        followed — which reads the same here, but meant a block's position came from the block BEFORE
+        it rather than from its own setting. Insert a Top row between these two and the second one
+        went to the top of the shelf. `place_rows` accumulates repeats of one anchor in order, so
+        repeating the marker costs nothing and removes the inheritance."""
         from shortlist.engine.models import HubAnchor
 
         specs = [
@@ -6045,4 +6323,9 @@ class TestShelfSequence:
         ]
         seq, _ = self._seq(specs, {"picked": {11}, "gems": {21}})
 
-        assert seq == [("anchor", "Recently Added Movies"), ("rows", {11}), ("rows", {21})]
+        assert seq == [
+            ("anchor", "Recently Added Movies"),
+            ("rows", {11}),
+            ("anchor", "Recently Added Movies"),
+            ("rows", {21}),
+        ]

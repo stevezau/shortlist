@@ -101,11 +101,11 @@ class TestTheShelfEventsANightlyRunEmits:
         """`verified` answers "we asked Plex and it stuck". Nothing was asked here, so answering it
         would be a fabrication — and the separate scope is what keeps `_shelf_contention`'s bounded
         window holding only the repeated moves it counts."""
-        seen = self._emit([{"library": "Movies", "placed": False, "moved": [], "reason": "anchor not on the shelf"}])
+        seen = self._emit([{"library": "Movies", "placed": False, "moved": [], "reason": "anchor not found"}])
 
         assert [(a[0], a[1]) for a in seen] == [("run.hub_unplaced", "warning")]
         fields = seen[0][2]
-        assert fields["reason"] == "anchor not on the shelf" and fields["verified"] is None
+        assert fields["reason"] == "anchor not found" and fields["verified"] is None
         assert fields["library"] == "Movies" and fields["run_id"] == 7
 
     def test_a_move_still_uses_the_ordinary_scope(self):

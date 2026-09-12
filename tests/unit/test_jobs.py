@@ -742,11 +742,11 @@ class TestRestoreAfterUnpause:
         ("user_type", "expected"),
         [
             # The row says: owner sees it nowhere, friends see it on the Recommended shelf only.
-            ("owner", {"shared": False, "home": False, "recommended": False, "pin_top": True}),
-            ("shared", {"shared": False, "home": False, "recommended": True, "pin_top": True}),
+            ("owner", {"shared": False, "home": False, "recommended": False}),
+            ("shared", {"shared": False, "home": False, "recommended": True}),
             # MANAGED goes with SHARED, never the owner — Plex's own docs: promotedToSharedHome
             # "applies to all shared users, INCLUDING managed users".
-            ("managed", {"shared": False, "home": False, "recommended": True, "pin_top": True}),
+            ("managed", {"shared": False, "home": False, "recommended": True}),
         ],
     )
     def test_it_promotes_onto_the_surfaces_the_row_actually_asks_for(self, sessions, user_type, expected):
@@ -783,9 +783,7 @@ class TestRestoreAfterUnpause:
 
         jobs._HANDLERS["user.restore"](state, {"slug": "sarah"})
 
-        assert [kwargs for _t, kwargs in promoted] == [
-            {"shared": False, "home": False, "recommended": True, "pin_top": True}
-        ]
+        assert [kwargs for _t, kwargs in promoted] == [{"shared": False, "home": False, "recommended": True}]
 
     def test_a_top_seed_row_is_placed_from_the_ledger_with_no_run_history_at_all(self, sessions):
         """The last gap the ledger closes. A `{top_seed}` title is different every run, so nothing can
@@ -818,9 +816,7 @@ class TestRestoreAfterUnpause:
 
         # The ROW's placement — off for the owner, Recommended-only for friends, pinned — not the
         # fallback's "show it on their Home".
-        assert [kwargs for _t, kwargs in promoted] == [
-            {"shared": False, "home": False, "recommended": True, "pin_top": True}
-        ]
+        assert [kwargs for _t, kwargs in promoted] == [{"shared": False, "home": False, "recommended": True}]
 
     def test_the_ledger_wins_over_a_stale_recorded_title(self, sessions):
         """Both sources can disagree — a title recorded before a rename, against a ratingKey that
@@ -855,9 +851,7 @@ class TestRestoreAfterUnpause:
 
         jobs._HANDLERS["user.restore"](state, {"slug": "sarah"})
 
-        assert [kwargs for _t, kwargs in promoted] == [
-            {"shared": False, "home": False, "recommended": True, "pin_top": True}
-        ]
+        assert [kwargs for _t, kwargs in promoted] == [{"shared": False, "home": False, "recommended": True}]
 
     def test_a_top_seed_row_is_placed_from_what_the_last_run_delivered(self, sessions):
         """A `{top_seed}` title is different every run, so it cannot be re-rendered from the template.
@@ -891,9 +885,7 @@ class TestRestoreAfterUnpause:
 
         jobs._HANDLERS["user.restore"](state, {"slug": "sarah"})
 
-        assert [kwargs for _t, kwargs in promoted] == [
-            {"shared": False, "home": False, "recommended": True, "pin_top": True}
-        ]
+        assert [kwargs for _t, kwargs in promoted] == [{"shared": False, "home": False, "recommended": True}]
 
     def test_a_replayed_job_does_nothing_once_the_user_is_paused_again(self, sessions):
         """Jobs are replayed after a crash with no way to know how far they got. This is the one
@@ -1390,6 +1382,18 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
         # ...and the shelf placement really was asked for, not just reported.
         ctx.plex.place_rows.assert_called_once()
         assert ctx.plex.place_rows.call_args.kwargs["dry_run"] is False
+        # The arguments the PIPELINE is responsible for computing, not just that a call happened.
+        # Only `dry_run` was ever asserted here, so emptying `sequence` — the entire arrangement —
+        # broke nothing in this suite (testing rule: "if removing a parameter from the SUT wouldn't
+        # break the test, the test isn't covering that parameter").
+        from shortlist.engine.pipeline import LABEL_PREFIX
+
+        kwargs = ctx.plex.place_rows.call_args.kwargs
+        assert kwargs["label_prefix"] == LABEL_PREFIX
+        assert kwargs["sequence"] == [("top", ""), ("rows", {4242})], (
+            "the ledger's one delivered key, with its own position marker"
+        )
+        assert ctx.plex.place_rows.call_args.args[0] is movies
         assert "repositioned rows on the shelf in Movies" in result["detail"]
 
     def test_the_audit_records_how_many_hubs_were_repositioned_in_total(self, monkeypatch):
@@ -1479,11 +1483,15 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
 
         def unplaceable_context(dry_run: bool, plex_only: bool = False):
             ctx = original(dry_run, plex_only)
+            # The real shape: `place_rows` NAMES the anchors it refused, so the audit can report each
+            # one on its own. It used to return for the whole library on the first bad anchor.
             ctx.plex.place_rows.return_value = {
                 "anchor": "Archive 2019",
                 "moved": [],
+                "repositioned": 0,
                 "skipped": True,
-                "reason": "anchor not on the shelf",
+                "reason": "anchor not found",
+                "refused": ["Archive 2019"],
             }
             return ctx
 
@@ -1493,7 +1501,8 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
         assert [a[0] for a in audits if a[0].startswith("shelf.")] == ["shelf.unplaced"]
         _, level, fields = next(a for a in audits if a[0] == "shelf.unplaced")
         assert level == "warning"
-        assert fields["reason"] == "anchor not on the shelf"
+        assert fields["reason"] == "anchor not found"
+        assert fields["anchor"] == "Archive 2019", "the owner must be told WHICH anchor is doing nothing"
         assert fields["verified"] is None  # never fabricated: we asked Plex for nothing
         # And the operator's line says so instead of claiming a reposition.
         assert "could NOT place rows in Movies" in result["detail"]
@@ -1512,7 +1521,7 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
         monkeypatch.setattr(jobs, "write_audit", lambda st, scope, level, **f: audits.append((scope, level, f)))
         report = SimpleNamespace(
             hub_orderings=[
-                {"library": "Movies", "placed": False, "moved": [], "reason": "anchor not on the shelf"},
+                {"library": "Movies", "placed": False, "moved": [], "reason": "anchor not found"},
                 {"library": "TV", "moved": ["row"], "verified": False},
             ]
         )

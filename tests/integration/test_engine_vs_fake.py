@@ -31,7 +31,15 @@ from shortlist.engine.context import EngineContext
 from shortlist.engine.curator import NullCurator
 from shortlist.engine.delivery import row_marker
 from shortlist.engine.history import ShareTokenWatchSource
-from shortlist.engine.models import EngineConfig, MediaType, RowOverride, RowSpec, UserProfile, UserType
+from shortlist.engine.models import (
+    EngineConfig,
+    HubAnchor,
+    MediaType,
+    RowOverride,
+    RowSpec,
+    UserProfile,
+    UserType,
+)
 from shortlist.engine.pipeline import run as engine_run
 from shortlist.engine.privacy import shortlist_labels_in
 from tests.fakes.fake_plex import (
@@ -2953,3 +2961,93 @@ def test_two_labels_go_on_in_one_write_and_do_not_disturb_a_foreign_label(fakes)
     finally:
         if collection is not None:
             collection.delete()
+
+
+def _placement_ctx(state, pms_url, tmp_path, rows):
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(
+            row_size=12,
+            min_history=5,
+            candidates_pre_rank=40,
+            max_seeds=12,
+            rows=rows(plex),
+            rows_defined=True,
+            manage_shelf_order=True,
+        ),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+    users = [
+        UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
+        for u in sorted(plextv.list_users(), key=lambda u: u.id)
+        if not u.restriction_profile
+    ]
+    return plex, ctx, users
+
+
+def test_the_default_placement_puts_our_rows_above_plex_own_hubs(fakes, tmp_path):
+    """The SHIPPED default (no placement set = top of the shelf), through the whole stack, on a shelf
+    whose first hub is one of Plex's own.
+
+    This is the arrangement every new install gets, and nothing full-stack could express it: the fake
+    served no built-in hubs, and modelled shelf order as the insertion order of its collections, so a
+    built-in could neither be moved nor moved past. Reaching the top therefore meant moving
+    `movie.recentlyadded`, which the fake answered with a 500 that `_apply_placement` swallows.
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex, ctx, users = _placement_ctx(
+        state,
+        pms_url,
+        tmp_path,
+        lambda _plex: [RowSpec(slug="picked", name_template="✨ {library_name} Picked for You", size=12)],
+    )
+
+    report = engine_run(ctx, users)
+
+    assert not report.error, report.error
+    failures = [e for e in report.hub_orderings if e.get("placed") is False]
+    assert not failures, f"the default placement must not fail against a built-in: {failures}"
+    for section in plex.sections():
+        titles = [getattr(h, "title", "") for h in section.managedHubs()]
+        assert "Recently Added" in titles, titles
+        ours = [n for n, t in enumerate(titles) if "Picked for You" in t]
+        assert ours, titles
+        assert max(ours) < titles.index("Recently Added"), f"our rows must sit ABOVE Plex's own hub, got {titles}"
+
+
+def test_an_anchor_the_owner_switched_off_in_plex_is_reported_not_silently_skipped(fakes, tmp_path):
+    """The other half: a row anchored to one of Plex's own hubs that the owner has switched OFF.
+
+    It occupies no position a viewer can see, so there is nothing to sit beside — and it must be said
+    out loud rather than leaving the row at the bottom for ever with the pass reporting success.
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex, ctx, users = _placement_ctx(
+        state,
+        pms_url,
+        tmp_path,
+        lambda p: [
+            RowSpec(
+                slug="picked",
+                name_template="✨ {library_name} Picked for You",
+                size=12,
+                hub_anchors={str(s.key): HubAnchor(anchor_title="By Genre") for s in p.sections()},
+            )
+        ],
+    )
+
+    report = engine_run(ctx, users)
+
+    assert not report.error, report.error
+    refused = [e for e in report.hub_orderings if e.get("placed") is False]
+    assert refused, f"anchoring to a switched-off built-in must be reported: {report.hub_orderings}"
+    assert all(e["reason"] == "anchor not found" for e in refused), refused
+    # And the shelf really carries Plex's own hubs, so this was not asserted against a shelf of ours.
+    titles = [getattr(h, "title", "") for h in plex.sections()[0].managedHubs()]
+    assert "Recently Added" in titles and "By Genre" in titles, titles

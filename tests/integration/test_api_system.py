@@ -16,6 +16,27 @@ pytestmark = pytest.mark.integration
 _HUB_IDS = iter(range(500, 999))
 
 
+def _builtin(title: str, identifier: str, *, promoted: bool = True):
+    """One of Plex's OWN hubs, as `managedHubs()` really returns it.
+
+    Carries the three promotion flags, because plexapi's `ManagedHub._loadData` always sets them —
+    `utils.cast(bool, data.attrib.get(flag, False))` — so a real built-in hub object never lacks
+    them, whatever the XML said. A flagless `SimpleNamespace` stood here instead and is the shape
+    that hid a live bug: every built-in read as promoted-nowhere, so the rule "judge collections only"
+    looked necessary, and an owner could pick a switched-off built-in as an anchor the engine would
+    then silently never place (testing rule: the fake must be no easier than the real server).
+    """
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        title=title,
+        identifier=identifier,
+        promotedToSharedHome=promoted,
+        promotedToOwnHome=False,
+        promotedToRecommended=False,
+    )
+
+
 def _hub(title: str, *, promoted: bool = True, recommended: bool = False):
     """A COLLECTION's managed hub, as `managedHubs()` really returns one.
 
@@ -417,11 +438,15 @@ class TestSystemResponseShapes:
         so; it is NOT filtered out here, because an owner whose saved anchor vanished from the list
         cannot tell "not on the shelf" from "deleted".
 
-        The matrix that matters is COLLECTION vs BUILT-IN, told apart by the hub's own
-        `custom.collection.*` identifier rather than by title. Only a collection is judged, because
-        Plex sends the promotion flags for those and the app reads them on every promote. A built-in
-        hub is never marked unusable: the engine never refuses one, so saying so here would be a lie
-        the owner acts on — and titles collide, so a title check would refuse one for real.
+        The matrix that matters is COLLECTION vs BUILT-IN x on-shelf vs off, told apart by the hub's
+        own `custom.collection.*` identifier rather than by title — titles collide, and a title check
+        would refuse a real anchor.
+
+        A built-in used to be exempt from the judgement entirely, on the reasoning that the engine
+        never refuses one. The engine now does, because accepting one placed NOTHING: `place_rows`
+        builds its backbone from promoted hubs only, so a row spliced onto a switched-off built-in
+        dropped out of the arrangement and the pass answered "already in place" every night in
+        silence. Both sides read `can_anchor`, so both say the same thing.
         """
         from types import SimpleNamespace
 
@@ -431,9 +456,11 @@ class TestSystemResponseShapes:
             title="Movies",
             type="movie",
             managedHubs=lambda: [
-                # A built-in Plex hub: no promotion flags, and an identifier of another kind — the
-                # shape this repo has never recorded (plex-safety rule 11). It must stay selectable.
-                SimpleNamespace(title="Recently Added", identifier="home.television.recentlyadded"),
+                # A built-in Plex hub the owner has left ON, with an identifier of another family.
+                _builtin("Recently Added", "home.television.recentlyadded"),
+                # ...and one they switched OFF in Manage Recommendations (recorded: it reads with all
+                # three flags at 0). It occupies no position, so it is no anchor.
+                _builtin("By Genre", "movie.genre", promoted=False),
                 _hub("New Series (Unwatched)"),
                 _hub("Archive 2019", promoted=False),
                 # Any ONE flag is a real, visible position — a Kometa anchor is usually this one.
@@ -442,10 +469,10 @@ class TestSystemResponseShapes:
                 # usable, so the answer must be OR-ed across all of them rather than first-hub-wins —
                 # otherwise the API greys out an anchor the engine places happily. "Top Rated" is a
                 # stock Plex hub and a stock Kometa collection; "Trending" is the same, reversed.
-                SimpleNamespace(title="Top Rated", identifier="home.movies.toprated"),
+                _builtin("Top Rated", "home.movies.toprated"),
                 _hub("Top Rated", promoted=False),
                 _hub("Trending", promoted=False),
-                SimpleNamespace(title="Trending", identifier="home.movies.trending"),
+                _builtin("Trending", "home.movies.trending"),
             ],
         )
 
@@ -460,6 +487,7 @@ class TestSystemResponseShapes:
 
         assert client.get("/api/system/libraries/1/collections").json() == [
             {"title": "Recently Added", "on_shelf": True},
+            {"title": "By Genre", "on_shelf": False},
             {"title": "New Series (Unwatched)", "on_shelf": True},
             {"title": "Archive 2019", "on_shelf": False},
             {"title": "Kometa Genre", "on_shelf": True},

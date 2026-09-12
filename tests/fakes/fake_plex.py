@@ -153,6 +153,14 @@ class FakePlexState:
     pms_url: str = "http://127.0.0.1:32400"  # set by the harness once the fake PMS has a port
     sections: dict[int, FakeSection] = field(default_factory=_default_sections)
     collections: dict[int, FakeCollection] = field(default_factory=dict)
+    #: Managed-hub order per section — identifiers, Plex's own hubs and our collections in ONE list,
+    #: because that is what `GET /hubs/sections/{id}/manage` returns and what `.../move` reorders.
+    #: Shelf order used to be modelled as the insertion order of `collections`, which meant a
+    #: built-in could not be moved or moved past, so the shipped default placement (a row above
+    #: `movie.recentlyadded`) was unrealisable and the engine burned its retries against it.
+    #: Populated lazily by `_shelf`, which appends collections it has not seen — new hubs go to the
+    #: BOTTOM, as on a real server.
+    hub_order: dict[int, list[str]] = field(default_factory=dict)
     users: dict[int, FakeUser] = field(default_factory=dict)  # owner is NOT in this dict
     history: list[FakeHistoryEntry] = field(default_factory=list)
     #: Per-account LEAF watch state — `{account_id: {rating_key: [view_count, view_offset_ms]}}`.
@@ -756,6 +764,35 @@ def _managed_hub_xml(parent: Element, section_id: int, collection: FakeCollectio
     )
 
 
+#: Plex's OWN hubs, which `GET /hubs/sections/{id}/manage` returns alongside the collections —
+#: recorded in `tests/fixtures/pms_managed_hubs.xml.txt`. The fake served collections only, and their
+#: promotion flags are now load-bearing on both sides of the app: `can_anchor` refuses an anchor that
+#: is promoted nowhere, and the anchor picker greys the same ones out. With no built-in in the fake,
+#: no full-stack path ever saw one (testing rule: the fake must be no easier than the real server).
+#:
+#: One ON and one OFF, because the OFF case is the one that used to be silently unplaceable: a
+#: built-in the owner switched off in Manage Recommendations reads with all three flags at 0.
+_BUILTIN_HUBS = (
+    ("movie.recentlyadded", "Recently Added", True),
+    ("movie.genre", "By Genre", False),
+)
+
+
+def _builtin_hub_xml(parent: Element, identifier: str, title: str, promoted: bool) -> Element:
+    """A built-in hub as a real PMS serves it: no `deletable`, and all three flags always present."""
+    return _el(
+        parent,
+        "Hub",
+        identifier=identifier,
+        title=title,
+        promotedToRecommended=int(promoted),
+        promotedToOwnHome=0,
+        promotedToSharedHome=0,
+        homeVisibility="none",
+        recommendationsVisibility="all" if promoted else "none",
+    )
+
+
 def _page(request: Request, total: int) -> tuple[int, int]:
     """Container paging: plexapi sends X-Plex-Container-Start/Size as headers OR query params."""
     query, headers = request.query_params, request.headers
@@ -1180,12 +1217,38 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
         art = _fake_poster(rating_key, item.title)
         return Response(art, media_type="image/jpeg" if art[:2] == b"\xff\xd8" else "image/png")
 
+    def _shelf(section_id: int) -> list[str]:
+        """This section's managed-hub order, as one list of identifiers.
+
+        Self-maintaining: it starts as Plex's own hubs, and every collection the section has that is
+        not in it yet is APPENDED — which is exactly what a real PMS does with a newly created
+        collection, and the reason an unplaced row sinks out of sight. Collections that have gone are
+        dropped. Returned by reference so `move_hub` reorders the state.
+        """
+        order = state.hub_order.setdefault(section_id, [identifier for identifier, _t, _p in _BUILTIN_HUBS])
+        live = [
+            f"custom.collection.{section_id}.{c.rating_key}"
+            for c in state.collections.values()
+            if c.section_id == section_id
+        ]
+        order[:] = [i for i in order if not i.startswith("custom.collection.") or i in live]
+        order.extend(i for i in live if i not in order)
+        return order
+
     @app.get("/hubs/sections/{section_id}/manage")
     def manage_hubs(section_id: int, request: Request) -> Response:
         wanted = request.query_params.get("metadataItemId")
         root = _container()
-        for collection in state.collections.values():
-            if collection.section_id != section_id:
+        builtins = dict((identifier, (title, promoted)) for identifier, title, promoted in _BUILTIN_HUBS)
+        for identifier in _shelf(section_id):
+            if identifier in builtins:
+                # A single-hub lookup asks about one COLLECTION, so Plex's own hubs are not in it.
+                if wanted is None:
+                    title, promoted = builtins[identifier]
+                    _builtin_hub_xml(root, identifier, title, promoted)
+                continue
+            collection = state.collections.get(int(identifier.rsplit(".", 1)[-1]))
+            if collection is None:
                 continue
             if wanted is not None and collection.rating_key != int(wanted):
                 continue
@@ -1207,7 +1270,6 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
     @app.put("/hubs/sections/{section_id}/manage/{identifier}/move")
     def move_hub(section_id: int, identifier: str, request: Request) -> Response:
         # after=None (no query) -> pinned to the top of the Managed Recommendations shelf.
-        key = int(identifier.rsplit(".", 1)[-1])
         after = request.query_params.get("after")
         # And REALLY reorder. `manage_hubs` serves `state.collections` in insertion order, so this
         # used to answer 200 while the shelf never moved — which is precisely the misbehaviour a real
@@ -1215,16 +1277,16 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
         # unverified. A fake that behaves like the bug makes every shelf-order assertion vacuous and
         # would have had e2e re-issuing moves three times and finishing on a warning. Testing rule:
         # the fake must be no easier than the real server.
-        order = [k for k in state.collections if k != key]
+        order = _shelf(section_id)
+        if identifier not in order:
+            return Response(status_code=404)
+        order.remove(identifier)
         if after is None:
-            index = 0
+            order.insert(0, identifier)
+        elif after in order:
+            order.insert(order.index(after) + 1, identifier)
         else:
-            after_key = int(after.rsplit(".", 1)[-1])
-            index = order.index(after_key) + 1 if after_key in order else len(order)
-        order.insert(index, key)
-        reordered = {k: state.collections[k] for k in order}
-        state.collections.clear()
-        state.collections.update(reordered)
+            order.append(identifier)
         return Response(status_code=200)
 
     @app.put("/hubs/sections/{section_id}/manage/{identifier}")
