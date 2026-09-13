@@ -25,8 +25,9 @@ violate them.
    account's filter (measured: `tests/fixtures/pms_collections_tab_filter_visibility.json`). Rows of
    people who already have one were excluded by an earlier merge; a person's FIRST row is not. So when a
    person with no row on the server before the run gets one, `_exclude_first_rows` merges their exclude
-   into every other account from inside the same hold of the write lock that wrote the row (additive
-   only), so no other row is written in between; (c) still runs at the end, reads every filter fresh, and
+   into every other account as soon as that row's first library is written (created, labelled, and its
+   browse-hide and poster set), inside the same hold of the write lock (additive only), so no other
+   collection is written in between; (c) still runs at the end, reads every filter fresh, and
    gates promotion. A run with no
    users (`engine_run(ctx, [])`) still does the sweep + merge — it only ever makes the server more
    private, never creates or promotes.

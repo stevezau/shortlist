@@ -16,7 +16,10 @@
     "3. So until `label!=shortlist_<slug>` is on an account's filter, that account can see the row's title",
     "   and contents in the Collections tab. A person's FIRST row has no exclude anywhere until a merge",
     "   writes one, which is why the pipeline merges that person's exclude as soon as their first row is",
-    "   written, inside the same write lock (`_exclude_first_rows`), instead of at the end-of-run merge."
+    "   written, inside the same write lock (`_exclude_first_rows`), instead of at the end-of-run merge.",
+    "4. Live check 2026-09-13, one new person on the same server, watched from another account's token:",
+    "   rows stayed visible ~25s after the early merge wrote that account's filter (Plex's apply time),",
+    "   instead of until the end-of-run merge."
   ],
   "measured_at": "2026-09-13",
   "pms_version": "1.43.3",

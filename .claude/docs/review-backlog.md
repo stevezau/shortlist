@@ -23,10 +23,12 @@ absent, 0 of 180. So the gap was real: title and contents, for every shared acco
 delivery.
 
 **Fixed:** when a person whose slug was not in the run-start `stored_labels` gets a stored label,
-`rows._deliver_row` calls `_exclude_first_rows` from inside the same hold of the write lock that wrote the
-row — so no other row is written in between, at any concurrency — merging excludes into every other account
+`delivery.deliver_rows` calls `_exclude_first_rows` (via `rows._deliver_row`) as soon as that library's write
+returns — created, labelled, browse-hidden and postered — inside the same hold of the write lock, so no other
+collection is written in between, at any concurrency, not even the row's next library — merging excludes
+into every other account
 (additive only: no enumeration, no departure evidence, so nothing is removed but a person's own label from
-their own filter). A delivery that raises part-way still triggers it (the call is in a `finally`). The first plex.tv failure that is not a per-account 422 stops early merges for
+their own filter). A delivery that raises in a later library has already triggered it. The first plex.tv failure that is not a per-account 422 stops early merges for
 the rest of the run, since each failing write backs off for a minute or more while every delivery waits on
 the lock. The end-of-run `_privacy_sync_phase` still runs, reads every filter fresh — which catches an early
 write plex.tv did not keep, and confirms or withdraws any #116 "restriction working again" notice the early

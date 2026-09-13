@@ -360,6 +360,7 @@ def deliver_rows(
     poster_artist: PosterArtist | None = None,
     order_work: list[tuple] | None = None,
     on_write: Callable[[dict], None] | None = None,
+    on_label_stored: Callable[[], None] | None = None,
 ) -> tuple[CollectionDiff, str | None]:
     """Deliver one row's picks as one collection per targeted library. Returns (diff, stored label).
 
@@ -373,6 +374,10 @@ def deliver_rows(
     `on_write` receives each library's pending change (``{"row", "library"}`` plus ``"creating"`` or
     ``"adding"``/``"removing"`` counts) just before its membership writes start, so a run can show what
     it is doing while a slow write is in flight. Never called for an unchanged row or a dry run.
+
+    `on_label_stored` is called each time a library's label lands in `stored_labels` — after that library's
+    write (including its browse-hide and poster) returns, before the next library is written. That is when
+    a person's first row can be excluded (`pipeline._deliver_phase`).
 
     `stored_labels` and `diff` are caller-owned accumulators, written the moment the PMS confirms
     each library's row. A user gets a row per library, so delivery can half-succeed: if the second
@@ -542,6 +547,8 @@ def deliver_rows(
         # None when nothing was delivered"); the code did not keep the promise.
         if stored_labels is not None and not dry_run and stored:
             stored_labels[stored_key] = stored
+            if on_label_stored is not None:
+                on_label_stored()
 
     return combined, stored
 
@@ -954,9 +961,10 @@ def _create_labelled_collection(
     # guard, so the retry is the safe read-modify-write rather than a bare replace.
     _apply_shortlist_label(plex, collection, profile.username)
     # A person's FIRST row has no `label!=` exclude in anyone's share filter until
-    # `pipeline._exclude_first_rows` merges one after their delivery. Set the browse-hiding mode promote()
-    # sets now rather than then. It does not cover the Collections tab — only the exclude does
-    # (tests/fixtures/pms_collections_tab_filter_visibility.json). Best-effort: promote() hides it again.
+    # `pipeline._exclude_first_rows` merges one, as soon as this library's write returns. Set the
+    # browse-hiding mode promote() sets now rather than then. It does not cover the Collections tab — only
+    # the exclude does (tests/fixtures/pms_collections_tab_filter_visibility.json). Best-effort: promote()
+    # hides it again.
     try:
         plex.hide_from_browse(collection)
     except Exception as e:

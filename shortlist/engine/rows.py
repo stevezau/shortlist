@@ -2707,8 +2707,8 @@ def _deliver_row(
 ) -> bool:
     """Write one row's collections to Plex, under the write-lock and with an idempotent retry.
 
-    `on_first_row` is called while the lock is still held, once this person has a stored label — so a
-    person's first row gets its excludes before any other person's write can take the lock
+    `on_first_row` is called while the lock is still held, each time one of this row's libraries stores its
+    label — so a person's first row gets its excludes before anything else is written
     (`pipeline._deliver_phase`). It must not raise.
 
     Returns False when the run was cancelled while this row was QUEUED for the write-lock, and the
@@ -2769,42 +2769,39 @@ def _deliver_row(
             del user_report.breakdown[breakdown_mark:]  # drop any entries a prior failed attempt appended
             work_start = time.monotonic()
             claimed_this_run = _claimed_this_run(user_report)
-            try:
-                deliver_rows(
-                    ctx.plex,
-                    user,
-                    picks,
-                    cfg,
-                    spec,
-                    sole_row=sole_row,
-                    # {section key -> ratingKey} for THIS row and user: which object delivery should
-                    # retitle rather than rebuild when the title has moved on.
-                    #
-                    # Minus anything THIS RUN has already delivered to. Plex ratingKeys are rowids and
-                    # get reused: the sweep can free row A's id at the top of a run, row B create and
-                    # be handed it, and row A then match B's brand-new collection and retitle it. The
-                    # breakdown is the record of what this run has already written, so excluding it
-                    # closes that window outright.
-                    delivered_keys={
-                        section_key: key
-                        for (u, r, section_key), key in ctx.delivered_keys.items()
-                        if u == user.slug and r == spec.slug and (section_key, key) not in claimed_this_run
-                    },
-                    dry_run=cfg.dry_run,
-                    stored_labels=stored_labels,
-                    diff=user_report.diff,
-                    sections=ctx.delivery_sections,
-                    section_index=ctx.section_index,
-                    section_picks=section_picks,
-                    breakdown=user_report.breakdown,
-                    poster_artist=ctx.poster_artist,
-                    order_work=order_work,
-                    on_write=lambda counts: _emit(ctx, user.slug, "delivering", counts),
-                )
-            finally:
-                # Even when delivery raised part-way: a row it did write still needs hiding.
-                if on_first_row is not None and user.slug in stored_labels:
-                    on_first_row()
+            deliver_rows(
+                ctx.plex,
+                user,
+                picks,
+                cfg,
+                spec,
+                sole_row=sole_row,
+                # {section key -> ratingKey} for THIS row and user: which object delivery should
+                # retitle rather than rebuild when the title has moved on.
+                #
+                # Minus anything THIS RUN has already delivered to. Plex ratingKeys are rowids and
+                # get reused: the sweep can free row A's id at the top of a run, row B create and
+                # be handed it, and row A then match B's brand-new collection and retitle it. The
+                # breakdown is the record of what this run has already written, so excluding it
+                # closes that window outright.
+                delivered_keys={
+                    section_key: key
+                    for (u, r, section_key), key in ctx.delivered_keys.items()
+                    if u == user.slug and r == spec.slug and (section_key, key) not in claimed_this_run
+                },
+                dry_run=cfg.dry_run,
+                stored_labels=stored_labels,
+                diff=user_report.diff,
+                sections=ctx.delivery_sections,
+                section_index=ctx.section_index,
+                section_picks=section_picks,
+                breakdown=user_report.breakdown,
+                poster_artist=ctx.poster_artist,
+                order_work=order_work,
+                on_write=lambda counts: _emit(ctx, user.slug, "delivering", counts),
+                # Inside this lock hold, before the row's next library is written.
+                on_label_stored=on_first_row,
+            )
             logger.debug(
                 "{}: row '{}' delivery — waited {:.1f}s for write-lock, wrote {} librar(ies) in {:.1f}s",
                 user.username,

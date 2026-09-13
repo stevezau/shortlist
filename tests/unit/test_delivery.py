@@ -803,6 +803,67 @@ class TestDeliverRows:
 
         assert events == [{"row": "✨ Movies Picked for You", "library": "Movies", "creating": 2}, "create"]
 
+    def test_reports_a_stored_label_before_the_next_library_is_written(self, engine_config, movies, shows):
+        """The caller hides a person's first row the moment its label exists. Waiting for the row's other
+        libraries left the first collection listed in everyone's Collections tab while a TV collection was
+        created — ~36s on a large library, measured live."""
+        plex = self._plex(movies, shows)
+        plex.fetch_items.side_effect = lambda keys: ([MagicMock(ratingKey=k) for k in keys], [])
+        events: list = []
+        create = plex.create_collection.side_effect
+        plex.create_collection.side_effect = lambda section, title, items: (
+            events.append(("create", section.title)) or create(section, title, items)
+        )
+        stored_labels: dict[str, str] = {}
+        mixed = picks(1) + picks(1, MediaType.SHOW, start=5)
+
+        deliver_rows(
+            plex,
+            make_profile(),
+            mixed,
+            engine_config,
+            stored_labels=stored_labels,
+            on_label_stored=lambda: events.append(("label stored", dict(stored_labels))),
+        )
+
+        assert events[0] == ("create", "Movies")
+        assert events[1] == ("label stored", {"sarah": "Shortlist_sarah"})
+        assert events[2] == ("create", "TV Shows")
+
+    def test_a_library_whose_label_never_landed_reports_nothing(self, engine_config, movies, shows):
+        """Reporting it anyway would spend the caller's run-once hide on a row that has no label to exclude."""
+        plex = self._plex(movies, shows)
+        plex.stored_label.side_effect = RuntimeError("label write failed")
+        called: list = []
+
+        with pytest.raises(RuntimeError):
+            deliver_rows(
+                plex,
+                make_profile(),
+                picks(),
+                engine_config,
+                stored_labels={},
+                on_label_stored=lambda: called.append(True),
+            )
+
+        assert called == []
+
+    def test_a_dry_run_reports_no_stored_label(self, engine_config, movies, shows):
+        plex = self._plex(movies, shows)
+        called: list = []
+
+        deliver_rows(
+            plex,
+            make_profile(),
+            picks(),
+            engine_config,
+            stored_labels={},
+            dry_run=True,
+            on_label_stored=lambda: called.append(True),
+        )
+
+        assert called == []
+
     def test_says_nothing_when_the_row_is_unchanged(self, engine_config, movies, shows):
         """An unchanged row writes nothing, so announcing a write would be a lie."""
         plex = self._plex(movies, shows)
