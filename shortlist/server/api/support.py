@@ -2064,7 +2064,7 @@ async def sharing(request: Request) -> dict:
                 block.line(f"  …and {len(still_held) - 8} more account(s) in the same state")
         for row in (r for r in rows if r["missing"] and r["manage_sharing"]):
             block.line(f"{row['user']} (#{row['account_id']})")
-            block.line(f"  hides {len(row['shortlist_excludes'])} of {len(row['should_hide'])} other rows")
+            block.line(f"  hides {len(row['shortlist_excludes_enforced'])} of {len(row['should_hide'])} other rows")
             # Named, not counted: "which row can this person see" is the actual question.
             block.line(f"  NOT HIDDEN: {', '.join(row['missing'][:6])}")
             if len(row["missing"]) > 6:
@@ -2417,7 +2417,7 @@ async def recent_runs(request: Request) -> dict:
             # The 6-key truncation above is a readability cap on ordinary counters, but two keys
             # report a privacy FAULT — and both sort late enough to fall outside it. A bundle that
             # silently dropped them is exactly the artifact someone attaches when reporting the leak.
-            for key in ("filters_not_enforced", "left_alone_failures"):
+            for key in ("filters_not_enforced", "left_alone_failures", "unreadable_filters"):
                 if stats.get(key):
                     block.line(f"    !! {key}={stats[key]}")
         for failure in run["failed"][:5]:

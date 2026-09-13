@@ -573,6 +573,8 @@ class TestRestoreAfterUnpause:
             # false premise that let `user.restore` promote a row nobody's filter was hiding.
             return SimpleNamespace(
                 error="could not read the plex.tv user list: RuntimeError: plex.tv 503" if merge_fails else None,
+                restrictions_restored={},
+                unreadable_filters={},
                 promotion_blockers=[],
                 swept_rows={},
                 converged=0,
@@ -652,6 +654,8 @@ class TestRestoreAfterUnpause:
 
         pipeline_mod.run = lambda ctx, users: SimpleNamespace(
             error=None,
+            restrictions_restored={},
+            unreadable_filters={},
             promotion_blockers=["dave (plex account 300): plex.tv 503"],
             swept_rows={},
             converged=0,
@@ -678,6 +682,8 @@ class TestRestoreAfterUnpause:
             seen.append(ctx.config.manage_shelf_order)
             return SimpleNamespace(
                 error=None,
+                restrictions_restored={},
+                unreadable_filters={},
                 promotion_blockers=[],
                 swept_rows={},
                 converged=0,
@@ -690,6 +696,34 @@ class TestRestoreAfterUnpause:
         jobs._HANDLERS["privacy.sync"](state, {"reason": "someone left a shared row"})
 
         assert seen == [False], "the privacy pass must not reorder the shelf"
+
+    def test_privacy_sync_says_when_it_switched_an_owners_restriction_back_on(self, sessions):
+        """This job persists no run, so if it is the pass that repairs a #116 filter, its detail line is
+        the only place the owner is told an account's own Plex restriction applies again."""
+        state = self._state(sessions, promoted=[], merged=[])
+        import shortlist.engine.pipeline as pipeline_mod
+
+        pipeline_mod.run = lambda ctx, users: SimpleNamespace(
+            error=None,
+            promotion_blockers=[],
+            swept_rows={},
+            converged=0,
+            hub_orderings=[],
+            left_alone_failures=[],
+            restrictions_restored={201: "sarah"},
+            unreadable_filters={"mike": "their Plex restriction uses the label 'Kids & Family'"},
+        )
+
+        result = jobs._HANDLERS["privacy.sync"](state, {"reason": "someone left a shared row"})
+
+        assert "sarah" in result["detail"]
+        assert "restriction" in result["detail"]
+        with sessions() as session:
+            from shortlist.server.db.models import Event
+
+            restored = session.query(Event).filter_by(scope="privacy.restriction_restored").all()
+            assert [e.message["username"] for e in restored] == ["sarah"], "the bell reads this, not the detail"
+        assert "mike" in result["detail"], "an account nothing can hide must reach the Jobs page too"
 
     def test_user_restore_leaves_the_recommended_shelf_order_alone(self, sessions):
         """Un-pausing one person ran the WHOLE placement phase and audited none of it.
@@ -708,6 +742,8 @@ class TestRestoreAfterUnpause:
             seen.append(ctx.config.manage_shelf_order)
             return SimpleNamespace(
                 error=None,
+                restrictions_restored={},
+                unreadable_filters={},
                 promotion_blockers=[],
                 swept_rows={},
                 converged=0,
@@ -721,6 +757,27 @@ class TestRestoreAfterUnpause:
 
         assert seen == [False], "restoring a user must not reorder the shelf"
 
+    def test_a_failed_pass_names_the_blocked_account_even_when_verification_also_failed(self, sessions):
+        """Round-9 audit: the read-back now runs after an earlier failure, and its `report.error` hid the
+        named blocker — the account the owner actually has to go and fix."""
+        state = self._state(sessions, promoted=[], merged=[])
+        import shortlist.engine.pipeline as pipeline_mod
+
+        pipeline_mod.run = lambda ctx, users: SimpleNamespace(
+            error="could not verify filters: RuntimeError",
+            restrictions_restored={},
+            unreadable_filters={},
+            promotion_blockers=["kid (plex account 500): plex.tv 422"],
+            swept_rows={},
+            converged=0,
+        )
+
+        with pytest.raises(RuntimeError) as raised:
+            jobs._HANDLERS["privacy.sync"](state, {"reason": "test"})
+
+        assert "could not verify filters" in str(raised.value)
+        assert "kid (plex account 500)" in str(raised.value)
+
     def test_privacy_sync_does_not_report_success_when_no_filter_was_written(self, sessions):
         """It read only `swept_rows`/`converged` and returned a result dict, so `_finish` marked the
         job `done` — "Share filters merged for every account" — and retired an owed HIDE from the
@@ -730,6 +787,8 @@ class TestRestoreAfterUnpause:
 
         pipeline_mod.run = lambda ctx, users: SimpleNamespace(
             error="could not read the plex.tv user list: RuntimeError: plex.tv 503",
+            restrictions_restored={},
+            unreadable_filters={},
             promotion_blockers=[],
             swept_rows={},
             converged=0,
@@ -974,7 +1033,14 @@ class TestSafeMode:
         monkeypatch.setattr(
             pipeline_mod,
             "run",
-            lambda ctx, users: SimpleNamespace(error=None, promotion_blockers=[], swept_rows={}, converged=0),
+            lambda ctx, users: SimpleNamespace(
+                error=None,
+                restrictions_restored={},
+                unreadable_filters={},
+                promotion_blockers=[],
+                swept_rows={},
+                converged=0,
+            ),
         )
 
         result = jobs._HANDLERS["user.restore"](self._state(sessions, self._ctx(wrote=wrote)), {"slug": "sarah"})
@@ -1736,6 +1802,8 @@ class TestScheduledRowVisibility:
             calls.append(("merge", users))
             return SimpleNamespace(
                 error="could not read the plex.tv user list: RuntimeError: plex.tv 503" if merge_fails else None,
+                restrictions_restored={},
+                unreadable_filters={},
                 promotion_blockers=[],
                 swept_rows={},
                 converged=0,

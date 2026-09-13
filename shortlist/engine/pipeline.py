@@ -47,12 +47,15 @@ from shortlist.engine.models import (
 )
 from shortlist.engine.privacy import (
     RESTRICTED_FILTER_FIELDS,
+    FilterParseError,
     clear_our_excludes,
     shared_label_audiences,
     shortlist_labels_in,
     sync_user_restrictions,
+    unenforced_excludes,
     unhidden_rows_on_home,
     unhidden_rows_visible_to,
+    voids_owner_restriction,
 )
 from shortlist.engine.request_config import resolve_request_config
 
@@ -593,6 +596,24 @@ def _leave_sharing_alone(ctx: EngineContext, user, remote, report: RunReport) ->
         # Audited like any other share write (rule 10): this one changes who can see what, and it is
         # the only write in the run that widens rather than narrows.
         report.filter_writes[user.plex_account_id] = {"username": user.username, "fields": written}
+        _record_restored_restriction(ctx, user, written, report)
+
+
+def _record_restored_restriction(
+    ctx: EngineContext, user: UserProfile, written: dict[str, tuple[str, str]], report: RunReport
+) -> None:
+    """Note an account whose OWN Plex restriction this write switched back on (#116).
+
+    Only for a real write: a dry run computes the same diff and changes nothing on Plex, so recording it
+    would have the notice claim a repair that never happened, every night in safe mode.
+    """
+    if ctx.config.dry_run:
+        return
+    if any(
+        voids_owner_restriction(before, LABEL_PREFIX) and not voids_owner_restriction(after, LABEL_PREFIX)
+        for before, after in written.values()
+    ):
+        report.restrictions_restored[user.plex_account_id] = user.username
 
 
 def _verify_filters_enforced(ctx, audience, roster, owned, collections_known, report) -> None:
@@ -634,6 +655,9 @@ def _verify_filters_enforced(ctx, audience, roster, owned, collections_known, re
     # settled at the bottom of this function — a type that never produced a reading must not be
     # reported as clean on the strength of a different type that did.
     attempts: dict[str, int] = {}
+    # Types passed over only because this run just wrote them. Still owed a reading before the run may
+    # claim that type is clean.
+    skipped_types: set[str] = set()
     for user in audience:
         if user.user_type is UserType.OWNER or user.plex_account_id in ctx.unmanaged_account_ids:
             continue
@@ -641,6 +665,12 @@ def _verify_filters_enforced(ctx, audience, roster, owned, collections_known, re
         if remote is None or getattr(remote, "restriction_profile", ""):
             continue  # profiled accounts are `_record_unhideable`'s job, and have a different remedy
         kind = str(user.user_type)
+        if user.plex_account_id in report.filter_writes:
+            # Written seconds ago, and Plex takes ~25s to apply a change (measured, #116): its Home would
+            # still show the OLD filter. The first run after the #116 fix writes exactly the accounts that
+            # were leaking, so sampling them raised "Plex is ignoring the filter" on the repair itself.
+            skipped_types.add(kind)
+            continue
         if kind in seen_types:
             continue
         # Only an account that HAS our exclusions can demonstrate they are being ignored. One with
@@ -681,7 +711,7 @@ def _verify_filters_enforced(ctx, audience, roster, owned, collections_known, re
     # whole budget went on failures, the run persists `filters_not_enforced: {}`, and the "Plex is
     # ignoring the privacy filter" card CLEARS while the leak is live. `attempts` is per type and
     # this flag is one bool for the run, which is exactly how that slips past (review 2026-08-18).
-    fully_covered = bool(seen_types) and set(attempts) <= seen_types
+    fully_covered = bool(seen_types) and (set(attempts) | skipped_types) <= seen_types
     report.filters_enforcement_measured = bool(report.filters_not_enforced) or fully_covered
 
 
@@ -804,6 +834,7 @@ def _privacy_sync_phase(
             continue
         try:
             own_slug = own_slugs.get(user.plex_account_id)
+            refused: dict[str, str] = {}
             written = sync_user_restrictions(
                 ctx.plextv,
                 user,
@@ -822,12 +853,22 @@ def _privacy_sync_phase(
                 hide_all_shared=(
                     ctx.config.hide_shared_from_disabled and user.plex_account_id in ctx.disabled_account_ids
                 ),
+                refused=refused,
                 dry_run=ctx.config.dry_run,
             )
+            if refused:
+                # A field Plex itself cannot read (a literal `&` in one of the owner's labels). Reported, NOT
+                # a blocker (owner decision 2026-09-13): the other field was still written if it could be,
+                # and blocking would take everyone else's rows off Home every night for one label name.
+                report.unreadable_filters[user.username] = "; ".join(
+                    f"{'Movies' if field == 'filterMovies' else 'TV'}: {refused[field]}" for field in sorted(refused)
+                )
+                logger.error("{}: {}", user.username, report.unreadable_filters[user.username])
             if written:
                 # Every share we touch, audited by account id — most of these accounts have no
                 # UserRunReport to record it on (rule 10).
                 report.filter_writes[user.plex_account_id] = {"username": user.username, "fields": written}
+                _record_restored_restriction(ctx, user, written, report)
                 if not ctx.config.dry_run:
                     # {field: expected merged value} — read back once, after every write, below.
                     to_verify[user.plex_account_id] = {field: after for field, (_before, after) in written.items()}
@@ -908,11 +949,16 @@ def _privacy_sync_phase(
     # promotion (the caller promotes only when this returns True). A missing shortlist exclude means a
     # row would be visible to someone it shouldn't, so it fails the whole sync (blocks promotion) exactly
     # as the old per-user read-back-and-raise did — just without a full roster fetch per account.
-    if to_verify and not sync_failed:
+    # Run even when something already failed: it is read-only, and it is what confirms (or withdraws) every
+    # restriction this pass reports as working again (#116) — a pass another account blocked still wrote.
+    if to_verify:
         try:
             fresh = {r.id: r for r in ctx.plextv.list_users()}
         except Exception as e:
             sync_failed = True
+            # Nothing written this pass is confirmed, so no restriction may be reported as working again.
+            for account_id in to_verify:
+                report.restrictions_restored.pop(account_id, None)
             note = f"could not verify filters: {type(e).__name__}"
             report.error = f"{report.error} | {note}" if report.error else note
             logger.exception("could not read the plex.tv roster to verify filter writes — nothing promoted")
@@ -921,9 +967,18 @@ def _privacy_sync_phase(
                 remote2 = fresh.get(account_id)
                 for fieldname, expected in expected_fields.items():
                     got = remote2.filters[fieldname] if remote2 is not None else ""
-                    missing = shortlist_labels_in(expected, LABEL_PREFIX) - shortlist_labels_in(got, LABEL_PREFIX)
+                    # ENFORCED, not merely present (#116): plex.tv hands back whatever it stored, and an
+                    # exclude behind a `|` is stored perfectly and applied never. A filter we cannot parse
+                    # proves nothing either, so it counts as every exclude missing.
+                    wanted_here = shortlist_labels_in(expected, LABEL_PREFIX)
+                    try:
+                        missing = unenforced_excludes(got, wanted_here)
+                    except FilterParseError:
+                        missing = wanted_here
                     if missing:
                         sync_failed = True
+                        # plex.tv accepted the write and did not keep it: the owner's restriction is NOT back.
+                        report.restrictions_restored.pop(account_id, None)
                         msg = f"read-back missing excludes {missing} on {fieldname} for account {account_id}"
                         stamp = reports.get(own_slugs.get(account_id, ""))
                         if stamp is not None:

@@ -35,6 +35,25 @@ All notable changes to this project are documented here. This project follows
 
 ### Fixed
 
+- **Restrictions you set on someone in Plex were being switched off.** If you had set a restriction
+  on someone — excluding a content rating like R, or an allow-list of ratings or labels — Shortlist
+  added its hide rule to it joined with `|`. Plex reads that as "either/or", not "both", so your
+  restriction quietly stopped applying. With an exclude rule, that person could also see every other
+  person's row; with an allow-list, they could see the whole library. Plex stored the rule exactly as
+  written, so the Sharing page and the check before promotion both reported the account as hidden.
+  Measured on a real server before fixing it.
+
+  Shortlist now joins its rule with `&`, which Plex applies together with yours. The first privacy
+  pass after you update repairs every account an earlier version wrote, and a notice names the
+  accounts it fixed. Those people may notice less on the server than before: that is your original
+  restriction working again. An allow-list now applies to Shortlist's rows too, so someone with one
+  only sees their own row if it carries one of the allowed labels.
+
+  One case Shortlist can't fix for you: a label with a literal `&` in its name ("Kids & Family") in
+  someone's restrictions. Plex returns an error for their Home screen with a restriction like that,
+  so Shortlist can't add its rule to it. You'll get a notice naming the person and the label to
+  rename; the Sharing page says the same, and everyone else's rows carry on as normal. (#116, #115)
+
 - **Schedules with a day of the week now run on that day, not the day after.** `0 4 * * 1,4` is
   Mondays and Thursdays, but it ran on Tuesdays and Fridays: the scheduler library counts weekdays
   from Monday where cron counts from Sunday. The same slip moved every **Weekly** row from Sunday

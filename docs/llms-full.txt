@@ -1813,6 +1813,9 @@ faster than a list of questions: _"open /issue, switch the checks on, type the t
   re-merges the `label!=` exclusions into each account's share filters. Check whether the share
   was edited by hand in plex.tv (Shortlist re-merges but never deletes filter conditions it
   didn't add), and confirm Plex Media Server is ≥ 1.43.2.10687 (older builds ignore the exclusion).
+  If the account has a restriction of your own (a content rating or label rule) and you're on an
+  older Shortlist, update: earlier versions joined the exclusion to your restriction in a way Plex
+  ignores.
 - **Rows not appearing for anyone** — promoted rows land in Plex's hub order; users may
   need to scroll, or pin the row via "Manage Home Screen" on their client.
 - **Rows keep drifting to the bottom of the Recommended shelf** — something else on your server is
@@ -2601,16 +2604,18 @@ POST /api/watching-account/undo {snapshot_id, dry_run?} -> (same shape as /trans
 GET  /api/privacy/status -> {read_at, summary, accounts[], rows_on_plex, rows_error, error, enforcement}
      What can be VERIFIED about row hiding right now, for an ordinary shared account — the same
      computation the support page ran, out from behind support mode and rendered at /sharing.
-     It reports three things, each a live read: that plex.tv is storing each exclude now, that the rows
-     exist on the PMS now, and that Plex was applying them ON HOME for the accounts a run spot-checked
+     It reports three things, each a live read: that each exclude sits in the filter where Plex applies
+     it (stored behind a `|`, Plex ignores it — #116), that the rows exist on the PMS now, and that Plex was applying them ON HOME for the accounts a run spot-checked
      (naming the run and when).
      It deliberately REFUSES to claim: anything outside Home (Plex's Collections tab has no recorded
      answer, and plex-safety rule 11 forbids guessing one), anything for a parental-profile account
      (plex.tv refuses the write), anything about the owner (no share exists — a Plex limitation, not a
      fault), and "all clear" from a check that did not run or a read that failed.
-     Verdicts rank: unreadable > rows_unknown > missing > not_enforced > unhideable > clean. A
-     MISSING rule outranks a measured exposure on purpose — it is the one the next run fixes, where
-     an exposure needs the owner to change something in Plex. The page never derives "hidden" from
+     Verdicts rank: unreadable > rows_unknown > missing > filter_unreadable > not_enforced >
+     unhideable > clean. A MISSING rule outranks a measured exposure on purpose — it is the one the
+     next run fixes, where an exposure needs the owner to change something in Plex. filter_unreadable
+     (account state `unreadable_filter`) is a filter Plex itself fails on — a label with a raw `&` —
+     which no run fixes until the owner renames the label. The page never derives "hidden" from
      what Shortlist WROTE — every cell is a live read or the words "not checked".
 ```
 
@@ -3084,8 +3089,13 @@ DEBUG the run log prints the same per row: every pick with its seed, source and 
 
 Each row is a Plex collection labelled `shortlist_<userslug>`. Every _other_ account's share filter
 gets a `label!=shortlist_<userslug>` exclusion (merged into their existing `filterMovies` /
-`filterTelevision`, never rebuilt), so only its owner ever sees it. The write ordering is what keeps
-this leak-safe: a run delivers rows **unpromoted**, merges all the exclusions, and only **then**
+`filterTelevision`, never rebuilt), so only its owner ever sees it. If you've set restrictions of
+your own on an account — a content rating, or a label allow-list — Shortlist joins its exclusion to
+them with **and**, so both apply. Plex reads conditions joined with `|` as **or**; versions before
+this fix joined them that way, which switched your restriction off. The first privacy pass after
+upgrading repairs it and tells you which accounts it fixed. An allow-list applies to Shortlist's rows
+as well, so that person only sees their own row if it carries one of the allowed labels. The write
+ordering is what keeps this leak-safe: a run delivers rows **unpromoted**, merges all the exclusions, and only **then**
 promotes rows onto Home, so a new row is never visible before the exclusion that hides it exists. Rows
 Plex cannot hide (wrong media type for their library) are swept away first, before anything else.
 

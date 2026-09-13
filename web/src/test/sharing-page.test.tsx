@@ -224,6 +224,29 @@ describe("what the page refuses to claim", () => {
     expect(screen.getByText(/that's the setting, not a fault/i)).toBeVisible();
   });
 
+  it("an account Plex can't read a filter for names the fix, and never promises the next run", async () => {
+    getPrivacyStatus.mockResolvedValue(
+      status({
+        summary: "filter_unreadable",
+        accounts: [
+          account({
+            state: "unreadable_filter",
+            hides: [],
+            missing: ["shortlist_mike"],
+          }),
+        ],
+      }),
+    );
+
+    renderPage();
+
+    expect(
+      await screen.findByText(/plex can't read the restrictions on sarah/i),
+    ).toBeVisible();
+    expect(screen.getAllByText(/rename/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/next run merges it back in/i)).toBeNull();
+  });
+
   it("a parental-profile account says Plex refuses the rule and how to fix it", async () => {
     getPrivacyStatus.mockResolvedValue(
       status({

@@ -37,7 +37,7 @@ from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.delivery import row_marker
 from shortlist.engine.models import LABEL_PREFIX
 from shortlist.server.db.models import Job
-from shortlist.server.services.audit import add_audit, write_audit
+from shortlist.server.services.audit import add_audit, audit_restored_restrictions, write_audit
 from shortlist.server.settings_store import SettingsStore
 
 # A job still marked `running` this long after it started is presumed dead — its process is gone.
@@ -1002,7 +1002,7 @@ def _require_filters_merged(report, what: str) -> None:
     expected), so this cannot fire nightly over an account Plex will never accept filters for.
     """
     if report.error or report.promotion_blockers:
-        why = report.error or "; ".join(report.promotion_blockers)
+        why = "; ".join(filter(None, [report.error, *report.promotion_blockers]))
         raise RuntimeError(f"share filters were not merged, so {what} is unsafe: {why}")
 
 
@@ -1085,6 +1085,9 @@ def _privacy_sync(state, payload: dict) -> dict:
     # job's business and still runs; where it sits on the shelf is not.
     ctx.config.manage_shelf_order = False
     report = engine_run(ctx, [])
+    # Before the check that may raise: an account repaired in a pass that another account blocked is
+    # still repaired, and the retry will find nothing left to report.
+    audit_restored_restrictions(state, report)
     _require_filters_merged(report, "reporting the filters as merged")
     _audit_hub_orderings(state, report, dry_run)
     swept = sum(len(titles) for titles in report.swept_rows.values())
@@ -1103,6 +1106,14 @@ def _privacy_sync(state, payload: dict) -> dict:
     if report.left_alone_failures:
         failed = len(report.left_alone_failures)
         detail += f"; could NOT clear Shortlist's exclusions from {failed} left-alone account(s)"
+    # Said on the Jobs page too: this job persists no run, and it is often the pass that repairs a #116
+    # filter first (flipping who-sees-what queues it).
+    if report.restrictions_restored:
+        names = ", ".join(sorted(report.restrictions_restored.values()))
+        detail += f"; switched the Plex restriction you set back on for {names}"
+    if report.unreadable_filters:
+        names = ", ".join(sorted(report.unreadable_filters))
+        detail += f"; could NOT hide rows from {names} — Plex can't read their share filter (a label with '&')"
     # Kept, though this job no longer orders: `report.hub_orderings` is empty when
     # `manage_shelf_order` is off, so this adds nothing to the detail line — and it is the one place
     # that would say so if that ever changed back. The audit event is written either way
@@ -1413,6 +1424,9 @@ def _user_restore(state, payload: dict) -> dict:
     # them, not where they sit.
     ctx.config.manage_shelf_order = False
     report = engine_run(ctx, [])
+    # Before the check that may raise: an account repaired in a pass that another account blocked is
+    # still repaired, and the retry will find nothing left to report.
+    audit_restored_restrictions(state, report)
     _require_filters_merged(report, f"promoting {slug}'s rows")
     restored = promote_user_rows(ctx, profile, placements, placement_keys=keys)
     # `dry_run` recorded, not assumed False: `promote_user_rows` carries its own safe-mode guard, so
@@ -1728,6 +1742,9 @@ def _rows_visibility(state, payload: dict) -> dict:
     # run places them, which is a position, never a visibility.
     ctx.config.manage_shelf_order = False
     report = engine_run(ctx, [])
+    # Before the check that may raise: an account repaired in a pass that another account blocked is
+    # still repaired, and the retry will find nothing left to report.
+    audit_restored_restrictions(state, report)
     _require_filters_merged(report, "applying today's row schedule")
 
     touched: set[int] = set()

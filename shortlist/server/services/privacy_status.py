@@ -232,6 +232,12 @@ def read_sharing_status(
     for account in accounts:
         ours: dict[str, list[str]] = {}
         theirs: list[str] = []
+        # Our labels Plex actually APPLIES, not merely stores (#116): one behind a `|` is ORed away.
+        # Our labels Plex applies in EVERY field that carries them: a label enforced in TV must not vouch for
+        # the Movies filter that ORs the same label away (#116's own shape). A field Plex cannot read
+        # applies nothing at all.
+        enforced_per_field: list[set[str]] = []
+        unreadable = False
         for name in ("filterMovies", "filterTelevision"):
             raw = account.filters.get(name) or ""
             if not raw:
@@ -243,6 +249,13 @@ def read_sharing_status(
                 # engine refuses to rewrite one too.
                 theirs.append(f"{name}: {raw} (unparseable)")
                 continue
+            candidates = {unquote(v).lower() for c in conditions for v in c.values if is_our_label(v)}
+            # A raw `&` inside a value: Plex cannot read this filter at all (measured), so nothing in it is
+            # hidden however it parses here — and no run will fix it until the label is renamed.
+            if privacy.plex_cannot_read(raw):
+                unreadable = True
+            elif candidates:
+                enforced_per_field.append(candidates - privacy.unenforced_excludes(raw, candidates))
             for condition in conditions:
                 mine = [v for v in condition.values if is_our_label(v)]
                 others = [v for v in condition.values if not is_our_label(v)]
@@ -252,6 +265,7 @@ def read_sharing_status(
                     joined = ",".join(others)
                     theirs.append(f"{name}: {condition.field}{condition.op}{joined}" if joined else f"{name}: —")
         ours_flat = sorted({label for labels in ours.values() for label in labels})
+        enforced = set() if unreadable or not enforced_per_field else set.intersection(*enforced_per_field)
         should_hide = all_labels - {labelled.get(account.id, "")}
         status.accounts.append(
             {
@@ -274,6 +288,9 @@ def read_sharing_status(
                 # unable to answer the one question it exists for: is every row excluded for this
                 # person.
                 "shortlist_excludes": ours_flat,
+                # The subset Plex actually APPLIES (#116) — what "hides N of M" may count.
+                "shortlist_excludes_enforced": sorted(v for v in ours_flat if unquote(v).lower() in enforced),
+                "unreadable_filter": unreadable,
                 "shortlist_excludes_by_filter": {k: sorted(set(v)) for k, v in ours.items()},
                 "other_conditions": theirs,
                 "filters": {k: v for k, v in account.filters.items() if v},
@@ -281,7 +298,7 @@ def read_sharing_status(
                 # themselves. Their own label must never sit in their own filter — that would hide
                 # them from their own row (see `privacy.py`).
                 "should_hide": sorted(should_hide),
-                "missing": sorted(should_hide - {unquote(v).lower() for v in ours_flat}),
+                "missing": sorted(should_hide - enforced),
             }
         )
     return status

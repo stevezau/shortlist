@@ -41,7 +41,7 @@ from shortlist.engine.models import (
     UserType,
 )
 from shortlist.engine.pipeline import run as engine_run
-from shortlist.engine.privacy import shortlist_labels_in
+from shortlist.engine.privacy import shortlist_labels_in, unhidden_rows_on_home
 from tests.fakes.fake_plex import (
     FakeCollection,
     FakeHistoryEntry,
@@ -2799,7 +2799,7 @@ def test_a_filter_plex_stores_but_ignores_is_caught_and_reported(fakes, tmp_path
     profile — so the accounts we successfully write filters FOR had no verification at all, and the
     first person to notice was a user, not the owner.
 
-    Modelled by making the fake PMS store the filter and not act on it (`excluded_labels` -> empty),
+    Modelled by making the fake PMS store the filter and not act on it (`sees` -> always True),
     which is precisely the difference between "stored" and "enforced".
     """
     state, pms_url, _tmdb_app = fakes
@@ -2825,7 +2825,7 @@ def test_a_filter_plex_stores_but_ignores_is_caught_and_reported(fakes, tmp_path
 
     # Now Plex starts storing the exclusions without applying them. Nothing else changes: the filter
     # strings stay exactly where they were, so every existing check still reports a healthy server.
-    monkeypatch.setattr(type(state), "excluded_labels", staticmethod(lambda _user: set()))
+    monkeypatch.setattr(type(state), "sees", lambda _self, _user, _collection: True)
     report = engine_run(ctx, [sarah, mike])
 
     # Both account KINDS must be represented: the check samples one per type, and the managed
@@ -2839,6 +2839,67 @@ def test_a_filter_plex_stores_but_ignores_is_caught_and_reported(fakes, tmp_path
     # and still promotes.
     assert report.ok
     assert not report.promotion_blockers
+
+
+def _privacy_ctx(state, pms_url, tmp_path):
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(row_size=12, min_history=5, candidates_pre_rank=40, max_seeds=12),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+        token_for_user=lambda profile: f"server-{profile.plex_account_id}",
+    )
+    return ctx, plex
+
+
+def test_an_account_with_its_own_plex_restriction_still_sees_no_one_elses_row(fakes, tmp_path):
+    """#116, end to end. The owner set ONE restriction on Sarah in Plex (a rating exclude). The old
+    merge appended our excludes with `|`, which a real PMS reads as OR — she saw every row, the owner's
+    rating exclude stopped applying, and every check said healthy because plex.tv stored it perfectly.
+    """
+    state, pms_url, _tmdb_app = fakes
+    for fieldname in ("filterMovies", "filterTelevision"):
+        state.users[201].filters[fieldname] = "contentRating!=R"
+    ctx, plex = _privacy_ctx(state, pms_url, tmp_path)
+    sarah = UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED)
+    mike = UserProfile(username="mike", plex_account_id=202, user_type=UserType.SHARED)
+
+    report = engine_run(ctx, [sarah, mike])
+
+    owned = plex.owned_collections()
+    assert owned["mike"].rating_keys, "mike needs a row for this to prove anything"
+    assert unhidden_rows_on_home(plex.user_hubs("server-201"), owned, "sarah") == []
+    assert state.users[201].filters["filterMovies"].startswith("contentRating!=R&label!=")
+    assert report.filters_not_enforced == {}
+    assert report.restrictions_restored == {}, "a first merge restores nothing — nothing was voided yet"
+
+
+def test_an_account_the_old_merge_broke_is_repaired_and_reported_once(fakes, tmp_path):
+    """Every affected server holds this today, and the old merge never touched it again: nothing was
+    MISSING from the filter, only unenforced. The repair moves our excludes to where Plex applies them,
+    which also brings the owner's own restriction back — so the run says so, once."""
+    state, pms_url, _tmdb_app = fakes
+    ctx, plex = _privacy_ctx(state, pms_url, tmp_path)
+    sarah = UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED)
+    mike = UserProfile(username="mike", plex_account_id=202, user_type=UserType.SHARED)
+    engine_run(ctx, [sarah, mike])
+    ours = state.users[201].filters["filterMovies"]
+    for fieldname in ("filterMovies", "filterTelevision"):
+        state.users[201].filters[fieldname] = f"contentRating!=R|{ours}"
+    owned = plex.owned_collections()
+    assert unhidden_rows_on_home(plex.user_hubs("server-201"), owned, "sarah"), "the damage must leak first"
+
+    repaired = engine_run(ctx, [sarah, mike])
+
+    assert state.users[201].filters["filterMovies"] == f"contentRating!=R&{ours}"
+    assert unhidden_rows_on_home(plex.user_hubs("server-201"), plex.owned_collections(), "sarah") == []
+    assert repaired.restrictions_restored == {201: "sarah"}
+    assert engine_run(ctx, [sarah, mike]).restrictions_restored == {}
 
 
 def test_a_server_that_enforces_its_filters_reports_nothing(fakes, tmp_path):

@@ -1,0 +1,127 @@
+{
+  "_why": [
+    "What a real PMS DOES with a share filter whose conditions are joined by '|' versus '&' \u2014 as",
+    "opposed to plextv_combined_filters.json, which only proves plex.tv STORES both forms verbatim.",
+    "",
+    "Issue #116. Measured by writing each filterMovies value to one shared account (its own, via",
+    "PUT /api/users/{id}), waiting 90s, then reading GET /hubs and GET /library/sections/{id}/all",
+    "(X-Plex-Container-Size=1, totalSize) with that account's own server token. The account's",
+    "original value was restored afterwards and its Home verified back to baseline.",
+    "",
+    "Observables: 'others_rows_on_home' is how many OTHER people's Shortlist rows the account's Home",
+    "shows (the canary's own computation, unhidden_rows_on_home). 'own_movie_row_visible' is whether",
+    "the account's OWN movie row shows while its own label is in the exclude. 'movies_visible' is",
+    "the library count as that account sees it.",
+    "",
+    "Conclusions the code relies on:",
+    "1. '|' is OR and '&' is AND. `contentRating!=X|label!=ours` hides nothing of ours: a collection",
+    "   has no content rating, so the first half is true for it. It ALSO voids the owner's own rating",
+    "   exclude (9988 movies, not 9970) \u2014 Shortlist's merge was switching off parental restrictions.",
+    "2. Order does not rescue '|': `label!=ours|contentRating!=X` is ignored the same way.",
+    "3. '&' does NOT bind tighter than '|': `A|B&label!=ours` hid our row. So a trailing '&' clause",
+    "   is ANDed with the whole filter before it.",
+    "4. An allow list survives '&' (401 movies) and is voided by '|' (9988) \u2014 issue #115.",
+    "5. PMS applied every change within ~25s; there is no long cache between plex.tv and PMS here.",
+    "6. A LITERAL '&' inside a label breaks the filter in Plex itself: GET /hubs as that account",
+    "   answers HTTP 500 ('label!=ZZ&Probe,OURS+OWN' and 'label!=ZZ & Probe,OURS+OWN'). A plain space",
+    "   is fine, and '%26' is fine with our exclude enforced. So such a filter is already broken for",
+    "   that person, and no merge into it can be verified."
+  ],
+  "recorded": "2026-09-13",
+  "pms_version": "1.43.4.10903-e5521bd8c",
+  "endpoint_written": "PUT https://plex.tv/api/users/{id}?filterMovies=...",
+  "endpoints_read": [
+    "GET /hubs",
+    "GET /library/sections/{id}/all?type=1"
+  ],
+  "legend": {
+    "OURS": "label!=<every other person's shortlist_ label> (47 values)",
+    "OURS+OWN": "label!=<the same 47> plus the account's own shortlist_ label",
+    "PROBE": "a content rating no item carries (ZZShortlistProbe)"
+  },
+  "baseline": {
+    "filter": "OURS",
+    "others_rows_on_home": 0,
+    "own_rows_visible": "4/4",
+    "movies_visible": 9988
+  },
+  "apply_lag_seconds": 25,
+  "cases": [
+    {
+      "filter": "OURS+OWN",
+      "own_movie_row_visible": false,
+      "movies_visible": 9988
+    },
+    {
+      "filter": "contentRating!=PROBE|OURS+OWN",
+      "own_movie_row_visible": true,
+      "verdict": "exclude ignored"
+    },
+    {
+      "filter": "contentRating!=PROBE&OURS+OWN",
+      "own_movie_row_visible": false,
+      "verdict": "exclude enforced"
+    },
+    {
+      "filter": "OURS+OWN|contentRating!=PROBE",
+      "own_movie_row_visible": true,
+      "verdict": "exclude ignored"
+    },
+    {
+      "filter": "contentRating!=NC-17",
+      "others_rows_on_home": 90,
+      "movies_visible": 9970
+    },
+    {
+      "filter": "contentRating!=NC-17|OURS",
+      "written_by": "merge_label_excludes('contentRating!=NC-17', ours) before the fix",
+      "read_back_identical": true,
+      "others_rows_on_home": 90,
+      "movies_visible": 9988,
+      "verdict": "our excludes ignored AND the owner's NC-17 exclude voided"
+    },
+    {
+      "filter": "contentRating!=NC-17&OURS",
+      "others_rows_on_home": 0,
+      "movies_visible": 9970,
+      "verdict": "both enforced"
+    },
+    {
+      "filter": "contentRating=G&OURS",
+      "others_rows_on_home": 0,
+      "movies_visible": 401,
+      "verdict": "allow list kept"
+    },
+    {
+      "filter": "contentRating=G|OURS",
+      "others_rows_on_home": 0,
+      "movies_visible": 9988,
+      "verdict": "allow list voided"
+    },
+    {
+      "filter": "contentRating!=NC-17|contentRating=G&OURS+OWN",
+      "own_movie_row_visible": false,
+      "others_rows_on_home": 0,
+      "movies_visible": 9970,
+      "verdict": "grouped as (A|B)&C \u2014 '&' does not bind tighter"
+    },
+    {
+      "filter": "label!=ZZ Probe,<OURS+OWN values>",
+      "hubs_status": 200,
+      "own_movie_row_visible": false
+    },
+    {
+      "filter": "label!=ZZ%20%26%20Probe,<OURS+OWN values>",
+      "hubs_status": 200,
+      "own_movie_row_visible": false
+    },
+    {
+      "filter": "label!=ZZ&Probe,<OURS+OWN values>",
+      "hubs_status": 500
+    },
+    {
+      "filter": "label!=ZZ & Probe,<OURS+OWN values>",
+      "hubs_status": 500
+    }
+  ]
+}

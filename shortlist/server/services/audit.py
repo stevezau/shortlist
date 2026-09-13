@@ -68,6 +68,17 @@ def actor_of(auth: dict | None, request) -> dict:
         return {"via": "unknown"}
 
 
+#: One event per account whose OWN Plex restriction a privacy pass switched back on (#116). Written by the
+#: run persister and by every job that runs the privacy pass without persisting a run; read by the bell.
+RESTRICTION_RESTORED_SCOPE = "privacy.restriction_restored"
+
+
+def audit_restored_restrictions(state, report) -> None:
+    """Record each account a run-less privacy pass repaired, so the bell hears about it (#116)."""
+    for account_id, username in report.restrictions_restored.items():
+        write_audit(state, RESTRICTION_RESTORED_SCOPE, "info", account_id=account_id, username=username)
+
+
 def add_audit(session: Session, scope: str, level: Level, **message) -> None:
     """Add one audit Event to an OPEN session — the caller owns the commit.
 

@@ -12,7 +12,7 @@ from shortlist.engine import privacy
 from shortlist.engine.clients.plextv import PlexTvUser
 from shortlist.engine.models import UserType
 from shortlist.engine.privacy import (
-    FilterCondition,
+    AmbiguousFilterError,
     FilterParseError,
     merge_label_excludes,
     parse_filter,
@@ -25,35 +25,7 @@ from shortlist.engine.privacy import (
     unhidden_rows_visible_to,
 )
 from tests.conftest import make_profile, plextv_user
-
-# Raw filter values. `,` `|` `=` `!` really are syntax and never appear inside a value — but `&` is
-# NOT in that list: it is a separator in Plex Web's dialect and an ordinary character in a label
-# ("Kids & Family"), so a filter using both at once is genuinely ambiguous and no parser can resolve
-# it. `&`-in-value is therefore covered by explicit `|`-separated cases below rather than generated
-# here, where hypothesis would happily build the ambiguous combination.
-value = st.text(alphabet=st.sampled_from("abcdefgXYZ0123456789_%."), min_size=1, max_size=12)
-field_name = st.sampled_from(["label", "contentRating", "genre", "year"])
-# Both separators of each kind, because plex.tv stores whatever the last writer used and hands it
-# straight back — live-verified 2026-08-10. Plex Web writes `&` with `%2C`, plexapi writes `|` with
-# `%2C`, Shortlist writes `|` with `,`; a filter can be in any of those shapes when we read it.
-condition_sep = st.sampled_from(["|", "&"])
-value_sep = st.sampled_from([",", "%2C"])
-
-
-@st.composite
-def _condition(draw):
-    values = tuple(draw(st.lists(value, min_size=1, max_size=4)))
-    return FilterCondition(
-        draw(field_name),
-        draw(st.sampled_from(["=", "!="])),
-        values,
-        sep=draw(condition_sep),
-        value_seps=tuple(draw(st.lists(value_sep, min_size=len(values) - 1, max_size=len(values) - 1))),
-    )
-
-
-condition = _condition()
-filter_string = st.lists(condition, min_size=0, max_size=5).map(serialize_filter)
+from tests.strategies import filter_string
 
 
 class TestParseSerializeRoundTrip:
@@ -162,9 +134,20 @@ class TestTheFormsPlexActuallyWrites:
         server until somebody hand-edits that one account (the #14 shape). These parsed fine before
         `&` was understood at all, and must keep parsing fine."""
         assert serialize_filter(parse_filter(raw)) == raw
-        merged = merge_label_excludes(raw, {"shortlist_new"})
-        assert merged.startswith(raw), "the existing filter must survive byte-identical"
-        assert "shortlist_new" in merged
+
+    @pytest.mark.parametrize("raw", ["label!=Kids & Family", "label!=Kids & Family,Shortlist_a"])
+    def test_an_ampersand_label_even_in_the_enforced_exclude_clause_is_refused(self, raw):
+        """Measured 2026-09-13: Plex answers that account's Home with HTTP 500 for any literal `&` in a
+        label, so a filter carrying one cannot be written into and verified."""
+        with pytest.raises(AmbiguousFilterError):
+            merge_label_excludes(raw, {"shortlist_new"})
+
+    @pytest.mark.parametrize("raw", ["label=Age 0,Age 3|label!=Kids & Family", "contentRating!=R|label!=Rock & Roll"])
+    def test_an_ampersand_label_where_ours_must_be_joined_with_and_is_refused(self, raw):
+        """Ours has to go on the end with `&` (a `|` would void it, #116), and `Kids & Family&label!=x`
+        cannot be read back as two conditions. The old merge wrote `|` here — stored, never enforced."""
+        with pytest.raises(AmbiguousFilterError):
+            merge_label_excludes(raw, {"shortlist_new"})
 
     def test_a_bare_ampersand_in_a_value_beside_an_ampersand_separator_is_refused(self):
         """The one shape the `|`-only fallback cannot rescue, pinned deliberately.
@@ -210,21 +193,25 @@ class TestMergeLabelExcludes:
         assert merged == "label!=Shortlist_mike,Shortlist_sarah"
 
     def test_merge_preserves_foreign_conditions_byte_identical(self):
+        """Joined with `&`, never `|`: a real PMS reads `|` as OR, and `raw|label!=Shortlist_sarah` hid
+        nothing while voiding the owner's own rating exclude (#116, pms_share_filter_boolean_semantics)."""
         raw = "contentRating!=R,NC-17|genre=Horror"
         merged = merge_label_excludes(raw, {"Shortlist_sarah"})
-        assert merged == raw + "|label!=Shortlist_sarah"
+        assert merged == raw + "&label!=Shortlist_sarah"
 
-    def test_merge_mixed_only_touches_the_label_condition(self):
+    def test_merge_mixed_keeps_the_owners_conditions_and_moves_ours_to_the_end(self):
+        """The owner's conditions stay byte-identical — but ours never stay in a clause a `|` joins, where
+        Plex ORs them away (#116). They go on the end, ANDed with the whole filter."""
         raw = "contentRating!=R|label!=kids_hide,Shortlist_mike|genre=Horror"
         merged = merge_label_excludes(raw, {"Shortlist_sarah"})
-        assert merged == "contentRating!=R|label!=kids_hide,Shortlist_mike,Shortlist_sarah|genre=Horror"
+        assert merged == "contentRating!=R|label!=kids_hide|genre=Horror&label!=Shortlist_mike,Shortlist_sarah"
 
     def test_merge_is_idempotent(self):
         once = merge_label_excludes("label!=x", {"Shortlist_a", "Shortlist_b"})
         assert merge_label_excludes(once, {"Shortlist_a", "Shortlist_b"}) == once
 
     def test_merge_already_present_returns_input_unchanged(self):
-        raw = "label!=Shortlist_sarah|contentRating!=R"
+        raw = "contentRating!=R&label!=Shortlist_sarah"
         assert merge_label_excludes(raw, {"Shortlist_sarah"}) is raw
 
     def test_merge_is_case_insensitive_like_plex_tag_matching(self):
@@ -530,14 +517,15 @@ class TestSyncUserRestrictions:
 
         # The return value IS the audit record: what changed, on which field, from what to what.
         assert wrote == {
-            "filterMovies": ("contentRating!=R", "contentRating!=R|label!=Shortlist_mike,Shortlist_steve"),
+            # `&`, not `|` — the `|` form is stored verbatim and hides nothing (#116).
+            "filterMovies": ("contentRating!=R", "contentRating!=R&label!=Shortlist_mike,Shortlist_steve"),
             "filterTelevision": ("", "label!=Shortlist_mike,Shortlist_steve"),
         }
         assert snapshot_store.saved[100].filters["filterMovies"] == "contentRating!=R"
         call = mock_plextv.update_user_filters.call_args
         assert call.args[0] == 100
         # Both fields merged; foreign condition preserved byte-identical; stored (title-cased) labels used.
-        assert call.args[1]["filterMovies"] == "contentRating!=R|label!=Shortlist_mike,Shortlist_steve"
+        assert call.args[1]["filterMovies"] == "contentRating!=R&label!=Shortlist_mike,Shortlist_steve"
         assert call.args[1]["filterTelevision"] == "label!=Shortlist_mike,Shortlist_steve"
 
     def test_prunes_a_stale_shared_exclude_but_keeps_private_and_foreign(self, mock_plextv, snapshot_store):
@@ -572,8 +560,9 @@ class TestSyncUserRestrictions:
             collections_known=True,
         )
 
-        # The public shared exclude is pruned; the private one and the foreign condition remain.
-        assert wrote["filterMovies"][1] == "contentRating!=R|label!=Shortlist_mike"
+        # The public shared exclude is pruned; the private one and the foreign condition remain — and the
+        # private one moves out from behind the `|` that stopped Plex applying it (#116).
+        assert wrote["filterMovies"][1] == "contentRating!=R&label!=Shortlist_mike"
         assert wrote["filterTelevision"][1] == "label!=Shortlist_mike"
 
     def test_a_stale_private_exclude_is_never_pruned(self, mock_plextv, snapshot_store):

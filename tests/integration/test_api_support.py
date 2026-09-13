@@ -1903,6 +1903,7 @@ class TestTheReportCarriesWhatABugReportActuallyNeeds:
                         "f": 6,
                         "g": 7,
                         "filters_not_enforced": {"sarah": [101, 102]},
+                        "unreadable_filters": {"mike": "their Plex restriction uses the label 'Kids & Family'"},
                     },
                 )
             )
@@ -1913,6 +1914,7 @@ class TestTheReportCarriesWhatABugReportActuallyNeeds:
 
         assert "filters_not_enforced" in text, "a privacy exposure must never be truncated out"
         assert "sarah" in text and "101" in text, "and it has to name who, and which rows"
+        assert "unreadable_filters" in text and "Kids & Family" in text, "#116: an account nothing can hide"
 
     def test_an_ordinary_run_does_not_grow_the_privacy_line(self, client):
         """The `!!` line is a fault report; a clean run must not carry one, or it becomes wallpaper."""

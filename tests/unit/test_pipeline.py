@@ -237,6 +237,145 @@ class TestRun:
         )
         ctx.plex.promote.assert_not_called()
 
+    def test_a_readback_holding_our_excludes_where_plex_ignores_them_blocks_promotion(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """Present is not enforced (#116). plex.tv hands back whatever it stored, so a write that lands
+        as `X|label!=...` passes a presence check while Plex shows the account every row. The read-back
+        must ask whether Plex APPLIES the exclude, or it waves the leak through to promotion."""
+        sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+
+        def put_behind_an_or(account_id, fields):
+            user = next(u for u in mock_plextv.users if u.id == account_id)
+            user.filters.update({name: f"contentRating!=R|{value}" for name, value in fields.items()})
+
+        mock_plextv.update_user_filters.side_effect = put_behind_an_or
+        existing = MagicMock()
+        existing.title = "✨ Picked for You"
+        existing.items.return_value = []
+        ctx.plex.find_owned_collections.return_value = [existing]
+
+        report = pipeline_mod.run(ctx, [sarah, mike])
+
+        assert not report.ok
+        assert "read-back missing" in (report.error or "") or any(
+            "read-back missing" in (u.error or "") for u in report.users
+        )
+        ctx.plex.promote.assert_not_called()
+
+    def test_an_account_whose_filter_plex_cannot_read_is_reported_and_does_not_block_everyone(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """Owner decision 2026-09-13: report it, don't block the server. A literal `&` in one account's label
+        makes Plex fail that account's Home outright (measured), so no hide rule written into it can be
+        verified. Blocking promotion would take every other person's rows off Home, nightly, for one label
+        name — the #14 shape. That account is named instead, with the label to rename."""
+        sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
+        mock_plextv.users = [
+            plextv_user(100, "sarah", filters={"filterMovies": "label=Kids & Family"}),
+            plextv_user(200, "mike"),
+        ]
+        existing = MagicMock()
+        existing.title = "✨ Picked for You"
+        existing.items.return_value = []
+        ctx.plex.find_owned_collections.return_value = [existing]
+        ctx.plex.owned_collections.return_value = {
+            "sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[1]),
+            "mike": OwnedRow(label="Shortlist_mike", rating_keys=[2]),
+        }
+
+        report = pipeline_mod.run(ctx, [sarah, mike])
+
+        assert list(report.unreadable_filters) == ["sarah"]
+        assert "Kids & Family" in report.unreadable_filters["sarah"]
+        assert not report.promotion_blockers
+        ctx.plex.promote.assert_called()
+        # Refused PER FIELD (review 2026-09-13): the unreadable Movies filter is left alone, but Sarah's TV
+        # filter can be enforced and is — a bad label in one field must not leave the other unhidden.
+        sarah_writes = [call.args[1] for call in mock_plextv.update_user_filters.call_args_list if call.args[0] == 100]
+        assert sarah_writes == [{"filterTelevision": "label!=Shortlist_mike"}]
+        assert any(call.args[0] == 200 for call in mock_plextv.update_user_filters.call_args_list)
+
+    def test_a_dry_run_restores_nothing_it_did_not_write(self, ctx: EngineContext, mock_plextv):
+        """Safe mode computes the repair diff but writes nothing, so claiming a restriction "applies again"
+        would repeat a false fact every night (architecture review 2026-09-13)."""
+        ctx.config.dry_run = True
+        sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
+        mock_plextv.users = [
+            plextv_user(100, "sarah", filters={"filterMovies": "contentRating!=R|label!=Shortlist_mike"}),
+            plextv_user(200, "mike"),
+        ]
+        ctx.plex.owned_collections.return_value = {"mike": OwnedRow(label="Shortlist_mike", rating_keys=[2])}
+
+        report = pipeline_mod.run(ctx, [sarah, mike])
+
+        assert report.filter_writes, "the dry run still previews the repair"
+        assert report.restrictions_restored == {}
+
+    def test_a_left_alone_account_whose_restriction_comes_back_is_reported(self, ctx: EngineContext, mock_plextv):
+        user = make_profile("kid", account_id=500)
+        remote = plextv_user(500, "kid", filters={"filterMovies": "contentRating!=R|label!=Shortlist__shared_x"})
+        report = pipeline_mod.RunReport(started_at=datetime.now(UTC))
+
+        pipeline_mod._leave_sharing_alone(ctx, user, remote, report)
+
+        assert report.restrictions_restored == {500: "kid"}
+
+    def test_the_enforcement_spot_check_skips_an_account_this_run_just_wrote(self, ctx: EngineContext):
+        """Plex takes ~25s to apply a filter change (pms_share_filter_boolean_semantics.json). Reading an
+        account's Home straight after writing its filter measures the OLD filter — on the first run after
+        upgrade that is the #116 repair itself, and it would raise an undismissable "Plex is ignoring the
+        privacy filter" alert beside the notice saying the repair worked. Written accounts are not sampled;
+        with no other account of that kind, the run does not claim to have measured."""
+        sarah = make_profile("sarah", account_id=100)
+        remote = plextv_user(100, "sarah", filters={"filterMovies": "label!=Shortlist_mike"})
+        report = pipeline_mod.RunReport(started_at=datetime.now(UTC))
+        report.filter_writes[100] = {"username": "sarah", "fields": {}}
+        ctx.token_for_user = MagicMock(return_value="server-100")
+        owned = {"mike": OwnedRow(label="Shortlist_mike", rating_keys=[2])}
+
+        pipeline_mod._verify_filters_enforced(ctx, [sarah], {100: remote}, owned, True, report)
+
+        ctx.token_for_user.assert_not_called()
+        assert report.filters_enforcement_measured is False
+
+    def test_a_type_skipped_because_it_was_written_is_not_claimed_as_measured(self, ctx: EngineContext):
+        """Round-6 audit: skipping a just-written managed account while a shared one was read published an
+        empty finding for BOTH types, clearing a live managed-type alert. A type that produced no reading
+        must not ride on another type's."""
+        sarah = make_profile("sarah", account_id=100)
+        dan = make_profile("dan", user_type=UserType.MANAGED, account_id=300)
+        roster = {
+            100: plextv_user(100, "sarah", filters={"filterMovies": "label!=Shortlist_mike"}),
+            300: plextv_user(300, "dan", filters={"filterMovies": "label!=Shortlist_mike"}),
+        }
+        report = pipeline_mod.RunReport(started_at=datetime.now(UTC))
+        report.filter_writes[300] = {"username": "dan", "fields": {}}
+        ctx.token_for_user = MagicMock(return_value="server-100")
+        ctx.plex.user_hubs.return_value = []
+        owned = {"mike": OwnedRow(label="Shortlist_mike", rating_keys=[2])}
+
+        pipeline_mod._verify_filters_enforced(ctx, [sarah, dan], roster, owned, True, report)
+
+        assert report.filters_enforcement_measured is False
+
+    def test_a_repair_plex_tv_did_not_keep_is_not_reported_as_restored(self, ctx: EngineContext, mock_plextv):
+        """Round-7 audit: the restore is recorded when plex.tv ACCEPTS the write, and jobs audit it before
+        they raise — so a write that answered 200 but never stuck told the owner "working again"."""
+        sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
+        mock_plextv.users = [
+            plextv_user(100, "sarah", filters={"filterMovies": "contentRating!=R|label!=Shortlist_mike"}),
+            plextv_user(200, "mike"),
+        ]
+        mock_plextv.update_user_filters.side_effect = lambda *a: None  # accepted, not stored
+        ctx.plex.owned_collections.return_value = {"mike": OwnedRow(label="Shortlist_mike", rating_keys=[2])}
+
+        report = pipeline_mod.run(ctx, [sarah, mike])
+
+        assert report.promotion_blockers or not report.ok
+        assert report.restrictions_restored == {}
+
     def test_verification_roster_read_raising_blocks_promotion(self, ctx: EngineContext, mock_plextv):
         """If the single post-write roster read (used to verify persistence) itself fails, we cannot
         confirm any exclude stuck -> fail safe, nothing promoted. list_users is called twice per run:
@@ -258,6 +397,52 @@ class TestRun:
         assert not report.ok
         assert "could not verify filters" in (report.error or "")
         ctx.plex.promote.assert_not_called()
+
+    def test_a_restore_is_not_reported_when_the_read_back_itself_fails(self, ctx: EngineContext, mock_plextv):
+        sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
+        mock_plextv.users = [
+            plextv_user(100, "sarah", filters={"filterMovies": "contentRating!=R|label!=Shortlist_mike"}),
+            plextv_user(200, "mike"),
+        ]
+        ctx.plex.owned_collections.return_value = {"mike": OwnedRow(label="Shortlist_mike", rating_keys=[2])}
+        calls = {"n": 0}
+
+        def list_users():
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                raise RuntimeError("plex.tv roster read failed")
+            return mock_plextv.users
+
+        mock_plextv.list_users.side_effect = list_users
+
+        report = pipeline_mod.run(ctx, [sarah, mike])
+
+        assert "could not verify filters" in (report.error or "")
+        assert report.restrictions_restored == {}
+
+    def test_a_restore_is_verified_even_when_another_accounts_write_already_failed(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """Round-8 audit: the read-back was skipped once anything had failed, so a repair plex.tv accepted
+        and did not keep was still announced as "working again". The read-back is read-only; run it."""
+        sarah, dan = make_profile("sarah", account_id=100), make_profile("dan", account_id=300)
+        mock_plextv.users = [
+            plextv_user(100, "sarah", filters={"filterMovies": "contentRating!=R|label!=Shortlist_mike"}),
+            plextv_user(300, "dan"),
+        ]
+        ctx.plex.owned_collections.return_value = {"mike": OwnedRow(label="Shortlist_mike", rating_keys=[2])}
+
+        def put(account_id, fields):
+            if account_id == 300:
+                raise RuntimeError("plex.tv 503")
+            # sarah's write is accepted and not stored
+
+        mock_plextv.update_user_filters.side_effect = put
+
+        report = pipeline_mod.run(ctx, [sarah, dan])
+
+        assert report.promotion_blockers
+        assert report.restrictions_restored == {}
 
     def test_account_absent_from_verification_roster_blocks_promotion(self, ctx: EngineContext, mock_plextv):
         """A write happens, but the verification roster read-back no longer lists that account (its

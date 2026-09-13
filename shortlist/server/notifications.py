@@ -23,6 +23,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from shortlist.server.db.models import Event, Run
+from shortlist.server.services.audit import RESTRICTION_RESTORED_SCOPE
 from shortlist.server.services.watch_stream import STREAM_DOWN_ALERT_MINUTES, STREAM_DOWN_SINCE_KEY
 from shortlist.server.settings_store import SettingsStore
 from shortlist.server.version_check import check_for_update
@@ -755,12 +756,94 @@ def _filters_not_enforced(session: Session) -> dict | None:
             "it. Those rows are visible to them right now. Shortlist spot-checks ONE account of each "
             "kind, so this is likely every shared or managed account on the server, not only the "
             f"{'one' if len(names) == 1 else 'ones'} named. Please open an issue and include this "
-            "run's id — the Sharing report will look healthy, because every hide rule really is "
-            "present and read back correctly; that is the fault."
+            "run's id and what the Sharing page shows for them, including any restrictions of your own "
+            "on that account."
         ),
         "action_url": f"/runs/{run.id}",
         "action_label": "See the run",
         "dismissable": False,
+    }
+
+
+def _filters_plex_cannot_read(session: Session) -> dict | None:
+    """An account whose share filter Plex itself cannot read, so no row can be hidden from it.
+
+    A literal `&` inside one of the owner's labels ("Kids & Family") makes Plex answer that account's
+    Home with HTTP 500 — measured 2026-09-13. Shortlist refuses to write its exclude into a filter
+    nothing can verify, and by owner decision does not block everyone else's rows over it, so this card
+    is the whole warning. Error, undismissable, and cleared by the next run that looked and found none.
+    """
+    run = next(
+        (
+            r
+            for r in session.query(Run).filter(Run.finished_at.isnot(None)).order_by(Run.finished_at.desc()).limit(50)
+            if "unreadable_filters" in (r.stats or {})
+        ),
+        None,
+    )
+    unreadable = ((run.stats or {}).get("unreadable_filters") or {}) if run else {}
+    if not unreadable:
+        return None
+    lines = "\n".join(f"• {name}: {why}" for name, why in sorted(unreadable.items()))
+    return {
+        "id": f"filters-unreadable-{run.id}",
+        "severity": "error",
+        "title": "Shortlist can't hide rows from some accounts",
+        "body": (
+            "Shortlist can't hide other people's rows from these accounts in the libraries named, because "
+            f"Plex can't read the restrictions set on them:\n\n{lines}\n\n"
+            "Everyone else's rows are still hidden and still showing on Home. Rename the label in Plex "
+            "(Settings → Manage Library Access → the person → Restrictions, and the label itself on your "
+            "titles) and the next run fixes it."
+        ),
+        "action_url": "/sharing",
+        "action_label": "See sharing",
+        "dismissable": False,
+    }
+
+
+def _restrictions_restored(session: Session) -> dict | None:
+    """A privacy pass moved our excludes out from behind a `|`, and an account's OWN Plex restriction applies again.
+
+    Before #116 Shortlist joined its excludes to an account's existing restriction with `|`, which Plex
+    reads as OR — so a rating exclude or an allow-list the owner set stopped applying, silently. The
+    repair turns it back on, and the people on those accounts will find less on the server than they
+    had yesterday. Said for a week, so the owner hears it from Shortlist before they hear it from a
+    friend. Info, not a fault.
+
+    Read from audit events rather than run stats: several jobs run the privacy pass without persisting
+    a run, and whichever runs first after upgrading is the one that repairs.
+    """
+    since = datetime.now(UTC) - timedelta(days=7)
+    events = (
+        session.query(Event)
+        .filter(Event.scope == RESTRICTION_RESTORED_SCOPE, Event.ts >= since)
+        .order_by(Event.ts.desc())
+        .limit(200)
+        .all()
+    )
+    if not events:
+        return None
+    names = sorted({str((e.message or {}).get("username") or "") for e in events} - {""})
+    if not names:
+        return None
+    who = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+    return {
+        "id": f"restrictions-restored-{events[0].id}",
+        "severity": "info",
+        "title": "Plex restrictions you set are working again",
+        "body": (
+            f"{who} had a restriction of your own in Plex — a content rating or label rule. An earlier "
+            "version of Shortlist joined its hide rule to it in a way Plex reads as 'either/or', which "
+            "quietly switched your restriction off: an exclude rule also let them see other people's rows, "
+            "and an allow-list let them see the whole library. Shortlist has fixed that, so your "
+            "restriction applies again and they may notice less on the server than before.\n\n"
+            "One thing to know if it is an allow-list: Plex now applies it to Shortlist's rows too, so they "
+            "only see their own row if it carries one of the allowed labels."
+        ),
+        "action_url": "/sharing",
+        "action_label": "See sharing",
+        "dismissable": True,
     }
 
 
@@ -780,6 +863,8 @@ def build_notifications(session: Session, store: SettingsStore, current_version:
         _rows_with_no_name_for_newcomers(session, store),
         _rows_we_cannot_hide(session),
         _filters_not_enforced(session),
+        _filters_plex_cannot_read(session),
+        _restrictions_restored(session),
         _owner_sees_all_rows(session),
         _shelf_contention(session),
         _playback_listener_down(store),

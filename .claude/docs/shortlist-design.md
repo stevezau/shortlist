@@ -313,7 +313,8 @@ for each enabled user U:
   current = GET plex.tv/api/users → parse U's filterMovies/filterTelevision
             (pipe-separated conditions; label!= is one comma-separated value)
   if first sync: snapshot current → RestrictionSnapshot(U, before=current)
-  merged = current with label!= := (existing label!= values ∪ desired_excludes)   # MERGE, never clobber
+  merged = current AND label!= (existing enforced label!= values ∪ desired_excludes)   # MERGE, never clobber
+            # joined with `&`, never `|` — Plex reads `|` as OR (#116, see plex-safety rule 3)
   if merged == current: skip (steady-state nights are zero PUTs)
   PUT plex.tv/api/users/{U.id}?filterMovies=…&filterTelevision=…   # throttle 1 req/s, 429 backoff
   read back; assert; log diff

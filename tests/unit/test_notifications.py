@@ -1184,6 +1184,91 @@ class TestTheEnforcementAlertCanClearItself:
         assert "every shared or managed account" in body
 
 
+class TestFiltersPlexCannotRead:
+    """#116 review: an account whose own label has a literal `&` cannot be hidden, and Plex fails its Home
+    outright. Reported instead of blocking the server, so this card is the whole of the owner's warning."""
+
+    @staticmethod
+    def _run(session, unreadable, *, finished):
+        run = Run(trigger="schedule", status="ok", finished_at=finished, stats={"unreadable_filters": unreadable})
+        session.add(run)
+        session.commit()
+        return run
+
+    def test_it_names_the_account_and_passes_on_what_to_rename(self, session):
+        self._run(
+            session, {"sarah": "their Plex restriction uses the label 'Kids & Family'"}, finished=datetime.now(UTC)
+        )
+
+        card = notif._filters_plex_cannot_read(session)
+
+        assert card["severity"] == "error"
+        assert card["dismissable"] is False, "a live exposure must not be silenced"
+        assert "sarah" in card["body"] and "Kids & Family" in card["body"]
+
+    def test_a_later_run_that_never_looked_does_not_clear_it(self, session):
+        """Absent is not clean: a run that died before the privacy loop writes no key at all."""
+        self._run(session, {"sarah": "x"}, finished=datetime.now(UTC) - timedelta(hours=2))
+        session.add(Run(trigger="manual", status="error", finished_at=datetime.now(UTC), stats={}))
+        session.commit()
+
+        assert notif._filters_plex_cannot_read(session) is not None
+
+    def test_a_later_run_that_looked_and_found_none_clears_it(self, session):
+        self._run(session, {"sarah": "x"}, finished=datetime.now(UTC) - timedelta(hours=2))
+        self._run(session, {}, finished=datetime.now(UTC))
+
+        assert notif._filters_plex_cannot_read(session) is None
+
+
+class TestRestrictionsRestoredNotice:
+    """The #116 repair switches each affected account's OWN Plex restriction back on. The people on
+    those accounts will see less than they did yesterday; the owner should hear why from Shortlist.
+
+    Read from audit EVENTS, not run stats: `privacy.sync`, `user.restore` and the daily row-schedule job
+    all run the privacy pass without persisting a run, and any of them can be the one that repairs."""
+
+    @staticmethod
+    def _restored(session, username, *, at):
+        from shortlist.server.db.models import Event
+
+        event = Event(
+            scope="privacy.restriction_restored", level="info", ts=at, message={"account_id": 1, "username": username}
+        )
+        session.add(event)
+        session.commit()
+        return event
+
+    def test_it_names_the_accounts_whose_restriction_came_back(self, session):
+        self._restored(session, "sarah", at=datetime.now(UTC) - timedelta(hours=1))
+        latest = self._restored(session, "mike", at=datetime.now(UTC))
+
+        card = notif._restrictions_restored(session)
+
+        assert card["severity"] == "info"
+        assert card["dismissable"] is True
+        assert str(latest.id) in card["id"], "a later repair must not hide behind an earlier dismissal"
+        assert "mike and sarah" in card["body"]
+        assert card["action_url"] == "/sharing"
+
+    def test_the_copy_does_not_promise_an_allow_listed_friend_their_own_row(self, session):
+        """Recorded: an allow-list joined with `&` hides every collection without the allowed label —
+        including that person's own row. Saying "rows are hidden, nothing to do" would be wrong for them."""
+        self._restored(session, "sarah", at=datetime.now(UTC))
+
+        body = notif._restrictions_restored(session)["body"]
+
+        assert "allow" in body and "their own" in body
+
+    def test_nothing_restored_shows_nothing(self, session):
+        assert notif._restrictions_restored(session) is None
+
+    def test_it_stops_showing_a_week_after_the_repair(self, session):
+        self._restored(session, "sarah", at=datetime.now(UTC) - timedelta(days=8))
+
+        assert notif._restrictions_restored(session) is None
+
+
 class TestAFailedJobSaysOnlyWhatIsTrueOfIt:
     """The body used to make two claims about every failure: that Plex might not reflect what you
     asked for, and that you can run it again. `watch.reconcile` is the first kind for which BOTH are

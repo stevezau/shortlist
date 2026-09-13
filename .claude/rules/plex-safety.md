@@ -25,8 +25,21 @@ violate them.
 2. **Snapshot first.** Before the first restriction mutation for a user, persist a
    `restriction_snapshots` row with their current filters. Uninstall restores from these.
 3. **Merge, never rebuild.** Share-filter writes are read-modify-write: parse the user's current
-   `filterMovies`/`filterTelevision`, union our `shortlist_*` excludes into the existing `label!=`
-   values, leave every other condition byte-identical. Never construct a filter string from scratch.
+   `filterMovies`/`filterTelevision`, add our `shortlist_*` excludes, leave every other condition
+   byte-identical. Never construct a filter string from scratch.
+
+   **Where they go is load-bearing (#116, owner decision 2026-09-13).** A real PMS reads `|` between
+   conditions as OR and `&` as AND (`tests/fixtures/pms_share_filter_boolean_semantics.json`). So
+   `contentRating!=R|label!=shortlist_x` hides nothing of ours and switches the owner's own rating
+   exclude off — and plex.tv stores it perfectly, so every read-back passes. Our labels may only sit
+   in a `label!=` clause with no `|` joining it or anything after it: fold into such a clause if one
+   exists, otherwise append a new one with `&`. Never fold into a clause a `|` joins, and never append
+   with `|`. The merge moves any of our labels it finds in such a position (that repair only ever
+   hides more). It refuses any filter with a literal `&` inside one of the owner's labels — Plex itself
+   fails that account's Home with HTTP 500 — and that account is REPORTED (`unreadable_filters`), not a
+   promotion blocker: one label name must not take every other person's rows off Home (#14's shape).
+   Presence is not proof: every "is this row hidden" check asks `unenforced_excludes`, never "is the
+   label in the string".
 
    The same rule governs the one write that goes the other way. `users.manage_sharing=0` ("leave this
    account's Plex sharing alone", discussion #92) makes the run REMOVE our excludes from that one

@@ -74,6 +74,9 @@ faster than a list of questions: _"open /issue, switch the checks on, type the t
   re-merges the `label!=` exclusions into each account's share filters. Check whether the share
   was edited by hand in plex.tv (Shortlist re-merges but never deletes filter conditions it
   didn't add), and confirm Plex Media Server is ≥ 1.43.2.10687 (older builds ignore the exclusion).
+  If the account has a restriction of your own (a content rating or label rule) and you're on an
+  older Shortlist, update: earlier versions joined the exclusion to your restriction in a way Plex
+  ignores.
 - **Rows not appearing for anyone** — promoted rows land in Plex's hub order; users may
   need to scroll, or pin the row via "Manage Home Screen" on their client.
 - **Rows keep drifting to the bottom of the Recommended shelf** — something else on your server is

@@ -42,7 +42,7 @@ from shortlist.server.db.models import (
     WatchSession,
 )
 from shortlist.server.services import jobs
-from shortlist.server.services.audit import add_audit
+from shortlist.server.services.audit import RESTRICTION_RESTORED_SCOPE, add_audit
 from shortlist.server.services.watch_events import (
     RowMembership,
     _attribution_floor,
@@ -1027,6 +1027,8 @@ def persist_report(
         if report.error:
             _add_event(session, "run", "error", run_id, error=report.error)
         _finalize_run(run, report, status, error, ok, errors, skipped)
+        for account_id, username in report.restrictions_restored.items():
+            add_audit(session, RESTRICTION_RESTORED_SCOPE, "info", account_id=account_id, username=username)
         session.commit()
     # Retention is applied AFTER this transaction commits, as its own `maintenance.prune` job.
     # It used to share this transaction: a bulk delete across runs/run_users/run_log_lines/picks
@@ -1714,6 +1716,9 @@ def _finalize_run(
     # assumed it meant.
     if report.unhideable_measured:
         stats["unhideable_rows"] = {name: list(keys) for name, keys in report.unhideable_rows.items()}
+        # Same measured-flag discipline, same reason: the privacy loop that fills it ran, so empty is a
+        # finding that clears the alert (#116 — filters Plex itself cannot read).
+        stats["unreadable_filters"] = dict(report.unreadable_filters)
     # Accounts the owner left alone whose excludes could not be taken back off. Written only when
     # non-empty: an empty key would read as a measurement on every run that never got this far.
     # Accounts whose filter Shortlist wrote and Plex is not applying. Written on every run that

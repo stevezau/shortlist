@@ -161,6 +161,25 @@ function Summary({
       </Banner>
     );
   }
+  if (data.summary === "filter_unreadable") {
+    // Not folded into "missing": that banner promises the next run fixes it, and for these accounts
+    // no run can — Plex fails on a label with a raw `&` in it until the owner renames it.
+    const stuck = data.accounts.filter((a) => a.state === "unreadable_filter");
+    return (
+      <Banner tone="bad" role="alert">
+        <p>
+          <strong>
+            {stuck.length === 1
+              ? `Plex can't read the restrictions on ${stuck[0]?.display_name}, so Shortlist can't hide rows from them.`
+              : `Plex can't read the restrictions on ${stuck.length} accounts, so Shortlist can't hide rows from them.`}
+          </strong>{" "}
+          A label in those restrictions has an &ldquo;&amp;&rdquo; in its name,
+          and Plex returns an error for their Home screen. Rename the label in Plex — for example with
+          &ldquo;and&rdquo; — and the next run hides the rows.
+        </p>
+      </Banner>
+    );
+  }
   if (data.summary === "unhideable") {
     // Without this branch the sixth verdict fell through to "Shortlist couldn't interpret this
     // reading", printed above an all-clear enforcement panel — so the one thing the escalation
@@ -296,6 +315,10 @@ const STATE_COPY: Record<string, { label: string; tone: string }> = {
     tone: "text-success",
   },
   missing: { label: "Missing hide rules", tone: "text-destructive-text" },
+  unreadable_filter: {
+    label: "Plex can't read this account's restrictions",
+    tone: "text-destructive-text",
+  },
   left_alone: {
     label: "Left alone by choice, so it hides nothing",
     tone: "text-muted-foreground",
@@ -354,9 +377,16 @@ function AccountRow({ account }: { account: AccountPrivacy }) {
             )}
           </p>
           <p className={cn("text-sm", copy?.tone)}>{copy?.label}</p>
-          {account.state === "missing" && (
+          {(account.state === "missing" ||
+            account.state === "unreadable_filter") && (
             <p className="mt-1 text-sm text-muted-foreground">
               Can see: {account.missing.join(", ")}
+            </p>
+          )}
+          {account.state === "unreadable_filter" && (
+            <p className="mt-1 text-sm text-muted-foreground">
+              A label in their restrictions has an &ldquo;&amp;&rdquo; in its
+              name. Rename it in Plex and the next run can hide their view.
             </p>
           )}
           {account.state === "owner" && (

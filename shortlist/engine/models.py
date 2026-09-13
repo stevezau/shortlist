@@ -1436,6 +1436,18 @@ class RunReport:
     # than asked, never less), but it is a state change the owner made that did not reach Plex, and
     # §12's whole register is that shape. `pipeline._leave_sharing_alone` fills it.
     left_alone_failures: dict[int, str] = field(default_factory=dict)
+    # {plex account id: username} — accounts whose filter held one of our excludes where Plex ORs it with a
+    # restriction the OWNER set (`X|label!=shortlist_*`), which this run moved to where Plex applies it.
+    # The pre-#116 merge wrote that shape onto every account with a restriction of its own, switching
+    # the owner's restriction off; repairing it switches it back on, and the people on those accounts
+    # will notice what they can see shrink. Reported so the owner hears it from Shortlist first.
+    restrictions_restored: dict[int, str] = field(default_factory=dict)
+    # {username: why} — accounts whose share filter Plex itself cannot read (a literal `&` inside one of the
+    # owner's labels makes that account's Home answer HTTP 500 — measured 2026-09-13), so no exclude of
+    # ours can be written into it and verified. Not a blocker, by owner decision: one label name must not
+    # take every other person's rows off Home. Read beside `unhideable_measured`, which says the privacy
+    # loop ran — an empty dict clears the alert only on a run that looked.
+    unreadable_filters: dict[str, str] = field(default_factory=dict)
     # {username: [ratingKey, ...]} — accounts whose share filter Shortlist DID write, that can still
     # see other people's rows. The read-back proves plex.tv STORED our exclusions; this asks whether
     # Plex ACTS on them.

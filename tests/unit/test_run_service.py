@@ -249,6 +249,7 @@ class TestRunExecution:
             "error": None,
             "promotion_blockers": [],
             "unhideable_rows": {},
+            "unreadable_filters": {},
         }
         with sessions() as session:
             run_users = session.query(RunUser).filter_by(run_id=run.id).all()
@@ -423,6 +424,31 @@ class TestRunExecution:
         with sessions() as s:
             assert s.query(RunUser).filter_by(run_id=run_id).count() == 1
             assert s.query(PickRow).filter_by(run_id=run_id).count() == 1
+
+    def test_an_unreadable_filter_is_recorded_on_every_run_that_looked_empty_included(self, sessions, tmp_path):
+        """Empty must be written too, or one bad night pins the alert through every fixed run after it —
+        the shape `filters_not_enforced` already had to be fixed for."""
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        run_id = self._new_run(sessions)
+        report = self._report(self._one_user_report("sarah"))
+        report.unhideable_measured = True
+
+        service._persist_report(run_id, report)
+
+        with sessions() as s:
+            assert s.get(Run, run_id).stats["unreadable_filters"] == {}
+
+    def test_a_run_that_restored_an_owners_restriction_records_who(self, sessions, tmp_path):
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        run_id = self._new_run(sessions)
+        report = self._report(self._one_user_report("sarah"))
+        report.restrictions_restored = {201: "sarah"}
+
+        service._persist_report(run_id, report)
+
+        with sessions() as s:
+            events = s.query(Event).filter_by(scope="privacy.restriction_restored").all()
+            assert [e.message for e in events] == [{"account_id": 201, "username": "sarah"}]
 
     def test_a_shared_rows_write_is_audited(self, sessions, tmp_path, monkeypatch):
         """A shared row files its report under `shared_<slug>`, which is nobody's user slug — so

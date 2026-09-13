@@ -52,12 +52,13 @@ class AccountPrivacyOut(PassthroughModel):
     user_type: str  # shared | managed | owner
     restriction_profile: str  # "" unless Plex refuses filters for this account
     manage_sharing: bool  # False = the owner asked us to leave this account alone
-    #: Which of the six things is true of this account, decided here so the copy lives in one place
-    #: in the SPA: "hiding" | "missing" | "left_alone" | "refused_by_plex" | "owner" | "unknown".
+    #: Which of the seven things is true of this account, decided here so the copy lives in one place
+    #: in the SPA: "hiding" | "missing" | "unreadable_filter" | "left_alone" | "refused_by_plex" | "owner" |
+    #: "unknown". "unreadable_filter" means a label with a raw `&` makes Plex fail on the filter.
     #: "unknown" means the PMS row read failed, so there is nothing to check the filters against —
     #: never render it as clean.
     state: str
-    #: The `shortlist_*` labels in this account's filters, read from plex.tv this second.
+    #: The `shortlist_*` labels in this account's filters that Plex applies, read from plex.tv this second.
     hides: list[str]
     #: Every per-person row that exists on Plex right now, minus this account's own.
     should_hide: list[str]
@@ -97,10 +98,11 @@ class PrivacyStatusOut(PassthroughModel):
 
     read_at: str
     #: The headline, in priority order: "unreadable" (plex.tv failed) | "rows_unknown" (the PMS row
-    #: read failed) | "not_enforced" (a run looked through a real account's eyes and Plex was serving
-    #: other people's rows anyway) | "missing" (a hide rule is absent from someone's share) |
-    #: "unhideable" (a run looked through a parental-profile account's eyes and SAW other people's
-    #: rows — Plex refuses the hide rule for that account entirely) | "clean".
+    #: read failed) | "missing" (a hide rule is absent, or sits where Plex ignores it) |
+    #: "filter_unreadable" (Plex fails on an account's filter — a label with a raw `&`; renaming it is
+    #: the only fix) | "not_enforced" (a run looked through a real account's eyes and Plex was serving
+    #: other people's rows anyway) | "unhideable" (a run looked through a parental-profile account's
+    #: eyes and SAW other people's rows — Plex refuses the hide rule for that account entirely) | "clean".
     #:
     #: "missing" outranks "not_enforced": the two CAN co-occur (the engine's spot-check gate is
     #: `any` of our labels, not all), and only a missing rule is something the owner's next run
@@ -181,6 +183,10 @@ def _account_out(row: dict, *, rows_known: bool, user_id: int | None) -> dict:
         state = "refused_by_plex"
     elif not row["manage_sharing"]:
         state = "left_alone"
+    elif row["unreadable_filter"]:
+        # Its own state, not "missing": the next run cannot fix this one — Plex fails on a label with a
+        # raw `&` in it, and only renaming that label does.
+        state = "unreadable_filter"
     elif row["missing"]:
         state = "missing"
     else:
@@ -195,7 +201,7 @@ def _account_out(row: dict, *, rows_known: bool, user_id: int | None) -> dict:
         "restriction_profile": row["restriction_profile"],
         "manage_sharing": row["manage_sharing"],
         "state": state,
-        "hides": row["shortlist_excludes"],
+        "hides": row["shortlist_excludes_enforced"],
         "should_hide": row["should_hide"],
         "missing": row["missing"],
         "other_conditions": row["other_conditions"],
@@ -254,6 +260,10 @@ def _summary(status: privacy_status.SharingStatus, accounts: list[dict], enforce
         return "rows_unknown"
     if any(a["state"] == "missing" for a in accounts):
         return "missing"
+    # After `missing` (that one fixes itself next run), before a measured exposure: the owner can act on
+    # it, and nothing else will.
+    if any(a["state"] == "unreadable_filter" for a in accounts):
+        return "filter_unreadable"
     # Only a run that actually LOOKED can report an exposure. An unmeasured empty result is "nobody
     # checked", never "somebody is exposed" — the same distinction `measured` exists to hold.
     if enforcement["measured"] and enforcement["not_enforced"]:

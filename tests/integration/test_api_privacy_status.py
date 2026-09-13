@@ -232,6 +232,107 @@ class TestTheVerdictIsAlwaysALiveRead:
         assert sarah["missing"] == [] and sarah["state"] == "hiding"
         assert dan["missing"] == ["shortlist_mike", "shortlist_sarah"], "name the rows, don't just count them"
 
+    def test_an_exclude_plex_ignores_is_reported_missing_not_hiding(self, client: TestClient, monkeypatch):
+        """#116. Behind a `|` both excludes are STORED — and a real PMS ORs them away, showing Sarah
+        every row. Counting labels by presence called that account `hiding`, which is the one answer
+        this report exists never to give falsely."""
+        _seed_users(
+            client,
+            [
+                {"slug": "sarah", "plex_account_id": 1000, "enabled": True},
+                {"slug": "mike", "plex_account_id": 1001, "enabled": True},
+                {"slug": "dan", "plex_account_id": 1002, "enabled": True},
+            ],
+        )
+        _rows_on_plex(monkeypatch, ["sarah", "mike", "dan"])
+        _roster(
+            monkeypatch,
+            {"sarah": {"filterMovies": "contentRating!=R|label!=shortlist_mike,shortlist_dan"}},
+            ids={"sarah": 1000},
+        )
+
+        body = client.get("/api/privacy/status").json()
+
+        sarah = next(a for a in body["accounts"] if a["slug"] == "sarah")
+        assert sarah["missing"] == ["shortlist_dan", "shortlist_mike"]
+        assert sarah["state"] == "missing"
+        assert sarah["hides"] == [], "the count beside it must not say 'hides 2 of 2'"
+
+    def test_a_label_applied_in_tv_does_not_cover_movies_ignoring_it(self, client: TestClient, monkeypatch):
+        """Round-6 audit: pooling both fields let TV's enforced exclude vouch for the Movies filter that
+        ORs the same exclude away — #116's own shape, reported clean."""
+        _seed_users(
+            client,
+            [
+                {"slug": "sarah", "plex_account_id": 1000, "enabled": True},
+                {"slug": "mike", "plex_account_id": 1001, "enabled": True},
+            ],
+        )
+        _rows_on_plex(monkeypatch, ["sarah", "mike"])
+        _roster(
+            monkeypatch,
+            {
+                "sarah": {
+                    "filterMovies": "contentRating!=R|label!=shortlist_mike",
+                    "filterTelevision": "label!=shortlist_mike",
+                }
+            },
+            ids={"sarah": 1000},
+        )
+
+        body = client.get("/api/privacy/status").json()
+
+        sarah = next(a for a in body["accounts"] if a["slug"] == "sarah")
+        assert sarah["missing"] == ["shortlist_mike"]
+        assert sarah["hides"] == []
+
+    def test_one_unreadable_field_leaves_nothing_counted_as_hidden(self, client: TestClient, monkeypatch):
+        _seed_users(
+            client,
+            [
+                {"slug": "sarah", "plex_account_id": 1000, "enabled": True},
+                {"slug": "mike", "plex_account_id": 1001, "enabled": True},
+            ],
+        )
+        _rows_on_plex(monkeypatch, ["sarah", "mike"])
+        _roster(
+            monkeypatch,
+            {
+                "sarah": {
+                    "filterMovies": "label!=Kids & Family,shortlist_mike",
+                    "filterTelevision": "label!=shortlist_mike",
+                }
+            },
+            ids={"sarah": 1000},
+        )
+
+        body = client.get("/api/privacy/status").json()
+
+        sarah = next(a for a in body["accounts"] if a["slug"] == "sarah")
+        assert sarah["state"] == "unreadable_filter"
+        assert sarah["missing"] == ["shortlist_mike"], "never a blank 'Can see:' beside the unreadable badge"
+        assert sarah["hides"] == []
+
+    def test_a_filter_with_a_literal_ampersand_label_hides_nothing_it_claims_to(self, client: TestClient, monkeypatch):
+        """Plex fails that account's Home outright (measured), so no exclude in it can be vouched for — even
+        one our own parser reads as sitting in the right place."""
+        _seed_users(
+            client,
+            [
+                {"slug": "sarah", "plex_account_id": 1000, "enabled": True},
+                {"slug": "mike", "plex_account_id": 1001, "enabled": True},
+            ],
+        )
+        _rows_on_plex(monkeypatch, ["sarah", "mike"])
+        _roster(monkeypatch, {"sarah": {"filterMovies": "label!=Kids & Family,shortlist_mike"}}, ids={"sarah": 1000})
+
+        body = client.get("/api/privacy/status").json()
+
+        sarah = next(a for a in body["accounts"] if a["slug"] == "sarah")
+        assert sarah["missing"] == ["shortlist_mike"]
+        assert sarah["state"] == "unreadable_filter", "'the next run merges it back in' is false for this one"
+        assert body["summary"] == "filter_unreadable"
+
 
 class TestTheThingsItRefusesToClaim:
     def test_the_owner_is_reported_as_a_plex_limitation_not_a_fault(self, client: TestClient, monkeypatch):

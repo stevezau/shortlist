@@ -23,6 +23,7 @@ import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import unquote
 from xml.etree.ElementTree import Element, SubElement, tostring
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -435,15 +436,46 @@ class FakePlexState:
         keys |= {k for k, v in self.leaf_state.get(account_id, {}).items() if v[0] > 0}
         return {k for k in keys if self.leaf_view(account_id, k)[0] > 0}
 
-    @staticmethod
-    def excluded_labels(user: FakeUser) -> set[str]:
-        """Lowercased ``label!=`` values across the user's movie/TV share filters."""
-        excludes: set[str] = set()
-        for fieldname in ("filterMovies", "filterTelevision"):
-            for condition in (user.filters.get(fieldname) or "").split("|"):
-                if condition.startswith("label!="):
-                    excludes.update(v.lower() for v in condition.removeprefix("label!=").split(",") if v)
-        return excludes
+    def sees(self, user: FakeUser | None, collection: FakeCollection) -> bool:
+        """Whether a real PMS would show this account `collection`, given its share filter.
+
+        Evaluated the way a real server was measured to (`pms_share_filter_boolean_semantics.json`):
+        `&` is AND, `|` is OR, read left to right — the recording rules out `&` binding tighter. A
+        collection carries labels and no content rating, so `contentRating!=X` is TRUE for it, which is
+        exactly why `contentRating!=X|label!=ours` hid nothing on a real server (#116).
+
+        `filterMovies` applies to movie libraries and `filterTelevision` to TV. The owner (`None`) has
+        no filter, and an off-type collection is matched by neither (see `filterable`).
+
+        Limits, so nobody leans on it past them: it groups left to right only, and the recording cannot
+        tell that from `|` binding tighter — the property tests in `test_privacy_filter_semantics.py`
+        cover both, this does not. And a literal `&` inside a label raises here, where a real PMS
+        answers that account's Home with a 500.
+        """
+        if user is None or not self.filterable(collection):
+            return True
+        fieldname = "filterMovies" if self.section_type(collection.section_id) == "movie" else "filterTelevision"
+        raw = user.filters.get(fieldname) or ""
+        if not raw:
+            return True
+        attributes = {"label": {label.casefold() for label in collection.labels}}
+        chunks = re.split(r"([|&])", raw)
+        visible = True
+        for i in range(0, len(chunks), 2):
+            match = re.match(r"^([A-Za-z]+)(!=|=)(.*)$", chunks[i])
+            if match is None:
+                raise ValueError(f"fake PMS cannot read share filter condition {chunks[i]!r}")
+            field_name, op, rest = match.groups()
+            values = {unquote(v).casefold() for v in re.split(r"%2C|%2c|,", rest) if v}
+            hit = bool(attributes.get(field_name, set()) & values)
+            holds = hit if op == "=" else not hit
+            if i == 0:
+                visible = holds
+            elif chunks[i - 1] == "&":
+                visible = visible and holds
+            else:
+                visible = visible or holds
+        return visible
 
 
 #: The demo library the docs screenshots are taken against. Real titles, because every one of
@@ -1301,7 +1333,6 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
         user = state.user_for_token(token)
         if user is None and token != state.owner_token:
             return JSONResponse({"errors": [{"code": 1001, "message": "Unauthorized"}]}, status_code=401)
-        excludes = state.excluded_labels(user) if user else set()
         hub_list: list[dict] = [
             {"key": "/hubs/home/continueWatching", "title": "Continue Watching", "type": "mixed", "promoted": True}
         ]
@@ -1313,10 +1344,7 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
             promoted = collection.promoted_own_home if user is None else collection.promoted_shared_home
             if not promoted:
                 continue
-            excluded = bool({label.lower() for label in collection.labels} & excludes)
-            # An exclude only takes effect if the PMS can actually match this collection with a
-            # library filter. Off-type collections are unfilterable and stay visible — the leak.
-            if excluded and state.filterable(collection):
+            if not state.sees(user, collection):
                 continue
             children_key = f"/library/collections/{collection.rating_key}/children"
             hub_list.append(
