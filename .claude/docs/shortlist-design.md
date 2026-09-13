@@ -121,8 +121,9 @@ mechanisms working together:
   every _other_ account, `label!=shortlist_<userslug>` is merged into their `filterMovies`/
   `filterTelevision` share filter (read-modify-write MERGE — §6), so Plex refuses to show them that
   row.
-- **Leak-safe write ordering.** A row is never visible to the wrong person before the exclusion that
-  hides it exists. Every run: (a) sweeps rows Plex cannot hide first, (b) delivers all rows
+- **Leak-safe write ordering.** A row is never promoted before the exclusion that hides it exists, and
+  a person's first row is excluded as soon as it is written (unpromoted is still listed in the
+  Collections tab — plex-safety rule 1). Every run: (a) sweeps rows Plex cannot hide first, (b) delivers all rows
   UNPROMOTED, (c) merges every account's `label!=` excludes, and only THEN (d) promotes rows onto
   shared Home. Get the order wrong and a row could be briefly visible with nothing to catch it — so
   the ordering is the load-bearing guarantee.
@@ -275,7 +276,8 @@ users are independent (`try/except` per user), shared caches across the loop.
                              label shortlist_<slug> · poster ·
                              collection mode = "hide" (modeUpdate — row shows on Home but the
                              collection stays out of library browsing; same trick Kometa uses. It
-                             stays reachable from the Collections tab, where share filters hide it) ·
+                             stays in the Collections tab, where only the share-filter excludes hide
+                             it — measured, tests/fixtures/pms_collections_tab_filter_visibility.json) ·
                              promote via collection.visibility() → ManagedHub.updateVisibility
                              (shared=True, recommended=True) — visibility() verified in plexapi
                              source 2026-07-12
@@ -329,8 +331,8 @@ for each enabled user U:
 **No runtime verification:** the app does not read back or re-check hiding after a write (the
 automatic Privacy Check was removed, 2026-07-16). Correctness rests entirely on the leak-safe write
 ordering: rows are delivered UNPROMOTED and promoted onto shared Home only after every other
-account's `label!=shortlist_<slug>` exclude is merged in, so a row is never visible before the
-exclusion that hides it exists.
+account's `label!=shortlist_<slug>` exclude is merged in, so a row is never promoted before the
+exclusion that hides it exists (and a first row is excluded straight after it is built — rule 1).
 
 ---
 
@@ -389,7 +391,7 @@ mutations. Docs firmly recommend not exposing Shortlist publicly; subpath + reve
 | plex.tv 429s                            | response codes                | 1 req/s throttle + exponential backoff + resume; runs never half-apply (per-user transaction)                                                                                                                 |
 | TMDB down / LLM down                    | health probes per run         | degrade gracefully: reuse last candidates / heuristic mode; warn, never fail the whole run                                                                                                                    |
 | Very large libraries                    | index once/run + SQLite cache | O(library) once, O(user-history) per user; 10k-item library ≈ seconds                                                                                                                                         |
-| ~40 collections on owner's Home         | —                             | only the owner sees all (verified); collection mode "hide" keeps them out of library browse, and the `label!=` excludes keep other accounts off them in the Collections tab (the owner has no share, so sees every row there — docs/faq.md); incremental rollout guidance in docs; no evidence of Home-render degradation (researched July 2026)  |
+| ~40 collections on owner's Home         | —                             | only the owner sees all (verified); collection mode "hide" keeps them out of library browse, and only the `label!=` excludes keep other accounts off them in the Collections tab (measured; the owner has no share, so sees every row there — docs/faq.md); incremental rollout guidance in docs; no evidence of Home-render degradation (researched July 2026)  |
 | Row POSITION on a user's Home           | —                             | not server-controllable per user: promoted rows land in Plex's hub order; each user can pin/reorder it in their own client ("Manage Home Screen"). Documented honestly — the row appears, its position varies |
 
 ---

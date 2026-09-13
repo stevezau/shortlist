@@ -62,6 +62,16 @@ All notable changes to this project are documented here. This project follows
   accepted as Sunday too, and a list of days now gets a description ("Every Monday and Thursday at
   4:00 AM") instead of none. (#123)
 
+- **A person's first row is hidden from everyone else as soon as it is built, not at the end of the run.**
+  Until Shortlist has written the exclusion onto every other account's share, a brand-new row could be
+  seen in the library's Collections tab by the other people on your server: the row's name, which can
+  say what the person watched, and the titles in it. That lasted until the privacy step at the end of
+  the run, which on a large library could be an hour or more. Now someone's first row is hidden from
+  every other account as soon as it is written, before any other row is. If plex.tv is failing, the
+  privacy step at the end of the run still hides it, as before. People who already had rows were not
+  affected. A first run, where everyone is new, makes more share-filter writes as a result — one round
+  per person rather than one at the end — and the rows pause while each round is written. (#119)
+
 - **A row keeps its Plex collection when its titles change, so agregarr settings stick.**
   A row that lost five or more titles in a run used to be deleted and created again, because that
   was quicker on a large TV library. The new collection had a new Plex id, and tools that remember a

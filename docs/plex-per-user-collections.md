@@ -87,8 +87,9 @@ The safe order is:
 3. Merge the `label!=` exclusion into **every other account's** share filter.
 4. **Only then** promote it to Home / Recommended.
 
-The collection is never simultaneously visible and unexcluded. Do it in this order every time, even
-when you're "just testing".
+Keep the gap between steps 1 and 3 short. An unpromoted collection is off every shelf, but it is still
+listed in the library's **Collections tab** for any account whose filter does not exclude it yet. Do it
+in this order every time, even when you're "just testing".
 
 ### Merge the filter, never rebuild it
 

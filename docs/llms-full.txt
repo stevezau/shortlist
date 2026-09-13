@@ -3096,7 +3096,11 @@ this fix joined them that way, which switched your restriction off. The first pr
 upgrading repairs it and tells you which accounts it fixed. An allow-list applies to Shortlist's rows
 as well, so that person only sees their own row if it carries one of the allowed labels. The write
 ordering is what keeps this leak-safe: a run delivers rows **unpromoted**, merges all the exclusions, and only **then**
-promotes rows onto Home, so a new row is never visible before the exclusion that hides it exists. Rows
+promotes rows onto Home. Unpromoted is not invisible — a collection is still listed in the library's
+Collections tab for anyone whose filter does not exclude it — so when someone gets their **first** row,
+its exclusion is merged into every other account as soon as that row is written, before any other row
+is. (If plex.tv is failing, Shortlist stops trying early for that run and the privacy step at the end
+hides the row instead.) Rows that already existed were excluded by an earlier run. Rows
 Plex cannot hide (wrong media type for their library) are swept away first, before anything else.
 
 Every row also carries a second, constant label — `shortlist` (Plex stores it title-cased, as
@@ -3807,8 +3811,9 @@ The safe order is:
 3. Merge the `label!=` exclusion into **every other account's** share filter.
 4. **Only then** promote it to Home / Recommended.
 
-The collection is never simultaneously visible and unexcluded. Do it in this order every time, even
-when you're "just testing".
+Keep the gap between steps 1 and 3 short. An unpromoted collection is off every shelf, but it is still
+listed in the library's **Collections tab** for any account whose filter does not exclude it yet. Do it
+in this order every time, even when you're "just testing".
 
 ### Merge the filter, never rebuild it
 
@@ -4234,8 +4239,8 @@ is genuinely for.
 
 Per-user "Picked for You" rows built from each person's own watch history, made private with Plex's
 label restrictions — every other account's share filter gets `label!=shortlist_<user>` merged into it,
-so a row is visible only to its owner. Rows are delivered unpromoted, exclusions merged, and only then
-promoted, so a row is never visible before the rule hiding it exists.
+so a row is visible only to its owner. Rows are delivered unpromoted, exclusions merged — straight away
+for someone's first row — and only then promoted onto Home.
 
 Share filters are snapshotted before the first write and restored exactly on uninstall; it merges
 rather than rebuilds them, skips the owner, and never modifies a collection it didn't create.

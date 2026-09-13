@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import time
 from collections import Counter
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -62,6 +63,10 @@ from shortlist.engine.request_config import resolve_request_config
 #: How many accounts of one type the filter-enforcement spot-check may try before giving up.
 _ENFORCEMENT_SPOT_CHECK_ATTEMPTS = 3
 
+#: Plex takes ~25s to apply a share-filter change (measured, pms_share_filter_boolean_semantics.json), so
+#: an account written more recently than this still shows its OLD filter to a spot-check.
+_FILTER_APPLY_S = 30.0
+
 
 def _distinct_wanted(demand: dict[str, dict]) -> int:
     """How many titles the owner is actually missing across every row.
@@ -81,7 +86,9 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
 
     Write ordering is leak-safe: rows are created/updated UNPROMOTED, then every user's
     share filters are merged, and only then are rows promoted onto shared Home — so a new
-    collection is never visible to anyone before the exclusions that hide it exist.
+    collection is never PROMOTED before the exclusions that hide it exist. Unpromoted is not
+    invisible (the Collections tab), which is why a person's first row is excluded as soon as it is
+    written — see `_deliver_phase` and plex-safety rule 1.
     """
     report = RunReport(started_at=datetime.now(UTC), dry_run=ctx.config.dry_run)
     # The header a log reader needs BEFORE anything else: a run that dies in the index build, or is
@@ -406,6 +413,36 @@ def _deliver_phase(
 ) -> tuple[list[UserProfile], list[tuple[RowSpec, UserProfile]]]:
     """Deliver every per-person and shared row, all UNPROMOTED. Returns the promotion candidates."""
     to_promote: list[UserProfile] = []
+    # Whose rows were on the server before this run. Anyone else who ends up with a stored label got their
+    # FIRST row tonight, and nobody's share filter excludes it yet. Until one does, that row is listed in
+    # every shared account's Collections tab — collection mode "hide" does not cover that tab (measured,
+    # tests/fixtures/pms_collections_tab_filter_visibility.json) — and the end-of-run merge waits for
+    # every later person's delivery, an hour or more on a large library. So it is merged from inside the
+    # same hold of the write lock that wrote it (`rows._deliver_row`). A row that already existed was
+    # excluded by an earlier merge.
+    already_on_server = set(stored_labels)
+    early_merges = {"stopped": False}
+
+    def first_row_hider(user: UserProfile) -> Callable[[], None] | None:
+        """Hide this person's first row once, from inside the write lock that wrote it. Never raises."""
+        if user.slug in already_on_server:
+            return None
+        done = False
+
+        def hide() -> None:
+            nonlocal done
+            if done or early_merges["stopped"]:
+                return
+            done = True
+            try:
+                merged = _exclude_first_rows(ctx, users, stored_labels, report, who=user.slug)
+            except Exception:
+                logger.exception("{}: could not hide a first row early — the end-of-run merge will", user.slug)
+                merged = False
+            if not merged:
+                early_merges["stopped"] = True
+
+        return hide
 
     def process(user: UserProfile) -> tuple[UserProfile, UserRunReport, bool]:
         user_report = UserRunReport(username=user.username, slug=user.slug)
@@ -420,6 +457,7 @@ def _deliver_phase(
         # run-level record, so a paused user's deletion is never lost just because they have no
         # UserRunReport.
         swept_titles = report.swept_rows.get(user.slug, [])
+        hide_first_row = first_row_hider(user)
         started = time.monotonic()
         delivered = False
         try:
@@ -428,7 +466,15 @@ def _deliver_phase(
             # night catastrophic — SFLIX run 3, 2026-07-19). A timeout that exhausts the delivery
             # retries, or one from a non-delivery PMS read, falls through here and fails just this user.
             delivered = rows._run_user(
-                ctx, user, seed_index, library_index, stored_labels, user_report, demand, order_work
+                ctx,
+                user,
+                seed_index,
+                library_index,
+                stored_labels,
+                user_report,
+                demand,
+                order_work,
+                on_first_row=hide_first_row,
             )
         except Exception as e:
             user_report.status = "error"
@@ -496,6 +542,81 @@ def _deliver_phase(
         if agg is not None:
             shared_to_promote.append((spec, agg))
     return to_promote, shared_to_promote
+
+
+def _exclude_first_rows(
+    ctx: EngineContext, users: list[UserProfile], stored_labels: dict[str, str], report: RunReport, *, who: str
+) -> bool:
+    """Merge the excludes for `who`'s just-created first row into every other account. Returns False when
+    plex.tv could not be read or written, so the caller stops trying early merges for the rest of the run.
+
+    Additive only: `collections_known=False` and no departure evidence, so `sync_user_restrictions`
+    removes nothing but a person's own label from their own filter. Best-effort — anything that fails
+    here is written by `_privacy_sync_phase` at the end of the run, which still gates promotion.
+    """
+    started = time.monotonic()
+    try:
+        roster = {remote.id: remote for remote in ctx.plextv.list_users()}
+    except Exception as e:
+        logger.warning("{}: could not read the plex.tv user list to hide a first row early ({})", who, type(e).__name__)
+        return False
+    own_slugs = {**ctx.known_slugs, **{u.plex_account_id: u.slug for u in users}}
+    shared_labels = shared_label_audiences(ctx.config)
+    written_accounts = 0
+    for user in _server_audience(users, roster, own_slugs):
+        if user.plex_account_id in ctx.unmanaged_account_ids:
+            continue
+        own_slug = own_slugs.get(user.plex_account_id)
+        try:
+            written = sync_user_restrictions(
+                ctx.plextv,
+                user,
+                roster.get(user.plex_account_id),
+                stored_labels,
+                ctx.snapshots,
+                own_label=stored_labels.get(own_slug) if own_slug else None,
+                label_prefix=LABEL_PREFIX,
+                shared_labels=shared_labels,
+                hide_all_shared=(
+                    ctx.config.hide_shared_from_disabled and user.plex_account_id in ctx.disabled_account_ids
+                ),
+                refused={},
+                dry_run=ctx.config.dry_run,
+            )
+        except FilterWriteRefused:
+            continue  # this one account's Plex settings refuse label filters; the end pass measures it
+        except Exception as e:
+            # Every failing write retries with backoff under the write lock, and every other delivery waits
+            # on it. Stop here rather than repeat that for each account and each new person.
+            logger.warning(
+                "{}: stopped hiding a first row early at {} ({}) — the privacy sync at the end of the run will",
+                who,
+                user.username,
+                type(e).__name__,
+            )
+            return False
+        if written:
+            written_accounts += 1
+            _record_filter_write(report, user, written)
+            _record_restored_restriction(ctx, user, written, report)
+    # Its own line: this runs under the write lock inside the person's row delivery, so its time is also in
+    # that row's timing — which would otherwise read as Plex being slow.
+    logger.info(
+        "{}: first row excluded early — {} share filter(s) written in {:.1f}s",
+        who,
+        written_accounts,
+        time.monotonic() - started,
+    )
+    return True
+
+
+def _record_filter_write(report: RunReport, user: UserProfile, written: dict[str, tuple[str, str]]) -> None:
+    """Audit a share-filter write (rule 10), keeping the earliest `before` when one account is written twice
+    in a run — once for new rows, again at the end — so the record still says what the account started as."""
+    entry = report.filter_writes.setdefault(user.plex_account_id, {"username": user.username, "fields": {}})
+    for field_name, (before, after) in written.items():
+        entry["fields"][field_name] = (entry["fields"].get(field_name, (before, after))[0], after)
+    entry["at"] = time.monotonic()
 
 
 def _record_unhideable(ctx, user, remote, owned, collections_known, report) -> None:
@@ -595,7 +716,7 @@ def _leave_sharing_alone(ctx: EngineContext, user, remote, report: RunReport) ->
     if written:
         # Audited like any other share write (rule 10): this one changes who can see what, and it is
         # the only write in the run that widens rather than narrows.
-        report.filter_writes[user.plex_account_id] = {"username": user.username, "fields": written}
+        _record_filter_write(report, user, written)
         _record_restored_restriction(ctx, user, written, report)
 
 
@@ -665,7 +786,9 @@ def _verify_filters_enforced(ctx, audience, roster, owned, collections_known, re
         if remote is None or getattr(remote, "restriction_profile", ""):
             continue  # profiled accounts are `_record_unhideable`'s job, and have a different remedy
         kind = str(user.user_type)
-        if user.plex_account_id in report.filter_writes:
+        write = report.filter_writes.get(user.plex_account_id)
+        now = time.monotonic()
+        if write is not None and now - write.get("at", now) < _FILTER_APPLY_S:
             # Written seconds ago, and Plex takes ~25s to apply a change (measured, #116): its Home would
             # still show the OLD filter. The first run after the #116 fix writes exactly the accounts that
             # were leaking, so sampling them raised "Plex is ignoring the filter" on the repair itself.
@@ -788,8 +911,19 @@ def _privacy_sync_phase(
         # what keeps those deletions in the audit trail (rule 10).
         report.error = f"could not read the plex.tv user list: {type(e).__name__}: {e}"
         report.finished_at = datetime.now(UTC)
+        # Any restriction the early merge reported as working again is unconfirmed without this read.
+        report.restrictions_restored.clear()
         logger.exception("could not read the plex.tv user list — no filters written, nothing promoted")
         return None
+
+    # This fresh read is the read-back for `_exclude_first_rows`, which has none of its own: a restriction
+    # it reported as working again that plex.tv did not keep is withdrawn here (and re-written below).
+    for account_id in list(report.restrictions_restored):
+        remote = roster.get(account_id)
+        if remote is None or any(
+            voids_owner_restriction(remote.filters.get(f, ""), LABEL_PREFIX) for f in RESTRICTED_FILTER_FIELDS
+        ):
+            report.restrictions_restored.pop(account_id)
 
     # Whose row is whose, by ACCOUNT ID. Never by name: people rename themselves, and two display
     # names can slugify to the same string — either would quietly hand one account another's row.
@@ -867,13 +1001,14 @@ def _privacy_sync_phase(
             if written:
                 # Every share we touch, audited by account id — most of these accounts have no
                 # UserRunReport to record it on (rule 10).
-                report.filter_writes[user.plex_account_id] = {"username": user.username, "fields": written}
+                _record_filter_write(report, user, written)
                 _record_restored_restriction(ctx, user, written, report)
                 if not ctx.config.dry_run:
                     # {field: expected merged value} — read back once, after every write, below.
                     to_verify[user.plex_account_id] = {field: after for field, (_before, after) in written.items()}
             if user_report is not None:
-                user_report.privacy_synced = bool(written)
+                # Written now or earlier in the run, for a person who just got their first row.
+                user_report.privacy_synced = user.plex_account_id in report.filter_writes
             if not written:
                 # Nothing was written for this account. For a profiled managed account that is
                 # expected (Plex refuses label filters) — but "expected" was doing too much work: the

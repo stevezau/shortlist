@@ -10,50 +10,52 @@ below is later work.
 
 ---
 
-## OPEN — a person's first row has no exclude until the merge (2026-09-13)
+## CLOSED — a person's first row was in the Collections tab until the merge (2026-09-13)
 
 Found auditing #119. A person with no row yet has no `label!=shortlist_<slug>` in anyone's share
-filter: `desired_excludes` builds excludes from `stored_labels` (labels already on the server plus
-what delivery just stored), and `_privacy_sync_phase` runs after EVERY person's delivery
-(`pipeline.py`). From the moment their first row is created until then, the only thing standing
-between that row and other accounts is its collection mode. A run that stops before the merge
-(plex.tv roster unreadable) leaves it that way until the next run.
+filter until a merge writes one, and the merge ran after EVERY person's delivery — about an hour on
+SFLIX, longer on a refresh night now that rows update in place.
 
-Not new: it has existed as long as the deliver-then-merge order has. #119 made it LONGER — rows now
-update in place, so every removal on a very large TV library is its own slow write (estimate below).
+**Measured, read-only, as a shared account** (`tests/fixtures/pms_collections_tab_filter_visibility.json`):
+collection mode "hide" does not cover the Collections tab or collection search — the public shared rows,
+mode 0 and excluded by nobody, were listed 2 of 2 — while every row the account's filter excluded was
+absent, 0 of 180. So the gap was real: title and contents, for every shared account, for the rest of
+delivery.
 
-What is done: `delivery._create_labelled_collection` sets the browse-hiding collection mode as soon
-as the label lands (`PlexClient.hide_from_browse`), instead of waiting for promote(). That covers
-library browse only.
+**Fixed:** when a person whose slug was not in the run-start `stored_labels` gets a stored label,
+`rows._deliver_row` calls `_exclude_first_rows` from inside the same hold of the write lock that wrote the
+row — so no other row is written in between, at any concurrency — merging excludes into every other account
+(additive only: no enumeration, no departure evidence, so nothing is removed but a person's own label from
+their own filter). A delivery that raises part-way still triggers it (the call is in a `finally`). The first plex.tv failure that is not a per-account 422 stops early merges for
+the rest of the run, since each failing write backs off for a minute or more while every delivery waits on
+the lock. The end-of-run `_privacy_sync_phase` still runs, reads every filter fresh — which catches an early
+write plex.tv did not keep, and confirms or withdraws any #116 "restriction working again" notice the early
+merge recorded — and still gates promotion. Cost: one merge per new person; on a first rollout, where
+everyone is new, about (people × accounts) plex.tv writes instead of one round.
 
-The Collections tab is believed EXPOSED in that window. The repo's documented model is that a
-browse-hidden collection stays reachable from the Collections tab and only share filters keep other
-accounts off it: `server/api/collections.py` (PLACEMENTS note), `engine/models.py` (`placement`),
-`docs/reference/settings.md` ("off" rows), and `docs/faq.md` (the owner, who has no filter, sees every
-row there). A first row has no exclude yet, so it is in the owner's position. There is no recorded
-fixture of another account's view (`audit-2026-09-programme.md`, rule 11); a read-only probe as a
-shared account against a real PMS would settle it. Two older test comments disagree on whether share
-filters cover browse at all (`test_pipeline.py` "only cover Home/Recommended/Related",
-`test_engine_vs_fake.py` "govern browse") — the probe should settle those too.
+The early hide from browse at creation (`PlexClient.hide_from_browse`) stays, for library browse.
 
-How long: removals are one ~15-16.5s Plex write each on a very large TV library (measured per write,
-not per run), so a person's first row can wait roughly (titles removed across every later person's
-rows) × 16s before the merge — an estimate, not a measured run.
-
-Options if it is exposed, needing an owner decision:
-1. Deliver people with no existing label FIRST, merge, then deliver everyone else. Shortens the
-   window to those people's own deliveries.
-2. One batched merge BEFORE delivery carrying every new person's exclude — one plex.tv write per
-   account, not per person. Two unknowns: Plex title-cases stored labels, and `desired_excludes`
-   deliberately refuses to guess a casing ("guessing their label's casing would poison filters");
-   and whether Plex accepts an exclude for a label that does not exist yet (rule 11 fixture).
-3. Accept it, and document it in the privacy FAQ.
+**Not covered, deliberately (architecture review 2026-09-13):** "already on the server" is taken as
+"already excluded", which is not proof. Three cases fall outside the fix; the first two are older than #119:
+1. An account newly shared with the server sees every row until the next merge — the end of the next run
+   or the daily privacy sync (05:15). A merge before delivery would narrow that to the start of the next
+   run, at one extra plex.tv roster read per run; not done, since the daily sync is the gap that matters.
+2. A run killed (a `dev` redeploy recreates the container) between someone's first row being created and
+   their `_exclude_first_rows` leaves that row unexcluded until the next merge, because the next run treats
+   the person as existing. The window is that person's own delivery: minutes for a multi-library person.
+3. The early writes are audited only when the run finishes: `report.filter_writes` becomes `run.privacy_sync`
+   events in `_persist_report`. A run that crashes or is redeployed after an early merge leaves filter writes
+   with no events row, and the next run finds those filters already right and audits nothing. The end-of-run
+   writes always had this gap, for the short phases after the merge; it now spans delivery. Accepted: every
+   early write only narrows what an account can see. The fix, if wanted, is a live `ctx.on_filter_write` hook
+   like `ctx.on_user_done`.
 
 ---
 
 ## OPEN — every pick vanishing before a create fails the person (2026-09-13)
 
-Found auditing #119, LOW, pre-existing. If every pick for a library is deleted from Plex in the seconds
+Found auditing #119, LOW, pre-existing. **Never observed on SFLIX:** 0 in 7 days of logs, and 0 vanished
+picks in run history back to 2026-07-24 (checked 2026-09-13). Leave it unless it is ever seen. If every pick for a library is deleted from Plex in the seconds
 between curation and `_create_labelled_collection`'s `fetch_items`, `create_collection(section, title,
 [])` reaches plexapi's `Collection._create`, which raises `BadRequest('Must include items…')` before
 any request. It is not transient, so the person's delivery fails that night and heals the next.

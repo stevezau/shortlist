@@ -60,7 +60,10 @@ docker build -t shortlist:dev .   # multi-stage: node web build → python runti
 Rows are made private by share-filter excludes: each account's `filterMovies`/`filterTelevision`
 gets `label!=shortlist_<otheruser>` for every row that isn't theirs. The ordering is what keeps it
 leak-safe — rows are delivered UNPROMOTED, all filters merged, and only then promoted, so a new row
-is never visible before the exclusions that hide it exist.
+is never promoted before the exclusions that hide it exist. Unpromoted is not invisible: a row is listed
+in the library's Collections tab until its exclude is on an account's filter, so a person's FIRST row is
+excluded as soon as it is written, before any other row is — unless plex.tv fails, when the end-of-run
+merge does it (plex-safety rule 1).
 
 The old automatic Privacy Check + write gate that _verified_ this before each write was **removed at
 the owner's request** (2026-07-16). Writes are no longer gated on a recorded check; the hiding still

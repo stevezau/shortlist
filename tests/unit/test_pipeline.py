@@ -19,6 +19,7 @@ import shortlist.engine.picker as picker_mod
 import shortlist.engine.pipeline as pipeline_mod
 from shortlist.engine import rows as rows_mod
 from shortlist.engine.clients.plex_pms import PlexClient
+from shortlist.engine.clients.plextv import FilterWriteRefused
 from shortlist.engine.clients.tmdb import NullCache
 from shortlist.engine.context import EngineContext
 from shortlist.engine.delivery import (
@@ -245,6 +246,11 @@ class TestRun:
         must ask whether Plex APPLIES the exclude, or it waves the leak through to promotion."""
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
         mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        # Both already have rows, so no early merge runs: the roster is read for the sync, then its read-back.
+        ctx.plex.owned_collections.return_value = {
+            "sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[1]),
+            "mike": OwnedRow(label="Shortlist_mike", rating_keys=[2]),
+        }
 
         def put_behind_an_or(account_id, fields):
             user = next(u for u in mock_plextv.users if u.id == account_id)
@@ -382,6 +388,11 @@ class TestRun:
         once to build the roster, once to verify; only the second (verify) read raises here."""
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
         mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        # Both already have rows, so no early merge runs: the roster is read for the sync, then its read-back.
+        ctx.plex.owned_collections.return_value = {
+            "sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[1]),
+            "mike": OwnedRow(label="Shortlist_mike", rating_keys=[2]),
+        }
         calls = {"n": 0}
 
         def list_users():
@@ -404,7 +415,11 @@ class TestRun:
             plextv_user(100, "sarah", filters={"filterMovies": "contentRating!=R|label!=Shortlist_mike"}),
             plextv_user(200, "mike"),
         ]
-        ctx.plex.owned_collections.return_value = {"mike": OwnedRow(label="Shortlist_mike", rating_keys=[2])}
+        # sarah already has a row too, so no early merge runs: the roster is read for the sync, then its read-back.
+        ctx.plex.owned_collections.return_value = {
+            "sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[1]),
+            "mike": OwnedRow(label="Shortlist_mike", rating_keys=[2]),
+        }
         calls = {"n": 0}
 
         def list_users():
@@ -451,6 +466,11 @@ class TestRun:
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
         full = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
         mock_plextv.users = full
+        # Both already have rows, so no early merge runs: the roster is read for the sync, then its read-back.
+        ctx.plex.owned_collections.return_value = {
+            "sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[1]),
+            "mike": OwnedRow(label="Shortlist_mike", rating_keys=[2]),
+        }
         calls = {"n": 0}
 
         def list_users():
@@ -3733,6 +3753,345 @@ class TestParallelRuns:
         assert "Shortlist_mike" in sarah_filters["filterMovies"]
         assert "Shortlist_canary" in sarah_filters["filterMovies"]
         assert "Shortlist_sarah" not in sarah_filters["filterMovies"]
+
+
+class TestAFirstRowIsHiddenAsSoonAsItsPersonIsDelivered:
+    """A person's first row has no `label!=` exclude in anyone's share filter until a merge writes one.
+
+    Measured on a real server (tests/fixtures/pms_collections_tab_filter_visibility.json): collection mode "hide" does
+    nothing for the library's Collections tab — the browse-hidden, unexcluded shared rows were listed
+    there, 2 of 2 — while every row that account's filter excluded was not, 0 of 180. So a first row
+    created early in a run sat in every shared account's Collections tab, title and titles, until the
+    merge at the END of delivery: about an hour on a large library. People whose rows already exist
+    are unaffected — their exclude is already on every share.
+    """
+
+    def _record_writes(self, ctx: EngineContext, mock_plextv) -> list[tuple]:
+        events: list[tuple] = []
+
+        def create(section, title, items):
+            events.append(("create", title))
+            return MagicMock()
+
+        def put(account_id, fields):
+            events.append(("filter", account_id, dict(fields)))
+            for u in mock_plextv.users:
+                if u.id == account_id:
+                    u.filters.update(fields)
+
+        ctx.plex.create_collection.side_effect = create
+        mock_plextv.update_user_filters.side_effect = put
+        return events
+
+    def test_each_new_persons_row_is_excluded_everywhere_before_the_next_person_is_delivered(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        # mike and jess are new; sarah already has a row. Two new people, so the first of them must not
+        # wait for the second.
+        ctx.plex.owned_collections.return_value = {"sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[501])}
+        mock_plextv.users = [
+            plextv_user(100, "sarah"),
+            plextv_user(200, "mike"),
+            plextv_user(300, "jess"),
+            plextv_user(400, "dan"),
+        ]
+        events = self._record_writes(ctx, mock_plextv)
+        order = [
+            make_profile("mike", account_id=200),
+            make_profile("sarah", account_id=100),
+            make_profile("jess", account_id=300),
+        ]
+
+        report = pipeline_mod.run(ctx, order)
+
+        def create_of(account_id: int) -> int:
+            return next(i for i, e in enumerate(events) if e[0] == "create" and e[1].endswith(row_marker(account_id)))
+
+        def first_hide_of(label: str) -> int:
+            return next(i for i, e in enumerate(events) if e[0] == "filter" and label in e[2].get("filterMovies", ""))
+
+        assert create_of(200) < first_hide_of("Shortlist_mike") < create_of(100), events
+        assert create_of(300) < first_hide_of("Shortlist_jess"), events
+        hidden_from = {e[1] for e in events if e[0] == "filter" and "Shortlist_mike" in e[2].get("filterMovies", "")}
+        assert {100, 300, 400} <= hidden_from, "every other account, not just tonight's people"
+        assert 200 not in hidden_from, "a person must never be hidden from their own row"
+        assert [u.slug for u in report.users] == ["mike", "sarah", "jess"]
+
+    def test_at_concurrency_no_other_row_is_written_between_a_first_row_and_its_exclude(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """Production runs 4 people at a time. The exclude has to go on inside the same hold of the write lock
+        that wrote the first row, or rows other people have queued land in between."""
+        ctx.concurrency = 3
+        mock_plextv.users = [plextv_user(a, n) for a, n in ((100, "sarah"), (200, "mike"), (300, "jess"), (400, "dan"))]
+        events = self._record_writes(ctx, mock_plextv)
+        put = mock_plextv.update_user_filters.side_effect
+        create = ctx.plex.create_collection.side_effect
+
+        def slow_create(section, title, items):
+            time.sleep(0.02)  # give the other workers time to queue on the lock
+            return create(section, title, items)
+
+        def put_checking_the_lock(account_id, fields):
+            assert ctx.write_lock.locked(), "a share filter was written without the write lock"
+            put(account_id, fields)
+
+        ctx.plex.create_collection.side_effect = slow_create
+        mock_plextv.update_user_filters.side_effect = put_checking_the_lock
+        people = [make_profile(n, account_id=a) for a, n in ((100, "sarah"), (200, "mike"), (300, "jess"))]
+        result: dict = {}
+        worker = threading.Thread(target=lambda: result.setdefault("report", pipeline_mod.run(ctx, people)))
+        worker.start()
+        worker.join(timeout=30)
+
+        assert not worker.is_alive(), "the run deadlocked"
+        assert all(u.status == "ok" for u in result["report"].users)
+        for person in people:
+            label = f"Shortlist_{person.slug}"
+            created = next(
+                i
+                for i, e in enumerate(events)
+                if e[0] == "create" and e[1].endswith(row_marker(person.plex_account_id))
+            )
+            hidden = next(i for i, e in enumerate(events) if e[0] == "filter" and label in e[2].get("filterMovies", ""))
+            between = [e for e in events[created + 1 : hidden] if e[0] == "create"]
+            assert not between, f"{person.slug}: {between} was written between their row and its exclude"
+
+    def test_a_person_whose_delivery_fails_after_their_row_exists_is_still_hidden_early(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        ctx.plex.owned_collections.return_value = {"sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[501])}
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        events = self._record_writes(ctx, mock_plextv)
+        deliver = rows_mod.deliver_rows
+
+        def deliver_then_fail(plex, profile, *args, **kwargs):
+            outcome = deliver(plex, profile, *args, **kwargs)
+            if profile.slug == "mike":
+                raise ValueError("a failure after the row was written")
+            return outcome
+
+        monkeypatch.setattr(rows_mod, "deliver_rows", deliver_then_fail)
+
+        report = pipeline_mod.run(ctx, [make_profile("mike", account_id=200), make_profile("sarah", account_id=100)])
+
+        assert next(u for u in report.users if u.slug == "mike").status == "error"
+        mike_hidden = next(
+            i for i, e in enumerate(events) if e[0] == "filter" and "Shortlist_mike" in e[2].get("filterMovies", "")
+        )
+        sarah_create = next(i for i, e in enumerate(events) if e[0] == "create" and e[1].endswith(row_marker(100)))
+        assert mike_hidden < sarah_create, events
+
+    def test_plex_tv_failing_filter_writes_stops_early_merges_for_the_rest_of_the_run(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """Each failing write retries with backoff for a minute or more, under the write lock. Repeating that for
+        every new person would stall every delivery for hours; the end-of-run pass covers what was skipped."""
+        mock_plextv.users = [plextv_user(a, n) for a, n in ((100, "sarah"), (200, "mike"), (300, "jess"), (400, "dan"))]
+        self._record_writes(ctx, mock_plextv)
+        attempts_during_delivery: list[int] = []
+        delivering = {"done": False}
+
+        def failing_put(account_id, fields):
+            if not delivering["done"]:
+                attempts_during_delivery.append(account_id)
+            raise ConnectionError("plex.tv unreachable")
+
+        mock_plextv.update_user_filters.side_effect = failing_put
+        ctx.progress = lambda slug, stage, counts, reason=None: (
+            delivering.__setitem__("done", True) if stage == "users_done" else None
+        )
+        people = [make_profile(n, account_id=a) for a, n in ((100, "sarah"), (200, "mike"), (300, "jess"))]
+
+        report = pipeline_mod.run(ctx, people)
+
+        assert len(attempts_during_delivery) == 1, attempts_during_delivery
+        assert not report.ok, "the end-of-run pass must still try, fail, and block promotion"
+
+    def test_accounts_hidden_early_are_still_spot_checked_for_enforcement(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        """The enforcement spot-check skips an account written SECONDS ago (Plex takes ~25s to apply a
+        filter). One written at the start of delivery, long before the end, is not that — skipping it would
+        leave every account unmeasured on any night someone new got a row."""
+        clock = iter(range(0, 10_000, 100))  # every reading 100s after the last
+        monkeypatch.setattr(pipeline_mod.time, "monotonic", lambda: next(clock))
+        ctx.plex.owned_collections.return_value = {"sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[501])}
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike"), plextv_user(300, "jess")]
+        self._record_writes(ctx, mock_plextv)
+        ctx.token_for_user = MagicMock(return_value="server-token")
+        ctx.plex.user_hubs.return_value = []
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
+
+        assert ctx.token_for_user.called, "every account hidden early was skipped by the enforcement check"
+
+    def test_an_early_write_plex_tv_did_not_keep_is_written_again_at_the_end(self, ctx: EngineContext, mock_plextv):
+        """The early merge has no read-back of its own. The end-of-run pass reads every filter fresh, so an
+        early write that never stuck looks like a missing exclude there, and is written — and verified."""
+        ctx.plex.owned_collections.return_value = {"sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[501])}
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        dropped: set[int] = set()
+
+        def put_dropping_the_first_write(account_id, fields):
+            if account_id not in dropped:
+                dropped.add(account_id)  # answered 200, stored nothing
+                return
+            next(u for u in mock_plextv.users if u.id == account_id).filters.update(fields)
+
+        mock_plextv.update_user_filters.side_effect = put_dropping_the_first_write
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
+
+        assert 100 in dropped, "the early merge never wrote sarah's filter, so this proved nothing"
+        assert "Shortlist_mike" in next(u for u in mock_plextv.users if u.id == 100).filters["filterMovies"]
+        assert report.ok
+
+    def test_an_account_written_seconds_ago_is_not_spot_checked(self, ctx: EngineContext, mock_plextv):
+        """A run for one new person: the end-of-run pass starts right after the early merge, well inside the
+        ~25s Plex takes to apply it, so reading that account's Home would measure the OLD filter."""
+        mock_plextv.users = [plextv_user(200, "mike"), plextv_user(300, "jess")]
+        self._record_writes(ctx, mock_plextv)
+        ctx.plex.owned_collections.return_value = {"mike": OwnedRow(label="Shortlist_mike", rating_keys=[502])}
+        ctx.token_for_user = MagicMock(return_value="server-token")
+        ctx.plex.user_hubs.return_value = []
+        report = pipeline_mod.RunReport(started_at=datetime.now(UTC))
+        jess = make_profile("jess", account_id=300)
+        pipeline_mod._record_filter_write(report, jess, {"filterMovies": ("", "label!=Shortlist_mike")})
+        roster = {300: plextv_user(300, "jess", filters={"filterMovies": "label!=Shortlist_mike"})}
+
+        pipeline_mod._verify_filters_enforced(ctx, [jess], roster, ctx.plex.owned_collections(), True, report)
+
+        ctx.token_for_user.assert_not_called()
+
+    def test_a_restriction_the_early_merge_repairs_is_still_reported_as_working_again(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """#116: an owner restriction switched off by an old `|` join is switched back on by whichever pass
+        writes that account first. On a night someone new gets a row that is the early merge, and the end
+        pass then has nothing to write — the notice must not depend on which pass did it."""
+        ctx.plex.owned_collections.return_value = {"sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[501])}
+        mock_plextv.users = [
+            plextv_user(100, "sarah"),
+            plextv_user(200, "mike"),
+            plextv_user(300, "jess", filters={"filterMovies": "contentRating!=R|label!=Shortlist_sarah"}),
+        ]
+        self._record_writes(ctx, mock_plextv)
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
+
+        assert next(u for u in mock_plextv.users if u.id == 300).filters["filterMovies"].startswith("contentRating!=R&")
+        assert report.restrictions_restored == {300: "jess"}
+
+    def test_a_repair_the_early_merge_reported_but_plex_tv_did_not_keep_is_withdrawn(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        ctx.plex.owned_collections.return_value = {"sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[501])}
+        broken = "contentRating!=R|label!=Shortlist_sarah"
+        mock_plextv.users = [
+            plextv_user(100, "sarah"),
+            plextv_user(200, "mike"),
+            plextv_user(300, "jess", filters={"filterMovies": broken}),
+        ]
+        self._record_writes(ctx, mock_plextv)
+        put = mock_plextv.update_user_filters.side_effect
+
+        jess_writes = {"n": 0}
+
+        def never_keep_jess(account_id, fields):
+            if account_id != 300:
+                put(account_id, fields)
+                return
+            jess_writes["n"] += 1
+            if jess_writes["n"] > 1:  # the end-of-run rewrite fails outright, so only the fresh read can tell
+                raise RuntimeError("(500) plex.tv")
+
+        mock_plextv.update_user_filters.side_effect = never_keep_jess
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
+
+        assert 300 not in report.restrictions_restored
+
+    def test_no_extra_merge_when_nobody_is_new(self, ctx: EngineContext, mock_plextv):
+        ctx.plex.owned_collections.return_value = {
+            "sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[501]),
+            "mike": OwnedRow(label="Shortlist_mike", rating_keys=[502]),
+        }
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        events = self._record_writes(ctx, mock_plextv)
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
+
+        last_create = max(i for i, e in enumerate(events) if e[0] == "create")
+        assert all(i > last_create for i, e in enumerate(events) if e[0] == "filter"), events
+
+    def test_the_early_merge_itself_honours_dry_run(self, ctx: EngineContext, mock_plextv):
+        # A dry run never stores a label, so the pipeline never reaches this; the function still must not write.
+        ctx.config.dry_run = True
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        report = pipeline_mod.RunReport(started_at=datetime.now(UTC))
+
+        pipeline_mod._exclude_first_rows(
+            ctx, [make_profile("mike", account_id=200)], {"mike": "Shortlist_mike"}, report, who="mike"
+        )
+
+        mock_plextv.update_user_filters.assert_not_called()
+        assert report.filter_writes[100]["fields"]["filterMovies"][1] == "label!=Shortlist_mike"
+
+    def test_an_account_left_alone_gets_no_early_exclude(self, ctx: EngineContext, mock_plextv):
+        """ "Leave this account's Plex sharing alone" (#92): the end-of-run pass REMOVES our excludes from it,
+        so writing one early would flip its filter twice a night."""
+        ctx.unmanaged_account_ids = {100}
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(300, "jess")]
+        report = pipeline_mod.RunReport(started_at=datetime.now(UTC))
+
+        pipeline_mod._exclude_first_rows(
+            ctx, [make_profile("mike", account_id=200)], {"mike": "Shortlist_mike"}, report, who="mike"
+        )
+
+        assert [c.args[0] for c in mock_plextv.update_user_filters.call_args_list] == [300]
+
+    def test_one_account_refusing_the_early_write_does_not_stop_the_others(self, ctx: EngineContext, mock_plextv):
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(300, "jess")]
+        self._record_writes(ctx, mock_plextv)
+        put = mock_plextv.update_user_filters.side_effect
+
+        def refuse_sarah(account_id, fields):
+            if account_id == 100:
+                raise FilterWriteRefused("plex.tv rejected the share-filter update for account 100: HTTP 422")
+            put(account_id, fields)
+
+        mock_plextv.update_user_filters.side_effect = refuse_sarah
+        report = pipeline_mod.RunReport(started_at=datetime.now(UTC))
+
+        pipeline_mod._exclude_first_rows(
+            ctx, [make_profile("mike", account_id=200)], {"mike": "Shortlist_mike"}, report, who="mike"
+        )
+
+        assert "Shortlist_mike" in next(u for u in mock_plextv.users if u.id == 300).filters["filterMovies"]
+        assert list(report.filter_writes) == [300]
+
+    def test_an_early_merge_that_fails_leaves_the_end_of_run_merge_to_hide_the_row(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        ctx.plex.owned_collections.return_value = {"sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[501])}
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        self._record_writes(ctx, mock_plextv)
+        roster_reads = {"n": 0}
+
+        def list_users():
+            roster_reads["n"] += 1
+            if roster_reads["n"] == 1:
+                raise RuntimeError("plex.tv 503")
+            return mock_plextv.users
+
+        mock_plextv.list_users.side_effect = list_users
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
+
+        assert all(u.status == "ok" for u in report.users)
+        sarah = next(u for u in mock_plextv.users if u.id == 100)
+        assert "Shortlist_mike" in sarah.filters["filterMovies"]
 
 
 class TestEffectiveRowSources:

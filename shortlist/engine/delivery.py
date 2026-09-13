@@ -953,11 +953,10 @@ def _create_labelled_collection(
     # the second chance when that write fell back to the critical label alone — and it brings its own
     # guard, so the retry is the safe read-modify-write rather than a bare replace.
     _apply_shortlist_label(plex, collection, profile.username)
-    # A person's FIRST row has no `label!=` exclude in anyone's share filter until the merge phase, which
-    # waits for every later person's delivery. Set the browse-hiding mode promote() sets now rather than
-    # then. By the documented model a browse-hidden row still shows in the Collections tab (see the
-    # PLACEMENTS note in server/api/collections.py), so that window stays open — .claude/docs/review-backlog.md.
-    # Best-effort: promote() hides it again.
+    # A person's FIRST row has no `label!=` exclude in anyone's share filter until
+    # `pipeline._exclude_first_rows` merges one after their delivery. Set the browse-hiding mode promote()
+    # sets now rather than then. It does not cover the Collections tab — only the exclude does
+    # (tests/fixtures/pms_collections_tab_filter_visibility.json). Best-effort: promote() hides it again.
     try:
         plex.hide_from_browse(collection)
     except Exception as e:
@@ -1324,7 +1323,8 @@ def _deliver_one(
     _apply_shortlist_label(plex, collection, profile.username)
     diff.rating_key = _rating_key(collection)
     # Promotion is deliberately NOT done here: the pipeline promotes only after every user's
-    # share filters have been merged, so a new row is never visible before its exclusions exist.
+    # share filters have been merged, so a new row is never PROMOTED before its exclusions exist
+    # (see plex-safety rule 1 on the Collections tab).
     logger.info(
         "{}: delivered '{}' to '{}' ({} items, label {})", profile.username, display, section.title, len(picks), stored
     )

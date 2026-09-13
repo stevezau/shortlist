@@ -91,8 +91,8 @@ is genuinely for.
 
 Per-user "Picked for You" rows built from each person's own watch history, made private with Plex's
 label restrictions — every other account's share filter gets `label!=shortlist_<user>` merged into it,
-so a row is visible only to its owner. Rows are delivered unpromoted, exclusions merged, and only then
-promoted, so a row is never visible before the rule hiding it exists.
+so a row is visible only to its owner. Rows are delivered unpromoted, exclusions merged — straight away
+for someone's first row — and only then promoted onto Home.
 
 Share filters are snapshotted before the first write and restored exactly on uninstall; it merges
 rather than rebuilds them, skips the owner, and never modifies a collection it didn't create.

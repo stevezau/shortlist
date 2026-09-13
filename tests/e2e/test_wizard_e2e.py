@@ -285,7 +285,10 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
     # name has nothing to hide. 203 is the jess: they are still excluded from both of the others.
     assert state.users[201].filters["filterMovies"] == "label!=Shortlist_mike"
     assert state.users[202].filters["filterMovies"] == "label!=Shortlist_sarah"
-    assert state.users[203].filters["filterMovies"] == "label!=Shortlist_mike,Shortlist_sarah"
+    # One clause, exactly these two labels; their order is the order the first rows were merged in.
+    jess_filter = state.users[203].filters["filterMovies"]
+    assert jess_filter.startswith("label!=") and "&" not in jess_filter and "|" not in jess_filter, jess_filter
+    assert set(jess_filter.removeprefix("label!=").split(",")) == {"Shortlist_mike", "Shortlist_sarah"}
     # And nothing empty ever reaches a filter — `label!=A,,B` is malformed and fails OPEN.
     for user in state.users.values():
         assert ",," not in (user.filters.get("filterMovies") or "")

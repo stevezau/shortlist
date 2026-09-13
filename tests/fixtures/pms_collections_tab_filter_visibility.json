@@ -1,0 +1,36 @@
+{
+  "_why": [
+    "What a shared account sees of Shortlist's collections in a library's COLLECTIONS TAB, as opposed to",
+    "pms_share_filter_boolean_semantics.json, which measured Home and the library item count.",
+    "",
+    "Measured read-only on 2026-09-13 against a real PMS (1.43.3) with 48 shared accounts, using one",
+    "shared account's own server token (plex.tv shared_servers accessToken): GET",
+    "/library/sections/{id}/collections for the Movies and TV libraries (plexapi LibrarySection.collections())",
+    "and a collection search (LibrarySection.search(libtype='collection')). The owner token listed 186",
+    "Shortlist collections, every one with collectionMode 0 ('Hide collection').",
+    "",
+    "Conclusions the code relies on:",
+    "1. collectionMode 0 does NOT keep a collection out of the Collections tab or collection search. The",
+    "   public shared rows (mode 0, excluded by nobody) were listed for the account, 2 of 2.",
+    "2. The share-filter label exclude DOES. Every row the account's filter excluded was absent: 0 of 180.",
+    "3. So until `label!=shortlist_<slug>` is on an account's filter, that account can see the row's title",
+    "   and contents in the Collections tab. A person's FIRST row has no exclude anywhere until a merge",
+    "   writes one, which is why the pipeline merges that person's exclude as soon as their first row is",
+    "   written, inside the same write lock (`_exclude_first_rows`), instead of at the end-of-run merge."
+  ],
+  "measured_at": "2026-09-13",
+  "pms_version": "1.43.3",
+  "owner_view": {"shortlist_collections": 186, "collection_modes": [0]},
+  "shared_account_view": {
+    "collections_tab": {
+      "public_shared_rows_mode0_unexcluded": {"visible": 2, "of": 2},
+      "own_rows_mode0_not_excluded_for_self": {"visible": 4, "of": 4},
+      "other_peoples_rows_excluded_by_filter": {"visible": 0, "of": 180}
+    },
+    "collection_search": {
+      "public_shared_rows_mode0_unexcluded": {"visible": 2, "of": 2},
+      "own_rows_mode0_not_excluded_for_self": {"visible": 4, "of": 4},
+      "other_peoples_rows_excluded_by_filter": {"visible": 0, "of": 180}
+    }
+  }
+}

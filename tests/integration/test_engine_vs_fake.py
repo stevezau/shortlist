@@ -267,14 +267,20 @@ def test_engine_run_end_to_end(fakes, tmp_path):
 
     # Filters merged on the fake plex.tv: every user excludes the OTHER two users' stored labels.
     remote = {u.id: u for u in plextv.list_users()}
+    # ONE `label!=` clause holding exactly the other two labels. Their order inside the clause is
+    # whichever order they were merged in — each first row is merged as its person finishes — and Plex
+    # does not care about it.
     expected = {
-        201: "label!=Shortlist_jess,Shortlist_mike",
-        202: "label!=Shortlist_jess,Shortlist_sarah",
-        203: "label!=Shortlist_mike,Shortlist_sarah",
+        201: {"Shortlist_jess", "Shortlist_mike"},
+        202: {"Shortlist_jess", "Shortlist_sarah"},
+        203: {"Shortlist_mike", "Shortlist_sarah"},
     }
-    for account_id, merged in expected.items():
-        assert remote[account_id].filters["filterMovies"] == merged
-        assert remote[account_id].filters["filterTelevision"] == merged
+    for account_id, labels in expected.items():
+        for field_name in ("filterMovies", "filterTelevision"):
+            clause = remote[account_id].filters[field_name]
+            assert clause.startswith("label!=") and "&" not in clause and "|" not in clause, clause
+            assert set(clause.removeprefix("label!=").split(",")) == labels, clause
+    first_run_filters = {account_id: dict(remote[account_id].filters) for account_id in expected}
 
     # Snapshots captured the PRE-merge filters (all empty at seed time).
     for account_id in (201, 202, 203):
@@ -315,8 +321,8 @@ def test_engine_run_end_to_end(fakes, tmp_path):
     assert report2.ok
     assert all(not u.privacy_synced for u in report2.users)
     assert len(state.collections) == len(owner_ids) + len(other_ids)  # no duplicate rows created on a re-run
-    for account_id, merged in expected.items():
-        assert state.users[account_id].filters["filterMovies"] == merged
+    for account_id, filters in first_run_filters.items():
+        assert dict(state.users[account_id].filters) == filters, "a re-run rewrote a filter that was already right"
 
 
 def test_engine_run_deletes_a_genuine_unlabelled_orphan_end_to_end(fakes, tmp_path):

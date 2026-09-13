@@ -18,7 +18,16 @@ violate them.
    exclusion that hides it exists. Every run therefore: (a) sweeps rows Plex cannot hide (wrong type
    for their library) BEFORE anything else, (b) delivers all rows UNPROMOTED, (c) merges the
    `label!=shortlist_<userslug>` excludes into every account's share filter, and only THEN (d)
-   promotes rows onto shared Home. Never promote a row before its excludes are merged. A run with no
+   promotes rows onto shared Home. Never promote a row before its excludes are merged.
+
+   "Unpromoted" is NOT "invisible". Collection mode "hide" keeps a row out of library browse, but a
+   shared account still sees it in the library's **Collections tab** until its exclude is on that
+   account's filter (measured: `tests/fixtures/pms_collections_tab_filter_visibility.json`). Rows of
+   people who already have one were excluded by an earlier merge; a person's FIRST row is not. So when a
+   person with no row on the server before the run gets one, `_exclude_first_rows` merges their exclude
+   into every other account from inside the same hold of the write lock that wrote the row (additive
+   only), so no other row is written in between; (c) still runs at the end, reads every filter fresh, and
+   gates promotion. A run with no
    users (`engine_run(ctx, [])`) still does the sweep + merge — it only ever makes the server more
    private, never creates or promotes.
 

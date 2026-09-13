@@ -201,7 +201,11 @@ this fix joined them that way, which switched your restriction off. The first pr
 upgrading repairs it and tells you which accounts it fixed. An allow-list applies to Shortlist's rows
 as well, so that person only sees their own row if it carries one of the allowed labels. The write
 ordering is what keeps this leak-safe: a run delivers rows **unpromoted**, merges all the exclusions, and only **then**
-promotes rows onto Home, so a new row is never visible before the exclusion that hides it exists. Rows
+promotes rows onto Home. Unpromoted is not invisible — a collection is still listed in the library's
+Collections tab for anyone whose filter does not exclude it — so when someone gets their **first** row,
+its exclusion is merged into every other account as soon as that row is written, before any other row
+is. (If plex.tv is failing, Shortlist stops trying early for that run and the privacy step at the end
+hides the row instead.) Rows that already existed were excluded by an earlier run. Rows
 Plex cannot hide (wrong media type for their library) are swept away first, before anything else.
 
 Every row also carries a second, constant label — `shortlist` (Plex stores it title-cased, as
