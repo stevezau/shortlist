@@ -1,6 +1,7 @@
 ---
 name: Architecture Review
 description: Audits a code diff for the bug shapes that have shipped to production in this codebase's lineage (inherited from media_preview_generator, extended with Shortlist's Plex-safety shapes). MUST be invoked before any commit the assistant creates.
+model: opus
 tools:
   - Read
   - Grep
