@@ -116,6 +116,54 @@ class TestRetry:
         assert drain(state) == 1
         assert drain(state) == 0  # still inside the backoff window
 
+    def test_every_failed_attempt_keeps_its_own_error_when_the_job_is_retried(self, state, sessions, monkeypatch):
+        """`jobs.error` holds only the LATEST attempt, so a retried job's first failure was lost for
+        good — production job 8150's was. Each attempt that goes back on the queue leaves its own
+        event, and the final one is the `job.failed` event it always was."""
+        monkeypatch.setattr(jobs, "_BACKOFF_S", (0,))
+        errors = iter(["Plex is down", "plex.tv said 429"])
+
+        def flaky(st, payload):
+            raise RuntimeError(next(errors))
+
+        jobs.handler("t.flaky")(flaky)
+        job_id = jobs.enqueue(sessions, "t.flaky", max_attempts=2)
+
+        drain(state)
+        drain(state)
+
+        assert _job(sessions, job_id).status == "failed"
+        with sessions() as session:
+            retried = session.query(Event).filter_by(scope="job.attempt_failed").one()
+            gave_up = session.query(Event).filter_by(scope="job.failed").one()
+        # Warning, not error: the bell counts error events, and a retry is not news.
+        assert retried.level == "warning"
+        assert retried.message == {
+            "job_id": job_id,
+            "kind": "t.flaky",
+            "error": "RuntimeError: Plex is down",
+            "attempts": 1,
+            "max_attempts": 2,
+        }
+        assert gave_up.message["error"] == "RuntimeError: plex.tv said 429"
+        assert gave_up.message["attempts"] == 2
+
+    def test_a_retried_attempts_error_is_stored_redacted(self, state, sessions):
+        """The same redacted text `jobs.error` gets — a Plex error can carry a tokened URL (rule 9)."""
+        jobs.handler("t.flaky")(
+            lambda st, payload: (_ for _ in ()).throw(
+                RuntimeError("GET http://pms:32400/library/sections?X-Plex-Token=abc123secretXYZ failed")
+            )
+        )
+        jobs.enqueue(sessions, "t.flaky")
+
+        drain(state)
+
+        with sessions() as session:
+            retried = session.query(Event).filter_by(scope="job.attempt_failed").one()
+        assert "abc123secretXYZ" not in retried.message["error"]
+        assert "X-Plex-Token=REDACTED" in retried.message["error"]
+
 
 class TestRecovery:
     def test_a_job_abandoned_by_a_dead_process_is_requeued(self, sessions):

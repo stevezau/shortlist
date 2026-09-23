@@ -653,6 +653,19 @@ def _finish(sessions, job_id: int, *, result: dict | None = None, error: str | N
             logger.warning(
                 "job {} ({}) failed, attempt {}/{}: {}", job.id, job.kind, job.attempts, job.max_attempts, error
             )
+            # `job.error` is overwritten by the next attempt, so without this row the first failure of
+            # a retried job is gone for good. Warning, not error: the bell counts error events, and a
+            # retry is not news. The last attempt is recorded by `job.failed` below.
+            add_audit(
+                session,
+                "job.attempt_failed",
+                "warning",
+                job_id=job.id,
+                kind=job.kind,
+                error=error,
+                attempts=job.attempts,
+                max_attempts=job.max_attempts,
+            )
         else:
             job.status = "failed"
             job.error = error
