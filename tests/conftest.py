@@ -5,9 +5,9 @@ from __future__ import annotations
 import shutil
 import socket
 import ssl
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -59,6 +59,28 @@ def make_profile(
     username: str = "sarah", user_type: UserType = UserType.SHARED, account_id: int = 100, **kw
 ) -> UserProfile:
     return UserProfile(username=username, plex_account_id=account_id, user_type=user_type, **kw)
+
+
+def freeze_clock(monkeypatch: pytest.MonkeyPatch, module: ModuleType, at: datetime) -> None:
+    """Make every `datetime.now()` inside `module` return `at`.
+
+    For code that reads the wall clock and takes no `now`. A test that pins its data to a fixed date
+    while the code under test reads the real clock passes only until the calendar walks out of the
+    code's window: twelve report tests pinned to 2026-08-23 went red on 2026-09-23, when their data
+    fell out of the 30-day window.
+
+    Args:
+        monkeypatch: The test's monkeypatch, so the real clock comes back after the test.
+        module: The module whose `datetime` name is replaced — it must do `from datetime import datetime`.
+        at: The instant `now()` returns, converted to whatever tz the caller asks for.
+    """
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            return at.astimezone(tz) if tz is not None else at.astimezone().replace(tzinfo=None)
+
+    monkeypatch.setattr(module, "datetime", _Frozen)
 
 
 class MemorySnapshotStore:
