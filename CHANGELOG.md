@@ -6,6 +6,52 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.9.2] - 2026-09-24
+
+### Added
+
+- **A run's log shows its own warnings.** Warnings and errors raised while a run works used to reach
+  only the container log. They now appear in that run's log on the Runs page, in amber, and the log
+  refreshes once the run finishes so its last lines are not missed.
+
+- **The run summary counts people and shared rows separately.** "47 ok" was 46 people and one shared
+  row.
+
+- **A night that only queued titles for your approval now leaves a record.** The `run.requests` event
+  is written whenever the run queued or sent anything, with how many of each. A night that only
+  queued titles used to leave no trace.
+
+- **Watched titles Shortlist cannot match are reported once, with a count.** Titles Plex holds without
+  a TMDB id cannot be used and are skipped. The warning fired once per person; it now fires once per
+  library per run, saying how many people it affects.
+
+- **Every failed attempt of a retried job is kept.** A retried job kept only its latest error, so the
+  first failure was lost. Each failed attempt is now recorded as a `job.attempt_failed` event, with
+  the same error text a failed job shows.
+
+### Fixed
+
+- **"database is locked" during the watch sync.** Reading someone's watch history kept the database
+  locked for writing while Plex answered for their next library — 12 to 18 seconds for a large TV
+  library — so other work waiting to write gave up. It showed as jobs failing to start during the
+  nightly history fill, and as lost playback updates. Each library is now saved before the next one
+  is read.
+
+- **A shared row showing twice on Home is cleaned up.** Renaming a shared row before 1.9.1 could leave
+  a second copy of it, and everyone saw both. The next run deletes the extra copy and records the
+  delete in the audit log.
+
+- **A row whose titles all left Plex before it was built now says which row.** If every title picked
+  for a library was deleted from Plex before the row was written, the error named nobody. It now
+  names the person, the row and the library. The row is still skipped that night and rebuilt on the
+  next run.
+
+- **Seasonal picks no longer claim "in genres you watch".** Seasonal titles are chosen for the season,
+  not for someone's genres, so that reason could be untrue. It now reads "Right for the season".
+
+- **The Jobs page no longer says a hidden seasonal row comes straight back.** That holds for a row on
+  its day off; between seasons, the row is rebuilt the night before its next season opens.
+
 ## [1.9.1] - 2026-09-16
 
 ### Added
