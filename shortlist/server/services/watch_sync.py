@@ -212,6 +212,13 @@ class WatchSync:
                     # one is the escape from a section that can never be topped up. Without this the
                     # cursor simply never advances and the cache silently goes stale for ever.
                     cache.force_full_next_time(session, user_id, str(section.key))
+                # Per library, not once at the end. Every sync writes (the cursor and `last_full_at`
+                # at least), and SQLite holds its one write lock from the first write to the commit —
+                # so a single commit held it through every later library's PMS read, 12-18s for a TV
+                # library, and every other writer waited out `busy_timeout` and failed. Nothing is
+                # lost to a crash between commits: each library's rows are complete on their own, and
+                # `stamp_true_dates` below re-stamps whatever is still undated on the next sync.
+                session.commit()
             # A library REMOVED from the server is swept here and nowhere else: `sync_section` only
             # ever replaces sections it read, so rows for one that is gone would otherwise be counted
             # as watched for ever. A section that merely 403'd above is still in `sections`, so an
