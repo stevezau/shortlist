@@ -324,9 +324,11 @@ CATALOG: tuple[JobKind, ...] = (
         label="Show and hide rows for today",
         description=(
             "Puts each row on the Plex shelves its own day schedule and seasons ask for. A row on its day "
-            "off, or between its seasons, is hidden, not deleted — it keeps its titles, so it comes "
-            "straight back without being built again. Everybody's privacy filters are re-merged before "
-            "anything is shown, and if that fails nothing appears."
+            "off is hidden, not deleted — it keeps its titles, so it comes straight back without being "
+            "built again. A row between its seasons is hidden the same way, but its next season is built "
+            "fresh the night before it opens, because last season's titles are out of season now. "
+            "Everybody's privacy filters are re-merged before anything is shown, and if that fails "
+            "nothing appears."
         ),
         manual=True,
         schedule_job_id="rows-visibility",
@@ -650,6 +652,19 @@ def _finish(sessions, job_id: int, *, result: dict | None = None, error: str | N
             job.error = error
             logger.warning(
                 "job {} ({}) failed, attempt {}/{}: {}", job.id, job.kind, job.attempts, job.max_attempts, error
+            )
+            # `job.error` is overwritten by the next attempt, so without this row the first failure of
+            # a retried job is gone for good. Warning, not error: the bell counts error events, and a
+            # retry is not news. The last attempt is recorded by `job.failed` below.
+            add_audit(
+                session,
+                "job.attempt_failed",
+                "warning",
+                job_id=job.id,
+                kind=job.kind,
+                error=error,
+                attempts=job.attempts,
+                max_attempts=job.max_attempts,
             )
         else:
             job.status = "failed"

@@ -360,7 +360,7 @@ class TestASeasonalRowInARun:
 
         sarah = next(u for u in report.users if u.username == "sarah")
         elf = next(p for p in sarah.picks if p.tmdb_id == 30)
-        assert elf.reason == "Right for the season, in genres you watch"
+        assert elf.reason == "Right for the season"
 
     def test_titles_dropped_for_being_out_of_season_say_so_in_the_trace(self, ctx):
         ctx.config.rows = [seasonal_spec()]

@@ -40,6 +40,18 @@ class TestReasonFor:
         cold = make_candidate(4, "Heat", seeds=[], genres=[], sources={"cold_start"})
         assert reason_for(cold) == "Popular on this server"
 
+    def test_a_season_pick_does_not_claim_a_genre_match(self):
+        """A season candidate is admitted on SEASON fit, not on genre overlap — `candidates.py` weights
+        fit 0.5-1.0 and lets a title in with no shared genre at all — and `reason_for` never sees the
+        person's genre profile, so it cannot honestly assert one. A failed genre lookup left the claim
+        empty for every title on the row (v1.9.1 release review)."""
+        no_genres = make_candidate(2, "Elf", seeds=[], genres=[], sources={"season"})
+        assert reason_for(no_genres) == "Right for the season"
+
+        unshared = make_candidate(3, "Krampus", seeds=[], genres=["Horror"], sources={"season"})
+        assert reason_for(unshared) == "Right for the season"
+        assert "genres you watch" not in reason_for(unshared)
+
     def test_seedless_with_no_recognised_source_gets_a_safe_default(self):
         """Never fall back to a line that claims a provenance the pick doesn't have."""
         candidate = make_candidate(2, "Arrival", seeds=[], genres=["Sci-Fi"], sources=set())

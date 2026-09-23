@@ -27,12 +27,13 @@ from sqlalchemy.orm import Session, sessionmaker
 
 import shortlist
 from shortlist.engine.context import EngineContext
+from shortlist.engine.models import RunReport
 from shortlist.engine.pipeline import run as engine_run
 from shortlist.server.db.models import Collection, Run, RunUser, User
 from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.services import jobs, notify, run_persistence
 from shortlist.server.services.context_builder import ContextBuilder
-from shortlist.server.services.run_log import RunLogBuffer
+from shortlist.server.services.run_log import RunLogBuffer, capture_warnings
 from shortlist.server.services.run_persistence import HIT_WINDOW_DAYS  # noqa: F401  (re-export)
 from shortlist.server.services.sse import EventBus
 from shortlist.server.services.watch_sync import WatchSync
@@ -78,6 +79,16 @@ def missed_by_restart(session: Session, run: Run, now: datetime) -> tuple[list[i
         row_id for (row_id,) in session.query(Collection.id).filter(Collection.slug.in_(row_slugs), Collection.enabled)
     )
     return (users, rows) if users and rows else None
+
+
+def _engine_run_logged(run_id: int, log_sink: Callable[[dict], None], ctx: EngineContext, profiles: list) -> RunReport:
+    """The engine run, with its warnings and errors copied into the run's own activity log.
+
+    Called ON the executor thread, because the capture is scoped by a contextvar and has to be set on
+    the thread doing the work — set in the event loop it would reach nothing the engine does.
+    """
+    with capture_warnings(run_id, log_sink):
+        return engine_run(ctx, profiles)
 
 
 class RunService:
@@ -182,12 +193,25 @@ class RunService:
         """The nightly read-only watch sweep. The four collaborators are resolved HERE, per call, not
         captured when `WatchSync` was built — `build_context` in particular is replaced wholesale by
         tests and by nothing else owning it."""
+        built: list[EngineContext] = []
+
+        def build_context(**kwargs) -> EngineContext:
+            ctx = self.build_context(**kwargs)
+            built.append(ctx)
+            return ctx
+
         await self._watch.sync_watched(
-            build_context=self.build_context,
+            build_context=build_context,
             enabled_profiles=self.enabled_profiles,
             reconcile_watched=self._reconcile_watched,
             run_lock=self._lock,
         )
+        # The sync reads everyone through the one history source it built, so that source's tally of
+        # watched titles dropped for want of a tmdb:// guid covers the whole job. Said once, after it.
+        for ctx in built:
+            summarise_unmatched = getattr(ctx.history_source, "log_unmatched_summary", None)
+            if summarise_unmatched is not None:
+                summarise_unmatched()
 
     # -- execution -----------------------------------------------------------------------
 
@@ -317,11 +341,12 @@ class RunService:
                         ],
                     }
                     session.commit()
+                log_sink = self._new_run_log(run_id)
                 ctx = self.build_context(
                     dry_run=dry_run,
                     loop=loop,
                     run_id=run_id,
-                    log_sink=self._new_run_log(run_id),
+                    log_sink=log_sink,
                     collection_ids=collection_ids,
                 )
                 # Which rows this run will build, recorded UP FRONT — the row twin of
@@ -373,7 +398,7 @@ class RunService:
                 # through the start of a run, and the second of two read-modify-write merges drops
                 # the first's `label!=shortlist_<slug>` excludes with nothing left to catch it.
                 async with jobs.plex_writer_lock():
-                    report = await loop.run_in_executor(None, engine_run, ctx, profiles)
+                    report = await loop.run_in_executor(None, _engine_run_logged, run_id, log_sink, ctx, profiles)
                 aborted = cancel is not None and cancel.is_set()
                 self._persist_report(run_id, report, status="aborted" if aborted else None)
                 # The engine filled each profile's history in place, so this is the one moment we hold

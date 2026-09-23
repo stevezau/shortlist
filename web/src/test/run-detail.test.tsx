@@ -1331,6 +1331,22 @@ describe("RunDetail — SSE stage events only refetch THIS run (issue 7.6)", () 
       expect(getRun.mock.calls.length).toBeGreaterThan(callsBefore),
     );
   });
+
+  it("re-reads the activity log when this run finishes", async () => {
+    // The warnings and errors a run logs reach its log through the log endpoint only — the SSE stage
+    // stream carries narration. Without a re-read, someone who watched the run live never saw one.
+    getRun.mockResolvedValue(run([]));
+    renderDetail("");
+    await expandRows();
+    await screen.findAllByText("all succeeded");
+
+    const logReads = getRunLog.mock.calls.length;
+    FakeEventSource.instances.at(-1)?.emit("run.finished", { run_id: 2, status: "ok" });
+
+    await waitFor(() =>
+      expect(getRunLog.mock.calls.length).toBeGreaterThan(logReads),
+    );
+  });
 });
 
 describe("RunDetailPage — a queued run has not started", () => {

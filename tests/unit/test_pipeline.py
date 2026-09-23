@@ -3763,6 +3763,58 @@ class TestLibraryIndexCache:
         assert ctx.plex.build_library_index.call_count == 2
 
 
+class TestTheRunSaysItsUnmatchedWatchedSummaryOnce:
+    """The per-library tally of watched titles dropped for want of a tmdb:// guid is the history
+    source's; the run is what knows when every read is over, so it asks for it — once, afterwards."""
+
+    def test_the_summary_is_asked_for_once_after_every_read(self, ctx: EngineContext, mock_plextv):
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        order: list[str] = []
+        history = ctx.history_source.fetch.return_value
+
+        def fetch(user, **kwargs):
+            order.append("read")
+            return history
+
+        ctx.history_source.fetch.side_effect = fetch
+        ctx.history_source.log_unmatched_summary.side_effect = lambda: order.append("summary")
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
+
+        assert order.count("read") == 2
+        assert order[-1] == "summary" and order.count("summary") == 1
+        ctx.history_source.log_unmatched_summary.assert_called_once_with()
+
+
+class TestTheRunSummaryLine:
+    """`run complete in …` counted `report.users`, which also holds each shared row's report (filed
+    under `shared_<slug>`), so a night of 46 people and one shared row read "47 ok"."""
+
+    def test_people_and_shared_rows_are_counted_apart(self, ctx: EngineContext, mock_plextv):
+        from loguru import logger
+
+        ctx.config.rows = [
+            RowSpec(slug="picked", name_template="Picked for You", size=5),
+            RowSpec(slug="popular", name_template="Popular", size=5, shared=True, min_watchers=2),
+        ]
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        lines: list[str] = []
+        handler = logger.add(
+            lines.append, level="INFO", format="{message}", filter=lambda r: r["message"].startswith("run complete")
+        )
+        try:
+            report = pipeline_mod.run(
+                ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)]
+            )
+        finally:
+            logger.remove(handler)
+
+        assert [u.status for u in report.users if u.slug == "shared_popular"] == ["ok"], "no shared row to count"
+        assert [line.split(": ", 1)[1].strip() for line in lines] == [
+            "people 2 ok, 0 failed, 0 skipped; shared rows 1 ok, 0 failed, 0 skipped (dry_run=False)"
+        ]
+
+
 class TestParallelRuns:
     """Stage 3: users processed concurrently, but every Plex write serialized by ctx.write_lock."""
 
@@ -3810,6 +3862,38 @@ class TestParallelRuns:
         assert all(u.status == "ok" for u in report.users)
         assert ctx.plex.create_collection.call_count == 3  # every user delivered
         assert counter["max"] == 1, "deliver writes ran concurrently — the write_lock is not holding"
+
+    def test_a_worker_thread_logs_under_its_callers_context(self, ctx: EngineContext, mock_plextv):
+        """The server scopes a run's activity log to the run with a loguru contextvar. A pool thread
+        starts with an EMPTY context, so without carrying the caller's across, every warning a person's
+        work raised on the pool lost its run and never reached that run's log."""
+        from loguru import logger
+
+        users = self._users(mock_plextv)
+        ctx.concurrency = 3
+        history = ctx.history_source.fetch.return_value
+        threads: set[int] = set()
+        tagged: list[object] = []
+
+        def fetch(user, **kwargs):
+            threads.add(threading.get_ident())
+            logger.warning("probe from {}", user.slug)
+            return history
+
+        ctx.history_source.fetch.side_effect = fetch
+        handler = logger.add(
+            lambda message: tagged.append(message.record["extra"].get("probe_run")),
+            level="WARNING",
+            filter=lambda record: record["message"].startswith("probe from"),
+        )
+        try:
+            with logger.contextualize(probe_run=7):
+                pipeline_mod.run(ctx, users)
+        finally:
+            logger.remove(handler)
+
+        assert threads and threading.get_ident() not in threads, "the reads never ran on the pool"
+        assert tagged and set(tagged) == {7}
 
     def test_concurrency_preserves_user_order_and_excludes(self, ctx: EngineContext, mock_plextv):
         users = self._users(mock_plextv)

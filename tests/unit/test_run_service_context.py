@@ -1630,6 +1630,105 @@ class TestSyncWatched:
         with sessions() as session:
             assert {row.title for row in session.query(WatchedTitle).all()} == {"T1", "T2"}
 
+    @staticmethod
+    def _another_writer_is_blocked(db_path: Path) -> str | None:
+        """Can a second connection take SQLite's write lock right now? The error if not, else None."""
+        import sqlite3
+
+        other = sqlite3.connect(db_path, timeout=0.2, isolation_level=None)
+        try:
+            other.execute("BEGIN IMMEDIATE")
+            other.execute("ROLLBACK")
+            return None
+        except sqlite3.OperationalError as e:
+            return str(e)
+        finally:
+            other.close()
+
+    def test_no_write_lock_is_held_across_the_next_librarys_read(self, service, sessions, tmp_path):
+        """One library's writes are COMMITTED before the next library's PMS read begins.
+
+        One transaction spanned every library, so SQLite's write lock was held through the next
+        section's HTTP read — 12-18s for a TV library in production. Every other writer waited out
+        `busy_timeout` and raised "database is locked": the job worker's claim three times in one
+        night, the playback listener's session persist twice in one sync.
+        """
+        from datetime import UTC, datetime
+
+        from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
+        from shortlist.server.db.models import User
+
+        with sessions() as session:
+            session.add(User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True))
+            session.commit()
+        profile = UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED, slug="sarah")
+        blocked: list[str] = []
+
+        def read_section(_profile, section, _media, since=None):
+            key = str(section.key)
+            if key == "2":
+                error = self._another_writer_is_blocked(tmp_path / "shortlist.db")
+                if error:
+                    blocked.append(error)
+            return [
+                WatchedItem(
+                    title=f"T{key}",
+                    media_type=MediaType.MOVIE,
+                    watched_at=datetime.now(UTC),
+                    tmdb_id=int(key),
+                    rating_key=int(key),
+                )
+            ]
+
+        history = service.refresh_watched(self._two_library_ctx(["1", "2"], read_section), profile, force_full=True)
+
+        assert blocked == [], f"library 1's writes still held the write lock during library 2's read: {blocked}"
+        assert {item.title for item in history} == {"T1", "T2"}
+
+    def test_a_failed_librarys_self_heal_mark_is_committed_before_the_next_read(self, service, sessions, tmp_path):
+        """The except branch writes too — `force_full_next_time` clears the cursor — so it must not be
+        left holding the lock across the next library's read either."""
+        from datetime import UTC, datetime
+
+        from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
+        from shortlist.server.db.models import User, WatchSyncState
+
+        with sessions() as session:
+            session.add(User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True))
+            session.commit()
+        profile = UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED, slug="sarah")
+        failing: set[str] = set()
+        blocked: list[str] = []
+
+        def read_section(_profile, section, _media, since=None):
+            key = str(section.key)
+            if key in failing:
+                raise RuntimeError("PMS refused the read")
+            if key == "2" and failing:
+                error = self._another_writer_is_blocked(tmp_path / "shortlist.db")
+                if error:
+                    blocked.append(error)
+            return [
+                WatchedItem(
+                    title=f"T{key}",
+                    media_type=MediaType.MOVIE,
+                    watched_at=datetime.now(UTC),
+                    tmdb_id=int(key),
+                    rating_key=int(key),
+                )
+            ]
+
+        ctx = self._two_library_ctx(["1", "2"], read_section)
+        service.refresh_watched(ctx, profile, force_full=True)  # a cursor for library 1 to clear
+        failing.add("1")
+
+        service.refresh_watched(ctx, profile, force_full=True)
+
+        assert blocked == [], f"library 1's self-heal write held the write lock during library 2's read: {blocked}"
+        with sessions() as session:
+            state = session.query(WatchSyncState).filter_by(section_key="1").one()
+            assert state.cursor_viewed_at is None, "the failed library was not marked for a complete re-read"
+
     def test_the_prefill_skips_people_this_run_will_not_build_for(self, service):
         """Every row carries its own cron, so a SCHEDULED run is always scoped to a subset of rows.
 

@@ -20,7 +20,10 @@ from shortlist.engine.models import Candidate, Pick
 # contradicted the provenance line shown right beneath it. The web line no longer says "AI" either:
 # with Exa the source runs with no AI provider at all, so claiming one on the row was untrue.
 _SEEDLESS_REASON = {
-    "season": "Right for the season, in genres you watch",
+    # No genre claim: a season candidate is admitted on season FIT (weighted 0.5-1.0 in
+    # `candidates.py`), which lets in titles sharing no genre with anything they watch, and a failed
+    # genre lookup left the claim empty for the whole row.
+    "season": "Right for the season",
     "llm_web": "Recommended on the web right now",
     "tmdb_discover": "In genres you watch a lot",
     "cold_start": "Popular on this server",

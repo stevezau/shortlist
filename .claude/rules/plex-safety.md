@@ -55,6 +55,15 @@ violate them.
    list cannot see ITS OWN rows — a row carries only its `shortlist_<slug>` label and no rating. So
    `privacy.admit_own_rows` adds that account's OWN row label as one more alternative in each allow
    group (`label=Kids` → `label=Kids,shortlist_me`; `contentRating=G` → `contentRating=G|label=shortlist_me`).
+
+   **It does NOT fill the row, and this rule used to imply it did** (measured 2026-09-18 on a managed
+   account, PMS 1.43.3.10793, `label=recommended` = 11 of 9,991 movies with none in the row). A share
+   filter matches ITEMS by label, and a row's member TITLES carry no `shortlist_*` label — only the
+   collection does. So admitting the row's label admits the collection and none of its 30 members: the
+   account sees an EMPTY row. In the same measurement the row collection stayed visible with no label
+   admitted at all, so "cannot see its own rows" did not reproduce either. The write is still additive
+   and harmless, so nothing here is being reverted — but do not build on the premise that an allow-list
+   account can USE its row. See the review-backlog entry of 2026-09-18 before extending this.
    A PMS groups a filter as `&`-separated groups of `|`-separated alternatives
    (`tests/fixtures/pms_share_filter_allow_lists.json`), and a label added to only one of two ANDed allow
    groups leaves the row hidden, so it goes into every group that would hide the row. It touches that one

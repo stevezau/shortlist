@@ -10,10 +10,88 @@ below is later work.
 
 ---
 
-## OPEN — v1.9.1 release review, two LOW (2026-09-16)
+## OPEN — v1.9.2 release review, one MED and three LOW (2026-09-24)
+
+The release-PR Architecture Review over `v1.9.1..dev` (PR #131) found no HIGH, so 1.9.2 shipped with
+these open. All four are in the shared-row duplicate cleanup (`_remove_shared_row_duplicates`, 92d690c7)
+and fire only on a server that still carries a duplicate from a rename before 1.9.1.
+
+- **MED — the run page calls a removed duplicate a deleted row.** The removed titles go into the
+  library's `CollectionDiff.deleted` (`shortlist/engine/delivery.py:1805`, `:916`), which
+  `web/src/components/runs/user-panel.tsx:232-236` renders in red as "Row deleted (this person no longer
+  gets this row)", beside that same row's live picks. Before 92d690c7 nothing in `_deliver_one` filled a
+  per-library `deleted`, so this text is new to delivery. Fix: a separate field, or wording for this case
+  ("Removed a duplicate copy of this row").
+- **LOW — a failed duplicate delete is still reported as deleted.** `delivery.py:1548` appends the title
+  before `delete_owned_collection` runs, so a raise still lands it in `diff.deleted` and the events row —
+  with the MED, "Row deleted" every night while the duplicate stays on Plex. Contradicts the docstring and
+  `models.py:1323` ("rows destroyed this run"); `test_a_failed_delete_never_costs_the_audience_their_row`
+  pins the current behaviour. Fix: append only after a successful delete (or in a dry run), keep the
+  failure in the warning, update that test.
+- **LOW — a duplicate delete goes unaudited if the row's own write then fails.** The cleanup at
+  `delivery.py:1741` runs before the row's membership write; if that raises, `_deliver_one` never returns
+  its diff (shared rows have no retry wrapper), so no events row records a delete that happened. Only the
+  WARNING line, now in the run log, survives (rule 10). Fix: run the cleanup after the row's own writes, or
+  return the removed titles on failure too.
+- **LOW — a comment gets rule 9 wrong.** `delivery.py:1553-1557` names `_rebuild_under_twin_name` (the
+  function is `_rebuild_under_name`), claims plexapi error text carries the token in the URL (on 4.18.2 it
+  does not — `X-Plex-Token` is added only with `includeToken`/show_secrets, and the text is built from
+  `response.url`), and calls the exception logged at `delivery.py:260` "one of ours" when
+  `_create_labelled_collection` also raises plexapi's own. No leak today; comment only.
+
+---
+
+## OPEN — #115 leaves an allow-list account's own row VISIBLE BUT EMPTY (measured 2026-09-18)
+
+`privacy.admit_own_rows` was shipped to make an allow-list account "see its own rows, filled with titles
+it can watch". Measured against a real managed account, it does not do the second half.
+
+**First two attempts were void — recorded so nobody repeats them.** They planted `label=Overlay` as the
+allow list. `Overlay` is a Kometa label on **9,980 of 9,991** movies on that server, so the allow list
+admitted virtually the whole library and proved nothing. Always confirm the allow VALUE actually
+restricts before reading anything into the result.
+
+**The real measurement.** `Tester` (the one managed Home account, no parental profile) was given a real
+row for this, then `label=recommended` was planted on its `filterMovies` alone — 11 of 9,991 movies, none
+of them in the row — with 45s to propagate and the value restored byte-identical afterwards:
+
+| state | own row collections visible | items inside the movie row |
+| --- | --- | --- |
+| baseline | both | 30 / 30 |
+| allow list planted | both | **0 / 30** |
+| after `plan_share_filter` admitted `Shortlist_tester` | both | **0 / 30** |
+
+Two conclusions, both new:
+
+1. **The allow list works on ITEMS and never hid the row object at all.** The collection stayed visible in
+   all three states, so the premise "an allow-list account cannot see its own row" did not reproduce on
+   PMS 1.43.3.10793 — for a managed account, which is the type the fixture recorded.
+2. **Admitting the row's own label does not bring its contents back.** A share filter matches ITEMS by
+   label, and the row's member titles carry no `shortlist_*` label — only the collection does. So adding
+   `Shortlist_tester` as an allow value can admit the collection (already visible) and none of its 30
+   members. The account gets an empty row.
+
+The fixture's conclusion 3 is literally consistent with this — "inside it exactly the items the allow list
+admits" is 0 when none of the row's titles carry the allowed label. What overstates is
+`.claude/rules/plex-safety.md`'s "filled with titles it can watch", now corrected there.
+
+`admit_own_rows` is still harmless and still additive, so there is nothing to revert. What is open is
+whether the feature is worth anything: to fill the row, the row's TITLES would have to carry the label,
+which means labelling other people's media — a much larger decision than #115 made.
+
+Residue note: `CanaryAllow_DELETE_ME` now appears in the movie library's label list with 0 items, from the
+first void attempt. Inert, and that list already carries several empty names (`Kometa`, `Based`, `Decade`,
+`Genre`, `RequestNeeded` are all 0).
+
+---
+
+## CLOSED — v1.9.1 release review, two LOW (2026-09-16, both fixed 2026-09-18)
 
 The release-PR Architecture Review over `v1.9.0..dev` (PR #129) found no HIGH or MED. A third LOW, the
-CHANGELOG saying a seasonal row returns "without being rebuilt", was fixed before the tag.
+CHANGELOG saying a seasonal row returns "without being rebuilt", was fixed before the tag. The two below
+are now fixed too: the catalogue text scopes "without being built again" to days off, and the seedless
+season reason is the always-true "Right for the season", pinned by
+`test_picker.py::TestReasonFor::test_a_season_pick_does_not_claim_a_genre_match`.
 
 - **The Jobs catalogue overstates seasonal rows.** `rows.visibility`'s description
   (`shortlist/server/services/jobs.py:326-328`) says a hidden row "comes straight back without being built
@@ -28,20 +106,55 @@ CHANGELOG saying a seasonal row returns "without being rebuilt", was fixed befor
 
 ---
 
-## OPEN — LOW: unmarked duplicates of a shared row (found 2026-09-15, discussion #124 review)
+## CLOSED — LOW: unmarked duplicates of a shared row (found 2026-09-15, fixed 2026-09-18 on the 2nd attempt)
 
-Before 2026-09-15 a rename from the rename screen took a shared row's `row_marker(0)` off its title, so
-the next run could not find the collection and built a second, marked one beside it. Both carry the
-`shortlist__shared_<row>` label, so `promote_shared_row` keeps both on Home. Not a privacy problem.
+`_remove_shared_row_duplicates`, called from `_deliver_one` once the row has been resolved. It deletes
+collections under this row's SHARED label in this library that are not the resolved row, are not marked
+with `row_marker(0)`, are not name-freeing helpers, and are the right type for the library. It never
+raises: a failed delete of a duplicate must not cost the audience their row.
 
-The rename no longer strips the marker, and it now leaves an unmarked copy alone when a marked one is in
-the same library (`collection_reconcile.reconcile_row_rename_iter`). What is left: servers that renamed
-a shared row before the fix may still hold the unmarked copy. Nothing deletes it while the row is live
-(the sweep skips it: the shared slug is not in its markers map); removing the row does, through
-`remove_row_collections`. Fix when it matters: delete an unmarked collection
-under a shared label when a marked sibling exists in the same library, with the usual confirm-twice guard.
+**The first attempt put this in `sweep_broken_rows` and Architecture Review blocked it**, reproducing the
+failure twice against the real sweep. Keep both reasons — they are why the code is where it is:
 
----
+- In the sweep the only evidence is a title suffix. A leftover name-freeing helper's title is
+  `FREED_NAME_PREFIX + hex + row_marker(0)` and it carries the shared label, so it counted as the
+  "marked sibling" that authorised the delete — and the live unmarked row was deleted with it, with the
+  run reporting success. A marked copy of the wrong subtype, itself being swept as `unhidable`, did the
+  same on its way out.
+- The sweep is also the wrong PLACE even with guards. Its purpose is rows Plex CANNOT hide, and it runs
+  before anything that can fail because leaks cannot wait. This duplicate is not a leak — both copies
+  carry the same shared label, so every exclude hides them identically. And an unmarked target makes
+  `delete_owned_collection` fall back to a label re-read whose empty answer raises, which `_sweep_phase`
+  (`pipeline.py:443`) turns into a whole-run abort. A cosmetic duplicate must not be able to do that.
+
+By `_deliver_one`, `_find_this_rows_collection` has already answered which collection IS the row from an
+exact title match or the ledger's ratingKey, so `keep` is an identity rather than a guess.
+
+**Which guard actually protects the live row:** the `endswith(row_marker(0))` one. Every resolution path
+requires the marker, so a resolved shared row is always marked and can never be selected for deletion.
+The ratingKey comparison is redundancy — verified by mutation: removing it changes no test, while removing
+the marker check fails `test_another_MARKED_copy_is_left_alone`. Do not drop the marker check on the
+grounds that the ratingKey check looks sufficient.
+
+**What it does NOT cover** (second review, 2026-09-18 — read this before trusting "CLOSED"). The cleanup
+is opportunistic: it runs only on a run that actually delivers this row to THIS library, so a duplicate
+survives a run where the row got no picks for the library, was scoped out, was dormant or out of season,
+or had no audience. It is also skipped when the row cannot be RESOLVED, and a duplicate guarantees
+`len(owned) != 1` so the `sole_row` fallback cannot fire either — meaning a shared row whose title has
+since moved on (renamed library, new season) resolves to None and a third collection is built. Neither is
+a regression; both are the pre-existing shape. Fixing the second means either passing the shared row's
+ledger keys through `_shared_row`'s `deliver_rows` call, or relaxing the `sole_row` fallback for a shared
+label to "exactly one MARKED collection" — true for shared rows by construction, not for per-person ones.
+
+The same review raised a HIGH that is fixed: the delete reached no audit trail. It now returns the removed
+titles and `_deliver_one` puts them in `CollectionDiff.deleted`, so it flows through `combined.deleted`
+into the per-library breakdown and the run page. A delete on someone's server must be answerable from the
+UI, not from a container log (rule 10).
+
+Nine tests in `test_delivery.py::TestSharedRowDuplicates`, five of which assert nothing is deleted:
+helper, wrong-typed, unresolved row, another marked copy, and a per-person row's unmarked sibling. Plus
+the audit-trail assertion, and a failed delete that must not cost the audience their row — that last one
+guards the "never raises" promise, which is the entire reason this is not in the sweep.
 
 ## CLOSED — v1.9.0 release review, three LOW (2026-09-14)
 
@@ -101,7 +214,21 @@ The early hide from browse at creation (`PlexClient.hide_from_browse`) stays, fo
 
 ---
 
-## OPEN — every pick vanishing before a create fails the person (2026-09-13)
+## PARTLY CLOSED — every pick vanishing before a create fails the person (2026-09-13, 2026-09-18)
+
+**The race is unchanged and still self-heals; what changed is that it now says so.** 2026-09-18:
+`_create_labelled_collection` raises a message naming the person, the row, the library and the pick
+count when `picks and not items and vanished`, instead of letting plexapi answer
+`BadRequest('Must include items to add when creating new collection')` — which named none of them and
+cost a full investigation to place. Behaviour is deliberately identical: that person's row is not built
+tonight and the next run rebuilds it.
+
+The gate includes `vanished` on purpose. An earlier attempt at this fired on an empty `items` alone and
+broke 25 tests: "no items and nothing vanished" is a different situation that must keep its behaviour.
+
+Still NOT done, and deliberately: making the delivery actually succeed. That needs the picks resolved
+BEFORE the repair's delete, per the reverted attempt below, and the race has never been observed —
+see the evidence in the original note.
 
 Found auditing #119, LOW, pre-existing. **Never observed on SFLIX:** 0 in 7 days of logs, and 0 vanished
 picks in run history back to 2026-07-24 (checked 2026-09-13). Leave it unless it is ever seen. If every pick for a library is deleted from Plex in the seconds
@@ -116,7 +243,31 @@ fix has to resolve the picks BEFORE the repair's delete, and keep the breakdown 
 
 ---
 
-## OPEN — issue #108 watch-status follow-ups (2026-09-02)
+## CLOSED — issue #108 watch-status follow-ups (2026-09-02; the REPORTER closed it 2026-09-05)
+
+**This section was stale and cost a wasted investigation on 2026-09-18. Read this first.** The notes
+below were written 2026-09-02 and say three of nine watch-status paths fail. On **2026-09-05** the
+reporter retested against `dev` (fd6259d, PMS 1.43.3.10896) and said of the one that mattered — marking a
+SEASON watched — "I cannot say what has changed but I can no longer reproduce the error. I've tried with
+3 new shows and it's now working just fine", then confirmed every other point. The issue was closed that
+day. Nothing here was ever left to build.
+
+Manual marks DO sync, and always did on these paths: `unwatched=0` for movies is Plex's own watched flag
+and includes a mark-as-watched, and shows are read with `viewedLeafCount!=0` precisely BECAUSE marking a
+series or a season does not set the show's own watch-state row while the episode counts stay correct
+(`plex_pms.watched_titles`).
+
+**Proved end to end 2026-09-18** on the managed test account, which has NO watch history at all — the
+exact case the stale note called broken. `The 'Burbs`, 8 episodes, `viewedLeafCount` 0: scrobbled ONE
+season, the show went to 8/8 and `watched_titles` returned it as `(8, 8)`; unscrobbled, back to 0 and
+absent again. So a marked season counts with no prior history, and the 52 shows the abandoned rollup
+flagged cannot have been marked at all — every level read zero watched episodes, which marking would have
+changed. Do not reopen this without a fresh reproduction from a real server.
+
+All three resolved: 2 and 3 were closed on the dates noted below, and 1 was investigated on
+2026-09-18 and ruled out — the sweep it proposed would have marked 52 unwatched shows as watched.
+See the measurement under item 1. Nothing here is actionable without a fresh report from a server
+that can produce a season with `viewedLeafCount > 0` under a show reading 0.
 
 Six commits landed for #108 (`dd2614a`, `a829724`, `1c61a9c`, `ac0a165`, `545a340`, `83cf07a`), and
 the reporter then tested all nine watch-status paths against `2bf1d90`. **Six pass**: mark a show
@@ -137,10 +288,42 @@ shows, of which **52 are invisible to the show-level read**. Those season rows c
 about how much — the same shape as the show-level bug one level down. Every one on that server is old
 (2017–2024), so they are historical residue there rather than fresh marks.
 
-*Fix direction:* read `?type=3&unwatched=0`, roll up by `parentRatingKey`. **Open question first:**
-such a show has a watched season and zero watched episodes per Plex, so what does
-`viewed_leaf_count` become? Recording 0 makes it not count as watched anyway, which defeats the
-point. Needs a decision, not just code.
+*INVESTIGATED 2026-09-18 — DO NOT BUILD THIS. The detection query is wrong and would mark 52 shows on
+SFLIX as watched that nobody has watched.*
+
+The plan was `?type=3&unwatched=0`, roll up by `parentRatingKey`, count the episodes. Measured, in this
+order, and each step moved the conclusion:
+
+- `type=2&viewedLeafCount!=0` (today's show-level read) returns 494 shows. `type=3&unwatched=0` returns
+  1,050 seasons over 525 parents. **52 parents are absent from the show-level read** — the figure in the
+  original note, still exact.
+- Those 52 are **false positives, every one**. Show `viewedLeafCount=0`, and via
+  `/library/metadata/{show}/children` **every season also reads `viewedLeafCount=0`**, and every episode
+  reads `viewCount=0`. The only non-zero field is the SEASON's own `viewCount` (1-5). Nobody watched or
+  marked anything: something established a play record on the season object. `Bob's Burgers` is in the
+  52 with 0 of ~300 episodes watched, and `Below Deck Mediterranean` with 0 of ~189.
+- **`unwatched=0` on seasons has exactly the flaw `watched_titles` already documents for shows.** Its
+  docstring says `unwatched=0` "filters on the show's own watch-state row, which marking a series or a
+  season does not establish". The inverse bites here: a season's own watch-state row can exist with no
+  episode watched at all, so `unwatched=0` returns it.
+- Control, to prove the reads themselves were sound: on shows the show-level read DOES return, season
+  `viewedLeafCount` matches the episodes exactly (8 of 8, and 4 of 10), and season `viewCount` is NOT the
+  watched-episode count (5 against a true 4). So `viewCount` could not stand in for it either.
+
+**The correct signal is a season with `viewedLeafCount > 0` under a show with `viewedLeafCount = 0`, and
+it cannot be had cheaply.** The section-level `type=3` response carries NO `viewedLeafCount` under any
+param tried (`unwatched=0`, `includeUserState=1`, bare, and `viewedLeafCount!=0`), and
+`type=3&viewedLeafCount!=0` is SILENTLY IGNORED — 1,732 rows against 1,050 for `unwatched=0` and 10,631
+for the whole library, so it is filtering on something else entirely. The only place the number appears is
+`/library/metadata/{show}/children`: one read per show, 525 per person per library, ~5s each and ~4
+minutes across 46 users, every sync.
+
+**On this server that cost buys zero findings** — there are no genuine cases, which is consistent with the
+original note's "could not be reproduced on the maintainer's server". So: do not build the sweep. If the
+reporter hits it again, read `/library/metadata/{show}/children` for THAT show and check whether a season
+has `viewedLeafCount > 0` while the show reads 0. That is one request, and it settles it. Only if that
+comes back positive is there a bug here at all, and then the question of what `viewed_leaf_count` becomes
+is answered by the season's own count rather than needing a decision.
 
 **2. The "Finished" date does not move when a partly-watched show is marked fully watched.** CLOSED.
 Plex does not update a show's own `lastViewedAt` when its episodes are MARKED, so a series finished

@@ -10,7 +10,7 @@ from plexapi.exceptions import BadRequest
 from shortlist.engine import delivery
 from shortlist.engine.clients.plex_pms import CollectionRejectedItems, PlexClient
 from shortlist.engine.delivery import DEFAULT_ROW_NAME, deliver_rows, render_row_name, row_marker, sweep_broken_rows
-from shortlist.engine.models import LABEL_PREFIX, EngineConfig, MediaType, Pick
+from shortlist.engine.models import LABEL_PREFIX, SHARED_LABEL_PREFIX, EngineConfig, MediaType, Pick
 from tests.conftest import make_profile
 
 
@@ -510,6 +510,29 @@ class TestDeliverRows:
             [1001, 1002],
         )
         existing.items.assert_called_once()  # membership read exactly once, not twice
+
+    def test_every_pick_vanishing_before_a_create_names_the_row_instead_of_plexapis_message(
+        self, engine_config: EngineConfig, movies, shows
+    ):
+        """If every pick for a library is deleted from Plex between curation and `fetch_items`,
+        `create_collection(section, title, [])` reaches plexapi's `Collection._create`, which raises
+        `BadRequest('Must include items to add when creating new collection')` before any request —
+        naming neither the person, the row nor the library. The delivery still fails for them tonight
+        and heals tomorrow; this only makes the reason legible (found auditing #119, pre-existing)."""
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        plex.find_owned_collections.return_value = []
+        picks = [Pick(1, 1001, "Dune", rank=1, reason="r", media_type=MediaType.MOVIE)]
+        plex.fetch_items.return_value = ([], [1001])  # every pick deleted from Plex since curation
+
+        with pytest.raises(RuntimeError) as raised:
+            deliver_rows(plex, profile, picks, engine_config)
+
+        message = str(raised.value)
+        assert profile.username in message
+        assert "Movies" in message
+        assert "vanished" in message
+        plex.create_collection.assert_not_called()
 
     def test_a_vanished_pick_does_not_erase_a_live_pick_that_shares_its_title(
         self, engine_config: EngineConfig, movies, shows
@@ -1140,6 +1163,165 @@ class TestServerWithTwoLibrariesOfTheSameType:
 
         plex.delete_owned_collection.assert_not_called()
         stray.editTitle.assert_not_called()  # never renamed into ours either
+
+
+class TestSharedRowDuplicates:
+    """A rename before 2026-09-15 stripped a shared row's `row_marker(0)`, so the next run could not find
+    that collection and built a second, MARKED one beside it — and both carry the shared label, so both
+    stayed on Home (#124 review).
+
+    The loser is removed HERE and not in `sweep_broken_rows`. This is the one place that has already
+    resolved which collection IS the row — by exact title match, or by the ledger's ratingKey — so the
+    duplicate is identified by IDENTITY rather than by a title suffix. An Architecture Review blocked the
+    sweep version on 2026-09-18: there, a leftover name-freeing helper carrying the shared label and
+    `row_marker(0)` counted as the sibling authorising the delete, and the live row went with it.
+    """
+
+    SHARED_LABEL = f"{SHARED_LABEL_PREFIX}popular"
+
+    def _spec(self):
+        from shortlist.engine.models import RowSpec
+
+        return RowSpec(slug="popular", name_template="Popular on SFLIX", size=5, shared=True, media="movie")
+
+    def _collection(self, title: str, key: int) -> MagicMock:
+        collection = MagicMock(ratingKey=key)
+        collection.title = title
+        collection.items.return_value = []
+        collection.labels = [SimpleNamespace(tag=self.SHARED_LABEL)]
+        return collection
+
+    def _plex(self, movies, shows, *owned: MagicMock) -> MagicMock:
+        plex = _labelling_plex_mock(MagicMock(spec=PlexClient))
+        plex.sections_by_type.return_value = {MediaType.MOVIE: movies, MediaType.SHOW: shows}
+        plex.matches_section.return_value = True
+        plex.find_owned_collections.side_effect = lambda section, label: list(owned) if section is movies else []
+        return plex
+
+    def _deliver(self, plex, engine_config, movies, shows, dry_run: bool = False):
+        picks = [Pick(1, 1001, "Dune", rank=1, reason="r", media_type=MediaType.MOVIE)]
+        return deliver_rows(
+            plex, make_profile(), picks, engine_config, self._spec(), dry_run=dry_run, sections=[movies, shows]
+        )
+
+    def _deleted(self, plex) -> list[int]:
+        return [c.args[0].ratingKey for c in plex.delete_owned_collection.call_args_list]
+
+    def test_the_unmarked_duplicate_is_deleted_and_the_resolved_row_is_kept(self, engine_config, movies, shows):
+        live = self._collection("Popular on SFLIX" + row_marker(0), 100)
+        stale = self._collection("Popular on SFLIX", 200)
+        plex = self._plex(movies, shows, live, stale)
+
+        self._deliver(plex, engine_config, movies, shows)
+
+        assert self._deleted(plex) == [200], "the unmarked duplicate must go and the resolved row must stay"
+
+    def test_the_removed_duplicate_reaches_the_diff_the_run_audits(self, engine_config, movies, shows):
+        """A collection destroyed on someone's real server has to be answerable from the UI, not just from
+        a container log that rotates in days (plex-safety rule 10). `combined.deleted` is what carries it
+        into the per-library breakdown and the run page."""
+        live = self._collection("Popular on SFLIX" + row_marker(0), 100)
+        stale = self._collection("Popular on SFLIX", 200)
+        plex = self._plex(movies, shows, live, stale)
+
+        diff, _ = self._deliver(plex, engine_config, movies, shows)
+
+        assert diff.deleted == ["Popular on SFLIX"], "the delete must be in the audited diff"
+        assert plex.delete_owned_collection.call_args.args[1] == LABEL_PREFIX, (
+            "the label prefix is the ownership proof delete_owned_collection checks"
+        )
+
+    def test_a_failed_delete_never_costs_the_audience_their_row(self, engine_config, movies, shows):
+        """The "never raises" promise is the whole reason this lives in `_deliver_one` rather than in
+        `sweep_broken_rows`, where a raise aborts the entire run. Nothing else exercises that branch, so
+        narrowing the `except` later would go unnoticed until a PMS hiccup took out a shared row."""
+        live = self._collection("Popular on SFLIX" + row_marker(0), 100)
+        stale = self._collection("Popular on SFLIX", 200)
+        plex = self._plex(movies, shows, live, stale)
+        plex.delete_owned_collection.side_effect = BadRequest("(500) internal_server_error")
+
+        diff, stored = self._deliver(plex, engine_config, movies, shows)
+
+        assert stored, "the row itself must still have been delivered"
+        assert diff.deleted == ["Popular on SFLIX"], "the attempt is still reported; only the delete failed"
+
+    def test_a_name_freeing_helper_under_the_shared_label_is_left_for_the_sweep(self, engine_config, movies, shows):
+        """The helper is debris from a stopped run and `sweep_broken_rows` owns it. Deleting it here
+        would be the same conflation that made the sweep version destroy live rows."""
+        live = self._collection("Popular on SFLIX" + row_marker(0), 100)
+        helper = self._collection(delivery.FREED_NAME_PREFIX + "f94fded57abc", 300)
+        plex = self._plex(movies, shows, live, helper)
+
+        self._deliver(plex, engine_config, movies, shows)
+
+        assert self._deleted(plex) == []
+
+    def test_a_wrong_typed_collection_is_left_for_the_sweep(self, engine_config, movies, shows):
+        """Wrong type for its library means no share filter can hide it — that is the sweep's leak case,
+        and it deletes it as `unhidable`. Doing it here too would double-delete."""
+        live = self._collection("Popular on SFLIX" + row_marker(0), 100)
+        mistyped = self._collection("Popular on SFLIX", 200)
+        plex = self._plex(movies, shows, live, mistyped)
+        plex.matches_section.side_effect = lambda c, section: c is not mistyped
+
+        self._deliver(plex, engine_config, movies, shows)
+
+        assert self._deleted(plex) == []
+
+    def test_another_MARKED_copy_is_left_alone(self, engine_config, movies, shows):
+        """A rename can leave a marked copy under the old title. It is not the shape this cleans up (that
+        one is UNMARKED), and every resolution path in `_find_this_rows_collection` requires the marker —
+        so refusing to touch a marked collection is what keeps the live row safe, whichever copy resolved."""
+        live = self._collection("Popular on SFLIX" + row_marker(0), 100)
+        old_marked = self._collection("Old Name" + row_marker(0), 200)
+        plex = self._plex(movies, shows, live, old_marked)
+
+        self._deliver(plex, engine_config, movies, shows)
+
+        assert self._deleted(plex) == []
+
+    def test_nothing_is_deleted_when_the_row_could_not_be_resolved(self, engine_config, movies, shows):
+        """No positive identity, no delete. Both copies are unmarked, so neither is provably the row."""
+        one = self._collection("Popular on SFLIX", 200)
+        two = self._collection("Something Else", 201)
+        plex = self._plex(movies, shows, one, two)
+
+        self._deliver(plex, engine_config, movies, shows)
+
+        assert self._deleted(plex) == []
+
+    def test_dry_run_reports_the_duplicate_without_deleting_it(self, engine_config, movies, shows):
+        live = self._collection("Popular on SFLIX" + row_marker(0), 100)
+        stale = self._collection("Popular on SFLIX", 200)
+        plex = self._plex(movies, shows, live, stale)
+
+        self._deliver(plex, engine_config, movies, shows, dry_run=True)
+
+        plex.delete_owned_collection.assert_not_called()
+
+    def test_a_per_person_rows_unmarked_sibling_is_not_touched_here(self, engine_config, movies, shows):
+        """Only a SHARED label gets this treatment. A per-person row's marker is its account id, and an
+        unmarked collection under a per-person label is the sweep's `shares_tag` leak, not a duplicate."""
+        from shortlist.engine.models import RowSpec
+
+        profile = make_profile()
+        live = self._collection("✨ Picked for You" + row_marker(profile.plex_account_id), 100)
+        stale = self._collection("✨ Picked for You", 200)
+        for c in (live, stale):
+            c.labels = [SimpleNamespace(tag=f"{LABEL_PREFIX}_{profile.username}")]
+        plex = self._plex(movies, shows, live, stale)
+        picks = [Pick(1, 1001, "Dune", rank=1, reason="r", media_type=MediaType.MOVIE)]
+
+        deliver_rows(
+            plex,
+            profile,
+            picks,
+            engine_config,
+            RowSpec(slug="picked", name_template="✨ Picked for You", size=5, media="movie"),
+            sections=[movies, shows],
+        )
+
+        assert self._deleted(plex) == []
 
 
 class TestSweepBrokenRows:

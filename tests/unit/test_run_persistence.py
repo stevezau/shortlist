@@ -177,6 +177,71 @@ class TestTheZeroRequestedEventSaysWhetherItWasReachable:
         assert self._emit(users=1, demand_floor=1)["demand_unreachable"] is False
 
 
+class TestTheRequestsEventIsWrittenWheneverThePassDidAnything:
+    """`run.requests` used to be written only when something was auto-SENT, and `outcomes` holds only
+    sends — so a night that queued 51 titles for the owner's approval left no audit event at all."""
+
+    @staticmethod
+    def _emit(requests) -> list[tuple[str, dict]]:
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from shortlist.server.services import run_persistence as rp
+
+        seen: list[tuple] = []
+        report = SimpleNamespace(requests=requests, dry_run=False, users=[])
+        with patch.object(rp, "add_audit", lambda session, scope, level, **f: seen.append((scope, level, f))):
+            rp._emit_request_events(None, 7, report)
+        return [(level, fields) for scope, level, fields in seen if scope == "run.requests"]
+
+    @staticmethod
+    def _title(tmdb_id: int):
+        from shortlist.engine.models import MediaType, MissingTitle
+
+        return MissingTitle(
+            tmdb_id=tmdb_id, title=f"T{tmdb_id}", media_type=MediaType.MOVIE, year=2020, rating=7.5, vote_count=900
+        )
+
+    def test_a_pass_that_only_queued_still_leaves_the_event_with_its_counts(self):
+        from shortlist.engine.models import RequestReport
+
+        requests = RequestReport(considered=5, wanted=40, pool_size=12, queued=[self._title(i) for i in range(3)])
+
+        events = self._emit(requests)
+
+        assert len(events) == 1, "a queued-only night left no audit event"
+        level, fields = events[0]
+        assert level == "info"
+        assert (fields["considered"], fields["queued"], fields["sent"]) == (5, 3, 0)
+        assert fields["outcomes"] == []
+        assert fields["run_id"] == 7
+
+    def test_a_pass_that_sent_carries_the_sent_count_beside_its_outcomes(self):
+        from shortlist.engine.models import MediaType, RequestOutcome, RequestReport
+
+        sent = self._title(1)
+        requests = RequestReport(
+            considered=2,
+            wanted=10,
+            pool_size=4,
+            sent=[sent],
+            queued=[self._title(2)],
+            outcomes=[RequestOutcome(tmdb_id=1, title="T1", media_type=MediaType.MOVIE, status="requested")],
+        )
+
+        (_, fields), *rest = self._emit(requests)
+
+        assert rest == []
+        assert (fields["considered"], fields["queued"], fields["sent"]) == (2, 1, 1)
+        assert [o["tmdb_id"] for o in fields["outcomes"]] == [1]
+
+    def test_a_pass_that_neither_queued_nor_sent_writes_no_event(self):
+        from shortlist.engine.models import RequestReport
+
+        assert self._emit(RequestReport(wanted=40, pool_size=12, considered=0)) == []
+        assert self._emit(None) == []
+
+
 class TestPicksCarryTheBuiltAtStamp:
     """`built_at` has to survive the write as well as the read.
 

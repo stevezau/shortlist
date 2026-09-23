@@ -4893,6 +4893,8 @@ export interface components {
             counts?: {
                 [key: string]: unknown;
             };
+            /** Level */
+            level?: string | null;
             /** Reason */
             reason?: string | null;
             /** Run Id */

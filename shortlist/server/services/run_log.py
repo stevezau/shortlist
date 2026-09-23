@@ -10,13 +10,80 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict, deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 
 from loguru import logger
 from sqlalchemy.orm import Session, sessionmaker
 
+from shortlist.engine.clients.http_retry import redact
 from shortlist.server.db.models import RunLogLine, iso_utc
+
+#: The loguru `extra` key that marks a record as this run's work. Set with `contextualize`, which is a
+#: contextvar — so it is per thread, and reaches the engine's worker threads only because the engine
+#: copies its caller's context into them. Other work in the process (jobs, the watch stream, the event
+#: loop) never carries it, which is the whole of the scoping.
+_RUN_KEY = "shortlist_run_log"
+
+#: Bound by `plex_pms._TimingHTTPAdapter` on its `PMS SLOW` line. Those were 423 of 457 WARNING/ERROR
+#: lines on a real server: they are for reading lock-wait in the container log, and on the Runs page
+#: they would bury every warning that matters.
+_TIMING_KEY = "timing"
+
+# Set while a forwarded record is being appended. The append can flush to the DB, and anything logged
+# during that must not be forwarded again: loguru refuses re-entry into a handler it is already inside.
+_forwarding = threading.local()
+
+
+@contextmanager
+def capture_warnings(run_id: int, sink: Callable[[dict], None]) -> Iterator[None]:
+    """Copy every WARNING and ERROR logged by this run's own work into the run's activity log.
+
+    Enter it on the thread that runs the engine. Lines land with `user` blank (a log record names no
+    person), `stage` and `level` both the level, and the message as `reason` — so the Runs page's
+    existing "error" styling and filter pick up an error line with no special case.
+
+    Args:
+        run_id: The run whose log receives the lines.
+        sink: That run's append sink, from `RunLogBuffer.start`.
+    """
+
+    def forward(message) -> None:
+        record = message.record
+        level = "error" if record["level"].no >= logger.level("ERROR").no else "warning"
+        _forwarding.active = True
+        try:
+            sink(
+                {
+                    "ts": iso_utc(record["time"].astimezone(UTC)),
+                    "run_id": run_id,
+                    "user": "",
+                    "stage": level,
+                    "counts": {},
+                    # The Logs page scrubs every line it serves; this one is served too (rule 9).
+                    "reason": redact(record["message"]),
+                    "level": level,
+                }
+            )
+        finally:
+            _forwarding.active = False
+
+    def ours(record) -> bool:
+        extra = record["extra"]
+        return (
+            extra.get(_RUN_KEY) == run_id and not extra.get(_TIMING_KEY) and not getattr(_forwarding, "active", False)
+        )
+
+    handler_id = logger.add(forward, level="WARNING", filter=ours, format="{message}")
+    try:
+        with logger.contextualize(**{_RUN_KEY: run_id}):
+            yield
+    finally:
+        # A live log-level change mid-run rebuilds loguru's sinks with a blanket `logger.remove()`,
+        # which takes this handler with it; the rest of that run's warnings reach the container only.
+        with suppress(ValueError):
+            logger.remove(handler_id)
 
 
 def _parse_ts(value: str | None) -> datetime:
@@ -75,6 +142,7 @@ class RunLogBuffer:
                 seq = self._log_seq.get(run_id, 0)
                 self._log_seq[run_id] = seq + 1
                 entry["seq"] = seq
+                entry.setdefault("level", "info")
                 log.append(entry)
                 buffered = self._log_buffer.setdefault(run_id, [])
                 buffered.append(entry)
@@ -140,6 +208,7 @@ class RunLogBuffer:
                 "stage": row.stage,
                 "counts": row.counts or {},
                 **({"reason": row.reason} if row.reason else {}),
+                "level": row.level or "info",
             }
             for row in rows
         ]

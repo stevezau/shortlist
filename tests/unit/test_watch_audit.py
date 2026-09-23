@@ -28,6 +28,7 @@ from shortlist.server.db.models import (
     WatchEvent,
     WatchSession,
 )
+from shortlist.server.services import report_service
 from shortlist.server.services.report_service import BOUNCE_PERCENT, engagement, resolve_outcomes
 from shortlist.server.services.run_persistence import FINISHED_PERCENT, reconcile_watched
 from shortlist.server.services.watch_events import (
@@ -40,8 +41,18 @@ from shortlist.server.services.watch_events import (
     session_progress,
     tmdb_by_rating_key,
 )
+from tests.conftest import freeze_clock
 
 NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
+
+# The report is read two days after NOW: inside the 30-day window, and past `SETTLING_HOURS`, so a play
+# stopped here is a verdict rather than "watching". `report_service` reads the wall clock and takes no `now`.
+REPORTED_AT = NOW + timedelta(days=2)
+
+
+@pytest.fixture(autouse=True)
+def _report_read_at(monkeypatch):
+    freeze_clock(monkeypatch, report_service, REPORTED_AT)
 
 
 @pytest.fixture

@@ -21,7 +21,8 @@ function LogLine({ entry }: { entry: RunLogEntry }) {
   const time = entry.ts ? new Date(entry.ts).toLocaleTimeString() : "";
   const label = STAGE_LABELS[entry.stage] ?? entry.stage;
   const detail = describeCounts(entry.counts ?? {});
-  const server = isServerStage(entry.user);
+  // A line the run logged at a level carries no person either, so it shares the server-wide dash.
+  const server = isServerStage(entry.user) || !entry.user;
 
   return (
     <div className="flex gap-2 py-px">
@@ -45,7 +46,9 @@ function LogLine({ entry }: { entry: RunLogEntry }) {
           "min-w-0",
           entry.stage === "error"
             ? "text-destructive-text"
-            : "text-muted-foreground",
+            : entry.level === "warning"
+              ? "text-warning"
+              : "text-muted-foreground",
         )}
       >
         {label}

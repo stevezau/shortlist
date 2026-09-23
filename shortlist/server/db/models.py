@@ -797,8 +797,8 @@ class RunLogLine(Base):
     # timestamp is not unique enough to dedupe on — several lines land in the same millisecond.
     seq: Mapped[int] = mapped_column(Integer)
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    # The user slug, or "Shortlist" for the server-wide phases. Blank never happens; the engine
-    # always names a subject.
+    # The user slug, or "Shortlist" for the server-wide phases. Blank only on a line the run's own work
+    # logged at WARNING/ERROR (`run_log.capture_warnings`): a log record names no person.
     user_slug: Mapped[str] = mapped_column(String(255), default="")
     stage: Mapped[str] = mapped_column(String(64), default="")
     counts: Mapped[dict] = mapped_column(JSON, default=dict)

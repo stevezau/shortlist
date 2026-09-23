@@ -488,7 +488,11 @@ Shortlist, which leaves them out of rows entirely so there is nothing of anyone 
 ## Runs
 
 A live **Activity** log streams each user through history → candidates → ranking → delivering as the
-run happens, seeded from the server so a reload replays it. Per-user diffs are grouped by row then
+run happens, seeded from the server so a reload replays it. Warnings and errors the run logs appear
+in the same log, highlighted (errors also under the **Errors** filter). They arrive when the run
+finishes, or on a reload. Two kinds reach only the container log: `PMS SLOW` timings of slow Plex
+calls, and anything logged after the log level is changed mid-run, which ends the capture for the rest
+of that run. Per-user diffs are grouped by row then
 library ("added X to Movies, Y to TV Shows"), each library showing its own ranked picks. Errors are
 first-class rows with copy-for-GitHub buttons, alongside LLM token usage.
 

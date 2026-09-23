@@ -17,7 +17,7 @@ from typing import Protocol
 
 from loguru import logger
 
-from shortlist.engine.clients.plex_pms import PlexClient, SectionNotShared
+from shortlist.engine.clients.plex_pms import PlexClient, SectionNotShared, WatchedRead
 from shortlist.engine.clients.plextv import PlexTvClient
 from shortlist.engine.models import MediaType, Seed, UserProfile, UserType, WatchedItem, is_human_rating
 
@@ -67,6 +67,11 @@ class ShareTokenWatchSource:
         # one instance — the lock makes the roster fetch happen exactly once instead of N racing GETs
         # bursting plex.tv (rule 6: be polite to shared infra).
         self._tokens_lock = threading.Lock()
+        # {section key: (ratingKeys dropped for want of a tmdb:// guid, account ids they were dropped for)}
+        # for `log_unmatched_summary`. One source lives for one run or one sync job, which is the span
+        # the summary covers; locked because reads run on the engine's per-user pool.
+        self._unmatched: dict[str, tuple[set[str], set[int]]] = {}
+        self._unmatched_lock = threading.Lock()
 
     def _tokens(self) -> dict[int, str]:
         with self._tokens_lock:
@@ -152,7 +157,39 @@ class ShareTokenWatchSource:
         token = self._token_for(user)
         if token is None:
             raise NoWatchToken(f"no server token for {user.username}")
-        return self._plex.watched_titles(section.key, media_type, token, since=since)
+        read = self._plex.watched_titles(section.key, media_type, token, since=since)
+        return self._note_unmatched(user, section, read)
+
+    def _note_unmatched(self, user: UserProfile, section, read: WatchedRead) -> WatchedRead:
+        # getattr: this only feeds a log line, and must never be what turns a good read into a failed one.
+        dropped = getattr(read, "dropped_keys", None)
+        if dropped:
+            with self._unmatched_lock:
+                keys, people = self._unmatched.setdefault(str(section.key), (set(), set()))
+                keys.update(dropped)
+                people.add(user.plex_account_id)
+        return read
+
+    def log_unmatched_summary(self) -> None:
+        """One WARNING per library: how many distinct watched titles were dropped for want of a
+        ``tmdb://`` guid since the last summary, and from how many people's watched sets.
+
+        The PMS client warns about this once per library per client, so it names only the first person
+        it happened to; every other person loses the same titles in silence. Not only legacy agents do
+        it: on a real server (2026-09-23) they were `plex://` shows whose metadata links only IMDb/TVDB,
+        and a custom sports agent's items. Call once, when the run or sync job has finished reading; the
+        tally resets, so a second call says nothing new.
+        """
+        with self._unmatched_lock:
+            unmatched, self._unmatched = self._unmatched, {}
+        for section_key, (keys, people) in unmatched.items():
+            logger.warning(
+                "watched read: section {} — {} distinct watched title(s) carry no tmdb:// guid, so they are "
+                "missing from {} person(s)' watched sets this pass.",
+                section_key,
+                len(keys),
+                len(people),
+            )
 
     def fetch(self, user: UserProfile, *, min_completion: float, since: datetime | None = None) -> list[WatchedItem]:
         """Watched titles across every movie/show library, as this user.
@@ -173,7 +210,8 @@ class ShareTokenWatchSource:
         for section in self._plex.sections():
             media_type = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
             try:
-                items.extend(self._plex.watched_titles(section.key, media_type, token, since=since).items)
+                read = self._plex.watched_titles(section.key, media_type, token, since=since)
+                items.extend(self._note_unmatched(user, section, read).items)
             except SectionNotShared:
                 # Not shared with them, so "nothing watched there" is the right answer, not a
                 # degraded one. DEBUG, not WARNING: `sections()` is the OWNER's library list, so

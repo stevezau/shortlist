@@ -231,6 +231,9 @@ export function RunDetailPage() {
       if (event.run_id === runId) {
         void queryClient.invalidateQueries({ queryKey: queryKeys.run(runId) });
         void queryClient.invalidateQueries({ queryKey: queryKeys.runs });
+        // The run's logged warnings and errors reach the log through this read only — the stage
+        // stream above carries narration. `mergeRunLog` dedupes by seq, so re-reading is safe.
+        void queryClient.invalidateQueries({ queryKey: queryKeys.runLog(runId) });
       }
     },
   });
