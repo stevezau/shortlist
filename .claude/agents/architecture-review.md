@@ -1,6 +1,6 @@
 ---
 name: Architecture Review
-description: Audits a code diff for the bug shapes that have shipped to production in this codebase's lineage (inherited from media_preview_generator, extended with Shortlist's Plex-safety shapes). MUST be invoked before any commit the assistant creates.
+description: Audits a code diff for the bug shapes that have shipped to production in this codebase's lineage (inherited from media_preview_generator, extended with Shortlist's Plex-safety shapes). Dispatch by risk, not before every commit: privacy and share filters, Plex/plex.tv writes, Alembic migrations, auth and tokens, watch history or user identity, direct external-storage reads, and dev-to-master release PRs. See .claude/CLAUDE.md for the full trigger list.
 model: opus
 tools:
   - Read
