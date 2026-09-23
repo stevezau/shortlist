@@ -10,6 +10,37 @@ below is later work.
 
 ---
 
+## OPEN — v1.9.2 release review, one MED and three LOW (2026-09-24)
+
+The release-PR Architecture Review over `v1.9.1..dev` (PR #131) found no HIGH, so 1.9.2 shipped with
+these open. All four are in the shared-row duplicate cleanup (`_remove_shared_row_duplicates`, 92d690c7)
+and fire only on a server that still carries a duplicate from a rename before 1.9.1.
+
+- **MED — the run page calls a removed duplicate a deleted row.** The removed titles go into the
+  library's `CollectionDiff.deleted` (`shortlist/engine/delivery.py:1805`, `:916`), which
+  `web/src/components/runs/user-panel.tsx:232-236` renders in red as "Row deleted (this person no longer
+  gets this row)", beside that same row's live picks. Before 92d690c7 nothing in `_deliver_one` filled a
+  per-library `deleted`, so this text is new to delivery. Fix: a separate field, or wording for this case
+  ("Removed a duplicate copy of this row").
+- **LOW — a failed duplicate delete is still reported as deleted.** `delivery.py:1548` appends the title
+  before `delete_owned_collection` runs, so a raise still lands it in `diff.deleted` and the events row —
+  with the MED, "Row deleted" every night while the duplicate stays on Plex. Contradicts the docstring and
+  `models.py:1323` ("rows destroyed this run"); `test_a_failed_delete_never_costs_the_audience_their_row`
+  pins the current behaviour. Fix: append only after a successful delete (or in a dry run), keep the
+  failure in the warning, update that test.
+- **LOW — a duplicate delete goes unaudited if the row's own write then fails.** The cleanup at
+  `delivery.py:1741` runs before the row's membership write; if that raises, `_deliver_one` never returns
+  its diff (shared rows have no retry wrapper), so no events row records a delete that happened. Only the
+  WARNING line, now in the run log, survives (rule 10). Fix: run the cleanup after the row's own writes, or
+  return the removed titles on failure too.
+- **LOW — a comment gets rule 9 wrong.** `delivery.py:1553-1557` names `_rebuild_under_twin_name` (the
+  function is `_rebuild_under_name`), claims plexapi error text carries the token in the URL (on 4.18.2 it
+  does not — `X-Plex-Token` is added only with `includeToken`/show_secrets, and the text is built from
+  `response.url`), and calls the exception logged at `delivery.py:260` "one of ours" when
+  `_create_labelled_collection` also raises plexapi's own. No leak today; comment only.
+
+---
+
 ## OPEN — #115 leaves an allow-list account's own row VISIBLE BUT EMPTY (measured 2026-09-18)
 
 `privacy.admit_own_rows` was shipped to make an allow-list account "see its own rows, filled with titles
