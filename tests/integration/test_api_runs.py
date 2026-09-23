@@ -61,7 +61,7 @@ RUN_SHARED_ROW_KEYS = (RUN_USER_KEYS - {"username", "display_name", "slug", "row
 PICK_KEYS = {"rank", "title", "reason", "rating_key", "seed_title", "sources", "affinity", "year", "rating"}
 TRACE_KEYS = {"username", "display_name", "status", "error", "reason", "trace", "breakdown", "requests"}
 TRACE_REQUEST_KEYS = {"status", "detail", "arr_slug", "excluded"}
-RUN_LOG_KEYS = {"seq", "ts", "run_id", "user", "stage", "counts", "reason"}
+RUN_LOG_KEYS = {"seq", "ts", "run_id", "user", "stage", "counts", "reason", "level"}
 RUNS_SUMMARY_KEYS = {"total", "ok", "error", "last_finished", "last_status"}
 
 REPORT_KEYS = {

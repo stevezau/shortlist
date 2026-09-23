@@ -1547,7 +1547,9 @@ def _emit_request_events(session: Session, run_id: int, report) -> None:
             demand_floor=report.requests.demand_floor,
             demand_unreachable=unreachable,
         )
-    if report.requests is None or not report.requests.outcomes:
+    # Written when the pass queued OR sent anything. `outcomes` holds only what was asked of an Arr, so
+    # gating on it alone left a night that queued 51 titles for approval with no audit record at all.
+    if report.requests is None or not (report.requests.outcomes or report.requests.queued):
         return
     _add_event(
         session,
@@ -1555,7 +1557,9 @@ def _emit_request_events(session: Session, run_id: int, report) -> None:
         "info",
         run_id,
         dry_run=report.dry_run,
-        considered=report.requests.considered,
+        considered=report.requests.considered,  # qualifying: cleared the rating/vote thresholds
+        queued=len(report.requests.queued),
+        sent=len(report.requests.sent),
         outcomes=[
             {
                 "tmdb_id": o.tmdb_id,

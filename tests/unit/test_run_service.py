@@ -1075,6 +1075,185 @@ class TestRunLogBuffer:
         monkeypatch.setattr(service._log, "_sessions", boom)
         service.flush_run_log(1)  # must not raise
 
+    def test_a_lines_level_survives_the_durable_read(self, sessions, tmp_path):
+        """`level` was written to `run_log_lines` and then left out of the read, so a warning that made
+        it into the table came back indistinguishable from narration once the run left memory."""
+        from shortlist.server.db.models import Run
+
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        with sessions() as session:
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.commit()
+            run_id = run.id
+        sink = service._new_run_log(run_id)
+        sink({"stage": "warning", "user": "", "counts": {}, "reason": "tmdb gave up", "level": "warning"})
+        sink({"stage": "history", "user": "sarah", "counts": {}})
+        service.flush_run_log(run_id)
+        for other in range(run_id + 1, run_id + 2 + service._log._run_log_runs):
+            service._new_run_log(other)
+
+        assert [e["level"] for e in service.run_log(run_id)] == ["warning", "info"]
+
+
+class TestTheWatchSyncSaysItsUnmatchedWatchedSummaryOnce:
+    """The nightly sync reads every person's watched set through one history source; its per-library
+    tally of titles dropped for want of a tmdb:// guid is said once, after the last read."""
+
+    def test_the_summary_is_asked_for_once_after_every_read(self, sessions, tmp_path, monkeypatch):
+        from shortlist.engine.models import UserProfile, UserType
+
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        order: list[str] = []
+
+        def read(profile, *args, **kwargs):
+            order.append(f"read {profile.slug}")
+            return []
+
+        ctx = SimpleNamespace(
+            plex=SimpleNamespace(sections=lambda: [SimpleNamespace(key="1", type="movie", title="Movies")]),
+            history_source=SimpleNamespace(
+                fetch=read, fetch_section=read, log_unmatched_summary=lambda: order.append("summary")
+            ),
+            config=SimpleNamespace(min_completion=0.7),
+        )
+        monkeypatch.setattr(service, "build_context", lambda **k: ctx)
+        profiles = [
+            UserProfile(username=slug, plex_account_id=i, user_type=UserType.SHARED, slug=slug)
+            for i, slug in enumerate(("sarah", "mike"), start=1)
+        ]
+        monkeypatch.setattr(service, "enabled_profiles", lambda session, user_ids=None: profiles)
+
+        asyncio.run(service.sync_watched())
+
+        assert order == ["read sarah", "read mike", "summary"]
+
+    def test_a_sync_that_never_built_a_context_asks_for_nothing(self, sessions, tmp_path, monkeypatch):
+        """Plex not configured: the sync skips, and there is no source to ask."""
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+
+        def unconfigured(**kwargs):
+            raise RuntimeError("plex is not configured")
+
+        monkeypatch.setattr(service, "build_context", unconfigured)
+
+        asyncio.run(service.sync_watched())  # must not raise
+
+
+class TestTheRunLogCarriesTheEnginesWarnings:
+    """`run_log_lines.level` read 'info' on every row ever written: the progress hook carries no level,
+    and the engine's real warnings went only to the container's log, so the Runs page never showed one.
+
+    The hard half is scoping. Jobs, the watch stream and other runs log from the same process at the
+    same moment, and a run's log must hold only what THAT run's work said."""
+
+    def _run(self, sessions, tmp_path, monkeypatch, engine) -> tuple[RunService, int]:
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+        monkeypatch.setattr(run_service_mod, "engine_run", engine)
+
+        async def scenario():
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            await _wait_for_run(sessions, run_id)
+            return run_id
+
+        return service, asyncio.run(scenario())
+
+    @staticmethod
+    def _levelled(service: RunService, run_id: int) -> list[tuple]:
+        return [
+            (e["stage"], e["level"], e["reason"]) for e in service.run_log(run_id) if e.get("level", "info") != "info"
+        ]
+
+    def test_a_warning_and_an_error_land_in_the_runs_log_with_their_level(self, sessions, tmp_path, monkeypatch):
+        from loguru import logger
+
+        def engine(ctx, profiles):
+            logger.info("narration that belongs in the container log only")
+            logger.warning("tmdb gave up on 3 titles")
+            logger.error("plex refused a write")
+            return fake_report()
+
+        service, run_id = self._run(sessions, tmp_path, monkeypatch, engine)
+
+        assert self._levelled(service, run_id) == [
+            ("warning", "warning", "tmdb gave up on 3 titles"),
+            ("error", "error", "plex refused a write"),
+        ]
+
+    def test_a_warning_from_other_work_running_at_the_same_moment_stays_out(self, sessions, tmp_path, monkeypatch):
+        """A job or the watch stream logs from its own thread, which never carried this run's context."""
+        from loguru import logger
+
+        def engine(ctx, profiles):
+            other = threading.Thread(target=lambda: logger.warning("a job's warning"))
+            other.start()
+            other.join()
+            logger.warning("the run's own warning")
+            return fake_report()
+
+        service, run_id = self._run(sessions, tmp_path, monkeypatch, engine)
+
+        assert [reason for _, _, reason in self._levelled(service, run_id)] == ["the run's own warning"]
+
+    def test_a_credential_in_a_warning_lands_redacted(self, sessions, tmp_path, monkeypatch):
+        """The Logs page scrubs every line it serves; the run log is served too, so it gets the same pass
+        (plex-safety rule 9). Client errors embed the request URL, credential and all."""
+        from loguru import logger
+
+        def engine(ctx, profiles):
+            logger.warning(
+                "PMS refused GET /library/sections?X-Plex-Token=abc123 and TMDB /3/movie/5?api_key=deadbeef99"
+            )
+            return fake_report()
+
+        service, run_id = self._run(sessions, tmp_path, monkeypatch, engine)
+
+        assert self._levelled(service, run_id) == [
+            (
+                "warning",
+                "warning",
+                "PMS refused GET /library/sections?X-Plex-Token=REDACTED and TMDB /3/movie/5?api_key=REDACTED",
+            ),
+        ]
+
+    def test_a_slow_pms_call_stays_in_the_container_log_only(self, sessions, tmp_path, monkeypatch):
+        """`PMS SLOW` timings were 423 of 457 WARNING/ERROR lines on a real server. They are for reading
+        lock-wait in the container log; on the Runs page they would bury every warning that matters."""
+        import requests
+        from loguru import logger
+        from requests.adapters import HTTPAdapter
+
+        from shortlist.engine.clients import plex_pms
+
+        monkeypatch.setattr(HTTPAdapter, "send", lambda self, request, **kw: SimpleNamespace(status_code=200))
+        monkeypatch.setattr(plex_pms, "_SLOW_PMS_S", 0.0)  # every call is "slow"
+
+        def engine(ctx, profiles):
+            plex_pms._TimingHTTPAdapter().send(requests.Request("GET", "http://pms:32400/library/sections").prepare())
+            logger.warning("tmdb gave up on 3 titles")
+            return fake_report()
+
+        container: list[str] = []
+        sink = logger.add(container.append, level="WARNING", format="{message}")
+        try:
+            service, run_id = self._run(sessions, tmp_path, monkeypatch, engine)
+        finally:
+            logger.remove(sink)
+
+        assert any("PMS SLOW" in line for line in container), "the container log keeps the timing"
+        assert self._levelled(service, run_id) == [("warning", "warning", "tmdb gave up on 3 titles")]
+
+    def test_nothing_is_captured_once_the_run_is_over(self, sessions, tmp_path, monkeypatch):
+        """The capture is torn down with the run: a warning after it reaches no run's log."""
+        from loguru import logger
+
+        service, run_id = self._run(sessions, tmp_path, monkeypatch, lambda ctx, profiles: fake_report())
+        logger.warning("after the run")
+        service.flush_run_log(run_id)
+
+        assert self._levelled(service, run_id) == []
+
 
 class TestCancellingAQueuedRunIsImmediate:
     """A queued run must stop the moment you ask, not when the run in front of it finishes.

@@ -582,6 +582,32 @@ class TestTmdbClient:
         assert first == [{"id": 7, "title": "A", "genre_ids": [27], "vote_average": 6.1}]
 
     @respx.mock
+    def test_discover_all_reads_its_pages_under_the_callers_logging_context(self):
+        """The pages are read on a pool, whose threads start with an empty context — so a warning from a
+        page read lost the run it belonged to and never reached that run's activity log."""
+        from loguru import logger
+
+        def serve(request):
+            page = int(request.url.params["page"])
+            logger.warning("probe page {}", page)
+            return httpx.Response(200, json={"page": page, "total_pages": 3, "results": [{"id": page}]})
+
+        respx.get("https://api.themoviedb.org/3/discover/movie").mock(side_effect=serve)
+        tagged: dict[str, object] = {}
+        handler = logger.add(
+            lambda message: tagged.__setitem__(message.record["message"], message.record["extra"].get("probe_run")),
+            level="WARNING",
+            filter=lambda record: record["message"].startswith("probe page"),
+        )
+        try:
+            with logger.contextualize(probe_run=7):
+                TmdbClient("k").discover_all(MediaType.MOVIE, {"with_genres": "27"})
+        finally:
+            logger.remove(handler)
+
+        assert tagged == {"probe page 1": 7, "probe page 2": 7, "probe page 3": 7}
+
+    @respx.mock
     def test_discover_all_raises_rather_than_returning_part_of_a_list(self):
         """A list missing a page would quietly drop titles from someone's season — and be cached for a week."""
 
@@ -2524,6 +2550,29 @@ class TestWatchedWindowCoverage:
 
         assert [i.tmdb_id for i in read.items] == [111]
         assert read.dropped_no_guid == 1, "the unmatched title was dropped without being counted"
+
+    @respx.mock
+    def test_a_dropped_title_is_named_by_its_ratingKey_on_any_read(self, mock_plex):
+        """The count says how many; a run's summary has to know WHICH, to count one title once across
+        everyone it was dropped for. Named on an incremental read as well — a run's reads mostly are,
+        and a title with no tmdb:// guid is missing from the person's watched set whichever read met it.
+        """
+        legacy = (
+            f'<Video ratingKey="7" type="movie" title="Legacy Agent" year="2001" viewCount="1" '
+            f'lastViewedAt="{self._NOW}"><Guid id="imdb://tt0000007"/></Video>'
+        )
+        matched = (
+            f'<Video ratingKey="8" type="movie" title="Matched" year="2002" viewCount="1" '
+            f'lastViewedAt="{self._NOW - 10}"><Guid id="tmdb://88"/></Video>'
+        )
+        body = f'<MediaContainer size="2" totalSize="2">{legacy}{matched}</MediaContainer>'
+
+        incremental = self._read(mock_plex, body, since_ago=1000)
+        complete = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK")
+
+        assert incremental.dropped_keys == frozenset({"7"})
+        assert complete.dropped_keys == frozenset({"7"})
+        assert [i.tmdb_id for i in complete.items] == [88]
 
     @respx.mock
     def test_a_healthy_library_reports_no_drops(self, mock_plex):

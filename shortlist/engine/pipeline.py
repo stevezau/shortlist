@@ -8,6 +8,7 @@ guarantees that depend on it.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import time
 from collections import Counter
@@ -154,6 +155,12 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     to_promote, shared_to_promote = _deliver_phase(
         ctx, users, seed_index, library_index, stored_labels, report, demand if requests_on else None, order_work
     )
+    # Every watched read of the run is over — the server's pre-fill and any the engine made itself — so
+    # the history source's tally of titles dropped for want of a tmdb:// guid is complete. Said here,
+    # before anything that can end the run early. Not on the protocol: only the share-token source reads.
+    summarise_unmatched = getattr(ctx.history_source, "log_unmatched_summary", None)
+    if summarise_unmatched is not None:
+        summarise_unmatched()
 
     # The hinge of the whole run: after this line every per-user card is terminal, and everything
     # that follows is server-wide. Without it the activity feed's last line is whichever person
@@ -213,13 +220,15 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     failed = sum(1 for u in report.users if u.status == "error")
     elapsed = (report.finished_at - report.started_at).total_seconds()
     # Errors called out separately rather than left as "N/M" arithmetic — "3/40 ok" reads as a
-    # disaster when 37 people were simply skipped, and as fine when 37 actually failed.
+    # disaster when 37 people were simply skipped, and as fine when 37 actually failed. People and
+    # shared rows apart: `report.users` also holds each shared row's report, so one list read "47 ok"
+    # for 46 people and a shared row.
+    slugs = {user.slug for user in users}
     logger.info(
-        "run complete in {:.0f}s: {} ok, {} failed, {} skipped (dry_run={})",
+        "run complete in {:.0f}s: people {}; shared rows {} (dry_run={})",
         elapsed,
-        ok,
-        failed,
-        len(report.users) - ok - failed,
+        _outcome_tally([u for u in report.users if u.slug in slugs]),
+        _outcome_tally([u for u in report.users if u.slug not in slugs]),
         ctx.config.dry_run,
     )
     # The last line of the feed, so "is it still going?" is answerable without reading the header.
@@ -230,6 +239,13 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
         {"ok": ok, "failed": failed, "seconds": round(elapsed)},
     )
     return report
+
+
+def _outcome_tally(reports: list[UserRunReport]) -> str:
+    """``"40 ok, 1 failed, 5 skipped"`` — for the run's closing log line."""
+    ok = sum(1 for r in reports if r.status in ("ok", "cold_start"))
+    failed = sum(1 for r in reports if r.status == "error")
+    return f"{ok} ok, {failed} failed, {len(reports) - ok - failed} skipped"
 
 
 # The real invalidation is the section SIGNATURE (item count + last-updated): the moment the library
@@ -570,8 +586,13 @@ def _deliver_phase(
     # untouched. `pool.map` preserves order, so report.users and to_promote read exactly as they would
     # sequentially; concurrency=1 (the default) skips the pool entirely and stays fully sequential.
     if ctx.concurrency > 1 and len(users) > 1:
+        # Each person runs in a copy of THIS thread's contextvars. A pool thread starts with an empty
+        # context, and the server scopes a run's activity log by a loguru contextvar — without the copy
+        # every warning raised on the pool lost its run. One copy per call: a context can be entered
+        # by only one thread at a time.
+        contexts = [contextvars.copy_context() for _ in users]
         with ThreadPoolExecutor(max_workers=ctx.concurrency) as pool:
-            results = list(pool.map(process, users))
+            results = list(pool.map(lambda context, user: context.run(process, user), contexts, users))
     else:
         results = [process(user) for user in users]
     for user, user_report, delivered in results:

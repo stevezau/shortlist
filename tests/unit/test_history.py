@@ -189,6 +189,65 @@ class TestShareTokenWatchSource:
         assert [i.title for i in items] == ["Dune"]
 
 
+class TestTheUnmatchedWatchedSummary:
+    """Titles Plex returns with no `tmdb://` guid are dropped from the person's watched set. The PMS
+    client warns about that once per library per client, so only the FIRST person it happened to was
+    ever named — the same titles vanished from everyone else's watched set with no word at all."""
+
+    @staticmethod
+    def _source(mock_plex, mock_plextv, dropped: dict[tuple[int, str], set[str]]) -> ShareTokenWatchSource:
+        mock_plex._server.library.sections.return_value = [_section("2", "show"), _section("12", "show")]
+        mock_plextv.shared_server_tokens.return_value = {100: "SARAH", 200: "MIKE", 300: "ANN"}
+        account_by_token = {"SARAH": 100, "MIKE": 200, "ANN": 300}
+
+        def watched_titles(section_key, media_type, token, *, since=None):
+            keys = dropped.get((account_by_token[token], str(section_key)), set())
+            return WatchedRead(items=[], covers_window=True, dropped_keys=frozenset(keys))
+
+        mock_plex.watched_titles = MagicMock(side_effect=watched_titles)
+        return ShareTokenWatchSource(mock_plex, mock_plextv, owner_token="OWNER")
+
+    @staticmethod
+    def _summary(source: ShareTokenWatchSource) -> list[str]:
+        from loguru import logger
+
+        lines: list[str] = []
+        handler = logger.add(lines.append, level="WARNING", format="{message}")
+        try:
+            source.log_unmatched_summary()
+        finally:
+            logger.remove(handler)
+        return [line.strip() for line in lines]
+
+    def test_one_line_per_library_counts_distinct_titles_and_the_people_they_were_dropped_for(
+        self, mock_plex, mock_plextv
+    ):
+        # One title dropped for two people is ONE title; section 12's single title is one person's.
+        source = self._source(
+            mock_plex, mock_plextv, {(100, "2"): {"501", "502"}, (200, "2"): {"501"}, (100, "12"): {"901"}}
+        )
+        sarah = make_profile(username="sarah", account_id=100)
+        source.fetch(sarah, min_completion=0.7)  # the engine's direct read
+        source.fetch_section(make_profile(username="mike", account_id=200), _section("2", "show"), MediaType.SHOW)
+        source.fetch(make_profile(username="ann", account_id=300), min_completion=0.7)  # a healthy account
+
+        assert self._summary(source) == [
+            "watched read: section 2 — 2 distinct watched title(s) carry no tmdb:// guid, so they are missing "
+            "from 2 person(s)' watched sets this pass.",
+            "watched read: section 12 — 1 distinct watched title(s) carry no tmdb:// guid, so they are missing "
+            "from 1 person(s)' watched sets this pass.",
+        ]
+
+    def test_it_says_nothing_when_nothing_was_dropped_and_each_summary_is_said_once(self, mock_plex, mock_plextv):
+        source = self._source(mock_plex, mock_plextv, {(100, "2"): {"501"}})
+        assert self._summary(source) == [], "no read yet, nothing to report"
+
+        source.fetch(make_profile(username="sarah", account_id=100), min_completion=0.7)
+
+        assert len(self._summary(source)) == 1
+        assert self._summary(source) == [], "the same drops were reported twice"
+
+
 class TestDistinctRecent:
     def test_a_binge_collapses_to_one_entry_and_lets_variety_through(self):
         # 20 episodes of one show + a few other titles. The naive "last N raw watches" would be all

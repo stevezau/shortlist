@@ -77,6 +77,9 @@ class WatchedRead:
     #: Rows the server returned that carry no `tmdb://` guid, so nothing here could ever match them.
     #: Zero on a healthy library; a whole library's worth when it is matched with a legacy agent.
     dropped_no_guid: int = 0
+    #: The ratingKeys of those rows — on EVERY read, incremental included, unlike the count — so a
+    #: run's summary can count one title once across the people it was dropped for.
+    dropped_keys: frozenset[str] = frozenset()
 
 
 class SectionNotShared(RuntimeError):
@@ -354,7 +357,10 @@ class _TimingHTTPAdapter(HTTPAdapter):
             duration = time.monotonic() - start
             path = request.path_url.split("?", 1)[0]  # drop the query string (carries X-Plex-Token)
             if duration >= _SLOW_PMS_S:
-                logger.warning("PMS SLOW · {} {} -> {} in {:.1f}s", request.method, path, status, duration)
+                # `timing` keeps it out of a run's activity log: it is for the container log only.
+                logger.bind(timing=True).warning(
+                    "PMS SLOW · {} {} -> {} in {:.1f}s", request.method, path, status, duration
+                )
             else:
                 logger.debug("PMS · {} {} -> {} in {:.2f}s", request.method, path, status, duration)
 
@@ -2184,6 +2190,7 @@ class PlexClient:
         # library matched with the legacy TheTVDB agent yields `tvdb://` only, so this is a whole
         # library's worth of silence, not a stray row.
         dropped = 0
+        dropped_keys: set[str] = set()
         # Rows the SERVER should have filtered out and did not. A handful is normal; a library's
         # worth means `viewedLeafCount!=0` was ignored and we are paging everything, which the
         # client-side filter hides completely — the answer stays right, the cost silently multiplies.
@@ -2235,6 +2242,10 @@ class PlexClient:
                     # skipped may simply be outside the window — counting it would report a match
                     # problem that isn't one. Every sync reads complete now, so nothing is lost.
                     dropped += full_read
+                    # Named on any read: the title is missing from this person's watched set whichever
+                    # read met it, and a row past the cutoff is still one they watched.
+                    if rating_key := el.get("ratingKey"):
+                        dropped_keys.add(rating_key)
                     continue
                 if since is not None and item.watched_at < since:
                     # An item with NO `lastViewedAt` is stamped 1970 by `_watched_item`, so it looks
@@ -2361,7 +2372,9 @@ class PlexClient:
         )
         if media_type is MediaType.SHOW and full_read:
             items = self._dates_from_episodes(section_key, token, items)
-        return WatchedRead(items=items, covers_window=covers_window, dropped_no_guid=dropped)
+        return WatchedRead(
+            items=items, covers_window=covers_window, dropped_no_guid=dropped, dropped_keys=frozenset(dropped_keys)
+        )
 
     def _dates_from_episodes(self, section_key: str | int, token: str, shows: list[WatchedItem]) -> list[WatchedItem]:
         """Give a show with no watch date of its own the date of its newest watched EPISODE.

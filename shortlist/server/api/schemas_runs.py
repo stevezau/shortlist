@@ -196,6 +196,10 @@ class RunLogLineOut(PassthroughModel):
     counts: dict[str, Any] = Field(default_factory=dict)
     #: Only emitted when there is something to say — null on the lines that have nothing.
     reason: str | None = None
+    #: "info" for narration; "warning" / "error" for a line the run's own work logged at that level
+    #: (`run_log.capture_warnings`), whose text is in `reason` and whose `user` is blank. Every line this
+    #: server writes carries one; optional so a client may treat a line without it as narration.
+    level: str | None = None
 
 
 class RunCreatedOut(PassthroughModel):

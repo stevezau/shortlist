@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import json
 from concurrent.futures import ThreadPoolExecutor
 from typing import ClassVar, Protocol
@@ -282,8 +283,13 @@ class TmdbClient:
         last = min(total_pages, MAX_DISCOVER_PAGES)
         pages = [first]
         if last > 1:
+            numbers = range(2, last + 1)
+            # In copies of the caller's contextvars, so a page read's warnings stay with the run that
+            # asked for them (see `pipeline._deliver_phase`); one copy per call, as a context can be
+            # entered by only one thread at a time.
+            contexts = [contextvars.copy_context() for _ in numbers]
             with ThreadPoolExecutor(max_workers=_LIST_PAGE_WORKERS) as pool:
-                pages += pool.map(read, range(2, last + 1))
+                pages += pool.map(lambda context, page: context.run(read, page), contexts, numbers)
         titles: dict[int, dict] = {}
         for page in pages:
             for item in page.get("results") or []:

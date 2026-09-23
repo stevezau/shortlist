@@ -5124,6 +5124,17 @@
             "title": "Counts",
             "type": "object"
           },
+          "level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level"
+          },
           "reason": {
             "anyOf": [
               {

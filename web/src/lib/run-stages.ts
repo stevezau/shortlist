@@ -96,7 +96,8 @@ export function matchesLogFilter(
     case "writes":
       return PLEX_WRITE_STAGES.has(stage);
     case "people":
-      return !isServerStage(userSlug);
+      // A blank subject is a line the run logged at a level (`capture_warnings`) — it names no person.
+      return userSlug !== "" && !isServerStage(userSlug);
     default:
       return true;
   }
