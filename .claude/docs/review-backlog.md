@@ -10,6 +10,34 @@ below is later work.
 
 ---
 
+## OPEN — left over from issue #133, "Because you watched X" stuck (2026-09-25)
+
+The bug itself is fixed in be9dcd95: `_seed_moved` compared pick #1 as it stood while the title skips
+unseeded picks, so a row led by a discover/web-search pick never saw its seed move. These three were
+found on the way and are not fixed.
+
+- **LOW — the run trace says "refreshed" for a row rebuilt because its seed moved.** `decision` is
+  settled at `shortlist/engine/rows.py:2754-2762`, before the branch at `:2803` asks `_seed_moved`, so a
+  forced rebuild is recorded as `refreshed`. It hid the #133 mirror cells (a nightly full rebuild) from
+  anyone reading the trace, and it makes `decision` useless as a test assertion — the #133 tests assert
+  on which picks survived instead. Fix: a `seed_moved` decision, set where the bootstrap branch is taken
+  for that reason.
+- **DECISION (owner) — a TV row can carry a film's name.** When a library has no seeded pick,
+  `seed_source` (`shortlist/engine/delivery.py:380-397`) borrows the other library's title (#84, pinned
+  by `tests/unit/test_delivery.py:145`). The #133 reporter's TV row read "Because you watched Passenger"
+  (a film) over 18 shows with no seed at all: their TV seed's 40 look-alikes were not in a 309-show
+  library. Option: when the row has its own `fallback_name`, prefer it to a borrowed seed; default
+  unchanged when it is blank.
+- **LOW, reasoned not reproduced — above one seed per library, a title can name a dead seed for a
+  night.** `_seed_moved` now checks the prior NAMED pick; the refresh then re-ranks survivors against
+  the pool (`rows.py:2821`) and the title renders from whichever seeded survivor ranks best — which can
+  be one whose seed has since left the seed set. The next night's check sees that name and rebuilds.
+  One seed per library (the recommended Movies+TV budget of 2) cannot reach it.
+
+Not a bug, so it isn't re-found: on SFLIX, 28 of 91 `{top_seed}` titles named an older watch than the
+person's newest (2026-09-24). The row's budget is 3, and above one seed per library the title names the
+best pick's seed, not the newest watch — the trade-off `docs/guides/rows.md` already describes.
+
 ## OPEN — v1.9.2 release review, one MED and three LOW (2026-09-24)
 
 The release-PR Architecture Review over `v1.9.1..dev` (PR #131) found no HIGH, so 1.9.2 shipped with
