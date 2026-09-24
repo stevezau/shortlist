@@ -6,6 +6,15 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **"Because you watched X" no longer stays on an old watch (#133).** When a row's best pick came
+  from a source that follows no watch (discover or web search), the row could miss that the person
+  had watched something newer. It then kept the old title, and most of the old picks, night after
+  night, and restarting or running the row by hand did not help. It now switches to the new watch on
+  the next run. Rows whose watch had not changed but had such a pick at the top were also rebuilt
+  from scratch every night; they now keep most of their picks as intended.
+
 ## [1.9.2] - 2026-09-24
 
 ### Added

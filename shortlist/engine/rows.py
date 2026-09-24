@@ -27,6 +27,7 @@ from shortlist.engine.clients.plex_pms import _retry_idempotent
 from shortlist.engine.context import EngineContext, _emit
 from shortlist.engine.delivery import (
     deliver_rows,
+    named_seed_pick,
     remove_row,
     render_row_name,
     resolve_row_template,
@@ -785,8 +786,15 @@ def _seed_moved(
     """
     if not _names_a_seed(spec, user, config) or not prior_valid or not sub:
         return False
-    current = sub[0].top_seed
-    return prior_valid[0].seed_tmdb_id != (current.tmdb_id if current else None)
+    # Both sides skip UNSEEDED entries, as the title does (issue #133). Read as they stood, a row led by
+    # a discover or web-search pick compared "no seed" with "no seed", never saw its seed move, and kept
+    # carrying the old watch's picks — and its name — forward every night; and a row whose seed was
+    # unchanged but had an unseeded pick on only ONE side read that as a move and rebuilt every night.
+    named = named_seed_pick(prior_valid)
+    if named is None:
+        return False
+    current = next((c.top_seed for c in sub if c.top_seed), None)
+    return named.seed_tmdb_id != (current.tmdb_id if current else None)
 
 
 def _rated_by_source(picks: list[Pick], ctx: EngineContext) -> dict[tuple[int, MediaType], float] | None:

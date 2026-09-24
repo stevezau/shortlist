@@ -345,6 +345,18 @@ def marker_account(title: str) -> int | None:
     return sum((1 << bit) for bit, c in enumerate(suffix) if c == _INVISIBLE[1])
 
 
+def named_seed_pick(picks: list[Pick]) -> Pick | None:
+    """The pick a `{top_seed}` title names: the best-matching (lowest `rank`) pick that HAS a seed.
+
+    One definition, because two questions must get the same answer: what the title says
+    (`top_seed_of`), and whether the watch it names has since moved (`rows._seed_moved`). The move
+    check once read pick #1 as it stood while the title skipped unseeded picks, so a row led by an
+    unseeded pick never saw its seed move and kept naming the old watch every night (issue #133).
+    """
+    seeded = [p for p in picks if p.seed_title]
+    return min(seeded, key=lambda p: p.rank) if seeded else None
+
+
 def top_seed_of(picks: list[Pick]) -> str:
     """The title `{top_seed}` renders to: the best-matching pick that actually HAS a seed.
 
@@ -361,8 +373,8 @@ def top_seed_of(picks: list[Pick]) -> str:
     every account on their server, including ones with years of history, which is what "no seed" was
     never meant to mean: it is supposed to mean a cold start.
     """
-    seeded = [p for p in picks if p.seed_title]
-    return min(seeded, key=lambda p: p.rank).seed_title if seeded else ""
+    named = named_seed_pick(picks)
+    return named.seed_title if named else ""
 
 
 def seed_source(section_picks: list[Pick], row_picks: list[Pick]) -> list[Pick]:

@@ -2068,6 +2068,114 @@ class TestPerRowOverrides:
             f"the title cannot outlive the seed that earned it, got {titles} with lead {lead}"
         )
 
+    def _unseeded_lead_ctx(self, ctx, *, discover_leads: bool = True, similar: bool = True):
+        """A named one-seed row whose pool also holds UNSEEDED titles (10-12, from discover).
+
+        Fargo (yesterday) is the only seed; Chernobyl (five days ago) is the older watch a stale row
+        still names. Fargo's look-alikes (13-19) are weak matches, so with ``discover_leads`` the
+        unseeded titles outscore them and lead the pool — the shape of the issue #133 reporter's
+        rows, whose discover and web-search picks score affinity 1.0 and seed nothing.
+        """
+        self._named_row_ctx(ctx, refresh_days=1)
+        ctx.config.rows = [replace(ctx.config.rows[0], candidate_sources=["tmdb_similar", "tmdb_discover"])]
+        ctx.plex.build_library_index.return_value = {900: 999, 901: 998, **{i: 1000 + i for i in range(10, 20)}}
+        ctx.history_source.fetch.return_value = [
+            make_watched("Fargo", days_ago=1, rating_key=999),
+            make_watched("Chernobyl", days_ago=5, rating_key=998),
+        ]
+        look_alikes = [{"id": i, "title": f"T{i}", "genre_ids": [18], "vote_average": 8.0} for i in range(13, 20)]
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: [(item, 0.2) for item in look_alikes] if similar else []
+        ctx.tmdb.genre_ids_for.side_effect = lambda tid, mt: [18]
+        vote = 9.0 if discover_leads else 5.0
+        ctx.tmdb.discover.side_effect = lambda mt, gids, **kw: [
+            {"id": i, "title": f"T{i}", "genre_ids": [18], "vote_average": vote} for i in (10, 11, 12)
+        ]
+
+    def _prior_led_by(self, lead: int, seeded: list[int], *, seed_tmdb_id: int, seed_title: str):
+        """Last run's row: ``lead`` at rank 1 carrying NO seed, then ``seeded`` carrying the given one."""
+        unseeded, *rest = self._prior_movies([lead, *seeded])
+        return [unseeded] + [replace(p, seed_tmdb_id=seed_tmdb_id, seed_title=seed_title) for p in rest]
+
+    def _run_sarah(self, ctx, mock_plextv):
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        titles = [strip_marker(t) for _library, t in report.users[0].placement_titles]
+        picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+        return titles, {p["tmdb_id"] for p in picks}, {p["seed_title"] for p in picks}
+
+    def test_a_named_row_rebuilds_when_its_seed_moved_behind_an_unseeded_lead(self, ctx: EngineContext, mock_plextv):
+        """Issue #133: the title renders from the best pick that HAS a seed (`top_seed_of`, #84), so the
+        check deciding whether that seed moved must skip unseeded picks too. It compared pick #1 with
+        tonight's pool lead as they stood, and when both came from a source that seeds nothing it read
+        "no seed" == "no seed" as unchanged — the refresh then carried Chernobyl's picks forward, and
+        the row said "Because you watched Chernobyl" night after night about a watch that was no
+        longer a seed at all."""
+        self._unseeded_lead_ctx(ctx)
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): self._prior_led_by(10, [12, 13, 14, 15], seed_tmdb_id=901, seed_title="Chernobyl")
+        }
+
+        titles, _ids, seeds = self._run_sarah(ctx, mock_plextv)
+
+        assert titles == ["Because you watched Fargo"]
+        assert "Chernobyl" not in seeds, "no pick still answers to the old watch"
+
+    def test_a_named_row_carries_forward_behind_an_unseeded_lead_while_its_seed_is_unchanged(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """The other half of #133's cell: both leads unseeded and the named seed NOT moved must keep the
+        normal carry-forward, or every refresh of such a row becomes a full rebuild. 19 and 18 are the
+        weakest look-alikes: only a carry-forward keeps them over tonight's stronger 11-14."""
+        self._unseeded_lead_ctx(ctx)
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): self._prior_led_by(10, [19, 18, 17, 16], seed_tmdb_id=900, seed_title="Fargo")
+        }
+
+        titles, ids, _seeds = self._run_sarah(ctx, mock_plextv)
+
+        assert titles == ["Because you watched Fargo"]
+        assert {19, 18} <= ids, f"an unchanged seed keeps the normal carry-forward, got {ids}"
+
+    def test_a_named_row_carries_forward_when_only_the_pool_lead_is_unseeded(self, ctx: EngineContext, mock_plextv):
+        """Last run's #1 carried the seed, tonight's pool lead carries none, the seed is unchanged. Comparing
+        the two leads as they stood read Fargo != "no seed" as a moved seed and rebuilt every night."""
+        self._unseeded_lead_ctx(ctx)
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): self._prior_seeded_by([19, 18, 17, 16, 15], seed_tmdb_id=900, seed_title="Fargo")
+        }
+
+        titles, ids, _seeds = self._run_sarah(ctx, mock_plextv)
+
+        assert titles == ["Because you watched Fargo"]
+        assert {19, 18} <= ids, f"an unchanged seed keeps the normal carry-forward, got {ids}"
+
+    def test_a_named_row_carries_forward_when_only_its_own_lead_is_unseeded(self, ctx: EngineContext, mock_plextv):
+        """The mirror cell: last run's #1 carried no seed, tonight's pool leads with the unchanged one."""
+        self._unseeded_lead_ctx(ctx, discover_leads=False)
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): self._prior_led_by(10, [19, 18, 17, 16], seed_tmdb_id=900, seed_title="Fargo")
+        }
+
+        titles, ids, _seeds = self._run_sarah(ctx, mock_plextv)
+
+        assert titles == ["Because you watched Fargo"]
+        assert {10, 19, 18} <= ids, f"an unchanged seed keeps the normal carry-forward, got {ids}"
+
+    def test_a_named_row_rebuilds_when_no_candidate_carries_a_seed_any_more(self, ctx: EngineContext, mock_plextv):
+        """The named seed has gone and nothing in tonight's pool is seeded (Fargo's look-alikes are not in
+        the library). A rebuild then has no seed to name, which is what a first build would say — never
+        the old watch."""
+        self._unseeded_lead_ctx(ctx, similar=False)
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): self._prior_led_by(10, [12, 13, 14, 15], seed_tmdb_id=901, seed_title="Chernobyl")
+        }
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        titles = [strip_marker(t) for _library, t in report.users[0].placement_titles]
+        assert "Because you watched Chernobyl" not in titles
+
     def test_an_unnamed_row_ignores_the_seed_check(self, ctx: EngineContext, mock_plextv):
         """A row that names no seed keeps the cheap carry-forward however far its seeds have drifted —
         re-deriving a normal 30-seed row on any seed change would make every refresh a full rebuild."""
