@@ -2163,8 +2163,8 @@ class TestPerRowOverrides:
 
     def test_a_named_row_rebuilds_when_no_candidate_carries_a_seed_any_more(self, ctx: EngineContext, mock_plextv):
         """The named seed has gone and nothing in tonight's pool is seeded (Fargo's look-alikes are not in
-        the library). A rebuild then has no seed to name, which is what a first build would say — never
-        the old watch."""
+        the library). The rebuilt row is named after Fargo, the watch it was built from — never the old
+        watch, and never nothing: an empty name left the old collection on Plex (issue #133)."""
         self._unseeded_lead_ctx(ctx, similar=False)
         ctx.previous_picks = {
             ("sarah", "picked", "1"): self._prior_led_by(10, [12, 13, 14, 15], seed_tmdb_id=901, seed_title="Chernobyl")
@@ -2174,7 +2174,53 @@ class TestPerRowOverrides:
         report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
 
         titles = [strip_marker(t) for _library, t in report.users[0].placement_titles]
-        assert "Because you watched Chernobyl" not in titles
+        assert titles == ["Because you watched Fargo"]
+
+    def test_a_row_named_after_its_lead_seed_carries_forward_while_that_watch_is_unchanged(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """Issue #133. Last run's row carried no seeded pick, so it was named after Fargo, the watch it was
+        built from, and the stamp says so. Fargo is still the newest watch: keep the normal carry-forward."""
+        self._unseeded_lead_ctx(ctx, similar=False)
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): [
+                replace(p, lead_seed_tmdb_id=900, lead_seed_title="Fargo")
+                for p in self._prior_movies([13, 14, 15, 16, 17])
+            ]
+        }
+
+        titles, ids, _seeds = self._run_sarah(ctx, mock_plextv)
+
+        assert titles == ["Because you watched Fargo"]
+        assert {13, 14} <= ids, f"an unchanged watch keeps the normal carry-forward, got {ids}"
+
+    def test_a_row_named_after_its_lead_seed_rebuilds_when_that_watch_moves_on(self, ctx: EngineContext, mock_plextv):
+        """The same row stamped with Chernobyl, which Fargo has since replaced: rebuild from tonight's pool
+        rather than carry two-thirds of Chernobyl's row forward under Fargo's name."""
+        self._unseeded_lead_ctx(ctx, similar=False)
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): [
+                replace(p, lead_seed_tmdb_id=901, lead_seed_title="Chernobyl")
+                for p in self._prior_movies([13, 14, 15, 16, 17])
+            ]
+        }
+
+        titles, ids, _seeds = self._run_sarah(ctx, mock_plextv)
+
+        assert titles == ["Because you watched Fargo"]
+        assert not {13, 14, 15, 16, 17} & ids, f"the old watch's row outlived it, got {ids}"
+
+    def test_a_row_with_no_recorded_lead_seed_carries_forward_as_before(self, ctx: EngineContext, mock_plextv):
+        """Picks written before the stamp existed read as "unknown", which keeps the old behaviour (no
+        rebuild) — the convention `recipe` and `built_at` use, so an upgrade rebuilds nothing. The title
+        still renders from tonight's watch."""
+        self._unseeded_lead_ctx(ctx, similar=False)
+        ctx.previous_picks = {("sarah", "picked", "1"): self._prior_movies([13, 14, 15, 16, 17])}
+
+        titles, ids, _seeds = self._run_sarah(ctx, mock_plextv)
+
+        assert titles == ["Because you watched Fargo"]
+        assert {13, 14} <= ids, f"an unknown stamp must not force a rebuild, got {ids}"
 
     def test_an_unnamed_row_ignores_the_seed_check(self, ctx: EngineContext, mock_plextv):
         """A row that names no seed keeps the cheap carry-forward however far its seeds have drifted —

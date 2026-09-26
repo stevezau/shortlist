@@ -883,6 +883,11 @@ class ContextBuilder:
                     # "unknown" and silently falls back to the plain cadence: the feature goes inert
                     # on a live server with nothing failing.
                     built_at=_utc(r.built_at),
+                    # The watch a `{top_seed}` row was built from. `_seed_moved` compares it with tonight's
+                    # for a row whose picks carried no seed; dropped here, such a row never sees its watch
+                    # move on and carries the old watch's picks forward under the new name (issue #133).
+                    lead_seed_tmdb_id=r.lead_seed_tmdb_id,
+                    lead_seed_title=r.lead_seed_title or "",
                     collection_slug=r.collection_slug,
                     section_key=r.section_key,
                     library=r.library,

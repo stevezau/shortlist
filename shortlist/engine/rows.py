@@ -761,7 +761,12 @@ def _names_a_seed(spec: RowSpec, user: UserProfile, config: EngineConfig) -> boo
 
 
 def _seed_moved(
-    spec: RowSpec, prior_valid: list[Pick], sub: list[Candidate], user: UserProfile, config: EngineConfig
+    spec: RowSpec,
+    prior_valid: list[Pick],
+    sub: list[Candidate],
+    user: UserProfile,
+    config: EngineConfig,
+    lead_tmdb_id: int | None = None,
 ) -> bool:
     """Whether a row NAMED after its seed is now built from a different one than last run's picks.
 
@@ -792,7 +797,13 @@ def _seed_moved(
     # unchanged but had an unseeded pick on only ONE side read that as a move and rebuilt every night.
     named = named_seed_pick(prior_valid)
     if named is None:
-        return False
+        # No pick last run carried a seed, so the title named the watch the row was BUILT from — the lead
+        # seed stamped on every pick (issue #133). Compare that with tonight's (`lead_tmdb_id`). Unknown
+        # (picks written before the stamp existed) reads as unmoved, as it always did, so an upgrade
+        # rebuilds nothing: a watch that moved before the stamp existed is not seen as a move, the title
+        # still renders from tonight's lead, and the row refreshes normally from then on.
+        was = prior_valid[0].lead_seed_tmdb_id
+        return was is not None and was != lead_tmdb_id
     current = next((c.top_seed for c in sub if c.top_seed), None)
     return named.seed_tmdb_id != (current.tmdb_id if current else None)
 
@@ -2663,6 +2674,14 @@ def _build_section_picks(
         sec_idx = ctx.section_index.get(section.key, {})
         pct = policy.effective_watched_pct(spec)
         sub = [c for c in pool_for_row if c.media_type is kind and c.tmdb_id in sec_idx]
+        # The watch this library's row is built from, for a row NAMED after one: its title falls back to
+        # it when no pick carries a seed of its own, which is every pick discover and web search make.
+        lead = (
+            next((s for s in policy.seeds_for(spec) if s.media_type is kind), None)
+            if _names_a_seed(spec, user, policy.cfg)
+            else None
+        )
+        lead_tmdb_id = lead.tmdb_id if lead else None
         rewatch_reasons: dict[tuple[int, MediaType], str] = {}
         if spec.rewatch:
             # History first, then the pool's unseen titles as the top-up. The pool holds no finished
@@ -2724,7 +2743,7 @@ def _build_section_picks(
         held = (
             due
             and not recipe_changed
-            and not _seed_moved(spec, prior_valid, sub, policy.user, policy.cfg)
+            and not _seed_moved(spec, prior_valid, sub, policy.user, policy.cfg, lead_tmdb_id)
             and _held_for_idle(prior_valid, policy.last_watch_at, ctx.run_at, hold_days)
         )
         refresh = due and not held
@@ -2800,7 +2819,7 @@ def _build_section_picks(
             spares, reselect = ([] if genre_hold else sub), False
             if len(sec_picks) < k and sub and not genre_hold:
                 sec_picks = _pad_picks(sec_picks, sub, k)
-        elif prior_valid and not _seed_moved(spec, prior_valid, sub, policy.user, policy.cfg):
+        elif prior_valid and not _seed_moved(spec, prior_valid, sub, policy.user, policy.cfg, lead_tmdb_id):
             # Refresh night: keep the strongest ~two-thirds by RANK (match quality — `prior_valid` is
             # ordered by the persisted rank column, not by how the row was displayed), and swap the
             # rest for genuinely-new titles.
@@ -2889,7 +2908,17 @@ def _build_section_picks(
             if refresh or not prior_valid
             else max((p.built_at for p in prior_valid if p.built_at is not None), default=None)
         )
-        ranked = [replace(p, rank=i + 1, recipe=recipe, built_at=built_at) for i, p in enumerate(sec_picks[:k])]
+        ranked = [
+            replace(
+                p,
+                rank=i + 1,
+                recipe=recipe,
+                built_at=built_at,
+                lead_seed_tmdb_id=lead_tmdb_id,
+                lead_seed_title=lead.title if lead else "",
+            )
+            for i, p in enumerate(sec_picks[:k])
+        ]
         # Only a row actually sorting on rating pays for the lookups, and only for its own k picks.
         ratings = _rated_by_source(ranked, ctx) if spec.pick_order == "rating" else None
         # Derived from the FINAL list rather than from the refresh branch's `new_picks`, because the

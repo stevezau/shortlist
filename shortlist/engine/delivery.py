@@ -372,9 +372,16 @@ def top_seed_of(picks: list[Pick]) -> str:
     title, with a dozen perfectly good seeded picks sitting right behind it. The reporter saw it on
     every account on their server, including ones with years of history, which is what "no seed" was
     never meant to mean: it is supposed to mean a cold start.
+
+    When NO pick carries a seed, the title names the watch the row was built from (`lead_seed_title`,
+    stamped on every pick). That is issue #133: a new watch with no look-alikes in the library leaves
+    a row filled only by sources that seed nothing, and rendering "" there made delivery leave the old
+    collection — last watch's title and items — on Plex until a later watch happened to have some.
     """
     named = named_seed_pick(picks)
-    return named.seed_title if named else ""
+    if named:
+        return named.seed_title or ""
+    return next((p.lead_seed_title for p in picks if p.lead_seed_title), "")
 
 
 def seed_source(section_picks: list[Pick], row_picks: list[Pick]) -> list[Pick]:
@@ -393,6 +400,10 @@ def seed_source(section_picks: list[Pick], row_picks: list[Pick]) -> list[Pick]:
     Borrowing is the step BEFORE giving up and using the default name — issue #84, where a
     `movies & shows` row whose seeds were all films delivered the seeded title to Movies and
     "✨ Picked for You" to TV, so one row appeared twice under two names on the same person's Plex.
+
+    Since issue #133 it borrows only when this library has no watch of its OWN: `top_seed_of` falls
+    back to the library's lead seed first, so a TV row whose show has no look-alikes in the library
+    names that show rather than the film the person watched.
     """
     return section_picks if top_seed_of(section_picks) else row_picks
 

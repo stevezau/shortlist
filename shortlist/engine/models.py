@@ -294,6 +294,13 @@ class Pick:
     # delivered", and the idle hold needs "last decided". None on picks written before this existed,
     # which reads as "unknown" and falls back to the plain cadence (`_held_for_idle`).
     built_at: datetime | None = None
+    # The watch this library's row was BUILT from: the newest of the row's seeds in this library's media
+    # type, stamped on every pick of a row named after a seed. The `{top_seed}` title falls back to it
+    # when no pick carries a seed of its own (discover and web-search picks never do), and the next run
+    # compares it with tonight's to tell whether such a row's watch has moved (issue #133). None on rows
+    # that name no seed, on cold starts, and on picks written before it existed ("unknown").
+    lead_seed_tmdb_id: int | None = None
+    lead_seed_title: str = ""
 
 
 @dataclass

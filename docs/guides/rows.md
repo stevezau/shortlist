@@ -41,7 +41,13 @@ reaching libraries you add later, so pick specific libraries if you want to reus
 
 The seed is the strongest pick that came from something they watched. Some sources suggest a title
 without following one — what's trending, what's popular on your server, a web-search find — so those
-contribute picks but no seed. The name uses the strongest pick that has one.
+contribute picks but no seed. The name uses the strongest pick that has one. If none has one — say
+their newest film has no look-alikes in your library, so the row was filled from discover and web
+search — the name uses the watch the row was built from.
+
+In a row covering Movies and TV, each library is named after its own watch: the Movies row after a
+film, the TV row after a show. A library borrows the other's name only when the row has no watch of
+its type to follow.
 
 If a `{top_seed}` row is built for someone with too little history to have a favourite at all, it
 falls back to a clean default ("✨ Picked for You") rather than a half-finished sentence — or you can

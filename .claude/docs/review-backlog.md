@@ -22,12 +22,12 @@ found on the way and are not fixed.
   anyone reading the trace, and it makes `decision` useless as a test assertion — the #133 tests assert
   on which picks survived instead. Fix: a `seed_moved` decision, set where the bootstrap branch is taken
   for that reason.
-- **DECISION (owner) — a TV row can carry a film's name.** When a library has no seeded pick,
-  `seed_source` (`shortlist/engine/delivery.py:380-397`) borrows the other library's title (#84, pinned
-  by `tests/unit/test_delivery.py:145`). The #133 reporter's TV row read "Because you watched Passenger"
-  (a film) over 18 shows with no seed at all: their TV seed's 40 look-alikes were not in a 309-show
-  library. Option: when the row has its own `fallback_name`, prefer it to a borrowed seed; default
-  unchanged when it is blank.
+- **FIXED (2026-09-27) — a TV row could carry a film's name.** Owner decision: each library is named
+  after its own watch. `top_seed_of` now falls back to the library's lead seed (`Pick.lead_seed_*`)
+  before `seed_source` borrows, so borrowing happens only when the row has no watch of that type (#84's
+  case, unchanged). Same change fixed the second #133 mechanism: a new watch with no look-alikes in the
+  library left a row with no seeded pick, an empty name, and the OLD collection frozen on Plex. Pinned
+  by `tests/integration/test_top_seed_row_title.py`.
 - **LOW, reasoned not reproduced — above one seed per library, a title can name a dead seed for a
   night.** `_seed_moved` now checks the prior NAMED pick; the refresh then re-ranks survivors against
   the pool (`rows.py:2821`) and the title renders from whichever seeded survivor ranks best — which can

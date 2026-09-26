@@ -14,6 +14,16 @@ All notable changes to this project are documented here. This project follows
   night, and restarting or running the row by hand did not help. It now switches to the new watch on
   the next run. Rows whose watch had not changed but had such a pick at the top were also rebuilt
   from scratch every night; they now keep most of their picks as intended.
+- **A "Because you watched X" row no longer freezes on Plex (#133).** When someone's newest watch had
+  no look-alikes in your library, every pick in the new row came from discover or web search, which
+  follow no single watch, so the row had nothing to be named after. Shortlist then left the old row
+  on Plex, old title and old titles in it, until a later watch happened to have look-alikes, while
+  the run page showed picks that never arrived. The row is now named after the watch it was built
+  from and updated as normal. If you set a fallback name on such a row, people with watch history
+  now get "Because you watched X" in its place; the fallback is for people with too little history.
+- **A Movies and TV "Because you watched X" row names each library after its own watch.** The TV row
+  used to borrow the film's name whenever none of its picks came from look-alikes of the show, so it
+  only changed when the person watched a film.
 
 ## [1.9.2] - 2026-09-24
 

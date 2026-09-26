@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import ClassVar
 from unittest.mock import MagicMock, call
@@ -139,6 +140,20 @@ class TestColdStartRowName:
             == "Because you watched Fargo"
         )
 
+    def test_a_row_with_no_seeded_pick_is_named_after_the_watch_it_was_built_from(self):
+        """Issue #133: discover and web-search picks carry no seed, so a row they filled rendered no name and
+        its old collection stayed on Plex. It names the watch the row was built from instead — and a pick
+        that does carry a seed still wins, so nothing changes for a row that has one."""
+        unseeded = replace(_named_pick(None), lead_seed_title="Obsession")
+        seeded = replace(_named_pick("Fargo"), rank=2, lead_seed_title="Obsession")
+
+        assert render_row_name("Because you watched {top_seed}", make_profile(), [unseeded]) == (
+            "Because you watched Obsession"
+        )
+        assert render_row_name("Because you watched {top_seed}", make_profile(), [unseeded, seeded]) == (
+            "Because you watched Fargo"
+        )
+
     def test_static_template_is_untouched(self):
         assert render_row_name("✨ Picked for You", make_profile(), [_named_pick(None)]) == "✨ Picked for You"
 
@@ -176,6 +191,49 @@ class TestColdStartRowName:
             f"one row must have ONE name in every library it lands in, got {created}"
         )
         assert DEFAULT_ROW_NAME not in created, "the TV library must not fall back while the row has a seed"
+
+    def test_a_library_names_its_own_watch_before_borrowing_the_other_librarys(self, engine_config, movies, shows):
+        """Issue #133. The TV picks carry no seed — the show they watched has no look-alikes in the library,
+        so discover and web search filled the row — but the row WAS built from that show. It is named after
+        it, not after the film the Movies half follows."""
+        from shortlist.engine.delivery import deliver_rows, strip_marker
+        from shortlist.engine.models import RowSpec
+
+        plex = _labelling_plex_mock(MagicMock(spec=PlexClient))
+        plex.sections.return_value = [movies, shows]
+        plex.find_owned_collections.return_value = []
+        seeded_movie = Pick(1, 101, "Sicario", rank=1, reason="r", media_type=MediaType.MOVIE, seed_title="Conjuring")
+        unseeded_show = Pick(
+            2, 202, "The Bear", rank=1, reason="r", media_type=MediaType.SHOW, lead_seed_title="The Wire"
+        )
+
+        deliver_rows(
+            plex,
+            make_profile(),
+            [seeded_movie, unseeded_show],
+            engine_config,
+            RowSpec(slug="because", name_template="Because you watched {top_seed}", size=10, media="both"),
+            sections=[movies, shows],
+            section_picks={movies.key: [seeded_movie], shows.key: [unseeded_show]},
+            dry_run=False,
+        )
+
+        created = [strip_marker(call.args[1]) for call in plex.create_collection.call_args_list]
+        assert created == ["Because you watched Conjuring", "Because you watched The Wire"]
+
+    def test_a_library_with_no_watch_of_its_own_borrows_the_other_librarys(self):
+        """#84's case, kept by #133: the row's seeds were all films, so the TV picks carry neither a seed nor
+        a lead of their own, and the TV row borrows the film the Movies half was built from."""
+        from shortlist.engine.delivery import seed_source
+
+        film_row = [replace(_named_pick(None), lead_seed_title="Obsession")]
+        show_row = [replace(_named_pick(None), tmdb_id=2, media_type=MediaType.SHOW)]
+
+        seed_picks = seed_source(show_row, film_row + show_row)
+
+        assert render_row_name("Because you watched {top_seed}", make_profile(), seed_picks) == (
+            "Because you watched Obsession"
+        )
 
     def test_the_seed_source_rule_has_exactly_one_implementation(self):
         """`seed_source` is the whole cross-module contract, so cover its matrix here.
