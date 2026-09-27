@@ -1422,6 +1422,7 @@ def promote_user_rows(
     placement_keys: dict[int, str] | None = None,
     into: set[int] | None = None,
     skip_unmatched: bool = False,
+    only_row: str | None = None,
 ) -> set[int]:
     """Put every collection under one user's label onto the surfaces its row asks for.
 
@@ -1444,6 +1445,9 @@ def promote_user_rows(
     consulted first. Unless ``skip_unmatched``: then it is left exactly as it is. ``_promote_phase`` and
     ``user.restore`` set it whenever a row is hidden today (``any_row_hidden_today``), because the
     unidentified collection might be that row; ``rows.visibility`` always sets it.
+
+    ``only_row`` narrows the pass to one row's collections: every other one, unidentified ones included,
+    is left exactly as it is. ``rows.visibility`` sets it when the row editor queued it for one row.
 
     Returns the ratingKeys touched, and writes them into ``into`` as it goes when given one — so a
     caller that catches a mid-loop PMS failure still knows which collections were already set. Raises
@@ -1543,6 +1547,8 @@ def promote_user_rows(
                 continue
             # Identity first: a ratingKey cannot be wrong, a title can be stale or unrenderable.
             spec = by_key.get(int(collection.ratingKey)) or placements.get((str(section.key), collection.title))
+            if only_row is not None and (spec is None or spec.slug != only_row):
+                continue
             if spec is None and skip_unmatched:
                 # For a RUN, `_promote_one`'s no-spec branch showing the row is the safe direction —
                 # under-showing makes people's rows silently disappear. For a caller converging a

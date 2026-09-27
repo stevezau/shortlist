@@ -2252,6 +2252,69 @@ class TestScheduledRowVisibility:
         assert promoted, "the shared row's public collection was never converged"
         assert promoted[0][2]["home"] is False and promoted[0][2]["shared"] is False
 
+    def _three_rows(self, sessions, calls: list):
+        marker = row_marker(self.ACCOUNT)
+        self._seed(sessions, rows={"picked": [1], "gems": [2], "crowd": [2]}, deliveries=(("picked", 42), ("gems", 43)))
+        return self._state(
+            sessions,
+            calls=calls,
+            rows=[self.ON, self.OFF, self.SHARED],
+            collections=[
+                ("✨ Picked for You" + marker, 42, "shortlist_sarah"),
+                ("✨ Hidden Gems" + marker, 43, "shortlist_sarah"),
+                ("✨ Popular Here", 99, self.SHARED.label),
+            ],
+        )
+
+    @pytest.mark.parametrize(
+        ("row", "title"),
+        [
+            pytest.param("gems", "✨ Hidden Gems", id="per-person-row"),
+            pytest.param("crowd", "✨ Popular Here", id="shared-row"),
+        ],
+    )
+    def test_a_pass_queued_for_one_row_promotes_only_that_row(self, sessions, row: str, title: str):
+        """Saving one row's seasons re-promoted every row on the server (seen live, 2026-09-27). The row editor
+        queues this with the row it changed; the merge still runs first (an account added since the last run
+        has no exclude yet), but only that row's collections are touched."""
+        calls: list = []
+        state = self._three_rows(sessions, calls)
+
+        result = jobs._HANDLERS["rows.visibility"](state, {"row": row})
+
+        assert calls[0][0] == "merge", "rule 1: the filters are merged before anything is promoted"
+        assert [c[1].removesuffix(row_marker(self.ACCOUNT)) for c in self._promotes(calls)] == [title]
+        assert result["changed"] == [row]
+
+    def test_a_pass_for_a_seasonal_row_out_of_season_reports_it_hidden(self, sessions, monkeypatch):
+        """Making a row seasonal in August queues a pass for it while it is out of season. A row with no day
+        schedule is missing from `scheduled`, which the summary read as "shown"."""
+        self._seed_seasonal(sessions, monkeypatch, today=datetime(2026, 8, 15, 0, 0))
+        state = self._state(sessions, calls=[], rows=[self.OFF])
+
+        result = jobs._HANDLERS["rows.visibility"](state, {"row": "seasonal"})
+
+        assert result["detail"] == "Today's schedule: hiding seasonal"
+
+    def test_a_pass_for_a_row_that_is_gone_applies_nothing(self, sessions):
+        """Disabled or deleted between being queued and running: its collections are another job's to remove."""
+        calls: list = []
+        self._seed(sessions, rows={"picked": [1]}, deliveries=(("picked", 42),))
+        state = self._state(sessions, calls=calls, rows=[self.ON])
+
+        result = jobs._HANDLERS["rows.visibility"](state, {"row": "gone"})
+
+        assert calls == []
+        assert result["changed"] == []
+
+    def test_the_midnight_pass_still_promotes_every_row(self, sessions):
+        calls: list = []
+        state = self._three_rows(sessions, calls)
+
+        jobs._HANDLERS["rows.visibility"](state, {})
+
+        assert len(self._promotes(calls)) == 3
+
     def test_a_dry_run_writes_nothing_and_still_records_what_it_would_do(self, sessions):
         """Rule 8 for the preview, rule 10 for the audit — a dry run that leaves no event is a
         visibility change nobody can account for."""

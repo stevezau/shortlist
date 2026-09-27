@@ -68,11 +68,20 @@ reproduced on a live server; both are reasoned from the cited code, not measured
 Seen while proving the new row editor's save paths live on throwaway MooHouse-only rows (all cleaned
 up; evidence in that session's scratchpad `live-proof/`). PRE-EXISTING behaviour, not changed by it.
 
-- **LOW, observed live — a seasons change re-applies visibility to EVERY row for every account.**
+- **FIXED (2026-09-27; unit-tested, not verified on a live server) — LOW — a seasons change re-applies
+  visibility to EVERY row for every account.**
   Saving one row out of Seasonal queued `rows.visibility` (`shortlist/server/api/row_changes.py`
   ~195-196), and the pass merged all 48 accounts' filters (none changed) and re-promoted every
   per-person row for every account, not just the edited row's. Harmless but slow on a big server;
   scope the job to the row it was queued for.
+  Fix: when the payload names a row, `rows.visibility` promotes only that row's collections
+  (`promote_user_rows(only_row=...)`, or that one `promote_shared_row`); every other collection,
+  unidentified ones included, is left as it is. The share-filter merge still runs first, server-wide: an
+  account added since the last run has no exclude yet (rule 1), and with nothing to change it writes
+  nothing. The midnight tick (no row) is still the full pass. A row disabled or deleted since it was
+  queued applies nothing, and the summary reads each row's own answer for today (a seasonal row out of
+  season used to be reported as "showing"). Pinned by `test_jobs.py::
+  TestScheduledRowVisibility::test_a_pass_queued_for_one_row_promotes_only_that_row`.
 - **UNRESOLVED — Recommended shelf order moved in Movies and TV Shows during that test.** agregarr's
   "Randomize Home Order" ran at 16:30:17 inside the window and Sports (which agregarr doesn't touch)
   kept its order, so agregarr is the likely cause — but the snapshot stored only a hash of each

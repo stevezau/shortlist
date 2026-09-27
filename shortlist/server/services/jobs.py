@@ -1769,8 +1769,9 @@ def _rows_visibility(state, payload: dict) -> dict:
     row narrows its days — every server, until somebody uses this — does one query and stops.
 
     The converging night is NOT free, and the docs say so: it runs ``engine_run(ctx, [])``, which is
-    a whole privacy sync, then re-promotes every row. That is the price of holding no
-    state, and it is paid only by servers that actually schedule a row.
+    a whole privacy sync, then re-promotes every row — or, when the row editor queued it for one row, that
+    row alone. That is the price of holding no state, and it is paid only by servers that actually
+    schedule a row.
 
     plex-safety rule 1: this can make a row MORE visible, so every account's excludes are merged and
     CHECKED first, exactly as ``user.restore`` does. Someone may have joined the server while a row was
@@ -1795,9 +1796,12 @@ def _rows_visibility(state, payload: dict) -> dict:
     # --- the gate: pure DB, no clients, no network -----------------------------------------
     with state.sessions() as session:
         scheduled: dict[str, bool] = {}
+        # Every enabled row's answer, scheduled or not: a pass queued for ONE row reports that row, and a
+        # seasonal row with no day schedule is missing from `scheduled` on most nights, hidden or shown.
+        today: dict[str, bool] = {}
         for row in session.query(Collection).filter_by(enabled=True):
             calendar = (row.seasons, row.season_lead_days, row.season_after_days)
-            shown = row_shown_today(row.show_days, *calendar, now)
+            shown = today[row.slug] = row_shown_today(row.show_days, *calendar, now)
             # A seasonal row with no day schedule takes a pass only in the week after a season opens or
             # closes for it (discussion #124) — stateless, since each earlier day's answer is the same pure
             # call — so a server whose only scheduled row is seasonal converges a few weeks a year, not
@@ -1817,6 +1821,9 @@ def _rows_visibility(state, payload: dict) -> dict:
     # alone would skip the very pass that shows it again.
     if not scheduled and not payload.get("row"):
         return {"changed": [], "dry_run": requested, "detail": "No row narrows the days it appears on"}
+    if payload.get("row") and payload["row"] not in today:
+        # Disabled or deleted since it was queued: removing its collections is another job's work.
+        return {"changed": [], "dry_run": requested, "detail": f"Row '{payload['row']}' is no longer enabled"}
 
     if paused_all:
         # The Danger Zone kill switch, honoured like every other scheduled task. Nothing is recorded
@@ -1829,9 +1836,13 @@ def _rows_visibility(state, payload: dict) -> dict:
             "detail": f"{len(scheduled)} row(s) are waiting for today's schedule — everything is paused",
         }
 
-    changed = sorted(scheduled)
-    shown = [slug for slug in changed if scheduled[slug]]
-    hidden = [slug for slug in changed if not scheduled[slug]]
+    # A pass the row editor queued for ONE row applies that row only. Saving one row's seasons used to
+    # re-promote every row on the server (seen live 2026-09-27); the midnight tick, with no row, is the
+    # server-wide pass.
+    row = payload.get("row") or None
+    changed = [row] if row else sorted(scheduled)
+    shown = [slug for slug in changed if today[slug]]
+    hidden = [slug for slug in changed if not today[slug]]
     parts = []
     if shown:
         parts.append(f"showing {', '.join(shown)}")
@@ -1850,7 +1861,7 @@ def _rows_visibility(state, payload: dict) -> dict:
             "rows.visibility",
             "info",
             scheduled=changed,
-            row=payload.get("row") or None,
+            row=row,
             collections=0,
             dry_run=True,
         )
@@ -1901,20 +1912,22 @@ def _rows_visibility(state, payload: dict) -> dict:
             # row, which is right for a run and exactly wrong here: a `{top_seed}` row with no ledger
             # key would be promoted onto Home on a day its schedule says to hide it.
             skip_unmatched=True,
+            only_row=row,
         )
 
     for spec in ctx.config.shared_rows():
-        promote_shared_row(ctx, spec, into=touched)
+        if row is None or spec.slug == row:
+            promote_shared_row(ctx, spec, into=touched)
 
-    # `scheduled`, not "changed": this pass applies today's answer for every scheduled row rather than
-    # tracking which ones moved, so calling it "changed" would overstate what the event records
-    # (rule 10 — the feed has to be readable as what happened).
+    # `scheduled`, not "changed": this pass applies today's answer to every scheduled row (or to the one row it
+    # was queued for) rather than tracking which ones moved, so calling it "changed" would overstate what the
+    # event records (rule 10 — the feed has to be readable as what happened).
     write_audit(
         state,
         "rows.visibility",
         "info",
         scheduled=changed,
-        row=payload.get("row") or None,
+        row=row,
         collections=len(touched),
         dry_run=False,
     )
