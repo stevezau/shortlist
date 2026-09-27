@@ -709,6 +709,104 @@ class TestReconcileRowRenameIter:
         } in (events)
         assert events[-1] == {"done": True, "total": 1}
 
+    def test_a_top_seed_row_given_a_plain_name_is_renamed_now_from_its_recorded_title(self, sessions):
+        """A `{top_seed}` title renders to nothing without picks, so the screen matched nothing and said
+        "renamed 0". The ledger records what each person's copy was last delivered as — that is the old title.
+        A seeded collection the ledger does not name is left alone: title alone is all that tells a person's
+        rows apart, and guessing would rename a different row."""
+        _add_user(sessions, slug="sarah", account_id=100)
+        with sessions() as session:
+            session.add(
+                Delivery(
+                    collection_slug="comedy",
+                    user_slug="sarah",
+                    library_key="1",
+                    rating_key=771,
+                    title="Because you watched Dune",
+                )
+            )
+            session.commit()
+        this_row = _collection("Because you watched Dune" + row_marker(100))
+        this_row.ratingKey = 771
+        another_row = _collection("Because you watched Heat" + row_marker(100))
+        another_row.ratingKey = 772
+        # Wears the recorded title but is not the collection the ledger names: a static rename writes no ledger
+        # entry, so a recorded title can be worn by something else by now.
+        same_title = _collection("Because you watched Dune" + row_marker(100))
+        same_title.ratingKey = 773
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [_section("Movies")]
+        plex.find_owned_collections.side_effect = lambda sec, label: (
+            [same_title, this_row, another_row] if label == "shortlist_sarah" else []
+        )
+
+        events = list(
+            rec.reconcile_row_rename_iter(
+                _state(sessions, plex),
+                slug="comedy",
+                new_template="Comedy Picks",
+                old_template="Because you watched {top_seed}",
+            )
+        )
+
+        this_row.editTitle.assert_called_once_with("Comedy Picks" + row_marker(100))
+        another_row.editTitle.assert_not_called()
+        same_title.editTitle.assert_not_called()
+        assert {
+            "user": "sarah",
+            "display_name": "sarah",
+            "old": "Because you watched Dune",
+            "new": "Comedy Picks",
+            "libraries": ["Movies"],
+        } in events
+        assert events[-1] == {"done": True, "total": 1}
+
+    @pytest.mark.parametrize(
+        ("old_template", "worn"),
+        [
+            pytest.param("Old Name", "Old Name", id="plain-to-top-seed"),
+            pytest.param("Because you watched {top_seed}", "Because you watched Dune", id="top-seed-to-top-seed"),
+        ],
+    )
+    def test_a_row_given_a_top_seed_name_is_reported_as_taking_it_at_the_next_run(
+        self, sessions, old_template: str, worn: str
+    ):
+        """Its new title depends on picks only a run has, so nothing is renamed now — but each copy is
+        reported as taking the name at the next run, instead of "renamed 0" as if nothing needed doing."""
+        _add_user(sessions, slug="sarah", account_id=100)
+        with sessions() as session:
+            session.add(
+                Delivery(collection_slug="comedy", user_slug="sarah", library_key="1", rating_key=771, title=worn)
+            )
+            session.commit()
+        collection = _collection(worn + row_marker(100))
+        collection.ratingKey = 771
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [_section("Movies")]
+        plex.find_owned_collections.side_effect = lambda sec, label: [collection] if label == "shortlist_sarah" else []
+
+        events = list(
+            rec.reconcile_row_rename_iter(
+                _state(sessions, plex),
+                slug="comedy",
+                new_template="More like {top_seed}",
+                old_template=old_template,
+            )
+        )
+
+        collection.editTitle.assert_not_called()
+        assert events == [
+            {
+                "user": "sarah",
+                "display_name": "sarah",
+                "old": worn,
+                "new": "More like {top_seed}",
+                "libraries": ["Movies"],
+                "next_run": True,
+            },
+            {"done": True, "total": 0},
+        ]
+
     CONFLICT = "(409) conflict; http://pms:32400/library/sections/1/all?id=771&title.value=X&type=18"
 
     def _refusing(self, title: str, *, then=None) -> MagicMock:
@@ -1014,6 +1112,26 @@ class TestReconcileRowRenameIter:
 
         collection.editTitle.assert_called_once_with("Christmas favourites" + row_marker(0))
 
+    def test_a_shared_seasonal_row_given_a_top_seed_name_is_left_alone(self, sessions):
+        """A shared row has no seed to be named after, so nothing can name it — and the pair's missing new title
+        must not reach the shared walk as a title."""
+        collection, plex = self._one_collection(
+            sessions, "🎄 Christmas picks" + row_marker(0), label="shortlist__shared_seasonal"
+        )
+
+        events = list(
+            rec.reconcile_row_rename_iter(
+                _state(sessions, plex),
+                slug="seasonal",
+                new_template="Because you watched {top_seed}",
+                old_template="{season_emoji} {season} picks",
+                build="shared",
+            )
+        )
+
+        collection.editTitle.assert_not_called()
+        assert events == [{"done": True, "total": 0}]
+
     def test_a_shared_rename_leaves_a_helper_and_an_unmarked_copy_alone(self, sessions):
         """Everything under a shared row's label used to be renamed, in listing order: a helper a killed run left
         behind, or the unmarked copy an older rename left, would take the row's new name first, the real row
@@ -1098,6 +1216,29 @@ class TestReconcileRowRenameIter:
         assert any(e.get("user") == "ann" and "old" in e for e in events)
         assert events[-1]["total"] == 1  # only ann's success is counted
 
+    def test_a_top_seed_name_that_did_not_change_reports_nothing(self, sessions):
+        """A roster sync re-runs the rename for every person when the global template or a nickname changes. A
+        person whose own `{top_seed}` name renders the same as before is not taking a new name at the next run."""
+        _add_user(sessions, slug="sarah", account_id=100)
+        with sessions() as session:
+            session.add(
+                Delivery(collection_slug="comedy", user_slug="sarah", library_key="1", rating_key=771, title="x Dune")
+            )
+            session.commit()
+        collection = _collection("x Dune" + row_marker(100))
+        collection.ratingKey = 771
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [_section("Movies")]
+        plex.find_owned_collections.side_effect = lambda sec, label: [collection] if label == "shortlist_sarah" else []
+
+        events = list(
+            rec.reconcile_row_rename_iter(
+                _state(sessions, plex), slug="comedy", new_template="x {top_seed}", old_template="x {top_seed}"
+            )
+        )
+
+        assert events == [{"done": True, "total": 0}]
+
     def test_an_unfillable_top_seed_template_skips_rather_than_retitling_to_the_blank_default(self, sessions):
         _add_user(sessions, slug="sarah", account_id=100)
         collection = _collection("Old Name" + row_marker(100))
@@ -1115,7 +1256,10 @@ class TestReconcileRowRenameIter:
         )
 
         collection.editTitle.assert_not_called()
-        assert events == [{"done": True, "total": 0}]
+        # Nothing renamed now; reported as taking the name at the next run instead of a bare "renamed 0"
+        # (backlog 2026-09-27) — see test_a_row_given_a_top_seed_name_is_reported_as_taking_it_at_the_next_run.
+        assert events[-1] == {"done": True, "total": 0}
+        assert all(e.get("next_run") for e in events[:-1])
 
     def test_old_display_names_covers_a_nickname_change_with_an_unchanged_template(self, sessions):
         """`{user}` renders the NEW nickname on both sides without this — matching nothing and

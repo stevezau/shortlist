@@ -625,8 +625,8 @@ function waitsOnARun(note: string, ctx: Pick<RowKindContext, "pausedAll">): stri
  * Where a kind switch's new name reaches Plex once saved (design §4.2):
  * - `rebuild`: the build flips, deleting the collections at save; the row is rebuilt under it.
  * - `turned_on`: the row is off, with nothing on Plex; it's named so when it next runs.
- * - `next_run`: either name has `{top_seed}`, which the rename screen renders as "" without picks
- *   (`collection_reconcile._renamed_titles`), so the row's next delivery retitles it.
+ * - `next_run`: either name has `{top_seed}`. A new one has no title until a run picks the seed, and the
+ *   row's next delivery retitles the collection by its ledger key either way.
  * - `rename_screen`: the rename screen renames the collections from the old title.
  */
 export type RenameAt = "rebuild" | "turned_on" | "next_run" | "rename_screen";

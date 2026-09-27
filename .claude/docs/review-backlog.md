@@ -94,13 +94,23 @@ up; evidence in that session's scratchpad `live-proof/`). PRE-EXISTING behaviour
 Found by the row-editor cleanup's second review. PRE-EXISTING: it predates that work, which only
 routes its own kind-switch renames around it (design §15.1).
 
-- **MED, reasoned not reproduced — Rename… reports "renamed 0 / nothing to rename" for any rename where
-  the old or new name contains `{top_seed}`.** `collection_reconcile.py:972-990` (`_renamed_titles`)
+- **FIXED (2026-09-27; unit-tested, not verified on a live server) — MED — Rename… reports "renamed 0 /
+  nothing to rename" for any rename where the old or new name contains `{top_seed}`.** `collection_reconcile.py:972-990` (`_renamed_titles`)
   renders both templates with no picks, and a `{top_seed}` template renders as "" without one, so there
   are no (old, new) title pairs to rename. Plex keeps the old title until the row's next delivery
   retitles the collection. The screen's "renamed 0" then reads as a failure, or as nothing to do, when
   the name did change in the DB. Fix: render each person's title from their delivery-ledger / last run
   picks, or say on that screen that a `{top_seed}` name changes at the next run.
+  Fix, both halves: an OLD `{top_seed}` name now matches the title the ledger recorded for that person in
+  that library (`collection_reconcile._ledger_titles`) — and the collection is selected by the ledger
+  KEY, since a static rename leaves the recorded title stale — so a rename to a plain name happens now; a NEW
+  `{top_seed}` name has no title until a run picks the seed, so each copy is reported with `next_run` and
+  the screen's existing "takes the new name at this row's next run" copy shows. A seeded copy the ledger
+  does not name is left alone, as is a `{top_seed}` name that renders exactly as before (a roster sync
+  re-runs the rename for everyone), and a shared row given a `{top_seed}` name. Not covered: a plain name becoming SEASONAL still reports nothing — the
+  next run names it, as `_renamed_titles` documents. `test_an_unfillable_top_seed_template_skips_rather_than_
+  retitling_to_the_blank_default` asserted the bare `renamed 0`; it now asserts the next-run report, and
+  still that nothing is retitled.
 
 ## OPEN — left over from issue #133, "Because you watched X" stuck (2026-09-25)
 
