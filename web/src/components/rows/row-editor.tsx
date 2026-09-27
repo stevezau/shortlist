@@ -562,7 +562,7 @@ export function RowEditor({
         />
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
         {/* `min-w-0`, because a grid item's default `min-width: auto` resolves to its MIN-CONTENT
             width. The `minmax(0,1fr)` above only covers `lg` and up; below it the single implicit
             column took its floor from the widest unbreakable thing inside — measured at 380px in a
