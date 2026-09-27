@@ -37,6 +37,23 @@ reproduced on a live server; both are reasoned from the cited code, not measured
   nothing revisits it afterwards: the nightly sweep only covers per-person rows switched OFF, not ones
   whose row switched TO shared (`context_builder.py:1225`), so it is permanent until removed by hand.
 
+## OPEN — seen during the row-editor live proof on SFLIX (2026-09-27)
+
+Seen while proving the new row editor's save paths live on throwaway MooHouse-only rows (all cleaned
+up; evidence in that session's scratchpad `live-proof/`). PRE-EXISTING behaviour, not changed by it.
+
+- **LOW, observed live — a seasons change re-applies visibility to EVERY row for every account.**
+  Saving one row out of Seasonal queued `rows.visibility` (`shortlist/server/api/row_changes.py`
+  ~195-196), and the pass merged all 48 accounts' filters (none changed) and re-promoted every
+  per-person row for every account, not just the edited row's. Harmless but slow on a big server;
+  scope the job to the row it was queued for.
+- **UNRESOLVED — Recommended shelf order moved in Movies and TV Shows during that test.** agregarr's
+  "Randomize Home Order" ran at 16:30:17 inside the window and Sports (which agregarr doesn't touch)
+  kept its order, so agregarr is the likely cause — but the snapshot stored only a hash of each
+  shelf's order, so a contribution from our own promote calls in the pass above isn't ruled out.
+  Next time, snapshot the full hub order per library, not a hash. See memory
+  "agregarr-fights-for-the-plex-shelf" (last time the culprit was ours).
+
 ## OPEN — the rename screen can't rename a `{top_seed}` row (found 2026-09-27)
 
 Found by the row-editor cleanup's second review. PRE-EXISTING: it predates that work, which only
