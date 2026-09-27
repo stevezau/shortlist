@@ -44,13 +44,20 @@ function renderPreview(
     ctx = CTX,
     settings = SETTINGS,
     enabled,
-  }: { ctx?: RowKindContext; settings?: Settings; enabled?: boolean } = {},
+    rowNames,
+  }: {
+    ctx?: RowKindContext;
+    settings?: Settings;
+    enabled?: boolean;
+    rowNames?: Record<string, string>;
+  } = {},
 ) {
   render(
     <RowPreview
       input={input}
       ctx={ctx}
       enabled={enabled}
+      rowNames={rowNames}
       users={[]}
       libraries={[]}
       settings={settings}
@@ -278,5 +285,29 @@ describe("requests, in one line", () => {
     renderPreview(toInput(row({ build: "shared", request_tag: "family" })));
     expect(line("Requests")).toHaveTextContent(/^RequestsNone — shared rows never ask for missing titles$/);
     expect(line("Requests")).not.toHaveAttribute("data-fact");
+  });
+});
+
+describe("the Shelf position line", () => {
+  const anchored = (): CollectionInput => ({
+    ...toInput(row({})),
+    hub_anchor: { "1": { row: "because_you_watched_top_seed", before: false } },
+  } as CollectionInput);
+
+  it("names the row it sits next to, not that row's internal slug", () => {
+    renderPreview(anchored(), {
+      rowNames: { because_you_watched_top_seed: "🎯 Because you watched {top_seed}" },
+    });
+
+    expect(valueOf("Shelf position")).toHaveTextContent(
+      "right after “🎯 Because you watched {top_seed}”",
+    );
+    expect(valueOf("Shelf position")).not.toHaveTextContent("because_you_watched_top_seed");
+  });
+
+  it("lets a long value wrap, so a phone-width page never scrolls sideways", () => {
+    renderPreview(anchored());
+
+    expect(valueOf("Shelf position").className).toContain("[overflow-wrap:anywhere]");
   });
 });

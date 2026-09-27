@@ -137,24 +137,32 @@ function librariesLine(
 }
 
 /** One library's shelf position, as the shelf-position control reads the same entry. */
-function shelfWords(entry: HubAnchorMap[string] | undefined): string {
+function shelfWords(
+  entry: HubAnchorMap[string] | undefined,
+  rowNames: Record<string, string>,
+): string {
   if (entry?.enabled === false) return "not placed";
-  const anchor = (entry?.row || entry?.anchor || "").trim();
+  // A Shortlist row is stored by slug; the owner knows it by its name.
+  const anchor = (entry?.row ? rowNames[entry.row] || entry.row : entry?.anchor || "").trim();
   // No entry, Top, or a mode picked with no anchor yet (Save drops that one): the top.
   if (!entry || entry.top || !anchor) return "top";
   return `right ${entry.before ? "before" : "after"} “${anchor}”`;
 }
 
 /** Where the row sits on each library's Recommended shelf. */
-function shelfLine(input: CollectionInput, libraries: PlexLibrary[]): string {
+function shelfLine(
+  input: CollectionInput,
+  libraries: PlexLibrary[],
+  rowNames: Record<string, string>,
+): string {
   const targeted = libraries.filter((library) =>
     targetsLibrary(library, input.library_keys, input.media),
   );
   // Before the libraries load, only the libraries with a choice of their own can be named.
   const places =
     targeted.length > 0
-      ? targeted.map((library) => [library.title, shelfWords(input.hub_anchor[library.key])])
-      : Object.entries(input.hub_anchor).map(([key, entry]) => [`Library ${key}`, shelfWords(entry)]);
+      ? targeted.map((library) => [library.title, shelfWords(input.hub_anchor[library.key], rowNames)])
+      : Object.entries(input.hub_anchor).map(([key, entry]) => [`Library ${key}`, shelfWords(entry, rowNames)]);
   if (places.every(([, words]) => words === "top")) return "Top of the Recommended shelf";
   return places.map(([name, words]) => `${name}: ${words}`).join(" · ");
 }
@@ -276,6 +284,7 @@ function rowFacts({
   libraries,
   settings,
   seasons,
+  rowNames,
 }: {
   input: CollectionInput;
   ctx: PreviewContext;
@@ -284,6 +293,7 @@ function rowFacts({
   libraries: PlexLibrary[];
   settings: Settings | undefined;
   seasons: Season[];
+  rowNames: Record<string, string>;
 }): FactLine[] {
   const shown = visibleSettings(input, ctx);
   const hidden = hiddenButRead(input, ctx);
@@ -521,7 +531,7 @@ function rowFacts({
   // Only for a row that actually narrows its days. Without this the panel says "Home and the
   // library" and stops, which is true but not the whole answer for a row people only see on Fridays.
   if (!everyDay) add("Only on", ["show_days"], showDaysSummary(input.show_days));
-  add("Shelf position", ["hub_anchor"], shelfLine(input, libraries));
+  add("Shelf position", ["hub_anchor"], shelfLine(input, libraries, rowNames));
   if (prefix) {
     add("Sort prefix", ["sort_title_prefix"], `“${prefix}” goes before its name when Plex sorts collections`);
   }
@@ -542,7 +552,7 @@ function Fact({ label, keys, value }: FactLine) {
       className="flex gap-3 py-2 text-sm"
     >
       <dt className="w-28 shrink-0 text-muted-foreground">{label}</dt>
-      <dd className="min-w-0 flex-1">{value}</dd>
+      <dd className="min-w-0 flex-1 [overflow-wrap:anywhere]">{value}</dd>
     </div>
   );
 }
@@ -571,6 +581,7 @@ export function RowPreview({
   libraries,
   settings,
   seasons = [],
+  rowNames = {},
 }: {
   input: CollectionInput;
   /** The globals the row's kind is read against — the editor's own, so the two cannot disagree. */
@@ -583,8 +594,10 @@ export function RowPreview({
   settings: Settings | undefined;
   /** The season catalogue, to name the seasons the row follows; empty while it loads. */
   seasons?: Season[];
+  /** Every row's name by slug, to name a row this one is placed beside. */
+  rowNames?: Record<string, string>;
 }) {
-  const facts = rowFacts({ input, ctx, enabled, users, libraries, settings, seasons });
+  const facts = rowFacts({ input, ctx, enabled, users, libraries, settings, seasons, rowNames });
 
   // The heading lives in the PAGE, above this card, not inside it — so it lines up with "Row
   // settings" over the left column and both columns start at the same y. A heading inside the card

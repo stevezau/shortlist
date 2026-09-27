@@ -41,6 +41,7 @@ import { blankInput, hasUnsavedChanges, toInput } from "@/lib/collections";
 import { settingString } from "@/lib/format";
 import {
   useCollectionEffectiveness,
+  useCollections,
   useLibraries,
   useSaveCollection,
   useSaveSettings,
@@ -163,6 +164,11 @@ export function RowEditor({
   // Read-only here: the editor never writes settings, it only names the globals a row inherits.
   const settings = useSettings();
   const libraries = useLibraries();
+  // Every row's name by slug, so the summary names a row this one sits beside.
+  const collections = useCollections();
+  const rowNames = Object.fromEntries(
+    (collections.data ?? []).map((row) => [row.slug, row.name_template || row.name]),
+  );
   const effectiveness = useCollectionEffectiveness(collection?.id ?? null);
   const ratingSource = asRatingSource(
     settings.data?.["recommendations.rating_source"],
@@ -1130,6 +1136,7 @@ export function RowEditor({
             libraries={libraries.data ?? []}
             settings={settings.data}
             seasons={chosenSeasons}
+            rowNames={rowNames}
           />
         </aside>
       </div>
