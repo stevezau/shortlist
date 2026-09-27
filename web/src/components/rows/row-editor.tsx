@@ -49,6 +49,7 @@ import {
   useSettings,
 } from "@/lib/queries";
 import { requestReadiness, requestsSummary } from "@/lib/requests";
+import { useStickyTop } from "@/lib/use-sticky-top";
 import {
   applyRowKind,
   BASELINE_FIELDS,
@@ -164,6 +165,9 @@ export function RowEditor({
   // Read-only here: the editor never writes settings, it only names the globals a row inherits.
   const settings = useSettings();
   const libraries = useLibraries();
+  // The summary scrolls with the page (no scrollbar of its own) and stays in view: see useStickyTop.
+  // 80 clears the sticky Save bar at the bottom of the page (61px) with room to spare.
+  const [summaryRef, summaryTop] = useStickyTop<HTMLElement>(24, 80);
   // Every row's name by slug, so the summary names a row this one sits beside.
   const collections = useCollections();
   const rowNames = Object.fromEntries(
@@ -468,7 +472,7 @@ export function RowEditor({
     // section that starts closed. With the cap gone the groups can stay open, warnings can sit
     // permanently beside the setting they concern, and there is room for the preview panel that
     // turns each abstract setting into "here is what Sarah will see tonight".
-    <div className="mx-auto w-full max-w-6xl space-y-6">
+    <div className="w-full space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
         <div>
           <h1 className="text-2xl font-semibold">
@@ -1118,7 +1122,7 @@ export function RowEditor({
             The max-height + scroll is a safety valve for a very tall preview on a short window, not
             a place to put content: anything parked below the fold here is effectively invisible,
             which is exactly why the effectiveness panel moved to the top of the page. */}
-        <aside className="space-y-5 lg:sticky lg:top-6 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pr-1">
+        <aside ref={summaryRef} style={{ top: summaryTop }} className="min-w-0 space-y-5 lg:sticky">
           {/* Outside the card, matching "Row settings" opposite, so the two columns start level. */}
           <div>
             <h2 className="text-base font-semibold">What this row will do</h2>
