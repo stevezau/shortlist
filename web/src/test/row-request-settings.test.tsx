@@ -7,6 +7,7 @@
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -31,6 +32,7 @@ const INHERITS: RowRequestInput = {
   req_language_mode: null,
   req_preferred_languages: null,
   req_min_rating_other: null,
+  request_tag: "",
 };
 
 const SETTINGS = {
@@ -49,18 +51,56 @@ const SETTINGS = {
 
 function renderSection(
   input: Partial<RowRequestInput> = {},
-  { requestsEnabled = true } = {},
+  {
+    requestsEnabled = true,
+    target,
+    radarrReady,
+    sonarrReady,
+    media,
+    audienceSize,
+  }: {
+    requestsEnabled?: boolean;
+    target?: "arr" | "overseerr";
+    radarrReady?: boolean;
+    sonarrReady?: boolean;
+    media?: "movie" | "show" | "both";
+    audienceSize?: number | null;
+  } = {},
 ) {
   const set = vi.fn();
   render(
-    <RowRequestSettings
-      input={{ ...INHERITS, ...input }}
-      set={set}
-      settings={SETTINGS}
-      requestsEnabled={requestsEnabled}
-    />,
+    <MemoryRouter>
+      <RowRequestSettings
+        input={{ ...INHERITS, ...input }}
+        set={set}
+        settings={SETTINGS}
+        requestsEnabled={requestsEnabled}
+        target={target}
+        radarrReady={radarrReady}
+        sonarrReady={sonarrReady}
+        media={media}
+        audienceSize={audienceSize}
+      />
+    </MemoryRouter>,
   );
   return set;
+}
+
+/** Radarr's group is anchored by its root-folder field; Sonarr's by its folder OR monitor field —
+ *  both are hidden together, so either is proof the whole group is there. */
+function radarrShown() {
+  return screen.queryByLabelText("Use the global Radarr folder for this row") !== null;
+}
+function sonarrShown() {
+  return (
+    screen.queryByLabelText("Use the global Sonarr folder for this row") !== null
+  );
+}
+function tagShown() {
+  return (
+    screen.queryByLabelText("Use the global tag-by-person setting for this row") !==
+    null
+  );
 }
 
 describe("RowRequestSettings", () => {
@@ -171,6 +211,59 @@ describe("RowRequestSettings", () => {
     // Otherwise the whole section reads as live configuration that does nothing.
     renderSection({}, { requestsEnabled: false });
     expect(screen.getByText(/Requests are turned off/)).toBeInTheDocument();
+  });
+
+  it("shows only that note when requests are off, and keeps every stored value", () => {
+    // Fields that cannot take effect promise a behaviour; hiding them never clears what they hold.
+    const set = renderSection(
+      { req_max_per_row: 3, req_min_rating: 6, request_tag: "family" },
+      { requestsEnabled: false, target: "arr", radarrReady: true, sonarrReady: true, media: "both" },
+    );
+    expect(screen.queryByRole("switch")).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("spinbutton")).toBeNull();
+    expect(screen.queryByText("How many this row may ask for")).toBeNull();
+    expect(screen.getByRole("link", { name: /Settings.*Requests/ })).toBeInTheDocument();
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it("asks its questions most-used first, with the two tags together before Radarr and Sonarr", () => {
+    renderSection({}, { target: "arr", radarrReady: true, sonarrReady: true, media: "both" });
+    const order = [
+      "How many this row may ask for",
+      "Send automatically, or wait for you",
+      "Minimum rating",
+      "How many people must want it",
+      "Release years",
+      "Language for this row",
+      "Request tag (optional)",
+      "Tag requests with who they're for",
+      "Where films from this row land",
+      "Where shows from this row land",
+      "How much of a show this row grabs",
+    ].map((label) => screen.getByText(label));
+    for (let i = 1; i < order.length; i++) {
+      expect(
+        order[i - 1]!.compareDocumentPosition(order[i]!) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    }
+  });
+
+  describe("the request tag", () => {
+    it("shows the row's tag and writes what's typed", async () => {
+      const set = renderSection({ request_tag: "kid" }, { target: "arr" });
+      const tag = screen.getByLabelText("Request tag (optional)");
+      expect(tag).toHaveValue("kid");
+      expect(tag).toHaveAttribute("maxLength", "64");
+      await userEvent.type(tag, "s");
+      expect(set).toHaveBeenLastCalledWith({ request_tag: "kids" });
+    });
+
+    it("is not offered when Overseerr files the requests, which ignores it", () => {
+      const set = renderSection({ request_tag: "family" }, { target: "overseerr" });
+      expect(screen.queryByLabelText("Request tag (optional)")).toBeNull();
+      expect(set).not.toHaveBeenCalled();
+    });
   });
 
   describe("language", () => {
@@ -292,5 +385,121 @@ describe("RowRequestSettings", () => {
       await userEvent.click(screen.getByLabelText(/Remove English/));
       expect(set).toHaveBeenCalledWith({ req_preferred_languages: [] });
     });
+  });
+
+  describe("linking to Settings when requests are off", () => {
+    it("links the off-note to Settings › Requests", () => {
+      renderSection({}, { requestsEnabled: false });
+      expect(
+        screen.getByRole("link", { name: /Settings.*Requests/ }),
+      ).toHaveAttribute("href", "/settings#requests");
+    });
+  });
+
+  describe("visibility by target, readiness and media", () => {
+    it("shows every field when no readiness props are wired in yet, matching today", () => {
+      renderSection();
+      expect(radarrShown()).toBe(true);
+      expect(sonarrShown()).toBe(true);
+      expect(tagShown()).toBe(true);
+    });
+
+    it("hides Radarr, Sonarr and the tag switch entirely when the target is Overseerr", () => {
+      renderSection(
+        {},
+        { target: "overseerr", radarrReady: true, sonarrReady: true, media: "both" },
+      );
+      expect(radarrShown()).toBe(false);
+      expect(sonarrShown()).toBe(false);
+      expect(tagShown()).toBe(false);
+    });
+
+    it("hides Radarr when Radarr isn't set up, and leaves Sonarr and the tag alone", () => {
+      renderSection(
+        {},
+        { target: "arr", radarrReady: false, sonarrReady: true, media: "both" },
+      );
+      expect(radarrShown()).toBe(false);
+      expect(sonarrShown()).toBe(true);
+      expect(tagShown()).toBe(true);
+    });
+
+    it("hides Sonarr when Sonarr isn't set up, and leaves Radarr and the tag alone", () => {
+      renderSection(
+        {},
+        { target: "arr", radarrReady: true, sonarrReady: false, media: "both" },
+      );
+      expect(radarrShown()).toBe(true);
+      expect(sonarrShown()).toBe(false);
+      expect(tagShown()).toBe(true);
+    });
+
+    it("hides Radarr on a shows-only row, even though Radarr itself is ready", () => {
+      renderSection(
+        {},
+        { target: "arr", radarrReady: true, sonarrReady: true, media: "show" },
+      );
+      expect(radarrShown()).toBe(false);
+      expect(sonarrShown()).toBe(true);
+    });
+
+    it("hides Sonarr on a movies-only row, even though Sonarr itself is ready", () => {
+      renderSection(
+        {},
+        { target: "arr", radarrReady: true, sonarrReady: true, media: "movie" },
+      );
+      expect(radarrShown()).toBe(true);
+      expect(sonarrShown()).toBe(false);
+    });
+
+    it("shows both when the target is arr, both apps are ready and the row is both media", () => {
+      renderSection(
+        {},
+        { target: "arr", radarrReady: true, sonarrReady: true, media: "both" },
+      );
+      expect(radarrShown()).toBe(true);
+      expect(sonarrShown()).toBe(true);
+      expect(tagShown()).toBe(true);
+    });
+
+    it("never clears a hidden field's stored value", async () => {
+      const set = renderSection(
+        { req_radarr_root_folder: "/data/Kids" },
+        { target: "overseerr" },
+      );
+      expect(set).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("the one-person demand warning", () => {
+    it("warns when only one person gets the row but it asks for more than one vote", () => {
+      renderSection({ req_min_demand: 2 }, { audienceSize: 1 });
+      expect(
+        screen.getByText(/never asks for anything/),
+      ).toBeInTheDocument();
+    });
+
+    it("says nothing when the lone person's row only needs their own vote", () => {
+      renderSection({ req_min_demand: 1 }, { audienceSize: 1 });
+      expect(screen.queryByText(/never asks for anything/)).toBeNull();
+    });
+
+    it("says nothing once a second person could also want it", () => {
+      renderSection({ req_min_demand: 2 }, { audienceSize: 2 });
+      expect(screen.queryByText(/never asks for anything/)).toBeNull();
+    });
+  });
+
+  describe("toggles are switches, not checkboxes", () => {
+    it("renders no raw checkbox inputs", () => {
+      renderSection({ req_auto_send: true, req_auto_user_tag: true });
+      expect(document.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
+      expect(screen.getAllByRole("switch").length).toBeGreaterThan(0);
+    });
+  });
+
+  it("fires no onChange on mount", () => {
+    const set = renderSection();
+    expect(set).not.toHaveBeenCalled();
   });
 });

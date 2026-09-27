@@ -46,9 +46,9 @@ Looking for a specific setting or API endpoint? That's [Reference](reference.md)
 
 ## A row disappeared, or you want rows to take turns
 
-A row can be given its own days: **Rows → the row → Where people see it → Only on these days.** On the
-days it is off, the row is hidden rather than deleted — it keeps its titles, so it comes straight
-back on its next day without being built again.
+A row can be given its own days: **Rows → the row → Where and when people see it → Only on these
+days.** On the days it is off, the row is hidden rather than deleted — it keeps its titles, so it
+comes straight back on its next day without being built again.
 
 Two rows can cover a week between them: set one to Mon/Wed/Fri and another to the remaining days, and
 the Home screen alternates.

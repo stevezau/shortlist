@@ -27,24 +27,41 @@ import type { Collection } from "@/lib/types";
 export function RowEnableToggle({
   collection,
   showLabel = false,
+  disabled = false,
+  onSaving,
+  onSaved,
 }: {
   collection: Collection;
   /** The editor has room for a word beside the switch; the card's action strip does not. */
   showLabel?: boolean;
+  /** Holds the switch and its Try again, e.g. while a form holding the row saves it. */
+  disabled?: boolean;
+  /** Called with true when a change starts saving and false once it's done, either way. */
+  onSaving?: (saving: boolean) => void;
+  /** Called once a change is saved, so a form holding the row can take the new value. */
+  onSaved?: (enabled: boolean) => void;
 }) {
   const save = useSaveCollection();
   const [confirmDisable, setConfirmDisable] = useState(false);
-  const setEnabled = (enabled: boolean) =>
-    save.mutate({
-      id: collection.id,
-      body: { ...toInput(collection), enabled },
-    });
+  // The body is the whole row, so it is built from the row as it is when sent — a retry too. Replaying
+  // the request that failed would carry back whatever the row held then, undoing a save made since.
+  const setEnabled = (enabled: boolean) => {
+    onSaving?.(true);
+    save.mutate(
+      { id: collection.id, body: { ...toInput(collection), enabled } },
+      {
+        onSuccess: () => onSaved?.(enabled),
+        onSettled: () => onSaving?.(false),
+      },
+    );
+  };
 
   return (
     <>
       <span className="flex items-center gap-2">
         <Switch
           checked={collection.enabled}
+          disabled={disabled}
           onCheckedChange={(enabled) =>
             enabled ? setEnabled(true) : setConfirmDisable(true)
           }
@@ -71,21 +88,23 @@ export function RowEnableToggle({
           fallback="Couldn’t change this row. Try again."
           onRetry={() => {
             const last = save.variables;
-            if (last) save.mutate(last);
+            if (last) setEnabled(last.body.enabled);
           }}
+          retryDisabled={disabled}
         />
       )}
 
-      {/* A confirmation, because the toggle's consequence is invisible and deferred: the row stays
-          on Plex until the next run, then disappears from everyone who had it. */}
+      {/* A confirmation, because the toggle reaches past this screen: saving it removes the row's
+          collections from Plex for everyone who had it, there and then (`row_changes.py`,
+          RECONCILE collection.disable). */}
       <Dialog open={confirmDisable} onOpenChange={setConfirmDisable}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Turn off &ldquo;{collection.name}&rdquo;?</DialogTitle>
             <DialogDescription>
-              The next run takes this row off Plex for everyone who has it. Its
-              settings stay here, so turning it back on rebuilds it. The titles
-              themselves stay in your library.
+              Switching it off takes it off Plex straight away, for everyone
+              who has it. Its settings stay here, and nothing is built until you
+              turn it back on. The titles themselves stay in your library.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

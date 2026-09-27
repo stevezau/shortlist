@@ -10,6 +10,46 @@ below is later work.
 
 ---
 
+## OPEN — pre-existing gaps found during the row-editor cleanup trace (2026-09-27)
+
+Found read-only while tracing per-person ↔ shared switching for the row-editor cleanup design
+(`.claude/docs/plans/row-editor-cleanup-design.md` §11). Both predate that work and are not touched by
+it — the design explicitly declines to fix them and sends them here instead. Neither has been
+reproduced on a live server; both are reasoned from the cited code, not measured.
+
+- **HIGH, unverified on a live server — a brand-new subset shared row is visible to people outside its
+  audience until the run ends.** Precondition: a row switches to `build=shared` with an `audience`
+  narrower than everyone (a "subset" shared row), and no earlier per-person row of this row's owner has
+  already put a `shortlist_<userslug>` exclude on the outsiders' share filters. The early first-row
+  exclude (`shortlist/engine/pipeline.py:495-546`, `.claude/rules/plex-safety.md` rule 1) only covers a
+  PER-PERSON row's owner; a shared row's audience has no equivalent. So the new row sits, delivered but
+  unpromoted, in every excluded person's library **Collections** tab from the moment it's written until
+  the end-of-run share-filter merge closes the gap. Applies to any brand-new subset shared row,
+  including one just switched from per-person.
+- **MED, unverified on a live server — a build switch's collection removal can leave a stale per-person
+  copy behind permanently.** At save, `shortlist/server/api/row_changes.py:129-136` triggers RECONCILE
+  to delete every per-person copy of a row switching build (`collection_reconcile.py:551-594`), and the
+  save waits for it — but the removal can still miss a copy: the reconcile job itself can give up
+  partway (raise, time out, or the process restart mid-run), or the row is named with `{top_seed}` and
+  its delivery-ledger key collides with a key another row also claims, so the reconcile walk
+  (`collection_reconcile.py:352-362`) skips it as belonging to that other row instead. A missed copy
+  stays on Plex under its own owner's `shortlist_*` label — so it's never exposed to anyone else — but
+  nothing revisits it afterwards: the nightly sweep only covers per-person rows switched OFF, not ones
+  whose row switched TO shared (`context_builder.py:1225`), so it is permanent until removed by hand.
+
+## OPEN — the rename screen can't rename a `{top_seed}` row (found 2026-09-27)
+
+Found by the row-editor cleanup's second review. PRE-EXISTING: it predates that work, which only
+routes its own kind-switch renames around it (design §15.1).
+
+- **MED, reasoned not reproduced — Rename… reports "renamed 0 / nothing to rename" for any rename where
+  the old or new name contains `{top_seed}`.** `collection_reconcile.py:972-990` (`_renamed_titles`)
+  renders both templates with no picks, and a `{top_seed}` template renders as "" without one, so there
+  are no (old, new) title pairs to rename. Plex keeps the old title until the row's next delivery
+  retitles the collection. The screen's "renamed 0" then reads as a failure, or as nothing to do, when
+  the name did change in the DB. Fix: render each person's title from their delivery-ledger / last run
+  picks, or say on that screen that a `{top_seed}` name changes at the next run.
+
 ## OPEN — left over from issue #133, "Because you watched X" stuck (2026-09-25)
 
 The bug itself is fixed in be9dcd95: `_seed_moved` compared pick #1 as it stood while the title skips

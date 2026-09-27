@@ -25,21 +25,24 @@ function seedWindowHint(value: number): string {
 }
 
 /**
- * Picker for how many recent watches a row cycles between ({@link SEED_WINDOW_MIN}..{@link SEED_WINDOW_MAX}).
- * Same self-buffering behaviour as {@link MaxSeedsField}: the field can be cleared and retyped, and the
- * clamped value is pushed up only on blur/Enter so autosave never fires mid-type.
+ * "Take turns between their last [N] watches": how many recent watches a row cycles between
+ * ({@link SEED_WINDOW_MIN}..{@link SEED_WINDOW_MAX}), written as one sentence with the number inline.
+ *
+ * Self-buffering like {@link MaxSeedsField}: the field can be cleared and retyped, and the clamped
+ * value is pushed up only on blur/Enter so a half-typed number never reaches the row.
  */
 export function SeedWindowField({
   value,
   onChange,
-  label = "Recent watches to choose from",
+  disabled = false,
 }: {
   value: number;
   onChange: (count: number) => void;
-  /** Caption above the input. Pass "" when the surrounding block already renders one. */
-  label?: string;
+  disabled?: boolean;
 }) {
   const id = useId();
+  const suffixId = useId();
+  const labelId = useId();
   const [text, setText] = useState(String(value));
   // Re-sync the buffer when the value changes from elsewhere (reset, another tab).
   // Adjusted during render rather than in an effect — see the note in row-size-field.tsx.
@@ -57,26 +60,37 @@ export function SeedWindowField({
 
   return (
     <div className="space-y-1.5">
-      {label ? <Label htmlFor={id}>{label}</Label> : null}
-      <Input
-        id={id}
-        aria-label="Recent watches to choose from"
-        type="number"
-        inputMode="numeric"
-        min={SEED_WINDOW_MIN}
-        max={SEED_WINDOW_MAX}
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            commit();
-          }
-        }}
-        className="w-28"
-      />
-      <p className="text-sm text-muted-foreground">{seedWindowHint(value)}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <Label id={labelId} htmlFor={id}>
+          Take turns between their last
+        </Label>
+        <Input
+          id={id}
+          aria-labelledby={`${labelId} ${suffixId}`}
+          type="number"
+          inputMode="numeric"
+          min={SEED_WINDOW_MIN}
+          max={SEED_WINDOW_MAX}
+          value={text}
+          disabled={disabled}
+          onChange={(event) => setText(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commit();
+            }
+          }}
+          className="w-20"
+        />
+        <span id={suffixId} className="text-sm font-medium">
+          watches
+        </span>
+      </div>
+      {/* Disabled, the caller says why instead: what the number would do is beside the point then. */}
+      {!disabled && (
+        <p className="text-sm text-muted-foreground">{seedWindowHint(value)}</p>
+      )}
     </div>
   );
 }

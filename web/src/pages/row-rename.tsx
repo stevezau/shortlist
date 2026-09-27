@@ -37,7 +37,13 @@ export function RowRenamePage() {
   const collections = useCollections();
   const collection = collections.data?.find((c) => c.id === collectionId);
   const location = useLocation();
-  const navState = location.state as { proposedName?: string } | null;
+  const navState = location.state as {
+    proposedName?: string;
+    /** With `alreadySaved`: the title the collections on Plex still carry. */
+    oldTemplate?: string;
+    /** The editor saved this name already, with the kind switch that needed it. */
+    alreadySaved?: boolean;
+  } | null;
 
   // Arriving WITH a proposed name means the editor's Rename button sent us, and that click was the
   // decision — it is only enabled once the name actually differs from the saved one, and it sits
@@ -150,6 +156,14 @@ export function RowRenamePage() {
 
   async function handleSubmit() {
     if (!collection) return;
+    // A kind switch saved the new name together with the settings that needed it (a season name the
+    // API refuses once the row follows no season can't be saved first and renamed after). The row on
+    // record is already renamed, so only the stream is left, from the title Plex still shows.
+    if (navState?.alreadySaved && navState.oldTemplate) {
+      setConfirmed(true);
+      startRename(newName, navState.oldTemplate);
+      return;
+    }
     const prev = collection.name_template || collection.name;
     setSaving(true);
     try {
@@ -258,8 +272,17 @@ export function RowRenamePage() {
       )}
 
       {error && (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive-text">
-          {error}
+        <div className="space-y-1 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive-text">
+          {/* The editor already saved the name, so "Rename" failing here is not "nothing happened":
+              the row carries its new name, and its next delivery retitles the collections. */}
+          {navState?.alreadySaved && (
+            <p className="font-medium">
+              {
+                "Your settings and the new name were saved, but the rename didn't finish on Plex. It's applied the next time the row runs."
+              }
+            </p>
+          )}
+          <p>{error}</p>
         </div>
       )}
 

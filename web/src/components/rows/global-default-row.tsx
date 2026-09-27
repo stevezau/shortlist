@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { Link } from "react-router";
 
 import { Switch } from "@/components/ui/switch";
@@ -16,6 +17,7 @@ export function GlobalDefaultToggle({
   globalValue,
   settingsHash,
   onChange,
+  disabledReason = null,
 }: {
   label?: string;
   ariaLabel: string;
@@ -26,7 +28,10 @@ export function GlobalDefaultToggle({
   /** Anchor on the settings page, e.g. "recommendations". */
   settingsHash: string;
   onChange: (inheriting: boolean) => void;
+  /** Why the toggle can't be used on this row right now; null when it can. */
+  disabledReason?: string | null;
 }) {
+  const reasonId = useId();
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-4">
@@ -35,8 +40,15 @@ export function GlobalDefaultToggle({
           checked={inheriting}
           onCheckedChange={onChange}
           aria-label={ariaLabel}
+          disabled={disabledReason !== null}
+          aria-describedby={disabledReason !== null ? reasonId : undefined}
         />
       </div>
+      {disabledReason !== null && (
+        <p id={reasonId} className="text-xs text-muted-foreground">
+          {disabledReason}
+        </p>
+      )}
       {inheriting && globalValue !== null && (
         <p className="text-xs text-muted-foreground">
           Currently <strong className="text-foreground">{globalValue}</strong>.{" "}
