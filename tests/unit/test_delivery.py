@@ -11,7 +11,7 @@ from plexapi.exceptions import BadRequest
 from shortlist.engine import delivery
 from shortlist.engine.clients.plex_pms import CollectionRejectedItems, PlexClient
 from shortlist.engine.delivery import DEFAULT_ROW_NAME, deliver_rows, render_row_name, row_marker, sweep_broken_rows
-from shortlist.engine.models import LABEL_PREFIX, SHARED_LABEL_PREFIX, EngineConfig, MediaType, Pick
+from shortlist.engine.models import LABEL_PREFIX, SHARED_LABEL_PREFIX, CollectionDiff, EngineConfig, MediaType, Pick
 from tests.conftest import make_profile
 
 
@@ -1256,10 +1256,17 @@ class TestSharedRowDuplicates:
         plex.find_owned_collections.side_effect = lambda section, label: list(owned) if section is movies else []
         return plex
 
-    def _deliver(self, plex, engine_config, movies, shows, dry_run: bool = False):
+    def _deliver(self, plex, engine_config, movies, shows, dry_run: bool = False, **kwargs):
         picks = [Pick(1, 1001, "Dune", rank=1, reason="r", media_type=MediaType.MOVIE)]
         return deliver_rows(
-            plex, make_profile(), picks, engine_config, self._spec(), dry_run=dry_run, sections=[movies, shows]
+            plex,
+            make_profile(),
+            picks,
+            engine_config,
+            self._spec(),
+            dry_run=dry_run,
+            sections=[movies, shows],
+            **kwargs,
         )
 
     def _deleted(self, plex) -> list[int]:
@@ -1276,18 +1283,37 @@ class TestSharedRowDuplicates:
 
     def test_the_removed_duplicate_reaches_the_diff_the_run_audits(self, engine_config, movies, shows):
         """A collection destroyed on someone's real server has to be answerable from the UI, not just from
-        a container log that rotates in days (plex-safety rule 10). `combined.deleted` is what carries it
-        into the per-library breakdown and the run page."""
+        a container log that rotates in days (plex-safety rule 10). `duplicates_removed` is what carries it
+        into the events row and the library's breakdown on the run page."""
         live = self._collection("Popular on SFLIX" + row_marker(0), 100)
         stale = self._collection("Popular on SFLIX", 200)
         plex = self._plex(movies, shows, live, stale)
+        breakdown: list[dict] = []
 
-        diff, _ = self._deliver(plex, engine_config, movies, shows)
+        diff, _ = self._deliver(plex, engine_config, movies, shows, breakdown=breakdown)
 
-        assert diff.deleted == ["Popular on SFLIX"], "the delete must be in the audited diff"
+        assert diff.duplicates_removed == ["Popular on SFLIX"], "the delete must be in the audited diff"
+        assert [entry["duplicates_removed"] for entry in breakdown] == [["Popular on SFLIX"]], (
+            "and in the breakdown of the library it happened in"
+        )
         assert plex.delete_owned_collection.call_args.args[1] == LABEL_PREFIX, (
             "the label prefix is the ownership proof delete_owned_collection checks"
         )
+
+    def test_a_removed_duplicate_is_not_reported_as_a_deleted_row(self, engine_config, movies, shows):
+        """`deleted` means the row itself is gone — the run page renders it as "Row deleted (this person no
+        longer gets this row)". After a duplicate is removed the row is still live, so reporting it there
+        contradicts the picks shown beside it (v1.9.2 release review, MED)."""
+        live = self._collection("Popular on SFLIX" + row_marker(0), 100)
+        stale = self._collection("Popular on SFLIX", 200)
+        plex = self._plex(movies, shows, live, stale)
+        breakdown: list[dict] = []
+
+        diff, _ = self._deliver(plex, engine_config, movies, shows, breakdown=breakdown)
+
+        assert self._deleted(plex) == [200], "precondition: the duplicate really was removed"
+        assert diff.deleted == []
+        assert [entry["deleted"] for entry in breakdown] == [[]]
 
     def test_a_failed_delete_never_costs_the_audience_their_row(self, engine_config, movies, shows):
         """The "never raises" promise is the whole reason this lives in `_deliver_one` rather than in
@@ -1301,7 +1327,26 @@ class TestSharedRowDuplicates:
         diff, stored = self._deliver(plex, engine_config, movies, shows)
 
         assert stored, "the row itself must still have been delivered"
-        assert diff.deleted == ["Popular on SFLIX"], "the attempt is still reported; only the delete failed"
+        # The duplicate is still on Plex, so the audit must not say it was removed; the WARNING says why.
+        assert diff.duplicates_removed == [], "a delete that failed must not be reported as done"
+        assert diff.deleted == []
+
+    def test_a_removed_duplicate_is_audited_even_when_the_rows_own_write_then_fails(self, engine_config, movies, shows):
+        """The cleanup runs before the row's membership write, and a shared row has no retry wrapper: if
+        that write raises, `_deliver_one` never returns its diff. The delete has already happened on Plex,
+        so it has to be in the caller's accumulator — the diff `_run_shared` keeps on its report and writes
+        to the `run.shared` events row whatever the outcome (plex-safety rule 10)."""
+        live = self._collection("Popular on SFLIX" + row_marker(0), 100)
+        stale = self._collection("Popular on SFLIX", 200)
+        plex = self._plex(movies, shows, live, stale)
+        plex.set_items.side_effect = BadRequest("(500) internal_server_error")
+        accumulator = CollectionDiff()
+
+        with pytest.raises(BadRequest):
+            self._deliver(plex, engine_config, movies, shows, diff=accumulator)
+
+        assert self._deleted(plex) == [200], "precondition: the duplicate was deleted before the write failed"
+        assert accumulator.duplicates_removed == ["Popular on SFLIX"]
 
     def test_a_name_freeing_helper_under_the_shared_label_is_left_for_the_sweep(self, engine_config, movies, shows):
         """The helper is debris from a stopped run and `sweep_broken_rows` owns it. Deleting it here
@@ -1353,9 +1398,10 @@ class TestSharedRowDuplicates:
         stale = self._collection("Popular on SFLIX", 200)
         plex = self._plex(movies, shows, live, stale)
 
-        self._deliver(plex, engine_config, movies, shows, dry_run=True)
+        diff, _ = self._deliver(plex, engine_config, movies, shows, dry_run=True)
 
         plex.delete_owned_collection.assert_not_called()
+        assert diff.duplicates_removed == ["Popular on SFLIX"], "a dry run reports the would-be delete"
 
     def test_a_per_person_rows_unmarked_sibling_is_not_touched_here(self, engine_config, movies, shows):
         """Only a SHARED label gets this treatment. A per-person row's marker is its account id, and an

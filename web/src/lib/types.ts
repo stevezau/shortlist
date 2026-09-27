@@ -593,6 +593,8 @@ export interface RunDiff {
   kept?: string[];
   /** Rows deleted because Plex could not hide them (wrong type for their library). */
   deleted?: string[];
+  /** Leftover copies of a shared row removed beside it; the row itself is still live. Absent on older runs. */
+  duplicates_removed?: string[];
 }
 
 /** One (row, library) slice of a user's run result: what changed in that library + its own picks.
@@ -607,6 +609,9 @@ export interface RunLibraryBreakdown {
   removed: string[];
   kept: string[];
   deleted: string[];
+  /** Leftover copies of a shared row removed from this library; the row itself is still live. Absent on
+   *  older runs. */
+  duplicates_removed?: string[];
   created: boolean;
   picks: Pick[];
   /** AI tokens the curate call for this (row, library) cost. Absent on legacy runs. */

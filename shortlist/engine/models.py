@@ -1328,6 +1328,9 @@ class CollectionDiff:
     removed: list[str] = field(default_factory=list)
     kept: list[str] = field(default_factory=list)
     deleted: list[str] = field(default_factory=list)  # rows destroyed this run (swept, or rebuilt)
+    # Leftover copies of a shared row deleted beside the live one. Not `deleted`: the row itself is still
+    # live, and the run page reads `deleted` as "this person no longer gets this row".
+    duplicates_removed: list[str] = field(default_factory=list)
     collection_title: str = ""
     created: bool = False
     # The Plex ratingKey of the collection this landed in. The delivery LEDGER's whole point: it is

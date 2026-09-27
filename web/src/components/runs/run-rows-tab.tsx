@@ -77,6 +77,8 @@ function SharedRowPanel({
   }
   const current =
     breakdown.find((entry) => entry.library_key === active) ?? breakdown[0];
+  // Absent on runs recorded before the field existed.
+  const duplicates = current?.duplicates_removed ?? [];
 
   return (
     <div className="space-y-4 p-5">
@@ -113,6 +115,14 @@ function SharedRowPanel({
                 {current.created && <Badge variant="outline">new row</Badge>}
               </div>
               <PickList picks={current.picks} collapseAfter={10} />
+              {duplicates.length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {duplicates.length === 1
+                    ? "Removed a duplicate copy of this row"
+                    : `Removed ${duplicates.length} duplicate copies of this row`}
+                  : {duplicates.join(", ")}
+                </p>
+              )}
             </div>
           )}
         </>

@@ -253,6 +253,51 @@ describe("RunRowsTab", () => {
     );
   });
 
+  it("notes a removed duplicate of a shared row quietly, never as a deleted row", () => {
+    renderTab(
+      run({
+        users: [user({ rows_considered: { picked: "not_due" } })],
+        shared_rows: [
+          {
+            collection_slug: "popular",
+            row_title: "👥 Popular Movies on SFLIX",
+            status: "ok",
+            error: null,
+            reason: null,
+            duration_ms: 64000,
+            llm_tokens: 0,
+            llm_tokens_by_step: {},
+            exa_searches: 0,
+            diff: { duplicates_removed: ["👥 Popular Movies on SFLIX"] },
+            picks: [pick(1, "Dune")],
+            breakdown: [
+              {
+                row_slug: "popular",
+                row_title: "👥 Popular Movies on SFLIX",
+                library_key: "1",
+                library_title: "Movies",
+                added: [],
+                removed: [],
+                kept: ["Dune"],
+                deleted: [],
+                duplicates_removed: ["👥 Popular Movies on SFLIX"],
+                created: false,
+                picks: [pick(1, "Dune", "11 people watched it")],
+              },
+            ],
+            has_trace: true,
+          },
+        ],
+      } as unknown as Partial<RunDetail>),
+    );
+
+    const note = screen.getByText(/removed a duplicate copy of this row/i);
+    expect(note).toHaveTextContent("👥 Popular Movies on SFLIX");
+    // The row is still live, with its picks right beside this — so no alarm colour and no "deleted".
+    expect(note).not.toHaveClass("text-destructive-text");
+    expect(screen.queryByText(/deleted/i)).not.toBeInTheDocument();
+  });
+
   it("explains a shared row that built nothing", () => {
     renderTab(
       run({
