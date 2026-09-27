@@ -34,6 +34,7 @@ import {
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
+import { dailyCronTime, describeCron } from "@/lib/cron";
 import { queuedReason, useRunActive, useWritesPlex } from "@/lib/job-activity";
 import {
   queryKeys,
@@ -218,7 +219,18 @@ function SchedulePanel({ entry }: { entry: JobCatalogEntry }) {
   const stored =
     ((settings.data ?? {})[entry.schedule_setting] as string | undefined) ?? "";
 
-  return <CronPicker value={stored} onChange={save} />;
+  // Blank means the built-in default here, not off, so unlike the optional branch above there is
+  // no separate restore chip — the blank preset itself just needs to say what it runs at, from the
+  // same `default_cron` /api/schedule already carries. "Daily" is the fallback for the moment before
+  // that response lands, and for a default that isn't a plain daily time.
+  const defaultCron =
+    schedule.data?.jobs.find((j) => j.kind === entry.kind)?.default_cron ?? "";
+  const defaultTime = dailyCronTime(defaultCron);
+  const blankLabel = defaultTime
+    ? `Built-in (${defaultTime})`
+    : (defaultCron && describeCron(defaultCron)) || "Daily";
+
+  return <CronPicker value={stored} onChange={save} blankLabel={blankLabel} />;
 }
 
 // --- live slots: what is happening, or just happened, because you pressed the button -------------

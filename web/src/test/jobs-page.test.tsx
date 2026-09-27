@@ -1127,22 +1127,59 @@ describe("JobsPage — the schedule panel for a job you can switch off", () => {
     expect(off.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("still calls a blank cron Daily for a job that cannot be switched off", async () => {
+  it("falls back to Daily for a job that cannot be switched off when the schedule has no entry for it yet", async () => {
+    // beforeEach's schedule mock only carries "sync.check" — nothing yet identifies what
+    // maintenance.prune's own default is, so the blank chip falls back to the generic label rather
+    // than showing a wrong time.
     renderPage();
     const row = await screen.findByTestId("job-maintenance.prune");
     await userEvent.click(
       within(row).getByRole("button", { name: "Clear out old records" }),
     );
 
-    // For every other job a blank cron means "use the built-in default", which is daily — so the
-    // chip means what it says, and there is no off state to offer.
     expect(
       within(row).getByRole("button", { name: "Daily" }),
     ).toBeInTheDocument();
     expect(within(row).queryByRole("button", { name: "Off" })).toBeNull();
-    // And no second way back to the default: Daily already IS it here, so a Built-in chip beside it
-    // would be two chips for one state.
+    // And no second way back to the default: the blank chip already IS it here, so a Built-in chip
+    // beside it would be two chips for one state.
     expect(within(row).queryByRole("button", { name: /Built-in/ })).toBeNull();
+  });
+
+  it("labels the blank chip with the built-in time for a job that cannot be switched off", async () => {
+    // Accurate but vague: "Daily" doesn't say WHEN, and the five non-off-able jobs don't all
+    // default to the same time. /api/schedule carries `default_cron` for maintenance.prune too, so
+    // the blank chip can say what it actually runs at.
+    getSchedule.mockResolvedValue({
+      jobs: [
+        {
+          type: "job",
+          kind: "maintenance.prune",
+          label: "Clear out old records",
+          description: "",
+          setting: "maintenance.prune_cron",
+          cron: "",
+          using_default: true,
+          default_cron: "0 3 * * *",
+          optional: false,
+          writes_plex: false,
+          next_run: "2026-08-01T03:00:00Z",
+        },
+      ],
+      rows: [],
+    });
+    renderPage();
+    const row = await screen.findByTestId("job-maintenance.prune");
+    await userEvent.click(
+      within(row).getByRole("button", { name: "Clear out old records" }),
+    );
+
+    expect(
+      await within(row).findByRole("button", { name: "Built-in (03:00)" }),
+    ).toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Daily" })).toBeNull();
+    // Still no off state and no second "restore" chip — blank already IS the default here.
+    expect(within(row).queryByRole("button", { name: "Off" })).toBeNull();
   });
 });
 
