@@ -2903,6 +2903,32 @@ class TestPerRowOverrides:
         assert "Hidden Gems" in report.users[0].diff.deleted
         ctx.plex.create_collection.assert_not_called()
 
+    def test_a_retired_top_seed_copy_is_removed_by_its_ledger_key_and_nothing_else(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """A row switched to shared is retired as a per-person row even when it is named `{top_seed}` — each
+        person's old copy wears a title nothing can recompute, so the ledger key is the only safe handle. A
+        copy the ledger does not name (mike's) is left alone, however much its title looks like the row's."""
+        ctx.config.rows = []
+        ctx.config.rows_defined = True
+        ctx.config.retired_rows = [RowSpec(slug="because", name_template="Because you watched {top_seed}", size=5)]
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        section_key = str(ctx.plex.sections.return_value[0].key)
+        sarahs_copy = fake_media_item(4242, "Because you watched The Bear" + row_marker(100))
+        mikes_copy = fake_media_item(4343, "Because you watched Fargo" + row_marker(200))
+        ctx.plex.find_owned_collections.side_effect = lambda section, label: {
+            "shortlist_sarah": [sarahs_copy],
+            "shortlist_mike": [mikes_copy],
+        }.get(label, [])
+        ctx.delivered_keys = {("sarah", "because", section_key): 4242}
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
+
+        ctx.plex.delete_owned_collection.assert_called_once()
+        assert ctx.plex.delete_owned_collection.call_args.args[0] is sarahs_copy
+        sarah = next(u for u in report.users if u.slug == "sarah")
+        assert sarah.removed_deliveries == [{"row_slug": "because", "library_key": section_key}]
+
 
 class TestRequestsWiring:
     """The request pass only runs when enabled, and it sees the titles the library lacks."""

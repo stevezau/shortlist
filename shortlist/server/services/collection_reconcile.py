@@ -557,13 +557,11 @@ def _reconcile_row_removal(
         if template is None:
             template = row_template(session, slug, state.secrets)
         other_rows = _other_rows(session, state.secrets, slug)
-    swept: set[str] = set()
 
     def remove_for(user: dict, displays: set[str]) -> None:
         rating_keys = keys_by_user.get(user["slug"], set())
         if not displays and not rating_keys:
             return
-        swept.add(user["slug"])
         removed.extend(
             remove_row_collections(
                 ctx.plex,
@@ -576,6 +574,14 @@ def _reconcile_row_removal(
                 claimed_titles=_claimed_titles(ctx, user, other_rows),
             )
         )
+        # The ledger records collections that EXIST. Only after a real removal — a dry run changed nothing,
+        # and forgetting there would leave the next live attempt with no ledger to address by. Per person, as
+        # soon as theirs returns: a walk that fails on someone later must not keep entries for collections it
+        # already deleted, since the nightly sweep of a shared row's per-person copies tries every such key.
+        if not dry_run:
+            with state.sessions() as session:
+                _forget_deliveries(session, slug, {user["slug"]}, in_sections)
+                session.commit()
 
     _walk_row_collections(
         ctx,
@@ -586,12 +592,6 @@ def _reconcile_row_removal(
         action=remove_for,
         only_user_ids=only_user_ids,
     )
-    # The ledger records collections that EXIST. Only after a real removal — a dry run changed nothing,
-    # and forgetting there would leave the next live attempt with no ledger to address by.
-    if swept and not dry_run:
-        with state.sessions() as session:
-            _forget_deliveries(session, slug, swept, in_sections)
-            session.commit()
     return dry_run
 
 

@@ -886,6 +886,80 @@ class TestCollectionsSeed:
 
         assert "blankish" not in {s.slug for s in retired}, "a whitespace-title row must not be auto-removed"
 
+    @pytest.mark.parametrize(
+        "template",
+        [
+            pytest.param("Popular Here", id="static-title"),
+            # Retired anyway: `remove_row` matches an unrenderable title by its ledger key ONLY, and leaves a copy
+            # the ledger does not name alone — so this cannot reach the default row the gate above protects.
+            pytest.param("Because you watched {top_seed}", id="top-seed-title"),
+        ],
+    )
+    def test_a_row_switched_to_shared_retires_everyones_per_person_copy(self, client: TestClient, template: str):
+        """The switch's own removal can miss a person's copy (the job gives up), and nothing else ever looked
+        for it again: it stayed on that person's Home for good. Every shared row's per-person copies are handed
+        to the nightly run for removal — for everyone, since whoever holds one was in the row's audience THEN."""
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        created = client.post("/api/collections", json={"name": "Popular Here"})
+        cid, slug = created.json()["id"], created.json()["slug"]
+        switched = client.patch(
+            f"/api/collections/{cid}",
+            json={"name": "Popular Here", "name_template": template, "build": "shared", "audience": "subset"},
+        )
+        assert switched.status_code == 200, switched.text
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            retired = builder._retired_rows(session, SettingsStore(session, client.app.state.secrets))
+
+        copy = next((s for s in retired if s.slug == slug), None)
+        assert copy is not None, "a shared row's per-person copies must be queued for removal"
+        assert not copy.shared, "the copies are per-person collections, under each person's own label"
+        assert copy.audience is None
+        assert copy.name_template == template
+
+    def test_a_disabled_shared_row_retires_no_per_person_copy(self, client: TestClient):
+        """Retired specs are indexed where they live, so a disabled shared row's libraries would stay in every
+        run's index — watches there seeding everyone's picks — for the sake of a copy that stays private."""
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        created = client.post("/api/collections", json={"name": "Popular Here"})
+        cid, slug = created.json()["id"], created.json()["slug"]
+        switched = client.patch(
+            f"/api/collections/{cid}",
+            json={"name": "Popular Here", "build": "shared", "audience": "subset", "enabled": False},
+        )
+        assert switched.status_code == 200, switched.text
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            retired = builder._retired_rows(session, SettingsStore(session, client.app.state.secrets))
+
+        assert slug not in {s.slug for s in retired}
+
+    def test_the_default_row_switched_to_shared_retires_copies_titled_from_the_global_template(
+        self, client: TestClient
+    ):
+        from shortlist.server.db.models import DEFAULT_SLUG
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        default = next(c for c in client.get("/api/collections").json() if c["slug"] == DEFAULT_SLUG)
+        switched = client.patch(
+            f"/api/collections/{default['id']}", json={"name": default["name"], "build": "shared", "audience": "subset"}
+        )
+        assert switched.status_code == 200, switched.text
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            retired = builder._retired_rows(session, SettingsStore(session, client.app.state.secrets))
+
+        copy = next(s for s in retired if s.slug == DEFAULT_SLUG)
+        assert copy.name_template == "", "empty: each person's copy renders the global template, or their own"
+
     def test_poster_config_round_trips_and_reaches_the_spec(self, client: TestClient):
         from shortlist.server.services.context_builder import ContextBuilder
         from shortlist.server.services.sse import EventBus

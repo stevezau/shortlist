@@ -347,6 +347,41 @@ class TestReconcileRowRemoval:
         label_used = plex.find_owned_collections.call_args.args[1]
         assert label_used == f"{SHARED_LABEL_PREFIX}movienight" == "shortlist__shared_movienight"
 
+    def test_a_walk_that_fails_partway_has_already_forgotten_the_people_it_finished(self, sessions):
+        """The ledger records collections that EXIST. Forgetting only after the whole walk meant a failure on the
+        second person kept the first person's entries for collections already deleted — and the nightly sweep
+        of a shared row's per-person copies tries every such key, every night, while Plex reuses ratingKeys."""
+        _add_user(sessions, slug="sarah", account_id=100)
+        _add_user(sessions, slug="mike", account_id=200)
+        with sessions() as session:
+            session.add(Collection(slug="friday", name="Friday", media="movie"))
+            for user_slug, key in (("sarah", 71), ("mike", 72)):
+                session.add(
+                    Delivery(collection_slug="friday", user_slug=user_slug, library_key="1", rating_key=key, title="x")
+                )
+            session.commit()
+        sarahs = _collection("Friday" + row_marker(100))
+        sarahs.ratingKey = 71
+
+        def owned(section, label):
+            if label == "shortlist_mike":
+                raise RuntimeError("PMS timed out")
+            return [sarahs] if label == "shortlist_sarah" else []
+
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [_section("Movies")]
+        plex.find_owned_collections.side_effect = owned
+
+        with pytest.raises(RuntimeError):
+            rec._reconcile_row_removal(
+                _state(sessions, plex), slug="friday", build="per_person", dry_run=False, removed=[]
+            )
+
+        plex.delete_owned_collection.assert_called_once_with(sarahs, LABEL_PREFIX)
+        with sessions() as session:
+            left = {d.user_slug for d in session.query(Delivery).filter_by(collection_slug="friday")}
+        assert left == {"mike"}, "sarah's copy is gone, so is her entry; mike's walk failed, so his stays"
+
     def test_shared_build_with_only_user_ids_does_nothing(self, sessions):
         """Who SEES a shared row is a share-filter concern, not a per-user Plex removal — an
         audience-shrink cleanup on a shared row must never touch the one collection everyone shares."""

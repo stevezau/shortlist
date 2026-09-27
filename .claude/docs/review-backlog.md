@@ -34,8 +34,8 @@ reproduced on a live server; both are reasoned from the cited code, not measured
   `test_a_new_shared_row_is_excluded_from_outsiders_before_the_next_row_is_written`,
   `test_a_new_shared_row_is_hidden_before_its_second_library_is_written` and
   `test_no_early_merge_for_a_shared_row_already_on_the_server`.
-- **MED, unverified on a live server — a build switch's collection removal can leave a stale per-person
-  copy behind permanently.** At save, `shortlist/server/api/row_changes.py:129-136` triggers RECONCILE
+- **FIXED (2026-09-27; unit-tested, not verified on a live server) — MED — a build switch's collection
+  removal can leave a stale per-person copy behind permanently.** At save, `shortlist/server/api/row_changes.py:129-136` triggers RECONCILE
   to delete every per-person copy of a row switching build (`collection_reconcile.py:551-594`), and the
   save waits for it — but the removal can still miss a copy: the reconcile job itself can give up
   partway (raise, time out, or the process restart mid-run), or the row is named with `{top_seed}` and
@@ -44,6 +44,24 @@ reproduced on a live server; both are reasoned from the cited code, not measured
   stays on Plex under its own owner's `shortlist_*` label — so it's never exposed to anyone else — but
   nothing revisits it afterwards: the nightly sweep only covers per-person rows switched OFF, not ones
   whose row switched TO shared (`context_builder.py:1225`), so it is permanent until removed by hand.
+  Fix: `context_builder._retired_rows` now also retires every ENABLED shared row as a per-person row, for
+  everyone the run processes, so each night's run removes any copy it finds through `remove_row`: by title
+  for a static name, by ledger key ONLY for a `{top_seed}` one, always under the person's own label (the
+  person's title marker keeps the shared collection and anything foreign out of a title match, the label
+  filter out of a key match — `test_delivery.py::TestRetiringASharedRowsPersonalCopies`). It skips the disabled-row render gate on
+  purpose, since `remove_row` never title-matches an unrenderable name. The switch's reconcile now forgets
+  each person's ledger rows as soon as their removal returns, not after the whole walk, so a walk that
+  fails later no longer leaves keys for copies it already deleted for the nightly sweep to retry while Plex
+  reuses ratingKeys. Still not reached: a copy whose person is paused or disabled (not in the run); a
+  static-titled copy wearing an OLD title (renamed in the same save, or a `{user}` title after a nickname
+  change — `remove_row` ignores the ledger key when a title renders); a `{top_seed}` copy whose ledger row
+  a completed walk forgot (an empty label read, or an ambiguous key — issue #121's other row); a person
+  whose OWN walk raises after deleting in one library keeps that library's dead key; and copies of a
+  DISABLED shared row (left out so its libraries are not indexed every run). Pinned by
+  `test_api_collections.py::test_a_row_switched_to_shared_retires_everyones_per_person_copy`,
+  `test_a_disabled_shared_row_retires_no_per_person_copy`,
+  `test_the_default_row_switched_to_shared_retires_copies_titled_from_the_global_template` and
+  `test_collection_reconcile.py::test_a_walk_that_fails_partway_has_already_forgotten_the_people_it_finished`.
 
 ## OPEN — seen during the row-editor live proof on SFLIX (2026-09-27)
 

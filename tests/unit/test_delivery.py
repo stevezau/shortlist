@@ -3404,3 +3404,72 @@ class TestOnDemandReconcilesNeverMatchAnotherRowsTitle:
 
         assert reset == ["Movies"]
         plex.reset_poster.assert_called_once_with(a)
+
+
+class TestRetiringASharedRowsPersonalCopies:
+    """A row switched to shared is retired as a per-person row, for everyone, every night — so its sweep meets
+    every other collection on the server. A title match needs the person's invisible marker, which the shared
+    collection (`row_marker(0)`) and anything foreign lack; a ledger-key match has only the label filter, so
+    that is run through the real `PlexClient`."""
+
+    MARK = row_marker(100)
+
+    def _remove(self, spec, by_section: dict[str, list], *, ledger=None, other_rows=()) -> list[int]:
+        from shortlist.engine.delivery import remove_row
+        from shortlist.engine.models import CollectionDiff, RowSpec
+
+        client = PlexClient.__new__(PlexClient)
+        client._section_collections = lambda section: by_section[section.key]
+        deleted: list[int] = []
+        client.delete_owned_collection = lambda collection, prefix: deleted.append(collection.ratingKey)
+        sections = [SimpleNamespace(key=key, title=f"Movies {key}", type="movie") for key in by_section]
+        remove_row(
+            client,
+            make_profile("sarah", account_id=100),
+            EngineConfig(row_name_template="Picked for You"),
+            spec,
+            dry_run=False,
+            diff=CollectionDiff(),
+            sections=sections,
+            delivered_keys=ledger or {},
+            other_rows=[RowSpec(slug="picked", name_template="", size=5), *other_rows],
+        )
+        return deleted
+
+    @staticmethod
+    def _collection(key: int, title: str, *labels: str) -> SimpleNamespace:
+        return SimpleNamespace(ratingKey=key, title=title, labels=[SimpleNamespace(tag=t) for t in labels])
+
+    def test_only_the_stale_copy_goes(self):
+        from shortlist.engine.models import RowSpec
+
+        shared = self._collection(900, "Popular Here" + row_marker(0), "shortlist__shared_popular", "shortlist")
+        # Another of sarah's rows builds in library 1 under the very same title (issue #121).
+        same_title = self._collection(501, "Popular Here" + self.MARK, "shortlist_sarah", "shortlist")
+        default = self._collection(502, "Picked for You" + self.MARK, "shortlist_sarah", "shortlist")
+        kometa = self._collection(504, "Popular Here", "Kometa")
+        stale = self._collection(503, "Popular Here" + self.MARK, "shortlist_sarah", "shortlist")
+
+        deleted = self._remove(
+            RowSpec(slug="popular", name_template="Popular Here", size=5),
+            {"1": [shared, same_title, default, kometa], "2": [stale]},
+            other_rows=[RowSpec(slug="gems", name_template="Popular Here", size=5, library_keys=["1"])],
+        )
+
+        assert deleted == [503]
+
+    @pytest.mark.parametrize("key", [900, 504], ids=["shared-collection", "foreign-collection"])
+    def test_a_top_seed_copys_ledger_key_cannot_reach_a_collection_under_another_label(self, key: int):
+        from shortlist.engine.models import RowSpec
+
+        shared = self._collection(900, "Popular Here" + row_marker(0), "shortlist__shared_popular", "shortlist")
+        kometa = self._collection(504, "Popular Here", "Kometa")
+        default = self._collection(502, "Picked for You" + self.MARK, "shortlist_sarah", "shortlist")
+
+        deleted = self._remove(
+            RowSpec(slug="popular", name_template="Because you watched {top_seed}", size=5),
+            {"1": [shared, kometa, default]},
+            ledger={"1": key},
+        )
+
+        assert deleted == []
