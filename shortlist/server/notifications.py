@@ -1042,8 +1042,8 @@ def _restrictions_restored(session: Session) -> dict | None:
             "quietly switched your restriction off: an exclude rule also let them see other people's rows, "
             "and an allow-list let them see the whole library. Shortlist has fixed that, so your "
             "restriction applies again and they may notice less on the server than before.\n\n"
-            "One thing to know if it is an allow-list: Plex now applies it to Shortlist's rows too, so they "
-            "only see their own row if it carries one of the allowed labels."
+            "One thing to know if it is an allow-list: Shortlist fills their own row only with titles the "
+            "allow-list lets them see, so a narrow list gives a short row."
         ),
         "action_url": "/sharing",
         "action_label": "See sharing",

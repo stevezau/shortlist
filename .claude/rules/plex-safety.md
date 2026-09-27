@@ -64,8 +64,10 @@ violate them.
    collection does. So admitting the row's label admits the collection and none of its 30 members: the
    account sees an EMPTY row. In the same measurement the row collection stayed visible with no label
    admitted at all, so "cannot see its own rows" did not reproduce either. The write is still additive
-   and harmless, so nothing here is being reverted — but do not build on the premise that an allow-list
-   account can USE its row. See the review-backlog entry of 2026-09-18 before extending this.
+   and harmless, so nothing here is being reverted. What DOES fill the row is picking: `RowPolicy.visible`
+   limits every row to titles the account can see, read as that account with its own token
+   (`PlexClient.visible_to`). The measurement above planted the allow list on a row built before it and
+   never re-ran, so its "0 / 30" is a stale row, not what a run produces (review-backlog, 2026-09-28).
    A PMS groups a filter as `&`-separated groups of `|`-separated alternatives
    (`tests/fixtures/pms_share_filter_allow_lists.json`), and a label added to only one of two ANDed allow
    groups leaves the row hidden, so it goes into every group that would hide the row. It touches that one

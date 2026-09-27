@@ -198,8 +198,9 @@ gets a `label!=shortlist_<userslug>` exclusion (merged into their existing `filt
 your own on an account — a content rating, or a label allow-list — Shortlist joins its exclusion to
 them with **and**, so both apply. Plex reads conditions joined with `|` as **or**; versions before
 this fix joined them that way, which switched your restriction off. The first privacy pass after
-upgrading repairs it and tells you which accounts it fixed. An allow-list applies to Shortlist's rows
-as well, so that person only sees their own row if it carries one of the allowed labels. The write
+upgrading repairs it and tells you which accounts it fixed. Shortlist also picks only titles that
+person can see, checking as them, so an allow-list gives a row of titles it admits, and a narrow one a
+short row. The write
 ordering is what keeps this leak-safe: a run delivers rows **unpromoted**, merges all the exclusions, and only **then**
 promotes rows onto Home. Unpromoted is not invisible — a collection is still listed in the library's
 Collections tab for anyone whose filter does not exclude it — so when someone gets their **first** row,
