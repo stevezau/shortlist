@@ -492,10 +492,11 @@ def _deliver_phase(
     already_on_server = set(stored_labels)
     early_merges = {"stopped": False}
 
-    def first_row_hider(user: UserProfile) -> Callable[[], None] | None:
-        """Hide this person's first row once, from inside the write lock that wrote it. Never raises."""
-        if user.slug in already_on_server:
-            return None
+    def first_row_hider(who: str) -> Callable[[], None]:
+        """Hide `who`'s first row once, from inside the delivery that wrote it. Never raises.
+
+        A person's row calls this under the write lock; a shared row is delivered alone, after the pool joins.
+        """
         done = False
 
         def hide() -> None:
@@ -504,9 +505,9 @@ def _deliver_phase(
                 return
             done = True
             try:
-                merged = _exclude_first_rows(ctx, users, stored_labels, report, who=user.slug)
+                merged = _exclude_first_rows(ctx, users, stored_labels, report, who=who)
             except Exception:
-                logger.exception("{}: could not hide a first row early — the end-of-run merge will", user.slug)
+                logger.exception("{}: could not hide a first row early — the end-of-run merge will", who)
                 merged = False
             if not merged:
                 early_merges["stopped"] = True
@@ -526,7 +527,7 @@ def _deliver_phase(
         # run-level record, so a paused user's deletion is never lost just because they have no
         # UserRunReport.
         swept_titles = report.swept_rows.get(user.slug, [])
-        hide_first_row = first_row_hider(user)
+        hide_first_row = None if user.slug in already_on_server else first_row_hider(user.slug)
         started = time.monotonic()
         delivered = False
         try:
@@ -616,11 +617,25 @@ def _deliver_phase(
     # midnight pass on the nights after that pass stops looking.
     if users and not ctx.cancelled():
         shared_to_promote.extend((spec, None) for spec in ctx.config.shared_rows() if spec.dormant)
+    # A new shared row is a first row too: it is hidden from every account outside its audience (and, with
+    # `hide_shared_from_disabled`, from disabled accounts) only once a merge writes its exclude, and every early
+    # merge above ran before it existed. Matched by label, not by key: the PMS read files a shared row under
+    # `_shared_<slug>`, delivery under `shared_<slug>`.
+    labels_on_server = {label.lower() for label in stored_labels.values()}
     for spec in shared_specs:
         if spec.dormant:
             continue
+        is_new = not spec.label or spec.label.lower() not in labels_on_server
         _shared_report, agg = rows._run_shared(
-            ctx, spec, users, seed_index, library_index, stored_labels, report, order_work
+            ctx,
+            spec,
+            users,
+            seed_index,
+            library_index,
+            stored_labels,
+            report,
+            order_work,
+            on_first_row=first_row_hider(f"{SHARED_SLUG_PREFIX}_{spec.slug}") if is_new else None,
         )
         if agg is not None:
             shared_to_promote.append((spec, agg))
@@ -630,8 +645,9 @@ def _deliver_phase(
 def _exclude_first_rows(
     ctx: EngineContext, users: list[UserProfile], stored_labels: dict[str, str], report: RunReport, *, who: str
 ) -> bool:
-    """Merge the excludes for `who`'s just-created first row into every other account. Returns False when
-    plex.tv could not be read or written, so the caller stops trying early merges for the rest of the run.
+    """Merge the excludes for `who`'s just-created first row — a person's, or a new shared row's — into every
+    account that must not see it. Returns False when plex.tv could not be read or written, so the caller stops
+    trying early merges for the rest of the run.
 
     Additive only: `collections_known=False` and no departure evidence, so `sync_user_restrictions`
     removes nothing but a person's own label from their own filter. Best-effort — anything that fails
@@ -683,8 +699,8 @@ def _exclude_first_rows(
             written_accounts += 1
             _record_filter_write(report, user, written)
             _record_restored_restriction(ctx, user, written, report)
-    # Its own line: this runs under the write lock inside the person's row delivery, so its time is also in
-    # that row's timing — which would otherwise read as Plex being slow.
+    # Its own line: this runs inside the row's delivery, so its time is also in that row's timing — which would
+    # otherwise read as Plex being slow.
     logger.info(
         "{}: first row excluded early — {} share filter(s) written in {:.1f}s",
         who,

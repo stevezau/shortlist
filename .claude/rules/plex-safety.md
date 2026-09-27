@@ -28,7 +28,9 @@ violate them.
    into every other account as soon as that row's first library is written (created, labelled, and its
    browse-hide and poster set), inside the same hold of the write lock (additive only), so no other
    collection is written in between; (c) still runs at the end, reads every filter fresh, and
-   gates promotion. A run with no
+   gates promotion. A shared row new to the server gets the same early merge, into every account outside
+   its audience (and, with `hide_shared_from_disabled`, every disabled account): shared rows are delivered after every person's, so each
+   person's early merge ran before it existed. A run with no
    users (`engine_run(ctx, [])`) still does the sweep + merge — it only ever makes the server more
    private, never creates or promotes.
 

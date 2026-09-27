@@ -17,7 +17,7 @@ Found read-only while tracing per-person ↔ shared switching for the row-editor
 it — the design explicitly declines to fix them and sends them here instead. Neither has been
 reproduced on a live server; both are reasoned from the cited code, not measured.
 
-- **HIGH, unverified on a live server — a brand-new subset shared row is visible to people outside its
+- **FIXED (2026-09-27; unit-tested, not verified on a live server) — HIGH — a brand-new subset shared row is visible to people outside its
   audience until the run ends.** Precondition: a row switches to `build=shared` with an `audience`
   narrower than everyone (a "subset" shared row), and no earlier per-person row of this row's owner has
   already put a `shortlist_<userslug>` exclude on the outsiders' share filters. The early first-row
@@ -26,6 +26,14 @@ reproduced on a live server; both are reasoned from the cited code, not measured
   unpromoted, in every excluded person's library **Collections** tab from the moment it's written until
   the end-of-run share-filter merge closes the gap. Applies to any brand-new subset shared row,
   including one just switched from per-person.
+  Fix: a shared row whose label was not on the server at run start now gets the same early merge as a
+  person's first row, fired by `deliver_rows`' `on_label_stored` after its first library is written
+  (`pipeline._deliver_phase` → `rows._run_shared`). It also covered a gap the entry missed: a new PUBLIC
+  shared row was listed for disabled accounts (`hide_shared_from_disabled`) until the end of the run.
+  Pinned by three tests in `test_pipeline.py::TestAFirstRowIsHiddenAsSoonAsItsPersonIsDelivered`:
+  `test_a_new_shared_row_is_excluded_from_outsiders_before_the_next_row_is_written`,
+  `test_a_new_shared_row_is_hidden_before_its_second_library_is_written` and
+  `test_no_early_merge_for_a_shared_row_already_on_the_server`.
 - **MED, unverified on a live server — a build switch's collection removal can leave a stale per-person
   copy behind permanently.** At save, `shortlist/server/api/row_changes.py:129-136` triggers RECONCILE
   to delete every per-person copy of a row switching build (`collection_reconcile.py:551-594`), and the

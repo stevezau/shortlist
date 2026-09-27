@@ -4087,6 +4087,15 @@ class TestAFirstRowIsHiddenAsSoonAsItsPersonIsDelivered:
     are unaffected — their exclude is already on every share.
     """
 
+    def _mark_end_of_run_merge(self, events: list[tuple], monkeypatch) -> None:
+        end_of_run_merge = pipeline_mod._privacy_sync_phase
+
+        def marked(*args, **kwargs):
+            events.append(("end-of-run merge",))
+            return end_of_run_merge(*args, **kwargs)
+
+        monkeypatch.setattr(pipeline_mod, "_privacy_sync_phase", marked)
+
     def _record_writes(self, ctx: EngineContext, mock_plextv) -> list[tuple]:
         events: list[tuple] = []
 
@@ -4413,6 +4422,108 @@ class TestAFirstRowIsHiddenAsSoonAsItsPersonIsDelivered:
         assert all(u.status == "ok" for u in report.users)
         sarah = next(u for u in mock_plextv.users if u.id == 100)
         assert "Shortlist_mike" in sarah.filters["filterMovies"]
+
+    # A public row nobody is disabled from is the third cell: it is excluded from nobody, so there is no
+    # exclude to write early or late — covered by the shared-row audience tests in test_privacy.py.
+    @pytest.mark.parametrize(
+        ("audience", "disabled", "outsiders"),
+        [
+            pytest.param({100, 200}, set(), {300, 400}, id="subset-audience"),
+            pytest.param(None, {300}, {300}, id="public-row-disabled-account"),
+        ],
+    )
+    def test_a_new_shared_row_is_excluded_from_outsiders_before_the_next_row_is_written(
+        self, ctx: EngineContext, mock_plextv, monkeypatch, audience, disabled, outsiders
+    ):
+        """Shared rows are delivered after every person's row, so every early merge above has already run by
+        the time a brand-new shared row exists. It sits in an outsider's Collections tab exactly like a
+        person's first row, so it is hidden the same way: before the next row is written, not at run's end."""
+        ctx.plex.owned_collections.return_value = {
+            "sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[501]),
+            "mike": OwnedRow(label="Shortlist_mike", rating_keys=[502]),
+        }
+        ctx.config.rows = [
+            RowSpec(slug="popular", name_template="Popular", size=5, shared=True, min_watchers=2, audience=audience),
+            RowSpec(slug="gems", name_template="Gems", size=5, shared=True, min_watchers=2, audience=audience),
+        ]
+        ctx.disabled_account_ids = disabled
+        mock_plextv.users = [plextv_user(a, n) for a, n in ((100, "sarah"), (200, "mike"), (300, "jess"), (400, "dan"))]
+        events = self._record_writes(ctx, mock_plextv)
+        self._mark_end_of_run_merge(events, monkeypatch)
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
+
+        def create_of(title: str) -> int:
+            return next(i for i, e in enumerate(events) if e[0] == "create" and e[1].startswith(title))
+
+        def hides_of(label: str) -> list[tuple[int, int]]:
+            return [
+                (i, e[1])
+                for i, e in enumerate(events)
+                if e[0] == "filter" and label in e[2].get("filterMovies", "").lower()
+            ]
+
+        end = events.index(("end-of-run merge",))
+        popular, gems = hides_of("shortlist__shared_popular"), hides_of("shortlist__shared_gems")
+        assert popular and gems, events
+        assert create_of("Popular") < popular[0][0] < create_of("Gems"), events
+        assert create_of("Gems") < gems[0][0] < end, events
+        assert {account for _, account in popular} == outsiders, "every outsider, and nobody in the audience"
+
+    def test_a_new_shared_row_is_hidden_before_its_second_library_is_written(self, ctx: EngineContext, mock_plextv):
+        movies, classics = (
+            MagicMock(type="movie", key=key, title=title) for key, title in (("1", "Movies"), ("2", "Classics"))
+        )
+        for section in (movies, classics):
+            section.collections.return_value = []
+        ctx.plex.sections.return_value = [movies, classics]
+        ctx.plex.owned_collections.return_value = {
+            "sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[501]),
+            "mike": OwnedRow(label="Shortlist_mike", rating_keys=[502]),
+        }
+        ctx.config.rows = [
+            RowSpec(slug="popular", name_template="Popular", size=5, shared=True, min_watchers=2, audience={100, 200})
+        ]
+        mock_plextv.users = [plextv_user(a, n) for a, n in ((100, "sarah"), (200, "mike"), (300, "jess"))]
+        events = self._record_writes(ctx, mock_plextv)
+
+        def create(section, title, items):
+            events.append(("create", title, section.key))
+            return MagicMock()
+
+        ctx.plex.create_collection.side_effect = create
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
+
+        creates = [i for i, e in enumerate(events) if e[0] == "create"]
+        hides = [
+            i
+            for i, e in enumerate(events)
+            if e[0] == "filter" and "shortlist__shared_popular" in e[2].get("filterMovies", "").lower()
+        ]
+        assert len(creates) == 2 and hides, events
+        assert creates[0] < hides[0] < creates[1], events
+
+    def test_no_early_merge_for_a_shared_row_already_on_the_server(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        # The PMS read files it under `_shared_popular` and Plex title-cases its label; matching on either as-is
+        # would treat every shared row as new and walk every account for it, every night.
+        ctx.plex.owned_collections.return_value = {
+            "sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[501]),
+            "mike": OwnedRow(label="Shortlist_mike", rating_keys=[502]),
+            "_shared_popular": OwnedRow(label="Shortlist__shared_popular", rating_keys=[503]),
+        }
+        ctx.config.rows = [
+            RowSpec(slug="popular", name_template="Popular", size=5, shared=True, min_watchers=2, audience={100, 200})
+        ]
+        mock_plextv.users = [plextv_user(a, n) for a, n in ((100, "sarah"), (200, "mike"), (300, "jess"))]
+        events = self._record_writes(ctx, mock_plextv)
+        self._mark_end_of_run_merge(events, monkeypatch)
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
+
+        end = events.index(("end-of-run merge",))
+        assert any(e[0] == "create" and e[1].startswith("Popular") for e in events[:end]), events
+        assert not [e for e in events[:end] if e[0] == "filter"], events
 
 
 class TestEffectiveRowSources:

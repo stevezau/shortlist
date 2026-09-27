@@ -3462,19 +3462,26 @@ def _run_shared(
     stored_labels: dict[str, str],
     report,
     order_work: list[tuple] | None = None,
+    on_first_row: Callable[[], None] | None = None,
 ) -> tuple[UserRunReport, UserProfile | None]:
     """Deliver one shared 'popular on this server' row from AGGREGATE history.
 
     Owns its own report row and its own error handling, so one shared row failing never stops the
     others and never leaves the run unaudited. Returns ``(user_report, agg)`` — the synthetic
     profile is a promotion candidate when a row was delivered, else None.
+
+    `on_first_row` is called each time one of this row's libraries stores its label, before the next
+    library is written — so a new row is hidden from everyone outside its audience first
+    (`pipeline._deliver_phase`). It must not raise.
     """
     started = time.monotonic()
     slug = f"{SHARED_SLUG_PREFIX}_{spec.slug}"
     user_report = UserRunReport(username=f"Shared · {spec.slug}", slug=slug)
     report.users.append(user_report)
     try:
-        agg = _shared_row(ctx, spec, users, seed_index, library_index, stored_labels, user_report, slug, order_work)
+        agg = _shared_row(
+            ctx, spec, users, seed_index, library_index, stored_labels, user_report, slug, order_work, on_first_row
+        )
     except Exception as e:  # one shared row's failure never stops the next (rule 6 resume-safety)
         user_report.status = "error"
         user_report.error = f"{type(e).__name__}: {e}"
@@ -3500,6 +3507,7 @@ def _shared_row(
     user_report: UserRunReport,
     slug: str,
     order_work: list[tuple] | None = None,
+    on_first_row: Callable[[], None] | None = None,
 ) -> UserProfile | None:
     """Build and deliver the shared row's picks (the body ``_run_shared`` guards).
 
@@ -3706,6 +3714,7 @@ def _shared_row(
         breakdown=user_report.breakdown,
         order_work=order_work,
         on_write=lambda counts: _emit(ctx, slug, "delivering", counts),
+        on_label_stored=on_first_row,
         written_details=_written_details(ctx, slug, spec.slug),
     )
     return agg if picks else None
