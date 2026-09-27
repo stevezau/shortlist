@@ -209,9 +209,9 @@ describe("RowEditor — acting on the row you're editing", () => {
     await screen.findByRole("button", { name: /Run Hidden Gems now/i });
     expect(screen.queryByText(/unsaved changes/i)).toBeNull();
 
-    await userEvent.click(
-      screen.getByRole("switch", { name: /watch it again row/i }),
-    );
+    // The "watch it again" switch this used to flip is now a kind; switching to it is the same edit.
+    await userEvent.click(screen.getByRole("radio", { name: "Watch it again" }));
+    await userEvent.click(screen.getByRole("button", { name: "Change it" }));
 
     expect(await screen.findByText(/unsaved changes/i)).toBeInTheDocument();
   });
@@ -227,7 +227,7 @@ describe("RowEditor — a name that needs a watch", () => {
     renderEditor(row({ name: "Car vous avez regardé {top_seed}" }));
 
     expect(
-      await screen.findByLabelText(/nothing watched yet/i),
+      await screen.findByLabelText(/Name for someone who.s new/i),
     ).toBeInTheDocument();
   });
 
@@ -236,7 +236,7 @@ describe("RowEditor — a name that needs a watch", () => {
     // people on a real server get this row at all. It has to read as a choice, not a blank field.
     renderEditor(row({ name: "Because you watched {top_seed}" }));
 
-    await screen.findByLabelText(/nothing watched yet/i);
+    await screen.findByLabelText(/Name for someone who.s new/i);
     expect(screen.getByText(/won.t get\s+this row/i)).toBeInTheDocument();
   });
 
@@ -245,7 +245,7 @@ describe("RowEditor — a name that needs a watch", () => {
 
     await screen.findByLabelText(/^row name$/i).catch(() => null);
     expect(
-      screen.queryByLabelText(/nothing watched yet/i),
+      screen.queryByLabelText(/Name for someone who.s new/i),
     ).not.toBeInTheDocument();
   });
 });
@@ -922,29 +922,56 @@ describe("RowEditor — recent watches to search", () => {
   });
 });
 
-describe("RowEditor — watches every source builds from", () => {
+describe("RowEditor — how many recent watches to match", () => {
   beforeEach(() => {
     updateCollection.mockClear();
+    settingsData.current = {};
   });
 
   it("shows the number field only when the row overrides the default", () => {
     renderEditor(row({ max_seeds: 3 }));
     expect(
-      screen.getByLabelText(/^Watches every source builds from$/i),
+      screen.getByLabelText(/^How many recent watches to match$/i),
     ).toHaveValue(3);
     expect(
       screen.getByRole("switch", {
-        name: /default number of watches every source builds from/i,
+        name: /global default for how many recent watches to match/i,
       }),
     ).not.toBeChecked();
   });
 
   it("round-trips a per-row max_seeds into the PATCH body", async () => {
+    // Making a "Because you watched X" row honest — 1 watch on a movies-only row — used to be done by
+    // turning this switch off. It is now the Because you watched row's own "Based on" choice.
+    renderEditor(
+      row({
+        name_template: "Because you watched {top_seed}",
+        max_seeds: null,
+        media: "movie",
+      }),
+    );
+
+    await userEvent.click(
+      screen.getByRole("radio", { name: "Their latest film" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save changes/i }),
+    );
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    expect(
+      (updateCollection.mock.calls.at(0)?.[1] as Collection).max_seeds,
+    ).toBe(1);
+  });
+
+  it("stops inheriting a Picked for You row's count at the global, so it stays Picked for You", async () => {
+    // 1 or 2 would make it a Because you watched row, which only the kind picker should do.
+    settingsData.current = { "recommendations.max_seeds": 25 };
     renderEditor(row({ max_seeds: null, media: "movie" }));
 
     await userEvent.click(
-      screen.getByRole("switch", {
-        name: /default number of watches every source builds from/i,
+      await screen.findByRole("switch", {
+        name: /global default for how many recent watches to match/i,
       }),
     );
     await userEvent.click(
@@ -952,11 +979,9 @@ describe("RowEditor — watches every source builds from", () => {
     );
 
     await waitFor(() => expect(updateCollection).toHaveBeenCalled());
-    // 1, not the 30 default: turning the switch off is what someone does to make a
-    // "Because you watched X" row honest, so the field opens where that lands.
     expect(
       (updateCollection.mock.calls.at(0)?.[1] as Collection).max_seeds,
-    ).toBe(1);
+    ).toBe(25);
   });
 
   it("round-trips a per-row cold_start into the PATCH body", async () => {
@@ -996,14 +1021,14 @@ describe("RowEditor — watches every source builds from", () => {
 
   it("opens at 2, not 1, for a row covering movies AND TV", async () => {
     // Seeds are balanced across the media types present, so a budget of 1 yields ONE type — a
-    // "both" row at 1 gathers nothing for its other half and that library never builds.
+    // "both" row at 1 gathers nothing for its other half and that library never builds. Making a
+    // row about one watch is now the switch to Because you watched.
     renderEditor(row({ max_seeds: null, media: "both" }));
 
     await userEvent.click(
-      screen.getByRole("switch", {
-        name: /default number of watches every source builds from/i,
-      }),
+      screen.getByRole("radio", { name: "Because you watched" }),
     );
+    await userEvent.click(screen.getByRole("button", { name: "Change it" }));
     await userEvent.click(
       screen.getByRole("button", { name: /Save changes/i }),
     );
@@ -1014,12 +1039,13 @@ describe("RowEditor — watches every source builds from", () => {
     ).toBe(2);
   });
 
-  it("warns a {top_seed} row that its name promises one title", () => {
+  it("tells a {top_seed} blend that its name mentions only one of its watches", () => {
+    // Neutral help now, not an amber "Set it to 1" (owner-approved mockup): a blend is a real choice.
     renderEditor(
       row({ name_template: "Because you watched {top_seed}", media: "movie" }),
     );
     expect(
-      screen.getByText(/blending their whole recent viewing/i),
+      screen.getByText(/but the name only mentions the latest one/i),
     ).toBeInTheDocument();
     // A movies-only row has no other half to strand, so it must not get the both-media caveat.
     expect(
@@ -1056,7 +1082,7 @@ describe("RowEditor — watches every source builds from", () => {
       screen.queryByText(/one of your two libraries would get nothing/i),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText(/blending their whole recent viewing/i),
+      screen.getByText(/but the name only mentions the latest one/i),
     ).toBeInTheDocument();
   });
 
@@ -1116,12 +1142,14 @@ describe("RowEditor — which watch it follows", () => {
     // Above two the row is blending a history and has no single watch to follow, so the question
     // has no answer and asking it would be noise.
     renderEditor(row({ max_seeds: 1 }));
-    expect(screen.getByText(/Which watch it follows/i)).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/Take turns between their last/i),
+    ).toBeEnabled();
 
     cleanup();
     renderEditor(row({ max_seeds: 30 }));
     expect(
-      screen.queryByText(/Which watch it follows/i),
+      screen.queryByLabelText(/Take turns between their last/i),
     ).not.toBeInTheDocument();
   });
 
@@ -1146,16 +1174,23 @@ describe("RowEditor — which watch it follows", () => {
     // The control only renders for a 1..2-seed row. Widening the budget without clearing the window
     // left the row cycling — and forced to nightly rebuilds — with the control gone from the editor,
     // so there was nothing to see it by and no way to undo it.
-    renderEditor(row({ max_seeds: 1, seed_window: 4 }));
+    // Named after a watch: only then does a blend stay a Because you watched row (`rowKindOf`).
+    renderEditor(
+      row({
+        name_template: "Because you watched {top_seed}",
+        max_seeds: 1,
+        seed_window: 4,
+      }),
+    );
 
-    const budget = screen.getByLabelText(/^Watches every source builds from$/i);
-    await userEvent.clear(budget);
-    await userEvent.type(budget, "30");
-    await userEvent.tab();
+    // The budget is "Based on" on a Because you watched row; a blend is the wider budget.
+    await userEvent.click(
+      screen.getByRole("radio", { name: /A blend of their last/i }),
+    );
 
     expect(
-      screen.queryByText(/Which watch it follows/i),
-    ).not.toBeInTheDocument();
+      screen.getByLabelText(/Take turns between their last/i),
+    ).toBeDisabled();
     await userEvent.click(
       screen.getByRole("button", { name: /Save changes/i }),
     );
@@ -1168,7 +1203,7 @@ describe("RowEditor — which watch it follows", () => {
   it("round-trips the window into the PATCH body", async () => {
     renderEditor(row({ max_seeds: 1, seed_window: 1 }));
 
-    const field = screen.getByLabelText(/Recent watches to choose from/i);
+    const field = screen.getByLabelText(/Take turns between their last/i);
     await userEvent.clear(field);
     await userEvent.type(field, "3");
     await userEvent.tab();
@@ -1377,12 +1412,13 @@ describe("RowEditor — every group is on screen, only the optional ones fold", 
     screen.getByText(title, { selector: "summary span span" }).closest("details");
   const GROUPS = [
     "How it looks on Plex",
+    // Directly under it: the kind decides every setting below (design §3). A seasonal row's seasons
+    // live in this group now, since following the calendar is a kind.
+    "What kind of row is this?",
     "Who gets it",
-    // Before "What goes in it", because following a season decides what goes in it (discussion #124).
-    "Seasons",
     "What goes in it",
     "When it updates",
-    "Where people see it",
+    "Where and when people see it",
     "Requests",
   ];
 
@@ -1406,7 +1442,7 @@ describe("RowEditor — every group is on screen, only the optional ones fold", 
     expect(groupNamed("Requests")).not.toHaveAttribute("open");
   });
 
-  it("asks its questions in order: how it looks, who gets it, its seasons, what's in it, when it updates, where it shows", () => {
+  it("asks its questions in order: how it looks, what kind it is, who gets it, what's in it, when it updates, where and when it shows", () => {
     renderEditor(row());
 
     const titles = Array.from(
@@ -1436,22 +1472,58 @@ describe("RowEditor — every group is on screen, only the optional ones fold", 
     ).toBeInTheDocument();
     expect(within(groupNamed("When it updates")!).getByText("Schedule")).toBeInTheDocument();
     expect(
-      within(groupNamed("Where people see it")!).getByLabelText("Sort title prefix"),
+      within(groupNamed("Where and when people see it")!).getByLabelText("Sort title prefix"),
     ).toBeInTheDocument();
     expect(
-      within(groupNamed("Where people see it")!).getByRole("button", { name: "Every day" }),
+      within(groupNamed("Where and when people see it")!).getByRole("button", { name: "Every day" }),
     ).toBeInTheDocument();
   });
 
-  it("a folded group still says what is inside it", () => {
+  it("a folded group still says what is inside it", async () => {
     // A disclosure that hides its contents AND what they are set to is worse than no disclosure.
     // Scoped to the group's own summary: the preview panel also reports the tag, so an unscoped
-    // match would pass on the panel alone even if the summary said nothing.
+    // match would pass on the panel alone even if the summary said nothing. Requests are on: with
+    // them off the group holds only a note, and its summary says so instead.
+    settingsData.current = { "requests.enabled": true };
     renderEditor(row({ request_tag: "family-picks" }));
 
-    const requests = screen.getByText("Requests").closest("details");
+    const requests = groupNamed("Requests")!;
     expect(requests).not.toHaveAttribute("open");
-    expect(requests).toHaveTextContent(/family-picks/);
+    expect(
+      await within(requests.querySelector("summary") as HTMLElement).findByText(/family-picks/),
+    ).toBeInTheDocument();
+  });
+
+  it("sums up the folded Requests group in the same words as the preview's Requests line", async () => {
+    settingsData.current = {
+      "requests.enabled": true,
+      "requests.max_per_run": 5,
+      "requests.auto_send": true,
+    };
+    renderEditor(row({ request_tag: "family-picks", req_max_per_row: 3 }));
+
+    const summary = await within(
+      groupNamed("Requests")!.querySelector("summary") as HTMLElement,
+    ).findByText(/Up to 3 a run/);
+    expect(summary).toHaveTextContent(
+      "Up to 3 a run, sent to Radarr/Sonarr automatically (global default), tagged “family-picks”",
+    );
+    expect(document.querySelector('[data-fact="requests"] dd')?.textContent).toBe(
+      summary.textContent,
+    );
+  });
+
+  it("says in the folded Requests group when requests are off", async () => {
+    settingsData.current = { "requests.enabled": false };
+    renderEditor(row({ request_tag: "family-picks" }));
+
+    const requests = groupNamed("Requests")!;
+    expect(
+      await within(requests.querySelector("summary") as HTMLElement).findByText(
+        "None — requests are off in Settings",
+      ),
+    ).toBeInTheDocument();
+    expect(within(requests).queryByLabelText(/Request tag/)).toBeNull();
   });
 
   it("shows a warning that used to be buried in a collapsed group", () => {
@@ -1556,10 +1628,10 @@ describe("RowEditor — a typed row says so", () => {
 
   it("names the rewatch switch after the row someone wants", () => {
     // The old label ("Lead with things they've seen") could only be understood by someone who had
-    // already understood that the percentage above is a ceiling.
+    // already understood that the percentage above is a ceiling. The switch is now a kind.
     renderEditor(row());
     expect(
-      screen.getByLabelText("Make this a watch it again row"),
+      screen.getByRole("radio", { name: "Watch it again" }),
     ).toBeInTheDocument();
   });
 });
@@ -1573,7 +1645,7 @@ describe("RowEditor — settings that would do nothing are not offered", () => {
     renderEditor(row({ recent_count: 5 }));
 
     expect(
-      await screen.findByText("Watches every source builds from"),
+      await screen.findByText("How many recent watches to match"),
     ).toBeInTheDocument();
     expect(
       screen.queryByLabelText(/Watches the AI web search looks up/i),
@@ -1617,6 +1689,16 @@ describe("RowEditor — the outcome preview", () => {
     renderEditor(row({ name_template: "Because you watched {top_seed}" }));
 
     expect(screen.getByText(/“Because you watched Fargo”/)).toBeInTheDocument();
+  });
+
+  it("gives the default row's size from Settings, which is what the engine builds it to", async () => {
+    // The default row's own `size` column is ignored (`context_builder`: `row.size` when is_default).
+    settingsData.current = { "row.size": 25 };
+    renderEditor(row({ slug: "picked", name: "✨ {library_name} Picked for You", size: 15 }));
+
+    const panel = within(document.querySelector("dl") as HTMLElement);
+    expect(await panel.findByText(/Up to 25 titles/)).toBeInTheDocument();
+    expect(panel.queryByText(/Up to 15 titles/)).toBeNull();
   });
 });
 
@@ -1784,10 +1866,11 @@ describe("RowEditor — a shared row hides the dials that do not apply to it", (
     settingsData.current = {};
   });
 
+  // The "watch it again" switch that was on this list is a kind now, offered on every row by the
+  // kind picker, so it is no longer a per-person dial to hide.
   const perPersonOnly = [
     /global already-watched default/i,
     /global rebuild cadence/i,
-    /watch it again/i,
     /not started/i,
     /global setting for people without enough watch history/i,
   ];
@@ -1848,7 +1931,10 @@ describe("RowEditor — a shared row hides the dials that do not apply to it", (
     // A shared row has no seeds to follow: it is the server's most-watched titles. A budget of 1 or 2 left
     // over from its per-person days used to bring the question back while the budget itself stayed hidden.
     renderEditor(row({ build: "shared", min_watchers: 2, max_seeds: 1 }));
-    expect(screen.queryByText("Which watch it follows")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/Take turns between their last/i),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup", { name: "Based on" })).toBeNull();
   });
 
   it("hides the release-date weight, which a shared row has nothing to apply it to", () => {

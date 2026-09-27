@@ -2068,6 +2068,186 @@ class TestPerRowOverrides:
             f"the title cannot outlive the seed that earned it, got {titles} with lead {lead}"
         )
 
+    def _unseeded_lead_ctx(self, ctx, *, discover_leads: bool = True, similar: bool = True):
+        """A named one-seed row whose pool also holds UNSEEDED titles (10-12, from discover).
+
+        Fargo (yesterday) is the only seed; Chernobyl (five days ago) is the older watch a stale row
+        still names. Fargo's look-alikes (13-19) are weak matches, so with ``discover_leads`` the
+        unseeded titles outscore them and lead the pool — the shape of the issue #133 reporter's
+        rows, whose discover and web-search picks score affinity 1.0 and seed nothing.
+        """
+        self._named_row_ctx(ctx, refresh_days=1)
+        ctx.config.rows = [replace(ctx.config.rows[0], candidate_sources=["tmdb_similar", "tmdb_discover"])]
+        ctx.plex.build_library_index.return_value = {900: 999, 901: 998, **{i: 1000 + i for i in range(10, 20)}}
+        ctx.history_source.fetch.return_value = [
+            make_watched("Fargo", days_ago=1, rating_key=999),
+            make_watched("Chernobyl", days_ago=5, rating_key=998),
+        ]
+        look_alikes = [{"id": i, "title": f"T{i}", "genre_ids": [18], "vote_average": 8.0} for i in range(13, 20)]
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: [(item, 0.2) for item in look_alikes] if similar else []
+        ctx.tmdb.genre_ids_for.side_effect = lambda tid, mt: [18]
+        vote = 9.0 if discover_leads else 5.0
+        ctx.tmdb.discover.side_effect = lambda mt, gids, **kw: [
+            {"id": i, "title": f"T{i}", "genre_ids": [18], "vote_average": vote} for i in (10, 11, 12)
+        ]
+
+    def _prior_led_by(self, lead: int, seeded: list[int], *, seed_tmdb_id: int, seed_title: str):
+        """Last run's row: ``lead`` at rank 1 carrying NO seed, then ``seeded`` carrying the given one."""
+        unseeded, *rest = self._prior_movies([lead, *seeded])
+        return [unseeded] + [replace(p, seed_tmdb_id=seed_tmdb_id, seed_title=seed_title) for p in rest]
+
+    def _run_sarah(self, ctx, mock_plextv):
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        titles = [strip_marker(t) for _library, t in report.users[0].placement_titles]
+        picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+        return titles, {p["tmdb_id"] for p in picks}, {p["seed_title"] for p in picks}
+
+    def test_a_named_row_rebuilds_when_its_seed_moved_behind_an_unseeded_lead(self, ctx: EngineContext, mock_plextv):
+        """Issue #133: the title renders from the best pick that HAS a seed (`top_seed_of`, #84), so the
+        check deciding whether that seed moved must skip unseeded picks too. It compared pick #1 with
+        tonight's pool lead as they stood, and when both came from a source that seeds nothing it read
+        "no seed" == "no seed" as unchanged — the refresh then carried Chernobyl's picks forward, and
+        the row said "Because you watched Chernobyl" night after night about a watch that was no
+        longer a seed at all."""
+        self._unseeded_lead_ctx(ctx)
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): self._prior_led_by(10, [12, 13, 14, 15], seed_tmdb_id=901, seed_title="Chernobyl")
+        }
+
+        titles, _ids, seeds = self._run_sarah(ctx, mock_plextv)
+
+        assert titles == ["Because you watched Fargo"]
+        assert "Chernobyl" not in seeds, "no pick still answers to the old watch"
+
+    def test_a_named_row_carries_forward_behind_an_unseeded_lead_while_its_seed_is_unchanged(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """The other half of #133's cell: both leads unseeded and the named seed NOT moved must keep the
+        normal carry-forward, or every refresh of such a row becomes a full rebuild. 19 and 18 are the
+        weakest look-alikes: only a carry-forward keeps them over tonight's stronger 11-14."""
+        self._unseeded_lead_ctx(ctx)
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): self._prior_led_by(10, [19, 18, 17, 16], seed_tmdb_id=900, seed_title="Fargo")
+        }
+
+        titles, ids, _seeds = self._run_sarah(ctx, mock_plextv)
+
+        assert titles == ["Because you watched Fargo"]
+        assert {19, 18} <= ids, f"an unchanged seed keeps the normal carry-forward, got {ids}"
+
+    def test_a_named_row_carries_forward_when_only_the_pool_lead_is_unseeded(self, ctx: EngineContext, mock_plextv):
+        """Last run's #1 carried the seed, tonight's pool lead carries none, the seed is unchanged. Comparing
+        the two leads as they stood read Fargo != "no seed" as a moved seed and rebuilt every night."""
+        self._unseeded_lead_ctx(ctx)
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): self._prior_seeded_by([19, 18, 17, 16, 15], seed_tmdb_id=900, seed_title="Fargo")
+        }
+
+        titles, ids, _seeds = self._run_sarah(ctx, mock_plextv)
+
+        assert titles == ["Because you watched Fargo"]
+        assert {19, 18} <= ids, f"an unchanged seed keeps the normal carry-forward, got {ids}"
+
+    def test_a_named_row_carries_forward_when_only_its_own_lead_is_unseeded(self, ctx: EngineContext, mock_plextv):
+        """The mirror cell: last run's #1 carried no seed, tonight's pool leads with the unchanged one."""
+        self._unseeded_lead_ctx(ctx, discover_leads=False)
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): self._prior_led_by(10, [19, 18, 17, 16], seed_tmdb_id=900, seed_title="Fargo")
+        }
+
+        titles, ids, _seeds = self._run_sarah(ctx, mock_plextv)
+
+        assert titles == ["Because you watched Fargo"]
+        assert {10, 19, 18} <= ids, f"an unchanged seed keeps the normal carry-forward, got {ids}"
+
+    def test_a_named_row_rebuilds_when_no_candidate_carries_a_seed_any_more(self, ctx: EngineContext, mock_plextv):
+        """The named seed has gone and nothing in tonight's pool is seeded (Fargo's look-alikes are not in
+        the library). The rebuilt row is named after Fargo, the watch it was built from — never the old
+        watch, and never nothing: an empty name left the old collection on Plex (issue #133)."""
+        self._unseeded_lead_ctx(ctx, similar=False)
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): self._prior_led_by(10, [12, 13, 14, 15], seed_tmdb_id=901, seed_title="Chernobyl")
+        }
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        titles = [strip_marker(t) for _library, t in report.users[0].placement_titles]
+        assert titles == ["Because you watched Fargo"]
+
+    def test_a_row_named_after_its_lead_seed_carries_forward_while_that_watch_is_unchanged(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """Issue #133. Last run's row carried no seeded pick, so it was named after Fargo, the watch it was
+        built from, and the stamp says so. Fargo is still the newest watch: keep the normal carry-forward."""
+        self._unseeded_lead_ctx(ctx, similar=False)
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): [
+                replace(p, lead_seed_tmdb_id=900, lead_seed_title="Fargo")
+                for p in self._prior_movies([13, 14, 15, 16, 17])
+            ]
+        }
+
+        titles, ids, _seeds = self._run_sarah(ctx, mock_plextv)
+
+        assert titles == ["Because you watched Fargo"]
+        assert {13, 14} <= ids, f"an unchanged watch keeps the normal carry-forward, got {ids}"
+
+    def test_a_row_named_after_its_lead_seed_rebuilds_when_that_watch_moves_on(self, ctx: EngineContext, mock_plextv):
+        """The same row stamped with Chernobyl, which Fargo has since replaced: rebuild from tonight's pool
+        rather than carry two-thirds of Chernobyl's row forward under Fargo's name."""
+        self._unseeded_lead_ctx(ctx, similar=False)
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): [
+                replace(p, lead_seed_tmdb_id=901, lead_seed_title="Chernobyl")
+                for p in self._prior_movies([13, 14, 15, 16, 17])
+            ]
+        }
+
+        titles, ids, _seeds = self._run_sarah(ctx, mock_plextv)
+
+        assert titles == ["Because you watched Fargo"]
+        assert not {13, 14, 15, 16, 17} & ids, f"the old watch's row outlived it, got {ids}"
+
+    def test_a_row_with_no_recorded_lead_seed_carries_forward_as_before(self, ctx: EngineContext, mock_plextv):
+        """Picks written before the stamp existed read as "unknown". While tonight's pool follows no watch
+        either, that is no move, so the row carries forward rather than rebuilding every night. The title
+        still renders from tonight's watch. (A seeded pool is a move — see the test below.)"""
+        self._unseeded_lead_ctx(ctx, similar=False)
+        ctx.previous_picks = {("sarah", "picked", "1"): self._prior_movies([13, 14, 15, 16, 17])}
+
+        titles, ids, _seeds = self._run_sarah(ctx, mock_plextv)
+
+        assert titles == ["Because you watched Fargo"]
+        assert {13, 14} <= ids, f"an unknown stamp must not force a rebuild, got {ids}"
+
+    def test_an_unstamped_row_with_no_seeded_pick_rebuilds_once_its_pool_follows_a_watch(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """A row whose last picks carry no seed AND no stamp — a cold-start row (the server's popular
+        titles), or one #133 froze before the stamp existed — was rebuilt by 1.9.2 the night its pool
+        first followed a watch. Reading "unknown" as "unmoved" instead kept most of those picks under a
+        brand-new "Because you watched Fargo" title (found by the 1.9.3 release review)."""
+        self._named_row_ctx(ctx, refresh_days=1)
+        ctx.config.rows = [replace(ctx.config.rows[0], candidate_sources=["tmdb_similar"])]
+        ctx.plex.build_library_index.return_value = {
+            900: 999,
+            **{i: 1000 + i for i in range(10, 20)},
+            **{i: 2000 + i for i in range(30, 35)},
+        }
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        look_alikes = [{"id": i, "title": f"T{i}", "genre_ids": [18], "vote_average": 8.0} for i in range(10, 20)]
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: [(item, 0.9) for item in look_alikes]
+        ctx.tmdb.genre_ids_for.side_effect = lambda tid, mt: [18]
+        ctx.previous_picks = {("sarah", "picked", "1"): self._prior_movies([30, 31, 32, 33, 34])}
+
+        titles, ids, seeds = self._run_sarah(ctx, mock_plextv)
+
+        assert titles == ["Because you watched Fargo"]
+        assert not {30, 31, 32, 33, 34} & ids, f"the unseeded row was carried forward under Fargo's name, got {ids}"
+        assert seeds == {"Fargo"}
+
     def test_an_unnamed_row_ignores_the_seed_check(self, ctx: EngineContext, mock_plextv):
         """A row that names no seed keeps the cheap carry-forward however far its seeds have drifted —
         re-deriving a normal 30-seed row on any seed change would make every refresh a full rebuild."""
@@ -2748,6 +2928,32 @@ class TestPerRowOverrides:
         assert ctx.plex.delete_owned_collection.call_args.args[0] is target  # exactly the retired row
         assert "Hidden Gems" in report.users[0].diff.deleted
         ctx.plex.create_collection.assert_not_called()
+
+    def test_a_retired_top_seed_copy_is_removed_by_its_ledger_key_and_nothing_else(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """A row switched to shared is retired as a per-person row even when it is named `{top_seed}` — each
+        person's old copy wears a title nothing can recompute, so the ledger key is the only safe handle. A
+        copy the ledger does not name (mike's) is left alone, however much its title looks like the row's."""
+        ctx.config.rows = []
+        ctx.config.rows_defined = True
+        ctx.config.retired_rows = [RowSpec(slug="because", name_template="Because you watched {top_seed}", size=5)]
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        section_key = str(ctx.plex.sections.return_value[0].key)
+        sarahs_copy = fake_media_item(4242, "Because you watched The Bear" + row_marker(100))
+        mikes_copy = fake_media_item(4343, "Because you watched Fargo" + row_marker(200))
+        ctx.plex.find_owned_collections.side_effect = lambda section, label: {
+            "shortlist_sarah": [sarahs_copy],
+            "shortlist_mike": [mikes_copy],
+        }.get(label, [])
+        ctx.delivered_keys = {("sarah", "because", section_key): 4242}
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
+
+        ctx.plex.delete_owned_collection.assert_called_once()
+        assert ctx.plex.delete_owned_collection.call_args.args[0] is sarahs_copy
+        sarah = next(u for u in report.users if u.slug == "sarah")
+        assert sarah.removed_deliveries == [{"row_slug": "because", "library_key": section_key}]
 
 
 class TestRequestsWiring:
@@ -3933,6 +4139,15 @@ class TestAFirstRowIsHiddenAsSoonAsItsPersonIsDelivered:
     are unaffected — their exclude is already on every share.
     """
 
+    def _mark_end_of_run_merge(self, events: list[tuple], monkeypatch) -> None:
+        end_of_run_merge = pipeline_mod._privacy_sync_phase
+
+        def marked(*args, **kwargs):
+            events.append(("end-of-run merge",))
+            return end_of_run_merge(*args, **kwargs)
+
+        monkeypatch.setattr(pipeline_mod, "_privacy_sync_phase", marked)
+
     def _record_writes(self, ctx: EngineContext, mock_plextv) -> list[tuple]:
         events: list[tuple] = []
 
@@ -4259,6 +4474,108 @@ class TestAFirstRowIsHiddenAsSoonAsItsPersonIsDelivered:
         assert all(u.status == "ok" for u in report.users)
         sarah = next(u for u in mock_plextv.users if u.id == 100)
         assert "Shortlist_mike" in sarah.filters["filterMovies"]
+
+    # A public row nobody is disabled from is the third cell: it is excluded from nobody, so there is no
+    # exclude to write early or late — covered by the shared-row audience tests in test_privacy.py.
+    @pytest.mark.parametrize(
+        ("audience", "disabled", "outsiders"),
+        [
+            pytest.param({100, 200}, set(), {300, 400}, id="subset-audience"),
+            pytest.param(None, {300}, {300}, id="public-row-disabled-account"),
+        ],
+    )
+    def test_a_new_shared_row_is_excluded_from_outsiders_before_the_next_row_is_written(
+        self, ctx: EngineContext, mock_plextv, monkeypatch, audience, disabled, outsiders
+    ):
+        """Shared rows are delivered after every person's row, so every early merge above has already run by
+        the time a brand-new shared row exists. It sits in an outsider's Collections tab exactly like a
+        person's first row, so it is hidden the same way: before the next row is written, not at run's end."""
+        ctx.plex.owned_collections.return_value = {
+            "sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[501]),
+            "mike": OwnedRow(label="Shortlist_mike", rating_keys=[502]),
+        }
+        ctx.config.rows = [
+            RowSpec(slug="popular", name_template="Popular", size=5, shared=True, min_watchers=2, audience=audience),
+            RowSpec(slug="gems", name_template="Gems", size=5, shared=True, min_watchers=2, audience=audience),
+        ]
+        ctx.disabled_account_ids = disabled
+        mock_plextv.users = [plextv_user(a, n) for a, n in ((100, "sarah"), (200, "mike"), (300, "jess"), (400, "dan"))]
+        events = self._record_writes(ctx, mock_plextv)
+        self._mark_end_of_run_merge(events, monkeypatch)
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
+
+        def create_of(title: str) -> int:
+            return next(i for i, e in enumerate(events) if e[0] == "create" and e[1].startswith(title))
+
+        def hides_of(label: str) -> list[tuple[int, int]]:
+            return [
+                (i, e[1])
+                for i, e in enumerate(events)
+                if e[0] == "filter" and label in e[2].get("filterMovies", "").lower()
+            ]
+
+        end = events.index(("end-of-run merge",))
+        popular, gems = hides_of("shortlist__shared_popular"), hides_of("shortlist__shared_gems")
+        assert popular and gems, events
+        assert create_of("Popular") < popular[0][0] < create_of("Gems"), events
+        assert create_of("Gems") < gems[0][0] < end, events
+        assert {account for _, account in popular} == outsiders, "every outsider, and nobody in the audience"
+
+    def test_a_new_shared_row_is_hidden_before_its_second_library_is_written(self, ctx: EngineContext, mock_plextv):
+        movies, classics = (
+            MagicMock(type="movie", key=key, title=title) for key, title in (("1", "Movies"), ("2", "Classics"))
+        )
+        for section in (movies, classics):
+            section.collections.return_value = []
+        ctx.plex.sections.return_value = [movies, classics]
+        ctx.plex.owned_collections.return_value = {
+            "sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[501]),
+            "mike": OwnedRow(label="Shortlist_mike", rating_keys=[502]),
+        }
+        ctx.config.rows = [
+            RowSpec(slug="popular", name_template="Popular", size=5, shared=True, min_watchers=2, audience={100, 200})
+        ]
+        mock_plextv.users = [plextv_user(a, n) for a, n in ((100, "sarah"), (200, "mike"), (300, "jess"))]
+        events = self._record_writes(ctx, mock_plextv)
+
+        def create(section, title, items):
+            events.append(("create", title, section.key))
+            return MagicMock()
+
+        ctx.plex.create_collection.side_effect = create
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
+
+        creates = [i for i, e in enumerate(events) if e[0] == "create"]
+        hides = [
+            i
+            for i, e in enumerate(events)
+            if e[0] == "filter" and "shortlist__shared_popular" in e[2].get("filterMovies", "").lower()
+        ]
+        assert len(creates) == 2 and hides, events
+        assert creates[0] < hides[0] < creates[1], events
+
+    def test_no_early_merge_for_a_shared_row_already_on_the_server(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        # The PMS read files it under `_shared_popular` and Plex title-cases its label; matching on either as-is
+        # would treat every shared row as new and walk every account for it, every night.
+        ctx.plex.owned_collections.return_value = {
+            "sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[501]),
+            "mike": OwnedRow(label="Shortlist_mike", rating_keys=[502]),
+            "_shared_popular": OwnedRow(label="Shortlist__shared_popular", rating_keys=[503]),
+        }
+        ctx.config.rows = [
+            RowSpec(slug="popular", name_template="Popular", size=5, shared=True, min_watchers=2, audience={100, 200})
+        ]
+        mock_plextv.users = [plextv_user(a, n) for a, n in ((100, "sarah"), (200, "mike"), (300, "jess"))]
+        events = self._record_writes(ctx, mock_plextv)
+        self._mark_end_of_run_merge(events, monkeypatch)
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
+
+        end = events.index(("end-of-run merge",))
+        assert any(e[0] == "create" and e[1].startswith("Popular") for e in events[:end]), events
+        assert not [e for e in events[:end] if e[0] == "filter"], events
 
 
 class TestEffectiveRowSources:

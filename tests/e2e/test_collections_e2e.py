@@ -80,9 +80,10 @@ def test_a_shared_row_created_in_the_ui_is_stored_as_shared(page: Page, app: Sho
     _open_rows(page)
     _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Popular Here")
-    page.get_by_role("button", name="Shared", exact=True).click()
+    # One row for everyone is the Popular on this server kind; a new row switches with no dialog.
+    page.get_by_role("radio", name="Popular on this server", exact=True).click()
     # The aggregate-privacy control appears only for shared rows.
-    expect(page.get_by_text("Only show titles at least this many people watched")).to_be_visible()
+    expect(page.get_by_text("Only titles watched by at least")).to_be_visible()
     page.get_by_role("button", name="Add row").click()
 
     expect(page.get_by_text("Popular Here").first).to_be_visible(timeout=LOAD)

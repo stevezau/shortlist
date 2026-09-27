@@ -375,8 +375,12 @@ export function useSaveSettings() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (settings: Settings) => api.putSettings(settings),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: queryKeys.settings }),
+    // The rows too: the default row's name and size are settings (`row.*`), and an editor opened
+    // from a stale row list sends the old name on Save, which the server writes back into Settings.
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.settings });
+      queryClient.invalidateQueries({ queryKey: queryKeys.collections });
+    },
   });
 }
 

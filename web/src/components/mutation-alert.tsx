@@ -5,7 +5,7 @@ import { apiErrorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 /**
- * A failed write, in plain English, with an optional button that re-fires exactly the same write.
+ * A failed write, in plain English, with an optional button that tries the write again.
  *
  * Every mutation reports failure through this, so a refused run, a rejected mute and a failed
  * user toggle all read the same way — and none of them can fail silently, which used to leave the
@@ -16,6 +16,7 @@ export function MutationAlert({
   fallback,
   lead,
   onRetry,
+  retryDisabled = false,
   className,
 }: {
   error: unknown;
@@ -24,6 +25,8 @@ export function MutationAlert({
   /** What is true *now*, in front of the reason — e.g. "This row is still showing for them." */
   lead?: string;
   onRetry?: () => void;
+  /** Holds Try again, e.g. while another write to the same thing is in flight. */
+  retryDisabled?: boolean;
   className?: string;
 }) {
   return (
@@ -39,7 +42,12 @@ export function MutationAlert({
         {apiErrorMessage(error, fallback)}
       </span>
       {onRetry && (
-        <Button variant="outline" size="sm" onClick={onRetry}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onRetry}
+          disabled={retryDisabled}
+        >
           <RefreshCw aria-hidden="true" />
           Try again
         </Button>

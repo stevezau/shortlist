@@ -31,5 +31,5 @@ outage, is the comment above `url:` in _config.yml.
 **The short version:** run the container, log in with Plex, pick your users, and every night each
 user gets a personal "✨ Picked for You" row built from their own watch history — visible only to
 them. Each row is delivered unpromoted, the exclusions that keep it private are merged into everyone
-else's share — straight away for someone's first row — and only then is it promoted onto Home. Your
+else's share — straight away for someone's first row or a new shared row — and only then is it promoted onto Home. Your
 share filters are snapshotted first, so uninstalling puts them back exactly.

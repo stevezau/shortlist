@@ -10,6 +10,164 @@ below is later work.
 
 ---
 
+## OPEN — pre-existing gaps found during the row-editor cleanup trace (2026-09-27)
+
+Found read-only while tracing per-person ↔ shared switching for the row-editor cleanup design
+(`.claude/docs/plans/row-editor-cleanup-design.md` §11). Both predate that work and are not touched by
+it — the design explicitly declines to fix them and sends them here instead. Neither has been
+reproduced on a live server; both are reasoned from the cited code, not measured.
+
+- **FIXED (2026-09-27; verified live on SFLIX, runs 57–58) — HIGH — a brand-new subset shared row is visible to people outside its
+  audience until the run ends.** Precondition: a row switches to `build=shared` with an `audience`
+  narrower than everyone (a "subset" shared row), and no earlier per-person row of this row's owner has
+  already put a `shortlist_<userslug>` exclude on the outsiders' share filters. The early first-row
+  exclude (`shortlist/engine/pipeline.py:495-546`, `.claude/rules/plex-safety.md` rule 1) only covers a
+  PER-PERSON row's owner; a shared row's audience has no equivalent. So the new row sits, delivered but
+  unpromoted, in every excluded person's library **Collections** tab from the moment it's written until
+  the end-of-run share-filter merge closes the gap. Applies to any brand-new subset shared row,
+  including one just switched from per-person.
+  Fix: a shared row whose label was not on the server at run start now gets the same early merge as a
+  person's first row, fired by `deliver_rows`' `on_label_stored` after its first library is written
+  (`pipeline._deliver_phase` → `rows._run_shared`). It also covered a gap the entry missed: a new PUBLIC
+  shared row was listed for disabled accounts (`hide_shared_from_disabled`) until the end of the run.
+  Pinned by three tests in `test_pipeline.py::TestAFirstRowIsHiddenAsSoonAsItsPersonIsDelivered`:
+  `test_a_new_shared_row_is_excluded_from_outsiders_before_the_next_row_is_written`,
+  `test_a_new_shared_row_is_hidden_before_its_second_library_is_written` and
+  `test_no_early_merge_for_a_shared_row_already_on_the_server`.
+- **FIXED (2026-09-27; verified live on SFLIX, runs 57–58) — MED — a build switch's collection
+  removal can leave a stale per-person copy behind permanently.** At save, `shortlist/server/api/row_changes.py:129-136` triggers RECONCILE
+  to delete every per-person copy of a row switching build (`collection_reconcile.py:551-594`), and the
+  save waits for it — but the removal can still miss a copy: the reconcile job itself can give up
+  partway (raise, time out, or the process restart mid-run), or the row is named with `{top_seed}` and
+  its delivery-ledger key collides with a key another row also claims, so the reconcile walk
+  (`collection_reconcile.py:352-362`) skips it as belonging to that other row instead. A missed copy
+  stays on Plex under its own owner's `shortlist_*` label — so it's never exposed to anyone else — but
+  nothing revisits it afterwards: the nightly sweep only covers per-person rows switched OFF, not ones
+  whose row switched TO shared (`context_builder.py:1225`), so it is permanent until removed by hand.
+  Fix: `context_builder._retired_rows` now also retires every ENABLED shared row as a per-person row, for
+  everyone the run processes, so each night's run removes any copy it finds through `remove_row`: by title
+  for a static name, by ledger key ONLY for a `{top_seed}` one, always under the person's own label (the
+  person's title marker keeps the shared collection and anything foreign out of a title match, the label
+  filter out of a key match — `test_delivery.py::TestRetiringASharedRowsPersonalCopies`). It skips the disabled-row render gate on
+  purpose, since `remove_row` never title-matches an unrenderable name. The switch's reconcile now forgets
+  each person's ledger rows as soon as their removal returns, not after the whole walk, so a walk that
+  fails later no longer leaves keys for copies it already deleted for the nightly sweep to retry while Plex
+  reuses ratingKeys. Still not reached: a copy whose person is paused or disabled (not in the run); a
+  static-titled copy wearing an OLD title (renamed in the same save, or a `{user}` title after a nickname
+  change — `remove_row` ignores the ledger key when a title renders); a `{top_seed}` copy whose ledger row
+  a completed walk forgot (an empty label read, or an ambiguous key — issue #121's other row); a person
+  whose OWN walk raises after deleting in one library keeps that library's dead key; and copies of a
+  DISABLED shared row (left out so its libraries are not indexed every run). These are left ON PURPOSE
+  (2026-09-27, not yet put to the owner): reaching them means deleting by a ledger key when a title renders, sweeping
+  people the run does not process, or indexing a disabled row's libraries — each loosens a guard that keeps
+  a delete off a row that is not this one, for copies that stay private to their owner. Pinned by
+  `test_api_collections.py::test_a_row_switched_to_shared_retires_everyones_per_person_copy`,
+  `test_a_disabled_shared_row_retires_no_per_person_copy`,
+  `test_the_default_row_switched_to_shared_retires_copies_titled_from_the_global_template` and
+  `test_collection_reconcile.py::test_a_walk_that_fails_partway_has_already_forgotten_the_people_it_finished`.
+
+## OPEN — seen during the row-editor live proof on SFLIX (2026-09-27)
+
+Seen while proving the new row editor's save paths live on throwaway MooHouse-only rows (all cleaned
+up; evidence in that session's scratchpad `live-proof/`). PRE-EXISTING behaviour, not changed by it.
+
+- **FIXED (2026-09-27; verified live on SFLIX, runs 57–58) — LOW — a seasons change re-applies
+  visibility to EVERY row for every account.**
+  Saving one row out of Seasonal queued `rows.visibility` (`shortlist/server/api/row_changes.py`
+  ~195-196), and the pass merged all 48 accounts' filters (none changed) and re-promoted every
+  per-person row for every account, not just the edited row's. Harmless but slow on a big server;
+  scope the job to the row it was queued for.
+  Fix: when the payload names a row, `rows.visibility` promotes only that row's collections
+  (`promote_user_rows(only_row=...)`, or that one `promote_shared_row`); every other collection,
+  unidentified ones included, is left as it is. The share-filter merge still runs first, server-wide: an
+  account added since the last run has no exclude yet (rule 1), and with nothing to change it writes
+  nothing. The midnight tick (no row) is still the full pass. A row disabled or deleted since it was
+  queued applies nothing, and the summary reads each row's own answer for today (a seasonal row out of
+  season used to be reported as "showing"). Pinned by `test_jobs.py::
+  TestScheduledRowVisibility::test_a_pass_queued_for_one_row_promotes_only_that_row`.
+- **RESOLVED (2026-09-27) — agregarr, not Shortlist. Recommended shelf order moved in Movies and TV Shows
+  during that test.** agregarr's
+  "Randomize Home Order" ran at 16:30:17 inside the window and Sports (which agregarr doesn't touch)
+  kept its order, so agregarr is the likely cause — but the snapshot stored only a hash of each
+  shelf's order, so a contribution from our own promote calls in the pass above isn't ruled out.
+  Next time, snapshot the full hub order per library, not a hash. See memory
+  "agregarr-fights-for-the-plex-shelf" (last time the culprit was ours).
+  Measured with full per-library hub-order snapshots (ids + an ours flag): agregarr's "Randomize Home
+  Order" runs every 30 minutes (:00 and :30, its own log), moving ~9 of its own hubs per library. Between
+  17:44 and 18:30 Shortlist wrote no event at all, yet Movies and TV each had 10–11 hubs move with the
+  FOREIGN relative order changed — something `place_rows` never does — and ours kept theirs. Across a deploy,
+  runs 57–58 and the (now scoped) visibility pass, with no agregarr tick inside the window, no existing hub
+  moved. Any shelf diff that spans a :00/:30 boundary will show agregarr's shuffle. And re-promoting
+  EVERY row does not move hubs either: a full `rows.visibility` pass (186 collections, 19:41, between
+  ticks) left all three shelves identical.
+
+## OPEN — found during the backlog-fixes live proof (2026-09-27)
+
+- **FIXED (2026-09-27; unit-tested) — LOW — deleting a SHARED row leaves its delivery-ledger row.** `_reconcile_row_removal`'s shared branch
+  (`collection_reconcile.py`, `if build == "shared":`) removes the collection and returns without
+  `_forget_deliveries`, so `(slug, shared_<slug>, library) -> ratingKey` outlives the collection (seen live:
+  the deleted test row's entry, removed by hand). Nothing reads it while the slug is gone; a new row that
+  reuses the slug would be handed the dead ratingKey, which Plex may have reused. Fix: forget the
+  `shared_<slug>` rows after a real (non-dry-run) removal, as the per-person branch does.
+  Done: the shared branch now forgets `shared_<slug>` (scoped to `in_sections`) after a real removal. Pinned by
+  `test_collection_reconcile.py::test_shared_build_forgets_its_own_ledger_rows_after_a_real_removal` and
+  `test_a_shared_row_narrowed_out_of_a_library_forgets_only_that_library`. Two residuals, both older than
+  this: a shared walk that raises partway keeps every library's key until a retry succeeds; and
+  `POST /api/collections/{id}/cleanup` takes no `plex_writer_lock` (the job worker does), so a cleanup
+  overlapping a run that delivers the same row can forget the run's fresh key — the row's next delivery
+  finds it by label and writes it back, and plays go uncredited until then. Same race on the per-person branch.
+
+## OPEN — the rename screen can't rename a `{top_seed}` row (found 2026-09-27)
+
+Found by the row-editor cleanup's second review. PRE-EXISTING: it predates that work, which only
+routes its own kind-switch renames around it (design §15.1).
+
+- **FIXED (2026-09-27; verified live on SFLIX, runs 57–58) — MED — Rename… reports "renamed 0 /
+  nothing to rename" for any rename where the old or new name contains `{top_seed}`.** `collection_reconcile.py:972-990` (`_renamed_titles`)
+  renders both templates with no picks, and a `{top_seed}` template renders as "" without one, so there
+  are no (old, new) title pairs to rename. Plex keeps the old title until the row's next delivery
+  retitles the collection. The screen's "renamed 0" then reads as a failure, or as nothing to do, when
+  the name did change in the DB. Fix: render each person's title from their delivery-ledger / last run
+  picks, or say on that screen that a `{top_seed}` name changes at the next run.
+  Fix, both halves: an OLD `{top_seed}` name now matches the title the ledger recorded for that person in
+  that library (`collection_reconcile._ledger_titles`) — and the collection is selected by the ledger
+  KEY, since a static rename leaves the recorded title stale — so a rename to a plain name happens now; a NEW
+  `{top_seed}` name has no title until a run picks the seed, so each copy is reported with `next_run` and
+  the screen's existing "takes the new name at this row's next run" copy shows. A seeded copy the ledger
+  does not name is left alone, as is a `{top_seed}` name that renders exactly as before (a roster sync
+  re-runs the rename for everyone), and a shared row given a `{top_seed}` name. Not covered: a plain name becoming SEASONAL still reports nothing — the
+  next run names it, as `_renamed_titles` documents. `test_an_unfillable_top_seed_template_skips_rather_than_
+  retitling_to_the_blank_default` asserted the bare `renamed 0`; it now asserts the next-run report, and
+  still that nothing is retitled.
+
+## OPEN — left over from issue #133, "Because you watched X" stuck (2026-09-25)
+
+The bug itself is fixed in be9dcd95: `_seed_moved` compared pick #1 as it stood while the title skips
+unseeded picks, so a row led by a discover/web-search pick never saw its seed move. These three were
+found on the way and are not fixed.
+
+- **LOW — the run trace says "refreshed" for a row rebuilt because its seed moved.** `decision` is
+  settled at `shortlist/engine/rows.py:2754-2762`, before the branch at `:2803` asks `_seed_moved`, so a
+  forced rebuild is recorded as `refreshed`. It hid the #133 mirror cells (a nightly full rebuild) from
+  anyone reading the trace, and it makes `decision` useless as a test assertion — the #133 tests assert
+  on which picks survived instead. Fix: a `seed_moved` decision, set where the bootstrap branch is taken
+  for that reason.
+- **FIXED (2026-09-27) — a TV row could carry a film's name.** Owner decision: each library is named
+  after its own watch. `top_seed_of` now falls back to the library's lead seed (`Pick.lead_seed_*`)
+  before `seed_source` borrows, so borrowing happens only when the row has no watch of that type (#84's
+  case, unchanged). Same change fixed the second #133 mechanism: a new watch with no look-alikes in the
+  library left a row with no seeded pick, an empty name, and the OLD collection frozen on Plex. Pinned
+  by `tests/integration/test_top_seed_row_title.py`.
+- **LOW, reasoned not reproduced — above one seed per library, a title can name a dead seed for a
+  night.** `_seed_moved` now checks the prior NAMED pick; the refresh then re-ranks survivors against
+  the pool (`rows.py:2821`) and the title renders from whichever seeded survivor ranks best — which can
+  be one whose seed has since left the seed set. The next night's check sees that name and rebuilds.
+  One seed per library (the recommended Movies+TV budget of 2) cannot reach it.
+
+Not a bug, so it isn't re-found: on SFLIX, 28 of 91 `{top_seed}` titles named an older watch than the
+person's newest (2026-09-24). The row's budget is 3, and above one seed per library the title names the
+best pick's seed, not the newest watch — the trade-off `docs/guides/rows.md` already describes.
+
 ## OPEN — v1.9.2 release review, one MED and three LOW (2026-09-24)
 
 The release-PR Architecture Review over `v1.9.1..dev` (PR #131) found no HIGH, so 1.9.2 shipped with

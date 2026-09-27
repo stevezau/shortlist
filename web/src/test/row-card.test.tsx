@@ -190,9 +190,9 @@ describe("RowCard", () => {
   });
 
   it("asks before turning a row OFF, and does not save until you confirm", async () => {
-    // The toggle's consequence is invisible and deferred: the next run takes the row off Plex for
-    // everyone who has it (`rows._remove_muted_and_retired`). A switch is the wrong amount of
-    // ceremony for that on its own.
+    // The toggle's consequence reaches past this screen: saving it takes the row off Plex for everyone
+    // who has it straight away (`row_changes.py`, RECONCILE collection.disable). A switch is the wrong
+    // amount of ceremony for that on its own.
     const user = userEvent.setup();
     updateCollection.mockClear();
     renderCard(collection({ enabled: true }));
@@ -200,7 +200,7 @@ describe("RowCard", () => {
     await user.click(await screen.findByRole("switch"));
 
     expect(updateCollection).not.toHaveBeenCalled();
-    expect(screen.getByText(/next run takes this row off Plex/i)).toBeTruthy();
+    expect(screen.getByText(/takes it off Plex straight away, for everyone who has it/i)).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: /Turn it off/i }));
     await waitFor(() => expect(updateCollection).toHaveBeenCalledTimes(1));

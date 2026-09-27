@@ -8,7 +8,11 @@ import { RowTemplateGallery } from "@/components/rows/row-template-gallery";
 import { RowEditor } from "@/components/rows/row-editor";
 import type * as ApiModule from "@/lib/api";
 import { blankInput } from "@/lib/collections";
-import { ROW_TEMPLATES, findRowTemplate } from "@/lib/row-templates";
+import {
+  ROW_TEMPLATE_GROUPS,
+  ROW_TEMPLATES,
+  findRowTemplate,
+} from "@/lib/row-templates";
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>();
@@ -169,12 +173,98 @@ describe("ROW_TEMPLATES", () => {
   });
 });
 
+describe("row template kinds and grouping", () => {
+  it("gives every template a kind", () => {
+    for (const template of ROW_TEMPLATES) {
+      expect(template.kind, template.id).toBeTruthy();
+    }
+  });
+
+  it("groups templates into the five kinds, in order, with the right members", () => {
+    const expected: {
+      kind: string;
+      heading: string;
+      description: string;
+      ids: string[];
+    }[] = [
+      {
+        kind: "picked",
+        heading: "Picked for You",
+        description:
+          "Titles they haven't seen yet, matched to everything they like.",
+        ids: [
+          "picked-for-you",
+          "fresh-finds",
+          "from-the-vault",
+          "movie-night",
+          "more-tv",
+        ],
+      },
+      {
+        kind: "byw",
+        heading: "Because you watched",
+        description:
+          'More like one thing they watched recently. Named after it, like "Because you watched Dune".',
+        ids: ["because-you-watched"],
+      },
+      {
+        kind: "again",
+        heading: "Watch it again",
+        description:
+          "Favourites they've already finished, ready to rewatch.",
+        ids: ["seen-it-already"],
+      },
+      {
+        kind: "seasonal",
+        heading: "Seasonal",
+        description:
+          "Only appears around the holidays you pick, like Halloween or Christmas. Filled in any of the ways above.",
+        ids: ["seasonal"],
+      },
+      {
+        kind: "popular",
+        heading: "Popular on this server",
+        description:
+          "What lots of people here are watching. Everyone sees the same row.",
+        ids: ["popular-here"],
+      },
+    ];
+
+    expect(ROW_TEMPLATE_GROUPS.map((g) => g.kind)).toEqual(
+      expected.map((g) => g.kind),
+    );
+    expected.forEach((group) => {
+      const actual = ROW_TEMPLATE_GROUPS.find((g) => g.kind === group.kind);
+      expect(actual?.heading).toBe(group.heading);
+      expect(actual?.description).toBe(group.description);
+      const members = ROW_TEMPLATES.filter((t) => t.kind === group.kind).map(
+        (t) => t.id,
+      );
+      expect(members).toEqual(group.ids);
+    });
+
+    // Every template belongs to exactly one of the five groups — none left out, none doubled up.
+    const grouped = expected.flatMap((g) => g.ids);
+    expect(new Set(grouped).size).toBe(ROW_TEMPLATES.length);
+  });
+
+  it("renames the rewatch template without touching its id or preset", () => {
+    const template = findRowTemplate("seen-it-already");
+    expect(template?.title).toBe("Watch it again");
+    expect(template?.values.name).toBe(
+      "☕ {library_name} you've already seen",
+    );
+  });
+});
+
 describe("RowTemplateGallery", () => {
   it("offers every template plus a way to skip them", async () => {
     const onPick = renderGallery();
 
     for (const template of ROW_TEMPLATES) {
-      expect(screen.getByText(template.title)).toBeInTheDocument();
+      // getAllByText, not getByText: a kind heading and its one template can share exact wording
+      // (e.g. "Watch it again" is both the "again" group's heading and its only card's title).
+      expect(screen.getAllByText(template.title).length).toBeGreaterThan(0);
     }
 
     await userEvent.click(
@@ -183,11 +273,32 @@ describe("RowTemplateGallery", () => {
     expect(onPick).toHaveBeenCalledWith(null);
   });
 
+  it("shows a heading and one-line description for each kind", () => {
+    renderGallery();
+
+    for (const group of ROW_TEMPLATE_GROUPS) {
+      expect(
+        screen.getByRole("heading", { name: group.heading }),
+      ).toBeInTheDocument();
+      expect(screen.getByText(group.description)).toBeInTheDocument();
+    }
+  });
+
+  it("explains templates as starting points you can change afterwards", () => {
+    renderGallery();
+
+    expect(
+      screen.getByText(
+        "Pick a starting point. It fills in the settings for you; you can change any of them, including the kind of row, afterwards.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("hands back the template that was clicked", async () => {
     const onPick = renderGallery();
 
     await userEvent.click(
-      screen.getByRole("button", { name: /Happy to see again/i }),
+      screen.getByRole("button", { name: /Watch it again/i }),
     );
 
     expect(onPick).toHaveBeenCalledWith(
@@ -222,16 +333,21 @@ describe("RowEditor seeded from a template", () => {
     expect(screen.getByLabelText(/^Name$/i)).toHaveValue(
       "☕ {library_name} you've already seen",
     );
-    // watched_pct 1 → the slider is shown (not inheriting) and reads 100%.
+    // `rewatch` lands as the row's kind, with its own setting on show.
+    expect(screen.getByRole("radio", { name: "Watch it again" })).toBeChecked();
+    expect(screen.getByLabelText(/Skip titles finished in the last/i)).toBeInTheDocument();
+    // watched_pct 1 is still prefilled, but a rewatch row hides its slider: the engine ignores the
+    // ceiling there (rows.py `effective_watched_pct … or spec.rewatch`).
+    expect(findRowTemplate("seen-it-already")?.values.watched_pct).toBe(1);
     expect(
-      screen.getByRole("slider", {
+      screen.queryByRole("slider", {
         name: /Maximum share of the row that may be already-watched/i,
       }),
-    ).toHaveValue("100");
+    ).not.toBeInTheDocument();
   });
 
   it("turns on the engine setting each template's promise depends on", () => {
-    // Both were hollow before: "Happy to see again" needed `rewatch` (watched_pct is only a ceiling,
+    // Both were hollow before: "Watch it again" needed `rewatch` (watched_pct is only a ceiling,
     // so it never PROMOTES a finished title) and "More TV to watch" needed `unstarted_only` (the
     // normal filter only drops FINISHED shows).
     expect(findRowTemplate("seen-it-already")?.values.rewatch).toBe(true);

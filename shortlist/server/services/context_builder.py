@@ -883,6 +883,11 @@ class ContextBuilder:
                     # "unknown" and silently falls back to the plain cadence: the feature goes inert
                     # on a live server with nothing failing.
                     built_at=_utc(r.built_at),
+                    # The watch a `{top_seed}` row was built from. `_seed_moved` compares it with tonight's
+                    # for a row whose picks carried no seed; dropped here, such a row never sees its watch
+                    # move on and carries the old watch's picks forward under the new name (issue #133).
+                    lead_seed_tmdb_id=r.lead_seed_tmdb_id,
+                    lead_seed_title=r.lead_seed_title or "",
                     collection_slug=r.collection_slug,
                     section_key=r.section_key,
                     library=r.library,
@@ -1199,16 +1204,24 @@ class ContextBuilder:
         return cls._parse_hub_anchors(collection.hub_anchor or {})
 
     def _retired_rows(self, session: Session, store: SettingsStore) -> list[RowSpec]:
-        """Per-person rows that are DISABLED — their collections must be removed from Plex.
+        """Per-person rows that are DISABLED, and every enabled SHARED row's per-person copies — all to be removed.
 
         Only enough of each spec to find and delete the collection (its rendered title, media and
         libraries); the recipe/size/sources are irrelevant to removal. A row DELETED from the DB
         can't be rebuilt here, so this covers disabling; a mute already covers per-user removal.
 
-        STATIC-TITLED ROWS ONLY. Per-person rows share one label and are told apart solely by title,
-        and a ``{top_seed}`` template with no picks renders to the DEFAULT row's title — so retiring
-        such a row would match and DELETE the user's live default row. Those are skipped (left for a
-        full rebuild), exactly as the mute path leaves them.
+        A DISABLED row is retired only if its title renders without picks. Per-person rows share one label and
+        are told apart solely by title, so one that renders to nothing (``{top_seed}``, blank) is skipped and
+        left for a full rebuild.
+
+        A row switched to shared has its per-person copies removed at save, but that removal can miss one
+        (the job gives up), and nothing else looked for it again. So every enabled shared row is retired as a
+        per-person row too: for everyone the run processes, since whoever holds a copy was in the row's
+        audience THEN, not necessarily now. It skips the render gate on purpose, because a switched
+        `{top_seed}` row is the case most likely to be missed: `remove_row` matches an unrenderable title by
+        its ledger key ONLY and leaves a copy the ledger does not name alone. Not a DISABLED shared row:
+        retired specs are indexed where they live (`pipeline._build_indexes`), so one would keep a library
+        that nothing else targets in every run's index, and its watches seeding everyone's picks.
         """
         account_by_user, audience_by_collection = self._audience_maps(session)
 
@@ -1231,21 +1244,9 @@ class ContextBuilder:
                 logger.debug("retired row '{}' would render to the default title — left for a rebuild", collection.slug)
                 continue
             audience = self._subset_audience(collection, account_by_user, audience_by_collection)
-            retired.append(
-                RowSpec(
-                    # The gate above renders WITH the fallback, so the spec must carry it too — or
-                    # removal renders a different title from the one that decided this row was safe
-                    # to retire.
-                    fallback_name=collection.fallback_name or "",
-                    slug=collection.slug,
-                    name_template="" if is_default else (collection.name_template or collection.name),
-                    size=collection.size,
-                    media=collection.media,
-                    shared=False,
-                    audience=audience,
-                    library_keys=[str(k) for k in (collection.library_keys or [])],
-                )
-            )
+            retired.append(_retired_spec(collection, audience))
+        for collection in session.query(Collection).filter_by(enabled=True, build="shared").all():
+            retired.append(_retired_spec(collection, None))
         return retired
 
     @staticmethod
@@ -1375,3 +1376,19 @@ class ContextBuilder:
             # `x or default` would turn an owner's deliberate 0.0 into the derived 8.5.
             min_rating_other=_optional_float(store.get("requests.min_rating_other")),
         )
+
+
+def _retired_spec(collection: Collection, audience: set[int] | None) -> RowSpec:
+    """Just enough of a per-person row to find and delete its copies: rendered title, media and libraries."""
+    return RowSpec(
+        # A disabled row is gated on a render WITH the fallback, so the spec must carry it too — or removal
+        # renders a different title from the one that decided the row was safe to retire.
+        fallback_name=collection.fallback_name or "",
+        slug=collection.slug,
+        name_template="" if collection.slug == DEFAULT_SLUG else (collection.name_template or collection.name),
+        size=collection.size,
+        media=collection.media,
+        shared=False,
+        audience=audience,
+        library_keys=[str(k) for k in (collection.library_keys or [])],
+    )

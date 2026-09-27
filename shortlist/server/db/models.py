@@ -548,6 +548,11 @@ class PickRow(Base):
     # delivery would make the ceiling unreachable. NULL on picks written before 0086 — read as
     # "unknown", which falls back to the plain refresh cadence.
     built_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+    # The watch this pick's `{top_seed}` row was built from (`Pick.lead_seed_*`). It names a row whose
+    # picks carry no seed and tells the next run whether that watch has moved on (issue #133). NULL on
+    # rows that name no seed and on picks written before 0093 — read as "unknown".
+    lead_seed_tmdb_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    lead_seed_title: Mapped[str | None] = mapped_column(String(512), nullable=True, default=None)
     # Both indexed: the effectiveness report is windowed, so every aggregate on it filters by one of
     # these two, over the largest table in this schema (retention prunes it, but only by whole runs).
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)

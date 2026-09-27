@@ -1,3 +1,4 @@
+import { KIND_META, ROW_KINDS, type RowKind } from "@/lib/row-kind-meta";
 import type { CollectionInput } from "@/lib/types";
 
 /**
@@ -10,9 +11,14 @@ import type { CollectionInput } from "@/lib/types";
  *
  * `values` is deliberately a partial: everything it omits keeps `blankInput()`'s default, and every
  * field stays editable after picking. A template is a starting point, never a mode.
+ *
+ * `kind` groups the gallery by the same five kinds the row editor's kind picker uses (design doc §3),
+ * with the picker's own copy, so the two cannot describe a kind differently.
  */
+
 export interface RowTemplate {
   id: string;
+  kind: RowKind;
   emoji: string;
   title: string;
   blurb: string;
@@ -21,9 +27,21 @@ export interface RowTemplate {
   values: Partial<CollectionInput>;
 }
 
+/** The gallery's five headings, in the kind picker's order, each with the kind's description. */
+export const ROW_TEMPLATE_GROUPS: {
+  kind: RowKind;
+  heading: string;
+  description: string;
+}[] = ROW_KINDS.map((kind) => ({
+  kind,
+  heading: KIND_META[kind].title,
+  description: KIND_META[kind].description,
+}));
+
 export const ROW_TEMPLATES: RowTemplate[] = [
   {
     id: "picked-for-you",
+    kind: "picked",
     emoji: "✨",
     title: "Picked for You",
     blurb:
@@ -52,6 +70,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
   },
   {
     id: "because-you-watched",
+    kind: "byw",
     emoji: "🎯",
     title: "Because you watched…",
     blurb:
@@ -97,8 +116,9 @@ export const ROW_TEMPLATES: RowTemplate[] = [
   },
   {
     id: "seen-it-already",
+    kind: "again",
     emoji: "☕",
-    title: "Happy to see again",
+    title: "Watch it again",
     // `watched_pct` alone could never deliver this: it is a CEILING, so `_apply_watched_cap` shows
     // unwatched titles FIRST and merely PERMITS finished ones — at 1.0 a library with plenty of
     // unwatched candidates still yielded a mostly-unwatched row. `rewatch` (engine) inverts that
@@ -120,6 +140,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
   },
   {
     id: "fresh-finds",
+    kind: "picked",
     emoji: "🌱",
     title: "Fresh finds",
     blurb:
@@ -135,6 +156,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
   },
   {
     id: "seasonal",
+    kind: "seasonal",
     emoji: "🗓️",
     title: "Seasonal",
     // Films only: TMDB tags a few dozen seasonal SHOWS against thousands of films (13 Christmas shows
@@ -167,6 +189,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
   },
   {
     id: "from-the-vault",
+    kind: "picked",
     emoji: "🕰️",
     title: "From the vault",
     // "Never re-picks on a schedule" is the honest form of what `refresh_days: 0` buys. The row is
@@ -186,6 +209,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
   },
   {
     id: "popular-here",
+    kind: "popular",
     emoji: "👥",
     title: "Popular on this server",
     blurb:
@@ -200,6 +224,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
   },
   {
     id: "movie-night",
+    kind: "picked",
     emoji: "🍿",
     title: "Movie night",
     blurb:
@@ -217,6 +242,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
   },
   {
     id: "more-tv",
+    kind: "picked",
     emoji: "📺",
     title: "More TV to watch",
     // Now literally true: `unstarted_only` (engine) drops any series with a single viewed episode,

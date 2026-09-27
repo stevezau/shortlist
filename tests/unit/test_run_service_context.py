@@ -483,6 +483,37 @@ class TestBuildContext:
 
         assert ctx.previous_picks[("sarah", "picked", "movies-1")][0].built_at == built
 
+    def test_previous_picks_carries_the_watch_the_row_was_built_from(self, service, sessions, configured):
+        """`_seed_moved` reads this for a row whose picks carried no seed (issue #133). Dropped here, such a
+        row never sees its watch move and carries the old watch's picks forward under the new name."""
+        from shortlist.server.db.models import Run
+
+        with sessions() as session:
+            session.add(User(plex_account_id=1, username="sarah", slug="sarah", enabled=True))
+            run = Run(trigger="manual", status="ok", dry_run=False, stats={})
+            session.add(run)
+            session.commit()
+            session.add(
+                PickRow(
+                    run_id=run.id,
+                    user_id=session.query(User).one().id,
+                    tmdb_id=100,
+                    media_type="movie",
+                    rating_key=100,
+                    rank=1,
+                    collection_slug="because",
+                    section_key="movies-1",
+                    title="t100",
+                    lead_seed_tmdb_id=900,
+                    lead_seed_title="Fargo",
+                )
+            )
+            session.commit()
+
+        pick = service.build_context(dry_run=True).previous_picks[("sarah", "because", "movies-1")][0]
+
+        assert (pick.lead_seed_tmdb_id, pick.lead_seed_title) == (900, "Fargo")
+
 
 class TestBuildRequests:
     """The adapter turns request.* settings into a RequestConfig — off, whole, and half-configured."""

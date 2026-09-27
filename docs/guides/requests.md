@@ -271,7 +271,23 @@ only the first season of a show, stay English-only, ask for a lower rating, and 
 title a night, while your main row carries on as it was.
 
 A field left on "use the setting from Settings › Requests" follows the global, and follows it as you
-change it. Only the ones you deliberately override differ.
+change it. Only the ones you deliberately override differ. Every on/off setting in this group,
+including that "use the setting from Settings" choice, is a switch — there are no checkboxes here,
+only where you're picking items from a list (languages, tags, and the like).
+
+The group only shows a setting the row can actually use: Radarr's root folder and quality profile
+appear only when requests go to Radarr and the row includes a movie library (Sonarr's equivalents, and
+its "how much of a show to grab" setting, need requests going to Sonarr and a show library); the
+request tag and "tag with who it's for" appear only when requests go to Radarr/Sonarr, since
+Overseerr/Jellyseerr has no tags field to carry them. If requests are off, the group is replaced by a
+note saying so, with a link to Settings.
+
+**How many people must want it** is counted within the row's own audience, so it can only ever be
+reached by a row that more than one person gets. Set it above 1 on a row whose audience is a single
+person and the editor warns you: any value above 1 there means the row will never ask for anything.
+
+See [Rows → Requests on a row](rows.md#requests-on-a-row) for these settings from the row editor's own
+side.
 
 Two things stay server-wide on purpose:
 

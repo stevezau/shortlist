@@ -320,7 +320,12 @@ class TestSharedRowExcludes:
             assert excludes == {"Shortlist__shared_x"}
 
     @given(
-        filter_string, st.sets(st.sampled_from(["Shortlist_a", "Shortlist_b", "Shortlist_c"]), min_size=1, max_size=3)
+        filter_string,
+        st.sets(
+            st.sampled_from(["Shortlist_a", "Shortlist_b", "Shortlist_c", "Shortlist__shared_x"]),
+            min_size=1,
+            max_size=4,
+        ),
     )
     def test_merge_never_drops_existing_conditions(self, raw: str, labels: set[str]):
         merged_conditions = parse_filter(merge_label_excludes(raw, labels))
@@ -330,7 +335,10 @@ class TestSharedRowExcludes:
             surviving_values = set().union(*(set(c.values) for c in match))
             assert set(original.values) <= surviving_values
 
-    @given(filter_string, st.sets(st.sampled_from(["Shortlist_a", "Shortlist_b"]), min_size=1, max_size=2))
+    @given(
+        filter_string,
+        st.sets(st.sampled_from(["Shortlist_a", "Shortlist_b", "Shortlist__shared_x"]), min_size=1, max_size=3),
+    )
     def test_remove_inverts_merge_when_labels_were_absent(self, raw: str, labels: set[str]):
         for cond in parse_filter(raw):
             if cond.field == "label" and cond.op == "!=" and set(cond.values) & labels:

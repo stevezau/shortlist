@@ -6,6 +6,53 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.9.3] - 2026-09-27
+
+### Changed
+
+- **The row editor asks what kind of row you are making, and shows only that kind's settings.** The
+  kinds are Picked for You, Because you watched, Watch it again, Seasonal and Popular on this server.
+  Switching kind asks first and says what will change on Plex; switching back restores the row as it
+  was. "Because you watched" rows pick how many watches they are "Based on", and "Take turns" is
+  always shown. Request settings are switches, show only what can take effect, and warn when one
+  person could never meet the minimum demand. Templates are grouped by kind, and "Happy to see again"
+  is now "Watch it again".
+
+### Fixed
+
+- **A new shared row for only some people is hidden from everyone else as soon as it is written.** It
+  used to be listed in other people's library Collections tab until the run finished. Rows for
+  everyone are unaffected; the same applies to people you have disabled.
+- **Switching a row from "each person" to "shared" no longer leaves someone's old copy behind.** A copy
+  the save failed to remove used to stay on that person's Home for good. Each night's run now removes
+  it.
+- **Rename… renames a "Because you watched X" row.** It used to report "renamed 0". Renaming such a row
+  to a plain name now happens straight away; giving a row a "Because you watched X" name says it takes
+  effect at the row's next run, which is when it can be filled in.
+- **Changing one row's days or seasons updates only that row on Plex.** It used to re-apply every row
+  on the server.
+- **Deleting, disabling or narrowing a shared row clears Shortlist's record of its old collection.** The
+  kept record could credit plays to a collection that no longer existed.
+- **The row editor fits a phone, uses the full page width, and its summary scrolls with the page.** The
+  summary names the row a row sits beside instead of its internal id, and saving Settings refreshes
+  the row list, so an editor opened afterwards no longer writes the old default row name back.
+- **"Because you watched X" no longer stays on an old watch (#133).** When a row's best pick came
+  from a source that follows no watch (discover or web search), the row could miss that the person
+  had watched something newer. It then kept the old title, and most of the old picks, night after
+  night, and restarting or running the row by hand did not help. It now switches to the new watch on
+  the next run. Rows whose watch had not changed but had such a pick at the top were also rebuilt
+  from scratch every night; they now keep most of their picks as intended.
+- **A "Because you watched X" row no longer freezes on Plex (#133).** When someone's newest watch had
+  no look-alikes in your library, every pick in the new row came from discover or web search, which
+  follow no single watch, so the row had nothing to be named after. Shortlist then left the old row
+  on Plex, old title and old titles in it, until a later watch happened to have look-alikes, while
+  the run page showed picks that never arrived. The row is now named after the watch it was built
+  from and updated as normal. If you set a fallback name on such a row, people with watch history
+  now get "Because you watched X" in its place; the fallback is for people with too little history.
+- **A Movies and TV "Because you watched X" row names each library after its own watch.** The TV row
+  used to borrow the film's name whenever none of its picks came from look-alikes of the show, so it
+  only changed when the person watched a film.
+
 ## [1.9.2] - 2026-09-24
 
 ### Added

@@ -11,12 +11,12 @@ const MAX_SEEDS_MAX = 100;
  *  slices the front of this same list for a single source and the two were previously told apart
  *  only by wording. Exported so Settings, the row editor and the rename page import the name rather
  *  than retype it — the last rename shipped to some of those screens and not others. */
-export const MAX_SEEDS_LABEL = "Watches every source builds from";
+export const MAX_SEEDS_LABEL = "How many recent watches to match";
 
-/** Clamp any number to the valid seed-budget range (matches the API's 1..100 bound). */
-function clampMaxSeeds(n: number): number {
-  if (Number.isNaN(n)) return MAX_SEEDS_MIN;
-  return Math.max(MAX_SEEDS_MIN, Math.min(MAX_SEEDS_MAX, Math.round(n)));
+/** Clamp any number to the valid seed-budget range (the API's bound is 1..100). */
+function clampMaxSeeds(n: number, min: number): number {
+  if (Number.isNaN(n)) return min;
+  return Math.max(min, Math.min(MAX_SEEDS_MAX, Math.round(n)));
 }
 
 /**
@@ -28,9 +28,13 @@ export function MaxSeedsField({
   value,
   onChange,
   label = MAX_SEEDS_LABEL,
+  min = MAX_SEEDS_MIN,
 }: {
   value: number;
   onChange: (count: number) => void;
+  /** The lowest count this caller accepts. A Picked for You row passes 3: 1 or 2 would make it a
+   *  Because you watched row (`row-kinds.ts`), a change only the kind picker should make. */
+  min?: number;
   /** Caption above the input. Pass "" when the surrounding block already renders one — an
    *  `InheritableField` does, and rendering both printed the same heading twice with the toggle
    *  sandwiched between them. Suppressing it falls back to an `aria-label`, so the field never
@@ -48,7 +52,7 @@ export function MaxSeedsField({
   }
 
   const commit = () => {
-    const next = text.trim() === "" ? value : clampMaxSeeds(Number(text));
+    const next = text.trim() === "" ? value : clampMaxSeeds(Number(text), min);
     setText(String(next));
     if (next !== value) onChange(next);
   };
@@ -64,7 +68,7 @@ export function MaxSeedsField({
           aria-label={label ? undefined : MAX_SEEDS_LABEL}
           type="number"
           inputMode="numeric"
-          min={MAX_SEEDS_MIN}
+          min={min}
           max={MAX_SEEDS_MAX}
           value={text}
           onChange={(event) => setText(event.target.value)}

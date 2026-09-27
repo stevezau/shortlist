@@ -37,6 +37,7 @@ from shortlist.engine.delivery import (
 from shortlist.engine.models import (
     LABEL_PREFIX,
     SHARED_LABEL_PREFIX,
+    SHARED_SLUG_PREFIX,
     EngineConfig,
     RowSeason,
     RowSpec,
@@ -47,6 +48,7 @@ from shortlist.engine.pipeline import identity_map
 from shortlist.engine.placeholders import (
     catalogue_seasons,
     fill_season,
+    names_a_seed,
     needs_a_run,
     season_renderings,
     uses_season,
@@ -154,9 +156,10 @@ def _claimed_titles(ctx, udata: dict, other_rows: _OtherRows) -> set[tuple[str, 
     claimed = titles_other_rows_build(ctx.plex.sections(), profile, config, other_rows.specs, slug="")
     # A `{top_seed}` title cannot be rendered without picks, so rendering never claims one — yet two such
     # rows seeded by one watch wear the same title in different libraries. The ledger records what each
-    # was last delivered as, in which library, whichever run that was. It is read as a CLAIM only, never
-    # to select a collection, and only for `{top_seed}` rows: a static title is claimed by rendering
-    # already, and its ledger title goes stale on a rename, which writes no ledger entry.
+    # was last delivered as, in which library, whichever run that was. Here it is read as a CLAIM only, and
+    # only for `{top_seed}` rows: a static title is claimed by rendering already, and its ledger title goes
+    # stale on a rename, which writes no ledger entry. (Renaming a `{top_seed}` row reads it as the old title,
+    # but selects by the ledger KEY — `reconcile_row_rename_iter`.)
     for spec in other_rows.specs:
         if spec.audience is not None and profile.plex_account_id not in spec.audience:
             continue
@@ -319,6 +322,18 @@ def rows_titled_from(
         if _title_keys(session, other, secrets) & wanted_keys:
             clashes.append(other)
     return clashes
+
+
+def _ledger_titles(session, slug: str) -> dict[tuple[str, str], str]:
+    """{(user slug, library key) -> the title this row was last delivered under there}, from the ledger.
+
+    Read only as the OLD title of a `{top_seed}` row being renamed, which nothing else can supply.
+    """
+    return {
+        (row.user_slug, row.library_key): row.title
+        for row in session.query(Delivery).filter_by(collection_slug=slug)
+        if row.title
+    }
 
 
 def _ledger_keys(session, slug: str) -> dict[str, set[int]]:
@@ -549,6 +564,14 @@ def _reconcile_row_removal(
                     in_sections=in_sections,
                 )
             )
+            # The ledger records collections that EXIST, as the per-person branch below keeps it — and only after
+            # a real removal. A kept key is handed dead to the row's next delivery, credits plays to a collection
+            # that is gone (`watch_events._shared_on_plex`), and, once Plex reuses it, makes another row's key
+            # ambiguous so that row loses its handle too.
+            if not dry_run:
+                with state.sessions() as session:
+                    _forget_deliveries(session, slug, {f"{SHARED_SLUG_PREFIX}_{slug}"}, in_sections)
+                    session.commit()
         return dry_run
     with state.sessions() as session:
         keys_by_user = _ledger_keys(session, slug)
@@ -557,13 +580,11 @@ def _reconcile_row_removal(
         if template is None:
             template = row_template(session, slug, state.secrets)
         other_rows = _other_rows(session, state.secrets, slug)
-    swept: set[str] = set()
 
     def remove_for(user: dict, displays: set[str]) -> None:
         rating_keys = keys_by_user.get(user["slug"], set())
         if not displays and not rating_keys:
             return
-        swept.add(user["slug"])
         removed.extend(
             remove_row_collections(
                 ctx.plex,
@@ -576,6 +597,14 @@ def _reconcile_row_removal(
                 claimed_titles=_claimed_titles(ctx, user, other_rows),
             )
         )
+        # The ledger records collections that EXIST. Only after a real removal — a dry run changed nothing,
+        # and forgetting there would leave the next live attempt with no ledger to address by. Per person, as
+        # soon as theirs returns: a walk that fails on someone later must not keep entries for collections it
+        # already deleted, since the nightly sweep of a shared row's per-person copies tries every such key.
+        if not dry_run:
+            with state.sessions() as session:
+                _forget_deliveries(session, slug, {user["slug"]}, in_sections)
+                session.commit()
 
     _walk_row_collections(
         ctx,
@@ -586,12 +615,6 @@ def _reconcile_row_removal(
         action=remove_for,
         only_user_ids=only_user_ids,
     )
-    # The ledger records collections that EXIST. Only after a real removal — a dry run changed nothing,
-    # and forgetting there would leave the next live attempt with no ledger to address by.
-    if swept and not dry_run:
-        with state.sessions() as session:
-            _forget_deliveries(session, slug, swept, in_sections)
-            session.commit()
     return dry_run
 
 
@@ -779,6 +802,8 @@ def reconcile_row_rename_iter(
     leave the old-titled collection on the server for the next run to duplicate.
 
     Yields: {"user": slug, "display_name": str, "old": old_title, "new": new_title, "libraries": [...]}
+    — with ``"next_run": True`` when nothing was renamed now and the next run gives it the name, in which
+    case ``new`` may be the raw template (a ``{top_seed}`` name has no title until a run picks the seed) —
     and {"user", "library", "error"} for a per-collection PMS failure.
     At the end yields {"done": True, "total": n}.
     """
@@ -786,6 +811,12 @@ def reconcile_row_rename_iter(
     with state.sessions() as session:
         users_data = _users_data(session)
         other_rows = _other_rows(session, state.secrets, slug)
+        # Only an old `{top_seed}` name is matched through the ledger (see the walk), so only then is it read.
+        seeded_old = names_a_seed(old_template or "") or (
+            slug == DEFAULT_SLUG and any(names_a_seed(u["prefs"].get("row_name_tpl") or "") for u in users_data)
+        )
+        ledger_titles = _ledger_titles(session, slug) if seeded_old else {}
+        ledger_keys = _ledger_keys(session, slug) if seeded_old else {}
     ctx = state.run_service.build_context(dry_run=dry_run, plex_only=True)
     dry_run = ctx.config.dry_run or dry_run  # the chokepoint may force a preview ON, never off
     total = 0
@@ -824,6 +855,8 @@ def reconcile_row_rename_iter(
                     if old_title not in renamed:
                         continue
                     new_display = renamed[old_title]
+                    if new_display is None:  # a `{top_seed}` name: a shared row has no seed to be named after
+                        continue
                 if collection.title == new_display + row_marker(0):
                     continue
                 try:
@@ -900,7 +933,14 @@ def reconcile_row_rename_iter(
                     udata["slug"],
                 )
                 continue
-            renamed = _renamed_titles(effective_old, effective_template, old_profile, profile, lib_name)
+            renamed = _renamed_titles(
+                effective_old,
+                effective_template,
+                old_profile,
+                profile,
+                lib_name,
+                recorded=ledger_titles.get((udata["slug"], str(section.key))),
+            )
             if not renamed:  # unnameable — see render_row_name and `_renamed_titles`
                 continue
             for collection in ctx.plex.find_owned_collections(section, label):
@@ -908,16 +948,34 @@ def reconcile_row_rename_iter(
                 # Scope to THIS row: only rename collections whose stripped title matches what this
                 # row USED to render as.
                 old_display = strip_marker(current_title)
-                new_display = renamed.get(old_display)
-                if new_display is None:
+                if old_display not in renamed:
                     continue
-                new_with_marker = new_display + marker
-                if current_title == new_with_marker:
+                if names_a_seed(effective_old) and int(collection.ratingKey) not in ledger_keys.get(
+                    udata["slug"], set()
+                ):
+                    # Its old title came from the ledger, which a static rename does not update — so the
+                    # title can be worn by another collection by now. The ledger KEY says which is this row's.
+                    continue
+                new_display = renamed[old_display]
+                if new_display is not None and current_title == new_display + marker:
                     continue
                 if (str(section.key), old_display) in claimed:
                     # Another of this person's rows builds here under that very title (issue #121), so
                     # this is ITS collection, however well the old title matches.
                     continue
+                if new_display is None:
+                    # Named after a watch only a run can pick. Delivery finds this copy by its ledger key and
+                    # retitles it then, so say so rather than count it as nothing to do.
+                    yield {
+                        "user": udata["slug"],
+                        "display_name": profile.display_name,
+                        "old": old_display,
+                        "new": effective_template,
+                        "libraries": [lib_name],
+                        "next_run": True,
+                    }
+                    continue
+                new_with_marker = new_display + marker
                 try:
                     outcome = (
                         rename_or_keep(
@@ -970,23 +1028,44 @@ def reconcile_row_rename_iter(
 
 
 def _renamed_titles(
-    old_template: str, new_template: str, old_profile: UserProfile, profile: UserProfile, library_name: str
-) -> dict[str, str]:
-    """{title the row may be wearing -> the title it takes}, for one library.
+    old_template: str,
+    new_template: str,
+    old_profile: UserProfile,
+    profile: UserProfile,
+    library_name: str,
+    *,
+    recorded: str | None = None,
+) -> dict[str, str | None]:
+    """{title the row may be wearing -> the title it takes}, for one library. None: the next run names it.
 
     One pair for a plain name. A seasonal name (discussion #124) renders only with a season, and a row keeps
     the title of the season it was last built for — out of season too — so it is one pair per catalogue
     season, old and new filled with the SAME season. A plain name becoming seasonal gets no pair: nothing
     says which season the collection should take, and guessing could put Valentine's Day on it in December.
     The next run names it.
+
+    A `{top_seed}` name renders to nothing without picks. As the OLD name, the title it wears is `recorded`:
+    what the ledger says this person's copy was last delivered as in this library. As the NEW name, it has no
+    title until a run picks the seed, so every title the row may be wearing maps to None.
     """
+    seeded = names_a_seed(new_template)
+    if seeded and old_template == new_template and old_profile.display_name == profile.display_name:
+        return {}  # renders exactly as before, so nothing is taking a new name
     seasons = catalogue_seasons() if uses_season(old_template) else [None]
-    pairs: dict[str, str] = {}
+    pairs: dict[str, str | None] = {}
     for season in seasons:
         old = render_row_name(fill_season(old_template, season), old_profile, [], library_name=library_name)
-        new = render_row_name(fill_season(new_template, season), profile, [], library_name=library_name)
-        if old and new:
+        new = (
+            None
+            if seeded
+            else render_row_name(fill_season(new_template, season), profile, [], library_name=library_name)
+        )
+        if old and new != "":
             pairs.setdefault(old, new)
+    if recorded and names_a_seed(old_template):
+        new = None if seeded else render_row_name(new_template, profile, [], library_name=library_name)
+        if new != "":
+            pairs.setdefault(recorded, new)
     return pairs
 
 

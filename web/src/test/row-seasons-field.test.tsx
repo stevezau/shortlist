@@ -32,22 +32,17 @@ function renderField(
   return onChange;
 }
 
-const OFF: Value = { seasons: [], season_lead_days: 30, season_after_days: 0 };
 const ON: Value = { seasons: ["halloween", "christmas"], season_lead_days: 30, season_after_days: 0 };
 
 describe("RowSeasonsField", () => {
-  it("is off for an ordinary row and lists no seasons", () => {
-    renderField(OFF);
-    expect(screen.getByRole("switch", { name: /Follow the calendar/i })).not.toBeChecked();
-    expect(screen.queryByRole("checkbox")).toBeNull();
-  });
-
-  it("turning it on follows every season, a month ahead", async () => {
-    const onChange = renderField(OFF);
-    await userEvent.click(screen.getByRole("switch", { name: /Follow the calendar/i }));
-    expect(onChange).toHaveBeenCalledWith({
-      seasons: ["valentines", "halloween", "christmas"],
-    });
+  // "Follow the calendar" is gone: whether a row is seasonal is its kind now, picked in the row
+  // editor. Turning it on — every season, a month ahead — is tested there
+  // (`row-editor-kinds.test.tsx`, "turning it on follows every season, a month ahead").
+  it("has no on/off switch of its own, and writes nothing on its own", async () => {
+    const onChange = renderField(ON);
+    await screen.findByRole("checkbox", { name: /Halloween/ });
+    expect(screen.queryByRole("switch")).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it("lists each season with its day and when it would show", async () => {

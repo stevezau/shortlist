@@ -19,9 +19,12 @@
  * request — controls here would be offered and then silently ignored.
  */
 import type { ReactNode } from "react";
+import { Link } from "react-router";
 
+import { GlobalDefaultToggle } from "@/components/rows/global-default-row";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   requestAutoSendGlobal,
   requestAutoUserTagGlobal,
@@ -68,9 +71,17 @@ export type RowRequestInput = {
   req_language_mode: RowLanguageMode;
   req_preferred_languages: string[] | null;
   req_min_rating_other: number | null;
+  request_tag: string;
 };
 
-function Field({
+/**
+ * One "leave on the global default, or override it here" field.
+ *
+ * Uses the same `GlobalDefaultToggle` every other inheriting field in the row editor uses
+ * (`row-editor.tsx`'s `InheritableField`) — this used to be a local raw checkbox, the one place in
+ * the editor that didn't match.
+ */
+function RequestField({
   label,
   labelFor,
   description,
@@ -78,6 +89,7 @@ function Field({
   globalValue,
   onToggle,
   ariaLabel,
+  after,
   children,
 }: {
   label: string;
@@ -87,6 +99,8 @@ function Field({
   globalValue: string | null;
   onToggle: (usesGlobal: boolean) => void;
   ariaLabel: string;
+  /** Extra content shown regardless of inheriting (the one-person demand warning). */
+  after?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -97,20 +111,15 @@ function Field({
         <p className="text-sm font-medium">{label}</p>
       )}
       <p className="text-sm text-muted-foreground">{description}</p>
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={inheriting}
-          aria-label={ariaLabel}
-          onChange={(e) => onToggle(e.target.checked)}
-          className="h-4 w-4"
-        />
-        <span className="text-muted-foreground">
-          Use the setting from Settings &rsaquo; Requests
-          {globalValue ? ` (${globalValue})` : ""}
-        </span>
-      </label>
+      <GlobalDefaultToggle
+        ariaLabel={ariaLabel}
+        inheriting={inheriting}
+        globalValue={globalValue}
+        settingsHash="requests"
+        onChange={onToggle}
+      />
       {!inheriting && children}
+      {after}
     </div>
   );
 }
@@ -120,23 +129,66 @@ export function RowRequestSettings({
   set,
   settings,
   requestsEnabled,
+  target,
+  radarrReady,
+  sonarrReady,
+  media,
+  audienceSize,
 }: {
   input: RowRequestInput;
   set: (patch: Partial<RowRequestInput>) => void;
   settings: Settings | undefined;
   /** Whether Sonarr/Radarr requests are on at all. Off means these controls cannot do anything. */
   requestsEnabled: boolean;
+  /** Where requests are filed. Undefined shows every field, matching today's behaviour before the
+   *  caller wires this in. */
+  target?: "arr" | "overseerr";
+  /** Whether Radarr/Sonarr are set up enough for a per-row override to have any effect. Undefined
+   *  shows the field, same reasoning as `target`. */
+  radarrReady?: boolean;
+  sonarrReady?: boolean;
+  /** Which library types this row draws from — hides the other app's fields on a single-media row. */
+  media?: "movie" | "show" | "both";
+  /** How many people this row's audience holds, for the "never asks for anything" warning below. */
+  audienceSize?: number | null;
 }) {
+  // Overseerr/Seerr drives its own filing, so the fields for CHOOSING where a title lands (Radarr's
+  // folder/profile, Sonarr's, and the request tag) can't do anything there — `requests.py:806-816`.
+  const hideRadarr = target === "overseerr" || radarrReady === false || media === "show";
+  const hideSonarr = target === "overseerr" || sonarrReady === false || media === "movie";
+  const hideTag = target === "overseerr";
+
+  const globalMinDemand =
+    typeof settings?.["requests.min_demand"] === "number"
+      ? settings["requests.min_demand"]
+      : null;
+  const effectiveMinDemand = input.req_min_demand ?? globalMinDemand;
+  const soleAudienceWarning =
+    audienceSize === 1 && effectiveMinDemand !== null && effectiveMinDemand > 1;
+
+  // Off, none of the fields below can do anything, so only the note shows. Hiding them clears
+  // nothing: the row keeps what it holds for when requests are turned on.
+  if (!requestsEnabled) {
+    return (
+      <div className="space-y-4">
+        <p className="rounded-md bg-muted/60 p-3 text-sm text-muted-foreground">
+          Requests are turned off, so this row won&rsquo;t ask for anything.
+          Turn them on in{" "}
+          <Link
+            to="/settings#requests"
+            className="underline underline-offset-2 hover:text-foreground"
+          >
+            Settings &rsaquo; Requests
+          </Link>{" "}
+          to choose what it asks for.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      {!requestsEnabled && (
-        <p className="rounded-md bg-muted/60 p-3 text-sm text-muted-foreground">
-          Requests are turned off, so nothing here will be used yet. Turn them
-          on in Settings &rsaquo; Requests and these become live.
-        </p>
-      )}
-
-      <Field
+      <RequestField
         label="How many this row may ask for"
         labelFor="row-req-max"
         description={
@@ -166,9 +218,27 @@ export function RowRequestSettings({
             ? "This row never asks for anything on its own — its picks still wait in Requests for you to approve."
             : `At most ${input.req_max_per_row} per run from this row.`}
         </p>
-      </Field>
+      </RequestField>
 
-      <Field
+      <RequestField
+        label="Send automatically, or wait for you"
+        description="Automatic means this row's strongest picks go straight to Sonarr/Radarr. Waiting puts them in Requests for you to approve."
+        ariaLabel="Use the global auto-send setting for this row"
+        inheriting={input.req_auto_send === null}
+        globalValue={requestAutoSendGlobal(settings)}
+        onToggle={(on) => set({ req_auto_send: on ? null : false })}
+      >
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-sm">Send automatically</span>
+          <Switch
+            checked={input.req_auto_send ?? false}
+            onCheckedChange={(checked) => set({ req_auto_send: checked })}
+            aria-label="Ask automatically for this row"
+          />
+        </div>
+      </RequestField>
+
+      <RequestField
         label="Minimum rating"
         labelFor="row-req-rating"
         description="How well-reviewed a title must be before this row will ask for it."
@@ -186,9 +256,9 @@ export function RowRequestSettings({
           value={input.req_min_rating ?? 7}
           onChange={(e) => set({ req_min_rating: Number(e.target.value) })}
         />
-      </Field>
+      </RequestField>
 
-      <Field
+      <RequestField
         label="How many people must want it"
         labelFor="row-req-demand"
         description="Counted within this row only — someone who wants a title in a different row doesn't count towards this one."
@@ -196,6 +266,14 @@ export function RowRequestSettings({
         inheriting={input.req_min_demand === null}
         globalValue={requestDemandGlobal(settings)}
         onToggle={(on) => set({ req_min_demand: on ? null : 1 })}
+        after={
+          soleAudienceWarning ? (
+            <p role="alert" className="text-sm text-destructive-text">
+              Only one person gets this row, so any value above 1 means it
+              never asks for anything.
+            </p>
+          ) : null
+        }
       >
         <Input
           id="row-req-demand"
@@ -206,9 +284,9 @@ export function RowRequestSettings({
             set({ req_min_demand: Math.max(1, Number(e.target.value)) })
           }
         />
-      </Field>
+      </RequestField>
 
-      <Field
+      <RequestField
         label="Release years"
         description="Only ask for titles released in this range. Leave a box at 0 for no limit at that end."
         ariaLabel="Use the global release-year range for this row"
@@ -241,169 +319,9 @@ export function RowRequestSettings({
             onChange={(e) => set({ req_max_year: Number(e.target.value) || 0 })}
           />
         </div>
-      </Field>
+      </RequestField>
 
-      <Field
-        label="Ask automatically, or wait for you"
-        description="Automatic means this row's strongest picks go straight to Sonarr/Radarr. Waiting puts them in Requests for you to approve."
-        ariaLabel="Use the global auto-send setting for this row"
-        inheriting={input.req_auto_send === null}
-        globalValue={requestAutoSendGlobal(settings)}
-        onToggle={(on) => set({ req_auto_send: on ? null : false })}
-      >
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={input.req_auto_send ?? false}
-            aria-label="Ask automatically for this row"
-            onChange={(e) => set({ req_auto_send: e.target.checked })}
-            className="h-4 w-4"
-          />
-          <span>Ask automatically</span>
-        </label>
-      </Field>
-
-      <Field
-        label="Tag requests with who they're for"
-        description="Adds each person's name as a Sonarr/Radarr tag, so you can tell at a glance in there who a title was added for. Someone with their own tag set on their user page keeps that instead."
-        ariaLabel="Use the global tag-by-person setting for this row"
-        inheriting={input.req_auto_user_tag === null}
-        globalValue={requestAutoUserTagGlobal(settings)}
-        onToggle={(on) => set({ req_auto_user_tag: on ? null : false })}
-      >
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={input.req_auto_user_tag ?? false}
-            aria-label="Tag this row's requests by person"
-            onChange={(e) => set({ req_auto_user_tag: e.target.checked })}
-            className="h-4 w-4"
-          />
-          <span>Tag by person</span>
-        </label>
-      </Field>
-
-      <Field
-        label="Where films from this row land"
-        labelFor="row-req-radarr-folder"
-        description="The Radarr root folder and quality profile for films this row asks for. Everything else about the connection stays as set in Settings."
-        ariaLabel="Use the global Radarr folder for this row"
-        inheriting={
-          input.req_radarr_root_folder === null &&
-          input.req_radarr_quality_profile_id === null
-        }
-        globalValue={requestRootFolderGlobal(settings, "radarr")}
-        onToggle={(on) =>
-          set(
-            on
-              ? {
-                  req_radarr_root_folder: null,
-                  req_radarr_quality_profile_id: null,
-                }
-              : { req_radarr_root_folder: "" },
-          )
-        }
-      >
-        <Input
-          id="row-req-radarr-folder"
-          placeholder="/data/Kids Movies"
-          value={input.req_radarr_root_folder ?? ""}
-          onChange={(e) =>
-            set({ req_radarr_root_folder: e.target.value || null })
-          }
-        />
-        <Input
-          aria-label="Radarr quality profile id"
-          type="number"
-          min={1}
-          placeholder="Quality profile id (leave blank to keep the global)"
-          value={input.req_radarr_quality_profile_id ?? ""}
-          onChange={(e) =>
-            set({
-              req_radarr_quality_profile_id: e.target.value
-                ? Number(e.target.value)
-                : null,
-            })
-          }
-        />
-      </Field>
-
-      <Field
-        label="Where shows from this row land"
-        labelFor="row-req-sonarr-folder"
-        description="The Sonarr root folder and quality profile for shows this row asks for."
-        ariaLabel="Use the global Sonarr folder for this row"
-        inheriting={
-          input.req_sonarr_root_folder === null &&
-          input.req_sonarr_quality_profile_id === null
-        }
-        globalValue={requestRootFolderGlobal(settings, "sonarr")}
-        onToggle={(on) =>
-          set(
-            on
-              ? {
-                  req_sonarr_root_folder: null,
-                  req_sonarr_quality_profile_id: null,
-                }
-              : { req_sonarr_root_folder: "" },
-          )
-        }
-      >
-        <Input
-          id="row-req-sonarr-folder"
-          placeholder="/data/Kids TV"
-          value={input.req_sonarr_root_folder ?? ""}
-          onChange={(e) =>
-            set({ req_sonarr_root_folder: e.target.value || null })
-          }
-        />
-        <Input
-          aria-label="Sonarr quality profile id"
-          type="number"
-          min={1}
-          placeholder="Quality profile id (leave blank to keep the global)"
-          value={input.req_sonarr_quality_profile_id ?? ""}
-          onChange={(e) =>
-            set({
-              req_sonarr_quality_profile_id: e.target.value
-                ? Number(e.target.value)
-                : null,
-            })
-          }
-        />
-      </Field>
-
-      <Field
-        label="How much of a show this row grabs"
-        labelFor="row-req-sonarr-monitor"
-        description="Sonarr downloads what it monitors, so a long-running show normally arrives whole. A row that's meant as a taster can take the first season and no more."
-        ariaLabel="Use the global amount-of-a-show setting for this row"
-        inheriting={input.req_sonarr_monitor === null}
-        globalValue={requestSonarrMonitorGlobal(settings)}
-        onToggle={(on) =>
-          set({ req_sonarr_monitor: on ? null : "firstSeason" })
-        }
-      >
-        <select
-          id="row-req-sonarr-monitor"
-          className="h-9 w-full rounded-md border bg-elevated px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          value={input.req_sonarr_monitor ?? "all"}
-          onChange={(e) =>
-            set({ req_sonarr_monitor: asSonarrMonitor(e.target.value) })
-          }
-        >
-          {SONARR_MONITOR_MODES.map((mode) => (
-            <option key={mode} value={mode}>
-              {SONARR_MONITOR_LABELS[mode]}
-            </option>
-          ))}
-        </select>
-        <p className="text-sm text-muted-foreground">
-          {SONARR_MONITOR_HINTS[input.req_sonarr_monitor ?? "all"]}
-        </p>
-      </Field>
-
-      <Field
+      <RequestField
         label="Language for this row"
         labelFor="row-req-language-mode"
         description="A kids row can stay in English while the rest of the server takes anything good. Turning this off puts the row back on whatever you chose in Settings."
@@ -504,7 +422,173 @@ export function RowRequestSettings({
                 )}
             </div>
           )}
-      </Field>
+      </RequestField>
+
+      {!hideTag && (
+        <div className="space-y-2 border-t pt-4">
+          <Label htmlFor="row-request-tag">Request tag (optional)</Label>
+          <Input
+            id="row-request-tag"
+            value={input.request_tag}
+            onChange={(event) => set({ request_tag: event.target.value })}
+            placeholder="e.g. picked-for-family"
+            maxLength={64}
+            className="max-w-xs"
+          />
+          <p className="text-sm text-muted-foreground">
+            An extra Radarr/Sonarr tag on requests from this row, beside the
+            ones every Shortlist request already gets. Blank adds nothing.
+          </p>
+        </div>
+      )}
+
+      {!hideTag && (
+        <RequestField
+          label="Tag requests with who they're for"
+          description="Adds each person's name as a Sonarr/Radarr tag, so you can tell at a glance in there who a title was added for. Someone with their own tag set on their user page keeps that instead."
+          ariaLabel="Use the global tag-by-person setting for this row"
+          inheriting={input.req_auto_user_tag === null}
+          globalValue={requestAutoUserTagGlobal(settings)}
+          onToggle={(on) => set({ req_auto_user_tag: on ? null : false })}
+        >
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-sm">Tag by person</span>
+            <Switch
+              checked={input.req_auto_user_tag ?? false}
+              onCheckedChange={(checked) =>
+                set({ req_auto_user_tag: checked })
+              }
+              aria-label="Tag this row's requests by person"
+            />
+          </div>
+        </RequestField>
+      )}
+
+      {!hideRadarr && (
+        <RequestField
+          label="Where films from this row land"
+          labelFor="row-req-radarr-folder"
+          description="The Radarr root folder and quality profile for films this row asks for. Everything else about the connection stays as set in Settings."
+          ariaLabel="Use the global Radarr folder for this row"
+          inheriting={
+            input.req_radarr_root_folder === null &&
+            input.req_radarr_quality_profile_id === null
+          }
+          globalValue={requestRootFolderGlobal(settings, "radarr")}
+          onToggle={(on) =>
+            set(
+              on
+                ? {
+                    req_radarr_root_folder: null,
+                    req_radarr_quality_profile_id: null,
+                  }
+                : { req_radarr_root_folder: "" },
+            )
+          }
+        >
+          <Input
+            id="row-req-radarr-folder"
+            placeholder="/data/Kids Movies"
+            value={input.req_radarr_root_folder ?? ""}
+            onChange={(e) =>
+              set({ req_radarr_root_folder: e.target.value || null })
+            }
+          />
+          <Input
+            aria-label="Radarr quality profile id"
+            type="number"
+            min={1}
+            placeholder="Quality profile id (leave blank to keep the global)"
+            value={input.req_radarr_quality_profile_id ?? ""}
+            onChange={(e) =>
+              set({
+                req_radarr_quality_profile_id: e.target.value
+                  ? Number(e.target.value)
+                  : null,
+              })
+            }
+          />
+        </RequestField>
+      )}
+
+      {!hideSonarr && (
+        <>
+          <RequestField
+            label="Where shows from this row land"
+            labelFor="row-req-sonarr-folder"
+            description="The Sonarr root folder and quality profile for shows this row asks for."
+            ariaLabel="Use the global Sonarr folder for this row"
+            inheriting={
+              input.req_sonarr_root_folder === null &&
+              input.req_sonarr_quality_profile_id === null
+            }
+            globalValue={requestRootFolderGlobal(settings, "sonarr")}
+            onToggle={(on) =>
+              set(
+                on
+                  ? {
+                      req_sonarr_root_folder: null,
+                      req_sonarr_quality_profile_id: null,
+                    }
+                  : { req_sonarr_root_folder: "" },
+              )
+            }
+          >
+            <Input
+              id="row-req-sonarr-folder"
+              placeholder="/data/Kids TV"
+              value={input.req_sonarr_root_folder ?? ""}
+              onChange={(e) =>
+                set({ req_sonarr_root_folder: e.target.value || null })
+              }
+            />
+            <Input
+              aria-label="Sonarr quality profile id"
+              type="number"
+              min={1}
+              placeholder="Quality profile id (leave blank to keep the global)"
+              value={input.req_sonarr_quality_profile_id ?? ""}
+              onChange={(e) =>
+                set({
+                  req_sonarr_quality_profile_id: e.target.value
+                    ? Number(e.target.value)
+                    : null,
+                })
+              }
+            />
+          </RequestField>
+
+          <RequestField
+            label="How much of a show this row grabs"
+            labelFor="row-req-sonarr-monitor"
+            description="Sonarr downloads what it monitors, so a long-running show normally arrives whole. A row that's meant as a taster can take the first season and no more."
+            ariaLabel="Use the global amount-of-a-show setting for this row"
+            inheriting={input.req_sonarr_monitor === null}
+            globalValue={requestSonarrMonitorGlobal(settings)}
+            onToggle={(on) =>
+              set({ req_sonarr_monitor: on ? null : "firstSeason" })
+            }
+          >
+            <select
+              id="row-req-sonarr-monitor"
+              className="h-9 w-full rounded-md border bg-elevated px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              value={input.req_sonarr_monitor ?? "all"}
+              onChange={(e) =>
+                set({ req_sonarr_monitor: asSonarrMonitor(e.target.value) })
+              }
+            >
+              {SONARR_MONITOR_MODES.map((mode) => (
+                <option key={mode} value={mode}>
+                  {SONARR_MONITOR_LABELS[mode]}
+                </option>
+              ))}
+            </select>
+            <p className="text-sm text-muted-foreground">
+              {SONARR_MONITOR_HINTS[input.req_sonarr_monitor ?? "all"]}
+            </p>
+          </RequestField>
+        </>
+      )}
     </div>
   );
 }

@@ -1518,6 +1518,35 @@ class TestSeasonalRows0092:
         assert not ({"seasons", "season_lead_days", "season_after_days"} & set(self._columns(tmp_path)))
 
 
+class TestPickLeadSeed0093:
+    """0093 records on each pick the watch its `{top_seed}` row was built from (issue #133). NULL is
+    "unknown" — the same convention as `recipe` and `built_at` — so an upgrade changes no row's behaviour
+    until that row is next built."""
+
+    @staticmethod
+    def _columns(config_dir: Path) -> set[str]:
+        con = sqlite3.connect(config_dir / "shortlist.db")
+        try:
+            return {r[1] for r in con.execute("PRAGMA table_info(picks)")}
+        finally:
+            con.close()
+
+    def test_it_adds_the_lead_seed_columns(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        assert {"lead_seed_tmdb_id", "lead_seed_title"} <= self._columns(tmp_path)
+
+    def test_running_it_again_over_an_already_migrated_database_is_a_no_op(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.stamp(_alembic(tmp_path), "0092")
+        run_migrations(tmp_path)
+        assert {"lead_seed_tmdb_id", "lead_seed_title"} <= self._columns(tmp_path)
+
+    def test_the_downgrade_removes_them_again(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0092")
+        assert not ({"lead_seed_tmdb_id", "lead_seed_title"} & self._columns(tmp_path))
+
+
 class TestRowShowDaysDowngrade0088:
     """0089's downgrade re-creates `shown_state` for any install that had it, and 0088's downgrade has to
     take it out again, or a database downgraded past 0088 keeps a column no revision below it defines."""

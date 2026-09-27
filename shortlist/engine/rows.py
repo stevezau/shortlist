@@ -27,6 +27,7 @@ from shortlist.engine.clients.plex_pms import _retry_idempotent
 from shortlist.engine.context import EngineContext, _emit
 from shortlist.engine.delivery import (
     deliver_rows,
+    named_seed_pick,
     remove_row,
     render_row_name,
     resolve_row_template,
@@ -760,7 +761,12 @@ def _names_a_seed(spec: RowSpec, user: UserProfile, config: EngineConfig) -> boo
 
 
 def _seed_moved(
-    spec: RowSpec, prior_valid: list[Pick], sub: list[Candidate], user: UserProfile, config: EngineConfig
+    spec: RowSpec,
+    prior_valid: list[Pick],
+    sub: list[Candidate],
+    user: UserProfile,
+    config: EngineConfig,
+    lead_tmdb_id: int | None = None,
 ) -> bool:
     """Whether a row NAMED after its seed is now built from a different one than last run's picks.
 
@@ -785,8 +791,25 @@ def _seed_moved(
     """
     if not _names_a_seed(spec, user, config) or not prior_valid or not sub:
         return False
-    current = sub[0].top_seed
-    return prior_valid[0].seed_tmdb_id != (current.tmdb_id if current else None)
+    # Both sides skip UNSEEDED entries, as the title does (issue #133). Read as they stood, a row led by
+    # a discover or web-search pick compared "no seed" with "no seed", never saw its seed move, and kept
+    # carrying the old watch's picks — and its name — forward every night; and a row whose seed was
+    # unchanged but had an unseeded pick on only ONE side read that as a move and rebuilt every night.
+    named = named_seed_pick(prior_valid)
+    if named is None:
+        # No pick last run carried a seed, so the title named the watch the row was BUILT from — the lead
+        # seed stamped on every pick (issue #133). Compare that with tonight's (`lead_tmdb_id`).
+        was = prior_valid[0].lead_seed_tmdb_id
+        if was is None:
+            # Unknown: a cold-start row (the cold-start fill stamps nothing), or one written before the stamp
+            # existed. It follows no watch, so it moved the night its pool first follows one — as 1.9.2 read
+            # "no seed" against a seeded pool. Kept, most of it would be carried forward under a new
+            # "Because you watched X" title. A pool that still follows no watch (nor a library with no watch
+            # of its own) is not a move, so neither rebuilds every night; once rebuilt, the row is stamped.
+            return lead_tmdb_id is not None and any(c.top_seed for c in sub)
+        return was != lead_tmdb_id
+    current = next((c.top_seed for c in sub if c.top_seed), None)
+    return named.seed_tmdb_id != (current.tmdb_id if current else None)
 
 
 def _rated_by_source(picks: list[Pick], ctx: EngineContext) -> dict[tuple[int, MediaType], float] | None:
@@ -2655,6 +2678,14 @@ def _build_section_picks(
         sec_idx = ctx.section_index.get(section.key, {})
         pct = policy.effective_watched_pct(spec)
         sub = [c for c in pool_for_row if c.media_type is kind and c.tmdb_id in sec_idx]
+        # The watch this library's row is built from, for a row NAMED after one: its title falls back to
+        # it when no pick carries a seed of its own, which is every pick discover and web search make.
+        lead = (
+            next((s for s in policy.seeds_for(spec) if s.media_type is kind), None)
+            if _names_a_seed(spec, user, policy.cfg)
+            else None
+        )
+        lead_tmdb_id = lead.tmdb_id if lead else None
         rewatch_reasons: dict[tuple[int, MediaType], str] = {}
         if spec.rewatch:
             # History first, then the pool's unseen titles as the top-up. The pool holds no finished
@@ -2716,7 +2747,7 @@ def _build_section_picks(
         held = (
             due
             and not recipe_changed
-            and not _seed_moved(spec, prior_valid, sub, policy.user, policy.cfg)
+            and not _seed_moved(spec, prior_valid, sub, policy.user, policy.cfg, lead_tmdb_id)
             and _held_for_idle(prior_valid, policy.last_watch_at, ctx.run_at, hold_days)
         )
         refresh = due and not held
@@ -2792,7 +2823,7 @@ def _build_section_picks(
             spares, reselect = ([] if genre_hold else sub), False
             if len(sec_picks) < k and sub and not genre_hold:
                 sec_picks = _pad_picks(sec_picks, sub, k)
-        elif prior_valid and not _seed_moved(spec, prior_valid, sub, policy.user, policy.cfg):
+        elif prior_valid and not _seed_moved(spec, prior_valid, sub, policy.user, policy.cfg, lead_tmdb_id):
             # Refresh night: keep the strongest ~two-thirds by RANK (match quality — `prior_valid` is
             # ordered by the persisted rank column, not by how the row was displayed), and swap the
             # rest for genuinely-new titles.
@@ -2881,7 +2912,17 @@ def _build_section_picks(
             if refresh or not prior_valid
             else max((p.built_at for p in prior_valid if p.built_at is not None), default=None)
         )
-        ranked = [replace(p, rank=i + 1, recipe=recipe, built_at=built_at) for i, p in enumerate(sec_picks[:k])]
+        ranked = [
+            replace(
+                p,
+                rank=i + 1,
+                recipe=recipe,
+                built_at=built_at,
+                lead_seed_tmdb_id=lead_tmdb_id,
+                lead_seed_title=lead.title if lead else "",
+            )
+            for i, p in enumerate(sec_picks[:k])
+        ]
         # Only a row actually sorting on rating pays for the lookups, and only for its own k picks.
         ratings = _rated_by_source(ranked, ctx) if spec.pick_order == "rating" else None
         # Derived from the FINAL list rather than from the refresh branch's `new_picks`, because the
@@ -3425,19 +3466,26 @@ def _run_shared(
     stored_labels: dict[str, str],
     report,
     order_work: list[tuple] | None = None,
+    on_first_row: Callable[[], None] | None = None,
 ) -> tuple[UserRunReport, UserProfile | None]:
     """Deliver one shared 'popular on this server' row from AGGREGATE history.
 
     Owns its own report row and its own error handling, so one shared row failing never stops the
     others and never leaves the run unaudited. Returns ``(user_report, agg)`` — the synthetic
     profile is a promotion candidate when a row was delivered, else None.
+
+    `on_first_row` is called each time one of this row's libraries stores its label, before the next
+    library is written — so a new row is hidden from everyone outside its audience first
+    (`pipeline._deliver_phase`). It must not raise.
     """
     started = time.monotonic()
     slug = f"{SHARED_SLUG_PREFIX}_{spec.slug}"
     user_report = UserRunReport(username=f"Shared · {spec.slug}", slug=slug)
     report.users.append(user_report)
     try:
-        agg = _shared_row(ctx, spec, users, seed_index, library_index, stored_labels, user_report, slug, order_work)
+        agg = _shared_row(
+            ctx, spec, users, seed_index, library_index, stored_labels, user_report, slug, order_work, on_first_row
+        )
     except Exception as e:  # one shared row's failure never stops the next (rule 6 resume-safety)
         user_report.status = "error"
         user_report.error = f"{type(e).__name__}: {e}"
@@ -3463,6 +3511,7 @@ def _shared_row(
     user_report: UserRunReport,
     slug: str,
     order_work: list[tuple] | None = None,
+    on_first_row: Callable[[], None] | None = None,
 ) -> UserProfile | None:
     """Build and deliver the shared row's picks (the body ``_run_shared`` guards).
 
@@ -3669,6 +3718,7 @@ def _shared_row(
         breakdown=user_report.breakdown,
         order_work=order_work,
         on_write=lambda counts: _emit(ctx, slug, "delivering", counts),
+        on_label_stored=on_first_row,
         written_details=_written_details(ctx, slug, spec.slug),
     )
     return agg if picks else None

@@ -281,7 +281,7 @@ describe("RecommendationsSection", () => {
       "recommendations.recent_count": 10,
     });
 
-    const budget = screen.getByLabelText(/^Watches every source builds from$/i);
+    const budget = screen.getByLabelText(/^How many recent watches to match$/i);
     const slice = screen.getByLabelText(
       /^Watches the AI web search looks up$/i,
     );

@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { QueryBoundary } from "@/components/query-boundary";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { targetsLibrary } from "@/lib/placement";
 import {
   useCollections,
   useLibraries,
@@ -16,18 +17,6 @@ const selectClass =
 
 type Entry = HubAnchorMap[string];
 type Mode = "top" | "after" | "before" | "off";
-
-/** A row targets a library when it lists it, or (when it lists none) any library of its media type. */
-function targetsLibrary(
-  library: PlexLibrary,
-  libraryKeys: string[],
-  media: CollectionInput["media"],
-): boolean {
-  const mediaMatch = media === "both" || library.type === media;
-  return libraryKeys.length === 0
-    ? mediaMatch
-    : libraryKeys.includes(library.key);
-}
 
 /** No entry = the default, which is the top of the shelf. `enabled: false` = never positioned.
  *

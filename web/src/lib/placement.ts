@@ -1,4 +1,16 @@
-import type { Placement, User } from "@/lib/types";
+import type { CollectionInput, Placement, PlexLibrary, User } from "@/lib/types";
+
+/** A row targets a library when it lists it, or (when it lists none) any library of its media type. */
+export function targetsLibrary(
+  library: PlexLibrary,
+  libraryKeys: string[],
+  media: CollectionInput["media"],
+): boolean {
+  const mediaMatch = media === "both" || library.type === media;
+  return libraryKeys.length === 0
+    ? mediaMatch
+    : libraryKeys.includes(library.key);
+}
 
 /** Where a row shows, in words. `Placement` has FOUR values — the "off" arm was missing, so a row
  *  hidden from every shelf was badged "Shows on: Home & Library": a confident, specific, false claim

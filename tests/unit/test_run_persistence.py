@@ -285,6 +285,44 @@ class TestPicksCarryTheBuiltAtStamp:
             assert stored.built_at.replace(tzinfo=stored.built_at.tzinfo or UTC) == built
 
 
+class TestPicksCarryTheLeadSeed:
+    """The watch a `{top_seed}` row was built from has to survive the write (issue #133). Dropped here, every
+    carried row reads as "unknown", and a row named without a seeded pick never notices its watch moving on:
+    it carries two-thirds of the old watch's row forward under the new watch's name."""
+
+    def test_a_persisted_pick_keeps_the_watch_its_row_was_built_from(self, sessions):
+        from shortlist.engine.models import MediaType, Pick, UserRunReport
+        from shortlist.server.db.models import PickRow, Run, User
+        from shortlist.server.services.run_persistence import _persist_user_report
+
+        with sessions() as session:
+            user = User(plex_account_id=1, username="sarah", slug="sarah", enabled=True)
+            run = Run(trigger="manual", status="ok", dry_run=False, stats={})
+            session.add_all([user, run])
+            session.commit()
+            report = UserRunReport(username="sarah", slug="sarah", status="ok")
+            report.picks = [
+                Pick(
+                    tmdb_id=100,
+                    rating_key=1,
+                    title="T100",
+                    rank=1,
+                    reason="",
+                    media_type=MediaType.MOVIE,
+                    collection_slug="because",
+                    section_key="1",
+                    lead_seed_tmdb_id=900,
+                    lead_seed_title="Fargo",
+                )
+            ]
+
+            _persist_user_report(session, run.id, user, report, dry_run=False)
+            session.commit()
+
+            stored = session.query(PickRow).one()
+            assert (stored.lead_seed_tmdb_id, stored.lead_seed_title) == (900, "Fargo")
+
+
 class TestTheLedgerRecordsWhatWasWrittenToASummaryAndSortTitle:
     """Issue #120. The ledger's record is what lets clearing a row's field hand back ONLY what Shortlist
     wrote — so the persist must forget a record the run cleared, and must keep one a run never reached."""

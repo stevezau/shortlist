@@ -60,14 +60,21 @@ export function RowEditPage() {
               template={template}
               users={users.data ?? []}
               onClose={() => navigate("/rows")}
-              onRename={(proposedName) =>
+              onRename={(proposedName, saved) =>
                 collection &&
                 navigate(`/rows/${collection.id}/rename`, {
                   // The proposed name is also the go-ahead: that screen starts the rename on
                   // arrival. The button is only enabled once the name has actually changed, so the
                   // click is the decision — asking again there made "Rename…" mean "open a page
-                  // with a Rename button on it".
-                  state: { proposedName },
+                  // with a Rename button on it". A kind switch's name was saved with the switch, so
+                  // that screen streams from the old title instead of saving it again.
+                  state: saved
+                    ? {
+                        proposedName,
+                        oldTemplate: saved.oldTemplate,
+                        alreadySaved: true,
+                      }
+                    : { proposedName },
                 })
               }
             />

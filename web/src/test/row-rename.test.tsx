@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -30,11 +30,11 @@ function streamOf(events: object[]) {
   };
 }
 
-function renderRename() {
+function renderRename(state: object = { proposedName: "New Name" }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[{ pathname: "/rows/7/rename", state: { proposedName: "New Name" } }]}>
+      <MemoryRouter initialEntries={[{ pathname: "/rows/7/rename", state }]}>
         <Routes>
           <Route path="/rows/:id/rename" element={<RowRenamePage />} />
         </Routes>
@@ -111,5 +111,57 @@ describe("RowRenamePage — what each person's rename came to", () => {
     renderRename();
 
     expect(await screen.findByText("Plex isn't reachable.")).toBeInTheDocument();
+  });
+});
+
+describe("RowRenamePage — where the name was saved", () => {
+  const fetchMock = vi.fn();
+  const streamed = () => JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string);
+
+  beforeEach(() => {
+    Element.prototype.scrollTo = vi.fn();
+    // After the editor's save the cached row already carries the new name.
+    listCollections.mockResolvedValue([{ id: 7, slug: "comedy", name: "New Name", name_template: "New Name" }]);
+    updateCollection.mockReset().mockResolvedValue({});
+    fetchMock.mockReset().mockResolvedValue(streamOf([{ done: true, total: 0 }]));
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("streams straight from the old title when the editor already saved the name", async () => {
+    renderRename({ proposedName: "New Name", oldTemplate: "{season} picks", alreadySaved: true });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(streamed()).toEqual({ name_template: "New Name", old_template: "{season} picks" });
+    expect(updateCollection).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the stream reports an error", () => fetchMock.mockResolvedValue(streamOf([{ error: "Plex isn't reachable." }]))],
+    ["the request fails", () => fetchMock.mockRejectedValue(new Error("Plex isn't reachable."))],
+  ])("says the name was saved but Plex wasn't renamed when %s", async (_, fail) => {
+    fail();
+    renderRename({ proposedName: "New Name", oldTemplate: "{season} picks", alreadySaved: true });
+
+    expect(
+      await screen.findByText(
+        "Your settings and the new name were saved, but the rename didn't finish on Plex. It's applied the next time the row runs.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Plex isn't reachable.")).toBeInTheDocument();
+  });
+
+  it("still saves the name with the rename deferred, then streams, when it arrives from Rename…", async () => {
+    listCollections.mockResolvedValue([{ id: 7, slug: "comedy", name: "Old Name", name_template: "Old Name" }]);
+    renderRename({ proposedName: "New Name" });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(updateCollection).toHaveBeenCalledWith(7, {
+      name: "New Name",
+      name_template: "New Name",
+      defer_rename: true,
+    });
+    expect(updateCollection.mock.invocationCallOrder[0]).toBeLessThan(fetchMock.mock.invocationCallOrder[0] ?? 0);
+    expect(streamed()).toEqual({ name_template: "New Name", old_template: "Old Name" });
   });
 });
