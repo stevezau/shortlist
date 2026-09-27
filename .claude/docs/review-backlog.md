@@ -57,7 +57,10 @@ reproduced on a live server; both are reasoned from the cited code, not measured
   change — `remove_row` ignores the ledger key when a title renders); a `{top_seed}` copy whose ledger row
   a completed walk forgot (an empty label read, or an ambiguous key — issue #121's other row); a person
   whose OWN walk raises after deleting in one library keeps that library's dead key; and copies of a
-  DISABLED shared row (left out so its libraries are not indexed every run). Pinned by
+  DISABLED shared row (left out so its libraries are not indexed every run). These are left ON PURPOSE
+  (2026-09-27, not yet put to the owner): reaching them means deleting by a ledger key when a title renders, sweeping
+  people the run does not process, or indexing a disabled row's libraries — each loosens a guard that keeps
+  a delete off a row that is not this one, for copies that stay private to their owner. Pinned by
   `test_api_collections.py::test_a_row_switched_to_shared_retires_everyones_per_person_copy`,
   `test_a_disabled_shared_row_retires_no_per_person_copy`,
   `test_the_default_row_switched_to_shared_retires_copies_titled_from_the_global_template` and
@@ -94,16 +97,25 @@ up; evidence in that session's scratchpad `live-proof/`). PRE-EXISTING behaviour
   17:44 and 18:30 Shortlist wrote no event at all, yet Movies and TV each had 10–11 hubs move with the
   FOREIGN relative order changed — something `place_rows` never does — and ours kept theirs. Across a deploy,
   runs 57–58 and the (now scoped) visibility pass, with no agregarr tick inside the window, no existing hub
-  moved. Any shelf diff that spans a :00/:30 boundary will show agregarr's shuffle.
+  moved. Any shelf diff that spans a :00/:30 boundary will show agregarr's shuffle. And re-promoting
+  EVERY row does not move hubs either: a full `rows.visibility` pass (186 collections, 19:41, between
+  ticks) left all three shelves identical.
 
 ## OPEN — found during the backlog-fixes live proof (2026-09-27)
 
-- **LOW — deleting a SHARED row leaves its delivery-ledger row.** `_reconcile_row_removal`'s shared branch
+- **FIXED (2026-09-27; unit-tested) — LOW — deleting a SHARED row leaves its delivery-ledger row.** `_reconcile_row_removal`'s shared branch
   (`collection_reconcile.py`, `if build == "shared":`) removes the collection and returns without
   `_forget_deliveries`, so `(slug, shared_<slug>, library) -> ratingKey` outlives the collection (seen live:
   the deleted test row's entry, removed by hand). Nothing reads it while the slug is gone; a new row that
   reuses the slug would be handed the dead ratingKey, which Plex may have reused. Fix: forget the
   `shared_<slug>` rows after a real (non-dry-run) removal, as the per-person branch does.
+  Done: the shared branch now forgets `shared_<slug>` (scoped to `in_sections`) after a real removal. Pinned by
+  `test_collection_reconcile.py::test_shared_build_forgets_its_own_ledger_rows_after_a_real_removal` and
+  `test_a_shared_row_narrowed_out_of_a_library_forgets_only_that_library`. Two residuals, both older than
+  this: a shared walk that raises partway keeps every library's key until a retry succeeds; and
+  `POST /api/collections/{id}/cleanup` takes no `plex_writer_lock` (the job worker does), so a cleanup
+  overlapping a run that delivers the same row can forget the run's fresh key — the row's next delivery
+  finds it by label and writes it back, and plays go uncredited until then. Same race on the per-person branch.
 
 ## OPEN — the rename screen can't rename a `{top_seed}` row (found 2026-09-27)
 

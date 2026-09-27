@@ -37,6 +37,7 @@ from shortlist.engine.delivery import (
 from shortlist.engine.models import (
     LABEL_PREFIX,
     SHARED_LABEL_PREFIX,
+    SHARED_SLUG_PREFIX,
     EngineConfig,
     RowSeason,
     RowSpec,
@@ -563,6 +564,14 @@ def _reconcile_row_removal(
                     in_sections=in_sections,
                 )
             )
+            # The ledger records collections that EXIST, as the per-person branch below keeps it — and only after
+            # a real removal. A kept key is handed dead to the row's next delivery, credits plays to a collection
+            # that is gone (`watch_events._shared_on_plex`), and, once Plex reuses it, makes another row's key
+            # ambiguous so that row loses its handle too.
+            if not dry_run:
+                with state.sessions() as session:
+                    _forget_deliveries(session, slug, {f"{SHARED_SLUG_PREFIX}_{slug}"}, in_sections)
+                    session.commit()
         return dry_run
     with state.sessions() as session:
         keys_by_user = _ledger_keys(session, slug)

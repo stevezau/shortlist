@@ -347,6 +347,56 @@ class TestReconcileRowRemoval:
         label_used = plex.find_owned_collections.call_args.args[1]
         assert label_used == f"{SHARED_LABEL_PREFIX}movienight" == "shortlist__shared_movienight"
 
+    @pytest.mark.parametrize(("dry_run", "left"), [(False, {"sarah"}), (True, {"sarah", "shared_movienight"})])
+    def test_shared_build_forgets_its_own_ledger_rows_after_a_real_removal(self, sessions, dry_run: bool, left: set):
+        """Deleting a shared row kept `shared_<slug>`'s ledger entry for a collection that was gone (seen live,
+        2026-09-27), so a row reusing the slug would be handed a dead ratingKey. A per-person entry under the
+        same slug is not the shared row's to forget."""
+        with sessions() as session:
+            for user_slug, key in (("shared_movienight", 900), ("sarah", 901)):
+                session.add(
+                    Delivery(
+                        collection_slug="movienight", user_slug=user_slug, library_key="1", rating_key=key, title="x"
+                    )
+                )
+            session.commit()
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [_section("Movies")]
+        plex.find_owned_collections.side_effect = lambda sec, label: (
+            [_collection("Movie Night")] if label == "shortlist__shared_movienight" else []
+        )
+
+        rec._reconcile_row_removal(
+            _state(sessions, plex), slug="movienight", build="shared", dry_run=dry_run, removed=[]
+        )
+
+        with sessions() as session:
+            assert {d.user_slug for d in session.query(Delivery).filter_by(collection_slug="movienight")} == left
+
+    def test_a_shared_row_narrowed_out_of_a_library_forgets_only_that_library(self, sessions):
+        with sessions() as session:
+            for library_key, key in (("1", 900), ("2", 902)):
+                session.add(
+                    Delivery(
+                        collection_slug="movienight",
+                        user_slug="shared_movienight",
+                        library_key=library_key,
+                        rating_key=key,
+                        title="x",
+                    )
+                )
+            session.commit()
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [_section("Movies", "1"), _section("Classics", "2")]
+        plex.find_owned_collections.return_value = []
+
+        rec._reconcile_row_removal(
+            _state(sessions, plex), slug="movienight", build="shared", dry_run=False, removed=[], in_sections={"2"}
+        )
+
+        with sessions() as session:
+            assert [d.library_key for d in session.query(Delivery).filter_by(collection_slug="movienight")] == ["1"]
+
     def test_a_walk_that_fails_partway_has_already_forgotten_the_people_it_finished(self, sessions):
         """The ledger records collections that EXIST. Forgetting only after the whole walk meant a failure on the
         second person kept the first person's entries for collections already deleted — and the nightly sweep
