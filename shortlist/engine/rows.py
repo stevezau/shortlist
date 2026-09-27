@@ -798,12 +798,16 @@ def _seed_moved(
     named = named_seed_pick(prior_valid)
     if named is None:
         # No pick last run carried a seed, so the title named the watch the row was BUILT from — the lead
-        # seed stamped on every pick (issue #133). Compare that with tonight's (`lead_tmdb_id`). Unknown
-        # (picks written before the stamp existed) reads as unmoved, as it always did, so an upgrade
-        # rebuilds nothing: a watch that moved before the stamp existed is not seen as a move, the title
-        # still renders from tonight's lead, and the row refreshes normally from then on.
+        # seed stamped on every pick (issue #133). Compare that with tonight's (`lead_tmdb_id`).
         was = prior_valid[0].lead_seed_tmdb_id
-        return was is not None and was != lead_tmdb_id
+        if was is None:
+            # Unknown: a cold-start row (the cold-start fill stamps nothing), or one written before the stamp
+            # existed. It follows no watch, so it moved the night its pool first follows one — as 1.9.2 read
+            # "no seed" against a seeded pool. Kept, most of it would be carried forward under a new
+            # "Because you watched X" title. A pool that still follows no watch (nor a library with no watch
+            # of its own) is not a move, so neither rebuilds every night; once rebuilt, the row is stamped.
+            return lead_tmdb_id is not None and any(c.top_seed for c in sub)
+        return was != lead_tmdb_id
     current = next((c.top_seed for c in sub if c.top_seed), None)
     return named.seed_tmdb_id != (current.tmdb_id if current else None)
 

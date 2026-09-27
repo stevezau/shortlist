@@ -2211,9 +2211,9 @@ class TestPerRowOverrides:
         assert not {13, 14, 15, 16, 17} & ids, f"the old watch's row outlived it, got {ids}"
 
     def test_a_row_with_no_recorded_lead_seed_carries_forward_as_before(self, ctx: EngineContext, mock_plextv):
-        """Picks written before the stamp existed read as "unknown", which keeps the old behaviour (no
-        rebuild) — the convention `recipe` and `built_at` use, so an upgrade rebuilds nothing. The title
-        still renders from tonight's watch."""
+        """Picks written before the stamp existed read as "unknown". While tonight's pool follows no watch
+        either, that is no move, so the row carries forward rather than rebuilding every night. The title
+        still renders from tonight's watch. (A seeded pool is a move — see the test below.)"""
         self._unseeded_lead_ctx(ctx, similar=False)
         ctx.previous_picks = {("sarah", "picked", "1"): self._prior_movies([13, 14, 15, 16, 17])}
 
@@ -2221,6 +2221,32 @@ class TestPerRowOverrides:
 
         assert titles == ["Because you watched Fargo"]
         assert {13, 14} <= ids, f"an unknown stamp must not force a rebuild, got {ids}"
+
+    def test_an_unstamped_row_with_no_seeded_pick_rebuilds_once_its_pool_follows_a_watch(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """A row whose last picks carry no seed AND no stamp — a cold-start row (the server's popular
+        titles), or one #133 froze before the stamp existed — was rebuilt by 1.9.2 the night its pool
+        first followed a watch. Reading "unknown" as "unmoved" instead kept most of those picks under a
+        brand-new "Because you watched Fargo" title (found by the 1.9.3 release review)."""
+        self._named_row_ctx(ctx, refresh_days=1)
+        ctx.config.rows = [replace(ctx.config.rows[0], candidate_sources=["tmdb_similar"])]
+        ctx.plex.build_library_index.return_value = {
+            900: 999,
+            **{i: 1000 + i for i in range(10, 20)},
+            **{i: 2000 + i for i in range(30, 35)},
+        }
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        look_alikes = [{"id": i, "title": f"T{i}", "genre_ids": [18], "vote_average": 8.0} for i in range(10, 20)]
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: [(item, 0.9) for item in look_alikes]
+        ctx.tmdb.genre_ids_for.side_effect = lambda tid, mt: [18]
+        ctx.previous_picks = {("sarah", "picked", "1"): self._prior_movies([30, 31, 32, 33, 34])}
+
+        titles, ids, seeds = self._run_sarah(ctx, mock_plextv)
+
+        assert titles == ["Because you watched Fargo"]
+        assert not {30, 31, 32, 33, 34} & ids, f"the unseeded row was carried forward under Fargo's name, got {ids}"
+        assert seeds == {"Fargo"}
 
     def test_an_unnamed_row_ignores_the_seed_check(self, ctx: EngineContext, mock_plextv):
         """A row that names no seed keeps the cheap carry-forward however far its seeds have drifted —
