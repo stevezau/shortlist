@@ -548,10 +548,10 @@ fetch` fail-softs past an unreadable section and returns a non-empty answer that
 
 **Also outstanding, unrelated to the reporter:**
 
-* **DONE (2026-09-28; unit-tested, not yet measured live):** users are read `run.concurrency` at a time
+* **DONE (2026-09-28; measured live on SFLIX: 47.8s, was 87–132s over the six syncs before; all 47 people's cached sets byte-identical before and after):** users are read `run.concurrency` at a time
   (sync + run prefill). PMS reads run lock-free, then each user's SQLite write step runs under
   `WatchSync._cache_writes`. The "static half" lever had nothing to share: every per-section call depends
-  on the user's own token. Measure the 48-user wall time on the next nightly. Review (2026-09-28): the
+  on the user's own token. Review (2026-09-28): the
   unlocked `PlexClient` sections cache is now read once before the pool starts. Accepted, LOW: a transfer
   UNDO (`watching_account.undo`, a writer job) that lands between a person's read-ahead and their queued
   write step lets the write re-insert the pre-undo titles as ordinary rows — "watched" until the next
