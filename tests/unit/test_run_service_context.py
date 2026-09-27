@@ -184,6 +184,16 @@ class TestBuildContext:
         assert ctx.trakt is None and ctx.search is None and ctx.mdblist is None and ctx.poster_artist is None
         assert ctx.config.dry_run is True
 
+    def test_plex_only_carries_the_run_concurrency(self, service, sessions, configured):
+        """The watch sync builds its context here and reads people `ctx.concurrency` at a time; left
+        at the dataclass default of 1, the setting never reached it and 48 people were read serially."""
+        with sessions() as session:
+            SettingsStore(session, configured).set("run.concurrency", 6)
+
+        ctx = service.build_context(dry_run=True, plex_only=True)
+
+        assert ctx.concurrency == 6
+
     def test_plex_only_still_refuses_a_different_server(self, service, sessions, configured):
         from shortlist.server.db.models import Server
 

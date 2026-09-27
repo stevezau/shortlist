@@ -580,6 +580,9 @@ class ContextBuilder:
                 history_source=ShareTokenWatchSource(plex, plextv, owner_token=plex_token),
                 curator=make_curator(""),
                 snapshots=DbSnapshotStore(self._sessions),
+                # The watch sync reads people this many at a time. Only `engine_run` and the watch
+                # sync consult it, and every plex-only caller of `engine_run` passes no users.
+                concurrency=int(store.get("run.concurrency") or 1),
             )
 
     def build_requests_only(self) -> tuple[RequestConfig | None, TmdbClient]:

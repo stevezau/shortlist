@@ -13,7 +13,10 @@ orchestrator stays the single owner of them.
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
 from loguru import logger
@@ -64,12 +67,49 @@ def _with_owner(session: Session, profiles: list) -> list:
     ]
 
 
+def _media_type(section) -> MediaType:
+    return MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
+
+
+def _for_each_profile(ctx, profiles: list, work: Callable[[UserProfile], None]) -> None:
+    """Call ``work`` once per profile, ``ctx.concurrency`` of them at a time.
+
+    ``work`` must not raise: each caller keeps its own per-person error handling inside it, so one
+    person's failure never cancels anyone else's read.
+
+    Each person runs in a copy of the caller's contextvars, as in `pipeline.engine_run`: a pool thread
+    starts with an empty context, so anything the caller scoped by contextvar would otherwise be lost.
+    """
+    concurrency = getattr(ctx, "concurrency", 1)
+    if not isinstance(concurrency, int) or concurrency <= 1 or len(profiles) <= 1:
+        for profile in profiles:
+            work(profile)
+        return
+    # Read /library/sections once, up front. `PlexClient`'s sections cache is unlocked, so parallel people
+    # would each fetch it, and a dead-library sweep could act on a different answer per person. A failure
+    # here is left to each person's own read, which reports it exactly as before.
+    plex = getattr(ctx, "plex", None)
+    if plex is not None:
+        try:
+            plex.sections()
+        except Exception:
+            logger.debug("watch-sync: sections pre-read failed; each person's read will report it")
+    contexts = [contextvars.copy_context() for _ in profiles]
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        list(pool.map(lambda context, profile: context.run(work, profile), contexts, profiles))
+
+
 class WatchSync:
     """Keeps every profile's watched set fresh, as cheaply as is safe."""
 
     def __init__(self, session_factory: sessionmaker[Session], bus: EventBus) -> None:
         self._sessions = session_factory
         self._bus = bus
+        # One person's cache writes at a time. People are READ in parallel, but SQLite takes one writer
+        # and makes the rest wait out `busy_timeout` (5s) — which a cold-cache bulk insert can outlast,
+        # failing the waiting person's library. Queueing here keeps SQLite seeing the one sync writer
+        # it saw when people were read serially.
+        self._cache_writes = threading.Lock()
 
     def _dead_sweep_due(self, store: SettingsStore) -> bool:
         """Is this the periodic pass?
@@ -147,11 +187,23 @@ class WatchSync:
         # Read once and keep: this is also the authority for which libraries still EXIST, and asking
         # twice risks sweeping against a different answer than the one just synced against.
         sections = list(ctx.plex.sections())
-        with self._sessions() as session:
+        # The PMS reads happen before taking `_cache_writes`, so people read in parallel overlap on the
+        # slow part and queue only for the write. Only a complete read can be taken ahead: an
+        # incremental one starts from the cursor, which is in the DB.
+        read_ahead = self._read_ahead(token_source, profile, sections) if force_full else {}
+        with self._cache_writes, self._sessions() as session:
             for section in sections:
-                media_type = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
+                media_type = _media_type(section)
 
                 def read(since, _section=section, _media=media_type):
+                    key = str(_section.key)
+                    # Once only: `_confirm_shrink` calls this a second time to ask the server AGAIN,
+                    # and handing it the same answer would have it agree with itself.
+                    if since is None and key in read_ahead:
+                        answer = read_ahead.pop(key)
+                        if isinstance(answer, Exception):
+                            raise answer
+                        return answer
                     return token_source.fetch_section(profile, _section, _media, since=since)
 
                 # Only ever called for shows Plex re-counted without re-dating, so a quiet night
@@ -273,6 +325,20 @@ class WatchSync:
         profile.history_complete = True
         return history
 
+    @staticmethod
+    def _read_ahead(token_source, profile, sections: list) -> dict[str, object]:
+        """Each library's complete read for this person — or the exception it raised, which `read`
+        re-raises where the read used to happen, so a failed library is handled exactly as before."""
+        answers: dict[str, object] = {}
+        for section in sections:
+            try:
+                answers[str(section.key)] = token_source.fetch_section(
+                    profile, section, _media_type(section), since=None
+                )
+            except Exception as e:
+                answers[str(section.key)] = e
+        return answers
+
     def prefill_history(self, ctx, profiles, run_id: int | None = None) -> None:
         """Top up the cache and hand each profile its watched set, so the engine reads none itself.
 
@@ -291,12 +357,19 @@ class WatchSync:
         # caller may hand in a context that has no progress hook at all.
         progress = getattr(ctx, "progress", None)
         total = len(wanted)
-        for position, profile in enumerate(wanted, start=1):
+        started = 0
+        started_lock = threading.Lock()
+
+        def prefill(profile) -> None:
+            nonlocal started
             if progress is not None:
-                try:
-                    progress("Shortlist", "reading_history", {"done": position, "total": total}, None)
-                except Exception:  # a broken listener must never fail the run
-                    logger.exception("progress callback failed during history pre-fill")
+                # Counted and reported under one lock, so the line never steps backwards.
+                with started_lock:
+                    started += 1
+                    try:
+                        progress("Shortlist", "reading_history", {"done": started, "total": total}, None)
+                    except Exception:  # a broken listener must never fail the run
+                        logger.exception("progress callback failed during history pre-fill")
             try:
                 # force_full, like the sync job. Without it this fell through to `needs_full()`,
                 # which is False as soon as a section has one proven complete read on record — so
@@ -311,6 +384,8 @@ class WatchSync:
                     profile.slug,
                     type(e).__name__,
                 )
+
+        _for_each_profile(ctx, wanted, prefill)
 
     @staticmethod
     def has_a_row_in_scope(ctx, profile) -> bool:
@@ -354,6 +429,9 @@ class WatchSync:
         reconcile so the effectiveness report stays fresh daily even when a row's own cron is weekly
         (or a user has no scheduled row at all).
 
+        Reads people ``run.concurrency`` at a time (`ctx.concurrency`); their cache writes still take
+        turns — see ``_cache_writes``.
+
         Skips quietly if Plex isn't configured (build_context raises), and a per-user history-fetch
         failure is logged and skipped rather than aborting the sweep. Serialized against runs by
         ``run_lock`` — the run orchestrator's own lock — so it never overlaps a live run's per-user
@@ -385,7 +463,11 @@ class WatchSync:
                     profiles = _with_owner(session, profiles)
             total = len(profiles)
             emit("sync.progress", {"done": 0, "total": total})
-            for i, profile in enumerate(profiles, start=1):
+            finished = 0
+            finished_lock = threading.Lock()
+
+            def refresh(profile) -> None:
+                nonlocal finished
                 try:
                     # ALWAYS a complete read. Measured on a live 47-user, 3-library server: 27.4s
                     # complete against 27.3s incremental, because every read fetches a 500-row page
@@ -397,7 +479,13 @@ class WatchSync:
                     profile.history = self.refresh_watched(ctx, profile, force_full=True, sweep_dead=sweep_dead)
                 except Exception as e:
                     logger.warning("watch-sync: history fetch failed for {}: {}", profile.slug, type(e).__name__)
-                emit("sync.progress", {"done": i, "total": total})
+                # Counted and emitted under one lock: people finish out of order, and the bar must
+                # never step backwards.
+                with finished_lock:
+                    finished += 1
+                    emit("sync.progress", {"done": finished, "total": total})
+
+            _for_each_profile(ctx, profiles, refresh)
             # The server's own play log, one admin call for every account. Deliberately AFTER the
             # per-user reads and inside the same lock: it is the source of exact play TIMES, which is
             # what lets the reconcile ask "was this in their row at the time" instead of "is it in

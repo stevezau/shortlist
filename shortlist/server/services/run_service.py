@@ -386,7 +386,7 @@ class RunService:
                 # Fill each person's history from the cache BEFORE the engine runs. The run used to
                 # do its own complete per-user read — the same read the nightly sync had already
                 # done hours earlier — which was half the total cost of a night.
-                await loop.run_in_executor(None, self._watch.prefill_history, ctx, profiles, run_id)  # scoped inside
+                await loop.run_in_executor(None, self._watch.prefill_history, ctx, profiles, run_id)
                 # What is in each person's rows RIGHT NOW, before the engine rebuilds them. This is
                 # the shelf they were actually looking at during the window they were watching in,
                 # and it stops existing the moment the run persists tonight's picks — so it has to be
