@@ -17,7 +17,7 @@ Found read-only while tracing per-person ↔ shared switching for the row-editor
 it — the design explicitly declines to fix them and sends them here instead. Neither has been
 reproduced on a live server; both are reasoned from the cited code, not measured.
 
-- **FIXED (2026-09-27; unit-tested, not verified on a live server) — HIGH — a brand-new subset shared row is visible to people outside its
+- **FIXED (2026-09-27; verified live on SFLIX, runs 57–58) — HIGH — a brand-new subset shared row is visible to people outside its
   audience until the run ends.** Precondition: a row switches to `build=shared` with an `audience`
   narrower than everyone (a "subset" shared row), and no earlier per-person row of this row's owner has
   already put a `shortlist_<userslug>` exclude on the outsiders' share filters. The early first-row
@@ -34,7 +34,7 @@ reproduced on a live server; both are reasoned from the cited code, not measured
   `test_a_new_shared_row_is_excluded_from_outsiders_before_the_next_row_is_written`,
   `test_a_new_shared_row_is_hidden_before_its_second_library_is_written` and
   `test_no_early_merge_for_a_shared_row_already_on_the_server`.
-- **FIXED (2026-09-27; unit-tested, not verified on a live server) — MED — a build switch's collection
+- **FIXED (2026-09-27; verified live on SFLIX, runs 57–58) — MED — a build switch's collection
   removal can leave a stale per-person copy behind permanently.** At save, `shortlist/server/api/row_changes.py:129-136` triggers RECONCILE
   to delete every per-person copy of a row switching build (`collection_reconcile.py:551-594`), and the
   save waits for it — but the removal can still miss a copy: the reconcile job itself can give up
@@ -68,7 +68,7 @@ reproduced on a live server; both are reasoned from the cited code, not measured
 Seen while proving the new row editor's save paths live on throwaway MooHouse-only rows (all cleaned
 up; evidence in that session's scratchpad `live-proof/`). PRE-EXISTING behaviour, not changed by it.
 
-- **FIXED (2026-09-27; unit-tested, not verified on a live server) — LOW — a seasons change re-applies
+- **FIXED (2026-09-27; verified live on SFLIX, runs 57–58) — LOW — a seasons change re-applies
   visibility to EVERY row for every account.**
   Saving one row out of Seasonal queued `rows.visibility` (`shortlist/server/api/row_changes.py`
   ~195-196), and the pass merged all 48 accounts' filters (none changed) and re-promoted every
@@ -82,19 +82,35 @@ up; evidence in that session's scratchpad `live-proof/`). PRE-EXISTING behaviour
   queued applies nothing, and the summary reads each row's own answer for today (a seasonal row out of
   season used to be reported as "showing"). Pinned by `test_jobs.py::
   TestScheduledRowVisibility::test_a_pass_queued_for_one_row_promotes_only_that_row`.
-- **UNRESOLVED — Recommended shelf order moved in Movies and TV Shows during that test.** agregarr's
+- **RESOLVED (2026-09-27) — agregarr, not Shortlist. Recommended shelf order moved in Movies and TV Shows
+  during that test.** agregarr's
   "Randomize Home Order" ran at 16:30:17 inside the window and Sports (which agregarr doesn't touch)
   kept its order, so agregarr is the likely cause — but the snapshot stored only a hash of each
   shelf's order, so a contribution from our own promote calls in the pass above isn't ruled out.
   Next time, snapshot the full hub order per library, not a hash. See memory
   "agregarr-fights-for-the-plex-shelf" (last time the culprit was ours).
+  Measured with full per-library hub-order snapshots (ids + an ours flag): agregarr's "Randomize Home
+  Order" runs every 30 minutes (:00 and :30, its own log), moving ~9 of its own hubs per library. Between
+  17:44 and 18:30 Shortlist wrote no event at all, yet Movies and TV each had 10–11 hubs move with the
+  FOREIGN relative order changed — something `place_rows` never does — and ours kept theirs. Across a deploy,
+  runs 57–58 and the (now scoped) visibility pass, with no agregarr tick inside the window, no existing hub
+  moved. Any shelf diff that spans a :00/:30 boundary will show agregarr's shuffle.
+
+## OPEN — found during the backlog-fixes live proof (2026-09-27)
+
+- **LOW — deleting a SHARED row leaves its delivery-ledger row.** `_reconcile_row_removal`'s shared branch
+  (`collection_reconcile.py`, `if build == "shared":`) removes the collection and returns without
+  `_forget_deliveries`, so `(slug, shared_<slug>, library) -> ratingKey` outlives the collection (seen live:
+  the deleted test row's entry, removed by hand). Nothing reads it while the slug is gone; a new row that
+  reuses the slug would be handed the dead ratingKey, which Plex may have reused. Fix: forget the
+  `shared_<slug>` rows after a real (non-dry-run) removal, as the per-person branch does.
 
 ## OPEN — the rename screen can't rename a `{top_seed}` row (found 2026-09-27)
 
 Found by the row-editor cleanup's second review. PRE-EXISTING: it predates that work, which only
 routes its own kind-switch renames around it (design §15.1).
 
-- **FIXED (2026-09-27; unit-tested, not verified on a live server) — MED — Rename… reports "renamed 0 /
+- **FIXED (2026-09-27; verified live on SFLIX, runs 57–58) — MED — Rename… reports "renamed 0 /
   nothing to rename" for any rename where the old or new name contains `{top_seed}`.** `collection_reconcile.py:972-990` (`_renamed_titles`)
   renders both templates with no picks, and a `{top_seed}` template renders as "" without one, so there
   are no (old, new) title pairs to rename. Plex keeps the old title until the row's next delivery
