@@ -7,19 +7,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BackupPanel } from "@/components/jobs/backup-panel";
 import type * as ApiModule from "@/lib/api";
 
-const { getBackups, getPendingRestore, restoreBackup, cancelRestore, getSettings } = vi.hoisted(() => ({
+const { getBackups, getPendingRestore, restoreBackup, cancelRestore, getSettings, getSchedule } = vi.hoisted(() => ({
   getBackups: vi.fn(),
   getPendingRestore: vi.fn(),
   restoreBackup: vi.fn(),
   cancelRestore: vi.fn(),
   getSettings: vi.fn(),
+  getSchedule: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>();
   return {
     ...actual,
-    api: { ...actual.api, getBackups, getPendingRestore, restoreBackup, cancelRestore, getSettings },
+    api: { ...actual.api, getBackups, getPendingRestore, restoreBackup, cancelRestore, getSettings, getSchedule },
   };
 });
 
@@ -41,6 +42,7 @@ describe("BackupPanel — a restore waiting for a restart", () => {
     vi.clearAllMocks();
     getBackups.mockResolvedValue([BACKUP]);
     getSettings.mockResolvedValue({});
+    getSchedule.mockResolvedValue({ jobs: [], rows: [] });
   });
 
   it("says a restore is waiting, which backup, and that a restart applies it", async () => {
@@ -116,5 +118,41 @@ describe("BackupPanel — a restore waiting for a restart", () => {
     await waitFor(() => expect(screen.queryByRole("status", { name: /restore waiting/i })).not.toBeInTheDocument());
     expect(screen.queryByText(/Ready to restore/)).not.toBeInTheDocument();
     expect(screen.queryByText("Rows note.")).not.toBeInTheDocument();
+  });
+});
+
+describe("BackupPanel — its schedule", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getBackups.mockResolvedValue([BACKUP]);
+    getPendingRestore.mockResolvedValue({ pending: null });
+    getSettings.mockResolvedValue({});
+  });
+
+  it("labels the blank schedule chip with the built-in backup time", async () => {
+    // The backup panel draws its own CronPicker, so the Built-in label that reached the generic job
+    // panel missed it and it still read "Daily" (seen live on 2026-09-28).
+    getSchedule.mockResolvedValue({
+      jobs: [
+        {
+          type: "job",
+          kind: "backup.take",
+          label: "Back up the database",
+          description: "",
+          setting: "backup.cron",
+          cron: "",
+          using_default: true,
+          default_cron: "0 3 * * *",
+          optional: false,
+          writes_plex: false,
+          next_run: "2026-09-29T03:00:00Z",
+        },
+      ],
+      rows: [],
+    });
+    renderPanel();
+
+    expect(await screen.findByRole("button", { name: "Built-in (03:00)" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Daily" })).toBeNull();
   });
 });

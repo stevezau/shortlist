@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { describeCron } from "@/lib/cron";
 import { formatDate, formatSize, timeAgo } from "@/lib/format";
-import { queryKeys, useSaveSettings, useSettings } from "@/lib/queries";
+import { queryKeys, useBuiltInScheduleLabel, useSaveSettings, useSettings } from "@/lib/queries";
 
 const RETENTION_OPTIONS = ["5", "10", "20", "30"];
 
@@ -68,6 +68,7 @@ export function BackupPanel() {
   const waiting = pendingRestore.data?.pending ?? null;
 
   const backupCron = ((settings.data ?? {})["backup.cron"] as string) ?? "";
+  const blankLabel = useBuiltInScheduleLabel("backup.take");
   const backupMaxKeep =
     ((settings.data ?? {})["backup.max_keep"] as number) ?? 10;
 
@@ -95,6 +96,7 @@ export function BackupPanel() {
       <div className="flex flex-wrap items-start gap-4">
         <CronPicker
           value={backupCron}
+          blankLabel={blankLabel}
           onChange={(cron) =>
             saveSettings.mutate(
               { "backup.cron": cron },

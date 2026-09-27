@@ -1146,6 +1146,45 @@ describe("JobsPage — the schedule panel for a job you can switch off", () => {
     expect(within(row).queryByRole("button", { name: /Built-in/ })).toBeNull();
   });
 
+  it("labels the blank chip with the built-in time on the sync jobs that draw their own panel", async () => {
+    // Sync watch history and Sync people from Plex render their own CronPicker rather than
+    // SchedulePanel's, so the Built-in label reached the generic panel and missed these two — they
+    // still read "Daily" on a live server (2026-09-28).
+    const scheduled = (kind: string, setting: string, defaultCron: string) => ({
+      type: "job" as const,
+      kind,
+      label: kind,
+      description: "",
+      setting,
+      cron: "",
+      using_default: true,
+      default_cron: defaultCron,
+      optional: false,
+      writes_plex: false,
+      next_run: "2026-08-01T04:00:00Z",
+    });
+    getSchedule.mockResolvedValue({
+      jobs: [
+        scheduled("sync.history", "sync.watch_cron", "17 4 * * *"),
+        scheduled("sync.users", "sync.users_cron", "47 4 * * *"),
+      ],
+      rows: [],
+    });
+    renderPage();
+
+    for (const [kind, label, time] of [
+      ["sync.history", "Sync watch history", "04:17"],
+      ["sync.users", "Sync people from Plex", "04:47"],
+    ] as const) {
+      const row = await screen.findByTestId(`job-${kind}`);
+      await userEvent.click(within(row).getByRole("button", { name: label }));
+      expect(
+        await within(row).findByRole("button", { name: `Built-in (${time})` }),
+      ).toBeInTheDocument();
+      expect(within(row).queryByRole("button", { name: "Daily" })).toBeNull();
+    }
+  });
+
   it("labels the blank chip with the built-in time for a job that cannot be switched off", async () => {
     // Accurate but vague: "Daily" doesn't say WHEN, and the five non-off-able jobs don't all
     // default to the same time. /api/schedule carries `default_cron` for maintenance.prune too, so

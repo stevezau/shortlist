@@ -34,10 +34,10 @@ import {
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
-import { dailyCronTime, describeCron } from "@/lib/cron";
 import { queuedReason, useRunActive, useWritesPlex } from "@/lib/job-activity";
 import {
   queryKeys,
+  useBuiltInScheduleLabel,
   useSchedule,
   useSettings,
   useSaveSettings,
@@ -152,6 +152,8 @@ function SchedulePanel({ entry }: { entry: JobCatalogEntry }) {
   const settings = useSettings();
   const schedule = useSchedule();
   const saveSettings = useSaveSettings();
+  // Blank means the built-in default below, not off, so the blank preset itself says what it runs at.
+  const blankLabel = useBuiltInScheduleLabel(entry.kind);
   if (!entry.schedule_setting) return null;
 
   // `null` is not "blank": it deletes the stored cron, which is the only way to say "use the
@@ -218,17 +220,6 @@ function SchedulePanel({ entry }: { entry: JobCatalogEntry }) {
 
   const stored =
     ((settings.data ?? {})[entry.schedule_setting] as string | undefined) ?? "";
-
-  // Blank means the built-in default here, not off, so unlike the optional branch above there is
-  // no separate restore chip — the blank preset itself just needs to say what it runs at, from the
-  // same `default_cron` /api/schedule already carries. "Daily" is the fallback for the moment before
-  // that response lands, and for a default that isn't a plain daily time.
-  const defaultCron =
-    schedule.data?.jobs.find((j) => j.kind === entry.kind)?.default_cron ?? "";
-  const defaultTime = dailyCronTime(defaultCron);
-  const blankLabel = defaultTime
-    ? `Built-in (${defaultTime})`
-    : (defaultCron && describeCron(defaultCron)) || "Daily";
 
   return <CronPicker value={stored} onChange={save} blankLabel={blankLabel} />;
 }
@@ -351,6 +342,8 @@ export function JobsPage() {
   const saveSettings = useSaveSettings();
   const watchCron = ((settings.data ?? {})["sync.watch_cron"] as string) ?? "";
   const usersCron = ((settings.data ?? {})["sync.users_cron"] as string) ?? "";
+  const watchBlankLabel = useBuiltInScheduleLabel("sync.history");
+  const usersBlankLabel = useBuiltInScheduleLabel("sync.users");
 
   // Every job's action lives here rather than inside its panel: the button is on the ROW, which
   // stays visible when the panel is closed.
@@ -654,6 +647,7 @@ export function JobsPage() {
                 panel={
                   <CronPicker
                     value={usersCron}
+                    blankLabel={usersBlankLabel}
                     onChange={(cron) =>
                       saveSettings.mutate(
                         { "sync.users_cron": cron },
@@ -739,6 +733,7 @@ export function JobsPage() {
                 panel={
                   <CronPicker
                     value={watchCron}
+                    blankLabel={watchBlankLabel}
                     onChange={(cron) =>
                       saveSettings.mutate(
                         { "sync.watch_cron": cron },

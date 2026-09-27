@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query";
 
 import { api } from "./api";
+import { dailyCronTime, describeCron } from "./cron";
 import { runRefetchIntervalMs, runsListRefetchIntervalMs } from "./run-format";
 import { useSSE } from "./sse";
 import { useLiveClock } from "./use-live-clock";
@@ -218,6 +219,23 @@ export function useClearDeletedRows() {
 
 export function useSchedule() {
   return useQuery({ queryKey: queryKeys.schedule, queryFn: api.getSchedule });
+}
+
+/**
+ * What the blank schedule chip says for a job where blank means "use the built-in default".
+ *
+ * "Built-in (03:00)" from the `default_cron` /api/schedule reports for `kind`, the plain-English
+ * description for a default that isn't a daily time, or "Daily" until that response lands. One hook
+ * because four panels draw this chip, and a label fixed in only one of them left the rest saying
+ * "Daily".
+ */
+export function useBuiltInScheduleLabel(kind: string): string {
+  const schedule = useSchedule();
+  const defaultCron =
+    schedule.data?.jobs.find((j) => j.kind === kind)?.default_cron ?? "";
+  const time = dailyCronTime(defaultCron);
+  if (time) return `Built-in (${time})`;
+  return (defaultCron && describeCron(defaultCron)) || "Daily";
 }
 
 export function useClearRuns() {

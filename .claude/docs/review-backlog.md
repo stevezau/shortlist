@@ -1063,8 +1063,11 @@ expression fails the `using_default` assertion. The live-trigger assertion is th
 most — the job is REMOVED from APScheduler while off, so "restore" has to re-register it, and the
 test reads the trigger string rather than `next_run is not None`.
 
-**FIXED 2026-09-28** (`web/src/pages/jobs.tsx`, `jobs-page.test.tsx`): the chip reads "Built-in (HH:MM)"
-from `default_cron`. Original note: for the five jobs where blank means default, the chip is labelled
+**FIXED 2026-09-28** (`queries.useBuiltInScheduleLabel`): the chip reads "Built-in (HH:MM)" from
+`default_cron`. The first fix (02239886) reached only the generic `SchedulePanel`, so on SFLIX only "Clear
+out old records" changed: Sync watch history, Sync people from Plex and Back up the database draw their
+own `CronPicker` and still said "Daily". All four now share the one hook; pinned by
+`jobs-page.test.tsx` ("…sync jobs that draw their own panel") and `backup-panel.test.tsx`. Original note: for the five jobs where blank means default, the chip is labelled
 "Daily" rather than the time it actually runs at ("Built-in (03:00)"). Accurate but vague; now
 cheap to fix, since `default_cron` is on every entry of `GET /api/schedule`.
 
