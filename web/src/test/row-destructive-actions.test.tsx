@@ -99,6 +99,36 @@ describe("RowDestructiveActions", () => {
     );
   });
 
+  it("lets the owner try again when the real removal is refused because Plex is busy", async () => {
+    // The endpoint answers 409 while a run or another change holds Plex, having removed nothing. That is
+    // a "not now", not a dead end: the reason shows, and the same button retries once Plex is free.
+    cleanupCollection
+      .mockResolvedValueOnce({ removed: ["Sarah / Movies"] })
+      .mockRejectedValueOnce(new Error("A run is updating Plex right now"));
+    renderActions();
+    await userEvent.click(
+      screen.getByRole("button", { name: /Remove Hidden Gems from Plex/i }),
+    );
+    expect(
+      await screen.findByText(/will remove 1 collection/i),
+    ).toBeInTheDocument();
+
+    const confirm = () =>
+      screen.getAllByRole("button", { name: "Remove from Plex" }).at(-1)!;
+    await userEvent.click(confirm());
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(confirm()).toBeEnabled();
+
+    await userEvent.click(confirm());
+    await waitFor(() =>
+      expect(cleanupCollection.mock.calls).toEqual([
+        [7, true],
+        [7, false],
+        [7, false],
+      ]),
+    );
+  });
+
   it("keeps the real removal disabled when the dry run FAILED", async () => {
     // A failed preview says nothing about what is on the server. Offering the destructive button
     // anyway would remove collections with nobody having seen the diff.

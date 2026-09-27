@@ -2088,9 +2088,32 @@ async def cleanup_collection(collection_id: int, body: CleanupRequest, request: 
             raise HTTPException(status_code=404, detail="collection not found")
         slug, build, name = collection.slug, collection.build, collection.name
 
-    removed, error = await reconcile.run_reconcile(
-        state, slug=slug, build=build, dry_run=body.dry_run, scope="collection.cleanup"
-    )
+    # A real cleanup is a Plex writer, so it takes the one-writer lock the job worker and every run take.
+    # Without it, a cleanup overlapping a run that delivers this row could forget the ledger key the run had
+    # just written, leaving that row's plays uncredited until a later delivery found it by label again.
+    # Same policy as uninstall: 409 for a RUN, which holds the lock for many minutes; a bounded wait for a
+    # writer JOB, which is seconds. A preview writes nothing and never takes it.
+    writer = None if body.dry_run else jobs.plex_writer_lock()
+    if writer is not None:
+        if state.run_service.is_running():
+            raise HTTPException(
+                status_code=409,
+                detail="A run is updating Plex right now, so nothing was removed. Try again once it finishes.",
+            )
+        try:
+            await asyncio.wait_for(writer.acquire(), timeout=jobs.WRITER_LOCK_WAIT_S)
+        except TimeoutError:
+            raise HTTPException(
+                status_code=409,
+                detail="Shortlist is busy making other changes on Plex, so nothing was removed. Try again in a minute.",
+            ) from None
+    try:
+        removed, error = await reconcile.run_reconcile(
+            state, slug=slug, build=build, dry_run=body.dry_run, scope="collection.cleanup"
+        )
+    finally:
+        if writer is not None:
+            writer.release()
     if error:
         raise HTTPException(status_code=502, detail=f"Cleanup failed part-way; removed {len(removed)} before: {error}")
     verb = "Would remove" if body.dry_run else "Removed"

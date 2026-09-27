@@ -442,7 +442,9 @@ fixes are load-bearing in ways the code alone doesn't explain.
 
    Now the automatic reconciles (delete, build flip, audience shrink, row disabled, library narrowing)
    are queued as `row.reconcile` and drained inline, and `user.restore` mirrors `user.hide`. The one
-   still inline is the interactive **cleanup** button, which has to return what it removed.
+   still inline is the interactive **cleanup** button, which has to return what it removed. It takes
+   `plex_writer_lock` itself, on uninstall's policy: 409 while a run is in flight, a bounded wait
+   (`WRITER_LOCK_WAIT_S`) behind a writer job, and no lock for a dry run (2026-09-28).
 
 3. **Settings PATCH was inert.** It stored values and did nothing. It now compares before/after for the
    two settings that change Plex — `row.name_template` and `privacy.hide_shared_from_disabled` — and

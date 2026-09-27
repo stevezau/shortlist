@@ -554,23 +554,36 @@ def _reconcile_row_removal(
         # A shared row is one collection for everyone; who SEES it is a share-filter concern handled
         # by the privacy pass the caller queues, not a per-user collection to remove here.
         if only_user_ids is None:
-            removed.extend(
-                remove_row_collections(
-                    ctx.plex,
-                    ctx.config,
-                    label=f"{SHARED_LABEL_PREFIX}{slug}",
-                    displays=None,
-                    dry_run=dry_run,
-                    in_sections=in_sections,
-                )
-            )
+            ledger_slug = f"{SHARED_SLUG_PREFIX}_{slug}"
             # The ledger records collections that EXIST, as the per-person branch below keeps it — and only after
             # a real removal. A kept key is handed dead to the row's next delivery, credits plays to a collection
             # that is gone (`watch_events._shared_on_plex`), and, once Plex reuses it, makes another row's key
-            # ambiguous so that row loses its handle too.
+            # ambiguous so that row loses its handle too. So one library at a time, each forgotten as soon as its
+            # removal returns: a PMS failure in a later library must not keep the key of one already deleted.
+            # `sections()` is cached on the client, so walking it here costs no extra reads.
+            for section in ctx.plex.sections():
+                section_key = str(section.key)
+                if in_sections is not None and section_key not in in_sections:
+                    continue
+                removed.extend(
+                    remove_row_collections(
+                        ctx.plex,
+                        ctx.config,
+                        label=f"{SHARED_LABEL_PREFIX}{slug}",
+                        displays=None,
+                        dry_run=dry_run,
+                        in_sections={section_key},
+                    )
+                )
+                if not dry_run:
+                    with state.sessions() as session:
+                        _forget_deliveries(session, slug, {ledger_slug}, {section_key})
+                        session.commit()
+            # And the whole scope once every library is done, for an entry naming a library Plex no longer lists:
+            # no collection can exist there, and no walk above reaches it.
             if not dry_run:
                 with state.sessions() as session:
-                    _forget_deliveries(session, slug, {f"{SHARED_SLUG_PREFIX}_{slug}"}, in_sections)
+                    _forget_deliveries(session, slug, {ledger_slug}, in_sections)
                     session.commit()
         return dry_run
     with state.sessions() as session:
@@ -734,7 +747,8 @@ async def preview_row_removal(
 
     Runs the walk in an executor because it is blocking Plex I/O across every library. It takes no
     lock, and needs none: ``jobs.plex_writer_lock`` serialises Plex WRITES and is held AROUND
-    `_reconcile_row_removal` by the job worker rather than inside it, so a preview can neither
+    `_reconcile_row_removal` by its writers (the job worker, the cleanup endpoint) rather than inside it, so a
+    preview can neither
     deadlock against a live run nor perform the writes that lock exists to order.
 
     Args:

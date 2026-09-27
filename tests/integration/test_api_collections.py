@@ -1338,6 +1338,86 @@ class TestCollectionsApi:
         assert deleted == ["Drop Me" + row_marker(acct)]
         assert keep.status_code == 201
 
+    def _shared_row_with_a_lock_spy(self, client: TestClient, monkeypatch, lock) -> tuple[int, list[str], list[bool]]:
+        """A shared row on a fake Plex, with `jobs.plex_writer_lock` pinned to ``lock`` and every Plex read
+        recording whether that lock was held at the time."""
+        from shortlist.engine.delivery import row_marker
+        from shortlist.server.services import jobs
+
+        created = client.post("/api/collections", json={"name": "Popular", "build": "shared"})
+        cid, slug = created.json()["id"], created.json()["slug"]
+        deleted = self._fake_plex_ctx(
+            monkeypatch, client, collections=[("🔥 Popular" + row_marker(0), f"shortlist__shared_{slug}")]
+        )
+        monkeypatch.setattr(jobs, "plex_writer_lock", lambda: lock)
+        plex = client.app.state.run_service.build_context().plex
+        sections = plex.sections.return_value
+        held: list[bool] = []
+        plex.sections.side_effect = lambda *a, **kw: (held.append(lock.locked()), sections)[1]
+        return cid, deleted, held
+
+    def test_a_real_cleanup_holds_the_one_writer_lock_while_it_touches_plex(self, client: TestClient, monkeypatch):
+        """The job worker and every run hold this lock; the cleanup button did not. A cleanup overlapping a run
+        that delivers the same row could forget the ledger key the run had just written, and plays on that row
+        went uncredited until its next delivery found it by label again."""
+        import asyncio
+
+        cid, deleted, held = self._shared_row_with_a_lock_spy(client, monkeypatch, asyncio.Lock())
+
+        r = client.post(f"/api/collections/{cid}/cleanup", json={"dry_run": False})
+
+        assert r.status_code == 200
+        assert len(deleted) == 1
+        assert held and all(held), "the removal touched Plex without the one-writer lock held"
+
+    def test_a_cleanup_preview_takes_no_lock_and_still_answers_during_a_run(self, client: TestClient, monkeypatch):
+        """A dry run writes nothing, so it has no business holding the one-writer lock — and the preview is
+        what the confirm dialog opens on, so refusing it mid-run would leave the dialog with nothing to show."""
+        import asyncio
+
+        cid, deleted, held = self._shared_row_with_a_lock_spy(client, monkeypatch, asyncio.Lock())
+        monkeypatch.setattr(client.app.state.run_service, "is_running", lambda: True)
+
+        r = client.post(f"/api/collections/{cid}/cleanup", json={"dry_run": True})
+
+        assert r.status_code == 200
+        assert r.json()["removed"] == ["🔥 Popular"]
+        assert deleted == []
+        assert held and not any(held), "a preview took the one-writer lock"
+
+    def test_a_real_cleanup_is_refused_while_a_run_is_writing(self, client: TestClient, monkeypatch):
+        """A run holds the lock for its whole length — many minutes on a real server — so waiting for it
+        would hang the request with nothing on screen to say why. Refuse, say so, and touch nothing."""
+        import asyncio
+
+        cid, deleted, held = self._shared_row_with_a_lock_spy(client, monkeypatch, asyncio.Lock())
+        monkeypatch.setattr(client.app.state.run_service, "is_running", lambda: True)
+
+        r = client.post(f"/api/collections/{cid}/cleanup", json={"dry_run": False})
+
+        assert r.status_code == 409
+        assert "run" in r.json()["detail"].lower() and "nothing was removed" in r.json()["detail"].lower()
+        assert deleted == [] and held == [], "a refused cleanup still read or wrote Plex"
+
+    def test_a_real_cleanup_stands_down_when_another_writer_keeps_the_lock(self, client: TestClient, monkeypatch):
+        """A writer JOB is short enough to wait for, but only for a bounded time — the same bound the job
+        worker uses — so a lock that stays held costs the request a wait, never an open-ended hang."""
+        import asyncio
+
+        from shortlist.server.services import jobs
+
+        lock = asyncio.Lock()
+        asyncio.run(lock.acquire())  # another writer, mid-flight
+        cid, deleted, held = self._shared_row_with_a_lock_spy(client, monkeypatch, lock)
+        monkeypatch.setattr(jobs, "WRITER_LOCK_WAIT_S", 0.05)
+
+        r = client.post(f"/api/collections/{cid}/cleanup", json={"dry_run": False})
+
+        assert r.status_code == 409
+        assert "nothing was removed" in r.json()["detail"].lower()
+        assert deleted == [] and held == []
+        assert lock.locked(), "the other writer's hold was released by a request that never had it"
+
     def test_deleting_a_row_also_removes_its_plex_collection(self, client: TestClient, monkeypatch):
         """Delete now cleans Plex first (while the slug still exists), THEN drops the DB row.
 

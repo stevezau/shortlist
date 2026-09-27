@@ -397,6 +397,47 @@ class TestReconcileRowRemoval:
         with sessions() as session:
             assert [d.library_key for d in session.query(Delivery).filter_by(collection_slug="movienight")] == ["1"]
 
+    @pytest.mark.parametrize(("dry_run", "left"), [(False, ["2"]), (True, ["1", "2"])])
+    def test_a_shared_walk_that_fails_partway_has_already_forgotten_the_libraries_it_finished(
+        self, sessions, dry_run: bool, left: list[str]
+    ):
+        """The shared twin of the per-person case below: forgetting only after every library meant a failure in
+        the second kept the first library's entry for a collection already deleted, until a retry succeeded —
+        and Plex reuses ratingKeys. A dry run deleted nothing, so it forgets nothing either."""
+        with sessions() as session:
+            for library_key, key in (("1", 900), ("2", 902)):
+                session.add(
+                    Delivery(
+                        collection_slug="movienight",
+                        user_slug="shared_movienight",
+                        library_key=library_key,
+                        rating_key=key,
+                        title="x",
+                    )
+                )
+            session.commit()
+        movies = _collection("Movie Night")
+
+        def owned(section, label):
+            if section.key == "2":
+                raise RuntimeError("PMS timed out")
+            return [movies]
+
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [_section("Movies", "1"), _section("TV", "2")]
+        plex.find_owned_collections.side_effect = owned
+        removed: list[str] = []
+
+        with pytest.raises(RuntimeError):
+            rec._reconcile_row_removal(
+                _state(sessions, plex), slug="movienight", build="shared", dry_run=dry_run, removed=removed
+            )
+
+        with sessions() as session:
+            keys = sorted(d.library_key for d in session.query(Delivery).filter_by(collection_slug="movienight"))
+        assert keys == left
+        assert removed == ["Movie Night"], "the library that finished is still reported for the audit"
+
     def test_a_walk_that_fails_partway_has_already_forgotten_the_people_it_finished(self, sessions):
         """The ledger records collections that EXIST. Forgetting only after the whole walk meant a failure on the
         second person kept the first person's entries for collections already deleted — and the nightly sweep
