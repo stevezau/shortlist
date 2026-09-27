@@ -2248,6 +2248,87 @@ class TestPerRowOverrides:
         assert not {30, 31, 32, 33, 34} & ids, f"the unseeded row was carried forward under Fargo's name, got {ids}"
         assert seeds == {"Fargo"}
 
+    def _three_seed_named_row_ctx(self, ctx, *, twelve_affinity: float = 0.2, chernobyl_finds_twelve: bool = False):
+        """A `{top_seed}` row built from up to three watches in one Movies library — SFLIX's per-row budget.
+
+        Fargo (900) is the newest watch; its look-alikes 20-22 are middling matches. Heat (902) has one
+        look-alike, 12, a weak match that discover ALSO finds. Chernobyl (901) has weak look-alikes 25-27,
+        and with ``chernobyl_finds_twelve`` finds 12 as well. Discover's 10-12 score above Fargo's
+        look-alikes once they carry no seed of their own.
+        """
+        self._named_row_ctx(ctx, refresh_days=1, max_seeds=3)
+        ctx.config.rows = [replace(ctx.config.rows[0], candidate_sources=["tmdb_similar", "tmdb_discover"])]
+        ctx.plex.build_library_index.return_value = {
+            900: 999,
+            901: 998,
+            902: 997,
+            **{i: 1000 + i for i in range(10, 30)},
+        }
+
+        def item(tmdb_id: int, vote: float) -> dict:
+            return {"id": tmdb_id, "title": f"T{tmdb_id}", "genre_ids": [18], "vote_average": vote}
+
+        similar = {
+            900: [(item(i, 8.0), 0.25) for i in (20, 21, 22)],
+            902: [(item(12, 9.0), twelve_affinity)],
+            901: [(item(i, 5.0), 0.25) for i in (25, 26, 27)],
+        }
+        if chernobyl_finds_twelve:
+            similar[901].append((item(12, 9.0), twelve_affinity))
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: similar.get(tid, [])
+        ctx.tmdb.genre_ids_for.side_effect = lambda tid, mt: [18]
+        ctx.tmdb.discover.side_effect = lambda mt, gids, **kw: [item(i, 9.0) for i in (10, 11, 12)]
+
+    def _night(self, ctx, mock_plextv, *watched: tuple[str, int, int]):
+        """One run from ``(title, days_ago, rating_key)`` watches, carrying its picks and recipe into the
+        next run the way `context_builder` does. Returns the titles, the picks, and the trace decision."""
+        ctx.history_source.fetch.return_value = [make_watched(t, days_ago=d, rating_key=rk) for t, d, rk in watched]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        user = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)]).users[0]
+        picks = sorted(user.picks, key=lambda p: p.rank)
+        ctx.previous_picks = {("sarah", "picked", "1"): [replace(p, section_key=str(p.section_key)) for p in picks]}
+        ctx.previous_recipes = {("sarah", "picked", "1"): picks[0].recipe}
+        titles = [strip_marker(t) for _library, t in user.placement_titles]
+        return titles, picks, (user.trace.get("selection") or [{}])[0].get("decision")
+
+    def test_a_refresh_never_names_a_watch_that_left_the_seed_set(self, ctx: EngineContext, mock_plextv):
+        """Above one seed per library, `_seed_moved` can pass while the title moves onto a dead watch.
+
+        Night one is named after Fargo and carries 12 at rank 3, found as Heat's look-alike. Heat is then
+        un-watched. Fargo still leads tonight's pool, so the row refreshes and keeps 12 — which is now a
+        discover title with no seed, outranks Fargo's look-alikes, and still carries last night's seed. The
+        title said "Because you watched Heat", a watch no longer in the seed set, until the next night's
+        check saw that name and rebuilt the whole row.
+        """
+        self._three_seed_named_row_ctx(ctx)
+        fargo, heat, chernobyl = ("Fargo", 1, 999), ("Heat", 2, 997), ("Chernobyl", 3, 998)
+        first, first_picks, _ = self._night(ctx, mock_plextv, fargo, heat, chernobyl)
+        assert first == ["Because you watched Fargo"]
+        assert {p.tmdb_id: p.seed_title for p in first_picks}.get(12) == "Heat", "the scenario needs 12 from Heat"
+
+        second, picks, decision = self._night(ctx, mock_plextv, fargo, chernobyl)
+        _third, _, next_decision = self._night(ctx, mock_plextv, fargo, chernobyl)
+
+        assert decision == "refreshed" and 12 in {p.tmdb_id for p in picks}, "a refresh keeps its strong picks"
+        assert second == ["Because you watched Fargo"], f"named a watch outside tonight's seeds: {second}"
+        assert next_decision == "refreshed", "an honest title leaves the next night nothing to rebuild"
+
+    def test_a_survivor_whose_watch_left_answers_to_a_live_watch_that_still_finds_it(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """The same refresh when a watch still in the seed set (Chernobyl) ALSO finds 12: the kept pick
+        answers to Chernobyl, as a newcomer of the same title would — not to Heat, and not to nothing."""
+        self._three_seed_named_row_ctx(ctx, twelve_affinity=0.1, chernobyl_finds_twelve=True)
+        fargo, heat, chernobyl = ("Fargo", 1, 999), ("Heat", 2, 997), ("Chernobyl", 3, 998)
+        _, first_picks, _ = self._night(ctx, mock_plextv, fargo, heat, chernobyl)
+        assert {p.tmdb_id: p.seed_title for p in first_picks}.get(12) == "Heat", "the scenario needs 12 from Heat"
+
+        titles, picks, decision = self._night(ctx, mock_plextv, fargo, chernobyl)
+
+        assert decision == "refreshed"
+        assert {p.tmdb_id: p.seed_title for p in picks}.get(12) == "Chernobyl"
+        assert titles == ["Because you watched Fargo"]
+
     def test_an_unnamed_row_ignores_the_seed_check(self, ctx: EngineContext, mock_plextv):
         """A row that names no seed keeps the cheap carry-forward however far its seeds have drifted —
         re-deriving a normal 30-seed row on any seed change would make every refresh a full rebuild."""
@@ -6175,6 +6256,32 @@ class TestTheTraceExplainsWhatHappenedToTheRow:
 
         assert self._selection(ctx, mock_plextv)["decision"] == "settings_changed"
 
+    def _named_after(self, ctx: EngineContext, *, seed_tmdb_id: int, seed_title: str) -> None:
+        """A `{top_seed}` row whose last run was named after the given watch."""
+        self._ctx(ctx, refresh_days=1)
+        ctx.config.rows = [replace(ctx.config.rows[0], name_template="Because you watched {top_seed}")]
+        ctx.previous_picks = {
+            self.KEY: [replace(p, seed_tmdb_id=seed_tmdb_id, seed_title=seed_title) for p in self._prior()]
+        }
+        ctx.previous_recipes = {}
+
+    def test_a_rebuild_because_the_named_watch_changed_is_named_as_the_reason(self, ctx: EngineContext, mock_plextv):
+        """Issue #133's leftover: the row is rebuilt from scratch because the watch its title names is no
+        longer what it is built from — but the trace said "refreshed", the line for a row that kept its
+        strongest picks. A nightly full rebuild then looked like a normal refresh to anyone reading it."""
+        self._named_after(ctx, seed_tmdb_id=424242, seed_title="A Film They Un-watched")
+
+        entry = self._selection(ctx, mock_plextv)
+
+        assert entry["decision"] == "seed_moved"
+
+    def test_a_named_row_whose_watch_is_unchanged_is_still_refreshed(self, ctx: EngineContext, mock_plextv):
+        """The other cell: 900 is what "Fargo" resolves to here, so the named watch has not moved and the
+        row keeps its strongest picks — `seed_moved` must not become the answer for every named row."""
+        self._named_after(ctx, seed_tmdb_id=900, seed_title="Fargo")
+
+        assert self._selection(ctx, mock_plextv)["decision"] == "refreshed"
+
     def test_it_carries_the_settings_that_decided_the_row(self, ctx: EngineContext, mock_plextv):
         """The settings are reported from the values the branch itself used, so the trace cannot
         claim one thing while the engine did another."""
@@ -6452,6 +6559,7 @@ class TestIdleHoldInARun:
         _, entry = self._run(ctx, mock_plextv)
 
         assert entry["decision"] != "held_idle", "a row whose title no longer matches its seed must rebuild"
+        assert entry["decision"] == "seed_moved"
 
     def test_a_settings_change_still_rebuilds_a_held_row(self, ctx: EngineContext, mock_plextv):
         """The owner's deliberate edit outranks the hold. Making them wait up to the ceiling for an

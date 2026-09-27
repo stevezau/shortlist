@@ -809,13 +809,15 @@ export interface TraceSelection {
   library: string;
   /** `rebuilt` (built fresh) · `carried_forward` (redelivered untouched — not its refresh night) ·
    *  `refreshed` (kept the strongest two-thirds, swapped the rest) · `settings_changed` (rebuilt
-   *  early because a setting that decides contents was edited) · `held_idle` (it WAS its refresh
-   *  night, but the person has watched nothing since the row was built) · `cold_start`. */
+   *  early because a setting that decides contents was edited) · `seed_moved` (a row named after a
+   *  watch, rebuilt because that watch changed) · `held_idle` (it WAS its refresh night, but the
+   *  person has watched nothing since the row was built) · `cold_start`. */
   decision:
     | "rebuilt"
     | "carried_forward"
     | "refreshed"
     | "settings_changed"
+    | "seed_moved"
     | "held_idle"
     | "cold_start";
   size: number;

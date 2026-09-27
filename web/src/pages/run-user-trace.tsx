@@ -477,6 +477,8 @@ function cadenceLine(entry: TraceSelection): string {
       }. Turn down “Hold rows for inactive viewers” to rebuild it regardless.`;
     case "settings_changed":
       return "— rebuilt now because a setting that decides its titles changed.";
+    case "seed_moved":
+      return "— rebuilt from scratch because the watch it was named after changed.";
     case "refreshed":
       return "— refresh night: the strongest picks stayed, the weakest were swapped for new ones.";
     case "cold_start":

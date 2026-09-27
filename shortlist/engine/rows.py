@@ -1032,6 +1032,31 @@ def _rank_against_pool(picks: list[Pick], sub: list[Candidate]) -> list[Pick]:
     return sorted(picks, key=lambda p: order.get((p.tmdb_id, p.media_type), len(order)))
 
 
+def _reseed_survivors(kept: list[Pick], sub: list[Candidate], seeds: list[Seed]) -> list[Pick]:
+    """A named row's refresh survivors, each attributed only to a watch in tonight's seed set.
+
+    A carried pick keeps the seed it was found through, and a `{top_seed}` title names the best-ranked
+    pick that has one (`delivery.named_seed_pick`). Above one seed per library, a survivor whose seed has
+    since left the set (un-watched, or pushed out by newer watches) can be re-ranked to the head of the
+    row by `_rank_against_pool` while `_seed_moved` passes — so the row was renamed after a watch it is no
+    longer built from, until the next night's check read that name back and rebuilt the whole row.
+
+    The pick stays; only its attribution changes, to what tonight's pool says (its candidate's
+    `top_seed`, or no seed when no live watch vouches for it) — what a newcomer of the same title would
+    carry. `reason` is left alone: it says how the pick was found, which is still true.
+    """
+    live = {(s.tmdb_id, s.media_type) for s in seeds}
+    tonight = {(c.tmdb_id, c.media_type): c.top_seed for c in sub}
+    out: list[Pick] = []
+    for p in kept:
+        if p.seed_tmdb_id is None or (p.seed_tmdb_id, p.media_type) in live:
+            out.append(p)
+            continue
+        seed = tonight.get((p.tmdb_id, p.media_type))
+        out.append(replace(p, seed_tmdb_id=seed.tmdb_id if seed else None, seed_title=seed.title if seed else None))
+    return out
+
+
 def _rating_key_resolver(seed_index: dict[int, int]) -> Callable[[WatchedItem], int | None]:
     """A resolver from a watched item to its tmdb_id, via ratingKey, across EVERY library.
 
@@ -2744,10 +2769,11 @@ def _build_section_picks(
         # BACKWARDS onto an older watch, which reads as idle — and `_seed_moved` is otherwise only
         # consulted on the refresh branch, so the row would keep claiming "Because you watched X"
         # about a title the owner un-watched, for up to the ceiling.
+        seed_moved = _seed_moved(spec, prior_valid, sub, policy.user, policy.cfg, lead_tmdb_id)
         held = (
             due
             and not recipe_changed
-            and not _seed_moved(spec, prior_valid, sub, policy.user, policy.cfg, lead_tmdb_id)
+            and not seed_moved
             and _held_for_idle(prior_valid, policy.last_watch_at, ctx.run_at, hold_days)
         )
         refresh = due and not held
@@ -2781,6 +2807,8 @@ def _build_section_picks(
             decision = "held_idle"
         elif not refresh:
             decision = "carried_forward"
+        elif seed_moved:
+            decision = "seed_moved"
         else:
             decision = "refreshed"
         if held:
@@ -2823,7 +2851,7 @@ def _build_section_picks(
             spares, reselect = ([] if genre_hold else sub), False
             if len(sec_picks) < k and sub and not genre_hold:
                 sec_picks = _pad_picks(sec_picks, sub, k)
-        elif prior_valid and not _seed_moved(spec, prior_valid, sub, policy.user, policy.cfg, lead_tmdb_id):
+        elif prior_valid and not seed_moved:
             # Refresh night: keep the strongest ~two-thirds by RANK (match quality — `prior_valid` is
             # ordered by the persisted rank column, not by how the row was displayed), and swap the
             # rest for genuinely-new titles.
@@ -2831,6 +2859,8 @@ def _build_section_picks(
             # bounce straight back — the internal anti-immediate-repeat guard that replaced staleness_runs.
             keep_n = min(len(prior_valid), round(_KEEP_FRACTION * k))
             kept = prior_valid[:keep_n]
+            if _names_a_seed(spec, user, policy.cfg):
+                kept = _reseed_survivors(kept, sub, policy.seeds_for(spec))
             fresh_pool = [c for c in sub if (c.tmdb_id, c.media_type) not in prior_ids]
             new_picks = picker.build_picks(fresh_pool, k)
             newcomers = [p for p in new_picks if (p.tmdb_id, p.media_type) not in prior_ids]
@@ -2846,12 +2876,10 @@ def _build_section_picks(
                 sec_picks = _pad_picks(sec_picks, fresh_pool, k)
             spares, reselect = fresh_pool, True
             # `_seed_moved` above asked whether the POOL still leads with the seed this row is named
-            # after. That is not quite the question the title asks: the name renders from the
-            # best-matching DELIVERED pick, and re-ranking survivors against newcomers can put a
-            # differently-seeded newcomer first even when the pool's own top seed never moved. Left
-            # here, the row would rename itself while still carrying the old seed's picks — the exact
-            # stale claim `_seed_moved` exists to prevent. Only reachable above one seed, which is
-            # why the single-seed tests never saw it.
+            # after; the name renders from the best-matching DELIVERED pick. Re-ranking can put a
+            # differently-seeded pick first while the pool's top seed never moved, and the title then
+            # follows its new lead — a watch still in the seed set, because `_reseed_survivors` left no
+            # survivor claiming one that has gone. Only reachable above one seed.
         else:
             # Bootstrap: this row+library has never been built (or its picks predate row/library
             # stamping) — build a fresh full row, exactly like a first run. Also reached on a refresh

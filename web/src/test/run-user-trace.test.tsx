@@ -831,6 +831,16 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
     ).toBeInTheDocument();
   });
 
+  it("names a changed watch as the reason a named row was rebuilt, not refreshed", () => {
+    // A "Because you watched X" row whose watch changed is rebuilt from scratch. Shown as a refresh
+    // ("the strongest picks stayed"), a nightly full rebuild looked like the normal cadence.
+    render(<TraceView data={withSelection({ decision: "seed_moved" })} />);
+    expect(
+      screen.getByText(/the watch it was named after changed/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/strongest picks stayed/i)).not.toBeInTheDocument();
+  });
+
   it("has a shortlisted step showing the cut", () => {
     // Between search and order, because that is where it happens: the cut decides what can be
     // ordered at all, so explaining ordering without it describes half the mechanism.
