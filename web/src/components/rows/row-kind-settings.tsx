@@ -22,6 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { plural } from "@/lib/format";
 import { useRequestRowSources } from "@/lib/queries";
 import {
   CONNECTIONS_SETTINGS,
@@ -198,10 +199,6 @@ const SOURCE_BADGE: Record<SourceState, { label: string; variant: "success" | "w
   unreachable: { label: "Unreachable", variant: "warning" },
   off: { label: "Off", variant: "secondary" },
 };
-
-function plural(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
-}
 
 /** One line under a source's badge: what it found, in numbers the owner can check against the app. */
 function sourceDetail(sources: RowSources, source: "overseerr" | "radarr" | "sonarr"): string | null {
@@ -381,7 +378,20 @@ export function YourRequestsBlock(props: KindBlockProps) {
 
       {props.shown.has("requests_sources") && (
         <div data-setting="requests_sources" className="space-y-2">
-          <p className="text-sm font-medium">Where requests are read from</p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-medium">Where requests are read from</p>
+            {/* The pattern's own Check sits inside the folded "Use my own tags" details, so a source
+                that just came up needed the pattern opened to re-read it. Same read, same pattern. */}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={check}
+              disabled={sources.isFetching}
+            >
+              {sources.isFetching ? "Checking…" : "Check again"}
+            </Button>
+          </div>
           {sources.isPending ? (
             <div className="space-y-2" aria-busy="true">
               <Skeleton className="h-8 w-full" />
@@ -393,7 +403,7 @@ export function YourRequestsBlock(props: KindBlockProps) {
               <span title={sources.error instanceof Error ? sources.error.message : String(sources.error)}>
                 Couldn&rsquo;t check the sources.
               </span>{" "}
-              Press Check, under Use my own tags, to try again.
+              Press Check again to try once more.
             </p>
           ) : (
             <RequestSourcesPanel sources={sources.data} />

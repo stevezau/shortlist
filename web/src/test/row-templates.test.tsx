@@ -12,6 +12,7 @@ import {
   ROW_TEMPLATE_GROUPS,
   ROW_TEMPLATES,
   findRowTemplate,
+  sentenceCaseHighlights,
 } from "@/lib/row-templates";
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -521,5 +522,20 @@ describe("what the row list says about a template's row", () => {
       null,
     );
     expect(parts).toContain("Never started only");
+  });
+});
+
+describe("sentenceCaseHighlights", () => {
+  it("lowercases each highlight's first letter, except a proper noun or an acronym", () => {
+    // The editor's "Started from …" banner joins the highlights into one sentence. A blanket
+    // toLowerCase() wrote "overseerr or radarr/sonarr tags" and "tv only".
+    expect(
+      sentenceCaseHighlights(["Rebuilds nightly", "TV only", "Overseerr or Radarr/Sonarr tags"]),
+    ).toEqual(["rebuilds nightly", "TV only", "Overseerr or Radarr/Sonarr tags"]);
+    expect(sentenceCaseHighlights(["Plex only", "TMDB picks", "AI-ranked"])).toEqual([
+      "Plex only",
+      "TMDB picks",
+      "AI-ranked",
+    ]);
   });
 });

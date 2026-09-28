@@ -75,7 +75,7 @@ import {
   type RowKindChoice,
   type RowKindContext,
 } from "@/lib/row-kinds";
-import type { RowTemplate } from "@/lib/row-templates";
+import { sentenceCaseHighlights, type RowTemplate } from "@/lib/row-templates";
 import {
   idleHoldGlobal,
   idleHoldSeed,
@@ -555,7 +555,7 @@ export function RowEditor({
           {/* Several template titles end in an ellipsis ("Because you watched…"), which the
               sentence stop then doubled into "…." — so the separator is a dash, not a full stop. */}
           {" — change anything you like: "}
-          {template.highlights.join(", ").toLowerCase()}.
+          {sentenceCaseHighlights(template.highlights).join(", ")}.
         </p>
       )}
 
@@ -1056,6 +1056,10 @@ export function RowEditor({
             </div>
           </SettingsGroup>
 
+          {/* A Your requests row never searches, so it has nothing to ask for and nothing to set
+              here; the preview's Requests line says so in one sentence, and an empty group would
+              only be somewhere to be wrong. */}
+          {!input.requests_row && (
           <SettingsGroup
             title="Requests"
             description="What this row asks Sonarr and Radarr for when a pick isn't on the server yet, and where those titles land."
@@ -1085,6 +1089,7 @@ export function RowEditor({
               </p>
             )}
           </SettingsGroup>
+          )}
 
           {save.isError && (
             <p role="alert" className="text-sm text-destructive-text">

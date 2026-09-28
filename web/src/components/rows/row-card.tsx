@@ -1,4 +1,4 @@
-import { PLACEHOLDER_EXACT, PLACEHOLDER_SPLIT } from "@/lib/placeholders";
+import { PLACEHOLDER_SPLIT } from "@/lib/placeholders";
 import {
   Image as ImageIcon,
   ListChecks,
@@ -10,6 +10,7 @@ import { Link } from "react-router";
 
 import { RowRunAction } from "@/components/rows/row-run-action";
 import { RowEnableToggle } from "@/components/rows/row-enable-toggle";
+import { RowName } from "@/components/rows/row-name";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -22,40 +23,11 @@ import { useLibraries, useSettings } from "@/lib/queries";
 import type { Collection, User } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-/** A row name with its `{placeholders}` shown as placeholders rather than as literal text.
- *
- * The list used to print the raw template — "✨ {library_name} Picked for You" — beside cards
- * whose names had no token in them, and beside a dashboard that shows the same row resolved
- * ("✨ Movies Picked for You"). Read cold it looks like a substitution that failed. Resolving it
- * here instead would be a different lie: a row over two libraries really is two collections with
- * two names, so there is no single name to show. Marking the variable as a variable is the honest
- * version, and it costs one chip.
- */
-/** Whether this name renders any chips, so a caller can explain what a chip IS only when one is on
- *  screen. Exact tokens only (`lib/placeholders.ts`): anything else must stay plain text, since hiding a
- *  typo like "{Library_Name}" as a chip would dress up braces Plex will print. */
+/** Whether this name renders any chips (`RowName`), so a caller can explain what a chip IS only when
+ *  one is on screen. Exact tokens only (`lib/placeholders.ts`): anything else must stay plain text,
+ *  since hiding a typo like "{Library_Name}" as a chip would dress up braces Plex will print. */
 export function hasRowNameToken(name: string): boolean {
   return PLACEHOLDER_SPLIT.test(name);
-}
-
-function RowCardName({ name }: { name: string }) {
-  const parts = name.split(PLACEHOLDER_SPLIT);
-  return (
-    <span className="font-medium">
-      {parts.map((part, i) =>
-        PLACEHOLDER_EXACT.test(part) ? (
-          <span
-            key={i}
-            className="mx-0.5 rounded bg-muted px-1 py-0.5 text-xs font-normal text-muted-foreground"
-          >
-            {part.slice(1, -1).replace(/_/g, " ")}
-          </span>
-        ) : (
-          part
-        ),
-      )}
-    </span>
-  );
 }
 
 /** One row in the Rows list: its audience/size summary, an enable toggle, edit, and the way out.
@@ -132,7 +104,7 @@ export function RowCard({
         )}
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
-            <RowCardName name={collection.name} />
+            <RowName name={collection.name} />
             <Badge
               variant={collection.build === "shared" ? "warning" : "secondary"}
             >

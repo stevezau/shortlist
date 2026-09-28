@@ -5,6 +5,7 @@ import { MutationAlert } from "@/components/mutation-alert";
 import { PickList } from "@/components/pick-list";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { RecentCountField } from "@/components/recent-count-field";
+import { RowName } from "@/components/rows/row-name";
 import { RowSizeField } from "@/components/row-size-field";
 import { SaveStatus } from "@/components/save-status";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +14,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { useAutosave } from "@/lib/autosave";
+import { LIBRARY_NAME } from "@/lib/placeholders";
 import { useSetUserRowOverride, useUserRows } from "@/lib/queries";
 import type { User, UserRow } from "@/lib/types";
 
@@ -72,9 +74,17 @@ function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="font-medium">
-                {row.library ? `${row.name} — ${row.library}` : row.name}
-              </span>
+              {/* This card is one library's copy of the row, so `{library_name}` has exactly one
+                  value here — and a name that carries it already says which library, so the
+                  suffix stays only for a name that does not. */}
+              <RowName
+                name={
+                  row.library && !row.name.includes(LIBRARY_NAME)
+                    ? `${row.name} — ${row.library}`
+                    : row.name
+                }
+                libraryName={row.library || undefined}
+              />
               {row.is_default && <Badge variant="outline">default</Badge>}
               {muted && <Badge variant="secondary">muted</Badge>}
             </div>

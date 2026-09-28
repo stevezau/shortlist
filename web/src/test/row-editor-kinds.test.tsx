@@ -487,6 +487,14 @@ describe("requests", () => {
     expect(await screen.findByLabelText(/Request tag/)).toBeInTheDocument();
   });
 
+  it("has no Requests section on a Your requests row, which has nothing there to set", async () => {
+    // The folded group read "None — shared rows never ask for missing titles" under a row that is
+    // not shared. With nothing to configure, an empty section is only a place to be wrong.
+    renderEditor(row({ requests_row: true }));
+    await screen.findByText("Which requests show up");
+    expect(screen.queryByText("Requests", { selector: "summary span span" })).toBeNull();
+  });
+
   it("says a Popular row never asks for anything", () => {
     renderEditor(row({ build: "shared" }));
     const group = screen.getByText("Requests", { selector: "summary span span" }).closest("details")!;

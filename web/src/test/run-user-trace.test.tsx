@@ -869,6 +869,21 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
     expect(screen.queryByText("picked")).toBeNull();
   });
 
+  it("fills {library_name} with the library the section is about", () => {
+    // Each of these sections is one library's story, so the token has exactly one honest value
+    // here; stripping it read "📬 you asked for — their own requests…".
+    render(
+      <TraceView
+        data={withSelection()}
+        rowNames={{ picked: "✨ {library_name} Picked for You" }}
+      />,
+    );
+
+    expect(screen.getAllByText("✨ Movies Picked for You").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/\{library_name\}/)).toBeNull();
+    expect(screen.queryByText("✨ Picked for You")).toBeNull();
+  });
+
   it("falls back to the slug for a row that no longer exists", () => {
     // A deleted row is not in the collections list, and a blank lead-in would be worse than a slug.
     render(<TraceView data={withSelection()} rowNames={{}} />);
@@ -1083,6 +1098,22 @@ describe("TraceView — a Your requests row", () => {
     expect(screen.queryByText(/How we ordered the shortlist/)).toBeNull();
     // Still ends where every flow ends.
     expect(screen.getByText(/What we put in Movies/)).toBeInTheDocument();
+  });
+
+  it("counts one request in the singular", () => {
+    const one = requestsTrace().trace!.selection![0]!.requests![0]!;
+    render(<TraceView data={requestsTrace({ candidates: 1, delivered: 1, requests: [one] })} />);
+    expect(screen.getByText("1 request looked at")).toBeInTheDocument();
+  });
+
+  it("keeps each date on one line, so a narrow screen scrolls the table instead of stacking a date", () => {
+    render(<TraceView data={requestsTrace()} />);
+    // The title is also in the delivered list below, so start from the table's cell.
+    const cells = within(
+      screen.getByRole("cell", { name: "Toy Story 2" }).closest("tr")!,
+    ).getAllByRole("cell");
+    expect(cells[1]).toHaveClass("whitespace-nowrap");
+    expect(cells[2]).toHaveClass("whitespace-nowrap");
   });
 
   it("lists every request with where it was found and what became of it", () => {

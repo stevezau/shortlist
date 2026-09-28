@@ -288,3 +288,19 @@ export const ROW_TEMPLATES: RowTemplate[] = [
 export function findRowTemplate(id: string): RowTemplate | undefined {
   return ROW_TEMPLATES.find((template) => template.id === id);
 }
+
+/** Names a highlight may start with that keep their capital mid-sentence. */
+const PROPER_NOUNS = new Set(["Overseerr", "Radarr", "Sonarr", "Plex", "TMDB", "Trakt", "TV"]);
+
+/**
+ * The highlights as they read joined into one sentence: each starts lowercase, unless its first
+ * word is a proper noun or an acronym (a run of two or more capitals). A blanket `toLowerCase()`
+ * wrote "overseerr or radarr/sonarr tags" and "tv only" in the editor's "Started from" banner.
+ */
+export function sentenceCaseHighlights(highlights: string[]): string[] {
+  return highlights.map((highlight) => {
+    const firstWord = highlight.split(/[\s/,.-]/, 1)[0] ?? "";
+    const keepsCapital = PROPER_NOUNS.has(firstWord) || /^[A-Z]{2,}/.test(firstWord);
+    return keepsCapital ? highlight : highlight.charAt(0).toLowerCase() + highlight.slice(1);
+  });
+}

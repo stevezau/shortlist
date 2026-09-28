@@ -293,6 +293,14 @@ describe("requests, in one line", () => {
     expect(line("Requests")).toHaveAttribute("data-fact", "requests");
   });
 
+  it("says a Your requests row asks for nothing, in its own words", () => {
+    // It is per-person, not shared, and the shared-row sentence explained the wrong thing: this row
+    // never searches, so there is nothing missing for it to ask for.
+    renderPreview({ ...toInput(row()), requests_row: true });
+    expect(line("Requests")).toHaveTextContent(/^RequestsNone — this row only shows what they already asked for$/);
+    expect(line("Requests")).not.toHaveAttribute("data-fact");
+  });
+
   it("says a shared row asks for nothing, without claiming the hidden setting", () => {
     renderPreview(toInput(row({ build: "shared", request_tag: "family" })));
     expect(line("Requests")).toHaveTextContent(/^RequestsNone — shared rows never ask for missing titles$/);

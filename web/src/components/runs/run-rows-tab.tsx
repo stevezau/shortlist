@@ -9,6 +9,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 
 import { PickList } from "@/components/pick-list";
+import { RowName } from "@/components/rows/row-name";
 import { Segmented } from "@/components/segmented";
 import { UserPanel } from "@/components/runs/user-panel";
 import { UserTabs } from "@/components/runs/user-tabs";
@@ -230,7 +231,9 @@ function RowCard({
           />
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <span className="font-medium">{group.title}</span>
+              {/* The header spans every library the row built, so no one library can fill
+                  `{library_name}`; the chip says what it is instead of dropping it. */}
+              <RowName name={group.template} />
               {libraries && (
                 <span className="text-xs tracking-wide text-muted-foreground uppercase">
                   {libraries}

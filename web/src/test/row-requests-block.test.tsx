@@ -191,6 +191,18 @@ describe("YourRequestsBlock", () => {
     expect(screen.getByRole("link", { name: /Settings/ })).toHaveAttribute("href", "/settings#connections");
   });
 
+  it("re-reads the sources from Check again in the panel header, with the pattern as it stands", async () => {
+    // Check lives inside the folded "Use my own tags" details, so re-checking a source that just
+    // came back needed the pattern opened first.
+    renderBlock(requestsRow({ requests_tag_pattern: "req-{username}" }));
+    await screen.findByText("Connected");
+    expect(getRequestRowSources).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(getRequestRowSources).toHaveBeenCalledTimes(2));
+    expect(getRequestRowSources).toHaveBeenLastCalledWith("req-{username}");
+  });
+
   it("says when the check itself failed, and Check tries again", async () => {
     getRequestRowSources.mockRejectedValueOnce(new Error("boom"));
     renderBlock(requestsRow());

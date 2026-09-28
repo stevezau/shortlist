@@ -27,6 +27,7 @@ import { useParams } from "react-router";
 
 import { BackLink } from "@/components/back-link";
 import { EmptyState, QueryBoundary } from "@/components/query-boundary";
+import { RowName } from "@/components/rows/row-name";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -37,7 +38,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatDate } from "@/lib/format";
+import { formatDate, plural } from "@/lib/format";
 import { provenanceLabel, sourceLabel } from "@/lib/pick-provenance";
 import { Button } from "@/components/ui/button";
 import {
@@ -115,15 +116,15 @@ export function RunUserTracePage() {
         collections.data?.find((row) => row.slug === rowSlug)?.name ?? "",
       ) || undefined
     : undefined;
-  // Every row's name by slug, for the same reason and by the same rule: the trace's own
-  // `selection` entries carry slugs, and printing one in prose reads as a stray token.
+  // Every row's configured name by slug, for the same reason: the trace's own `selection` entries
+  // carry slugs, and printing one in prose reads as a stray token. Kept as the template — each
+  // section below is one library's story, so `RowName` fills `{library_name}` there.
   const rowNames = useMemo(
     () =>
       Object.fromEntries(
-        (collections.data ?? []).flatMap((row) => {
-          const name = rowDisplayName(row.name);
-          return name ? [[row.slug, name] as const] : [];
-        }),
+        (collections.data ?? []).flatMap((row) =>
+          row.name.trim() ? [[row.slug, row.name] as const] : [],
+        ),
       ),
     [collections.data],
   );
@@ -407,10 +408,16 @@ function ShortlistTitles({ lib }: { lib: LibraryView }): ReactNode {
  * lines below lead with it in bold — so a row configured as "✨ {library_name} Picked for You"
  * announced itself as **picked** in the middle of a sentence written for a person. `rowNames` is
  * the collections list keyed by slug; the slug remains the fallback for a row that has since been
- * deleted, where there is no name left to show.
+ * deleted, where there is no name left to show. The entry is one library's, so that library fills
+ * `{library_name}` — "📬 Movies you asked for", not "📬 you asked for".
  */
-function rowLabel(slug: string, rowNames: Record<string, string>): string {
-  return rowNames[slug] || slug;
+function rowLabel(entry: TraceSelection, rowNames: Record<string, string>): ReactNode {
+  return (
+    <RowName
+      name={rowNames[entry.row] || entry.row}
+      libraryName={entry.library}
+    />
+  );
 }
 
 /** What the release-date weight and the pool cap did to this library's shortlist. */
@@ -424,7 +431,7 @@ function shortlistBody(
       {entries.map((entry) => (
         <li key={entry.row} className="space-y-1 text-sm">
           <p>
-            <span className="font-medium">{rowLabel(entry.row, rowNames)}</span>
+            {rowLabel(entry, rowNames)}
             {entry.candidates != null && (
               <>
                 {" — "}
@@ -458,7 +465,7 @@ function deliveryNote(
     <ul className="mb-3 space-y-1.5 text-sm">
       {entries.map((entry) => (
         <li key={entry.row}>
-          <span className="font-medium">{rowLabel(entry.row, rowNames)}</span>{" "}
+          {rowLabel(entry, rowNames)}{" "}
           <span
             className={
               entry.decision === "carried_forward" ||
@@ -664,7 +671,7 @@ function LibraryFlow({
       rail: "Asked for",
       count: entry.delivered,
       title: "What they asked for",
-      subtitle: `${entry.candidates ?? entry.requests?.length ?? 0} requests looked at`,
+      subtitle: `${plural(entry.candidates ?? entry.requests?.length ?? 0, "request")} looked at`,
       body: (
         <RequestsTable
           requests={entry.requests ?? []}
@@ -957,10 +964,12 @@ function RequestsTable({
         {requests.map((request) => (
           <TableRow key={`${request.tmdb_id}:${request.media_type}`}>
             <TableCell className="font-medium">{request.title}</TableCell>
-            <TableCell className="text-muted-foreground">
+            {/* A date stays on one line: at phone width the table's own container scrolls, which
+                reads better than "Sep / 16, / 2026" stacked three high. */}
+            <TableCell className="whitespace-nowrap text-muted-foreground">
               {formatDate(request.asked_at, { dateOnly: true })}
             </TableCell>
-            <TableCell className="text-muted-foreground">
+            <TableCell className="whitespace-nowrap text-muted-foreground">
               {formatDate(request.landed_at, { dateOnly: true })}
             </TableCell>
             <TableCell className="text-muted-foreground">
