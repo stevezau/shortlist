@@ -438,7 +438,8 @@ class RowSourcesOut(PassthroughModel):
 async def get_row_sources(
     request: Request,
     pattern: Annotated[
-        str, Query(max_length=200, description="An own-tag pattern to preview, e.g. req-{username}")
+        # 128 is the stored column's length: a longer pattern could never be saved, so it is not previewed.
+        str, Query(max_length=128, description="An own-tag pattern to preview, e.g. req-{username}")
     ] = "",
 ) -> dict:
     """Read every request source once and say whether a "Your requests" row can be built from it.

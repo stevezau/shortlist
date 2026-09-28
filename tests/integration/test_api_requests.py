@@ -244,6 +244,11 @@ class TestRowSourcesSetupCheck:
         assert (out["overseerr"], out["radarr"], out["sonarr"], out["complete"]) == ("off", "connected", "off", True)
         assert any("Overseerr isn't connected" in p for p in out["problems"])
 
+    def test_row_sources_refuses_a_pattern_longer_than_the_column_it_previews(self, client: TestClient):
+        """`requests_tag_pattern` is stored at 128; a preview of what could never be saved is refused."""
+        assert client.get("/api/requests/row-sources", params={"pattern": "x" * 128}).status_code == 200
+        assert client.get("/api/requests/row-sources", params={"pattern": "x" * 129}).status_code == 422
+
     def test_row_sources_says_off_when_nothing_is_configured(self, client: TestClient):
         out = client.get("/api/requests/row-sources").json()
 

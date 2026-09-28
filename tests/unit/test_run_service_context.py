@@ -165,6 +165,26 @@ class TestBuildContext:
         assert ctx.unmanaged_account_ids == {102}
         assert ctx.disabled_account_ids == {103}
 
+    def test_the_roster_is_every_enabled_person_even_when_the_run_is_scoped(self, service, configured, sessions):
+        """The request ledger resolves tags against `ctx.roster`, not the scoped users: a run for ONE
+        person must still see that a tag two people share is ambiguous (issue #127)."""
+        with sessions() as session:
+            session.add_all(
+                [
+                    User(plex_account_id=101, username="sarah", slug="sarah", enabled=True),
+                    User(plex_account_id=102, username="kid", slug="kid", enabled=True),
+                    User(plex_account_id=103, username="off", slug="off", enabled=False),
+                ]
+            )
+            session.commit()
+            sarah_id = session.query(User).filter_by(slug="sarah").one().id
+            scoped = service.enabled_profiles(session, user_ids=[sarah_id])
+
+        ctx = service.build_context(dry_run=True)
+
+        assert [p.slug for p in scoped] == ["sarah"]
+        assert sorted(p.slug for p in ctx.roster) == ["kid", "sarah"]
+
     def test_plex_only_skips_the_clients_a_label_walk_never_touches(self, service, configured, monkeypatch):
         """The reconciles, the pause/disable handlers and the watch sync only ever walk collections
         under a label — but every one of them opened Trakt, Exa, MDBList, the LLM curator and the

@@ -9895,7 +9895,7 @@
             "schema": {
               "default": "",
               "description": "An own-tag pattern to preview, e.g. req-{username}",
-              "maxLength": 200,
+              "maxLength": 128,
               "title": "Pattern",
               "type": "string"
             }

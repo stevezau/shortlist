@@ -514,6 +514,9 @@ class ContextBuilder:
                 may_delete_orphans=True,
                 handled_requests=self._handled_requests(session),
                 progress=progress,
+                # Everyone, not the run's scope: the request ledger must see that a tag two people
+                # share is ambiguous even when only one of them is in tonight's run.
+                roster=self.enabled_profiles(session),
             )
 
     def _build_mdblist(self, store: SettingsStore) -> MdbListClient | None:
