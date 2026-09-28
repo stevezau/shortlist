@@ -81,6 +81,9 @@ class RequestLedger:
     seerr_requesters: int = 0
     seerr_linked: int = 0
     seerr_servers: list[dict] = field(default_factory=list)
+    #: Every Plex account id an Overseerr account is linked to — how "linked" is told apart from
+    #: "has asked for something": a person with an account and no requests is still linked.
+    seerr_plex_ids: set[int] = field(default_factory=set)
 
     def for_person(self, plex_account_id: int) -> list[RequestedTitle]:
         """The titles one person asked for, newest arrival first."""
@@ -181,6 +184,7 @@ def collect_requests(
     if seerr_client is not None:
         try:
             seerr_plex = seerr_client.user_plex_ids()
+            ledger.seerr_plex_ids = {pid for pid in seerr_plex.values() if pid is not None}
             rows = seerr_client.requests()
             ledger.seerr_servers = [
                 {

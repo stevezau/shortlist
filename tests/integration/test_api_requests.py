@@ -3,8 +3,16 @@ reach past it."""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
+import httpx
 import pytest
+import respx
 from fastapi.testclient import TestClient
+
+from shortlist.server.db.models import User
+from shortlist.server.settings_store import SettingsStore
 
 pytestmark = pytest.mark.integration
 
@@ -157,3 +165,78 @@ class TestWantedByFilter:
         rows = client.get("/api/requests", params={"wanted_by": "sarah"}).json()
 
         assert [r["status"] for r in rows] == ["pending", "sent", "rejected"]
+
+
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
+
+
+def _connect_overseerr(client: TestClient) -> None:
+    with client.app.state.sessions() as session:
+        store = SettingsStore(session, client.app.state.secrets)
+        store.set("requests.overseerr.url", "http://seerr")
+        store.set("requests.overseerr.apikey", "k")
+        session.commit()
+
+
+class TestRowSourcesSetupCheck:
+    """`GET /requests/row-sources` is the owner's "is the requests row going to work?" screen: which
+    source is connected, whether Overseerr tags what it sends, and who is linked to an account."""
+
+    def test_row_sources_reports_each_source_and_who_is_linked(self, client: TestClient):
+        _connect_overseerr(client)
+        with client.app.state.sessions() as session:
+            session.query(User).filter_by(username="mike").update({"enabled": True})
+            session.commit()
+            ids = {u.username: u.id for u in session.query(User).all()}
+        reqs = json.loads((FIXTURES / "overseerr_requests_page.json").read_text())
+        # Sarah is the recorded requester 10 (one completed show); the request carries her Plex id.
+        # Mike has an Overseerr account but asked for nothing — he must still read as linked, so
+        # "linked" is proven to mean "has an account", not "has a request".
+        for r in reqs["results"]:
+            if r["requestedBy"]["id"] == 10:
+                r["requestedBy"]["plexId"] = 555000100
+        users = {
+            "pageInfo": {"results": 2, "pages": 1},
+            "results": [
+                {"id": 10, "plexId": 555000100, "displayName": "Sarah"},
+                {"id": 99, "plexId": 555000200, "displayName": "Mike"},
+            ],
+        }
+        with respx.mock:
+            respx.get("http://seerr/api/v1/request").mock(return_value=httpx.Response(200, json=reqs))
+            respx.get("http://seerr/api/v1/user").mock(return_value=httpx.Response(200, json=users))
+            respx.get("http://seerr/api/v1/settings/radarr").mock(
+                return_value=httpx.Response(200, json=[{"name": "r", "is4k": False, "tagRequests": True}])
+            )
+            respx.get("http://seerr/api/v1/settings/sonarr").mock(return_value=httpx.Response(200, json=[]))
+            respx.get("http://seerr/api/v1/media").mock(
+                return_value=httpx.Response(200, json={"pageInfo": {"results": 0}, "results": []})
+            )
+            r = client.get("/api/requests/row-sources")
+
+        assert r.status_code == 200, r.text
+        out = r.json()
+        assert (out["overseerr"], out["radarr"], out["sonarr"], out["complete"]) == ("connected", "off", "off", True)
+        assert out["servers"] == [{"kind": "radarr", "name": "r", "is4k": False, "tag_requests": True}]
+        assert out["seerr_requests"] == len(reqs["results"])
+        assert out["seerr_linked"] == 1  # of the requesters, only Sarah maps to someone on the roster
+        people = {p["display_name"]: p for p in out["people"]}
+        assert people["sarah"] == {"user_id": ids["sarah"], "display_name": "sarah", "linked": True, "ready": 1}
+        assert people["mike"] == {"user_id": ids["mike"], "display_name": "mike", "linked": True, "ready": 0}
+
+    def test_row_sources_says_off_when_nothing_is_configured(self, client: TestClient):
+        out = client.get("/api/requests/row-sources").json()
+
+        assert (out["overseerr"], out["radarr"], out["sonarr"], out["complete"]) == ("off", "off", "off", True)
+        assert out["people"] and all(p["linked"] is False and p["ready"] == 0 for p in out["people"])
+
+    def test_row_sources_says_unreachable_when_overseerr_is_down(self, client: TestClient):
+        _connect_overseerr(client)
+        with respx.mock:
+            respx.get(url__startswith="http://seerr/").mock(side_effect=httpx.ConnectError("refused"))
+            r = client.get("/api/requests/row-sources")
+
+        assert r.status_code == 200, r.text
+        out = r.json()
+        assert (out["overseerr"], out["complete"]) == ("unreachable", False)
+        assert any(p.startswith("Overseerr could not be read") for p in out["problems"])

@@ -598,6 +598,19 @@ class ContextBuilder:
             tmdb = TmdbClient(store.get("tmdb.apikey"), cache=DbCache(self._sessions))
             return self._build_requests(store), tmdb
 
+    def build_request_sources_only(self) -> tuple[RequestSources | None, list[UserProfile], dict[int, int]]:
+        """What the requests-row setup check reads: the sources, the roster, and each person's DB id.
+
+        The third item maps ``plex_account_id`` -> ``users.id``, because a `UserProfile` carries only
+        the Plex id the engine keys on while the API answers in DB ids. No Plex/LLM/TMDB client is built:
+        the check reads Overseerr and the Arrs and nothing else.
+        """
+        with self._sessions() as session:
+            store = SettingsStore(session, self._secrets)
+            profiles = self.enabled_profiles(session)
+            db_ids = {u.plex_account_id: u.id for u in session.query(User).filter_by(enabled=True).all()}
+            return self._build_request_sources(store), profiles, db_ids
+
     def user_history(self, user_id: int, *, limit: int = 25) -> list[dict] | None:
         """Recent watches for one user, newest first — the same source that feeds recommendations.
 
