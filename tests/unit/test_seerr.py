@@ -18,7 +18,7 @@ import respx
 from shortlist.engine import requests as requests_mod
 from shortlist.engine.clients import http_retry
 from shortlist.engine.clients import seerr as seerr_mod
-from shortlist.engine.clients.seerr import SeerrClient, SeerrError
+from shortlist.engine.clients.seerr import PartialRead, SeerrClient, SeerrError
 from shortlist.engine.models import MediaType, MissingTitle, RequestConfig, SeerrTarget
 
 pytestmark = pytest.mark.integration
@@ -837,3 +837,65 @@ class TestRequestReads:
             respx.get(f"{BASE}/request").mock(return_value=httpx.Response(500, text="boom"))
             with pytest.raises(SeerrError):
                 _client().requests()
+
+
+class TestPartialReads:
+    """The two reads that can take a row DOWN (`requests`, `user_plex_ids`) refuse a partial page.
+
+    `media_state`, `media_dates` and `blocklisted` keep tolerating one — they only ever hold a request
+    back or leave a date blank — so `test_a_server_that_caps_take_is_reported_rather_than_believed`
+    still stands for them.
+    """
+
+    @staticmethod
+    def _short(path: str, promised: int = 3) -> list[httpx.Response]:
+        page = {"pageInfo": {"pages": 1, "results": promised}, "results": [{"id": 1, "plexId": 100}]}
+        empty = {"pageInfo": {"pages": 1, "results": promised}, "results": []}
+        return [httpx.Response(200, json=page), httpx.Response(200, json=empty)]
+
+    def test_partial_read_is_a_seerr_error(self):
+        """So `collect_requests`' existing `except` catches it and flips `complete`."""
+        assert issubclass(PartialRead, SeerrError)
+
+    def test_requests_raises_when_page_info_promises_more_than_arrived(self):
+        with respx.mock:
+            respx.get(f"{BASE}/request").mock(side_effect=self._short("/request"))
+            with pytest.raises(PartialRead, match="1 of the 3"):
+                _client().requests()
+
+    def test_user_plex_ids_raises_when_page_info_promises_more_than_arrived(self):
+        with respx.mock:
+            respx.get(f"{BASE}/user").mock(side_effect=self._short("/user"))
+            with pytest.raises(PartialRead):
+                _client().user_plex_ids()
+
+    def test_requests_raises_when_the_page_cap_trips(self):
+        client = _client()
+        client._PAGE_SIZE, client._MAX_PAGES = 1, 2
+        full = {"pageInfo": {"pages": 99}, "results": [{"id": 1}]}  # no `results` count, a full page each time
+        with respx.mock:
+            respx.get(f"{BASE}/request").mock(return_value=httpx.Response(200, json=full))
+            with pytest.raises(PartialRead, match="2-page"):
+                client.requests()
+
+    def test_a_complete_walk_is_untouched(self):
+        page = _fixture("overseerr_requests_page.json")
+        with respx.mock:
+            respx.get(f"{BASE}/request").mock(return_value=httpx.Response(200, json=page))
+            assert len(_client().requests()) == page["pageInfo"]["results"]
+
+    def test_media_dates_still_tolerates_a_short_page(self):
+        with respx.mock:
+            respx.get(f"{BASE}/media").mock(
+                side_effect=[
+                    httpx.Response(
+                        200,
+                        json={
+                            "pageInfo": {"pages": 1, "results": 3},
+                            "results": [{"mediaType": "movie", "tmdbId": 1, "mediaAddedAt": "2026-01-01T00:00:00Z"}],
+                        },
+                    ),
+                    httpx.Response(200, json={"pageInfo": {"pages": 1, "results": 3}, "results": []}),
+                ]
+            )
+            assert list(_client().media_dates()) == [("movie", 1)]

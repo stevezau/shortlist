@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from shortlist.engine.clients.arr import RadarrClient, SonarrClient
-from shortlist.engine.clients.seerr import SeerrClient
+from shortlist.engine.clients.seerr import SeerrClient, _int_or_none
 from shortlist.engine.delivery import section_kind
 from shortlist.engine.models import MediaType, Pick, RequestSources, RowSpec, UserProfile
 
@@ -273,7 +273,7 @@ def _from_seerr_request(
         return None
     if r.get("status") not in (_REQ_APPROVED, _REQ_COMPLETED):
         return None
-    plex_id = who.get("plexId") or seerr_plex.get(uid)
+    plex_id = _int_or_none(who.get("plexId")) or seerr_plex.get(uid)
     if plex_id not in by_plex:
         return None
     media = r.get("media") if isinstance(r.get("media"), dict) else {}
@@ -333,6 +333,13 @@ def _add_tagged(
     ] = {}  # tag id -> (person, source, pattern, ambiguous)
     warned_seerr = False
     for tag_id, label in tags.items():
+        if _norm(label) in override:
+            # Before the Overseerr-format branch: an owner who typed `12-sarah` on a person meant that
+            # person, whether or not Overseerr is connected to say who user 12 is.
+            # Two people who typed the same tag: nobody's, the same as an ambiguous pattern match.
+            claimants = override[_norm(label)]
+            owner_of[tag_id] = (claimants[0] if len(claimants) == 1 else None, "override", "", len(claimants) > 1)
+            continue
         uid = parse_requester_tag(label)
         if uid is not None:
             # The number is a Seerr user id, meaningful only through Seerr's user list — the name
@@ -345,13 +352,13 @@ def _add_tagged(
                     )
                     warned_seerr = True
                 continue
+            if sources.exclude_seerr_user_id and uid == sources.exclude_seerr_user_id:
+                # The account Shortlist files its own requests as: its tag rides on every title we
+                # added, and its requests are already left out of the Overseerr read for the same reason.
+                owner_of[tag_id] = (None, "overseerr", "", False)
+                continue
             plex_id = seerr_plex.get(uid)
             owner_of[tag_id] = (by_plex.get(plex_id), "overseerr", "", False)
-            continue
-        if _norm(label) in override:
-            # Two people who typed the same tag: nobody's, the same as an ambiguous pattern match.
-            claimants = override[_norm(label)]
-            owner_of[tag_id] = (claimants[0] if len(claimants) == 1 else None, "override", "", len(claimants) > 1)
             continue
         for pattern in sorted(patterns):
             hits = pattern_matches(label, pattern, people)
@@ -502,6 +509,8 @@ def build_requests_picks(
                 "delivered": len(picks),
                 "candidates": len(rows),
                 "pick_order": "newest",
+                # The setting behind a `too_old` verdict, as it was on the night — the row may be edited later.
+                "requests_window_days": spec.requests_window_days,
                 "requests": list(rows.values()),
             }
         )
@@ -512,6 +521,7 @@ def _watched(policy: RowPolicy, t: RequestedTitle) -> bool:
     if t.media_type is MediaType.MOVIE:
         return t.tmdb_id in policy.watched_movies
     viewed, total = policy.watched_shows.get(t.tmdb_id, (0, None))
+    # `total > 0`: a show Plex holds zero episodes of is not finished — `0 >= 0` would drop it as watched.
     return total is not None and total > 0 and viewed >= total
 
 

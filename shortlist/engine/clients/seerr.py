@@ -109,6 +109,15 @@ class SeerrError(RuntimeError):
     """
 
 
+class PartialRead(SeerrError):
+    """A paged walk ended short of what the server said it held.
+
+    Raised only by the reads that can take a row DOWN (`requests`, `user_plex_ids`): a title the walk
+    dropped reads as "nothing requested", and a person missing from the user list reads as "linked to
+    nobody" — either would remove rows on the strength of a read that did not happen.
+    """
+
+
 class SeerrClient:
     """Talks to one Overseerr/Jellyseerr instance. Mirrors the shape of ``_ArrClient``."""
 
@@ -269,7 +278,7 @@ class SeerrClient:
         ``filter=all`` is explicit: the endpoint's default filter also says "all", but this read
         exists to see DELETED-media and COMPLETED requests alike, so the intent is written down.
         """
-        rows = self._paged("/request", filter="all", sort="added")
+        rows = self._paged("/request", filter="all", sort="added", strict=True)
         return [r for r in rows if isinstance(r, dict)]
 
     def user_plex_ids(self) -> dict[int, int | None]:
@@ -279,7 +288,7 @@ class SeerrClient:
         (fixture ``overseerr_requests_page.json``), so a request maps to a person with no name match.
         """
         out: dict[int, int | None] = {}
-        for row in self._paged("/user", permission=_MANAGE_USERS):
+        for row in self._paged("/user", permission=_MANAGE_USERS, strict=True):
             if not isinstance(row, dict) or _int_or_none(row.get("id")) is None:
                 continue
             out[int(row["id"])] = _int_or_none(row.get("plexId"))
@@ -395,13 +404,19 @@ class SeerrClient:
             )
         return state
 
-    def _paged(self, path: str, *, permission: str = _MANAGE_REQUESTS, **params: object) -> list[object]:
+    def _paged(
+        self, path: str, *, permission: str = _MANAGE_REQUESTS, strict: bool = False, **params: object
+    ) -> list[object]:
         """Walk a ``{pageInfo, results}`` endpoint to the end.
 
         ``pageInfo`` is believed over the size of the batch, because a server or proxy that CAPS
         ``take`` answers the whole question with page one: a short batch then looks exactly like the
         end of the list, and the walk returns 100 of 26,941 rows with every row perfectly usable, so
         nothing downstream can tell. `pageInfo` is in the same payload saying otherwise.
+
+        A short walk is WARNED about and returned by default — the lenient readers only ever hold a
+        request back or leave a date blank. ``strict=True`` raises :class:`PartialRead` instead, for
+        the readers whose answer can remove a row.
         """
         out: list[object] = []
         expected: int | None = None
@@ -422,22 +437,17 @@ class SeerrClient:
             if len(batch) < self._PAGE_SIZE:
                 return out
         else:
-            logger.warning(
-                "{}: {} paging hit the {}-page safety cap — reporting a partial list",
-                self.app_name,
-                path,
-                self._MAX_PAGES,
-            )
+            capped = f"{path} paging hit the {self._MAX_PAGES}-page safety cap"
+            if strict:
+                raise PartialRead(f"{self.app_name}: {capped} — the list is incomplete")
+            logger.warning("{}: {} — reporting a partial list", self.app_name, capped)
         if expected is not None and len(out) < expected:
             # The server said how many there were and we did not get them. Silence here is what a
             # take-capping proxy looks like, and it is indistinguishable from a small library.
-            logger.warning(
-                "{}: read {} of the {} rows {} says it has — the rest are invisible to this run",
-                self.app_name,
-                len(out),
-                expected,
-                path,
-            )
+            short = f"read {len(out)} of the {expected} rows {path} says it has"
+            if strict:
+                raise PartialRead(f"{self.app_name}: {short}")
+            logger.warning("{}: {} — the rest are invisible to this run", self.app_name, short)
         return out
 
     def blocklisted(self) -> set[tuple[str, int]]:

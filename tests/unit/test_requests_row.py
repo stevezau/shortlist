@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from shortlist.engine.clients.arr import ArrError
-from shortlist.engine.clients.seerr import SeerrError
+from shortlist.engine.clients.seerr import PartialRead, SeerrError
 from shortlist.engine.models import (
     ArrTarget,
     MediaType,
@@ -159,6 +159,23 @@ class TestCollectFromSeerr:
         ledger = collect_requests(RequestSources(overseerr=SEERR, radarr=ARR), _people(), seerr=c, radarr=_radarr())
         assert ledger.complete is False
         assert any(t.found_in == ("tag",) for t in ledger.titles)  # Radarr still read
+
+    def test_a_partial_request_page_marks_the_ledger_incomplete(self):
+        """A page that stops short of what `pageInfo` promised is a failed read, not a shorter list: the
+        titles it dropped would read as "nothing requested" and take rows down."""
+        c = _seerr()
+        c.requests.side_effect = PartialRead("read 100 of the 300 rows /request says it has")
+        ledger = collect_requests(RequestSources(overseerr=SEERR), _people(), seerr=c)
+        assert ledger.complete is False
+        assert "Overseerr" in ledger.unreadable
+
+    def test_a_plex_id_serialised_as_a_string_still_maps(self):
+        """`requestedBy.plexId` is read like `user_plex_ids` reads it — through `_int_or_none` — so a
+        server that serialises it as a string does not silently drop every request."""
+        req = dict(REQS["results"][0])
+        req["requestedBy"] = {**req["requestedBy"], "plexId": str(req["requestedBy"]["plexId"])}
+        ledger = collect_requests(RequestSources(overseerr=SEERR), _people(), seerr=_seerr(requests=[req], users={}))
+        assert [t.plex_account_id for t in ledger.titles] == [int(req["requestedBy"]["plexId"])]
 
     def test_unreadable_names_only_the_source_whose_read_failed(self):
         """Advice about Overseerr is not an Overseerr outage: a healthy Radarr next to a missing
@@ -401,6 +418,33 @@ class TestCollectFromTags:
             TagMatch(label="77-ghost", source="overseerr", plex_account_id=None, titles=1, ambiguous=False)
         ]
 
+    def test_the_request_as_accounts_tag_names_nobody(self):
+        """Its Overseerr requests are left out (`exclude_seerr_user_id`), so its `<uid>-<name>` tag on a
+        Radarr item must be too — that tag rides on every title Shortlist itself files."""
+        item = {"tmdbId": 501, "tags": [50], "hasFile": True, "movieFile": {}, "title": "A"}  # 50 = "10-person10"
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR, radarr=ARR, exclude_seerr_user_id=10),
+            _people(),
+            seerr=_seerr(requests=[]),
+            radarr=_radarr(items=[item]),
+        )
+        assert ledger.titles == []
+        (match,) = [m for m in ledger.tag_matches if m.label == "10-person10"]
+        assert match == TagMatch(
+            label="10-person10", source="overseerr", plex_account_id=None, titles=1, ambiguous=False
+        )
+
+    def test_an_override_tag_in_overseerrs_own_shape_wins_even_with_overseerr_off(self):
+        """An owner who typed `12-sarah` on a person meant it: the override is checked before the tag is
+        read as an Overseerr requester tag, so it resolves with Overseerr off and raises no advice."""
+        sarah = _person(1, requested_by_tag="12-sarah")
+        tags = [{"id": 7, "label": "12-sarah"}]
+        item = {"tmdbId": 501, "tags": [7], "hasFile": True, "movieFile": {}, "title": "A"}
+        ledger = collect_requests(RequestSources(radarr=ARR), [sarah], radarr=_radarr(items=[item], tags=tags))
+        assert [t.plex_account_id for t in ledger.titles] == [sarah.plex_account_id]
+        assert [m.source for m in ledger.tag_matches] == ["override"]
+        assert ledger.problems == []
+
     def test_shortlists_own_item_never_matches_an_override_tag_but_an_overseerr_tag_still_counts(self):
         kids = _person(3, requested_by_tag="children")
         tags = [{"id": 7, "label": "children"}, {"id": 2, "label": "shortlist"}, {"id": 50, "label": "10-person10"}]
@@ -476,6 +520,13 @@ class TestBuildRequestsPicks:
         picks = build_requests_picks(policy, SPEC, [_section(), _section("2", "show")], 20, ledger, now=NOW)
         assert picks["1"] == [] and [p.tmdb_id for p in picks["2"]] == [3]
 
+    def test_a_show_plex_holds_no_episodes_of_is_not_finished(self):
+        """`(0, 0)` reads as "nothing to watch", never as "watched everything"."""
+        ledger = RequestLedger(titles=[_title(2, MediaType.SHOW)], complete=True)
+        policy = _policy({"2": {2: 22}}, watched_shows={2: (0, 0)})
+        picks = build_requests_picks(policy, SPEC, [_section("2", "show")], 20, ledger, now=NOW)
+        assert [p.tmdb_id for p in picks["2"]] == [2]
+
     def test_a_season_that_has_not_landed_waits(self):
         ledger = RequestLedger(titles=[_title(2, MediaType.SHOW, seasons_landed=False)], complete=True)
         policy = _policy({"2": {2: 22}})
@@ -487,9 +538,13 @@ class TestBuildRequestsPicks:
         ledger = RequestLedger(titles=[_title(1, days_ago=91), _title(2, days_ago=89)], complete=True)
         policy = _policy({"1": {1: 11, 2: 22}})
         assert [p.tmdb_id for p in build_requests_picks(policy, SPEC, [_section()], 20, ledger, now=NOW)["1"]] == [2]
+        # The window is recorded on the trace entry, so a `too_old` verdict can name the run's own setting.
+        assert policy.report.trace["selection"][0]["requests_window_days"] == SPEC.requests_window_days == 90
         forever = RowSpec(slug="asked", name_template="n", size=20, requests_row=True, requests_window_days=0)
-        picks = build_requests_picks(_policy({"1": {1: 11, 2: 22}}), forever, [_section()], 20, ledger, now=NOW)
+        policy = _policy({"1": {1: 11, 2: 22}})
+        picks = build_requests_picks(policy, forever, [_section()], 20, ledger, now=NOW)
         assert [p.tmdb_id for p in picks["1"]] == [2, 1]
+        assert policy.report.trace["selection"][0]["requests_window_days"] == 0
 
     def test_an_undated_title_is_kept_and_sorted_last(self):
         ledger = RequestLedger(titles=[_title(1, landed_at=None), _title(2, days_ago=1)], complete=True)

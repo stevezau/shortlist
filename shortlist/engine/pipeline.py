@@ -439,17 +439,20 @@ def _load_season_titles(
 def _load_request_ledger(ctx: EngineContext, users: list[UserProfile]) -> None:
     """Read who-asked-for-what once per run, shared by every person's requests row (issue #127).
 
-    Built only when a requests row exists and a source is configured, so a server without one pays
-    nothing; and never fatal — an unreadable source leaves ``complete=False``, which stops the row
-    REMOVALS but not the rest of the night. ``users=[]`` is the privacy-sync shape (sweep + merge
-    only): nothing is built for anyone, so nothing is read.
+    Built only when a requests row is DUE and a source is configured, so a server without one pays
+    nothing and another row's scoped run reads nothing; and never fatal — an unreadable source leaves
+    ``complete=False``, which stops the row REMOVALS but not the rest of the night. ``users=[]`` is the
+    privacy-sync shape (sweep + merge only): nothing is built for anyone, so nothing is read.
+
+    Resolved against the whole roster (``ctx.roster``), not the scoped ``users``: a tag two people
+    render to is ambiguous whoever is in tonight's run, and a subset would credit the one in scope.
     """
-    request_rows = [spec for spec in ctx.config.rows if spec.requests_row]
+    request_rows = [spec for spec in ctx.config.rows if spec.requests_row and ctx.config.should_build(spec)]
     sources = ctx.config.request_sources
     if not users or not request_rows or sources is None or not sources.any():
         return
     patterns = frozenset(spec.requests_tag_pattern for spec in request_rows if spec.requests_tag_pattern)
-    ctx.request_ledger = collect_requests(sources, users, patterns=patterns)
+    ctx.request_ledger = collect_requests(sources, ctx.roster or users, patterns=patterns)
     for problem in ctx.request_ledger.problems:
         logger.warning("requests row: {}", problem)
 

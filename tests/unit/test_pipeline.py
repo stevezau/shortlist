@@ -29,6 +29,7 @@ from shortlist.engine.delivery import (
     strip_marker,
 )
 from shortlist.engine.models import (
+    ArrTarget,
     EngineConfig,
     MediaType,
     OwnedRow,
@@ -7520,13 +7521,15 @@ def _requests_spec(slug: str = "asked", **kw) -> RowSpec:
     return RowSpec(slug=slug, name_template="{library_name} you asked for", size=5, requests_row=True, **kw)
 
 
-def _ledger(*tmdb_ids: int, complete: bool = True, person: int = 100) -> RequestLedger:
+def _ledger(
+    *tmdb_ids: int, complete: bool = True, person: int = 100, media_type: MediaType = MediaType.MOVIE
+) -> RequestLedger:
     at = datetime(2026, 9, 27, tzinfo=UTC)
     return RequestLedger(
         titles=[
             RequestedTitle(
                 tmdb_id=t,
-                media_type=MediaType.MOVIE,
+                media_type=media_type,
                 plex_account_id=person,
                 requested_at=at,
                 landed_at=at,
@@ -7557,34 +7560,115 @@ class TestRequestsRow:
         decisions = {entry["decision"] for entry in report.trace["selection"]}
         assert decisions == {"requests"}
 
-    def test_an_empty_requests_row_is_removed_when_the_read_was_complete(
-        self, ctx: EngineContext, mock_plextv, monkeypatch
-    ):
-        removals: list[dict] = []
-        monkeypatch.setattr(rows_mod, "remove_row", lambda *a, **kw: removals.append(kw) or ["1"])
+    @staticmethod
+    def _seed_server(ctx: EngineContext) -> tuple[object, object]:
+        """The person's requests row already on Plex, beside a SIBLING row under the same label.
+
+        Real `remove_row`, real `find_owned_collections`: the sibling is what a title-blind delete
+        would take with it, and the tests below assert it is left alone.
+        """
+        ctx.plex.sections.return_value[0].key = "1"
+        existing = fake_media_item(4242, "Movies you asked for" + row_marker(100))
+        sibling = fake_media_item(4343, "✨ Movies Picked for You" + row_marker(100))
+        ctx.plex.find_owned_collections.return_value = [existing, sibling]
+        return existing, sibling
+
+    def test_an_empty_requests_row_is_removed_when_the_read_was_complete(self, ctx: EngineContext, mock_plextv):
+        existing, _sibling = self._seed_server(ctx)
         ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
         ctx.request_ledger = _ledger(complete=True)
 
         report = _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100))
 
-        assert len(removals) == 1
-        assert removals[0]["sections"] == [ctx.plex.sections.return_value[0]]
-        assert removals[0]["dry_run"] is ctx.config.dry_run
+        ctx.plex.delete_owned_collection.assert_called_once()
+        assert ctx.plex.delete_owned_collection.call_args.args[0] is existing
         assert report.removed_deliveries == [{"row_slug": "asked", "library_key": "1"}]
+        assert report.diff.deleted == ["Movies you asked for"]
         assert report.picks == []
 
-    def test_an_empty_requests_row_is_left_alone_when_the_read_was_incomplete(
-        self, ctx: EngineContext, mock_plextv, monkeypatch
-    ):
-        removals: list[dict] = []
-        monkeypatch.setattr(rows_mod, "remove_row", lambda *a, **kw: removals.append(kw) or [])
+    def test_a_dry_run_reports_the_removal_and_deletes_nothing(self, ctx: EngineContext, mock_plextv):
+        """Rule 8 covers this DELETE too: previewed in the diff, nothing written, nothing forgotten."""
+        self._seed_server(ctx)
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True, dry_run=True)
+        ctx.request_ledger = _ledger(complete=True)
+
+        report = _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100))
+
+        ctx.plex.delete_owned_collection.assert_not_called()
+        assert report.diff.deleted == ["Movies you asked for"]
+        assert report.removed_deliveries == []
+
+    def test_an_empty_requests_row_is_left_alone_when_the_read_was_incomplete(self, ctx: EngineContext, mock_plextv):
+        self._seed_server(ctx)
         ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
         ctx.request_ledger = _ledger(complete=False)
 
         report = _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100))
 
-        assert removals == []
+        ctx.plex.delete_owned_collection.assert_not_called()
         assert report.removed_deliveries == []
+        assert not (report.diff and report.diff.deleted)
+
+    def test_the_empty_library_is_removed_while_the_other_is_delivered(self, ctx: EngineContext, mock_plextv):
+        """Per LIBRARY: a person whose only ready request is a show loses the Movies copy and gets TV."""
+        existing, _sibling = self._seed_server(ctx)
+        movies = ctx.plex.sections.return_value[0]
+        shows = MagicMock()
+        shows.type, shows.title, shows.key = "show", "TV Shows", "2"
+        shows.collections.return_value = []
+        ctx.plex.sections.return_value = [movies, shows]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies, MediaType.SHOW: shows}
+        ctx.plex.build_library_index.side_effect = lambda s: (
+            {900: 999, 10: 1010, 20: 1020} if s is movies else {30: 2030}
+        )
+        on_server = ctx.plex.find_owned_collections.return_value
+        ctx.plex.find_owned_collections.side_effect = lambda section, label: on_server if section is movies else []
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
+        ctx.request_ledger = _ledger(30, media_type=MediaType.SHOW)
+
+        report = _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100))
+
+        ctx.plex.delete_owned_collection.assert_called_once()
+        assert ctx.plex.delete_owned_collection.call_args.args[0] is existing
+        assert report.removed_deliveries == [{"row_slug": "asked", "library_key": "1"}]
+        assert [(p.tmdb_id, p.rating_key) for p in report.picks] == [(30, 2030)]
+        assert ctx.plex.create_collection.call_args.args[0] is shows
+
+    def test_a_row_whose_every_title_is_hidden_from_them_is_removed(self, ctx: EngineContext, mock_plextv):
+        """Ready titles their Plex restrictions hide are not in the row, so the row is empty — and gone."""
+        existing, _sibling = self._seed_server(ctx)
+        ctx.token_for_user = lambda user: "their-token"
+        ctx.plex.visible_to.return_value = set()
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
+        ctx.request_ledger = _ledger(10, 20, complete=True)
+
+        report = _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100))
+
+        ctx.plex.delete_owned_collection.assert_called_once()
+        assert ctx.plex.delete_owned_collection.call_args.args[0] is existing
+        assert report.picks == []
+        results = {r["tmdb_id"]: r["result"] for r in report.trace["selection"][0]["requests"]}
+        assert results == {10: "hidden", 20: "hidden"}
+
+    def test_a_requests_row_beside_a_picked_row_leaves_the_picked_row_to_gather(
+        self, ctx: EngineContext, mock_plextv, mock_tmdb
+    ):
+        ctx.config = replace(
+            ctx.config,
+            rows=[_requests_spec(), RowSpec(slug="picked", name_template="Picked for You", size=5)],
+            rows_defined=True,
+        )
+        ctx.request_ledger = _ledger(10)
+
+        report = _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100))
+
+        by_row: dict[str, list[int]] = {}
+        for pick in report.picks:
+            by_row.setdefault(pick.collection_slug, []).append(pick.tmdb_id)
+        assert by_row["asked"] == [10]
+        assert sorted(by_row["picked"]) == [10, 20]
+        assert mock_tmdb.suggestions.call_count == 1
+        assert report.status == "ok"
 
     def test_a_cold_person_still_gets_their_requests_row(self, ctx: EngineContext, mock_plextv, mock_tmdb):
         ctx.history_source.fetch.return_value = []  # below min_history
@@ -7627,3 +7711,80 @@ class TestRequestsRow:
 
         assert ctx.request_ledger is None
         assert report.users[0].picks == []
+
+    def test_a_run_scoped_to_another_row_reads_no_sources_and_removes_nothing(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        """A requests row that is not due tonight (another row's own cron) is neither built nor removed:
+        `_run_user` drops not-due rows before its requests branch, and the ledger is not even read."""
+        monkeypatch.setattr(pipeline_mod, "collect_requests", lambda *a, **kw: pytest.fail("read for a row not due"))
+        self._seed_server(ctx)
+        ctx.config = replace(
+            ctx.config,
+            rows=[_requests_spec(), RowSpec(slug="picked", name_template="Picked for You", size=5)],
+            rows_defined=True,
+            request_sources=RequestSources(overseerr=SeerrTarget(url="http://s", api_key="k")),
+            build_only=frozenset({"picked"}),
+        )
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        assert ctx.request_ledger is None
+        assert report.users[0].rows_considered["asked"] == "not_due"
+        assert {p.collection_slug for p in report.users[0].picks} == {"picked"}
+        ctx.plex.delete_owned_collection.assert_not_called()
+
+    def test_the_ledger_is_read_over_the_whole_roster_not_the_users_in_scope(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        """Two people typed the same tag. A run scoped to ONE of them must not credit that person with
+        the other's requests: the ledger reads the full roster, so the tag stays ambiguous."""
+        real_collect = pipeline_mod.collect_requests
+        radarr = MagicMock()
+        radarr.app_name = "Radarr"
+        radarr.tags.return_value = {7: "children"}
+        radarr.movies.return_value = [{"tmdbId": 10, "tags": [7], "hasFile": True, "movieFile": {}, "title": "A"}]
+        monkeypatch.setattr(
+            pipeline_mod,
+            "collect_requests",
+            lambda sources, people, **kw: real_collect(sources, people, radarr=radarr, **kw),
+        )
+        sarah = make_profile("sarah", account_id=100, requested_by_tag="children")
+        kid = make_profile("kid", account_id=101, requested_by_tag="children")
+        ctx.roster = [sarah, kid]
+        ctx.config = replace(
+            ctx.config,
+            rows=[_requests_spec()],
+            rows_defined=True,
+            request_sources=RequestSources(
+                radarr=ArrTarget(url="http://r", api_key="k", quality_profile_id=0, root_folder="", tag="shortlist")
+            ),
+        )
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(101, "kid")]
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        assert report.users[0].picks == []
+        assert ctx.request_ledger is not None and ctx.request_ledger.titles == []
+        assert [(m.label, m.ambiguous) for m in ctx.request_ledger.tag_matches] == [("children", True)]
+
+    def test_without_a_roster_the_users_in_scope_are_the_roster(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        """A direct engine caller passes no roster; `users` doubles as it."""
+        seen: list[list[str]] = []
+        monkeypatch.setattr(
+            pipeline_mod,
+            "collect_requests",
+            lambda sources, people, **kw: seen.append([p.username for p in people]) or _ledger(),
+        )
+        ctx.config = replace(
+            ctx.config,
+            rows=[_requests_spec()],
+            rows_defined=True,
+            request_sources=RequestSources(overseerr=SeerrTarget(url="http://s", api_key="k")),
+        )
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        assert seen == [["sarah"]]
