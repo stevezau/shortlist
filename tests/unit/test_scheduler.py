@@ -3,8 +3,11 @@ and a blank/disabled/invalid cron never fires. There is no global schedule."""
 
 from __future__ import annotations
 
+import asyncio
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -55,6 +58,57 @@ class TestScheduleGroups:
         groups = schedule_groups(app)
 
         assert set(groups) == {"0 4 * * *"}
+
+
+class TestSchedulerLateness:
+    @pytest.mark.parametrize("rebuild", [False, True], ids=["initial", "rebuilt"])
+    @pytest.mark.parametrize("late_seconds", [1.116242, 29, 30, 31])
+    def test_row_runs_when_no_more_than_thirty_seconds_late(
+        self, app: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, rebuild: bool, late_seconds: float
+    ) -> None:
+        from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_MISSED
+        from apscheduler.executors import base
+
+        from shortlist.server.scheduler import build_scheduler, rebuild_schedule
+
+        cron = "0 2 * * *"
+        _add(app.state.sessions, "a", cron)
+        _add(app.state.sessions, "b", cron)
+        _add(app.state.sessions, "other", "0 6 * * *")
+        start_run = AsyncMock()
+        app.state.run_service = SimpleNamespace(start_run=start_run)
+        now = datetime(2026, 1, 1, 2, 0, tzinfo=UTC)
+        monkeypatch.setattr(base, "datetime", SimpleNamespace(now=lambda tz: now))
+
+        async def execute() -> None:
+            scheduler = build_scheduler(app)
+            app.state.scheduler = scheduler
+            # Starting paused applies APScheduler's defaults without firing unrelated jobs.
+            scheduler.start(paused=True)
+            try:
+                if rebuild:
+                    _add(app.state.sessions, "added", cron)
+                    rebuild_schedule(app)
+                job = scheduler.get_job(f"row-schedule::{cron}")
+                assert job is not None
+                events = await base.run_coroutine_job(
+                    job, "default", [now - timedelta(seconds=late_seconds)], "test.scheduler"
+                )
+
+                expected_code = EVENT_JOB_EXECUTED if late_seconds <= 30 else EVENT_JOB_MISSED
+                assert [(event.job_id, event.code) for event in events] == [(job.id, expected_code)]
+                if late_seconds <= 30:
+                    start_run.assert_awaited_once_with(
+                        trigger="schedule", dry_run=False, collection_ids=schedule_groups(app)[cron]
+                    )
+                else:
+                    start_run.assert_not_awaited()
+                assert all(job.misfire_grace_time == 30 for job in scheduler.get_jobs())
+            finally:
+                scheduler.shutdown(wait=False)
+                await asyncio.sleep(0)
+
+        asyncio.run(execute())
 
 
 class TestBuildScope:

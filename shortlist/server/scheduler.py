@@ -427,7 +427,8 @@ def _register_jobs_worker(scheduler: AsyncIOScheduler, app) -> None:
 
 
 def build_scheduler(app) -> AsyncIOScheduler:
-    scheduler = AsyncIOScheduler()
+    # The one-second default skips nightly runs after even a brief event-loop delay.
+    scheduler = AsyncIOScheduler(job_defaults={"misfire_grace_time": 30})
     groups = schedule_groups(app)
     _register(scheduler, app, groups)
     _register_watch_sync(scheduler, app)
