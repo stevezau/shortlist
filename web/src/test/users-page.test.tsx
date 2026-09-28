@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type * as ApiModule from "@/lib/api";
 import { ApiError } from "@/lib/api";
-import type { User, UserPatch } from "@/lib/types";
+import type { RowSources, User, UserPatch } from "@/lib/types";
 import { UsersPage } from "@/pages/users";
 
 const { toastSuccess } = vi.hoisted(() => ({ toastSuccess: vi.fn() }));
@@ -23,6 +23,7 @@ vi.mock("sonner", () => ({
 const {
   getUsers,
   getReport,
+  getRequestRowSources,
   patchUser,
   removeUser,
   setAllUsersEnabled,
@@ -30,6 +31,7 @@ const {
 } = vi.hoisted(() => ({
   getUsers: vi.fn(),
   getReport: vi.fn(),
+  getRequestRowSources: vi.fn(),
   patchUser: vi.fn(),
   removeUser: vi.fn(),
   syncUsers: vi.fn(() =>
@@ -52,6 +54,30 @@ function report(firstPickDaysAgo: number | null) {
   };
 }
 
+/** GET /api/requests/row-sources, reduced to what the Requests column reads: who is linked to
+ *  Overseerr and which sources are connected at all. */
+function sources(
+  people: { user_id: number; linked: boolean; ready: number }[],
+  states: Partial<Record<"overseerr" | "radarr" | "sonarr", "connected" | "unreachable" | "off">> = {},
+): RowSources {
+  return {
+    complete: true,
+    problems: [],
+    overseerr: "connected",
+    radarr: "off",
+    sonarr: "off",
+    ...states,
+    seerr_requests: 0,
+    seerr_requesters: 0,
+    seerr_linked: people.filter((p) => p.linked).length,
+    servers: [],
+    tagged_movies: 0,
+    tagged_shows: 0,
+    tags: [],
+    people: people.map((p) => ({ ...p, display_name: "" })),
+  };
+}
+
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>();
   return {
@@ -59,6 +85,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     api: {
       getUsers: () => getUsers(),
       getReport: (window: string) => getReport(window),
+      getRequestRowSources: (pattern: string) => getRequestRowSources(pattern),
       patchUser: (id: number, patch: UserPatch) => patchUser(id, patch),
       removeUser: (id: number) => removeUser(id),
       setAllUsersEnabled: (enabled: boolean) => setAllUsersEnabled(enabled),
@@ -117,6 +144,8 @@ describe("UsersPage", () => {
     // Most tests here are not about the hit-rate column; a long-running install is the state that
     // leaves every other assertion unchanged.
     getReport.mockResolvedValue(report(400));
+    getRequestRowSources.mockReset();
+    getRequestRowSources.mockResolvedValue(sources([]));
   });
 
   // `hit_rate` is watched-over-delivered across all time, so on a fresh install it is 0 for
@@ -358,6 +387,154 @@ describe("UsersPage — the Type column", () => {
     const badge = await screen.findByText("New viewer");
     // Its cell is the watch-history one, so it reads as "0 titles · New viewer".
     expect(badge.closest("td")).toHaveTextContent(/0 titles/);
+    // A requests-only person with thin history is a cold start too, and their Your requests row is
+    // delivered regardless — so the tooltip must not say they get "no row at all".
+    expect(badge).toHaveAttribute(
+      "title",
+      expect.stringContaining("A Your requests row is unaffected"),
+    );
+    expect(badge.getAttribute("title")).not.toContain("no row at all");
+  });
+});
+
+describe("UsersPage — the Requests column", () => {
+  beforeEach(() => {
+    getUsers.mockReset();
+    patchUser.mockReset();
+    getReport.mockReset();
+    getReport.mockResolvedValue(report(400));
+    getRequestRowSources.mockReset();
+  });
+
+  const KID: User = {
+    ...SARAH,
+    id: 5,
+    username: "kid",
+    slug: "kid",
+    user_type: "managed",
+  };
+
+  it("asks for the sources ONCE for the page, not once per person", async () => {
+    getUsers.mockResolvedValue([SARAH, MIKE, KID]);
+    getRequestRowSources.mockResolvedValue(sources([]));
+
+    renderPage();
+
+    expect(await screen.findByText("sarah")).toBeInTheDocument();
+    await waitFor(() => expect(getRequestRowSources).toHaveBeenCalled());
+    expect(getRequestRowSources).toHaveBeenCalledTimes(1);
+    expect(getRequestRowSources).toHaveBeenCalledWith("");
+  });
+
+  it("says who is linked to Overseerr and how many of their requests are ready", async () => {
+    getUsers.mockResolvedValue([SARAH, MIKE]);
+    getRequestRowSources.mockResolvedValue(
+      sources([
+        { user_id: SARAH.id, linked: true, ready: 2 },
+        { user_id: MIKE.id, linked: false, ready: 0 },
+      ]),
+    );
+
+    renderPage();
+
+    const linked = await screen.findByText("Linked");
+    expect(linked.closest("td")).toHaveTextContent("2 ready");
+    const none = screen.getByText("No account");
+    expect(none.closest("td")).toHaveTextContent(
+      "Hasn't signed in to Overseerr",
+    );
+  });
+
+  it("does not tell a managed profile to sign in — it can't", async () => {
+    getUsers.mockResolvedValue([KID]);
+    getRequestRowSources.mockResolvedValue(
+      sources([{ user_id: KID.id, linked: false, ready: 0 }]),
+    );
+
+    renderPage();
+
+    const badge = await screen.findByText("Can't use Overseerr");
+    expect(badge.closest("td")).toHaveTextContent(
+      "Managed profiles can't sign in to it",
+    );
+    expect(screen.queryByText("No account")).toBeNull();
+  });
+
+  it("shows a person's own request tag beside their Overseerr state", async () => {
+    getUsers.mockResolvedValue([{ ...KID, requested_by_tag: "children" }]);
+    getRequestRowSources.mockResolvedValue(
+      sources([{ user_id: KID.id, linked: false, ready: 0 }]),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText("Tag: children")).toBeInTheDocument();
+    expect(screen.getByText("Can't use Overseerr")).toBeInTheDocument();
+  });
+
+  it("shows a dash that says why when Overseerr can't be read", async () => {
+    getUsers.mockResolvedValue([SARAH]);
+    getRequestRowSources.mockRejectedValue(new ApiError(502, "Bad gateway"));
+
+    renderPage();
+
+    expect(await screen.findByText("sarah")).toBeInTheDocument();
+    expect(
+      await screen.findByTitle("Couldn't read Overseerr"),
+    ).toHaveTextContent("—");
+    expect(screen.queryByText("No account")).toBeNull();
+  });
+
+  it("shows a dash that says so when no request source is connected", async () => {
+    getUsers.mockResolvedValue([SARAH]);
+    getRequestRowSources.mockResolvedValue(
+      sources([{ user_id: SARAH.id, linked: false, ready: 0 }], {
+        overseerr: "off",
+        radarr: "off",
+        sonarr: "off",
+      }),
+    );
+
+    renderPage();
+
+    expect(
+      await screen.findByTitle("No request source connected"),
+    ).toHaveTextContent("—");
+    expect(screen.queryByText("No account")).toBeNull();
+  });
+
+  it("does not blame the person for a missing account when only Radarr/Sonarr are connected", async () => {
+    // Overseerr is off, so nobody can be "linked" to it; the tag is the only source that applies.
+    getUsers.mockResolvedValue([
+      { ...SARAH, requested_by_tag: "sarah-asked" },
+      MIKE,
+    ]);
+    getRequestRowSources.mockResolvedValue(
+      sources([], { overseerr: "off", radarr: "connected" }),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText("Tag: sarah-asked")).toBeInTheDocument();
+    expect(screen.queryByText("No account")).toBeNull();
+    // Both people get the dash — the tag sits beside Sarah's.
+    const dashes = screen.getAllByTitle("Overseerr isn't connected");
+    expect(dashes).toHaveLength(2);
+    for (const dash of dashes) expect(dash).toHaveTextContent("—");
+  });
+
+  it("holds a skeleton in the cell while the sources are still being read", async () => {
+    getUsers.mockResolvedValue([SARAH]);
+    getRequestRowSources.mockReturnValue(new Promise(() => {}));
+
+    renderPage();
+
+    const name = await screen.findByText("sarah");
+    const row = name.closest("tr") as HTMLElement;
+    expect(
+      within(row).getByTestId("requests-loading"),
+    ).toBeInTheDocument();
+    expect(within(row).queryByText("No account")).toBeNull();
   });
 });
 

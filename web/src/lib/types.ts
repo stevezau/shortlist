@@ -821,7 +821,8 @@ export interface TraceSelection {
     | "settings_changed"
     | "seed_moved"
     | "held_idle"
-    | "cold_start";
+    | "cold_start"
+    | "requests";
   size: number;
   delivered: number;
   candidates?: number;
@@ -843,6 +844,24 @@ export interface TraceSelection {
   cooling?: number;
   rewatch_cooldown_days?: number;
   unstarted_only?: boolean;
+  /** `requests` rows only: every request of theirs the run looked at for this library, and what
+   *  became of each. Nothing is searched for a requests row, so this is the whole story. */
+  requests?: TraceRequest[];
+}
+
+/** One request a Your requests row considered (`engine/requests_row.py`). */
+export interface TraceRequest {
+  tmdb_id: number;
+  media_type: "movie" | "show";
+  title: string;
+  /** When they asked (ISO), null for a title found only by its tag. */
+  asked_at: string | null;
+  /** When it reached the server (ISO), null if it has not. */
+  landed_at: string | null;
+  found_in: ("overseerr" | "tag")[];
+  /** `in_row` · `not_on_plex` · `season_not_landed` · `watched` · `too_old` · `hidden` ·
+   *  `over_size` — see {@link requestResultLabel} in `lib/trace.ts`. */
+  result: string;
 }
 
 // --- SSE payloads (GET /api/events) ---

@@ -6,6 +6,7 @@ import { TraceView } from "@/pages/run-user-trace";
 import type {
   RunUserTraceResponse,
   TraceRatings,
+  TraceSelection,
   TraceWatch,
 } from "@/lib/types";
 
@@ -998,5 +999,141 @@ describe("TraceView for a shared row", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/for this shared row/i)).toBeInTheDocument();
     expect(screen.queryByText(/for this person/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("TraceView — a Your requests row", () => {
+  /** What the engine records for a requests row: one `selection` entry per library, carrying every
+   *  request it looked at and what became of each. No seeds, no gathers — nothing was searched. */
+  const requestsTrace = (
+    patch: Partial<TraceSelection> = {},
+    extraSelection: TraceSelection[] = [],
+  ) =>
+    okTrace({
+      status: "ok",
+      trace: {
+        history: {
+          total: 1,
+          recent: [],
+          watched_movies: 1,
+          watched_shows: 0,
+          watched_by_library: { Movies: { movie: 1, show: 0 } },
+        },
+        seeds: [],
+        gathers: [],
+        selection: [
+          {
+            row: "your-requests",
+            library: "Movies",
+            decision: "requests",
+            size: 15,
+            delivered: 1,
+            candidates: 3,
+            pick_order: "newest",
+            requests: [
+              {
+                tmdb_id: 863,
+                media_type: "movie",
+                title: "Toy Story 2",
+                asked_at: "2026-09-01T10:00:00Z",
+                landed_at: "2026-09-03T10:00:00Z",
+                found_in: ["overseerr"],
+                result: "in_row",
+              },
+              {
+                tmdb_id: 920,
+                media_type: "movie",
+                title: "Cars",
+                asked_at: "2026-05-01T10:00:00Z",
+                landed_at: "2026-05-02T10:00:00Z",
+                found_in: ["overseerr", "tag"],
+                result: "too_old",
+              },
+              {
+                tmdb_id: 10193,
+                media_type: "movie",
+                title: "Toy Story 3",
+                asked_at: null,
+                landed_at: null,
+                found_in: ["tag"],
+                result: "not_on_plex",
+              },
+            ],
+            ...patch,
+          },
+          ...extraSelection,
+        ],
+      },
+      breakdown: okTrace().breakdown.map((b) => ({
+        ...b,
+        row_slug: "your-requests",
+        row_title: "Your requests",
+      })),
+    });
+
+  it("renders one 'What they asked for' step in place of the watched/searched/ordered steps", () => {
+    render(<TraceView data={requestsTrace()} />);
+    expect(screen.getByText("What they asked for")).toBeInTheDocument();
+    expect(screen.getByText("3 requests looked at")).toBeInTheDocument();
+    // Nothing was searched or ranked for this row, so those steps would explain a run that never
+    // happened.
+    expect(screen.queryByText(/What they watched recently/)).toBeNull();
+    expect(screen.queryByText(/Where we searched/)).toBeNull();
+    expect(screen.queryByText(/What survived/)).toBeNull();
+    expect(screen.queryByText(/How we ordered the shortlist/)).toBeNull();
+    // Still ends where every flow ends.
+    expect(screen.getByText(/What we put in Movies/)).toBeInTheDocument();
+  });
+
+  it("lists every request with where it was found and what became of it", () => {
+    render(<TraceView data={requestsTrace()} />);
+    const step = screen
+      .getByText("What they asked for")
+      .closest("section") as HTMLElement;
+    const rows = within(step).getAllByRole("row");
+    // Header + three requests.
+    expect(rows).toHaveLength(4);
+    const row = (i: number) => within(rows[i] as HTMLElement);
+    expect(row(1).getByText("Toy Story 2")).toBeInTheDocument();
+    expect(row(1).getByText("Overseerr")).toBeInTheDocument();
+    expect(row(1).getByText("In the row")).toBeInTheDocument();
+    expect(row(2).getByText("Overseerr, tag")).toBeInTheDocument();
+    expect(row(2).getByText("Landed too long ago")).toBeInTheDocument();
+    expect(row(3).getByText("tag")).toBeInTheDocument();
+    expect(row(3).getByText("Not on Plex yet")).toBeInTheDocument();
+    // A request with no dates shows a dash, not "Invalid Date".
+    expect(row(3).getAllByText("—")).toHaveLength(2);
+  });
+
+  it("names the row's window in days when the row's settings are known", () => {
+    render(
+      <TraceView
+        data={requestsTrace()}
+        rowWindows={{ "your-requests": 60 }}
+      />,
+    );
+    expect(
+      screen.getByText("Landed more than 60 days ago"),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the recommendation steps when the library also holds a picked row", () => {
+    render(
+      <TraceView
+        data={requestsTrace({}, [
+          {
+            row: "picked",
+            library: "Movies",
+            decision: "rebuilt",
+            size: 15,
+            delivered: 15,
+            candidates: 62,
+          },
+        ])}
+      />,
+    );
+    expect(screen.getByText("What they asked for")).toBeInTheDocument();
+    expect(screen.getByText(/What they watched recently/)).toBeInTheDocument();
+    expect(screen.getByText(/How we ordered the shortlist/)).toBeInTheDocument();
   });
 });

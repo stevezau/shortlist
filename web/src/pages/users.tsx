@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Eye, RefreshCw, ShieldCheck, Users as UsersIcon } from "lucide-react";
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 
 import { toast } from "sonner";
@@ -20,6 +21,7 @@ import {
   UnhiddenRowsBadge,
   UserTypeBadge,
 } from "@/components/user-badges";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -41,16 +43,75 @@ import {
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
 import { profileName } from "@/lib/user-profile";
-import type { User } from "@/lib/types";
+import type { RowSources, User } from "@/lib/types";
 import { formatHitRate, timeAgo } from "@/lib/format";
 import {
   queryKeys,
   useHitRatesMatured,
   useRemoveUser,
+  useRequestRowSources,
   useSetAllUsersEnabled,
   usePatchUser,
   useUsers,
 } from "@/lib/queries";
+
+/** The Requests column for one person: whether a Your requests row can find anything of theirs.
+ *
+ *  Reads the ONE row-sources query the page makes (`useRequestRowSources("")` costs up to a few
+ *  dozen HTTP calls to Overseerr and the Arrs, so it is never made per row). A dash carries its
+ *  reason in `title`: the three dashes — can't read Overseerr, nothing connected, Overseerr not
+ *  connected — would otherwise be indistinguishable from each other and from "no requests". */
+function RequestsCell({
+  user,
+  sources,
+}: {
+  user: User;
+  sources: { data?: RowSources; isPending: boolean; isError: boolean };
+}) {
+  if (sources.isPending) {
+    return <Skeleton data-testid="requests-loading" className="h-5 w-24" />;
+  }
+  const tag = user.requested_by_tag ? (
+    <Badge variant="outline">Tag: {user.requested_by_tag}</Badge>
+  ) : null;
+  const dash = (reason: string) => (
+    <span className="flex flex-wrap items-center gap-1.5">
+      <span title={reason}>—</span>
+      {tag}
+    </span>
+  );
+  const data = sources.data;
+  if (sources.isError || !data) return dash("Couldn't read Overseerr");
+  if ([data.overseerr, data.radarr, data.sonarr].every((s) => s === "off")) {
+    return dash("No request source connected");
+  }
+  // Only the tag applies without Overseerr — "hasn't signed in" would blame them for an account
+  // that can't exist.
+  if (data.overseerr === "off") return dash("Overseerr isn't connected");
+
+  const person = data.people.find((p) => p.user_id === user.id);
+  let badge: ReactNode;
+  let note: string | null;
+  if (person?.linked) {
+    badge = <Badge variant="success">Linked</Badge>;
+    note = person.ready > 0 ? `${person.ready} ready` : null;
+  } else if (user.user_type === "managed") {
+    badge = <Badge variant="secondary">Can't use Overseerr</Badge>;
+    note = "Managed profiles can't sign in to it";
+  } else {
+    badge = <Badge variant="secondary">No account</Badge>;
+    note = "Hasn't signed in to Overseerr";
+  }
+  return (
+    <span className="flex flex-col gap-1">
+      <span className="flex flex-wrap items-center gap-1.5">
+        {badge}
+        {tag}
+      </span>
+      {note && <span className="text-xs text-muted-foreground">{note}</span>}
+    </span>
+  );
+}
 
 function UsersSkeleton() {
   return (
@@ -67,6 +128,8 @@ export function UsersPage() {
   const navigate = useNavigate();
   const patchUser = usePatchUser();
   const ratesMatured = useHitRatesMatured();
+  // ONCE for the page, never per row — see RequestsCell.
+  const requestSources = useRequestRowSources("", true);
 
   /**
    * Toggle one person, and say so immediately.
@@ -380,6 +443,9 @@ export function UsersPage() {
                     <TableHead className="hidden lg:table-cell">
                       Last run
                     </TableHead>
+                    <TableHead className="hidden lg:table-cell">
+                      Requests
+                    </TableHead>
                     {/* One more column goes at 320: four still overran by 32px there, and the one
                         left outside the card was Enabled — a switch you could not reach. A number
                         you cannot see is a nuisance; a control you cannot press is a broken page,
@@ -448,6 +514,9 @@ export function UsersPage() {
                       </TableCell>
                       <TableCell className="hidden text-muted-foreground lg:table-cell">
                         {timeAgo(user.last_run_at)}
+                      </TableCell>
+                      <TableCell className="hidden lg:table-cell">
+                        <RequestsCell user={user} sources={requestSources} />
                       </TableCell>
                       {/* An em dash, not "0%", until a pick has actually had its chance. On day one
                           this whole column read 0% for everybody — a number the dashboard itself
