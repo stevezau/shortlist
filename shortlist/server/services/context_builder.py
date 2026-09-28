@@ -514,9 +514,10 @@ class ContextBuilder:
                 may_delete_orphans=True,
                 handled_requests=self._handled_requests(session),
                 progress=progress,
-                # Everyone, not the run's scope: the request ledger must see that a tag two people
-                # share is ambiguous even when only one of them is in tonight's run.
-                roster=self.enabled_profiles(session),
+                # Everyone who could own a tag, not the run's scope and not only the enabled: the
+                # request ledger must see that a tag two people share is ambiguous even when one of
+                # them is disabled, paused or simply not in tonight's run.
+                roster=self.all_profiles(session),
             )
 
     def _build_mdblist(self, store: SettingsStore) -> MdbListClient | None:
@@ -959,31 +960,47 @@ class ContextBuilder:
             # person can see anything.
             if user.restricted and user.restriction_profile:
                 continue
-            prefs = user.prefs or {}
-            if prefs.get("paused"):
+            if (user.prefs or {}).get("paused"):
                 continue
-            # The tag the owner typed on this person, if any. The AUTOMATIC alternative — their slug,
-            # under `requests.auto_user_tag` — is applied in the engine, not here: it is overridable
-            # per row, so it cannot be baked into one value that every row then shares.
-            request_tag = (user.request_tag or "").strip()
-            profiles.append(
-                UserProfile(
-                    username=user.username,
-                    plex_account_id=user.plex_account_id,
-                    user_type=UserType(user.user_type),
-                    slug=user.slug,
-                    nickname=user.nickname or user.friendly_name,
-                    excluded_genres=set(prefs.get("excluded_genres") or []),
-                    # Through the reader, not straight off prefs: the list holds bare ints on an
-                    # older install and records on a newer one, and the engine only wants ids.
-                    blocked_seeds=blocked_ids(prefs),
-                    row_name_template=prefs.get("row_name_tpl"),
-                    request_tag=request_tag,
-                    requested_by_tag=(user.requested_by_tag or "").strip(),
-                    row_overrides=overrides.get(user.id, {}),
-                )
-            )
+            profiles.append(self._profile(user, overrides))
         return profiles
+
+    def all_profiles(self, session: Session) -> list[UserProfile]:
+        """Everyone who could own a requester tag: every user still on the server, enabled or not.
+
+        The request ledger resolves tags against this list. Disabling or pausing someone takes them
+        out of the run, not off their tag — so a tag two people share has to stay ambiguous while
+        one of them is switched off, or the other's private row fills with the disabled person's
+        requests. Only a person plex.tv stopped listing (`departed_at`) or the owner filed away
+        (`removed_at`) is off it. Someone here who is not in the run is harmless: the pipeline only
+        asks the ledger for the people it builds for.
+        """
+        overrides = self._row_overrides(session)
+        query = session.query(User).filter(User.departed_at.is_(None), User.removed_at.is_(None))
+        return [self._profile(user, overrides) for user in query.all()]
+
+    @staticmethod
+    def _profile(user: User, overrides: dict[int, dict[str, RowOverride]]) -> UserProfile:
+        prefs = user.prefs or {}
+        # The tag the owner typed on this person, if any. The AUTOMATIC alternative — their slug,
+        # under `requests.auto_user_tag` — is applied in the engine, not here: it is overridable
+        # per row, so it cannot be baked into one value that every row then shares.
+        request_tag = (user.request_tag or "").strip()
+        return UserProfile(
+            username=user.username,
+            plex_account_id=user.plex_account_id,
+            user_type=UserType(user.user_type),
+            slug=user.slug,
+            nickname=user.nickname or user.friendly_name,
+            excluded_genres=set(prefs.get("excluded_genres") or []),
+            # Through the reader, not straight off prefs: the list holds bare ints on an
+            # older install and records on a newer one, and the engine only wants ids.
+            blocked_seeds=blocked_ids(prefs),
+            row_name_template=prefs.get("row_name_tpl"),
+            request_tag=request_tag,
+            requested_by_tag=(user.requested_by_tag or "").strip(),
+            row_overrides=overrides.get(user.id, {}),
+        )
 
     @staticmethod
     def _row_overrides(session: Session) -> dict[int, dict[str, RowOverride]]:

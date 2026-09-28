@@ -165,25 +165,32 @@ class TestBuildContext:
         assert ctx.unmanaged_account_ids == {102}
         assert ctx.disabled_account_ids == {103}
 
-    def test_the_roster_is_every_enabled_person_even_when_the_run_is_scoped(self, service, configured, sessions):
-        """The request ledger resolves tags against `ctx.roster`, not the scoped users: a run for ONE
-        person must still see that a tag two people share is ambiguous (issue #127)."""
+    def test_the_roster_is_everyone_who_could_own_a_tag(self, service, configured, sessions):
+        """The request ledger resolves tags against `ctx.roster`, not the users it builds for: a tag
+        two people share must stay ambiguous whoever is in tonight's run (issue #127). Disabling or
+        pausing one of them takes them OUT of the run, not off the tag — an enabled-only roster let
+        the other person's private row fill with the disabled person's requests. Only someone who
+        has left the server, or whom the owner filed away, is off it."""
+        gone = datetime(2026, 9, 1, tzinfo=UTC)
         with sessions() as session:
             session.add_all(
                 [
                     User(plex_account_id=101, username="sarah", slug="sarah", enabled=True),
-                    User(plex_account_id=102, username="kid", slug="kid", enabled=True),
-                    User(plex_account_id=103, username="off", slug="off", enabled=False),
+                    User(plex_account_id=102, username="kid", slug="kid", enabled=True, prefs={"paused": True}),
+                    User(plex_account_id=103, username="off", slug="off", enabled=False, requested_by_tag="fam"),
+                    # The roster sweep and "remove" both switch the person off as they stamp them.
+                    User(plex_account_id=104, username="left", slug="left", enabled=False, departed_at=gone),
+                    User(plex_account_id=105, username="filed", slug="filed", enabled=False, removed_at=gone),
                 ]
             )
             session.commit()
-            sarah_id = session.query(User).filter_by(slug="sarah").one().id
-            scoped = service.enabled_profiles(session, user_ids=[sarah_id])
+            tonight = service.enabled_profiles(session)
 
         ctx = service.build_context(dry_run=True)
 
-        assert [p.slug for p in scoped] == ["sarah"]
-        assert sorted(p.slug for p in ctx.roster) == ["kid", "sarah"]
+        assert [p.slug for p in tonight] == ["sarah"]
+        assert sorted(p.slug for p in ctx.roster) == ["kid", "off", "sarah"]
+        assert next(p for p in ctx.roster if p.slug == "off").requested_by_tag == "fam"
 
     def test_plex_only_skips_the_clients_a_label_walk_never_touches(self, service, configured, monkeypatch):
         """The reconciles, the pause/disable handlers and the watch sync only ever walk collections

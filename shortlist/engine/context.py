@@ -188,10 +188,11 @@ class EngineContext:
     cancelled: Callable[[], bool] = lambda: False
     # Built once per run by the pipeline when any row is a requests row; None otherwise.
     request_ledger: RequestLedger | None = None
-    #: Every enabled person, whatever `users` this run is scoped to. The request ledger resolves tags
-    #: against THIS list: a tag two roster people render to is ambiguous whoever is in tonight's run,
-    #: and resolving it against the scoped subset would credit the one person in scope. None (a direct
-    #: engine caller) means `users` is the roster.
+    #: Everyone who could own a tag — enabled or not — whatever `users` this run is scoped to. The
+    #: request ledger resolves tags against THIS list: a tag two roster people render to is ambiguous
+    #: whoever is in tonight's run, and resolving it against the run's own users would credit the one
+    #: person in it with a disabled or paused person's requests. None (a direct engine caller) means
+    #: `users` is the roster.
     roster: list[UserProfile] | None = None
 
 

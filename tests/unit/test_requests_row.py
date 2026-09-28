@@ -385,6 +385,22 @@ class TestCollectFromTags:
             TagMatch(label="fam", source="override", plex_account_id=None, titles=1, ambiguous=True)
         ]
 
+    def test_a_tag_shared_with_someone_outside_tonights_run_still_names_nobody(self):
+        """`people` is the ROSTER — everyone who could own a tag — not the run's scope. The person who
+        shares the tag may be disabled, paused or simply not in tonight's run; the one who IS gets
+        nothing from it either way, or a disabled person's requests would land on their row."""
+        in_run = _person(1, requested_by_tag="fam")
+        outside = _person(2, requested_by_tag="fam")
+        tags = [{"id": 1, "label": "fam"}]
+        item = {"tmdbId": 501, "tags": [1], "hasFile": True, "movieFile": {}, "title": "A"}
+        ledger = collect_requests(
+            RequestSources(radarr=ARR), [in_run, outside], radarr=_radarr(items=[item], tags=tags)
+        )
+        assert ledger.for_person(in_run.plex_account_id) == []
+        assert ledger.titles == []
+        (match,) = ledger.tag_matches
+        assert match.ambiguous and match.plex_account_id is None
+
     @pytest.mark.parametrize("tag_order", [[1, 2], [2, 1]])
     def test_a_title_tagged_by_override_and_pattern_keeps_the_override(self, tag_order):
         who = _person(1, requested_by_tag="fam")
