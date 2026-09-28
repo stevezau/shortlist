@@ -26,7 +26,7 @@ import { findRowTemplate, type RowTemplate } from "@/lib/row-templates";
 import type { Collection, CollectionInput } from "@/lib/types";
 import { BYW_NAME, CTX, FIXTURES, named, row } from "@/test/row-kind-fixtures";
 
-const { updateCollection, createCollection, settingsData, librariesData } = vi.hoisted(() => ({
+const { updateCollection, createCollection, settingsData, librariesData, rowSources } = vi.hoisted(() => ({
   updateCollection: vi.fn((id: number, body: unknown) =>
     Promise.resolve({ ...(body as object), id }),
   ),
@@ -37,6 +37,22 @@ const { updateCollection, createCollection, settingsData, librariesData } = vi.h
   settingsData: { current: {} as Record<string, unknown> },
   // Mutable so a test can offer libraries to narrow a row to; empty = none listed.
   librariesData: { current: [] as { key: string; title: string; type: string }[] },
+  // What the Your requests block's sources panel reads: one connected Overseerr, nothing else.
+  rowSources: {
+    overseerr: "connected",
+    radarr: "off",
+    sonarr: "off",
+    complete: true,
+    problems: [],
+    seerr_requests: 3,
+    seerr_requesters: 2,
+    seerr_linked: 2,
+    servers: [],
+    tagged_movies: 0,
+    tagged_shows: 0,
+    people: [],
+    tags: [],
+  },
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -56,6 +72,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
           { slug: "christmas", name: "Christmas", emoji: "🎄", month: 12, day: 25, description: "Christmas films" },
         ]),
       getImageProvider: () => Promise.resolve({ capable: false, provider: "", reason: "" }),
+      getRequestRowSources: () => Promise.resolve(rowSources),
       startRun: () => Promise.resolve({ run_id: 1 }),
     },
   };
@@ -142,10 +159,17 @@ describe("each kind shows exactly its settings", () => {
 });
 
 describe("the kind picker", () => {
-  it("lists the five kinds with what viewers see, the row's own kind checked", async () => {
+  it("lists the six kinds with what viewers see, the row's own kind checked", async () => {
     renderEditor(row({ ...named(BYW_NAME), max_seeds: 2 }));
     const group = screen.getByRole("radiogroup", { name: "What kind of row is this?" });
-    const titles = ["Picked for You", "Because you watched", "Watch it again", "Seasonal", "Popular on this server"];
+    const titles = [
+      "Picked for You",
+      "Because you watched",
+      "Watch it again",
+      "Your requests",
+      "Seasonal",
+      "Popular on this server",
+    ];
     const radios = within(group).getAllByRole("radio");
     expect(radios).toHaveLength(titles.length);
     radios.forEach((radio, i) => expect(radio).toHaveAccessibleName(titles[i]));
@@ -510,7 +534,7 @@ describe("switching kind is reversible, and only the last switch counts", () => 
 
     kindRadio("Picked for You").focus();
     // Down through every kind to Popular, then back up to Seasonal.
-    await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowUp}");
+    await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowUp}");
     expect(kindRadio("Seasonal")).toBeChecked();
     await save();
 
@@ -642,7 +666,8 @@ describe("the default row named after a watch in Settings", () => {
     renderEditor(row({ slug: "picked", name: BYW_NAME }));
     await waitFor(() => expect(kindRadio("Picked for You")).toBeDisabled());
 
-    for (const kind of ["Picked for You", "Popular on this server"]) {
+    // Your requests has no watch to fill a {top_seed} name with either.
+    for (const kind of ["Picked for You", "Your requests", "Popular on this server"]) {
       expect(kindRadio(kind), kind).toBeDisabled();
       expect(kindRadio(kind), kind).toHaveAccessibleDescription(
         /This row's name \(set in Settings\) follows one watch\. Change it in Settings first\./,
@@ -651,7 +676,7 @@ describe("the default row named after a watch in Settings", () => {
     expect(kindRadio("Watch it again")).toBeEnabled();
     expect(kindRadio("Because you watched")).toBeChecked();
     const links = within(screen.getByRole("radiogroup", { name: "What kind of row is this?" })).getAllByRole("link");
-    expect(links).toHaveLength(2);
+    expect(links).toHaveLength(3);
     for (const link of links) expect(link).toHaveAttribute("href", "/settings#defaults");
   });
 

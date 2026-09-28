@@ -348,9 +348,13 @@ export function RowEditor({
     );
   };
 
-  // Seasonal is filled the way the row on screen is: the owner makes what they see seasonal.
+  // Seasonal is filled the way the row on screen is: the owner makes what they see seasonal. A
+  // requests row can't be (the API refuses the pair), so from one Seasonal starts as Picked for You.
   const pickKind = (kind: RowKind) =>
-    requestKind({ kind, fill: kind === "seasonal" ? current.fill : kind });
+    requestKind({
+      kind,
+      fill: kind !== "seasonal" ? kind : current.fill === "requests" ? "picked" : current.fill,
+    });
 
   // What each folded section says about itself while closed. A disclosure that hides both its
   // controls AND what they are currently set to is worse than the flat list it replaced — these are

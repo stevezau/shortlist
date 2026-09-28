@@ -22,6 +22,7 @@ import {
   SEED_NAME_IN_SETTINGS,
   ROW_FILLS,
   ROW_KINDS,
+  SEASONAL_FILLS,
   ROW_SETTING_KEYS,
   rowKindOf,
   takeTurnsEnabled,
@@ -48,6 +49,7 @@ const PICKS_NAME = "✨ {library_name} Picks";
 const BYW_NAME = "🎯 Because you watched {top_seed}";
 const AGAIN_NAME = "☕ {library_name} you've already seen";
 const POPULAR_NAME = "👥 Popular {library_name} on this server";
+const REQUESTS_NAME = "📬 {library_name} you asked for";
 
 function named(name: string): Pick<CollectionInput, "name" | "name_template"> {
   return { name, name_template: name };
@@ -64,6 +66,7 @@ const FIXTURES = {
   bywCount: row({ max_seeds: 2 }),
   again: row({ ...named(AGAIN_NAME), rewatch: true, watched_pct: 1 }),
   popular: row({ ...named(POPULAR_NAME), build: "shared", min_watchers: 3 }),
+  requests: row({ ...named(REQUESTS_NAME), requests_row: true }),
 } satisfies Record<string, CollectionInput>;
 
 const FIXTURE_FILL: Record<keyof typeof FIXTURES, RowFill> = {
@@ -72,6 +75,7 @@ const FIXTURE_FILL: Record<keyof typeof FIXTURES, RowFill> = {
   bywCount: "byw",
   again: "again",
   popular: "popular",
+  requests: "requests",
 };
 
 const MEDIA = ["movie", "show", "both"] as const;
@@ -80,15 +84,15 @@ function seasonal(input: CollectionInput): CollectionInput {
   return { ...input, seasons: ["halloween"] };
 }
 
-/** Every target a picker can ask for: four plain kinds, and Seasonal with each fill. */
+/** Every target a picker can ask for: five plain kinds, and Seasonal with each fill it offers. */
 const TARGETS: RowKindChoice[] = [
   ...ROW_FILLS.map((fill) => ({ kind: fill, fill })),
-  ...ROW_FILLS.map((fill) => ({ kind: "seasonal" as const, fill })),
+  ...SEASONAL_FILLS.map((fill) => ({ kind: "seasonal" as const, fill })),
 ];
 
 describe("kind metadata", () => {
-  it("lists the five kinds in the picker's order with the design's copy", () => {
-    expect(ROW_KINDS).toEqual(["picked", "byw", "again", "seasonal", "popular"]);
+  it("lists the six kinds in the picker's order with the design's copy", () => {
+    expect(ROW_KINDS).toEqual(["picked", "byw", "again", "requests", "seasonal", "popular"]);
     expect(KIND_META).toEqual({
       picked: {
         title: "Picked for You",
@@ -103,6 +107,10 @@ describe("kind metadata", () => {
         title: "Watch it again",
         description: "Favourites they've already finished, ready to rewatch.",
       },
+      requests: {
+        title: "Your requests",
+        description: "What they asked for in Overseerr that's now on Plex, newest first. Never recommendations.",
+      },
       seasonal: {
         title: "Seasonal",
         description:
@@ -116,8 +124,12 @@ describe("kind metadata", () => {
   });
 
   it("offers every kind but Seasonal as a fill, titled as the kind is", () => {
-    expect(ROW_FILLS).toEqual(["picked", "byw", "again", "popular"]);
+    expect(ROW_FILLS).toEqual(["picked", "byw", "again", "requests", "popular"]);
     for (const fill of ROW_FILLS) expect(FILL_META[fill]).toEqual(KIND_META[fill]);
+  });
+
+  it("never offers a requests fill to a seasonal row: a request lands when it lands", () => {
+    expect(SEASONAL_FILLS).toEqual(["picked", "byw", "again", "popular"]);
   });
 });
 
@@ -237,7 +249,7 @@ describe("kindDisabledReason", () => {
     // You would read straight back as Because you watched, and a shared row has no watch to fill it
     // with; Watch it again is named after a watch by the engine too (`rows._names_a_seed`).
     const seedCtx = { ...DEFAULT_CTX, defaultRowName: BYW_NAME };
-    for (const kind of ["picked", "popular"] as const) {
+    for (const kind of ["picked", "popular", "requests"] as const) {
       expect(kindDisabledReason(kind, defaultRow, seedCtx), kind).toBe(SEED_NAME_IN_SETTINGS);
     }
     for (const kind of ["byw", "again"] as const) {
@@ -322,6 +334,7 @@ const EXTRA: Record<keyof typeof FIXTURES, RowSettingKey[]> = {
     "requests",
   ],
   popular: ["min_watchers"],
+  requests: ["requests_window_days", "requests_sources", "requests_tag_pattern"],
 };
 
 function expected(
@@ -358,6 +371,13 @@ describe("visibleSettings", () => {
     it.each(fixtureNames)("shows the %s fill's settings plus Which seasons on a seasonal row", (name) => {
       expect(visible(seasonal({ ...FIXTURES[name], media }))).toEqual(expected(name, media, { seasonal: true }));
     });
+  });
+
+  it("only the requests settings show for a requests row", () => {
+    const shown = visibleSettings({ ...blankInput(), requests_row: true }, CTX);
+    expect(shown.has("requests_window_days")).toBe(true);
+    expect(shown.has("candidate_sources")).toBe(false);
+    expect(shown.has("cold_start")).toBe(false);
   });
 
   it("shows Rated by only under Highest rated", () => {
@@ -426,9 +446,6 @@ describe("the setting register", () => {
     req_auto_min_demand: "No control; follows Settings > Requests (design §7).",
     req_auto_min_rating: "No control; follows Settings > Requests (design §7).",
     req_min_rating_other: "No control; the language toggle only clears it back to Settings (design §7).",
-    requests_row: "No control yet; the requests-row editor is the UI half of issue #127.",
-    requests_window_days: "No control yet; the requests-row editor is the UI half of issue #127.",
-    requests_tag_pattern: "No control yet; the requests-row editor is the UI half of issue #127.",
   };
 
   // Every state the fixtures can be in, so "visible somewhere" is checked against real rows.
@@ -606,6 +623,29 @@ describe("applyRowKind", () => {
     expect(applyRowKind(from, { kind: "picked", fill: "picked" }, CTX)).toEqual({ ...from, seasons: [] });
   });
 
+  it("a requests row is its own fill and never shared", () => {
+    const input = { ...blankInput(), requests_row: true };
+    expect(rowKindOf(input, CTX).fill).toBe("requests");
+    const patched = applyRowKind(blankInput(), { kind: "requests", fill: "requests" }, CTX);
+    expect(patched.requests_row).toBe(true);
+    expect(patched.build).toBe("per_person");
+    const back = applyRowKind(patched, { kind: "picked", fill: "picked" }, CTX);
+    expect(back.requests_row).toBe(false);
+  });
+
+  it("→ Your requests on a shared rewatch row: per person, no rewatch, no rotation", () => {
+    const from = row({ build: "shared", rewatch: true, unstarted_only: true, seed_window: 3, media: "show" });
+    const out = applyRowKind(from, { kind: "requests", fill: "requests" }, CTX);
+    expect(out).toEqual({
+      ...from,
+      build: "per_person",
+      rewatch: false,
+      requests_row: true,
+      unstarted_only: false,
+      seed_window: 1,
+    });
+  });
+
   it("ignores the fill on a kind that isn't Seasonal", () => {
     expect(applyRowKind(FIXTURES.picked, { kind: "picked", fill: "popular" }, CTX)).toEqual(FIXTURES.picked);
   });
@@ -639,10 +679,11 @@ describe("applyRowKind", () => {
 
   describe("touches nothing outside its documented patch", () => {
     const FILL_FIELDS: Record<RowFill, (keyof CollectionInput)[]> = {
-      picked: ["build", "rewatch", "seed_window", "max_seeds"],
-      byw: ["build", "rewatch", "max_seeds"],
-      again: ["build", "rewatch", "unstarted_only", "seed_window"],
-      popular: ["build", "request_tag"],
+      picked: ["build", "rewatch", "requests_row", "seed_window", "max_seeds"],
+      byw: ["build", "rewatch", "requests_row", "max_seeds"],
+      again: ["build", "rewatch", "requests_row", "unstarted_only", "seed_window"],
+      popular: ["build", "requests_row", "request_tag"],
+      requests: ["build", "rewatch", "requests_row", "unstarted_only", "seed_window"],
     };
     const froms = Object.entries(FIXTURES).flatMap(([name, input]) =>
       MEDIA.flatMap((media) => {
@@ -844,7 +885,7 @@ describe("round trip: the kind asked for is the kind read back", () => {
     }
   });
 
-  it.each(ROW_FILLS)(
+  it.each(SEASONAL_FILLS)(
     "holds for a seasonal %s row named after the season, under any new name the rename accepts",
     (fill) => {
       const base = row({

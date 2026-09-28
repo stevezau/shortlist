@@ -202,6 +202,16 @@ describe("the lines that are easy to get wrong", () => {
     expect(line("When they run out")).toHaveTextContent("New picks, matched to their last 12 watches");
   });
 
+  it("says which requests a Your requests row shows, with its window and own tags", () => {
+    renderPreview({ ...toInput(row()), requests_row: true, requests_window_days: 90, requests_tag_pattern: "req-{username}" });
+    expect(valueOf("Which requests")).toHaveTextContent(/landed in the last 90 days, newest first/);
+    expect(valueOf("Which requests")).toHaveTextContent(/req-\{username\}/);
+    renderPreview({ ...toInput(row()), requests_row: true, requests_window_days: 0 });
+    expect(screen.getAllByText("Which requests", { selector: "dt" })[1]?.parentElement).toHaveTextContent(
+      /Everything they asked for/,
+    );
+  });
+
   it("counts a Popular row's watchers", () => {
     renderPreview(toInput(row({ build: "shared", min_watchers: 3 })));
     expect(line("Counts")).toHaveTextContent("Only titles at least 3 people here have watched");

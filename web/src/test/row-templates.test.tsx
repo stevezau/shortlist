@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RowTemplateGallery } from "@/components/rows/row-template-gallery";
 import { RowEditor } from "@/components/rows/row-editor";
@@ -24,12 +24,48 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getLibraries: () => Promise.resolve([]),
       getImageProvider: () =>
         Promise.resolve({ capable: false, provider: "", reason: "" }),
+      getRequestRowSources: () => Promise.resolve(rowSources.current),
     },
   };
 });
 
+const { rowSources } = vi.hoisted(() => ({
+  // What the gallery reads to decide whether the Your requests tile can be picked. Mutable so a
+  // test can take every source away.
+  rowSources: {
+    current: {
+      overseerr: "connected",
+      radarr: "off",
+      sonarr: "off",
+      complete: true,
+      problems: [],
+      seerr_requests: 3,
+      seerr_requesters: 2,
+      seerr_linked: 2,
+      servers: [],
+      tagged_movies: 0,
+      tagged_shows: 0,
+      people: [],
+      tags: [],
+    },
+  },
+}));
+
+beforeEach(() => {
+  rowSources.current = { ...rowSources.current, overseerr: "connected" };
+});
+
 function renderGallery(onPick = vi.fn()) {
-  render(<RowTemplateGallery open onPick={onPick} onClose={() => {}} />);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <RowTemplateGallery open onPick={onPick} onClose={() => {}} />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
   return onPick;
 }
 
@@ -215,6 +251,13 @@ describe("row template kinds and grouping", () => {
         ids: ["seen-it-already"],
       },
       {
+        kind: "requests",
+        heading: "Your requests",
+        description:
+          "What they asked for in Overseerr that's now on Plex, newest first. Never recommendations.",
+        ids: ["your-requests"],
+      },
+      {
         kind: "seasonal",
         heading: "Seasonal",
         description:
@@ -243,7 +286,7 @@ describe("row template kinds and grouping", () => {
       expect(members).toEqual(group.ids);
     });
 
-    // Every template belongs to exactly one of the five groups — none left out, none doubled up.
+    // Every template belongs to exactly one of the six groups — none left out, none doubled up.
     const grouped = expected.flatMap((g) => g.ids);
     expect(new Set(grouped).size).toBe(ROW_TEMPLATES.length);
   });
@@ -303,6 +346,30 @@ describe("RowTemplateGallery", () => {
 
     expect(onPick).toHaveBeenCalledWith(
       expect.objectContaining({ id: "seen-it-already" }),
+    );
+  });
+
+  it("offers Your requests while something can say who asked for what", async () => {
+    const onPick = renderGallery();
+    const tile = await screen.findByRole("button", { name: /Your requests/i });
+    await userEvent.click(tile);
+    expect(onPick).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "your-requests" }),
+    );
+  });
+
+  it("disables Your requests when every source is off, and says what to set up", async () => {
+    rowSources.current = { ...rowSources.current, overseerr: "off" };
+    renderGallery();
+    expect(
+      await screen.findByText(
+        /Needs a way to know who asked for what: an Overseerr or Jellyseerr connection, or Radarr\/Sonarr with request tags\./,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Your requests/i })).toBeNull();
+    expect(screen.getByRole("link", { name: /Settings/ })).toHaveAttribute(
+      "href",
+      "/settings#connections",
     );
   });
 });

@@ -67,6 +67,8 @@ export type ConnectionTestResult = Schemas["ConnectionTestOut"];
 /** GET /api/settings/arr/{service}/options — dropdown data for a connected Sonarr/Radarr. */
 export type ArrOptions = Schemas["ArrOptionsOut"];
 export type SeerrOptions = Schemas["SeerrOptionsOut"];
+/** GET /api/requests/row-sources — whether a "Your requests" row can know who asked for what. */
+export type RowSources = Schemas["RowSourcesOut"];
 
 // --- Rows / collections ---
 

@@ -202,6 +202,26 @@ function kindValue(kind: RowKind, fill: RowFill): ReactNode {
         </>
       )}
       {fill === "again" && <Detail>Things they&apos;ve already finished, first</Detail>}
+      {fill === "requests" && <Detail>Only what they asked for — no recommendations</Detail>}
+    </>
+  );
+}
+
+/** Which of their requests a Your requests row shows: the arrival window, and any own tags it reads. */
+function requestsRowValue(input: CollectionInput): ReactNode {
+  const days = input.requests_window_days;
+  const pattern = input.requests_tag_pattern.trim();
+  return (
+    <>
+      {days > 0
+        ? `What they asked for that landed in the last ${daysLabel(days)}, newest first`
+        : "Everything they asked for that's on Plex, newest first"}
+      <Detail>Each title leaves once they&apos;ve watched it</Detail>
+      <Detail>
+        {pattern
+          ? `Read from Overseerr's requests and your own tags, ${pattern}`
+          : "Read from Overseerr's requests, or Radarr/Sonarr request tags"}
+      </Detail>
     </>
   );
 }
@@ -331,6 +351,13 @@ function rowFacts({
       "Seasons",
       ["seasons"],
       `${names || `${count} season${count === 1 ? "" : "s"}`} — ${before} to ${after}, hidden between seasons`,
+    );
+  }
+  if (shown.has("requests_window_days")) {
+    add(
+      "Which requests",
+      ["requests_window_days", "requests_sources", "requests_tag_pattern"],
+      requestsRowValue(input),
     );
   }
   if (shown.has("based_on")) {

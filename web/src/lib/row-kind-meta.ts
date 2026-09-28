@@ -7,7 +7,7 @@
  * which module loads first.
  */
 
-export type RowKind = "picked" | "byw" | "again" | "seasonal" | "popular";
+export type RowKind = "picked" | "byw" | "again" | "requests" | "seasonal" | "popular";
 
 /** How a row is filled. A seasonal row has one of these too; every other row's fill is its kind. */
 export type RowFill = Exclude<RowKind, "seasonal">;
@@ -25,10 +25,16 @@ export interface KindMeta {
 }
 
 /** The picker's order. */
-export const ROW_KINDS: readonly RowKind[] = ["picked", "byw", "again", "seasonal", "popular"];
+export const ROW_KINDS: readonly RowKind[] = ["picked", "byw", "again", "requests", "seasonal", "popular"];
 
-/** The Seasonal block's "How it's filled" order. */
-export const ROW_FILLS: readonly RowFill[] = ["picked", "byw", "again", "popular"];
+/** Every fill, in the picker's order. */
+export const ROW_FILLS: readonly RowFill[] = ["picked", "byw", "again", "requests", "popular"];
+
+/**
+ * The Seasonal block's "How it's filled" order. A requests row is never seasonal — a request lands
+ * when it lands, and the API refuses the pair — so that one fill is left out.
+ */
+export const SEASONAL_FILLS: readonly RowFill[] = ROW_FILLS.filter((fill) => fill !== "requests");
 
 export const KIND_META: Readonly<Record<RowKind, KindMeta>> = {
   picked: {
@@ -42,6 +48,10 @@ export const KIND_META: Readonly<Record<RowKind, KindMeta>> = {
   again: {
     title: "Watch it again",
     description: "Favourites they've already finished, ready to rewatch.",
+  },
+  requests: {
+    title: "Your requests",
+    description: "What they asked for in Overseerr that's now on Plex, newest first. Never recommendations.",
   },
   seasonal: {
     title: "Seasonal",
@@ -58,6 +68,7 @@ export const FILL_META: Readonly<Record<RowFill, KindMeta>> = {
   picked: KIND_META.picked,
   byw: KIND_META.byw,
   again: KIND_META.again,
+  requests: KIND_META.requests,
   popular: KIND_META.popular,
 };
 

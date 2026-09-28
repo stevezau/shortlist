@@ -12,7 +12,7 @@ import type { CollectionInput } from "@/lib/types";
  * `values` is deliberately a partial: everything it omits keeps `blankInput()`'s default, and every
  * field stays editable after picking. A template is a starting point, never a mode.
  *
- * `kind` groups the gallery by the same five kinds the row editor's kind picker uses (design doc §3),
+ * `kind` groups the gallery by the same six kinds the row editor's kind picker uses (design doc §3),
  * with the picker's own copy, so the two cannot describe a kind differently.
  */
 
@@ -27,7 +27,7 @@ export interface RowTemplate {
   values: Partial<CollectionInput>;
 }
 
-/** The gallery's five headings, in the kind picker's order, each with the kind's description. */
+/** The gallery's six headings, in the kind picker's order, each with the kind's description. */
 export const ROW_TEMPLATE_GROUPS: {
   kind: RowKind;
   heading: string;
@@ -136,6 +136,24 @@ export const ROW_TEMPLATES: RowTemplate[] = [
       watched_pct: 1,
       refresh_days: 11,
       size: 15,
+    },
+  },
+  {
+    id: "your-requests",
+    kind: "requests",
+    emoji: "📬",
+    title: "Your requests",
+    blurb:
+      "What they asked for in Overseerr, once it's on Plex. Each title leaves once they've watched it.",
+    highlights: ["Only what they asked for", "Newest first", "Overseerr or Radarr/Sonarr tags"],
+    values: {
+      name: "📬 {library_name} you asked for",
+      build: "per_person",
+      requests_row: true,
+      // 90 days: long enough that a request they made last season is still there, short enough that
+      // one they've lost interest in doesn't sit in the row for good.
+      requests_window_days: 90,
+      size: 20,
     },
   },
   {
