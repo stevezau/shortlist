@@ -5,8 +5,8 @@ import {
   FILL_META,
   KIND_GROUP,
   KIND_META,
-  ROW_FILLS,
   ROW_KINDS,
+  SEASONAL_FILLS,
   type KindMeta,
   type RowFill,
   type RowKind,
@@ -85,7 +85,7 @@ function RadioCards<T extends string>({
   );
 }
 
-/** "What kind of row is this?" — the five kinds, in the picker's order, with the design's copy. */
+/** "What kind of row is this?" — the six kinds, in the picker's order, with the design's copy. */
 export function RowKindPicker({
   value,
   onChange,
@@ -110,7 +110,8 @@ export function RowKindPicker({
   );
 }
 
-/** A seasonal row's "How it's filled": every kind but Seasonal. */
+/** A seasonal row's "How it's filled": every kind but Seasonal and Your requests (a request lands
+ *  when it lands, so no season decides whether it shows). */
 export function RowFillPicker({
   value,
   onChange,
@@ -131,7 +132,7 @@ export function RowFillPicker({
         label="How it's filled"
         value={value}
         onChange={onChange}
-        options={ROW_FILLS.map((fill) => ({
+        options={SEASONAL_FILLS.map((fill) => ({
           value: fill,
           ...FILL_META[fill],
           disabledReason: null,

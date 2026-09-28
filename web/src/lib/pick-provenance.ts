@@ -46,6 +46,8 @@ export function sourceLabel(source: string): string {
 export function provenanceLabel(pick: Pick): string {
   const sources = pick.sources ?? [];
   if (sources.length === 0) return "";
+  // Nothing suggested a requested title and there is no ranking to grade: they asked for it.
+  if (sources.length === 1 && sources[0] === "requests") return "they asked for it";
   // Both TMDB sources on one pick would read "TMDB (your genres) + TMDB", which looks like a bug.
   const both =
     sources.includes("tmdb_similar") && sources.includes("tmdb_discover");

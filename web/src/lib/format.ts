@@ -263,6 +263,11 @@ export function timeFromCron(cron: string): { time: string; weekly: boolean } {
   return { time: "03:30", weekly: false };
 }
 
+/** "1 request", "3 requests": a count with its noun, for nouns that pluralise with an s. */
+export function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
 /** Row-name templates render {top_seed} from each user's history and {library_name} per library nightly. */
 export function renderRowName(
   template: string,

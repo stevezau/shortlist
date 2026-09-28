@@ -91,6 +91,8 @@ class UserPatch(BaseModel):
     # that excludes it) is unaffected.
     nickname: str | None = Field(default=None, max_length=255)
     request_tag: str | None = Field(default=None, max_length=64)  # tag added to titles requested for this user
+    # The tag the *arrs put on what this person asked for (issue #127); wins over a row's tag pattern.
+    requested_by_tag: str | None = Field(default=None, max_length=64)
     prefs: UserPrefs | None = None
 
 
@@ -459,6 +461,8 @@ async def patch_user(user_id: int, patch: UserPatch, request: Request) -> dict:
             user.nickname = nickname
         if patch.request_tag is not None:
             user.request_tag = patch.request_tag.strip()
+        if patch.requested_by_tag is not None:
+            user.requested_by_tag = patch.requested_by_tag.strip()
         if patch.prefs is not None:
             was_paused = bool((user.prefs or {}).get("paused"))
             prefs = merged_prefs(user.prefs or {}, patch.prefs)

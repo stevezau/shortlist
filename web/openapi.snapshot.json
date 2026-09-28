@@ -1045,6 +1045,24 @@
             "title": "Request Tag",
             "type": "string"
           },
+          "requests_row": {
+            "default": false,
+            "title": "Requests Row",
+            "type": "boolean"
+          },
+          "requests_tag_pattern": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Requests Tag Pattern",
+            "type": "string"
+          },
+          "requests_window_days": {
+            "default": 90,
+            "maximum": 3650.0,
+            "minimum": 0.0,
+            "title": "Requests Window Days",
+            "type": "integer"
+          },
           "rewatch": {
             "default": false,
             "title": "Rewatch",
@@ -1619,6 +1637,18 @@
             "title": "Request Tag",
             "type": "string"
           },
+          "requests_row": {
+            "title": "Requests Row",
+            "type": "boolean"
+          },
+          "requests_tag_pattern": {
+            "title": "Requests Tag Pattern",
+            "type": "string"
+          },
+          "requests_window_days": {
+            "title": "Requests Window Days",
+            "type": "integer"
+          },
           "rewatch": {
             "title": "Rewatch",
             "type": "boolean"
@@ -1732,6 +1762,9 @@
           "watched_pct",
           "rewatch",
           "rewatch_cooldown_days",
+          "requests_row",
+          "requests_window_days",
+          "requests_tag_pattern",
           "unstarted_only",
           "refresh_days",
           "idle_hold_days",
@@ -3493,6 +3526,35 @@
         "title": "PerUserOut",
         "type": "object"
       },
+      "PersonReadyOut": {
+        "additionalProperties": true,
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "linked": {
+            "title": "Linked",
+            "type": "boolean"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "integer"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "user_id",
+          "display_name",
+          "linked",
+          "ready"
+        ],
+        "title": "PersonReadyOut",
+        "type": "object"
+      },
       "PickOut": {
         "additionalProperties": true,
         "description": "One delivered recommendation, as the run detail lists it.",
@@ -4918,6 +4980,138 @@
           "recent_count"
         ],
         "title": "RowOverrideSavedOut",
+        "type": "object"
+      },
+      "RowSourceServerOut": {
+        "additionalProperties": true,
+        "description": "One Radarr/Sonarr server Overseerr sends to, and whether it stamps the requester's tag.",
+        "properties": {
+          "is4k": {
+            "title": "Is4K",
+            "type": "boolean"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "tag_requests": {
+            "title": "Tag Requests",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "is4k",
+          "tag_requests"
+        ],
+        "title": "RowSourceServerOut",
+        "type": "object"
+      },
+      "RowSourcesOut": {
+        "additionalProperties": true,
+        "description": "The requests-row setup check: can the row know who asked for what, and for whom?",
+        "properties": {
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "overseerr": {
+            "enum": [
+              "connected",
+              "unreachable",
+              "off"
+            ],
+            "title": "Overseerr",
+            "type": "string"
+          },
+          "people": {
+            "items": {
+              "$ref": "#/components/schemas/PersonReadyOut"
+            },
+            "title": "People",
+            "type": "array"
+          },
+          "problems": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Problems",
+            "type": "array"
+          },
+          "radarr": {
+            "enum": [
+              "connected",
+              "unreachable",
+              "off"
+            ],
+            "title": "Radarr",
+            "type": "string"
+          },
+          "seerr_linked": {
+            "title": "Seerr Linked",
+            "type": "integer"
+          },
+          "seerr_requesters": {
+            "title": "Seerr Requesters",
+            "type": "integer"
+          },
+          "seerr_requests": {
+            "title": "Seerr Requests",
+            "type": "integer"
+          },
+          "servers": {
+            "items": {
+              "$ref": "#/components/schemas/RowSourceServerOut"
+            },
+            "title": "Servers",
+            "type": "array"
+          },
+          "sonarr": {
+            "enum": [
+              "connected",
+              "unreachable",
+              "off"
+            ],
+            "title": "Sonarr",
+            "type": "string"
+          },
+          "tagged_movies": {
+            "title": "Tagged Movies",
+            "type": "integer"
+          },
+          "tagged_shows": {
+            "title": "Tagged Shows",
+            "type": "integer"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/TagMatchOut"
+            },
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "overseerr",
+          "radarr",
+          "sonarr",
+          "complete",
+          "problems",
+          "seerr_requests",
+          "seerr_requesters",
+          "seerr_linked",
+          "servers",
+          "tagged_movies",
+          "tagged_shows",
+          "people",
+          "tags"
+        ],
+        "title": "RowSourcesOut",
         "type": "object"
       },
       "RunCancelledOut": {
@@ -6517,6 +6711,58 @@
         "title": "SyncsOut",
         "type": "object"
       },
+      "TagMatchOut": {
+        "additionalProperties": true,
+        "description": "How one requester tag on Radarr/Sonarr resolved \u2014 the preview under \"Use my own tags\".",
+        "properties": {
+          "ambiguous": {
+            "title": "Ambiguous",
+            "type": "boolean"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "overseerr",
+              "pattern",
+              "override"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "titles": {
+            "title": "Titles",
+            "type": "integer"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "label",
+          "source",
+          "user_id",
+          "display_name",
+          "titles",
+          "ambiguous"
+        ],
+        "title": "TagMatchOut",
+        "type": "object"
+      },
       "TitleMatchOut": {
         "additionalProperties": true,
         "description": "TMDB's own best guess for a title search, for the \"block a seed\" picker.",
@@ -7119,6 +7365,10 @@
             "title": "Request Tag",
             "type": "string"
           },
+          "requested_by_tag": {
+            "title": "Requested By Tag",
+            "type": "string"
+          },
           "restricted": {
             "title": "Restricted",
             "type": "boolean"
@@ -7159,6 +7409,7 @@
           "manage_sharing",
           "cold_start",
           "request_tag",
+          "requested_by_tag",
           "prefs",
           "history_depth",
           "last_run_at",
@@ -7227,6 +7478,18 @@
               }
             ],
             "title": "Request Tag"
+          },
+          "requested_by_tag": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By Tag"
           }
         },
         "title": "UserPatch",
@@ -9614,6 +9877,53 @@
           }
         },
         "summary": "Restore Requests",
+        "tags": [
+          "requests"
+        ]
+      }
+    },
+    "/api/requests/row-sources": {
+      "get": {
+        "description": "Read every request source once and say whether a \"Your requests\" row can be built from it.\n\nRead-only: nothing is written to Overseerr, the Arrs, or Plex. A source that is down reads as\n\"unreachable\" with the reason in `problems` \u2014 never a 500, because the screen this feeds exists\nprecisely to show the owner what is wrong.",
+        "operationId": "get_row_sources_api_requests_row_sources_get",
+        "parameters": [
+          {
+            "description": "An own-tag pattern to preview, e.g. req-{username}",
+            "in": "query",
+            "name": "pattern",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "An own-tag pattern to preview, e.g. req-{username}",
+              "maxLength": 128,
+              "title": "Pattern",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RowSourcesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Row Sources",
         "tags": [
           "requests"
         ]

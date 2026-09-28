@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Eye, RefreshCw, ShieldCheck, Users as UsersIcon } from "lucide-react";
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 
 import { toast } from "sonner";
@@ -20,6 +21,7 @@ import {
   UnhiddenRowsBadge,
   UserTypeBadge,
 } from "@/components/user-badges";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -41,16 +43,106 @@ import {
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
 import { profileName } from "@/lib/user-profile";
-import type { User } from "@/lib/types";
+import type { RowSources, User } from "@/lib/types";
 import { formatHitRate, timeAgo } from "@/lib/format";
 import {
   queryKeys,
   useHitRatesMatured,
   useRemoveUser,
+  useRequestRowSources,
   useSetAllUsersEnabled,
   usePatchUser,
   useUsers,
 } from "@/lib/queries";
+
+/** The Requests column for one person: whether a Your requests row can find anything of theirs.
+ *
+ *  Reads the ONE row-sources query the page makes (`useRequestRowSources("")` costs up to a few
+ *  dozen HTTP calls to Overseerr and the Arrs, so it is never made per row). A dash carries its
+ *  reason in `title`: the dashes — can't read the sources, nothing connected, Overseerr not
+ *  connected — would otherwise be indistinguishable from each other and from "no requests". */
+function RequestsCell({
+  user,
+  sources,
+}: {
+  user: User;
+  sources: { data?: RowSources; isPending: boolean; isError: boolean };
+}) {
+  if (sources.isPending) {
+    return <Skeleton data-testid="requests-loading" className="h-5 w-24" />;
+  }
+  const tag = user.requested_by_tag ? (
+    <Badge variant="outline">Tag: {user.requested_by_tag}</Badge>
+  ) : null;
+  const cell = (badge: ReactNode, note: string | null) => (
+    <span className="flex flex-col gap-1">
+      <span className="flex flex-wrap items-center gap-1.5">
+        {badge}
+        {tag}
+      </span>
+      {note && <span className="text-xs text-muted-foreground">{note}</span>}
+    </span>
+  );
+  const dash = (reason: string) =>
+    cell(
+      <span title={reason} aria-label={reason}>
+        —
+      </span>,
+      null,
+    );
+  const data = sources.data;
+  if (sources.isError || !data) return dash(unreadableSources(data));
+  if ([data.overseerr, data.radarr, data.sonarr].every((s) => s === "off")) {
+    return dash("No request source connected");
+  }
+  // The endpoint never fails: a configured-but-down Overseerr answers 200 with nobody linked, which
+  // would read as every shared person lacking an account and every managed one unable to get one.
+  if (data.overseerr === "unreachable") return dash("Couldn’t read Overseerr");
+
+  const person = data.people.find((p) => p.user_id === user.id);
+  const ready = person?.ready ?? 0;
+  const readyNote = ready > 0 ? `${ready} ready` : null;
+  // Without Overseerr only the tag applies — "hasn't signed in" would blame them for an account
+  // that can't exist — but tag-credited titles still count as ready.
+  if (data.overseerr === "off") {
+    return tag || readyNote
+      ? cell(null, readyNote)
+      : dash("Overseerr isn’t connected");
+  }
+  if (person?.linked) {
+    return cell(<Badge variant="success">Linked</Badge>, readyNote);
+  }
+  if (user.user_type === "managed") {
+    return cell(
+      <Badge variant="secondary">Can’t use Overseerr</Badge>,
+      "Managed profiles can’t sign in to it",
+    );
+  }
+  return cell(
+    <Badge variant="secondary">No account</Badge>,
+    "Hasn’t signed in to Overseerr",
+  );
+}
+
+/** Why the Requests column is blank after a failed read. A failed REFETCH still has the last answer,
+ *  which says which sources are configured — so an install with only Radarr/Sonarr is not told that
+ *  an Overseerr it never connected is down. With no answer at all, nothing can be blamed by name. */
+function unreadableSources(data: RowSources | undefined): string {
+  const configured = data
+    ? (
+        [
+          ["Overseerr", data.overseerr],
+          ["Radarr", data.radarr],
+          ["Sonarr", data.sonarr],
+        ] as const
+      )
+        .filter(([, state]) => state !== "off")
+        .map(([name]) => name)
+    : [];
+  return configured.length > 0
+    ? `Couldn’t read ${configured.join("/")}`
+    : "Couldn’t read the request sources";
+}
 
 function UsersSkeleton() {
   return (
@@ -67,6 +159,8 @@ export function UsersPage() {
   const navigate = useNavigate();
   const patchUser = usePatchUser();
   const ratesMatured = useHitRatesMatured();
+  // ONCE for the page, never per row — see RequestsCell.
+  const requestSources = useRequestRowSources("", true);
 
   /**
    * Toggle one person, and say so immediately.
@@ -380,6 +474,9 @@ export function UsersPage() {
                     <TableHead className="hidden lg:table-cell">
                       Last run
                     </TableHead>
+                    <TableHead className="hidden lg:table-cell">
+                      Requests
+                    </TableHead>
                     {/* One more column goes at 320: four still overran by 32px there, and the one
                         left outside the card was Enabled — a switch you could not reach. A number
                         you cannot see is a nuisance; a control you cannot press is a broken page,
@@ -448,6 +545,9 @@ export function UsersPage() {
                       </TableCell>
                       <TableCell className="hidden text-muted-foreground lg:table-cell">
                         {timeAgo(user.last_run_at)}
+                      </TableCell>
+                      <TableCell className="hidden lg:table-cell">
+                        <RequestsCell user={user} sources={requestSources} />
                       </TableCell>
                       {/* An em dash, not "0%", until a pick has actually had its chance. On day one
                           this whole column read 0% for everybody — a number the dashboard itself

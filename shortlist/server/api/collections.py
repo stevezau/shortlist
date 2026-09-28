@@ -292,6 +292,14 @@ class CollectionIn(StrictRequestModel):
         (`01 `) is part of how it sorts."""
         return value if value.strip() else ""
 
+    # A "Your requests" row (issue #127): what each person asked for in Overseerr/Radarr/Sonarr, never
+    # the candidate pool. Always per-person, never rewatch, never seasonal — `_validate` says so.
+    requests_row: bool = False
+    # Keep a request on the row this many days after it lands; 0 = until watched.
+    requests_window_days: int = Field(default=90, ge=0, le=3650)
+    # How the *arrs tag a person's requests, e.g. "req-{username}"; empty -> only a person's own tag.
+    requests_tag_pattern: str = Field(default="", max_length=128)
+
     # The seasons this row follows (discussion #124); [] -> not seasonal. Out of season the row is hidden,
     # and it shows from `season_lead_days` before each season's day to `season_after_days` after it.
     seasons: list[str] = Field(
@@ -419,6 +427,9 @@ class CollectionOut(PassthroughModel):
     watched_pct: float | None
     rewatch: bool
     rewatch_cooldown_days: int
+    requests_row: bool
+    requests_window_days: int
+    requests_tag_pattern: str
     unstarted_only: bool
     refresh_days: int | None
     idle_hold_days: int | None
@@ -640,6 +651,31 @@ def _validate(body: CollectionIn) -> None:
             # leave the editor showing a placement that is not the one in force.
             raise HTTPException(status_code=422, detail=f"hub_anchor[{lib}]: set either 'row' or 'anchor', not both")
     _validate_pairing(rewatch=body.rewatch, unstarted_only=body.unstarted_only, media=body.media)
+    pattern = body.requests_tag_pattern.strip()
+    if pattern and "{username}" not in pattern and "{name}" not in pattern:
+        raise HTTPException(status_code=422, detail="Tag pattern needs {username} or {name} in it")
+    _validate_requests_row(requests_row=body.requests_row, build=body.build, rewatch=body.rewatch, seasons=body.seasons)
+
+
+def _validate_requests_row(*, requests_row: bool, build: str, rewatch: bool, seasons: list[str]) -> None:
+    """The shapes a "Your requests" row cannot take. A person's requests are theirs alone, so the row is
+    always per-person; it holds titles they have NOT seen, so it cannot lead with finished ones; and a
+    request lands when it lands, so no season decides whether the row shows.
+
+    Keyword-only like `_validate_pairing`, and for the same reason: a PATCH judges the MERGED row, so
+    flipping `rewatch` on a requests row is refused as surely as flipping `requests_row` on a rewatch row.
+    """
+    if not requests_row:
+        return
+    if build != "per_person":
+        raise HTTPException(status_code=422, detail="A requests row is always one row per person")
+    if rewatch:
+        raise HTTPException(status_code=422, detail="A requests row can't also be a rewatch row")
+    if seasons:
+        raise HTTPException(
+            status_code=422,
+            detail="A requests row can't be seasonal — it shows what they asked for whenever it lands",
+        )
 
 
 def _validate_anchor_rows(session: Session, body: CollectionIn, editing_slug: str) -> None:
@@ -854,6 +890,9 @@ def _serialize(session, collection: Collection, now: datetime | None = None) -> 
         "watched_pct": collection.watched_pct,
         "rewatch": bool(collection.rewatch),
         "rewatch_cooldown_days": collection.rewatch_cooldown_days,
+        "requests_row": bool(collection.requests_row),
+        "requests_window_days": collection.requests_window_days,
+        "requests_tag_pattern": collection.requests_tag_pattern or "",
         "unstarted_only": bool(collection.unstarted_only),
         "refresh_days": collection.refresh_days,
         "idle_hold_days": collection.idle_hold_days,
@@ -1146,6 +1185,9 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             watched_pct=body.watched_pct,
             rewatch=body.rewatch,
             rewatch_cooldown_days=body.rewatch_cooldown_days,
+            requests_row=body.requests_row,
+            requests_window_days=body.requests_window_days,
+            requests_tag_pattern=body.requests_tag_pattern.strip(),
             unstarted_only=body.unstarted_only,
             refresh_days=body.refresh_days,
             idle_hold_days=body.idle_hold_days,
@@ -1222,6 +1264,9 @@ _PATCHABLE_COLUMNS = (
     "watched_pct",
     "rewatch",
     "rewatch_cooldown_days",
+    "requests_row",
+    "requests_window_days",
+    "requests_tag_pattern",
     "unstarted_only",
     "refresh_days",
     "idle_hold_days",
@@ -1547,6 +1592,12 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
             rewatch=body.rewatch if "rewatch" in sent else bool(collection.rewatch),
             unstarted_only=body.unstarted_only if "unstarted_only" in sent else bool(collection.unstarted_only),
             media=body.media if "media" in sent else collection.media,
+        )
+        _validate_requests_row(
+            requests_row=body.requests_row if "requests_row" in sent else bool(collection.requests_row),
+            build=body.build if "build" in sent else collection.build,
+            rewatch=body.rewatch if "rewatch" in sent else bool(collection.rewatch),
+            seasons=body.seasons if "seasons" in sent else list(collection.seasons or []),
         )
         # Hoisted above the writes: `_set_audience` raises this from inside the apply half, which on a
         # default-row rename meant answering 422 after `SettingsStore.set` had already committed.

@@ -156,6 +156,10 @@ class RunService:
         """Requests config + TMDB client for the approval inbox's manual send — no Plex/LLM I/O."""
         return self._ctx.build_requests_only()
 
+    def build_request_sources_only(self):
+        """Request sources + enabled roster + plex id -> DB id for the requests-row setup check."""
+        return self._ctx.build_request_sources_only()
+
     def enabled_profiles(self, session: Session, user_ids: list[int] | None = None):
         return self._ctx.enabled_profiles(session, user_ids)
 

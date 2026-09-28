@@ -12,6 +12,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
@@ -27,6 +28,9 @@ from shortlist.engine.history import HistorySource
 from shortlist.engine.models import EngineConfig, Pick, UserProfile, UserRunReport, WrittenDetails
 from shortlist.engine.privacy import SnapshotStore
 from shortlist.engine.seasons import SeasonTitles
+
+if TYPE_CHECKING:
+    from shortlist.engine.requests_row import RequestLedger
 
 
 @dataclass
@@ -182,6 +186,14 @@ class EngineContext:
     # promote still run for the users already delivered, so the server stays consistent. Default:
     # never cancels (direct engine runs and tests can't be cancelled).
     cancelled: Callable[[], bool] = lambda: False
+    # Built once per run by the pipeline when any row is a requests row; None otherwise.
+    request_ledger: RequestLedger | None = None
+    #: Everyone who could own a tag — enabled or not — whatever `users` this run is scoped to. The
+    #: request ledger resolves tags against THIS list: a tag two roster people render to is ambiguous
+    #: whoever is in tonight's run, and resolving it against the run's own users would credit the one
+    #: person in it with a disabled or paused person's requests. None (a direct engine caller) means
+    #: `users` is the roster.
+    roster: list[UserProfile] | None = None
 
 
 def _emit(ctx: EngineContext, slug: str, stage: str, counts: dict, reason: str | None = None) -> None:

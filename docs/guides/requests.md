@@ -114,6 +114,23 @@ does not auto-approve, so the choice stays yours.
 Everything else is unchanged: the same guardrails, the same auto-send bar, the same inbox. The only
 difference is who does the fetching.
 
+### A row of what they asked for
+
+The other direction is a row: a **Your requests** row kind puts what each person asked for in
+Overseerr — once it's on Plex and until they've watched it — in a private row of their own, newest
+arrival first. It reads Overseerr, Radarr and Sonarr whenever their address and key are set on this
+Connections screen, whether or not Shortlist sends requests of its own, so it works on a server where
+people request and Shortlist never does. How the row is set up, matched to people and emptied is in
+[Rows → Your requests rows](rows.md#your-requests-rows). Three things to know from this side:
+
+- **Turn on Tag Requests in Overseerr** (_Settings → Services_, on each Radarr and Sonarr server) so
+  each title it sends carries a tag naming who asked for it. Only requests made after that switch is on
+  carry one; earlier requests are still covered by Overseerr's own list while they remain in it.
+- **Deleting a filled request in Overseerr is fine.** The tag stays on the title in Radarr/Sonarr, and
+  Overseerr keeps the date it arrived, so the row is unchanged.
+- **Shortlist's own requests never count.** A title carrying Shortlist's request tag, or filed by the
+  **Request as** account above, is not treated as anyone's request.
+
 ### The Requests inbox
 
 The **Requests** tab (in the sidebar) is your approval queue. Each run adds the wanted-but-missing

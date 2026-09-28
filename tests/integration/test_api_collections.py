@@ -43,6 +43,9 @@ COLLECTION_KEYS = {
     "watched_pct",
     "rewatch",
     "rewatch_cooldown_days",
+    "requests_row",
+    "requests_window_days",
+    "requests_tag_pattern",
     "unstarted_only",
     "refresh_days",
     "idle_hold_days",
@@ -4175,3 +4178,76 @@ class TestDryRunPreview:
         # And the warning must be TRUE: the real delete does exactly what the preview promised.
         client.delete(f"/api/collections/{target['id']}")
         assert self._row_state(client, follower["id"])["hub_anchor"] == {}
+
+
+class TestRequestsRowFields:
+    """A "Your requests" row (issue #127): three per-row settings that have to survive the POST, the
+    serializer AND the spec build, and the shapes such a row cannot take."""
+
+    def test_requests_row_fields_round_trip_and_reach_the_spec(self, client: TestClient):
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        body = {
+            "name": "📬 {library_name} you asked for",
+            "build": "per_person",
+            "requests_row": True,
+            "requests_window_days": 30,
+            "requests_tag_pattern": "req-{username}",
+            "size": 20,
+        }
+        r = client.post("/api/collections", json=body)
+        assert r.status_code == 201, r.text
+        out = r.json()
+        assert (out["requests_row"], out["requests_window_days"], out["requests_tag_pattern"]) == (
+            True,
+            30,
+            "req-{username}",
+        )
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+        spec = next(s for s in specs if s.slug == out["slug"])
+        assert (spec.requests_row, spec.requests_window_days, spec.requests_tag_pattern) == (True, 30, "req-{username}")
+
+    @pytest.mark.parametrize(
+        ("bad", "msg"),
+        [
+            ({"build": "shared"}, "one row per person"),
+            ({"rewatch": True}, "rewatch"),
+            ({"seasons": ["halloween"]}, "seasonal"),
+            ({"requests_tag_pattern": "req-sarah"}, "{username}"),
+            ({"requests_window_days": 4000}, "less than or equal to 3650"),
+        ],
+    )
+    def test_a_requests_row_rejects_shapes_it_cannot_be(self, client: TestClient, bad: dict, msg: str):
+        body = {"name": "n", "build": "per_person", "requests_row": True, **bad}
+        r = client.post("/api/collections", json=body)
+        assert r.status_code == 422 and msg in r.text, r.text
+
+    def test_patch_can_turn_a_row_into_a_requests_row(self, client: TestClient):
+        created = client.post("/api/collections", json={"name": "n", "build": "per_person"}).json()
+        assert created["requests_row"] is False
+        # `name` rides along because `CollectionIn` requires it on a PATCH too; only the fields SENT move.
+        r = client.patch(f"/api/collections/{created['id']}", json={"name": "n", "requests_row": True})
+        assert r.status_code == 200, r.text
+        assert r.json()["requests_row"] is True
+        assert (r.json()["requests_window_days"], r.json()["requests_tag_pattern"]) == (90, "")
+
+    @pytest.mark.parametrize(
+        ("existing", "patch", "msg"),
+        [
+            ({"rewatch": True}, {"requests_row": True}, "rewatch"),
+            ({"requests_row": True}, {"rewatch": True}, "rewatch"),
+            ({"requests_row": True}, {"build": "shared"}, "one row per person"),
+            ({"requests_row": True}, {"seasons": ["halloween"]}, "seasonal"),
+        ],
+    )
+    def test_a_patch_is_judged_against_the_merged_row(self, client: TestClient, existing: dict, patch: dict, msg: str):
+        """A PATCH sends only what changed, so the body alone never shows the clash — a rewatch row
+        turning into a requests row sends no `rewatch`, and it is the STORED value that forbids it."""
+        created = client.post("/api/collections", json={"name": "n", "build": "per_person", **existing})
+        assert created.status_code == 201, created.text
+        r = client.patch(f"/api/collections/{created.json()['id']}", json={"name": "n", **patch})
+        assert r.status_code == 422 and msg in r.text, r.text

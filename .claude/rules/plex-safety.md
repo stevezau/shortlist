@@ -32,7 +32,10 @@ violate them.
    its audience (and, with `hide_shared_from_disabled`, every disabled account): shared rows are delivered after every person's, so each
    person's early merge ran before it existed. A run with no
    users (`engine_run(ctx, [])`) still does the sweep + merge — it only ever makes the server more
-   private, never creates or promotes.
+   private, never creates or promotes. A "Your requests" row is REMOVED from a library when the person
+   has nothing ready there (`rows.py`, `remove_row` under the write lock), and only when every request
+   source was read in full (`RequestLedger.complete`) — a source outage reads as "nothing requested"
+   for everyone, and must never take everyone's row down.
 
 2. **Snapshot first.** Before the first restriction mutation for a user, persist a
    `restriction_snapshots` row with their current filters. Uninstall restores from these.

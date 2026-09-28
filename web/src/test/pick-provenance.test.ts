@@ -13,6 +13,13 @@ function pick(over: Partial<Pick> = {}): Pick {
 }
 
 describe("provenanceLabel", () => {
+  it("says a requested title is there because they asked for it, with no match strength", () => {
+    // "suggested by requests" is the source id showing through; nothing suggested it, and there is
+    // no ranking to grade — they asked for it.
+    expect(provenanceLabel(pick({ sources: ["requests"], affinity: 1.0 }))).toBe("they asked for it");
+    expect(provenanceLabel(pick({ sources: ["requests"], affinity: null }))).toBe("they asked for it");
+  });
+
   it("names the source and how strong the match was", () => {
     expect(
       provenanceLabel(pick({ sources: ["tmdb_similar"], affinity: 1.0 })),

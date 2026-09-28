@@ -21,7 +21,7 @@ POST /api/setup/probe · POST /api/setup/link · GET/PUT /api/setup/state
 ## Users
 
 ```
-GET  /api/users · PATCH /api/users/{id} {enabled?, manage_sharing?, request_tag?, prefs?} — a `prefs` key sent as `null` CLEARS that preference. Only the keys actually present are touched: an omitted key keeps its stored value, so a partial write cannot wipe the rest. · DELETE /api/users/{id} (only for someone plex.tv no longer lists: drops their picks and run history and hides them from the list; keeps the users row and their pre-Shortlist share-filter snapshot, which uninstall restores from — 409 for anyone still on the share) · POST /api/users/sync (shared + Home users from plex.tv, plus the server owner, whom that list never returns)
+GET  /api/users · PATCH /api/users/{id} {enabled?, manage_sharing?, request_tag?, requested_by_tag?, prefs?} — `requested_by_tag` (string, max 64, default "") is a Radarr/Sonarr tag credited to this person by a "Your requests" row when it fits no row's tag pattern; "" clears it, and a tag two people both claim credits neither. A `prefs` key sent as `null` CLEARS that preference. Only the keys actually present are touched: an omitted key keeps its stored value, so a partial write cannot wipe the rest. · DELETE /api/users/{id} (only for someone plex.tv no longer lists: drops their picks and run history and hides them from the list; keeps the users row and their pre-Shortlist share-filter snapshot, which uninstall restores from — 409 for anyone still on the share) · POST /api/users/sync (shared + Home users from plex.tv, plus the server owner, whom that list never returns)
 POST /api/users/set-enabled {enabled} (bulk enable/disable every user at once)
 ```
 
@@ -177,6 +177,15 @@ GET  /api/collections/{id}/effectiveness -> {delivered, watched, finished, first
      in that library (favourites by their Plex rating, then titles close to tonight's taste, then longest unseen), and its candidate pool supplies
      only the unseen top-up — the same pool a 0% row uses, so the two share one gather.
      `rewatch_cooldown_days` (int 0–365, default 30) leaves out anything finished within that many days, on a rewatch row only; 0 disables it.
+     `requests_row` (bool, default false) makes a "Your requests" row: the titles this person asked for in Overseerr, or that carry their requester
+     tag in Radarr/Sonarr, that are on Plex and unwatched — newest arrival first, no candidates, no curation, no padding. The sources are
+     whichever of Overseerr, Radarr and Sonarr have a URL and key in Settings → Connections, whatever `requests.*` says. Refused (422) with
+     `build: "shared"`, with `rewatch`, or with `seasons`; PATCH validates the merged row, so none can be reached one field at a time. A person
+     with nothing ready in a library has that collection REMOVED, only on a run where every source was read in full.
+     `requests_window_days` (int 0–3650, default 90) drops titles that arrived more than that many days ago; 0 keeps every title until watched.
+     `requests_tag_pattern` (string, max 128, default "") credits Radarr/Sonarr tags matching the pattern to the person it renders for: it must
+     contain `{username}` (their Plex username) or `{name}` (their Shortlist display name); matching is case-insensitive with spaces read as
+     dashes. Overseerr's own `<user id>-<username>` tags are read regardless, and a tag two people render to credits neither.
      `description` (string, max 2000, default "") is the collection's Plex summary, filled per collection with `{user}`/`{library_name}`/`{top_seed}`.
      `sort_title_prefix` (string, max 64, default "") makes the collection's Plex sort title prefix + the row's current name; it orders the
      library's Collections tab, not Home. "" on either leaves that field on Plex alone, and whitespace alone is stored as "". Both reach Plex on the
@@ -226,6 +235,12 @@ GET  /api/runs?limit=&collection=&before_id= (newest first; `before_id` pages ba
 
 ```
 GET  /api/requests?wanted_by=&wanted_by= (the inbox, pending first then sent then rejected, capped at 500 rows; `wanted_by` repeats one `wanters` username per value and keeps a title any of them wanted — applied BEFORE the cap, so picking a name searches the whole history rather than the 500 the page loaded; omitted = everyone) · GET /api/requests/status -> {statuses: {request_id: "downloaded"|"downloading"|"queued"|"unmonitored"|null}, radarr: "ok"|"unreachable"|"off", sonarr: same} (live Sonarr/Radarr status for WAITING and SENT items — rejected are skipped; null = the app is fine and doesn't track it, which is why `radarr`/`sonarr` report reachability separately: an app that never answered would otherwise be indistinguishable from one with nothing to say. Fetched separately so the list itself makes no Arr calls, and read from whole-library maps so the cost doesn't scale with inbox size — which is what makes the inbox's poll cheap — it runs every 10s only while a title is actually downloading, and every 30s while an app is unreachable so the badge clears itself when it comes back; a settled inbox does not poll at all) · POST /api/requests/send {ids, dry_run?} · POST /api/requests/reject {ids} (permanent) · POST /api/requests/restore {ids} (un-reject → back to Waiting) · POST /api/requests/delete {ids} (removable; can re-surface) · POST /api/requests/clear {ids} (hide SENT items from the log without un-sending — the tombstone stays so the title isn't re-requested)
+GET  /api/requests/row-sources?pattern= -> {overseerr, radarr, sonarr: "connected"|"unreachable"|"off", complete, problems[], seerr_requests, seerr_requesters, seerr_linked, servers[{kind, name, is4k, tag_requests}], tagged_movies, tagged_shows, people[{user_id, display_name, linked, ready}], tags[{label, source: "overseerr"|"pattern"|"override", user_id, display_name, titles, ambiguous}]}
+     The "Your requests" row's setup check, behind the Row editor's sources panel and the Users page's Requests column. Read-only: it reads every
+     configured source once and writes nothing. `pattern` (max 200) previews an own-tag pattern such as `req-{username}` — the row's Check
+     button — and `tags` lists every requester tag found with who it resolved to. `servers` is each Radarr/Sonarr server Overseerr sends to and
+     whether its Tag Requests option is on. `complete` is false when a configured source could not be read, with the reason in `problems`
+     and that source reported `unreachable` — never a 500, because this screen exists to show what is wrong.
 ```
 
 ## Events and notifications

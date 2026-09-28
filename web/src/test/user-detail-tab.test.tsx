@@ -4,13 +4,44 @@ import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
 import { UserDetailBody } from "@/pages/user-detail";
-import type { User } from "@/lib/types";
+import type { User, UserRow } from "@/lib/types";
 
-// The page pulls several panels, each with its own query. None of them is what this file is about —
-// it tests which TAB the URL selects — so the api is stubbed wholesale and the panels render empty.
+// The page pulls several panels, each with its own query. Only the rows list serves anything (for
+// the row-card tests below); every other call is stubbed to an empty list, since the tab tests
+// only care which TAB the URL selects.
+const { userRows } = vi.hoisted(() => ({ userRows: { current: [] as unknown[] } }));
 vi.mock("@/lib/api", () => ({
-  api: new Proxy({}, { get: () => () => Promise.resolve([]) }),
+  api: new Proxy(
+    {},
+    {
+      get: (_target, name) => {
+        if (name === "getUserRows") return () => Promise.resolve(userRows.current);
+        // A row card asks whether hit rates have matured, which reads into the report's shape.
+        if (name === "getReport") return () => Promise.resolve({ first_pick: null, overall: { landing: {} } });
+        return () => Promise.resolve([]);
+      },
+    },
+  ),
 }));
+
+/** One of the person's rows as the server lists it, with no picks. */
+function userRow(patch: Partial<UserRow>): UserRow {
+  return {
+    collection_id: 5,
+    slug: "your-requests",
+    name: "📬 {library_name} you asked for",
+    library: "Movies",
+    section_key: "1",
+    media: "movie",
+    size: 20,
+    recent_count: 8,
+    is_default: false,
+    muted: false,
+    override: { row_size: null, recent_count: null, muted: null },
+    picks: [],
+    ...patch,
+  } as UserRow;
+}
 
 const USER = {
   id: 1,
@@ -69,5 +100,25 @@ describe("UserDetailBody — which tab the URL selects", () => {
     renderAt("/users/1?tab=nonsense");
 
     expect(screen.getByText(/Their personal rows/i)).toBeTruthy();
+  });
+});
+
+describe("UserDetailBody — how a row card names its row", () => {
+  it("fills {library_name} with the card's own library, instead of printing the token and the library both", async () => {
+    // The card knows exactly which library it is — it said so in a "— Movies" suffix, right after
+    // the literal "{library_name}" it could have filled.
+    userRows.current = [userRow({})];
+    renderAt("/users/1");
+
+    expect(await screen.findByText("📬 Movies you asked for")).toBeInTheDocument();
+    expect(screen.queryByText(/\{library_name\}/)).toBeNull();
+    expect(screen.queryByText(/— Movies/)).toBeNull();
+  });
+
+  it("keeps the library suffix on a row whose name does not mention its library", async () => {
+    userRows.current = [userRow({ name: "✨ Picked for You", collection_id: 6 })];
+    renderAt("/users/1");
+
+    expect(await screen.findByText("✨ Picked for You — Movies")).toBeInTheDocument();
   });
 });

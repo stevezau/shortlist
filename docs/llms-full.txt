@@ -692,15 +692,15 @@ Start a row from a template, name it, choose how its titles are ordered, and pic
 ## Starting from a template
 
 **Rows → Add a row** opens a gallery rather than a blank form: _Picked for You_, _Because you
-watched…_, _Watch it again_, _Fresh finds_, _Seasonal_, _From the vault_, _Popular on this
-server_, _Movie night_, _More TV to watch_, and _Start from scratch_. Each tile names the two or three settings it
+watched…_, _Watch it again_, _Your requests_, _Fresh finds_, _Seasonal_, _From the vault_, _Popular
+on this server_, _Movie night_, _More TV to watch_, and _Start from scratch_. Each tile names the two or three settings it
 changes, so picking one also shows you which knobs matter. Nothing is locked in. Every field is
 editable afterwards — including the row's kind, see [Row kinds](#row-kinds) below — and the template
 is not stored on the row.
 
 ## Row kinds
 
-Every row is one of five kinds. The **Row editor** shows a "What kind of row is this?" picker under
+Every row is one of six kinds. The **Row editor** shows a "What kind of row is this?" picker under
 **How it looks on Plex**; each kind fills the row in a different way, and picking one changes which
 settings appear below it, so you're never hunting for a setting that doesn't apply to what your row
 does:
@@ -709,16 +709,19 @@ does:
 - **Because you watched** — More like one thing they watched recently. Named after it, like "Because
   you watched Dune".
 - **Watch it again** — Favourites they've already finished, ready to rewatch.
+- **Your requests** — What they asked for in Overseerr, once it's on Plex. Each title leaves once
+  they've watched it. See [Your requests rows](#your-requests-rows) below.
 - **Seasonal** — Only appears around the holidays you pick, like Halloween or Christmas. Filled in any
-  of the ways above.
+  of the ways above, except Your requests.
 - **Popular on this server** — What lots of people here are watching. Everyone sees the same row.
 
-**Seasonal isn't a sixth way of filling a row** — it's a schedule wrapped around one of the other
-four. Pick it, choose which seasons the row follows, then choose **how it's filled**: Picked for You,
+**Seasonal isn't another way of filling a row** — it's a schedule wrapped around one of four of the
+others. Pick it, choose which seasons the row follows, then choose **how it's filled**: Picked for You,
 Because you watched, Watch it again, or Popular on this server. The settings for whichever fill you
 pick then show underneath, exactly as they would if the row weren't seasonal at all — so every
 combination (a seasonal "Because you watched" row, a seasonal shared row, and so on) stays reachable.
-See [Seasonal rows](#seasonal-rows) below.
+A Your requests row is the one kind that can't be seasonal: a request lands when it lands, so no
+season decides whether the row shows. See [Seasonal rows](#seasonal-rows) below.
 
 The default row can't be Seasonal — its name is the one every person's everyday row uses — so the
 picker shows Seasonal disabled there, with an explanation. Every other kind is still available on the
@@ -908,6 +911,68 @@ make sense for new suggestions don't apply here and don't show: **Already-watche
 point of this kind is titles they HAVE watched) and **Only series they haven't started** (the opposite
 of a rewatch row). A fill-up title can still be requested if your library doesn't have it — see
 [Requests on a row](#requests-on-a-row) below.
+
+## Your requests rows
+
+Choose **Your requests** as a row's kind — or start from the _Your requests_ template — and each
+person gets a private row of the titles **they** asked for that are now on Plex and they haven't
+watched yet, newest arrival first. Nothing is recommended, ranked or padded, and no AI is involved:
+the row is exactly what they asked for, or nothing. A title leaves the row once they've watched it,
+and a person with nothing ready has no row at all — theirs is taken off Plex rather than left holding
+titles they've already seen.
+
+**Where requests are read from.** Two sources, both read whenever their address and key are filled
+in under **Settings › Connections** — whether or not Shortlist's own requests are switched on, and
+wherever those go:
+
+- **Overseerr's request list** (Jellyseerr and Seerr too). A request counts once it's approved, and
+  shows in the row once the title is on Plex.
+- **Radarr and Sonarr requester tags.** Overseerr can stamp every title it sends with a tag naming who
+  asked for it, like `12-sarah`. Shortlist reads those tags and traces them back to the person through
+  Overseerr's user list. The tag stays on the title after the request is gone, so **deleting a filled
+  request in Overseerr is fine** — the title stays in the row, and Overseerr still remembers when it
+  arrived.
+
+To get those tags, turn on **Tag Requests** in Overseerr under _Settings → Services_, on each Radarr
+and Sonarr server it sends to. Only titles requested **after** that switch was turned on carry a tag;
+requests made before it are covered by Overseerr's own list for as long as they're still in it. The
+editor's **Where requests are read from** panel shows each source's state, whether Tag Requests is on
+for each server, how many titles the tags credit to someone, and how many people on your server are
+linked to an Overseerr account.
+
+**People are matched by Plex account, and nothing else.** An Overseerr account is linked to a person
+when it signed in with the same Plex account; a tag names that account through Overseerr. A tag that
+fits nobody, or that two people could both claim, is ignored and listed in the panel, because a wrong
+guess would put one person's requests in another person's private row. The **Users** page has a
+**Requests** column that says where each person stands: **Linked**, **No account** (nobody in
+Overseerr signed in as them), **Can't use Overseerr** (a Home profile can't sign in to Overseerr at
+all), or the tag they've been given by hand.
+
+**Use my own tags.** If you tag requests yourself in Radarr/Sonarr rather than through Overseerr,
+open **Use my own tags** in the editor and give the row a **tag pattern** such as `req-{username}`:
+`{username}` is their Plex username, `{name}` their name in Shortlist. Matching ignores case, and
+spaces count as dashes, which is how Radarr and Sonarr store a tag. Press **Check** to see every tag
+the pattern (or Overseerr) matched and who it belongs to, before anything is saved. For a tag that
+fits no pattern, a person's own page has **Their request tag in Radarr/Sonarr**, which credits that
+one tag to them. Overseerr's tags are still read alongside either. Titles Shortlist requested itself —
+carrying its own request tag, or filed by the **Request as** account in Overseerr — never count as
+anyone's request.
+
+**Which requests show up.** **Show titles that landed in the last** (default 90 days) drops older
+arrivals, so a request they've lost interest in doesn't sit there for good; 0 keeps every title until
+they've watched it. Beyond that the row uses the same **Libraries**, **Row size** and schedule
+settings as any other row. A show counts as ready when the season they asked for has landed (from
+Overseerr) or when it has episodes they haven't watched (from a tag), and a title their Plex
+restrictions hide from them stays out. A run's **How we picked** page has a **What they asked for**
+step listing every request and where it ended up: in the row, not on Plex yet, that season hasn't
+landed, already watched, landed more than N days ago, hidden by their Plex restrictions, or past the
+row size.
+
+A requests row is private the same way every per-person row is — see
+[How rows stay private](https://shortlistapp.dev/reference/concepts/#how-rows-stay-private). Because the row disappears
+when a person has nothing ready, each run costs one collections listing per library per person with
+an empty row, to check there is nothing left to remove. It is only ever removed on a night every
+request source was read in full: if Overseerr or an Arr is down, every row stays as it was.
 
 ## Seasonal rows
 
@@ -1810,6 +1875,23 @@ does not auto-approve, so the choice stays yours.
 
 Everything else is unchanged: the same guardrails, the same auto-send bar, the same inbox. The only
 difference is who does the fetching.
+
+### A row of what they asked for
+
+The other direction is a row: a **Your requests** row kind puts what each person asked for in
+Overseerr — once it's on Plex and until they've watched it — in a private row of their own, newest
+arrival first. It reads Overseerr, Radarr and Sonarr whenever their address and key are set on this
+Connections screen, whether or not Shortlist sends requests of its own, so it works on a server where
+people request and Shortlist never does. How the row is set up, matched to people and emptied is in
+[Rows → Your requests rows](https://shortlistapp.dev/guides/rows/#your-requests-rows). Three things to know from this side:
+
+- **Turn on Tag Requests in Overseerr** (_Settings → Services_, on each Radarr and Sonarr server) so
+  each title it sends carries a tag naming who asked for it. Only requests made after that switch is on
+  carry one; earlier requests are still covered by Overseerr's own list while they remain in it.
+- **Deleting a filled request in Overseerr is fine.** The tag stays on the title in Radarr/Sonarr, and
+  Overseerr keeps the date it arrived, so the row is unchanged.
+- **Shortlist's own requests never count.** A title carrying Shortlist's request tag, or filed by the
+  **Request as** account above, is not treated as anyone's request.
 
 ### The Requests inbox
 
@@ -2808,7 +2890,7 @@ POST /api/setup/probe · POST /api/setup/link · GET/PUT /api/setup/state
 ## Users
 
 ```
-GET  /api/users · PATCH /api/users/{id} {enabled?, manage_sharing?, request_tag?, prefs?} — a `prefs` key sent as `null` CLEARS that preference. Only the keys actually present are touched: an omitted key keeps its stored value, so a partial write cannot wipe the rest. · DELETE /api/users/{id} (only for someone plex.tv no longer lists: drops their picks and run history and hides them from the list; keeps the users row and their pre-Shortlist share-filter snapshot, which uninstall restores from — 409 for anyone still on the share) · POST /api/users/sync (shared + Home users from plex.tv, plus the server owner, whom that list never returns)
+GET  /api/users · PATCH /api/users/{id} {enabled?, manage_sharing?, request_tag?, requested_by_tag?, prefs?} — `requested_by_tag` (string, max 64, default "") is a Radarr/Sonarr tag credited to this person by a "Your requests" row when it fits no row's tag pattern; "" clears it, and a tag two people both claim credits neither. A `prefs` key sent as `null` CLEARS that preference. Only the keys actually present are touched: an omitted key keeps its stored value, so a partial write cannot wipe the rest. · DELETE /api/users/{id} (only for someone plex.tv no longer lists: drops their picks and run history and hides them from the list; keeps the users row and their pre-Shortlist share-filter snapshot, which uninstall restores from — 409 for anyone still on the share) · POST /api/users/sync (shared + Home users from plex.tv, plus the server owner, whom that list never returns)
 POST /api/users/set-enabled {enabled} (bulk enable/disable every user at once)
 ```
 
@@ -2964,6 +3046,15 @@ GET  /api/collections/{id}/effectiveness -> {delivered, watched, finished, first
      in that library (favourites by their Plex rating, then titles close to tonight's taste, then longest unseen), and its candidate pool supplies
      only the unseen top-up — the same pool a 0% row uses, so the two share one gather.
      `rewatch_cooldown_days` (int 0–365, default 30) leaves out anything finished within that many days, on a rewatch row only; 0 disables it.
+     `requests_row` (bool, default false) makes a "Your requests" row: the titles this person asked for in Overseerr, or that carry their requester
+     tag in Radarr/Sonarr, that are on Plex and unwatched — newest arrival first, no candidates, no curation, no padding. The sources are
+     whichever of Overseerr, Radarr and Sonarr have a URL and key in Settings → Connections, whatever `requests.*` says. Refused (422) with
+     `build: "shared"`, with `rewatch`, or with `seasons`; PATCH validates the merged row, so none can be reached one field at a time. A person
+     with nothing ready in a library has that collection REMOVED, only on a run where every source was read in full.
+     `requests_window_days` (int 0–3650, default 90) drops titles that arrived more than that many days ago; 0 keeps every title until watched.
+     `requests_tag_pattern` (string, max 128, default "") credits Radarr/Sonarr tags matching the pattern to the person it renders for: it must
+     contain `{username}` (their Plex username) or `{name}` (their Shortlist display name); matching is case-insensitive with spaces read as
+     dashes. Overseerr's own `<user id>-<username>` tags are read regardless, and a tag two people render to credits neither.
      `description` (string, max 2000, default "") is the collection's Plex summary, filled per collection with `{user}`/`{library_name}`/`{top_seed}`.
      `sort_title_prefix` (string, max 64, default "") makes the collection's Plex sort title prefix + the row's current name; it orders the
      library's Collections tab, not Home. "" on either leaves that field on Plex alone, and whitespace alone is stored as "". Both reach Plex on the
@@ -3013,6 +3104,12 @@ GET  /api/runs?limit=&collection=&before_id= (newest first; `before_id` pages ba
 
 ```
 GET  /api/requests?wanted_by=&wanted_by= (the inbox, pending first then sent then rejected, capped at 500 rows; `wanted_by` repeats one `wanters` username per value and keeps a title any of them wanted — applied BEFORE the cap, so picking a name searches the whole history rather than the 500 the page loaded; omitted = everyone) · GET /api/requests/status -> {statuses: {request_id: "downloaded"|"downloading"|"queued"|"unmonitored"|null}, radarr: "ok"|"unreachable"|"off", sonarr: same} (live Sonarr/Radarr status for WAITING and SENT items — rejected are skipped; null = the app is fine and doesn't track it, which is why `radarr`/`sonarr` report reachability separately: an app that never answered would otherwise be indistinguishable from one with nothing to say. Fetched separately so the list itself makes no Arr calls, and read from whole-library maps so the cost doesn't scale with inbox size — which is what makes the inbox's poll cheap — it runs every 10s only while a title is actually downloading, and every 30s while an app is unreachable so the badge clears itself when it comes back; a settled inbox does not poll at all) · POST /api/requests/send {ids, dry_run?} · POST /api/requests/reject {ids} (permanent) · POST /api/requests/restore {ids} (un-reject → back to Waiting) · POST /api/requests/delete {ids} (removable; can re-surface) · POST /api/requests/clear {ids} (hide SENT items from the log without un-sending — the tombstone stays so the title isn't re-requested)
+GET  /api/requests/row-sources?pattern= -> {overseerr, radarr, sonarr: "connected"|"unreachable"|"off", complete, problems[], seerr_requests, seerr_requesters, seerr_linked, servers[{kind, name, is4k, tag_requests}], tagged_movies, tagged_shows, people[{user_id, display_name, linked, ready}], tags[{label, source: "overseerr"|"pattern"|"override", user_id, display_name, titles, ambiguous}]}
+     The "Your requests" row's setup check, behind the Row editor's sources panel and the Users page's Requests column. Read-only: it reads every
+     configured source once and writes nothing. `pattern` (max 200) previews an own-tag pattern such as `req-{username}` — the row's Check
+     button — and `tags` lists every requester tag found with who it resolved to. `servers` is each Radarr/Sonarr server Overseerr sends to and
+     whether its Tag Requests option is on. `complete` is false when a configured source could not be read, with the reason in `problems`
+     and that source reported `unreachable` — never a 500, because this screen exists to show what is wrong.
 ```
 
 ## Events and notifications

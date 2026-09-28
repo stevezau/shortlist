@@ -50,6 +50,9 @@ const SUBSET_ROW: Collection = {
   watched_pct: null,
   rewatch: false,
   rewatch_cooldown_days: 30,
+  requests_row: false,
+  requests_window_days: 90,
+  requests_tag_pattern: "",
   unstarted_only: false,
   refresh_days: null,
   idle_hold_days: null,
@@ -135,6 +138,7 @@ describe("RowsPage", () => {
         history_depth: 10,
         last_run_at: null,
         request_tag: "",
+        requested_by_tag: "",
         hit_rate: null,
       },
     ]);

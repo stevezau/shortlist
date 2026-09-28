@@ -8,7 +8,9 @@ import {
   sourceRole,
   watchedSummary,
   orderingRows,
+  requestFoundInLabel,
   requestNote,
+  requestResultLabel,
   shortlistBreakdown,
   webMechanism,
 } from "@/lib/trace";
@@ -294,6 +296,32 @@ describe("plain-English trace helpers", () => {
       "hidden by their Plex restrictions",
     );
     expect(fateLabel("not_in_season")).toBe("not a film for the season");
+  });
+
+  it("requestResultLabel says what became of each request, and nothing for an unknown result", () => {
+    expect(requestResultLabel("in_row")).toBe("In the row");
+    expect(requestResultLabel("not_on_plex")).toBe("Not on Plex yet");
+    expect(requestResultLabel("season_not_landed")).toBe(
+      "That season hasn’t landed",
+    );
+    expect(requestResultLabel("watched")).toBe("Already watched");
+    expect(requestResultLabel("too_old")).toBe("Landed too long ago");
+    expect(requestResultLabel("too_old", 90)).toBe(
+      "Landed more than 90 days ago",
+    );
+    expect(requestResultLabel("hidden")).toBe(
+      "Hidden by their Plex restrictions",
+    );
+    expect(requestResultLabel("over_size")).toBe("Past the row size");
+    expect(requestResultLabel("something_new")).toBe("");
+  });
+
+  it("requestFoundInLabel names Overseerr, the tag, or both", () => {
+    expect(requestFoundInLabel(["overseerr"])).toBe("Overseerr");
+    expect(requestFoundInLabel(["tag"])).toBe("tag");
+    expect(requestFoundInLabel(["overseerr", "tag"])).toBe("Overseerr, tag");
+    expect(requestFoundInLabel(["tag", "overseerr"])).toBe("Overseerr, tag");
+    expect(requestFoundInLabel([])).toBe("");
   });
 
   it("sourceRole describes each source's real query shape", () => {

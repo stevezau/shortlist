@@ -15,6 +15,7 @@ import {
   Globe,
   History,
   Filter,
+  Inbox,
   ListOrdered,
   Search,
   X,
@@ -26,8 +27,18 @@ import { useParams } from "react-router";
 
 import { BackLink } from "@/components/back-link";
 import { EmptyState, QueryBoundary } from "@/components/query-boundary";
+import { RowName } from "@/components/rows/row-name";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { formatDate, plural } from "@/lib/format";
 import { provenanceLabel, sourceLabel } from "@/lib/pick-provenance";
 import { Button } from "@/components/ui/button";
 import {
@@ -41,7 +52,9 @@ import {
   buildLibraries,
   fateLabel,
   orderingRows,
+  requestFoundInLabel,
   requestNote,
+  requestResultLabel,
   shortlistBreakdown,
   mediaGroupLabel,
   mediaLabel,
@@ -56,6 +69,7 @@ import type {
   RunLibraryBreakdown,
   RunUserTraceResponse,
   TraceRatings,
+  TraceRequest,
   TraceRequestOutcome,
   TraceReturn,
   TraceSeed,
@@ -102,15 +116,26 @@ export function RunUserTracePage() {
         collections.data?.find((row) => row.slug === rowSlug)?.name ?? "",
       ) || undefined
     : undefined;
-  // Every row's name by slug, for the same reason and by the same rule: the trace's own
-  // `selection` entries carry slugs, and printing one in prose reads as a stray token.
+  // Every row's configured name by slug, for the same reason: the trace's own `selection` entries
+  // carry slugs, and printing one in prose reads as a stray token. Kept as the template — each
+  // section below is one library's story, so `RowName` fills `{library_name}` there.
   const rowNames = useMemo(
     () =>
       Object.fromEntries(
-        (collections.data ?? []).flatMap((row) => {
-          const name = rowDisplayName(row.name);
-          return name ? [[row.slug, name] as const] : [];
-        }),
+        (collections.data ?? []).flatMap((row) =>
+          row.name.trim() ? [[row.slug, row.name] as const] : [],
+        ),
+      ),
+    [collections.data],
+  );
+  // Each row's request window by slug, so a request dropped as `too_old` can say how many days the
+  // row keeps a landed title — the trace records the verdict, not the setting behind it.
+  const rowWindows = useMemo(
+    () =>
+      Object.fromEntries(
+        (collections.data ?? []).map(
+          (row) => [row.slug, row.requests_window_days] as const,
+        ),
       ),
     [collections.data],
   );
@@ -141,6 +166,7 @@ export function RunUserTracePage() {
               userId={uid}
               rowName={rowName}
               rowNames={rowNames}
+              rowWindows={rowWindows}
               sharedRow={isRow}
             />
           )}
@@ -175,6 +201,7 @@ export function TraceView({
   userId,
   rowName,
   rowNames = {},
+  rowWindows = {},
   sharedRow = false,
 }: {
   data: RunUserTraceResponse;
@@ -186,6 +213,9 @@ export function TraceView({
   /** Every row's name by SLUG, for the shortlist and delivery lines — the trace records slugs.
    *  Optional so the view still renders standalone; unknown slugs fall back to the slug itself. */
   rowNames?: Record<string, string>;
+  /** Each requests row's `requests_window_days` by slug, for the "landed more than N days ago"
+   *  verdict. Optional: without it the window is described, not counted. */
+  rowWindows?: Record<string, number>;
   /** A shared row belongs to nobody, so the person-framed copy in this view is wrong for it. */
   sharedRow?: boolean;
 }) {
@@ -247,6 +277,7 @@ export function TraceView({
                   (e) => e.library === current.label,
                 )}
                 rowNames={rowNames}
+                rowWindows={rowWindows}
               />
             )}
           </>
@@ -377,10 +408,16 @@ function ShortlistTitles({ lib }: { lib: LibraryView }): ReactNode {
  * lines below lead with it in bold — so a row configured as "✨ {library_name} Picked for You"
  * announced itself as **picked** in the middle of a sentence written for a person. `rowNames` is
  * the collections list keyed by slug; the slug remains the fallback for a row that has since been
- * deleted, where there is no name left to show.
+ * deleted, where there is no name left to show. The entry is one library's, so that library fills
+ * `{library_name}` — "📬 Movies you asked for", not "📬 you asked for".
  */
-function rowLabel(slug: string, rowNames: Record<string, string>): string {
-  return rowNames[slug] || slug;
+function rowLabel(entry: TraceSelection, rowNames: Record<string, string>): ReactNode {
+  return (
+    <RowName
+      name={rowNames[entry.row] || entry.row}
+      libraryName={entry.library}
+    />
+  );
 }
 
 /** What the release-date weight and the pool cap did to this library's shortlist. */
@@ -394,7 +431,7 @@ function shortlistBody(
       {entries.map((entry) => (
         <li key={entry.row} className="space-y-1 text-sm">
           <p>
-            <span className="font-medium">{rowLabel(entry.row, rowNames)}</span>
+            {rowLabel(entry, rowNames)}
             {entry.candidates != null && (
               <>
                 {" — "}
@@ -428,7 +465,7 @@ function deliveryNote(
     <ul className="mb-3 space-y-1.5 text-sm">
       {entries.map((entry) => (
         <li key={entry.row}>
-          <span className="font-medium">{rowLabel(entry.row, rowNames)}</span>{" "}
+          {rowLabel(entry, rowNames)}{" "}
           <span
             className={
               entry.decision === "carried_forward" ||
@@ -485,6 +522,8 @@ function cadenceLine(entry: TraceSelection): string {
       return entry.rewatch
         ? "— too little watch history to search from, so the server's top-rated titles stand in for new suggestions."
         : "— too little watch history, so it was filled from the server's top-rated titles.";
+    case "requests":
+      return "— their own requests that have landed, newest first; nothing is searched for or ranked. “What they asked for” above lists every one.";
     default:
       return "— built fresh.";
   }
@@ -594,12 +633,14 @@ function LibraryFlow({
   ratings,
   selection = [],
   rowNames = {},
+  rowWindows = {},
   sharedRow = false,
 }: {
   lib: LibraryView;
   userId?: number;
   ratings?: TraceRatings;
   selection?: TraceSelection[];
+  rowWindows?: Record<string, number>;
   /** Row slug → the row's configured name, so the shortlist and delivery lines can name a row the
    *  way the owner does rather than by its slug. Empty is safe: the slug is the fallback. */
   rowNames?: Record<string, string>;
@@ -616,6 +657,30 @@ function LibraryFlow({
   // no taste-based ranking to explain — the flow says that plainly instead of implying a search that
   // never ran. Detected from the only source being `cold_start`.
   const isCold = lib.sources.some((s) => s.source === "cold_start");
+  // A Your requests row searches nothing: its titles are whatever they asked for that has landed. So
+  // it gets one step of its own, and when it is the ONLY row in this library the watched/searched/
+  // shortlisted/ordered steps are dropped — they would narrate a search that never ran. A library
+  // holding both kinds keeps the full flow and adds the requests step before delivery.
+  const requestEntries = selection.filter((e) => e.decision === "requests");
+  const pickEntries = selection.filter((e) => e.decision !== "requests");
+  const requestsOnly = requestEntries.length > 0 && pickEntries.length === 0;
+  const requestSteps: Omit<FlowStepDef, "n">[] = requestEntries.map(
+    (entry) => ({
+      id: `${lib.key}-requests-${entry.row}`,
+      icon: Inbox,
+      rail: "Asked for",
+      count: entry.delivered,
+      title: "What they asked for",
+      subtitle: `${plural(entry.candidates ?? entry.requests?.length ?? 0, "request")} looked at`,
+      body: (
+        <RequestsTable
+          requests={entry.requests ?? []}
+          // The run's own setting first: the row may have been edited since that night.
+          windowDays={entry.requests_window_days ?? rowWindows[entry.row]}
+        />
+      ),
+    }),
+  );
   // Seeds are now pure-recency: the distinct titles someone watched most recently, newest first —
   // which is exactly what the old "what they watched" panel showed. So the two panels were identical
   // and are merged into one. Seeds are the richer object (they carry recency + drive the search), so
@@ -640,9 +705,25 @@ function LibraryFlow({
       <RatedOutList watched={lib.watched} ratings={ratings} />
     </>
   );
+  const deliveredStep: Omit<FlowStepDef, "n"> = {
+    id: `${lib.key}-delivered`,
+    icon: ArrowRight,
+    rail: "Delivered",
+    count: deliveredCount,
+    title: `What we put in ${lib.label}, and why`,
+    body:
+      lib.delivered.length > 0 ? (
+        <>
+          {deliveryNote(selection, rowNames)}
+          <DeliveredList delivered={lib.delivered} />
+        </>
+      ) : (
+        <Muted>Nothing was delivered to this library this run.</Muted>
+      ),
+  };
   // Steps are numbered by position so the ranking step can be omitted for cold start without leaving a
   // gap in the sequence.
-  const defs: Omit<FlowStepDef, "n">[] = [
+  const pickSteps: Omit<FlowStepDef, "n">[] = [
     {
       id: `${lib.key}-watched`,
       icon: History,
@@ -688,20 +769,20 @@ function LibraryFlow({
     },
     // What SURVIVED, and what the release-date weight did to it. Between search and order because
     // that is where it happens: filtering and the pool cut decide what can be ordered at all.
-    ...(isCold || selection.length === 0
+    ...(isCold || pickEntries.length === 0
       ? []
       : [
           {
             id: `${lib.key}-shortlisted`,
             icon: Filter,
             rail: "Shortlisted",
-            count: selection[0]?.candidates,
+            count: pickEntries[0]?.candidates,
             title: "What survived, and what release date did to it",
             subtitle:
               "Everything found above is filtered (already watched, wrong library, excluded genres) and then cut to the strongest few per media type. Release date is part of that cut, not applied after it.",
             body: (
               <>
-                {shortlistBody(selection, rowNames)}
+                {shortlistBody(pickEntries, rowNames)}
                 <ShortlistTitles lib={lib} />
               </>
             ),
@@ -722,23 +803,10 @@ function LibraryFlow({
             body: <RankingExplainer lib={lib} />,
           },
         ]),
-    {
-      id: `${lib.key}-delivered`,
-      icon: ArrowRight,
-      rail: "Delivered",
-      count: deliveredCount,
-      title: `What we put in ${lib.label}, and why`,
-      body:
-        lib.delivered.length > 0 ? (
-          <>
-            {deliveryNote(selection, rowNames)}
-            <DeliveredList delivered={lib.delivered} />
-          </>
-        ) : (
-          <Muted>Nothing was delivered to this library this run.</Muted>
-        ),
-    },
   ];
+  const defs: Omit<FlowStepDef, "n">[] = requestsOnly
+    ? [...requestSteps, deliveredStep]
+    : [...pickSteps, ...requestSteps, deliveredStep];
   const steps: FlowStepDef[] = defs.map((def, i) => ({ ...def, n: i + 1 }));
 
   const active = useScrollSpy(steps.map((s) => s.id));
@@ -858,6 +926,69 @@ function FlowStep({ step }: { step: FlowStepDef }) {
 
 function Muted({ children }: { children: ReactNode }) {
   return <p className="text-sm text-muted-foreground">{children}</p>;
+}
+
+// ── A Your requests row: every request looked at, and what became of each ─────
+
+/** Every request the row considered for this library, in the order the engine recorded them (the
+ *  ones in the row first, newest landed first). Dates are day-only: "when did they ask" is a
+ *  calendar question, and a time of day would dress an estimate up as a timestamp. */
+function RequestsTable({
+  requests,
+  windowDays,
+}: {
+  requests: TraceRequest[];
+  /** The row's `requests_window_days`, when known — names the window in a `too_old` verdict. */
+  windowDays?: number;
+}) {
+  if (requests.length === 0) {
+    return (
+      <Muted>
+        Nothing of theirs was found in Overseerr or by their tag, so there was
+        nothing to put in the row.
+      </Muted>
+    );
+  }
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow className="hover:bg-transparent">
+          <TableHead>Title</TableHead>
+          <TableHead>Asked for</TableHead>
+          <TableHead>Landed</TableHead>
+          <TableHead>Found in</TableHead>
+          <TableHead>Result</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {requests.map((request) => (
+          <TableRow key={`${request.tmdb_id}:${request.media_type}`}>
+            <TableCell className="font-medium">{request.title}</TableCell>
+            {/* A date stays on one line: at phone width the table's own container scrolls, which
+                reads better than "Sep / 16, / 2026" stacked three high. */}
+            <TableCell className="whitespace-nowrap text-muted-foreground">
+              {formatDate(request.asked_at, { dateOnly: true })}
+            </TableCell>
+            <TableCell className="whitespace-nowrap text-muted-foreground">
+              {formatDate(request.landed_at, { dateOnly: true })}
+            </TableCell>
+            <TableCell className="text-muted-foreground">
+              {requestFoundInLabel(request.found_in)}
+            </TableCell>
+            <TableCell
+              className={cn(
+                request.result === "in_row"
+                  ? "text-success"
+                  : "text-muted-foreground",
+              )}
+            >
+              {requestResultLabel(request.result, windowDays) || request.result}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
 }
 
 // ── Stage 1: recent watches, newest first (the seeds we search from) ───────────

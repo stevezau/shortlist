@@ -58,7 +58,10 @@ export type RunRowPerson = {
  *  presenting it as a list of people left a shared row — which belongs to no person — nowhere to go. */
 export type RunRowGroup = {
   slug: string;
+  /** The row's name with its placeholders stripped: one stable string for sorting and prose. */
   title: string;
+  /** The row's configured name as-is, for the header, where `RowName` marks each placeholder. */
+  template: string;
   /** How many people this row still has to get through — 0 once everyone is done. */
   pending: number;
   /** The libraries this row actually delivered to, e.g. ["Movies", "TV Shows"]. */
@@ -144,8 +147,10 @@ export function groupRunByRow(
     }
   }
 
+  const templateFor = (slug: string): string =>
+    titles[slug] ?? delivered.get(slug) ?? slug;
   const nameFor = (slug: string): string =>
-    rowDisplayName(titles[slug] ?? delivered.get(slug) ?? slug) || slug;
+    rowDisplayName(templateFor(slug)) || slug;
 
   const groups = new Map<string, RunRowGroup>();
   const ensure = (slug: string, kind: RunRowGroup["kind"]): RunRowGroup => {
@@ -154,6 +159,7 @@ export function groupRunByRow(
       group = {
         slug,
         title: nameFor(slug),
+        template: templateFor(slug),
         pending: 0,
         libraries: [],
         kind,
@@ -217,12 +223,12 @@ export function groupRunByRow(
         libraries.push(entry.library_title);
       }
     }
+    const template = titles[row.collection_slug] ?? row.row_title ?? "";
     return {
       slug: row.collection_slug,
       pending: 0,
-      title:
-        rowDisplayName(titles[row.collection_slug] ?? row.row_title ?? "") ||
-        row.collection_slug,
+      title: rowDisplayName(template) || row.collection_slug,
+      template: template || row.collection_slug,
       libraries,
       kind: "shared" as const,
       people: [],
@@ -246,8 +252,10 @@ export function groupRunByRow(
       row.slug,
       row.build === "shared" ? "shared" : "per_person",
     );
-    if (row.title && group.title === row.slug)
+    if (row.title && group.title === row.slug) {
       group.title = rowDisplayName(row.title) || row.slug;
+      group.template = row.title;
+    }
   }
   // Everyone the run means to build for, as PENDING, until their own result lands. Without this a
   // per-person row opened mid-run showed "0 succeeded" and an empty list — the run page's whole job

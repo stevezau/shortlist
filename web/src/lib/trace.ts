@@ -308,6 +308,39 @@ export function fateLabel(fate: TraceFate): string {
   }
 }
 
+/** What became of one request a Your requests row looked at, in plain words. `windowDays` is the
+ *  row's `requests_window_days` when the caller knows it; without it the window is left unnamed. */
+export function requestResultLabel(result: string, windowDays?: number): string {
+  switch (result) {
+    case "in_row":
+      return "In the row";
+    case "not_on_plex":
+      return "Not on Plex yet";
+    case "season_not_landed":
+      return "That season hasn’t landed";
+    case "watched":
+      return "Already watched";
+    case "too_old":
+      return windowDays !== undefined
+        ? `Landed more than ${windowDays} days ago`
+        : "Landed too long ago";
+    case "hidden":
+      return "Hidden by their Plex restrictions";
+    case "over_size":
+      return "Past the row size";
+    default:
+      return "";
+  }
+}
+
+/** Where a request was found — Overseerr, the Radarr/Sonarr tag, or both — Overseerr first. */
+export function requestFoundInLabel(foundIn: string[]): string {
+  const names: string[] = [];
+  if (foundIn.includes("overseerr")) names.push("Overseerr");
+  if (foundIn.includes("tag")) names.push("tag");
+  return names.join(", ");
+}
+
 /** One title as the shortlist step shows it: what it is, and the numbers its verdict rested on. */
 export interface ShortlistTitle {
   tmdb_id: number;

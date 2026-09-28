@@ -123,6 +123,16 @@ describe("RunRowsTab", () => {
     expect(screen.getByText(/1 row wasn.t in this run/i)).toBeInTheDocument();
   });
 
+  it("marks {library_name} in the row header as a placeholder, the way the Rows page does", () => {
+    // The header spans every library the row built, so no one library's name can fill the token —
+    // and silently dropping it turned "📬 {library_name} you asked for" into "📬 you asked for".
+    renderTab();
+
+    const header = screen.getByRole("button", { name: /Picked for You/ });
+    expect(within(header).getByText("library name")).toBeInTheDocument();
+    expect(within(header).queryByText(/\{library_name\}/)).toBeNull();
+  });
+
   it("says which of the rows left out of the run were out of season", async () => {
     const detail = run();
     detail.users = detail.users.map((u) => ({

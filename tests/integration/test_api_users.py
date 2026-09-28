@@ -42,6 +42,7 @@ USER_KEYS = {
     "manage_sharing",
     "cold_start",
     "request_tag",
+    "requested_by_tag",
     "prefs",
     "history_depth",
     "last_run_at",
@@ -1527,3 +1528,13 @@ class TestUserPickOutcomes:
 
     def test_an_unknown_user_is_a_404(self, client: TestClient):
         assert client.get("/api/users/999999/outcomes").status_code == 404
+
+
+def test_requested_by_tag_round_trips(client: TestClient):
+    """The tag Overseerr/Radarr/Sonarr put on what this person asked for (issue #127) — stored
+    trimmed, and rendered back by the same serializer the Users list reads."""
+    users = client.get("/api/users").json()
+    uid = users[0]["id"]
+    r = client.patch(f"/api/users/{uid}", json={"requested_by_tag": " children "})
+    assert r.status_code == 200 and r.json()["requested_by_tag"] == "children"
+    assert next(u for u in client.get("/api/users").json() if u["id"] == uid)["requested_by_tag"] == "children"

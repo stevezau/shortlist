@@ -11,6 +11,7 @@ import type {
   NotificationsPage,
   WhatsNew,
   ArrOptions,
+  RowSources,
   SeerrOptions,
   Backup,
   PendingRestore,
@@ -497,6 +498,12 @@ export const api = {
    *  folders here — those are the *seerr's own business on that route. */
   getSeerrOptions: (): Promise<SeerrOptions> =>
     request("/api/settings/overseerr/options"),
+
+  /** The request sources a "Your requests" row can read, with a preview of the own-tag pattern.
+   *  Read-only on the server, but it reads every source in turn (dozens of external calls), so the
+   *  UI asks once on mount and then only when the owner presses Check. */
+  getRequestRowSources: (pattern: string): Promise<RowSources> =>
+    request(`/api/requests/row-sources${pattern ? `?pattern=${encodeURIComponent(pattern)}` : ""}`),
 
   /** Model ids a provider offers, for the model picker. The body carries the (possibly unsaved)
    *  provider + key/URL being edited so the list reflects the current form; blank fields fall back to

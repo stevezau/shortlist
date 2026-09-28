@@ -22,6 +22,7 @@ function user(overrides: Partial<User>): User {
     enabled: true,
     cold_start: false,
     request_tag: "",
+    requested_by_tag: "",
     prefs: {},
     history_depth: 0,
     last_run_at: null,

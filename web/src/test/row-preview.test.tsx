@@ -202,6 +202,18 @@ describe("the lines that are easy to get wrong", () => {
     expect(line("When they run out")).toHaveTextContent("New picks, matched to their last 12 watches");
   });
 
+  it("says which requests a Your requests row shows, with its window and own tags", () => {
+    renderPreview({ ...toInput(row()), requests_row: true, requests_window_days: 90, requests_tag_pattern: "req-{username}" });
+    expect(valueOf("Which requests")).toHaveTextContent(/landed in the last 90 days, newest first/);
+    expect(valueOf("Which requests")).toHaveTextContent(/req-\{username\}/);
+    // No pick order to choose, so the line says what the engine does instead.
+    expect(valueOf("Order")).toHaveTextContent("Newest arrival first, always");
+    renderPreview({ ...toInput(row()), requests_row: true, requests_window_days: 0 });
+    expect(screen.getAllByText("Which requests", { selector: "dt" })[1]?.parentElement).toHaveTextContent(
+      /Everything they asked for/,
+    );
+  });
+
   it("counts a Popular row's watchers", () => {
     renderPreview(toInput(row({ build: "shared", min_watchers: 3 })));
     expect(line("Counts")).toHaveTextContent("Only titles at least 3 people here have watched");
@@ -279,6 +291,14 @@ describe("requests, in one line", () => {
     });
     expect(line("Requests")).toHaveTextContent(/^RequestsNone — requests are off in Settings$/);
     expect(line("Requests")).toHaveAttribute("data-fact", "requests");
+  });
+
+  it("says a Your requests row asks for nothing, in its own words", () => {
+    // It is per-person, not shared, and the shared-row sentence explained the wrong thing: this row
+    // never searches, so there is nothing missing for it to ask for.
+    renderPreview({ ...toInput(row()), requests_row: true });
+    expect(line("Requests")).toHaveTextContent(/^RequestsNone — this row only shows what they already asked for$/);
+    expect(line("Requests")).not.toHaveAttribute("data-fact");
   });
 
   it("says a shared row asks for nothing, without claiming the hidden setting", () => {

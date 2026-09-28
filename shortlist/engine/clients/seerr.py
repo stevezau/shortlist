@@ -109,6 +109,15 @@ class SeerrError(RuntimeError):
     """
 
 
+class PartialRead(SeerrError):
+    """A paged walk ended short of what the server said it held.
+
+    Raised only by the reads that can take a row DOWN (`requests`, `user_plex_ids`): a title the walk
+    dropped reads as "nothing requested", and a person missing from the user list reads as "linked to
+    nobody" — either would remove rows on the strength of a read that did not happen.
+    """
+
+
 class SeerrClient:
     """Talks to one Overseerr/Jellyseerr instance. Mirrors the shape of ``_ArrClient``."""
 
@@ -263,6 +272,75 @@ class SeerrClient:
             )
         return out
 
+    def requests(self) -> list[dict]:
+        """Every request on the instance, newest first, as Seerr serialises them.
+
+        ``filter=all`` is explicit: the endpoint's default filter also says "all", but this read
+        exists to see DELETED-media and COMPLETED requests alike, so the intent is written down.
+        """
+        rows = self._paged("/request", filter="all", sort="added", strict=True)
+        return [r for r in rows if isinstance(r, dict)]
+
+    def user_plex_ids(self) -> dict[int, int | None]:
+        """Seerr user id -> ``plexId`` (None for a local account never linked to Plex).
+
+        The only identity Shortlist trusts: ``plexId`` is the same number as ``users.plex_account_id``
+        (fixture ``overseerr_requests_page.json``), so a request maps to a person with no name match.
+        """
+        out: dict[int, int | None] = {}
+        for row in self._paged("/user", permission=_MANAGE_USERS, strict=True):
+            if not isinstance(row, dict) or _int_or_none(row.get("id")) is None:
+                continue
+            out[int(row["id"])] = _int_or_none(row.get("plexId"))
+        return out
+
+    def arr_settings(self) -> dict[str, list[dict]]:
+        """The Radarr and Sonarr servers Seerr sends to, with each one's ``tagRequests`` switch.
+
+        ``tagRequests`` is absent from the published schema but real (fixture
+        ``overseerr_arr_settings.json``); it is what stamps ``<userId>-<name>`` on each item sent.
+        """
+        out: dict[str, list[dict]] = {}
+        for kind in ("radarr", "sonarr"):
+            payload = self._get(f"/settings/{kind}")
+            out[kind] = [s for s in payload if isinstance(s, dict)] if isinstance(payload, list) else []
+        return out
+
+    def media_dates(self) -> dict[tuple[str, int], dict]:
+        """``(mediaType, tmdbId)`` -> the dates a requests row orders by, for every media row Seerr holds.
+
+        Read when a tagged title's request is gone: Seerr keeps the media row (and ``mediaAddedAt``)
+        after a request is deleted, which is what lets an owner who tidies their queue still get
+        arrival order.
+
+        Keyed on Seerr's OWN ``mediaType`` (``movie`` / ``tv``), not Shortlist's, so the key is the
+        same literal string a request row's ``type`` carries and the two join without translation.
+        """
+        out: dict[tuple[str, int], dict] = {}
+        rows = self._paged("/media")
+        dropped = 0
+        for row in rows:
+            kind = row.get("mediaType") if isinstance(row, dict) else None
+            tmdb_id = _int_or_none(row.get("tmdbId")) if isinstance(row, dict) else None
+            if kind not in ("movie", "tv") or tmdb_id is None:
+                dropped += 1
+                continue
+            out[(kind, tmdb_id)] = {
+                "mediaAddedAt": row.get("mediaAddedAt"),
+                "lastSeasonChange": row.get("lastSeasonChange"),
+                "tvdbId": _int_or_none(row.get("tvdbId")),
+                "status": _int_or_none(row.get("status")),
+                "status4k": _int_or_none(row.get("status4k")),
+            }
+        if dropped:
+            logger.debug(
+                "{}: {} of {} media rows carried no usable mediaType + tmdbId — no arrival date for those titles",
+                self.app_name,
+                dropped,
+                len(rows),
+            )
+        return out
+
     def media_state(self) -> dict[tuple[str, int], str]:
         """Everything this instance knows about, as ``{(media_type, tmdb_id): status}``.
 
@@ -326,18 +404,24 @@ class SeerrClient:
             )
         return state
 
-    def _paged(self, path: str, *, permission: str = _MANAGE_REQUESTS) -> list[object]:
+    def _paged(
+        self, path: str, *, permission: str = _MANAGE_REQUESTS, strict: bool = False, **params: object
+    ) -> list[object]:
         """Walk a ``{pageInfo, results}`` endpoint to the end.
 
         ``pageInfo`` is believed over the size of the batch, because a server or proxy that CAPS
         ``take`` answers the whole question with page one: a short batch then looks exactly like the
         end of the list, and the walk returns 100 of 26,941 rows with every row perfectly usable, so
         nothing downstream can tell. `pageInfo` is in the same payload saying otherwise.
+
+        A short walk is WARNED about and returned by default — the lenient readers only ever hold a
+        request back or leave a date blank. ``strict=True`` raises :class:`PartialRead` instead, for
+        the readers whose answer can remove a row.
         """
         out: list[object] = []
         expected: int | None = None
         for _page in range(self._MAX_PAGES):
-            payload = self._get(path, permission=permission, take=self._PAGE_SIZE, skip=len(out))
+            payload = self._get(path, permission=permission, take=self._PAGE_SIZE, skip=len(out), **params)
             results = payload.get("results") if isinstance(payload, dict) else None
             batch = results if isinstance(results, list) else []
             info = payload.get("pageInfo") if isinstance(payload, dict) else None
@@ -353,22 +437,17 @@ class SeerrClient:
             if len(batch) < self._PAGE_SIZE:
                 return out
         else:
-            logger.warning(
-                "{}: {} paging hit the {}-page safety cap — reporting a partial list",
-                self.app_name,
-                path,
-                self._MAX_PAGES,
-            )
+            capped = f"{path} paging hit the {self._MAX_PAGES}-page safety cap"
+            if strict:
+                raise PartialRead(f"{self.app_name}: {capped} — the list is incomplete")
+            logger.warning("{}: {} — reporting a partial list", self.app_name, capped)
         if expected is not None and len(out) < expected:
             # The server said how many there were and we did not get them. Silence here is what a
             # take-capping proxy looks like, and it is indistinguishable from a small library.
-            logger.warning(
-                "{}: read {} of the {} rows {} says it has — the rest are invisible to this run",
-                self.app_name,
-                len(out),
-                expected,
-                path,
-            )
+            short = f"read {len(out)} of the {expected} rows {path} says it has"
+            if strict:
+                raise PartialRead(f"{self.app_name}: {short}")
+            logger.warning("{}: {} — the rest are invisible to this run", self.app_name, short)
         return out
 
     def blocklisted(self) -> set[tuple[str, int]]:

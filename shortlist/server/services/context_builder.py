@@ -40,6 +40,7 @@ from shortlist.engine.models import (
     PosterSpec,
     RequestConfig,
     RequestOverrides,
+    RequestSources,
     RowOverride,
     RowSpec,
     SeerrTarget,
@@ -513,6 +514,10 @@ class ContextBuilder:
                 may_delete_orphans=True,
                 handled_requests=self._handled_requests(session),
                 progress=progress,
+                # Everyone who could own a tag, not the run's scope and not only the enabled: the
+                # request ledger must see that a tag two people share is ambiguous even when one of
+                # them is disabled, paused or simply not in tonight's run.
+                roster=self.all_profiles(session),
             )
 
     def _build_mdblist(self, store: SettingsStore) -> MdbListClient | None:
@@ -596,6 +601,25 @@ class ContextBuilder:
             store = SettingsStore(session, self._secrets)
             tmdb = TmdbClient(store.get("tmdb.apikey"), cache=DbCache(self._sessions))
             return self._build_requests(store), tmdb
+
+    def build_request_sources_only(self) -> tuple[RequestSources | None, list[UserProfile], dict[int, int]]:
+        """What the requests-row setup check reads: the sources, the roster, and each person's DB id.
+
+        The third item maps ``plex_account_id`` -> ``users.id``, because a `UserProfile` carries only
+        the Plex id the engine keys on while the API answers in DB ids. No Plex/LLM/TMDB client is built:
+        the check reads Overseerr and the Arrs and nothing else.
+        """
+        with self._sessions() as session:
+            store = SettingsStore(session, self._secrets)
+            # The same roster the run resolves tags against, so the preview cannot show a tag as
+            # one person's that the run will read as ambiguous. A disabled person is still on the
+            # Users page, and their cell should not read "No account" because they are off.
+            profiles = self.all_profiles(session)
+            db_ids = {
+                u.plex_account_id: u.id
+                for u in session.query(User).filter(User.departed_at.is_(None), User.removed_at.is_(None)).all()
+            }
+            return self._build_request_sources(store), profiles, db_ids
 
     def user_history(self, user_id: int, *, limit: int = 25) -> list[dict] | None:
         """Recent watches for one user, newest first — the same source that feeds recommendations.
@@ -942,30 +966,47 @@ class ContextBuilder:
             # person can see anything.
             if user.restricted and user.restriction_profile:
                 continue
-            prefs = user.prefs or {}
-            if prefs.get("paused"):
+            if (user.prefs or {}).get("paused"):
                 continue
-            # The tag the owner typed on this person, if any. The AUTOMATIC alternative — their slug,
-            # under `requests.auto_user_tag` — is applied in the engine, not here: it is overridable
-            # per row, so it cannot be baked into one value that every row then shares.
-            request_tag = (user.request_tag or "").strip()
-            profiles.append(
-                UserProfile(
-                    username=user.username,
-                    plex_account_id=user.plex_account_id,
-                    user_type=UserType(user.user_type),
-                    slug=user.slug,
-                    nickname=user.nickname or user.friendly_name,
-                    excluded_genres=set(prefs.get("excluded_genres") or []),
-                    # Through the reader, not straight off prefs: the list holds bare ints on an
-                    # older install and records on a newer one, and the engine only wants ids.
-                    blocked_seeds=blocked_ids(prefs),
-                    row_name_template=prefs.get("row_name_tpl"),
-                    request_tag=request_tag,
-                    row_overrides=overrides.get(user.id, {}),
-                )
-            )
+            profiles.append(self._profile(user, overrides))
         return profiles
+
+    def all_profiles(self, session: Session) -> list[UserProfile]:
+        """Everyone who could own a requester tag: every user still on the server, enabled or not.
+
+        The request ledger resolves tags against this list. Disabling or pausing someone takes them
+        out of the run, not off their tag — so a tag two people share has to stay ambiguous while
+        one of them is switched off, or the other's private row fills with the disabled person's
+        requests. Only a person plex.tv stopped listing (`departed_at`) or the owner filed away
+        (`removed_at`) is off it. Someone here who is not in the run is harmless: the pipeline only
+        asks the ledger for the people it builds for.
+        """
+        overrides = self._row_overrides(session)
+        query = session.query(User).filter(User.departed_at.is_(None), User.removed_at.is_(None))
+        return [self._profile(user, overrides) for user in query.all()]
+
+    @staticmethod
+    def _profile(user: User, overrides: dict[int, dict[str, RowOverride]]) -> UserProfile:
+        prefs = user.prefs or {}
+        # The tag the owner typed on this person, if any. The AUTOMATIC alternative — their slug,
+        # under `requests.auto_user_tag` — is applied in the engine, not here: it is overridable
+        # per row, so it cannot be baked into one value that every row then shares.
+        request_tag = (user.request_tag or "").strip()
+        return UserProfile(
+            username=user.username,
+            plex_account_id=user.plex_account_id,
+            user_type=UserType(user.user_type),
+            slug=user.slug,
+            nickname=user.nickname or user.friendly_name,
+            excluded_genres=set(prefs.get("excluded_genres") or []),
+            # Through the reader, not straight off prefs: the list holds bare ints on an
+            # older install and records on a newer one, and the engine only wants ids.
+            blocked_seeds=blocked_ids(prefs),
+            row_name_template=prefs.get("row_name_tpl"),
+            request_tag=request_tag,
+            requested_by_tag=(user.requested_by_tag or "").strip(),
+            row_overrides=overrides.get(user.id, {}),
+        )
 
     @staticmethod
     def _row_overrides(session: Session) -> dict[int, dict[str, RowOverride]]:
@@ -1078,6 +1119,7 @@ class ContextBuilder:
             # delivery only — classification/sync/sweep/promotion above still see the full list.
             build_only=self._build_only_slugs(session, collection_ids),
             requests=self._build_requests(store),
+            request_sources=self._build_request_sources(store),
         )
 
     def _build_rows(self, session: Session, store: SettingsStore) -> list[RowSpec]:
@@ -1165,6 +1207,11 @@ class ContextBuilder:
                     sort_title_prefix=collection.sort_title_prefix or "",
                     seasons=list(collection.seasons or []),
                     season=season,
+                    requests_row=bool(collection.requests_row),
+                    requests_window_days=int(
+                        collection.requests_window_days if collection.requests_window_days is not None else 90
+                    ),
+                    requests_tag_pattern=(collection.requests_tag_pattern or "").strip(),
                 )
             )
         return specs
@@ -1285,6 +1332,43 @@ class ContextBuilder:
                         before=bool(entry.get("before", False)),
                     )
         return anchors
+
+    @staticmethod
+    def _build_request_sources(store: SettingsStore) -> RequestSources | None:
+        """Where a requests row reads from — every app with a URL and key, whatever `requests.*` says.
+
+        Independent of `_build_requests`: the owner may send nothing through Shortlist and still want
+        the row. Only the Overseerr account Shortlist FILES AS is excluded, and only while it actually
+        files there — otherwise that account's requests are somebody's own.
+        """
+
+        def seerr() -> SeerrTarget | None:
+            url = (store.get("requests.overseerr.url") or "").strip()
+            key = store.get("requests.overseerr.apikey") or ""
+            if not (url and key):
+                return None
+            request_as = int(store.get("requests.overseerr.request_as_user_id") or 0)
+            return SeerrTarget(url=url, api_key=key, request_as_user_id=request_as)
+
+        def arr(prefix: str) -> ArrTarget | None:
+            url = (store.get(f"{prefix}.url") or "").strip()
+            key = store.get(f"{prefix}.apikey") or ""
+            if not (url and key):
+                return None
+            # Reading needs no profile, folder or tag — those say where a NEW request is filed.
+            return ArrTarget(url=url, api_key=key, quality_profile_id=0, root_folder="", tag="")
+
+        overseerr, radarr, sonarr = seerr(), arr("requests.radarr"), arr("requests.sonarr")
+        if not (overseerr or radarr or sonarr):
+            return None
+        sends_via_seerr = bool(store.get("requests.enabled")) and store.get("requests.target") == "overseerr"
+        return RequestSources(
+            overseerr=overseerr,
+            radarr=radarr,
+            sonarr=sonarr,
+            exclude_seerr_user_id=overseerr.request_as_user_id if overseerr and sends_via_seerr else 0,
+            shortlist_tag=(store.get("requests.tag") or "").strip(),
+        )
 
     @staticmethod
     def _build_requests(store: SettingsStore) -> RequestConfig | None:

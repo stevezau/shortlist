@@ -760,6 +760,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/requests/row-sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Row Sources
+         * @description Read every request source once and say whether a "Your requests" row can be built from it.
+         *
+         *     Read-only: nothing is written to Overseerr, the Arrs, or Plex. A source that is down reads as
+         *     "unreachable" with the reason in `problems` — never a 500, because the screen this feeds exists
+         *     precisely to show the owner what is wrong.
+         */
+        get: operations["get_row_sources_api_requests_row_sources_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/requests/send": {
         parameters: {
             query?: never;
@@ -3181,6 +3205,21 @@ export interface components {
              */
             request_tag: string;
             /**
+             * Requests Row
+             * @default false
+             */
+            requests_row: boolean;
+            /**
+             * Requests Tag Pattern
+             * @default
+             */
+            requests_tag_pattern: string;
+            /**
+             * Requests Window Days
+             * @default 90
+             */
+            requests_window_days: number;
+            /**
              * Rewatch
              * @default false
              */
@@ -3393,6 +3432,12 @@ export interface components {
             req_sonarr_root_folder: string | null;
             /** Request Tag */
             request_tag: string;
+            /** Requests Row */
+            requests_row: boolean;
+            /** Requests Tag Pattern */
+            requests_tag_pattern: string;
+            /** Requests Window Days */
+            requests_window_days: number;
             /** Rewatch */
             rewatch: boolean;
             /** Rewatch Cooldown Days */
@@ -4186,6 +4231,19 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** PersonReadyOut */
+        PersonReadyOut: {
+            /** Display Name */
+            display_name: string;
+            /** Linked */
+            linked: boolean;
+            /** Ready */
+            ready: number;
+            /** User Id */
+            user_id: number;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * PickOut
          * @description One delivered recommendation, as the run detail lists it.
@@ -4789,6 +4847,65 @@ export interface components {
             recent_count: number | null;
             /** Row Size */
             row_size: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RowSourceServerOut
+         * @description One Radarr/Sonarr server Overseerr sends to, and whether it stamps the requester's tag.
+         */
+        RowSourceServerOut: {
+            /** Is4K */
+            is4k: boolean;
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string;
+            /** Tag Requests */
+            tag_requests: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RowSourcesOut
+         * @description The requests-row setup check: can the row know who asked for what, and for whom?
+         */
+        RowSourcesOut: {
+            /** Complete */
+            complete: boolean;
+            /**
+             * Overseerr
+             * @enum {string}
+             */
+            overseerr: "connected" | "unreachable" | "off";
+            /** People */
+            people: components["schemas"]["PersonReadyOut"][];
+            /** Problems */
+            problems: string[];
+            /**
+             * Radarr
+             * @enum {string}
+             */
+            radarr: "connected" | "unreachable" | "off";
+            /** Seerr Linked */
+            seerr_linked: number;
+            /** Seerr Requesters */
+            seerr_requesters: number;
+            /** Seerr Requests */
+            seerr_requests: number;
+            /** Servers */
+            servers: components["schemas"]["RowSourceServerOut"][];
+            /**
+             * Sonarr
+             * @enum {string}
+             */
+            sonarr: "connected" | "unreachable" | "off";
+            /** Tagged Movies */
+            tagged_movies: number;
+            /** Tagged Shows */
+            tagged_shows: number;
+            /** Tags */
+            tags: components["schemas"]["TagMatchOut"][];
         } & {
             [key: string]: unknown;
         };
@@ -5495,6 +5612,29 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * TagMatchOut
+         * @description How one requester tag on Radarr/Sonarr resolved — the preview under "Use my own tags".
+         */
+        TagMatchOut: {
+            /** Ambiguous */
+            ambiguous: boolean;
+            /** Display Name */
+            display_name: string;
+            /** Label */
+            label: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "overseerr" | "pattern" | "override";
+            /** Titles */
+            titles: number;
+            /** User Id */
+            user_id: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * TitleMatchOut
          * @description TMDB's own best guess for a title search, for the "block a seed" picker.
          */
@@ -5764,6 +5904,8 @@ export interface components {
             preview_titles: string[];
             /** Request Tag */
             request_tag: string;
+            /** Requested By Tag */
+            requested_by_tag: string;
             /** Restricted */
             restricted: boolean;
             /** Restriction Profile */
@@ -5789,6 +5931,8 @@ export interface components {
             prefs?: components["schemas"]["UserPrefs"] | null;
             /** Request Tag */
             request_tag?: string | null;
+            /** Requested By Tag */
+            requested_by_tag?: string | null;
         };
         /**
          * UserPickOut
@@ -7161,6 +7305,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RestoredOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_row_sources_api_requests_row_sources_get: {
+        parameters: {
+            query?: {
+                /** @description An own-tag pattern to preview, e.g. req-{username} */
+                pattern?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RowSourcesOut"];
                 };
             };
             /** @description Validation Error */

@@ -385,6 +385,142 @@ async def get_arr_status(request: Request) -> dict:
     return await asyncio.get_running_loop().run_in_executor(None, _fetch_statuses)
 
 
+#: "off" = no URL + key for it; "unreachable" = configured, but the read failed; else "connected".
+RowSourceState = Literal["connected", "unreachable", "off"]
+
+
+class RowSourceServerOut(PassthroughModel):
+    """One Radarr/Sonarr server Overseerr sends to, and whether it stamps the requester's tag."""
+
+    kind: str  # "radarr" | "sonarr"
+    name: str
+    is4k: bool
+    tag_requests: bool
+
+
+class TagMatchOut(PassthroughModel):
+    """How one requester tag on Radarr/Sonarr resolved — the preview under "Use my own tags"."""
+
+    label: str
+    source: Literal["overseerr", "pattern", "override"]
+    user_id: int | None  # the DB user it names; None when it names nobody on the roster
+    display_name: str  # "" when it names nobody
+    titles: int  # items carrying the tag, matched or not
+    ambiguous: bool  # more than one person renders to this tag, so it credits nobody
+
+
+class PersonReadyOut(PassthroughModel):
+    user_id: int
+    display_name: str
+    linked: bool  # an Overseerr account carries this person's Plex id
+    ready: int  # titles they asked for that are on disk, any library
+
+
+class RowSourcesOut(PassthroughModel):
+    """The requests-row setup check: can the row know who asked for what, and for whom?"""
+
+    overseerr: RowSourceState
+    radarr: RowSourceState
+    sonarr: RowSourceState
+    complete: bool  # every configured source was read in full
+    problems: list[str]
+    seerr_requests: int
+    seerr_requesters: int
+    seerr_linked: int  # requesters whose account maps to someone on the roster
+    servers: list[RowSourceServerOut]
+    tagged_movies: int  # movies credited to a person by a Radarr tag alone
+    tagged_shows: int
+    people: list[PersonReadyOut]
+    tags: list[TagMatchOut]
+
+
+@router.get("/row-sources", response_model=RowSourcesOut)
+async def get_row_sources(
+    request: Request,
+    pattern: Annotated[
+        # 128 is the stored column's length: a longer pattern could never be saved, so it is not previewed.
+        str, Query(max_length=128, description="An own-tag pattern to preview, e.g. req-{username}")
+    ] = "",
+) -> dict:
+    """Read every request source once and say whether a "Your requests" row can be built from it.
+
+    Read-only: nothing is written to Overseerr, the Arrs, or Plex. A source that is down reads as
+    "unreachable" with the reason in `problems` — never a 500, because the screen this feeds exists
+    precisely to show the owner what is wrong.
+    """
+    svc = request.app.state.run_service
+
+    def _check() -> dict:
+        from shortlist.engine.requests_row import RequestLedger, collect_requests
+
+        sources, profiles, db_ids = svc.build_request_sources_only()
+        if sources is None:
+            ledger = RequestLedger(titles=[], complete=True)
+        else:
+            try:
+                ledger = collect_requests(sources, profiles, patterns=frozenset({pattern} if pattern else ()))
+            except Exception as e:
+                # collect_requests swallows per-source failures itself; this is for anything that
+                # goes wrong before a read starts (a client refusing its URL, say).
+                logger.warning("requests row check: sources could not be read ({})", e)
+                ledger = RequestLedger(titles=[], complete=False, problems=[f"Request sources could not be read: {e}"])
+                ledger.unreadable = {
+                    app
+                    for app, target in (
+                        ("Overseerr", sources.overseerr),
+                        ("Radarr", sources.radarr),
+                        ("Sonarr", sources.sonarr),
+                    )
+                    if target
+                }
+
+        def state(target: object, app: str) -> RowSourceState:
+            # Tracks the READ, not the wording of `problems`: advice ("requester tags were found ...
+            # but Overseerr isn't connected") and degradations (media dates) name an app without
+            # that app being down.
+            if target is None:
+                return "off"
+            return "unreachable" if app in ledger.unreadable else "connected"
+
+        by_plex = {p.plex_account_id: p for p in profiles}
+        tagged = [t for t in ledger.titles if "tag" in t.found_in]
+        return {
+            "overseerr": state(sources and sources.overseerr, "Overseerr"),
+            "radarr": state(sources and sources.radarr, "Radarr"),
+            "sonarr": state(sources and sources.sonarr, "Sonarr"),
+            "complete": ledger.complete,
+            "problems": ledger.problems,
+            "seerr_requests": ledger.seerr_requests,
+            "seerr_requesters": ledger.seerr_requesters,
+            "seerr_linked": ledger.seerr_linked,
+            "servers": ledger.seerr_servers,
+            "tagged_movies": sum(1 for t in tagged if t.media_type is MediaType.MOVIE),
+            "tagged_shows": sum(1 for t in tagged if t.media_type is MediaType.SHOW),
+            "people": [
+                {
+                    "user_id": db_ids[p.plex_account_id],
+                    "display_name": p.display_name,
+                    "linked": p.plex_account_id in ledger.seerr_plex_ids,
+                    "ready": sum(1 for t in ledger.for_person(p.plex_account_id) if t.on_disk),
+                }
+                for p in profiles
+            ],
+            "tags": [
+                {
+                    "label": m.label,
+                    "source": m.source,
+                    "user_id": db_ids.get(m.plex_account_id) if m.plex_account_id is not None else None,
+                    "display_name": by_plex[m.plex_account_id].display_name if m.plex_account_id in by_plex else "",
+                    "titles": m.titles,
+                    "ambiguous": m.ambiguous,
+                }
+                for m in ledger.tag_matches
+            ],
+        }
+
+    return await asyncio.get_running_loop().run_in_executor(None, _check)
+
+
 class SendOutcomeOut(PassthroughModel):
     """What the Arr said about one title. `status` is the engine's outcome — "requested",
     "would_request" on a dry run, or a skip/error reason the owner can act on."""

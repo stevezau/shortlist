@@ -54,6 +54,7 @@ EXPECTED_IDS = {
     "picked-for-you",
     "because-you-watched",
     "seen-it-already",
+    "your-requests",
     "fresh-finds",
     "from-the-vault",
     "popular-here",
@@ -321,6 +322,57 @@ class TestEveryTemplateDelivers:
         delivered = [p.tmdb_id for p in _picks_by_row(report)["seen_it_already"]]
         assert delivered, "the row delivered nothing"
         assert delivered[0] == 20, f"an already-watched title must LEAD the row, got {delivered}"
+
+    def test_your_requests_delivers_only_what_they_asked_for_newest_first(self, engine_ctx, mock_plextv):
+        """Claims: "Only what they asked for", "Newest first" — and the blurb's "once it's on Plex".
+
+        The row is built from the request ledger the run reads once for everyone; here it is handed
+        in directly, the way the pipeline's own tests do, because the proof is about what the row
+        makes of it. A recommendation pool is offered too, so "only what they asked for" has
+        something real to refuse.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        import shortlist.engine.pipeline as pipeline_mod
+        from shortlist.engine.requests_row import RequestedTitle, RequestLedger
+
+        spec = _spec("your-requests")
+        assert spec.requests_row, "the tile is a requests row"
+        assert spec.requests_window_days == 90, "the tile promises a season's worth"
+
+        def asked(tmdb_id: int, days_ago: int, *, on_disk: bool = True) -> RequestedTitle:
+            at = datetime.now(UTC) - timedelta(days=days_ago)
+            return RequestedTitle(
+                tmdb_id=tmdb_id,
+                media_type=MediaType.MOVIE,
+                plex_account_id=100,
+                requested_at=at,
+                landed_at=at,
+                on_disk=on_disk,
+                seasons_landed=True,
+                found_in=("overseerr",),
+            )
+
+        engine_ctx.request_ledger = RequestLedger(
+            titles=[
+                asked(10, 5),
+                asked(20, 1),
+                asked(30, 100),  # on Plex, but older than the 90-day window
+                asked(555, 2, on_disk=False),  # asked for, not here yet
+            ],
+            complete=True,
+        )
+        engine_ctx.history_source.fetch.return_value = _mixed_history()
+        engine_ctx.tmdb.suggestions.return_value = _movies(10, 20)
+        engine_ctx.config.rows = [spec]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(engine_ctx, [make_profile("sarah", account_id=100)])
+
+        delivered = [p.tmdb_id for p in _picks_by_row(report)["your_requests"]]
+        assert delivered == [20, 10], f"newest arrival first, only what landed inside the window, got {delivered}"
+        engine_ctx.tmdb.suggestions.assert_not_called()
+        assert all(p.sources == ["requests"] for p in report.users[0].picks)
 
     def test_fresh_finds_delivers_nothing_already_watched_and_rebuilds_nightly(self, engine_ctx, mock_plextv):
         """Claims: "Rebuilds nightly" and "Nothing already watched"."""

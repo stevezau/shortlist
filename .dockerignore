@@ -21,3 +21,4 @@ docs/
 CLAUDE.local.md
 .env
 .env.*
+.superpowers/

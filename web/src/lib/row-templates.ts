@@ -12,7 +12,7 @@ import type { CollectionInput } from "@/lib/types";
  * `values` is deliberately a partial: everything it omits keeps `blankInput()`'s default, and every
  * field stays editable after picking. A template is a starting point, never a mode.
  *
- * `kind` groups the gallery by the same five kinds the row editor's kind picker uses (design doc §3),
+ * `kind` groups the gallery by the same six kinds the row editor's kind picker uses (design doc §3),
  * with the picker's own copy, so the two cannot describe a kind differently.
  */
 
@@ -27,7 +27,7 @@ export interface RowTemplate {
   values: Partial<CollectionInput>;
 }
 
-/** The gallery's five headings, in the kind picker's order, each with the kind's description. */
+/** The gallery's six headings, in the kind picker's order, each with the kind's description. */
 export const ROW_TEMPLATE_GROUPS: {
   kind: RowKind;
   heading: string;
@@ -136,6 +136,24 @@ export const ROW_TEMPLATES: RowTemplate[] = [
       watched_pct: 1,
       refresh_days: 11,
       size: 15,
+    },
+  },
+  {
+    id: "your-requests",
+    kind: "requests",
+    emoji: "📬",
+    title: "Your requests",
+    blurb:
+      "What they asked for in Overseerr, once it's on Plex. Each title leaves once they've watched it.",
+    highlights: ["Only what they asked for", "Newest first", "Overseerr or Radarr/Sonarr tags"],
+    values: {
+      name: "📬 {library_name} you asked for",
+      build: "per_person",
+      requests_row: true,
+      // 90 days: long enough that a request they made last season is still there, short enough that
+      // one they've lost interest in doesn't sit in the row for good.
+      requests_window_days: 90,
+      size: 20,
     },
   },
   {
@@ -269,4 +287,32 @@ export const ROW_TEMPLATES: RowTemplate[] = [
 
 export function findRowTemplate(id: string): RowTemplate | undefined {
   return ROW_TEMPLATES.find((template) => template.id === id);
+}
+
+/** Names a highlight may start with that keep their capital mid-sentence: the apps, and every season
+ *  the engine ships (`shortlist/engine/seasons.py`), matched on the first word. */
+const PROPER_NOUNS = new Set([
+  "Overseerr",
+  "Radarr",
+  "Sonarr",
+  "Plex",
+  "TMDB",
+  "Trakt",
+  "TV",
+  "Halloween",
+  "Christmas",
+  "Valentine's",
+]);
+
+/**
+ * The highlights as they read joined into one sentence: each starts lowercase, unless its first
+ * word is a proper noun or an acronym (a run of two or more capitals). A blanket `toLowerCase()`
+ * wrote "overseerr or radarr/sonarr tags" and "tv only" in the editor's "Started from" banner.
+ */
+export function sentenceCaseHighlights(highlights: string[]): string[] {
+  return highlights.map((highlight) => {
+    const firstWord = highlight.split(/[\s/,.-]/, 1)[0] ?? "";
+    const keepsCapital = PROPER_NOUNS.has(firstWord) || /^[A-Z]{2,}/.test(firstWord);
+    return keepsCapital ? highlight : highlight.charAt(0).toLowerCase() + highlight.slice(1);
+  });
 }

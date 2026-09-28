@@ -47,6 +47,8 @@ export const queryKeys = {
   arrOptions: (service: "radarr" | "sonarr") =>
     ["arr-options", service] as const,
   seerrOptions: ["seerr-options"] as const,
+  requestRowSources: (pattern: string) =>
+    ["request-row-sources", pattern] as const,
   arrStatus: ["arrStatus"] as const,
   curatorModels: (provider: string, credential: string) =>
     ["curator-models", provider, credential] as const,
@@ -465,6 +467,25 @@ export function useSeerrOptions(enabled: boolean) {
     queryFn: () => api.getSeerrOptions(),
     enabled,
     staleTime: 60_000,
+    retry: false,
+  });
+}
+
+/**
+ * Whether a "Your requests" row can know who asked for what, with `pattern` previewed as own tags.
+ *
+ * Never per keystroke: the endpoint reads Overseerr and every Arr in turn. Callers fetch once with
+ * the saved pattern and then call `refetch()` from a Check button.
+ */
+export function useRequestRowSources(pattern: string, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.requestRowSources(pattern),
+    queryFn: () => api.getRequestRowSources(pattern),
+    enabled,
+    // Up to a few dozen HTTP calls to Overseerr and the Arrs per read, for a row that is built
+    // nightly: five minutes is fresh enough, and a tab switch must not re-run it.
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
     retry: false,
   });
 }

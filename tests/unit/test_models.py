@@ -1,6 +1,16 @@
 import pytest
 
-from shortlist.engine.models import MAX_ROW_SIZE, EngineConfig, RowSpec, UserProfile, UserType, slugify
+from shortlist.engine.models import (
+    MAX_ROW_SIZE,
+    ArrTarget,
+    EngineConfig,
+    RequestSources,
+    RowSpec,
+    SeerrTarget,
+    UserProfile,
+    UserType,
+    slugify,
+)
 from shortlist.engine.rows import _KEEP_FRACTION
 
 
@@ -149,3 +159,21 @@ class TestPoolClearsTheRowCeiling:
             meta = model.model_fields[field].metadata
             ceiling = next(m.le for m in meta if hasattr(m, "le"))
             assert ceiling == MAX_ROW_SIZE, f"{model.__name__}.{field} restates {ceiling}"
+
+
+def test_a_row_is_not_a_requests_row_by_default():
+    spec = RowSpec(slug="r", name_template="n", size=5)
+    assert (spec.requests_row, spec.requests_window_days, spec.requests_tag_pattern) == (False, 90, "")
+
+
+def test_request_sources_any_is_true_only_with_a_target():
+    assert RequestSources().any() is False
+    assert RequestSources(overseerr=SeerrTarget(url="http://s", api_key="k")).any() is True
+    arr = ArrTarget(url="http://a", api_key="k", quality_profile_id=1, root_folder="/m")
+    assert RequestSources(radarr=arr).any() is True
+    assert RequestSources(sonarr=arr).any() is True
+
+
+def test_config_and_profile_carry_the_new_fields_with_safe_defaults():
+    assert EngineConfig().request_sources is None
+    assert UserProfile(username="u", plex_account_id=1, user_type=UserType.SHARED).requested_by_tag == ""
