@@ -308,11 +308,13 @@ class SeerrClient:
         same literal string a request row's ``type`` carries and the two join without translation.
         """
         out: dict[tuple[str, int], dict] = {}
-        for row in self._paged("/media"):
-            if not isinstance(row, dict):
-                continue
-            kind, tmdb_id = row.get("mediaType"), _int_or_none(row.get("tmdbId"))
+        rows = self._paged("/media")
+        dropped = 0
+        for row in rows:
+            kind = row.get("mediaType") if isinstance(row, dict) else None
+            tmdb_id = _int_or_none(row.get("tmdbId")) if isinstance(row, dict) else None
             if kind not in ("movie", "tv") or tmdb_id is None:
+                dropped += 1
                 continue
             out[(kind, tmdb_id)] = {
                 "mediaAddedAt": row.get("mediaAddedAt"),
@@ -321,6 +323,13 @@ class SeerrClient:
                 "status": _int_or_none(row.get("status")),
                 "status4k": _int_or_none(row.get("status4k")),
             }
+        if dropped:
+            logger.debug(
+                "{}: {} of {} media rows carried no usable mediaType + tmdbId — no arrival date for those titles",
+                self.app_name,
+                dropped,
+                len(rows),
+            )
         return out
 
     def media_state(self) -> dict[tuple[str, int], str]:

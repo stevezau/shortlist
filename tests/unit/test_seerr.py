@@ -791,6 +791,7 @@ class TestRequestReads:
             got = _client().requests()
         assert len(got) == page["pageInfo"]["results"] == 7
         assert route.calls[0].request.url.params["filter"] == "all"
+        assert route.calls[0].request.url.params["sort"] == "added"
         assert got[0]["requestedBy"]["plexId"] == page["results"][0]["requestedBy"]["plexId"]
 
     def test_user_plex_ids_maps_seerr_id_to_plex_id_and_none_when_unlinked(self):
@@ -825,6 +826,11 @@ class TestRequestReads:
             "status",
             "status4k",
         }
+        # Keyed on Seerr's OWN word for a show ("tv"), never Shortlist's ("show"): the key has to
+        # equal a request row's literal `type` for the two to join.
+        show = next(r for r in page["results"] if r["mediaType"] == "tv")
+        assert got[("tv", show["tmdbId"])]["mediaAddedAt"] == show.get("mediaAddedAt")
+        assert ("show", show["tmdbId"]) not in got
 
     def test_a_request_read_failure_raises_seerr_error(self):
         with respx.mock:
