@@ -25,7 +25,7 @@ from shortlist.engine.models import MediaType, RequestSources, UserProfile
 REQUESTER_TAG = re.compile(r"^(\d+)\s?-\s?\S")
 # Seerr's enums: MediaRequestStatus and MediaStatus (server/constants/media.ts).
 _REQ_APPROVED, _REQ_COMPLETED = 2, 5
-_MEDIA_PARTIAL, _MEDIA_AVAILABLE = 4, 5
+_MEDIA_AVAILABLE = 5
 # Radarr/Sonarr lower-case a tag and turn spaces into dashes, so "Sarah Jones" is stored "sarah-jones".
 _TAG_CHARSET = re.compile(r"[^a-z0-9-]")
 _SEERR_MEDIA_KIND = {MediaType.MOVIE: "movie", MediaType.SHOW: "tv"}
@@ -50,7 +50,11 @@ class RequestedTitle:
 
 @dataclass(frozen=True)
 class TagMatch:
-    """How one requester tag resolved, for the owner to check the mapping."""
+    """How one requester tag resolved, for the owner to check the mapping.
+
+    ``titles`` counts every item carrying the tag, including ones that yielded nothing because the
+    tag was ambiguous or the item is Shortlist's own.
+    """
 
     label: str
     source: str  # "overseerr" | "pattern" | "override"
@@ -98,7 +102,7 @@ def pattern_matches(label: str, pattern: str, people: list[UserProfile]) -> list
     want = _norm(label)
     out = []
     for p in people:
-        rendered = pattern.replace("{username}", p.username).replace("{name}", p.nickname or p.username)
+        rendered = pattern.replace("{username}", p.username).replace("{name}", p.display_name)
         if _norm(rendered) == want:
             out.append(p)
     return out
@@ -149,12 +153,13 @@ def collect_requests(
     def add(t: RequestedTitle) -> None:
         # The Overseerr request carries the dates the person saw; a tag only proves they asked. The
         # request side wins its ``pattern`` too (empty): Overseerr proof holds in every row for the
-        # person, whatever tag pattern that row uses.
+        # person, whatever tag pattern that row uses. Between two tags, the override's empty pattern
+        # wins for the same reason.
         key = (t.media_type, t.tmdb_id, t.plex_account_id)
         prev = merged.get(key)
         if prev is None:
             merged[key] = t
-        elif "overseerr" in prev.found_in:
+        elif "overseerr" in prev.found_in or ("overseerr" not in t.found_in and not prev.pattern):
             merged[key] = replace(
                 prev,
                 found_in=tuple(dict.fromkeys(prev.found_in + t.found_in)),
@@ -301,7 +306,10 @@ def _add_tagged(
     shortlist_tag_ids = {
         i for i, label in tags.items() if sources.shortlist_tag and _norm(label) == _norm(sources.shortlist_tag)
     }
-    override = {_norm(p.requested_by_tag): p for p in people if p.requested_by_tag}
+    override: dict[str, list[UserProfile]] = {}
+    for p in people:
+        if p.requested_by_tag:
+            override.setdefault(_norm(p.requested_by_tag), []).append(p)
     counts: dict[tuple[str, str], int] = {}
     owner_of: dict[
         int, tuple[UserProfile | None, str, str, bool]
@@ -324,7 +332,9 @@ def _add_tagged(
             owner_of[tag_id] = (by_plex.get(plex_id), "overseerr", "", False)
             continue
         if _norm(label) in override:
-            owner_of[tag_id] = (override[_norm(label)], "override", "", False)
+            # Two people who typed the same tag: nobody's, the same as an ambiguous pattern match.
+            claimants = override[_norm(label)]
+            owner_of[tag_id] = (claimants[0] if len(claimants) == 1 else None, "override", "", len(claimants) > 1)
             continue
         for pattern in sorted(patterns):
             hits = pattern_matches(label, pattern, people)

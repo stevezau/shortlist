@@ -7,9 +7,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from shortlist.engine.clients.arr import ArrError
 from shortlist.engine.clients.seerr import SeerrError
 from shortlist.engine.models import ArrTarget, RequestSources, SeerrTarget, UserProfile, UserType
 from shortlist.engine.requests_row import (
+    TagMatch,
     collect_requests,
     parse_requester_tag,
     pattern_matches,
@@ -301,3 +303,76 @@ class TestCollectFromTags:
         seerr = _seerr()
         collect_requests(RequestSources(overseerr=SEERR), _people(), seerr=seerr)
         seerr.media_dates.assert_not_called()
+
+    def test_an_override_tag_shared_by_two_people_is_ambiguous_and_listed(self):
+        a = _person(1, requested_by_tag="fam")
+        b = _person(2, requested_by_tag="fam")
+        tags = [{"id": 1, "label": "fam"}]
+        item = {"tmdbId": 501, "tags": [1], "hasFile": True, "movieFile": {}, "title": "A"}
+        ledger = collect_requests(RequestSources(radarr=ARR), [a, b], radarr=_radarr(items=[item], tags=tags))
+        assert ledger.titles == []
+        assert ledger.tag_matches == [
+            TagMatch(label="fam", source="override", plex_account_id=None, titles=1, ambiguous=True)
+        ]
+
+    @pytest.mark.parametrize("tag_order", [[1, 2], [2, 1]])
+    def test_a_title_tagged_by_override_and_pattern_keeps_the_override(self, tag_order):
+        who = _person(1, requested_by_tag="fam")
+        tags = [{"id": 1, "label": "fam"}, {"id": 2, "label": "req-person1"}]
+        item = {"tmdbId": 501, "tags": tag_order, "hasFile": True, "movieFile": {}, "title": "A"}
+        ledger = collect_requests(
+            RequestSources(radarr=ARR),
+            [who],
+            radarr=_radarr(items=[item], tags=tags),
+            patterns=frozenset({"req-{username}"}),
+        )
+        assert [(t.tmdb_id, t.pattern) for t in ledger.titles] == [(501, "")]
+
+    def test_a_tag_only_show_reads_seerr_media_dates_under_the_tv_key(self):
+        item = SONARR["tagged_items"][0]  # tag 85 -> person14, episodes on disk
+        tv = {"mediaAddedAt": "2026-09-10T00:00:00.000Z", "lastSeasonChange": "2026-09-20T00:00:00.000Z"}
+        decoy = {"mediaAddedAt": "2000-01-01T00:00:00.000Z", "lastSeasonChange": "2000-01-01T00:00:00.000Z"}
+        media = {("tv", item["tmdbId"]): tv, ("show", item["tmdbId"]): decoy}
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR, sonarr=ARR),
+            _people(),
+            seerr=_seerr(requests=[], media=media),
+            sonarr=_sonarr(items=[item]),
+        )
+        (t,) = ledger.titles
+        assert t.landed_at == datetime(2026, 9, 20, tzinfo=UTC)
+
+    def test_a_radarr_error_marks_the_ledger_incomplete_and_overseerr_is_still_read(self):
+        radarr = _radarr()
+        radarr.tags.side_effect = ArrError("down")
+        ledger = collect_requests(RequestSources(overseerr=SEERR, radarr=ARR), _people(), seerr=_seerr(), radarr=radarr)
+        assert ledger.complete is False
+        assert any("Radarr" in p for p in ledger.problems)
+        assert len(ledger.titles) == 7 and all(t.found_in == ("overseerr",) for t in ledger.titles)
+
+    def test_an_overseerr_tag_for_an_unknown_seerr_user_names_nobody(self):
+        tags = [{"id": 1, "label": "77-ghost"}]
+        item = {"tmdbId": 501, "tags": [1], "hasFile": True, "movieFile": {}, "title": "A"}
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR, radarr=ARR),
+            _people(),
+            seerr=_seerr(requests=[]),
+            radarr=_radarr(items=[item], tags=tags),
+        )
+        assert ledger.titles == []
+        assert ledger.tag_matches == [
+            TagMatch(label="77-ghost", source="overseerr", plex_account_id=None, titles=1, ambiguous=False)
+        ]
+
+    def test_shortlists_own_item_never_matches_an_override_tag_but_an_overseerr_tag_still_counts(self):
+        kids = _person(3, requested_by_tag="children")
+        tags = [{"id": 7, "label": "children"}, {"id": 2, "label": "shortlist"}, {"id": 50, "label": "10-person10"}]
+        ours_for_kids = {"tmdbId": 501, "tags": [7, 2], "hasFile": True, "movieFile": {}, "title": "A"}
+        ours_asked = {"tmdbId": 502, "tags": [50, 2], "hasFile": True, "movieFile": {}, "title": "B"}
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR, radarr=ARR, shortlist_tag="shortlist"),
+            [kids, _person(10)],
+            seerr=_seerr(requests=[]),
+            radarr=_radarr(items=[ours_for_kids, ours_asked], tags=tags),
+        )
+        assert [(t.tmdb_id, t.plex_account_id) for t in ledger.titles] == [(502, _person(10).plex_account_id)]
