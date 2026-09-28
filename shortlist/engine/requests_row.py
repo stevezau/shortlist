@@ -1,0 +1,381 @@
+"""Who asked for what: the read behind a "Your requests" row (issue #127).
+
+Two sources, merged so a title counts once per person. Overseerr's request list covers requests that
+are still there; Radarr/Sonarr requester tags (``<seerrUserId>-<username>``, written by Seerr's
+"Tag Requests" and never removed when the request is deleted — fixture ``radarr_request_tags.json``)
+cover the ones an owner tidied away. A person is only ever identified by Plex account ID: an
+Overseerr tag resolves through Overseerr's user list, an own-pattern tag through the roster, and a
+tag that fits nobody or two people is reported, never guessed — a wrong guess puts one person's
+requests in another person's private row.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
+
+from loguru import logger
+
+from shortlist.engine.clients.arr import RadarrClient, SonarrClient
+from shortlist.engine.clients.seerr import SeerrClient
+from shortlist.engine.models import MediaType, RequestSources, UserProfile
+
+REQUESTER_TAG = re.compile(r"^(\d+)\s?-\s?\S")
+# Seerr's enums: MediaRequestStatus and MediaStatus (server/constants/media.ts).
+_REQ_APPROVED, _REQ_COMPLETED = 2, 5
+_MEDIA_PARTIAL, _MEDIA_AVAILABLE = 4, 5
+# Radarr/Sonarr lower-case a tag and turn spaces into dashes, so "Sarah Jones" is stored "sarah-jones".
+_TAG_CHARSET = re.compile(r"[^a-z0-9-]")
+_SEERR_MEDIA_KIND = {MediaType.MOVIE: "movie", MediaType.SHOW: "tv"}
+
+
+@dataclass(frozen=True)
+class RequestedTitle:
+    """One title one person asked for, with when it was asked for and when it arrived."""
+
+    tmdb_id: int
+    media_type: MediaType
+    plex_account_id: int
+    requested_at: datetime | None
+    landed_at: datetime | None
+    on_disk: bool
+    seasons_landed: bool
+    found_in: tuple[str, ...]
+    title: str = ""
+    #: The own-pattern that matched its tag; empty for Overseerr and override matches.
+    pattern: str = ""
+
+
+@dataclass(frozen=True)
+class TagMatch:
+    """How one requester tag resolved, for the owner to check the mapping."""
+
+    label: str
+    source: str  # "overseerr" | "pattern" | "override"
+    plex_account_id: int | None
+    titles: int
+    ambiguous: bool
+
+
+@dataclass
+class RequestLedger:
+    """Every configured source read once, plus what went wrong doing it."""
+
+    titles: list[RequestedTitle]
+    complete: bool
+    problems: list[str] = field(default_factory=list)
+    tag_matches: list[TagMatch] = field(default_factory=list)
+    seerr_requests: int = 0
+    seerr_requesters: int = 0
+    seerr_linked: int = 0
+    seerr_servers: list[dict] = field(default_factory=list)
+
+    def for_person(self, plex_account_id: int) -> list[RequestedTitle]:
+        """The titles one person asked for, newest arrival first."""
+        return [t for t in self.titles if t.plex_account_id == plex_account_id]
+
+
+def parse_requester_tag(label: str) -> int | None:
+    """The Seerr user id in an Overseerr-format requester tag (``12-sarah``), else None."""
+    m = REQUESTER_TAG.match(label.strip())
+    return int(m.group(1)) if m else None
+
+
+def _norm(label: str) -> str:
+    return _TAG_CHARSET.sub("", label.strip().lower().replace(" ", "-").replace("_", "-"))
+
+
+def pattern_matches(label: str, pattern: str, people: list[UserProfile]) -> list[UserProfile]:
+    """Every person whose ``{username}``/``{name}`` rendering of ``pattern`` is this tag.
+
+    Case-insensitive, and spaces read as dashes, because that is how the Arr stores a tag. A pattern
+    with no placeholder renders the same for everyone, so it can name nobody.
+    """
+    if "{username}" not in pattern and "{name}" not in pattern:
+        return []
+    want = _norm(label)
+    out = []
+    for p in people:
+        rendered = pattern.replace("{username}", p.username).replace("{name}", p.nickname or p.username)
+        if _norm(rendered) == want:
+            out.append(p)
+    return out
+
+
+def _iso(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    # Every source stamps UTC; a bare timestamp would make the ledger's sort raise on comparison.
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def collect_requests(
+    sources: RequestSources,
+    people: list[UserProfile],
+    *,
+    seerr: SeerrClient | None = None,
+    radarr: RadarrClient | None = None,
+    sonarr: SonarrClient | None = None,
+    patterns: frozenset[str] = frozenset(),
+) -> RequestLedger:
+    """Read every configured source once and return the ledger.
+
+    Never raises: a source that fails is recorded in ``problems`` and flips ``complete`` to False,
+    which is what stops any row being REMOVED on the strength of a read that did not happen.
+
+    Args:
+        sources: Where to read; a source that is None is skipped.
+        people: The roster; a request is only ever attributed to one of these, by Plex account ID.
+        seerr: Injectable Overseerr client; built from ``sources.overseerr`` when None.
+        radarr: Injectable Radarr client; built from ``sources.radarr`` when None.
+        sonarr: Injectable Sonarr client; built from ``sources.sonarr`` when None.
+        patterns: Every distinct own-tag pattern across the requests rows (``req-{username}``).
+
+    Returns:
+        The ledger, titles sorted newest arrival first.
+    """
+    ledger = RequestLedger(titles=[], complete=True)
+    by_plex = {p.plex_account_id: p for p in people}
+    seerr_plex: dict[int, int | None] = {}
+    seerr_client = seerr or (SeerrClient(sources.overseerr) if sources.overseerr else None)
+    merged: dict[tuple[MediaType, int, int], RequestedTitle] = {}
+
+    def add(t: RequestedTitle) -> None:
+        # The Overseerr request carries the dates the person saw; a tag only proves they asked. The
+        # request side wins its ``pattern`` too (empty): Overseerr proof holds in every row for the
+        # person, whatever tag pattern that row uses.
+        key = (t.media_type, t.tmdb_id, t.plex_account_id)
+        prev = merged.get(key)
+        if prev is None:
+            merged[key] = t
+        elif "overseerr" in prev.found_in:
+            merged[key] = replace(
+                prev,
+                found_in=tuple(dict.fromkeys(prev.found_in + t.found_in)),
+                title=prev.title or t.title,
+            )
+        else:
+            merged[key] = replace(
+                t,
+                found_in=tuple(dict.fromkeys(t.found_in + prev.found_in)),
+                title=t.title or prev.title,
+            )
+
+    if seerr_client is not None:
+        try:
+            seerr_plex = seerr_client.user_plex_ids()
+            rows = seerr_client.requests()
+            ledger.seerr_servers = [
+                {
+                    "kind": kind,
+                    "name": s.get("name", ""),
+                    "is4k": bool(s.get("is4k")),
+                    "tag_requests": bool(s.get("tagRequests")),
+                }
+                for kind, servers in seerr_client.arr_settings().items()
+                for s in servers
+            ]
+            if not rows and not seerr_plex:
+                # A Seerr with an admin has at least one user, so this shape is a broken read.
+                ledger.complete = False
+                ledger.problems.append("Overseerr answered with no users and no requests — treated as a failed read")
+            ledger.seerr_requests = len(rows)
+            requesters = {r.get("requestedBy", {}).get("id") for r in rows if isinstance(r.get("requestedBy"), dict)}
+            ledger.seerr_requesters = len(requesters)
+            ledger.seerr_linked = len({u for u in requesters if seerr_plex.get(u) in by_plex})
+            for r in rows:
+                t = _from_seerr_request(r, seerr_plex, by_plex, sources.exclude_seerr_user_id)
+                if t is not None:
+                    add(t)
+        except Exception as e:
+            ledger.complete = False
+            ledger.problems.append(f"Overseerr could not be read: {e}")
+            logger.warning("requests row: Overseerr read failed ({})", e)
+
+    for kind, client in (
+        (MediaType.MOVIE, radarr or (RadarrClient(sources.radarr) if sources.radarr else None)),
+        (MediaType.SHOW, sonarr or (SonarrClient(sources.sonarr) if sources.sonarr else None)),
+    ):
+        if client is None:
+            continue
+        try:
+            tags = client.tags()
+            items = client.movies() if kind is MediaType.MOVIE else client.series()
+        except Exception as e:
+            ledger.complete = False
+            ledger.problems.append(f"{client.app_name} could not be read: {e}")
+            logger.warning("requests row: {} read failed ({})", client.app_name, e)
+            continue
+        _add_tagged(
+            ledger, kind, items, tags, people, by_plex, seerr_plex, seerr_client is not None, sources, patterns, add
+        )
+
+    # A title found only by tag has no request to date it from. Seerr's media table knows when Plex
+    # got it (and, for a show, when the latest season did), which is the arrival the person saw;
+    # the Arr's own date is the fallback, and for Sonarr that is the day the series was ADDED, not
+    # when anything landed. The table is one paged walk, so it is read only when a title needs it.
+    tag_only = [k for k, t in merged.items() if "overseerr" not in t.found_in]
+    if tag_only and seerr_client is not None:
+        media_dates: dict[tuple[str, int], dict] = {}
+        try:
+            media_dates = seerr_client.media_dates()
+        except Exception as e:
+            ledger.problems.append(f"Overseerr media dates could not be read: {e}")
+            logger.warning("requests row: Overseerr media dates failed ({})", e)
+        for key in tag_only:
+            t = merged[key]
+            rec = media_dates.get((_SEERR_MEDIA_KIND[t.media_type], t.tmdb_id))
+            if not rec:
+                continue
+            landed = _iso(rec.get("lastSeasonChange")) if t.media_type is MediaType.SHOW else None
+            landed = landed or _iso(rec.get("mediaAddedAt"))
+            if landed:
+                merged[key] = replace(t, landed_at=landed)
+
+    ledger.titles = sorted(merged.values(), key=lambda t: t.landed_at or datetime(1, 1, 1, tzinfo=UTC), reverse=True)
+    return ledger
+
+
+def _from_seerr_request(
+    r: dict, seerr_plex: dict[int, int | None], by_plex: dict[int, UserProfile], exclude_uid: int
+) -> RequestedTitle | None:
+    who = r.get("requestedBy") if isinstance(r.get("requestedBy"), dict) else {}
+    uid = who.get("id")
+    if uid is None or (exclude_uid and uid == exclude_uid):
+        return None
+    if r.get("status") not in (_REQ_APPROVED, _REQ_COMPLETED):
+        return None
+    plex_id = who.get("plexId") or seerr_plex.get(uid)
+    if plex_id not in by_plex:
+        return None
+    media = r.get("media") if isinstance(r.get("media"), dict) else {}
+    tmdb_id = media.get("tmdbId")
+    kind = MediaType.MOVIE if r.get("type") == "movie" else MediaType.SHOW if r.get("type") == "tv" else None
+    if not isinstance(tmdb_id, int) or kind is None:
+        return None
+    # A 4K request is fulfilled by the 4K copy: Seerr tracks the two libraries separately.
+    status = media.get("status4k" if r.get("is4k") else "status")
+    on_disk = status == _MEDIA_AVAILABLE or (kind is MediaType.SHOW and r.get("status") == _REQ_COMPLETED)
+    seasons = r.get("seasons") if isinstance(r.get("seasons"), list) else []
+    seasons_landed = (
+        kind is MediaType.MOVIE
+        or r.get("status") == _REQ_COMPLETED
+        or (bool(seasons) and all(s.get("status") == _REQ_COMPLETED for s in seasons))
+    )
+    landed = None
+    if kind is MediaType.SHOW:
+        done = [_iso(s.get("updatedAt")) for s in seasons if s.get("status") == _REQ_COMPLETED]
+        landed = max((d for d in done if d), default=None) or _iso(media.get("lastSeasonChange"))
+    landed = landed or _iso(media.get("mediaAddedAt"))
+    return RequestedTitle(
+        tmdb_id=tmdb_id,
+        media_type=kind,
+        plex_account_id=int(plex_id),
+        requested_at=_iso(r.get("createdAt")),
+        landed_at=landed,
+        on_disk=bool(on_disk),
+        seasons_landed=bool(seasons_landed),
+        found_in=("overseerr",),
+    )
+
+
+def _add_tagged(
+    ledger: RequestLedger,
+    kind: MediaType,
+    items: list[dict],
+    tags: dict[int, str],
+    people: list[UserProfile],
+    by_plex: dict[int, UserProfile],
+    seerr_plex: dict[int, int | None],
+    seerr_connected: bool,
+    sources: RequestSources,
+    patterns: frozenset[str],
+    add: Callable[[RequestedTitle], None],
+) -> None:
+    shortlist_tag_ids = {
+        i for i, label in tags.items() if sources.shortlist_tag and _norm(label) == _norm(sources.shortlist_tag)
+    }
+    override = {_norm(p.requested_by_tag): p for p in people if p.requested_by_tag}
+    counts: dict[tuple[str, str], int] = {}
+    owner_of: dict[
+        int, tuple[UserProfile | None, str, str, bool]
+    ] = {}  # tag id -> (person, source, pattern, ambiguous)
+    warned_seerr = False
+    for tag_id, label in tags.items():
+        uid = parse_requester_tag(label)
+        if uid is not None:
+            # The number is a Seerr user id, meaningful only through Seerr's user list — the name
+            # after it is whatever the person was called when the tag was made, never a key.
+            if not seerr_connected:
+                if not warned_seerr:
+                    ledger.problems.append(
+                        "Overseerr requester tags were found in Radarr/Sonarr, but Overseerr isn't connected, "
+                        "so they can't be traced to a person"
+                    )
+                    warned_seerr = True
+                continue
+            plex_id = seerr_plex.get(uid)
+            owner_of[tag_id] = (by_plex.get(plex_id), "overseerr", "", False)
+            continue
+        if _norm(label) in override:
+            owner_of[tag_id] = (override[_norm(label)], "override", "", False)
+            continue
+        for pattern in sorted(patterns):
+            hits = pattern_matches(label, pattern, people)
+            if hits:
+                owner_of[tag_id] = (hits[0] if len(hits) == 1 else None, "pattern", pattern, len(hits) > 1)
+                break
+    for item in items:
+        tmdb_id = item.get("tmdbId")
+        if not isinstance(tmdb_id, int):
+            if any(t in owner_of for t in item.get("tags", [])):
+                ledger.problems.append(
+                    f"{item.get('title', '?')} carries a requester tag but has no TMDB id, "
+                    "so it can't be matched to Plex"
+                )
+            continue
+        item_tags = [t for t in item.get("tags", []) if t in owner_of]
+        # Shortlist's own additions carry its tag and usually the owner's requester tag too; only an
+        # Overseerr tag proves the person asked, an own-pattern match on such an item is the owner's.
+        ours = bool(shortlist_tag_ids & set(item.get("tags", [])))
+        for tag_id in item_tags:
+            person, source, pattern, _ambiguous = owner_of[tag_id]
+            counts[(tags[tag_id], source)] = counts.get((tags[tag_id], source), 0) + 1
+            if person is None or (ours and source != "overseerr"):
+                continue
+            if kind is MediaType.MOVIE:
+                on_disk = bool(item.get("hasFile"))
+                landed = _iso((item.get("movieFile") or {}).get("dateAdded"))
+            else:
+                on_disk = int((item.get("statistics") or {}).get("episodeFileCount") or 0) > 0
+                landed = _iso(item.get("added"))
+            add(
+                RequestedTitle(
+                    tmdb_id=tmdb_id,
+                    media_type=kind,
+                    plex_account_id=person.plex_account_id,
+                    requested_at=_iso(item.get("added")),
+                    landed_at=landed if on_disk else None,
+                    on_disk=on_disk,
+                    seasons_landed=True,
+                    found_in=("tag",),
+                    title=str(item.get("title") or ""),
+                    pattern=pattern,
+                )
+            )
+    for tag_id, (person, source, _pattern, ambiguous) in owner_of.items():
+        ledger.tag_matches.append(
+            TagMatch(
+                label=tags[tag_id],
+                source=source,
+                plex_account_id=person.plex_account_id if person else None,
+                titles=counts.get((tags[tag_id], source), 0),
+                ambiguous=ambiguous,
+            )
+        )

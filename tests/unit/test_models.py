@@ -2,6 +2,7 @@ import pytest
 
 from shortlist.engine.models import (
     MAX_ROW_SIZE,
+    ArrTarget,
     EngineConfig,
     RequestSources,
     RowSpec,
@@ -168,6 +169,9 @@ def test_a_row_is_not_a_requests_row_by_default():
 def test_request_sources_any_is_true_only_with_a_target():
     assert RequestSources().any() is False
     assert RequestSources(overseerr=SeerrTarget(url="http://s", api_key="k")).any() is True
+    arr = ArrTarget(url="http://a", api_key="k", quality_profile_id=1, root_folder="/m")
+    assert RequestSources(radarr=arr).any() is True
+    assert RequestSources(sonarr=arr).any() is True
 
 
 def test_config_and_profile_carry_the_new_fields_with_safe_defaults():
