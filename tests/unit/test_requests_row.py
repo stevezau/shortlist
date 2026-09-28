@@ -214,6 +214,22 @@ class TestCollectFromTags:
         assert len(tagged) == len(RADARR["tagged_items"])
         assert all(t.plex_account_id in {p.plex_account_id for p in people} for t in tagged)
 
+    def test_a_tag_in_both_arrs_is_listed_once_with_its_titles_summed(self):
+        """Radarr and Sonarr each carry `14-person14` (one tagged item apiece). The editor's tag preview
+        showed the tag twice, once per arr; the owner wants one line per tag."""
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR, radarr=ARR, sonarr=ARR),
+            _people(),
+            seerr=_seerr(requests=[]),
+            radarr=_radarr(),
+            sonarr=_sonarr(),
+        )
+        matches = [m for m in ledger.tag_matches if m.label == "14-person14"]
+        assert matches == [
+            TagMatch(label="14-person14", source="overseerr", plex_account_id=100014, titles=2, ambiguous=False)
+        ]
+        assert len({(m.label, m.source) for m in ledger.tag_matches}) == len(ledger.tag_matches)
+
     def test_overseerr_tags_without_overseerr_connected_are_reported_not_guessed(self):
         ledger = collect_requests(RequestSources(radarr=ARR), [_person(10)], radarr=_radarr())
         assert ledger.titles == []

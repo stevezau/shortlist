@@ -261,7 +261,24 @@ def collect_requests(
                 merged[key] = replace(t, landed_at=landed)
 
     ledger.titles = sorted(merged.values(), key=lambda t: t.landed_at or datetime(1, 1, 1, tzinfo=UTC), reverse=True)
+    ledger.tag_matches = _merge_tag_matches(ledger.tag_matches)
     return ledger
+
+
+def _merge_tag_matches(matches: list[TagMatch]) -> list[TagMatch]:
+    """One entry per (label, source): Radarr and Sonarr each report the tag, and the owner wants one line.
+
+    A tag resolves to the same person in both arrs (same label, same roster), so only the counts differ.
+    First-seen order is kept.
+    """
+    by_key: dict[tuple[str, str], TagMatch] = {}
+    for m in matches:
+        key = (m.label, m.source)
+        seen = by_key.get(key)
+        by_key[key] = (
+            m if seen is None else replace(seen, titles=seen.titles + m.titles, ambiguous=seen.ambiguous or m.ambiguous)
+        )
+    return list(by_key.values())
 
 
 def _from_seerr_request(
