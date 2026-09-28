@@ -289,8 +289,20 @@ export function findRowTemplate(id: string): RowTemplate | undefined {
   return ROW_TEMPLATES.find((template) => template.id === id);
 }
 
-/** Names a highlight may start with that keep their capital mid-sentence. */
-const PROPER_NOUNS = new Set(["Overseerr", "Radarr", "Sonarr", "Plex", "TMDB", "Trakt", "TV"]);
+/** Names a highlight may start with that keep their capital mid-sentence: the apps, and every season
+ *  the engine ships (`shortlist/engine/seasons.py`), matched on the first word. */
+const PROPER_NOUNS = new Set([
+  "Overseerr",
+  "Radarr",
+  "Sonarr",
+  "Plex",
+  "TMDB",
+  "Trakt",
+  "TV",
+  "Halloween",
+  "Christmas",
+  "Valentine's",
+]);
 
 /**
  * The highlights as they read joined into one sentence: each starts lowercase, unless its first

@@ -538,4 +538,16 @@ describe("sentenceCaseHighlights", () => {
       "AI-ranked",
     ]);
   });
+
+  it("keeps the season names capitalised, as the Seasonal template's highlight leads with one", () => {
+    // The Seasonal banner read "halloween, Christmas & Valentine's" — the first word lowercased, the
+    // rest untouched, which is the worst of both.
+    const seasonal = ROW_TEMPLATES.find((template) => template.kind === "seasonal")!;
+    expect(seasonal.highlights).toContain("Halloween, Christmas & Valentine's");
+    expect(sentenceCaseHighlights(["Halloween, Christmas & Valentine's", "Christmas only", "Valentine's Day"])).toEqual([
+      "Halloween, Christmas & Valentine's",
+      "Christmas only",
+      "Valentine's Day",
+    ]);
+  });
 });
