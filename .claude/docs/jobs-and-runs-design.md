@@ -662,6 +662,26 @@ added later that calls a `PlexClient` write method directly must check `ctx.conf
   The lesson is the one rule 4 already encodes: an assumption about what another system does, written
   as a comment instead of a probe, is how a privacy gap hides in plain sight for a year.
 
+- **The "Your requests" row removes itself (2026-09-28, issue #127).** The one row kind whose empty
+  state is a DELETE, not a skip: a person's requests row holds only what they asked for and have not
+  watched, so once the last title is watched, leaving the collection would keep watched titles sitting
+  in it. What reaches Plex: in `rows._run_user`, for each target library where `build_requests_picks`
+  returns nothing, `remove_row` (delivery.py) deletes that person's collection for that row in that
+  library — under `ctx.write_lock`, `dry_run`-aware (logs the would-be delete, removes nothing),
+  addressed by rendered title plus the delivery ledger's ratingKey, scoped to the `shortlist_<slug>`
+  label like every other removal — and the section keys it actually deleted in are recorded on the
+  report via `removed_deliveries`, so the persist path forgets those ledger entries and a reused
+  ratingKey is never re-presented. Deletion only ever makes the server more private (rule 1), so the
+  privacy side needs no new write.
+
+  The gate is `RequestLedger.complete`. `collect_requests` reads every configured source once per run
+  and flips `complete` to False when any of them fails (or answers a shape that can only be a broken
+  read: Overseerr with no users AND no requests). While it is False, `build_requests_picks` still
+  builds whatever it can, but the removal branch does not run at all: a source outage reads as
+  "nothing requested" for everyone, and the alternative is one down Overseerr taking every person's
+  row off the server in one night. §14's rule — a removal needs evidence, not the absence of an
+  exception — applied to a third source of "nothing here".
+
 ### Corrections to this document
 
 - §11.A said `notifications.py` doesn't read failed jobs — it does (`_failed_jobs`).

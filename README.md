@@ -149,6 +149,9 @@ anything.</sub>
   **Radarr/Sonarr** for it, or file a request in **Overseerr/Jellyseerr**. Off by default and
   cautious: the strongest few auto-send each night, the rest wait in a **Requests** inbox for
   one-click approval.
+- 📬 **A "Your requests" row** — what each person asked for in **Overseerr** (or tagged with their name
+  in Radarr/Sonarr), once it's on Plex and until they've watched it. Private per person, newest first,
+  no AI; a person with nothing ready simply has no row.
 
 **Trust & safety**
 
