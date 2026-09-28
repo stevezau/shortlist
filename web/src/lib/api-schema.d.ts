@@ -5622,8 +5622,11 @@ export interface components {
             display_name: string;
             /** Label */
             label: string;
-            /** Source */
-            source: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "overseerr" | "pattern" | "override";
             /** Titles */
             titles: number;
             /** User Id */

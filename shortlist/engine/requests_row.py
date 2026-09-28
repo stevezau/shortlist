@@ -84,6 +84,10 @@ class RequestLedger:
     #: Every Plex account id an Overseerr account is linked to — how "linked" is told apart from
     #: "has asked for something": a person with an account and no requests is still linked.
     seerr_plex_ids: set[int] = field(default_factory=set)
+    #: App names ("Overseerr", "Radarr", "Sonarr") whose read FAILED — the same events that flip
+    #: ``complete``. Advice and degradations land in ``problems`` only, so a setup screen can say
+    #: "unreachable" about a source that is down and nothing else.
+    unreadable: set[str] = field(default_factory=set)
 
     def for_person(self, plex_account_id: int) -> list[RequestedTitle]:
         """The titles one person asked for, newest arrival first."""
@@ -199,6 +203,7 @@ def collect_requests(
             if not rows and not seerr_plex:
                 # A Seerr with an admin has at least one user, so this shape is a broken read.
                 ledger.complete = False
+                ledger.unreadable.add("Overseerr")
                 ledger.problems.append("Overseerr answered with no users and no requests — treated as a failed read")
             ledger.seerr_requests = len(rows)
             requesters = {r.get("requestedBy", {}).get("id") for r in rows if isinstance(r.get("requestedBy"), dict)}
@@ -210,6 +215,7 @@ def collect_requests(
                     add(t)
         except Exception as e:
             ledger.complete = False
+            ledger.unreadable.add("Overseerr")
             ledger.problems.append(f"Overseerr could not be read: {e}")
             logger.warning("requests row: Overseerr read failed ({})", e)
 
@@ -224,6 +230,7 @@ def collect_requests(
             items = client.movies() if kind is MediaType.MOVIE else client.series()
         except Exception as e:
             ledger.complete = False
+            ledger.unreadable.add(client.app_name)
             ledger.problems.append(f"{client.app_name} could not be read: {e}")
             logger.warning("requests row: {} read failed ({})", client.app_name, e)
             continue

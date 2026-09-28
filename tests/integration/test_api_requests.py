@@ -224,6 +224,26 @@ class TestRowSourcesSetupCheck:
         assert people["sarah"] == {"user_id": ids["sarah"], "display_name": "sarah", "linked": True, "ready": 1}
         assert people["mike"] == {"user_id": ids["mike"], "display_name": "mike", "linked": True, "ready": 0}
 
+    def test_row_sources_radarr_alone_is_connected_even_when_its_tags_need_overseerr(self, client: TestClient):
+        """The Arr-tags-without-Overseerr setup this screen exists for: the engine's advice names
+        Overseerr, and that must not read as a Radarr outage."""
+        with client.app.state.sessions() as session:
+            store = SettingsStore(session, client.app.state.secrets)
+            store.set("requests.radarr.url", "http://radarr")
+            store.set("requests.radarr.apikey", "k")
+            session.commit()
+        with respx.mock:
+            respx.get("http://radarr/api/v3/tag").mock(
+                return_value=httpx.Response(200, json=[{"id": 1, "label": "10-sarah"}])
+            )
+            respx.get("http://radarr/api/v3/movie").mock(return_value=httpx.Response(200, json=[]))
+            r = client.get("/api/requests/row-sources")
+
+        assert r.status_code == 200, r.text
+        out = r.json()
+        assert (out["overseerr"], out["radarr"], out["sonarr"], out["complete"]) == ("off", "connected", "off", True)
+        assert any("Overseerr isn't connected" in p for p in out["problems"])
+
     def test_row_sources_says_off_when_nothing_is_configured(self, client: TestClient):
         out = client.get("/api/requests/row-sources").json()
 

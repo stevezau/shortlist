@@ -6728,6 +6728,11 @@
             "type": "string"
           },
           "source": {
+            "enum": [
+              "overseerr",
+              "pattern",
+              "override"
+            ],
             "title": "Source",
             "type": "string"
           },

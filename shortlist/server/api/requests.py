@@ -402,7 +402,7 @@ class TagMatchOut(PassthroughModel):
     """How one requester tag on Radarr/Sonarr resolved — the preview under "Use my own tags"."""
 
     label: str
-    source: str  # "overseerr" | "pattern" | "override"
+    source: Literal["overseerr", "pattern", "override"]
     user_id: int | None  # the DB user it names; None when it names nobody on the roster
     display_name: str  # "" when it names nobody
     titles: int  # items carrying the tag, matched or not
@@ -462,14 +462,24 @@ async def get_row_sources(
                 # collect_requests swallows per-source failures itself; this is for anything that
                 # goes wrong before a read starts (a client refusing its URL, say).
                 logger.warning("requests row check: sources could not be read ({})", e)
-                ledger = RequestLedger(
-                    titles=[], complete=False, problems=[f"Overseerr, Radarr or Sonarr could not be read: {e}"]
-                )
+                ledger = RequestLedger(titles=[], complete=False, problems=[f"Request sources could not be read: {e}"])
+                ledger.unreadable = {
+                    app
+                    for app, target in (
+                        ("Overseerr", sources.overseerr),
+                        ("Radarr", sources.radarr),
+                        ("Sonarr", sources.sonarr),
+                    )
+                    if target
+                }
 
         def state(target: object, app: str) -> RowSourceState:
+            # Tracks the READ, not the wording of `problems`: advice ("requester tags were found ...
+            # but Overseerr isn't connected") and degradations (media dates) name an app without
+            # that app being down.
             if target is None:
                 return "off"
-            return "unreachable" if any(app in p for p in ledger.problems) else "connected"
+            return "unreachable" if app in ledger.unreadable else "connected"
 
         by_plex = {p.plex_account_id: p for p in profiles}
         tagged = [t for t in ledger.titles if "tag" in t.found_in]
@@ -493,7 +503,6 @@ async def get_row_sources(
                     "ready": sum(1 for t in ledger.for_person(p.plex_account_id) if t.on_disk),
                 }
                 for p in profiles
-                if p.plex_account_id in db_ids
             ],
             "tags": [
                 {

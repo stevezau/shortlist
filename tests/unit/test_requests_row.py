@@ -160,6 +160,32 @@ class TestCollectFromSeerr:
         assert ledger.complete is False
         assert any(t.found_in == ("tag",) for t in ledger.titles)  # Radarr still read
 
+    def test_unreadable_names_only_the_source_whose_read_failed(self):
+        """Advice about Overseerr is not an Overseerr outage: a healthy Radarr next to a missing
+        Overseerr reports the tags it cannot trace, and nothing is unreadable."""
+        advised = collect_requests(RequestSources(radarr=ARR), [_person(10)], radarr=_radarr())
+        assert advised.unreadable == set() and any("Overseerr" in p for p in advised.problems)
+
+        seerr = _seerr()
+        seerr.requests.side_effect = SeerrError("down")
+        down = collect_requests(RequestSources(overseerr=SEERR, radarr=ARR), _people(), seerr=seerr, radarr=_radarr())
+        assert down.unreadable == {"Overseerr"}
+
+        empty = collect_requests(RequestSources(overseerr=SEERR), [_person(10)], seerr=_seerr(requests=[], users={}))
+        assert empty.unreadable == {"Overseerr"}
+
+        radarr = _radarr()
+        radarr.movies.side_effect = ArrError("down")
+        arr_down = collect_requests(
+            RequestSources(overseerr=SEERR, radarr=ARR), _people(), seerr=_seerr(), radarr=radarr
+        )
+        assert arr_down.unreadable == {"Radarr"}
+
+    def test_seerr_plex_ids_is_every_linked_account_not_every_requester(self):
+        users = {10: 100010, 99: 100099, 5: None}  # 99 asked for nothing; 5 is a local account
+        ledger = collect_requests(RequestSources(overseerr=SEERR), _people(), seerr=_seerr(users=users))
+        assert ledger.seerr_plex_ids == {100010, 100099}
+
 
 class TestCollectFromTags:
     def test_overseerr_tags_resolve_through_seerr_users(self):
