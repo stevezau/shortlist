@@ -263,6 +263,66 @@ class SeerrClient:
             )
         return out
 
+    def requests(self) -> list[dict]:
+        """Every request on the instance, newest first, as Seerr serialises them.
+
+        ``filter=all`` is explicit: the endpoint's default filter also says "all", but this read
+        exists to see DELETED-media and COMPLETED requests alike, so the intent is written down.
+        """
+        rows = self._paged("/request", filter="all", sort="added")
+        return [r for r in rows if isinstance(r, dict)]
+
+    def user_plex_ids(self) -> dict[int, int | None]:
+        """Seerr user id -> ``plexId`` (None for a local account never linked to Plex).
+
+        The only identity Shortlist trusts: ``plexId`` is the same number as ``users.plex_account_id``
+        (fixture ``overseerr_requests_page.json``), so a request maps to a person with no name match.
+        """
+        out: dict[int, int | None] = {}
+        for row in self._paged("/user", permission=_MANAGE_USERS):
+            if not isinstance(row, dict) or _int_or_none(row.get("id")) is None:
+                continue
+            out[int(row["id"])] = _int_or_none(row.get("plexId"))
+        return out
+
+    def arr_settings(self) -> dict[str, list[dict]]:
+        """The Radarr and Sonarr servers Seerr sends to, with each one's ``tagRequests`` switch.
+
+        ``tagRequests`` is absent from the published schema but real (fixture
+        ``overseerr_arr_settings.json``); it is what stamps ``<userId>-<name>`` on each item sent.
+        """
+        out: dict[str, list[dict]] = {}
+        for kind in ("radarr", "sonarr"):
+            payload = self._get(f"/settings/{kind}")
+            out[kind] = [s for s in payload if isinstance(s, dict)] if isinstance(payload, list) else []
+        return out
+
+    def media_dates(self) -> dict[tuple[str, int], dict]:
+        """``(mediaType, tmdbId)`` -> the dates a requests row orders by, for every media row Seerr holds.
+
+        Read when a tagged title's request is gone: Seerr keeps the media row (and ``mediaAddedAt``)
+        after a request is deleted, which is what lets an owner who tidies their queue still get
+        arrival order.
+
+        Keyed on Seerr's OWN ``mediaType`` (``movie`` / ``tv``), not Shortlist's, so the key is the
+        same literal string a request row's ``type`` carries and the two join without translation.
+        """
+        out: dict[tuple[str, int], dict] = {}
+        for row in self._paged("/media"):
+            if not isinstance(row, dict):
+                continue
+            kind, tmdb_id = row.get("mediaType"), _int_or_none(row.get("tmdbId"))
+            if kind not in ("movie", "tv") or tmdb_id is None:
+                continue
+            out[(kind, tmdb_id)] = {
+                "mediaAddedAt": row.get("mediaAddedAt"),
+                "lastSeasonChange": row.get("lastSeasonChange"),
+                "tvdbId": _int_or_none(row.get("tvdbId")),
+                "status": _int_or_none(row.get("status")),
+                "status4k": _int_or_none(row.get("status4k")),
+            }
+        return out
+
     def media_state(self) -> dict[tuple[str, int], str]:
         """Everything this instance knows about, as ``{(media_type, tmdb_id): status}``.
 
@@ -326,7 +386,7 @@ class SeerrClient:
             )
         return state
 
-    def _paged(self, path: str, *, permission: str = _MANAGE_REQUESTS) -> list[object]:
+    def _paged(self, path: str, *, permission: str = _MANAGE_REQUESTS, **params: object) -> list[object]:
         """Walk a ``{pageInfo, results}`` endpoint to the end.
 
         ``pageInfo`` is believed over the size of the batch, because a server or proxy that CAPS
@@ -337,7 +397,7 @@ class SeerrClient:
         out: list[object] = []
         expected: int | None = None
         for _page in range(self._MAX_PAGES):
-            payload = self._get(path, permission=permission, take=self._PAGE_SIZE, skip=len(out))
+            payload = self._get(path, permission=permission, take=self._PAGE_SIZE, skip=len(out), **params)
             results = payload.get("results") if isinstance(payload, dict) else None
             batch = results if isinstance(results, list) else []
             info = payload.get("pageInfo") if isinstance(payload, dict) else None

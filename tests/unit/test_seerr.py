@@ -777,3 +777,57 @@ class TestWhatTheReviewCaught:
             )
             state = _client().media_state()
         assert state == {("movie", 1): "downloaded", ("movie", 2): "downloaded"}
+
+
+def _fixture(name: str) -> dict:
+    return json.loads((FIXTURES / name).read_text())
+
+
+class TestRequestReads:
+    def test_requests_walks_the_list_with_filter_all(self):
+        page = _fixture("overseerr_requests_page.json")
+        with respx.mock:
+            route = respx.get(f"{BASE}/request").mock(return_value=httpx.Response(200, json=page))
+            got = _client().requests()
+        assert len(got) == page["pageInfo"]["results"] == 7
+        assert route.calls[0].request.url.params["filter"] == "all"
+        assert got[0]["requestedBy"]["plexId"] == page["results"][0]["requestedBy"]["plexId"]
+
+    def test_user_plex_ids_maps_seerr_id_to_plex_id_and_none_when_unlinked(self):
+        users = _fixture("overseerr_users_page.json")
+        with respx.mock:
+            respx.get(f"{BASE}/user").mock(return_value=httpx.Response(200, json=users))
+            got = _client().user_plex_ids()
+        linked = {u["id"]: u["plexId"] for u in users["results"]}
+        assert got == linked
+        assert None in got.values()  # the fixture's local (non-Plex) account
+
+    def test_arr_settings_returns_both_lists_with_tag_requests(self):
+        st = _fixture("overseerr_arr_settings.json")
+        with respx.mock:
+            respx.get(f"{BASE}/settings/radarr").mock(return_value=httpx.Response(200, json=st["radarr"]))
+            respx.get(f"{BASE}/settings/sonarr").mock(return_value=httpx.Response(200, json=st["sonarr"]))
+            got = _client().arr_settings()
+        assert [s["tagRequests"] for s in got["radarr"]] == [True]
+        assert [s["tagRequests"] for s in got["sonarr"]] == [True]
+
+    def test_media_dates_keys_by_media_type_and_tmdb_id(self):
+        page = _fixture("overseerr_media_page.json")
+        with respx.mock:
+            respx.get(f"{BASE}/media").mock(return_value=httpx.Response(200, json=page))
+            got = _client().media_dates()
+        row = page["results"][0]
+        assert got[(row["mediaType"], row["tmdbId"])]["mediaAddedAt"] == row.get("mediaAddedAt")
+        assert set(got[(row["mediaType"], row["tmdbId"])]) == {
+            "mediaAddedAt",
+            "lastSeasonChange",
+            "tvdbId",
+            "status",
+            "status4k",
+        }
+
+    def test_a_request_read_failure_raises_seerr_error(self):
+        with respx.mock:
+            respx.get(f"{BASE}/request").mock(return_value=httpx.Response(500, text="boom"))
+            with pytest.raises(SeerrError):
+                _client().requests()
