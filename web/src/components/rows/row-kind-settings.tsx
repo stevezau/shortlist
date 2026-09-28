@@ -46,7 +46,6 @@ import type {
   User,
 } from "@/lib/types";
 
-
 /** What every kind block reads. `shown` and `hidden` are `visibleSettings` / `hiddenButRead`. */
 export type KindBlockProps = {
   input: CollectionInput;
@@ -231,10 +230,10 @@ function SourceRow({ name, badge, detail }: { name: string; badge: ReactNode; de
   return (
     <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 py-1.5 text-sm">
       <span className="font-medium">{name}</span>
-      <span className="flex flex-col items-end gap-0.5 text-right">
+      <div className="flex flex-col items-end gap-0.5 text-right">
         {badge}
         {detail && <span className="text-xs text-muted-foreground">{detail}</span>}
-      </span>
+      </div>
     </div>
   );
 }
@@ -271,8 +270,8 @@ function RequestSourcesPanel({ sources }: { sources: RowSources }) {
       />
       {sources.problems.length > 0 && (
         <ul className="space-y-1 py-2 text-xs text-muted-foreground">
-          {sources.problems.map((problem) => (
-            <li key={problem}>{problem}</li>
+          {sources.problems.map((problem, index) => (
+            <li key={index}>{problem}</li>
           ))}
         </ul>
       )}
@@ -316,10 +315,10 @@ function TagPreview({ tags }: { tags: RowSources["tags"] }) {
             <TableCell className="font-mono text-xs">{tag.label}</TableCell>
             <TableCell>
               {tag.ambiguous ? (
-                <span className="flex flex-col items-start gap-0.5">
+                <div className="flex flex-col items-start gap-0.5">
                   <Badge variant="warning">No one</Badge>
                   <span className="text-xs text-muted-foreground">Fits more than one person</span>
-                </span>
+                </div>
               ) : (
                 tag.display_name || <Badge variant="secondary">No one</Badge>
               )}
@@ -391,8 +390,9 @@ export function YourRequestsBlock(props: KindBlockProps) {
             </div>
           ) : sources.isError ? (
             <p className="rounded-md bg-muted/60 p-3 text-sm text-muted-foreground">
-              Couldn&rsquo;t check the sources:{" "}
-              {sources.error instanceof Error ? sources.error.message : String(sources.error)}.
+              <span title={sources.error instanceof Error ? sources.error.message : String(sources.error)}>
+                Couldn&rsquo;t check the sources.
+              </span>{" "}
               Press Check, under Use my own tags, to try again.
             </p>
           ) : (

@@ -343,7 +343,9 @@ function expected(
   opts: { isDefault?: boolean; seasonal?: boolean } = {},
 ): RowSettingKey[] {
   return [
-    ...ALWAYS.filter((key) => !(opts.isDefault && key === "size")),
+    ...ALWAYS.filter((key) => !(opts.isDefault && key === "size"))
+      // Newest arrival first, always: a requests row offers no order.
+      .filter((key) => !(fixture === "requests" && key === "pick_order")),
     ...EXTRA[fixture].filter((key) => !(media === "movie" && key === "unstarted_only")),
     ...(opts.seasonal ? (["seasons"] as const) : []),
   ].sort();
@@ -383,6 +385,12 @@ describe("visibleSettings", () => {
   it("shows Rated by only under Highest rated", () => {
     expect(visibleSettings(row({ pick_order: "rating" }), CTX).has("rated_by")).toBe(true);
     expect(visibleSettings(row({ pick_order: "best" }), CTX).has("rated_by")).toBe(false);
+  });
+
+  it("offers a requests row no order, and so no Rated by either: it is newest arrival first", () => {
+    const shown = visibleSettings({ ...FIXTURES.requests, pick_order: "rating" }, CTX);
+    expect(shown.has("pick_order")).toBe(false);
+    expect(shown.has("rated_by")).toBe(false);
   });
 
   it("shows Recent watches for AI web search only when that source is on, from the row or the global", () => {

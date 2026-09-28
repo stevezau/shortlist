@@ -567,7 +567,9 @@ export function visibleSettings(
   // The default row's size is the global `row.size`.
   if (ctx.isDefault) shown.delete("size");
   if (kind === "seasonal") shown.add("seasons");
-  if (input.pick_order === "rating") shown.add("rated_by");
+  // A requests row is newest arrival first, always: the engine never reads its pick order.
+  if (fill === "requests") shown.delete("pick_order");
+  if (input.pick_order === "rating" && shown.has("pick_order")) shown.add("rated_by");
   // The engine rotates the fill-up's seed list like any other (`history.py`), so Watch it again
   // offers rotation while its new picks match 1 or 2 watches.
   if (fill === "again" && takeTurnsEnabled(input, ctx)) shown.add("seed_window");

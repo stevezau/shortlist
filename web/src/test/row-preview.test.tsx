@@ -206,6 +206,8 @@ describe("the lines that are easy to get wrong", () => {
     renderPreview({ ...toInput(row()), requests_row: true, requests_window_days: 90, requests_tag_pattern: "req-{username}" });
     expect(valueOf("Which requests")).toHaveTextContent(/landed in the last 90 days, newest first/);
     expect(valueOf("Which requests")).toHaveTextContent(/req-\{username\}/);
+    // No pick order to choose, so the line says what the engine does instead.
+    expect(valueOf("Order")).toHaveTextContent("Newest arrival first, always");
     renderPreview({ ...toInput(row()), requests_row: true, requests_window_days: 0 });
     expect(screen.getAllByText("Which requests", { selector: "dt" })[1]?.parentElement).toHaveTextContent(
       /Everything they asked for/,

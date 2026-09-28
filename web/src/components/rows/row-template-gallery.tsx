@@ -30,10 +30,7 @@ import {
 /** A tile that can't be picked yet, with what to set up first and where. */
 function DisabledTemplateTile({ template }: { template: RowTemplate }) {
   return (
-    <div
-      aria-disabled="true"
-      className="flex flex-col gap-1.5 rounded-lg border border-dashed p-4 text-left opacity-80"
-    >
+    <div className="flex flex-col gap-1.5 rounded-lg border border-dashed p-4 text-left opacity-80">
       <span className="text-xl" aria-hidden="true">
         {template.emoji}
       </span>

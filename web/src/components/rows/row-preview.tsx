@@ -502,7 +502,11 @@ function rowFacts({
       ),
     );
   }
-  add("Order", ["pick_order", shown.has("rated_by") && "rated_by"], orderWords(input, settings));
+  if (shown.has("pick_order")) {
+    add("Order", ["pick_order", shown.has("rated_by") && "rated_by"], orderWords(input, settings));
+  } else if (fill === "requests") {
+    add("Order", [], "Newest arrival first, always");
+  }
 
   add("Rebuilds", ["schedule", enabled && "enabled"], rebuildsValue(input.schedule));
   if (shown.has("refresh_days")) {

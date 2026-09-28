@@ -831,65 +831,67 @@ export function RowEditor({
                 />
               </div>
             )}
-            <div data-setting="pick_order" className="space-y-2 border-t pt-4">
-              <Label>What order the titles appear in</Label>
-              <Segmented
-                value={input.pick_order}
-                onChange={(pick_order) => set({ pick_order })}
-                ariaLabel="How the titles in this row are ordered"
-                options={[
-                  { value: "best", label: "Best match" },
-                  { value: "rating", label: "Highest rated" },
-                  // "Newest released", not "Newest": it sits two chips from "Just added", and the
-                  // two mean different things — when a film came out, vs when it joined this row.
-                  { value: "newest", label: "Newest released" },
-                  { value: "shuffle", label: "Shuffled" },
-                  { value: "new_first", label: "Just added" },
-                  { value: "rotate", label: "Taking turns" },
-                ]}
-              />
-              <p className="text-sm text-muted-foreground">
-                {pickOrderHelp(input.pick_order, ratingLabel)}
-              </p>
-              {/* The score to sort on is chosen HERE, not in Settings. "Highest rated" raises the
-                question "rated by whom?" at exactly this moment, and answering it by sending someone
-                to another screen is how the setting stayed undiscovered. It is still one server-wide
-                value, so the note says so rather than implying it is per-row. */}
-              {shown.has("rated_by") && (
-                <div
-                  data-setting="rated_by"
-                  className="space-y-1.5 rounded-md border bg-muted/30 p-3"
-                >
-                  <Label htmlFor="row-rating-source">Rated by</Label>
-                  <select
-                    id="row-rating-source"
-                    value={ratingSource}
-                    onChange={(e) =>
-                      saveSettings.mutate({
-                        "recommendations.rating_source": asRatingSource(
-                          e.target.value,
-                        ),
-                      })
-                    }
-                    disabled={saveSettings.isPending}
-                    className="h-9 w-56 rounded-md border bg-background px-3 text-sm"
+            {shown.has("pick_order") && (
+              <div data-setting="pick_order" className="space-y-2 border-t pt-4">
+                <Label>What order the titles appear in</Label>
+                <Segmented
+                  value={input.pick_order}
+                  onChange={(pick_order) => set({ pick_order })}
+                  ariaLabel="How the titles in this row are ordered"
+                  options={[
+                    { value: "best", label: "Best match" },
+                    { value: "rating", label: "Highest rated" },
+                    // "Newest released", not "Newest": it sits two chips from "Just added", and the
+                    // two mean different things — when a film came out, vs when it joined this row.
+                    { value: "newest", label: "Newest released" },
+                    { value: "shuffle", label: "Shuffled" },
+                    { value: "new_first", label: "Just added" },
+                    { value: "rotate", label: "Taking turns" },
+                  ]}
+                />
+                <p className="text-sm text-muted-foreground">
+                  {pickOrderHelp(input.pick_order, ratingLabel)}
+                </p>
+                {/* The score to sort on is chosen HERE, not in Settings. "Highest rated" raises the
+                  question "rated by whom?" at exactly this moment, and answering it by sending someone
+                  to another screen is how the setting stayed undiscovered. It is still one server-wide
+                  value, so the note says so rather than implying it is per-row. */}
+                {shown.has("rated_by") && (
+                  <div
+                    data-setting="rated_by"
+                    className="space-y-1.5 rounded-md border bg-muted/30 p-3"
                   >
-                    {RATING_SOURCES.map((source) => (
-                      <option key={source} value={source}>
-                        {RATING_LABELS[source]}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-muted-foreground">
-                    {ratingSource === "tmdb"
-                      ? "TMDB scores need no setup. IMDb, Trakt, Rotten Tomatoes and Metacritic all come from MDBList, a free service that fetches every site’s score in one lookup — add its key under Settings → Connections."
-                      : `Scores come from MDBList, a free service that fetches every site’s score in one lookup. Add its key under Settings → Connections, or ${ratingLabel} rows quietly fall back to TMDB.`}{" "}
-                    Shared by every row and by requests: changing it here
-                    changes it everywhere.
-                  </p>
-                </div>
-              )}
-            </div>
+                    <Label htmlFor="row-rating-source">Rated by</Label>
+                    <select
+                      id="row-rating-source"
+                      value={ratingSource}
+                      onChange={(e) =>
+                        saveSettings.mutate({
+                          "recommendations.rating_source": asRatingSource(
+                            e.target.value,
+                          ),
+                        })
+                      }
+                      disabled={saveSettings.isPending}
+                      className="h-9 w-56 rounded-md border bg-background px-3 text-sm"
+                    >
+                      {RATING_SOURCES.map((source) => (
+                        <option key={source} value={source}>
+                          {RATING_LABELS[source]}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-muted-foreground">
+                      {ratingSource === "tmdb"
+                        ? "TMDB scores need no setup. IMDb, Trakt, Rotten Tomatoes and Metacritic all come from MDBList, a free service that fetches every site’s score in one lookup — add its key under Settings → Connections."
+                        : `Scores come from MDBList, a free service that fetches every site’s score in one lookup. Add its key under Settings → Connections, or ${ratingLabel} rows quietly fall back to TMDB.`}{" "}
+                      Shared by every row and by requests: changing it here
+                      changes it everywhere.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
 
             <RowContentsFields
               input={draft}
