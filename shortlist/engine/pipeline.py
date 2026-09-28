@@ -65,6 +65,7 @@ from shortlist.engine.privacy import (
     voids_owner_restriction,
 )
 from shortlist.engine.request_config import resolve_request_config
+from shortlist.engine.requests_row import collect_requests
 
 #: How many accounts of one type the filter-enforcement spot-check may try before giving up.
 _ENFORCEMENT_SPOT_CHECK_ATTEMPTS = 3
@@ -150,6 +151,7 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     order_work: list[tuple] = []
 
     _load_season_titles(ctx, users, library_index)
+    _load_request_ledger(ctx, users)
 
     # Deliver every per-person and shared row UNPROMOTED — nothing is on anyone's Home yet.
     to_promote, shared_to_promote = _deliver_phase(
@@ -432,6 +434,24 @@ def _load_season_titles(
             len(titles.ids[MediaType.SHOW]),
             sum(len(items) for items in titles.in_library.values()),
         )
+
+
+def _load_request_ledger(ctx: EngineContext, users: list[UserProfile]) -> None:
+    """Read who-asked-for-what once per run, shared by every person's requests row (issue #127).
+
+    Built only when a requests row exists and a source is configured, so a server without one pays
+    nothing; and never fatal — an unreadable source leaves ``complete=False``, which stops the row
+    REMOVALS but not the rest of the night. ``users=[]`` is the privacy-sync shape (sweep + merge
+    only): nothing is built for anyone, so nothing is read.
+    """
+    request_rows = [spec for spec in ctx.config.rows if spec.requests_row]
+    sources = ctx.config.request_sources
+    if not users or not request_rows or sources is None or not sources.any():
+        return
+    patterns = frozenset(spec.requests_tag_pattern for spec in request_rows if spec.requests_tag_pattern)
+    ctx.request_ledger = collect_requests(sources, users, patterns=patterns)
+    for problem in ctx.request_ledger.problems:
+        logger.warning("requests row: {}", problem)
 
 
 def _sweep_phase(ctx: EngineContext, report: RunReport) -> bool:

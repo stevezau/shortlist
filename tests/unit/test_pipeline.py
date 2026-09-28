@@ -33,11 +33,14 @@ from shortlist.engine.models import (
     MediaType,
     OwnedRow,
     Pick,
+    RequestSources,
     RowOverride,
     RowSpec,
+    SeerrTarget,
     UserRunReport,
     UserType,
 )
+from shortlist.engine.requests_row import RequestedTitle, RequestLedger
 from tests.conftest import NOW, MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
 
@@ -7504,3 +7507,123 @@ class TestShelfSequence:
             ("anchor", "Recently Added Movies"),
             ("rows", {21}),
         ]
+
+
+def _run_one(ctx: EngineContext, mock_plextv, profile) -> UserRunReport:
+    """One person through the real pipeline with the rows the test configured, returning their report."""
+    mock_plextv.users = [plextv_user(profile.plex_account_id, profile.username)]
+    report = pipeline_mod.run(ctx, [profile])
+    return report.users[0]
+
+
+def _requests_spec(slug: str = "asked", **kw) -> RowSpec:
+    return RowSpec(slug=slug, name_template="{library_name} you asked for", size=5, requests_row=True, **kw)
+
+
+def _ledger(*tmdb_ids: int, complete: bool = True, person: int = 100) -> RequestLedger:
+    at = datetime(2026, 9, 27, tzinfo=UTC)
+    return RequestLedger(
+        titles=[
+            RequestedTitle(
+                tmdb_id=t,
+                media_type=MediaType.MOVIE,
+                plex_account_id=person,
+                requested_at=at,
+                landed_at=at,
+                on_disk=True,
+                seasons_landed=True,
+                found_in=("overseerr",),
+            )
+            for t in tmdb_ids
+        ],
+        complete=complete,
+    )
+
+
+class TestRequestsRow:
+    """The requests row is built from the ledger, never gathered, and is the one row kind that removes
+    its own collection when the person has nothing ready — gated on a COMPLETE source read."""
+
+    def test_a_requests_row_delivers_the_ledger_and_never_gathers(self, ctx: EngineContext, mock_plextv, mock_tmdb):
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
+        ctx.request_ledger = _ledger(10, 20)
+
+        report = _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100))
+
+        assert sorted(p.tmdb_id for p in report.picks) == [10, 20]
+        assert all(p.sources == ["requests"] for p in report.picks)
+        assert all(p.collection_slug == "asked" for p in report.picks)
+        mock_tmdb.suggestions.assert_not_called()
+        decisions = {entry["decision"] for entry in report.trace["selection"]}
+        assert decisions == {"requests"}
+
+    def test_an_empty_requests_row_is_removed_when_the_read_was_complete(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        removals: list[dict] = []
+        monkeypatch.setattr(rows_mod, "remove_row", lambda *a, **kw: removals.append(kw) or ["1"])
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
+        ctx.request_ledger = _ledger(complete=True)
+
+        report = _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100))
+
+        assert len(removals) == 1
+        assert removals[0]["sections"] == [ctx.plex.sections.return_value[0]]
+        assert removals[0]["dry_run"] is ctx.config.dry_run
+        assert report.removed_deliveries == [{"row_slug": "asked", "library_key": "1"}]
+        assert report.picks == []
+
+    def test_an_empty_requests_row_is_left_alone_when_the_read_was_incomplete(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        removals: list[dict] = []
+        monkeypatch.setattr(rows_mod, "remove_row", lambda *a, **kw: removals.append(kw) or [])
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
+        ctx.request_ledger = _ledger(complete=False)
+
+        report = _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100))
+
+        assert removals == []
+        assert report.removed_deliveries == []
+
+    def test_a_cold_person_still_gets_their_requests_row(self, ctx: EngineContext, mock_plextv, mock_tmdb):
+        ctx.history_source.fetch.return_value = []  # below min_history
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True, cold_start="skip")
+        ctx.request_ledger = _ledger(10)
+
+        report = _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100))
+
+        assert [p.tmdb_id for p in report.picks] == [10]
+        mock_tmdb.suggestions.assert_not_called()
+        ctx.plex.top_rated.assert_not_called()
+
+    def test_the_pipeline_builds_the_ledger_once_when_a_requests_row_exists(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        calls: list[frozenset[str]] = []
+        monkeypatch.setattr(
+            pipeline_mod, "collect_requests", lambda sources, people, **kw: calls.append(kw["patterns"]) or _ledger(10)
+        )
+        ctx.config = replace(
+            ctx.config,
+            rows=[_requests_spec(requests_tag_pattern="req-{username}"), _requests_spec(slug="asked-2")],
+            rows_defined=True,
+            request_sources=RequestSources(overseerr=SeerrTarget(url="http://s", api_key="k")),
+        )
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(101, "mike")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=101)])
+
+        assert calls == [frozenset({"req-{username}"})]
+        assert ctx.request_ledger is not None and [t.tmdb_id for t in ctx.request_ledger.titles] == [10]
+
+    def test_no_sources_means_no_ledger_and_no_row(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        monkeypatch.setattr(pipeline_mod, "collect_requests", lambda *a, **kw: pytest.fail("read with no source"))
+        monkeypatch.setattr(rows_mod, "remove_row", lambda *a, **kw: pytest.fail("removed with no source"))
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True, request_sources=None)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        assert ctx.request_ledger is None
+        assert report.users[0].picks == []

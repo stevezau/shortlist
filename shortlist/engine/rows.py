@@ -55,6 +55,7 @@ from shortlist.engine.models import (
     WrittenDetails,
 )
 from shortlist.engine.placeholders import names_a_seed
+from shortlist.engine.requests_row import build_requests_picks
 
 
 def effective_row_sources(spec: RowSpec, default_sources: list[str]) -> tuple[str, ...]:
@@ -1767,6 +1768,11 @@ def _drop_cold_skipped_rows(
     """
     keep: list[RowSpec] = []
     for spec in specs:
+        if spec.requests_row:
+            # A requests row needs no history depth — it is built from what they asked for, not what
+            # they watched.
+            keep.append(spec)
+            continue
         if effective_cold_start(spec, cfg) != "skip":
             keep.append(spec)
             continue
@@ -2225,6 +2231,11 @@ class RowPolicy:
             )
         return self.seed_cache[key]
 
+    def gathered_specs(self) -> list[RowSpec]:
+        """The rows built from a candidate pool — every row of theirs except a requests row, which is
+        built from the request ledger and must never cost a seed derivation or a TMDB/LLM gather."""
+        return [spec for spec in self.specs if not spec.requests_row]
+
     def pool_key(self, spec: RowSpec) -> tuple:
         # Sources alone is not enough. A row's media and its libraries both change which candidates
         # survive — and both now narrow the pool BEFORE the pre-rank truncation, so two rows that
@@ -2327,7 +2338,7 @@ class RowPolicy:
             # `poolCoversMedia` splits on " · " to decide which library a gather belongs to.
             seed_n = len(self.seeds_for(spec))
             pool_label = f"{spec.media} · {', '.join(key[0])}"
-            if any(len(self.seeds_for(other)) != seed_n for other in self.specs):
+            if any(len(self.seeds_for(other)) != seed_n for other in self.gathered_specs()):
                 pool_label += f" · {seed_n} seed{'' if seed_n == 1 else 's'}"
             _record_gather(
                 self.report,
@@ -2362,15 +2373,16 @@ def _cold_start(
     """Popular-on-this-server picks for someone whose history is too thin to seed from, plus the
     trace that keeps them from reading as skipped. Returns the base picks each row then slices."""
     ctx, user, report = policy.ctx, policy.user, policy.report
+    specs = policy.gathered_specs()
     # The rule `_warm_start` applies: a season list that could not be read is a row whose every source is
     # down, and a person whose EVERY row is down is a failed user, not a quiet cold start.
-    unreadable = [spec for spec in policy.specs if spec.season is not None and policy.season_titles(spec) is None]
-    if unreadable and len(unreadable) == len(policy.specs):
+    unreadable = [spec for spec in specs if spec.season is not None and policy.season_titles(spec) is None]
+    if unreadable and len(unreadable) == len(specs):
         raise NothingToBuildFrom("; ".join(sorted(_unreadable_season(ctx, spec) for spec in unreadable)))
     # A rewatch row is still built from what they finished, however little that is.
     policy.mark_finished_titles()
     # Enough picks for the LARGEST row this user is in; each row then takes its own k.
-    base_cold = _cold_start_picks(ctx, user, policy.cfg, k=max(spec.size for spec in policy.specs))
+    base_cold = _cold_start_picks(ctx, user, policy.cfg, k=max(spec.size for spec in specs))
     report.status = "cold_start"
     # File the trace even though no TMDB/Trakt search ran: their (thin) watches as the first stage —
     # NO seeds, because nothing was searched from them (the point of cold start) — and a synthetic
@@ -2403,7 +2415,7 @@ def _warm_start(
 
     Raises when EVERY row's sources are down — that is a failed user, not a quiet "ok".
     """
-    ctx, user, specs, report = policy.ctx, policy.user, policy.specs, policy.report
+    ctx, user, specs, report = policy.ctx, policy.user, policy.gathered_specs(), policy.report
     # Reported as the widest seed set any of this person's rows uses — the "both media, every
     # library" case when they have one, so the number still means "how much of their history fed
     # tonight's rows" rather than one arbitrary row's slice.
@@ -2468,7 +2480,7 @@ def _record_demand(policy: RowPolicy, demand: requests_mod.RowDemand) -> None:
     first_seen: dict[str, dict[tuple[int, MediaType], Candidate]] = {}
     title_tags: dict[str, dict[tuple[int, MediaType], set[str]]] = {}
     title_why: dict[str, dict[tuple[int, MediaType], list[RequestWhy]]] = {}
-    for spec in policy.specs:
+    for spec in policy.gathered_specs():
         pools = policy.pools_for(spec)
         if pools is None:
             continue
@@ -3263,7 +3275,11 @@ def _run_user(
 
     base_cold: list[Pick] = []
     try:
-        if cold:
+        if all(spec.requests_row for spec in specs):
+            # A requests row is built from the ledger, not a pool: no seeds, no TMDB, no cold-start
+            # fallback. A person whose only rows are requests rows gathers nothing at all.
+            user_report.status = "cold_start" if cold else "ok"
+        elif cold:
             base_cold = _cold_start(policy, library_of_watch, library_of_seed)
         else:
             _warm_start(policy, demand, library_of_watch, library_of_seed)
@@ -3313,30 +3329,60 @@ def _run_user(
             override = user.row_overrides.get(spec.slug)
             k = (override.size if override and override.size else None) or spec.size or cfg.row_size
             targets = target_sections(ctx.delivery_sections, spec)
-            pool_for_row: list[Candidate] = []
-            taste: set[tuple[int, MediaType]] = set()
-            if not cold:
-                # This row's own pool: its sources, its media and its libraries — already narrowed to
-                # all three BEFORE the pre-rank truncation, so nothing this row could show was cut by
-                # candidates it could never show.
-                pools = policy.pools_for(spec)
-                if pools is None:
-                    continue  # every source this row uses is down; its siblings still deliver
-                gathered, in_library, pool_for_row = pools
-                taste = {(c.tmdb_id, c.media_type) for c in gathered} if spec.rewatch else set()
-                # A row that overrides the server's release-date weight needs its OWN truncation, not
-                # just its own ordering: the cut decides which candidates a row may select from at all,
-                # so re-ordering what the global's cut left would cap the setting at whatever survived
-                # it. Re-taken from `in_library` — the cached pre-cut list — so this costs a sort, never
-                # another gather. A row that inherits reuses the pool's cut untouched.
-                recency = policy.effective_recency(spec)
-                if recency != ctx.config.recency:
-                    pool_for_row = policy.cut_at_recency(spec, in_library, recency)
-                row_label = spec.name_template or spec.slug
-                _emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row), "row": row_label})
-            section_picks = _build_section_picks(
-                policy, spec, targets, k, cold=cold, base_cold=base_cold, pool_for_row=pool_for_row, taste=taste
-            )
+            if spec.requests_row:
+                ledger = ctx.request_ledger
+                if ledger is None:
+                    continue  # no source configured — the Rows page says so; nothing to build or remove
+                section_picks = build_requests_picks(policy, spec, targets, k, ledger, now=datetime.now(UTC))
+                if ledger.complete:
+                    # The one row kind that REMOVES its collection when it has nothing to show: leaving it
+                    # would keep watched titles sitting in it. Only on a COMPLETE read — a source outage
+                    # reads as "nothing requested" for everyone, and must never take everyone's row down.
+                    diff = user_report.diff if user_report.diff is not None else CollectionDiff()
+                    user_report.diff = diff
+                    for section in targets:
+                        if section_picks.get(section.key):
+                            continue
+                        with ctx.write_lock:
+                            removed_in = remove_row(
+                                ctx.plex,
+                                user,
+                                cfg,
+                                spec,
+                                dry_run=cfg.dry_run,
+                                diff=diff,
+                                sections=[section],
+                                delivered_keys=_ledger_keys(ctx, user, spec),
+                                other_rows=cfg.per_person_rows(),
+                            )
+                        _forget(user_report, spec, removed_in)
+                if not any(section_picks.values()):
+                    continue
+            else:
+                pool_for_row: list[Candidate] = []
+                taste: set[tuple[int, MediaType]] = set()
+                if not cold:
+                    # This row's own pool: its sources, its media and its libraries — already narrowed to
+                    # all three BEFORE the pre-rank truncation, so nothing this row could show was cut by
+                    # candidates it could never show.
+                    pools = policy.pools_for(spec)
+                    if pools is None:
+                        continue  # every source this row uses is down; its siblings still deliver
+                    gathered, in_library, pool_for_row = pools
+                    taste = {(c.tmdb_id, c.media_type) for c in gathered} if spec.rewatch else set()
+                    # A row that overrides the server's release-date weight needs its OWN truncation, not
+                    # just its own ordering: the cut decides which candidates a row may select from at all,
+                    # so re-ordering what the global's cut left would cap the setting at whatever survived
+                    # it. Re-taken from `in_library` — the cached pre-cut list — so this costs a sort, never
+                    # another gather. A row that inherits reuses the pool's cut untouched.
+                    recency = policy.effective_recency(spec)
+                    if recency != ctx.config.recency:
+                        pool_for_row = policy.cut_at_recency(spec, in_library, recency)
+                    row_label = spec.name_template or spec.slug
+                    _emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row), "row": row_label})
+                section_picks = _build_section_picks(
+                    policy, spec, targets, k, cold=cold, base_cold=base_cold, pool_for_row=pool_for_row, taste=taste
+                )
             # Stamp each pick with the row AND the library it belongs to, so the user page can group picks
             # per row and the effectiveness report can split a multi-library row into one line per library.
             library_names = {section.key: getattr(section, "title", "") or "" for section in targets}
