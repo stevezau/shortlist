@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -9,9 +9,20 @@ import pytest
 
 from shortlist.engine.clients.arr import ArrError
 from shortlist.engine.clients.seerr import SeerrError
-from shortlist.engine.models import ArrTarget, RequestSources, SeerrTarget, UserProfile, UserType
+from shortlist.engine.models import (
+    ArrTarget,
+    MediaType,
+    RequestSources,
+    RowSpec,
+    SeerrTarget,
+    UserProfile,
+    UserType,
+)
 from shortlist.engine.requests_row import (
+    RequestedTitle,
+    RequestLedger,
     TagMatch,
+    build_requests_picks,
     collect_requests,
     parse_requester_tag,
     pattern_matches,
@@ -376,3 +387,132 @@ class TestCollectFromTags:
             radarr=_radarr(items=[ours_for_kids, ours_asked], tags=tags),
         )
         assert [(t.tmdb_id, t.plex_account_id) for t in ledger.titles] == [(502, _person(10).plex_account_id)]
+
+
+def _title(tmdb_id, kind=MediaType.MOVIE, *, days_ago=1, person=100001, **kw):
+    landed = datetime(2026, 9, 28, tzinfo=UTC) - timedelta(days=days_ago)
+    base = dict(
+        tmdb_id=tmdb_id,
+        media_type=kind,
+        plex_account_id=person,
+        requested_at=landed - timedelta(days=2),
+        landed_at=landed,
+        on_disk=True,
+        seasons_landed=True,
+        found_in=("overseerr",),
+    )
+    return RequestedTitle(**{**base, **kw})
+
+
+def _policy(section_index, *, watched_movies=(), watched_shows=None, visible=None):
+    policy = MagicMock()
+    policy.user = _person(1)
+    policy.ctx.section_index = section_index
+    policy.ctx.plex.fetch_items.side_effect = lambda keys: (
+        [MagicMock(ratingKey=k, title=f"t{k}", year=2020) for k in keys],
+        [],
+    )
+    policy.watched_movies = set(watched_movies)
+    policy.watched_shows = watched_shows or {}
+    policy.visible.side_effect = lambda keys: visible if visible is not None else None
+    policy.report.trace = {}
+    return policy
+
+
+def _section(key="1", kind="movie"):
+    s = MagicMock()
+    s.key = key
+    s.type = kind
+    s.title = "Movies" if kind == "movie" else "TV Shows"
+    return s
+
+
+NOW = datetime(2026, 9, 28, tzinfo=UTC)
+SPEC = RowSpec(slug="asked", name_template="📬 {library_name} you asked for", size=20, requests_row=True)
+
+
+class TestBuildRequestsPicks:
+    def test_newest_landed_first_and_only_titles_on_plex(self):
+        titles = [_title(1, days_ago=5), _title(2, days_ago=1), _title(3, days_ago=2)]
+        ledger = RequestLedger(titles=titles, complete=True)
+        policy = _policy({"1": {1: 11, 2: 22}})
+        picks = build_requests_picks(policy, SPEC, [_section()], 20, ledger, now=NOW)
+        assert [p.tmdb_id for p in picks["1"]] == [2, 1]
+        assert [p.rank for p in picks["1"]] == [1, 2]
+        results = {r["tmdb_id"]: r["result"] for r in policy.report.trace["selection"][0]["requests"]}
+        assert results == {2: "in_row", 1: "in_row", 3: "not_on_plex"}
+
+    def test_a_watched_movie_and_a_finished_show_drop_but_an_unfinished_show_stays(self):
+        ledger = RequestLedger(titles=[_title(1), _title(2, MediaType.SHOW), _title(3, MediaType.SHOW)], complete=True)
+        policy = _policy(
+            {"1": {1: 11}, "2": {2: 22, 3: 33}}, watched_movies={1}, watched_shows={2: (10, 10), 3: (4, 10)}
+        )
+        picks = build_requests_picks(policy, SPEC, [_section(), _section("2", "show")], 20, ledger, now=NOW)
+        assert picks["1"] == [] and [p.tmdb_id for p in picks["2"]] == [3]
+
+    def test_a_season_that_has_not_landed_waits(self):
+        ledger = RequestLedger(titles=[_title(2, MediaType.SHOW, seasons_landed=False)], complete=True)
+        policy = _policy({"2": {2: 22}})
+        picks = build_requests_picks(policy, SPEC, [_section("2", "show")], 20, ledger, now=NOW)
+        assert picks["2"] == []
+        assert policy.report.trace["selection"][0]["requests"][0]["result"] == "season_not_landed"
+
+    def test_the_window_drops_old_arrivals_and_zero_keeps_them(self):
+        ledger = RequestLedger(titles=[_title(1, days_ago=91), _title(2, days_ago=89)], complete=True)
+        policy = _policy({"1": {1: 11, 2: 22}})
+        assert [p.tmdb_id for p in build_requests_picks(policy, SPEC, [_section()], 20, ledger, now=NOW)["1"]] == [2]
+        forever = RowSpec(slug="asked", name_template="n", size=20, requests_row=True, requests_window_days=0)
+        picks = build_requests_picks(_policy({"1": {1: 11, 2: 22}}), forever, [_section()], 20, ledger, now=NOW)
+        assert [p.tmdb_id for p in picks["1"]] == [2, 1]
+
+    def test_an_undated_title_is_kept_and_sorted_last(self):
+        ledger = RequestLedger(titles=[_title(1, landed_at=None), _title(2, days_ago=1)], complete=True)
+        picks = build_requests_picks(_policy({"1": {1: 11, 2: 22}}), SPEC, [_section()], 20, ledger, now=NOW)
+        assert [p.tmdb_id for p in picks["1"]] == [2, 1]
+
+    def test_hidden_titles_are_dropped_when_visibility_is_known(self):
+        ledger = RequestLedger(titles=[_title(1), _title(2)], complete=True)
+        policy = _policy({"1": {1: 11, 2: 22}}, visible={22})
+        picks = build_requests_picks(policy, SPEC, [_section()], 20, ledger, now=NOW)
+        assert [p.tmdb_id for p in picks["1"]] == [2]
+        results = {r["tmdb_id"]: r["result"] for r in policy.report.trace["selection"][0]["requests"]}
+        assert results == {1: "hidden", 2: "in_row"}
+
+    def test_the_row_size_caps_and_marks_the_rest(self):
+        ledger = RequestLedger(titles=[_title(i, days_ago=i) for i in range(1, 5)], complete=True)
+        policy = _policy({"1": {i: i * 11 for i in range(1, 5)}})
+        picks = build_requests_picks(policy, SPEC, [_section()], 2, ledger, now=NOW)
+        assert [p.tmdb_id for p in picks["1"]] == [1, 2]
+        assert [r["result"] for r in policy.report.trace["selection"][0]["requests"]][2:] == ["over_size", "over_size"]
+
+    def test_only_this_persons_titles_and_this_rows_pattern(self):
+        ledger = RequestLedger(
+            titles=[
+                _title(1, person=999),
+                _title(2, found_in=("tag",), pattern="other-{username}"),
+                _title(3, found_in=("tag",), pattern="req-{username}"),
+            ],
+            complete=True,
+        )
+        spec = RowSpec(
+            slug="asked", name_template="n", size=20, requests_row=True, requests_tag_pattern="req-{username}"
+        )
+        picks = build_requests_picks(_policy({"1": {1: 11, 2: 22, 3: 33}}), spec, [_section()], 20, ledger, now=NOW)
+        assert [p.tmdb_id for p in picks["1"]] == [3]
+
+    def test_a_pick_says_when_they_asked(self):
+        ledger = RequestLedger(titles=[_title(1)], complete=True)
+        (pick,) = build_requests_picks(_policy({"1": {1: 11}}), SPEC, [_section()], 20, ledger, now=NOW)["1"]
+        assert pick.reason == "You asked for this on 25 Sep" and pick.sources == ["requests"] and pick.title == "t11"
+
+    def test_a_title_plex_dropped_since_the_index_was_built_is_not_on_plex(self):
+        ledger = RequestLedger(titles=[_title(1), _title(2)], complete=True)
+        policy = _policy({"1": {1: 11, 2: 22}})
+        policy.ctx.plex.fetch_items.side_effect = lambda keys: (
+            [MagicMock(ratingKey=k, title=f"t{k}", year=2020) for k in keys if k != 11],
+            [11],
+        )
+        picks = build_requests_picks(policy, SPEC, [_section()], 20, ledger, now=NOW)
+        assert [p.tmdb_id for p in picks["1"]] == [2] and picks["1"][0].rank == 1
+        results = {r["tmdb_id"]: r["result"] for r in policy.report.trace["selection"][0]["requests"]}
+        assert results == {1: "not_on_plex", 2: "in_row"}

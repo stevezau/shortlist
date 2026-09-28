@@ -14,13 +14,19 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
 from shortlist.engine.clients.arr import RadarrClient, SonarrClient
 from shortlist.engine.clients.seerr import SeerrClient
-from shortlist.engine.models import MediaType, RequestSources, UserProfile
+from shortlist.engine.delivery import section_kind
+from shortlist.engine.models import MediaType, Pick, RequestSources, RowSpec, UserProfile
+
+if TYPE_CHECKING:
+    # rows.py imports this module; a runtime import here would close the cycle.
+    from shortlist.engine.rows import RowPolicy
 
 REQUESTER_TAG = re.compile(r"^(\d+)\s?-\s?\S")
 # Seerr's enums: MediaRequestStatus and MediaStatus (server/constants/media.ts).
@@ -389,3 +395,118 @@ def _add_tagged(
                 ambiguous=ambiguous,
             )
         )
+
+
+def build_requests_picks(
+    policy: RowPolicy, spec: RowSpec, targets: list, k: int, ledger: RequestLedger, *, now: datetime
+) -> dict[str, list[Pick]]:
+    """This person's requested titles that are on Plex, unwatched, visible to them and recent — newest first.
+
+    No pool, no curator, no padding: the row is exactly what they asked for, or nothing. Every title
+    the ledger holds for them is written to the trace with the reason it is or isn't in the row.
+
+    Args:
+        policy: The person's row policy — their watched breakdown, visibility check and the run context.
+        spec: The requests row being built; its window and own-tag pattern decide what qualifies.
+        targets: The Plex library sections this row is delivered into.
+        k: The row size.
+        ledger: Every request read this run, for everyone.
+        now: The moment the window is measured from.
+
+    Returns:
+        ``{section.key: picks}`` for every target section, ranked newest arrival first.
+    """
+    ctx, user = policy.ctx, policy.user
+    mine = [t for t in ledger.for_person(user.plex_account_id) if t.pattern in ("", spec.requests_tag_pattern)]
+    cutoff = now - timedelta(days=spec.requests_window_days) if spec.requests_window_days > 0 else None
+    out: dict[str, list[Pick]] = {}
+    for section in targets:
+        kind = section_kind(section)
+        sec_idx = ctx.section_index.get(section.key, {})
+        # One trace row per title, keyed by tmdb_id: a person's ledger holds a title once, and a
+        # section holds one media type, so the key is unique within a section.
+        rows: dict[int, dict] = {}
+        keep: list[tuple[RequestedTitle, int]] = []
+        for t in (x for x in mine if x.media_type is kind):
+            key = sec_idx.get(t.tmdb_id)
+            result = "in_row"
+            # The library index comes first on purpose: a completed request whose media Seerr has
+            # since deleted still reads on_disk=True, and only Plex knows whether the title is here.
+            if key is None or not t.on_disk:
+                result = "not_on_plex"
+            elif not t.seasons_landed:
+                result = "season_not_landed"
+            elif _watched(policy, t):
+                result = "watched"
+            elif cutoff and t.landed_at and t.landed_at < cutoff:
+                result = "too_old"
+            rows[t.tmdb_id] = {
+                "tmdb_id": t.tmdb_id,
+                "media_type": t.media_type.value,
+                "title": t.title,
+                "asked_at": _stamp(t.requested_at),
+                "landed_at": _stamp(t.landed_at),
+                "found_in": list(t.found_in),
+                "result": result,
+            }
+            if result == "in_row":
+                keep.append((t, key))
+        seen = policy.visible([key for _, key in keep]) if keep else None
+        if seen is not None:
+            for t, key in keep:
+                if key not in seen:
+                    rows[t.tmdb_id]["result"] = "hidden"
+            keep = [(t, key) for t, key in keep if key in seen]
+        keep.sort(key=lambda tk: tk[0].landed_at or datetime(1, 1, 1, tzinfo=UTC), reverse=True)
+        for t, _key in keep[k:]:
+            rows[t.tmdb_id]["result"] = "over_size"
+        keep = keep[:k]
+        items, _missing = ctx.plex.fetch_items([key for _, key in keep]) if keep else ([], [])
+        by_key = {int(getattr(i, "ratingKey", 0)): i for i in items}
+        picks: list[Pick] = []
+        for t, key in keep:
+            item = by_key.get(key)
+            if item is None:
+                rows[t.tmdb_id]["result"] = "not_on_plex"
+                continue
+            picks.append(
+                Pick(
+                    tmdb_id=t.tmdb_id,
+                    rating_key=key,
+                    title=str(getattr(item, "title", "") or t.title),
+                    rank=len(picks) + 1,
+                    reason=_reason(t),
+                    media_type=kind,
+                    sources=["requests"],
+                    year=getattr(item, "year", None),
+                )
+            )
+        out[section.key] = picks
+        policy.report.trace.setdefault("selection", []).append(
+            {
+                "row": spec.slug,
+                "library": getattr(section, "title", str(section.key)),
+                "decision": "requests",
+                "size": k,
+                "delivered": len(picks),
+                "candidates": len(rows),
+                "pick_order": "newest",
+                "requests": list(rows.values()),
+            }
+        )
+    return out
+
+
+def _watched(policy: RowPolicy, t: RequestedTitle) -> bool:
+    if t.media_type is MediaType.MOVIE:
+        return t.tmdb_id in policy.watched_movies
+    viewed, total = policy.watched_shows.get(t.tmdb_id, (0, None))
+    return total is not None and total > 0 and viewed >= total
+
+
+def _reason(t: RequestedTitle) -> str:
+    return f"You asked for this on {t.requested_at:%-d %b}" if t.requested_at else "You asked for this"
+
+
+def _stamp(d: datetime | None) -> str | None:
+    return d.isoformat() if d else None
