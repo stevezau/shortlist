@@ -74,35 +74,7 @@ function RequestsCell({
   const tag = user.requested_by_tag ? (
     <Badge variant="outline">Tag: {user.requested_by_tag}</Badge>
   ) : null;
-  const dash = (reason: string) => (
-    <span className="flex flex-wrap items-center gap-1.5">
-      <span title={reason}>—</span>
-      {tag}
-    </span>
-  );
-  const data = sources.data;
-  if (sources.isError || !data) return dash("Couldn't read Overseerr");
-  if ([data.overseerr, data.radarr, data.sonarr].every((s) => s === "off")) {
-    return dash("No request source connected");
-  }
-  // Only the tag applies without Overseerr — "hasn't signed in" would blame them for an account
-  // that can't exist.
-  if (data.overseerr === "off") return dash("Overseerr isn't connected");
-
-  const person = data.people.find((p) => p.user_id === user.id);
-  let badge: ReactNode;
-  let note: string | null;
-  if (person?.linked) {
-    badge = <Badge variant="success">Linked</Badge>;
-    note = person.ready > 0 ? `${person.ready} ready` : null;
-  } else if (user.user_type === "managed") {
-    badge = <Badge variant="secondary">Can't use Overseerr</Badge>;
-    note = "Managed profiles can't sign in to it";
-  } else {
-    badge = <Badge variant="secondary">No account</Badge>;
-    note = "Hasn't signed in to Overseerr";
-  }
-  return (
+  const cell = (badge: ReactNode, note: string | null) => (
     <span className="flex flex-col gap-1">
       <span className="flex flex-wrap items-center gap-1.5">
         {badge}
@@ -110,6 +82,45 @@ function RequestsCell({
       </span>
       {note && <span className="text-xs text-muted-foreground">{note}</span>}
     </span>
+  );
+  const dash = (reason: string) =>
+    cell(
+      <span title={reason} aria-label={reason}>
+        —
+      </span>,
+      null,
+    );
+  const data = sources.data;
+  if (sources.isError || !data) return dash("Couldn’t read Overseerr");
+  if ([data.overseerr, data.radarr, data.sonarr].every((s) => s === "off")) {
+    return dash("No request source connected");
+  }
+  // The endpoint never fails: a configured-but-down Overseerr answers 200 with nobody linked, which
+  // would read as every shared person lacking an account and every managed one unable to get one.
+  if (data.overseerr === "unreachable") return dash("Couldn’t read Overseerr");
+
+  const person = data.people.find((p) => p.user_id === user.id);
+  const ready = person?.ready ?? 0;
+  const readyNote = ready > 0 ? `${ready} ready` : null;
+  // Without Overseerr only the tag applies — "hasn't signed in" would blame them for an account
+  // that can't exist — but tag-credited titles still count as ready.
+  if (data.overseerr === "off") {
+    return tag || readyNote
+      ? cell(null, readyNote)
+      : dash("Overseerr isn’t connected");
+  }
+  if (person?.linked) {
+    return cell(<Badge variant="success">Linked</Badge>, readyNote);
+  }
+  if (user.user_type === "managed") {
+    return cell(
+      <Badge variant="secondary">Can’t use Overseerr</Badge>,
+      "Managed profiles can’t sign in to it",
+    );
+  }
+  return cell(
+    <Badge variant="secondary">No account</Badge>,
+    "Hasn’t signed in to Overseerr",
   );
 }
 

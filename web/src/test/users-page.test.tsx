@@ -441,7 +441,7 @@ describe("UsersPage — the Requests column", () => {
     expect(linked.closest("td")).toHaveTextContent("2 ready");
     const none = screen.getByText("No account");
     expect(none.closest("td")).toHaveTextContent(
-      "Hasn't signed in to Overseerr",
+      "Hasn’t signed in to Overseerr",
     );
   });
 
@@ -453,9 +453,9 @@ describe("UsersPage — the Requests column", () => {
 
     renderPage();
 
-    const badge = await screen.findByText("Can't use Overseerr");
+    const badge = await screen.findByText("Can’t use Overseerr");
     expect(badge.closest("td")).toHaveTextContent(
-      "Managed profiles can't sign in to it",
+      "Managed profiles can’t sign in to it",
     );
     expect(screen.queryByText("No account")).toBeNull();
   });
@@ -469,7 +469,7 @@ describe("UsersPage — the Requests column", () => {
     renderPage();
 
     expect(await screen.findByText("Tag: children")).toBeInTheDocument();
-    expect(screen.getByText("Can't use Overseerr")).toBeInTheDocument();
+    expect(screen.getByText("Can’t use Overseerr")).toBeInTheDocument();
   });
 
   it("shows a dash that says why when Overseerr can't be read", async () => {
@@ -480,9 +480,33 @@ describe("UsersPage — the Requests column", () => {
 
     expect(await screen.findByText("sarah")).toBeInTheDocument();
     expect(
-      await screen.findByTitle("Couldn't read Overseerr"),
+      await screen.findByTitle("Couldn’t read Overseerr"),
     ).toHaveTextContent("—");
     expect(screen.queryByText("No account")).toBeNull();
+  });
+
+  it("says Overseerr is down rather than that nobody has an account", async () => {
+    // The endpoint never fails: a configured-but-down Overseerr answers 200 with nobody linked. Read
+    // literally, that is every shared person lacking an account and every managed one unable to get
+    // one — blame for an outage that is not theirs.
+    getUsers.mockResolvedValue([SARAH, KID]);
+    getRequestRowSources.mockResolvedValue(
+      sources(
+        [
+          { user_id: SARAH.id, linked: false, ready: 0 },
+          { user_id: KID.id, linked: false, ready: 0 },
+        ],
+        { overseerr: "unreachable" },
+      ),
+    );
+
+    renderPage();
+
+    const dashes = await screen.findAllByLabelText("Couldn’t read Overseerr");
+    expect(dashes).toHaveLength(2);
+    for (const dash of dashes) expect(dash).toHaveTextContent("—");
+    expect(screen.queryByText("No account")).toBeNull();
+    expect(screen.queryByText("Can’t use Overseerr")).toBeNull();
   });
 
   it("shows a dash that says so when no request source is connected", async () => {
@@ -504,23 +528,30 @@ describe("UsersPage — the Requests column", () => {
   });
 
   it("does not blame the person for a missing account when only Radarr/Sonarr are connected", async () => {
-    // Overseerr is off, so nobody can be "linked" to it; the tag is the only source that applies.
+    // Overseerr is off, so nobody can be "linked" to it; the tag is the only source that applies —
+    // and titles credited by the tag still count as ready.
     getUsers.mockResolvedValue([
       { ...SARAH, requested_by_tag: "sarah-asked" },
       MIKE,
     ]);
     getRequestRowSources.mockResolvedValue(
-      sources([], { overseerr: "off", radarr: "connected" }),
+      sources([{ user_id: SARAH.id, linked: false, ready: 3 }], {
+        overseerr: "off",
+        radarr: "connected",
+      }),
     );
 
     renderPage();
 
-    expect(await screen.findByText("Tag: sarah-asked")).toBeInTheDocument();
+    const tag = await screen.findByText("Tag: sarah-asked");
+    expect(tag.closest("td")).toHaveTextContent("3 ready");
     expect(screen.queryByText("No account")).toBeNull();
-    // Both people get the dash — the tag sits beside Sarah's.
-    const dashes = screen.getAllByTitle("Overseerr isn't connected");
-    expect(dashes).toHaveLength(2);
-    for (const dash of dashes) expect(dash).toHaveTextContent("—");
+    // Only Mike, with no tag and nothing ready, gets the dash.
+    const dashes = screen.getAllByTitle("Overseerr isn’t connected");
+    expect(dashes).toHaveLength(1);
+    expect(dashes[0]).toHaveTextContent("—");
+    expect(dashes[0]).toHaveAttribute("aria-label", "Overseerr isn’t connected");
+    expect(dashes[0]?.closest("tr")).toHaveTextContent("mike");
   });
 
   it("holds a skeleton in the cell while the sources are still being read", async () => {

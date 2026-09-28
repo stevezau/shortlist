@@ -317,7 +317,7 @@ export function requestResultLabel(result: string, windowDays?: number): string 
     case "not_on_plex":
       return "Not on Plex yet";
     case "season_not_landed":
-      return "That season hasn't landed";
+      return "That season hasn’t landed";
     case "watched":
       return "Already watched";
     case "too_old":

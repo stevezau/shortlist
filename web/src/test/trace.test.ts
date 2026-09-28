@@ -302,7 +302,7 @@ describe("plain-English trace helpers", () => {
     expect(requestResultLabel("in_row")).toBe("In the row");
     expect(requestResultLabel("not_on_plex")).toBe("Not on Plex yet");
     expect(requestResultLabel("season_not_landed")).toBe(
-      "That season hasn't landed",
+      "That season hasn’t landed",
     );
     expect(requestResultLabel("watched")).toBe("Already watched");
     expect(requestResultLabel("too_old")).toBe("Landed too long ago");
