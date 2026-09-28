@@ -59,7 +59,7 @@ import {
  *
  *  Reads the ONE row-sources query the page makes (`useRequestRowSources("")` costs up to a few
  *  dozen HTTP calls to Overseerr and the Arrs, so it is never made per row). A dash carries its
- *  reason in `title`: the three dashes — can't read Overseerr, nothing connected, Overseerr not
+ *  reason in `title`: the dashes — can't read the sources, nothing connected, Overseerr not
  *  connected — would otherwise be indistinguishable from each other and from "no requests". */
 function RequestsCell({
   user,
@@ -91,7 +91,7 @@ function RequestsCell({
       null,
     );
   const data = sources.data;
-  if (sources.isError || !data) return dash("Couldn’t read Overseerr");
+  if (sources.isError || !data) return dash(unreadableSources(data));
   if ([data.overseerr, data.radarr, data.sonarr].every((s) => s === "off")) {
     return dash("No request source connected");
   }
@@ -122,6 +122,26 @@ function RequestsCell({
     <Badge variant="secondary">No account</Badge>,
     "Hasn’t signed in to Overseerr",
   );
+}
+
+/** Why the Requests column is blank after a failed read. A failed REFETCH still has the last answer,
+ *  which says which sources are configured — so an install with only Radarr/Sonarr is not told that
+ *  an Overseerr it never connected is down. With no answer at all, nothing can be blamed by name. */
+function unreadableSources(data: RowSources | undefined): string {
+  const configured = data
+    ? (
+        [
+          ["Overseerr", data.overseerr],
+          ["Radarr", data.radarr],
+          ["Sonarr", data.sonarr],
+        ] as const
+      )
+        .filter(([, state]) => state !== "off")
+        .map(([name]) => name)
+    : [];
+  return configured.length > 0
+    ? `Couldn’t read ${configured.join("/")}`
+    : "Couldn’t read the request sources";
 }
 
 function UsersSkeleton() {

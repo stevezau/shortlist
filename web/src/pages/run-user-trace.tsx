@@ -668,7 +668,8 @@ function LibraryFlow({
       body: (
         <RequestsTable
           requests={entry.requests ?? []}
-          windowDays={rowWindows[entry.row]}
+          // The run's own setting first: the row may have been edited since that night.
+          windowDays={entry.requests_window_days ?? rowWindows[entry.row]}
         />
       ),
     }),

@@ -847,6 +847,8 @@ export interface TraceSelection {
   /** `requests` rows only: every request of theirs the run looked at for this library, and what
    *  became of each. Nothing is searched for a requests row, so this is the whole story. */
   requests?: TraceRequest[];
+  /** `requests` rows only: the row's `requests_window_days` on the night, behind any `too_old`. */
+  requests_window_days?: number;
 }
 
 /** One request a Your requests row considered (`engine/requests_row.py`). */

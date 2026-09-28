@@ -108,6 +108,15 @@ describe("ROW_TEMPLATES", () => {
     }
   });
 
+  it("the requests template name is unique among templates", () => {
+    // Two rows delivered under one title into one library are told apart by nothing: the removal
+    // paths match on title, so a template sharing a name with another would have the requests row's
+    // empty-night removal take the other row's collection with it.
+    const names = ROW_TEMPLATES.map((t) => t.values.name);
+    expect(new Set(names).size).toBe(names.length);
+    expect(names).toContain("📬 {library_name} you asked for");
+  });
+
   it("every template actually changes how the row behaves, not just its name", () => {
     // A template whose only difference is a title is a lie dressed as a feature: it promises a
     // distinct kind of row and produces the default one. Every tile must move at least one knob the

@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type * as ApiModule from "@/lib/api";
 import { ApiError } from "@/lib/api";
+import { queryKeys } from "@/lib/queries";
 import type { RowSources, User, UserPatch } from "@/lib/types";
 import { UsersPage } from "@/pages/users";
 
@@ -122,8 +123,8 @@ const SARAH: User = {
 
 const MIKE: User = { ...SARAH, id: 5, username: "mike", slug: "mike" };
 
-function renderPage() {
-  const client = new QueryClient({
+function renderPage(client?: QueryClient) {
+  client ??= new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
@@ -479,10 +480,37 @@ describe("UsersPage — the Requests column", () => {
     renderPage();
 
     expect(await screen.findByText("sarah")).toBeInTheDocument();
+    // Nothing came back at all, so nothing says which source is to blame.
     expect(
-      await screen.findByTitle("Couldn’t read Overseerr"),
+      await screen.findByTitle("Couldn’t read the request sources"),
     ).toHaveTextContent("—");
     expect(screen.queryByText("No account")).toBeNull();
+  });
+
+  it("blames the Arrs, not Overseerr, when the failed read had only Radarr and Sonarr to talk to", async () => {
+    // A refetch failed after an earlier success: the last answer still says which sources are
+    // configured, so the dash names those rather than an Overseerr that was never connected.
+    getUsers.mockResolvedValue([SARAH]);
+    getRequestRowSources.mockRejectedValue(new ApiError(502, "Bad gateway"));
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    client.setQueryData(
+      queryKeys.requestRowSources(""),
+      sources([{ user_id: SARAH.id, linked: false, ready: 0 }], {
+        overseerr: "off",
+        radarr: "connected",
+        sonarr: "unreachable",
+      }),
+      { updatedAt: 0 }, // stale, so the page refetches on mount — and that refetch fails
+    );
+
+    renderPage(client);
+
+    expect(
+      await screen.findByTitle("Couldn’t read Radarr/Sonarr"),
+    ).toHaveTextContent("—");
+    expect(screen.queryByTitle("Couldn’t read Overseerr")).toBeNull();
   });
 
   it("says Overseerr is down rather than that nobody has an account", async () => {

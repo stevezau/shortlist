@@ -1117,6 +1117,21 @@ describe("TraceView — a Your requests row", () => {
     ).toBeInTheDocument();
   });
 
+  it("prefers the window the run itself recorded over the row's current setting", () => {
+    // The row may have been edited since the night the verdict was reached; the trace entry carries
+    // the setting that actually dropped the title.
+    render(
+      <TraceView
+        data={requestsTrace({ requests_window_days: 30 })}
+        rowWindows={{ "your-requests": 60 }}
+      />,
+    );
+    expect(
+      screen.getByText("Landed more than 30 days ago"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/60 days/)).toBeNull();
+  });
+
   it("keeps the recommendation steps when the library also holds a picked row", () => {
     render(
       <TraceView

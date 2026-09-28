@@ -482,7 +482,10 @@ export function useRequestRowSources(pattern: string, enabled: boolean) {
     queryKey: queryKeys.requestRowSources(pattern),
     queryFn: () => api.getRequestRowSources(pattern),
     enabled,
-    staleTime: 60_000,
+    // Up to a few dozen HTTP calls to Overseerr and the Arrs per read, for a row that is built
+    // nightly: five minutes is fresh enough, and a tab switch must not re-run it.
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
     retry: false,
   });
 }
