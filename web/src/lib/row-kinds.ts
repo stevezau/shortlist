@@ -395,6 +395,10 @@ export const FIELD_SETTING: { readonly [K in keyof CollectionInput]-?: RowSettin
   candidate_sources: "candidate_sources",
   watched_pct: "watched_pct",
   rewatch_cooldown_days: "rewatch_cooldown_days",
+  // The "Your requests" row (issue #127) has no editor control yet; the server stores these today.
+  requests_row: null,
+  requests_window_days: null,
+  requests_tag_pattern: null,
   unstarted_only: "unstarted_only",
   refresh_days: "refresh_days",
   idle_hold_days: "idle_hold_days",

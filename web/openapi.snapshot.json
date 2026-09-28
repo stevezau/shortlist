@@ -1045,6 +1045,24 @@
             "title": "Request Tag",
             "type": "string"
           },
+          "requests_row": {
+            "default": false,
+            "title": "Requests Row",
+            "type": "boolean"
+          },
+          "requests_tag_pattern": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Requests Tag Pattern",
+            "type": "string"
+          },
+          "requests_window_days": {
+            "default": 90,
+            "maximum": 3650.0,
+            "minimum": 0.0,
+            "title": "Requests Window Days",
+            "type": "integer"
+          },
           "rewatch": {
             "default": false,
             "title": "Rewatch",
@@ -1619,6 +1637,18 @@
             "title": "Request Tag",
             "type": "string"
           },
+          "requests_row": {
+            "title": "Requests Row",
+            "type": "boolean"
+          },
+          "requests_tag_pattern": {
+            "title": "Requests Tag Pattern",
+            "type": "string"
+          },
+          "requests_window_days": {
+            "title": "Requests Window Days",
+            "type": "integer"
+          },
           "rewatch": {
             "title": "Rewatch",
             "type": "boolean"
@@ -1732,6 +1762,9 @@
           "watched_pct",
           "rewatch",
           "rewatch_cooldown_days",
+          "requests_row",
+          "requests_window_days",
+          "requests_tag_pattern",
           "unstarted_only",
           "refresh_days",
           "idle_hold_days",
@@ -7119,6 +7152,10 @@
             "title": "Request Tag",
             "type": "string"
           },
+          "requested_by_tag": {
+            "title": "Requested By Tag",
+            "type": "string"
+          },
           "restricted": {
             "title": "Restricted",
             "type": "boolean"
@@ -7159,6 +7196,7 @@
           "manage_sharing",
           "cold_start",
           "request_tag",
+          "requested_by_tag",
           "prefs",
           "history_depth",
           "last_run_at",
@@ -7227,6 +7265,18 @@
               }
             ],
             "title": "Request Tag"
+          },
+          "requested_by_tag": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By Tag"
           }
         },
         "title": "UserPatch",

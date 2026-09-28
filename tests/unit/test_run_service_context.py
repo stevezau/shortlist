@@ -738,6 +738,65 @@ class TestBuildRequests:
         assert "quality profile" in cfg.incomplete_targets[0]
 
 
+class TestBuildRequestSources:
+    """Where a "Your requests" row reads from (issue #127): every app with a URL and key, whatever the
+    request FEATURE says — the owner may send nothing through Shortlist and still want the row."""
+
+    def _store(self, sessions, tmp_path, values: dict):
+        box = SecretBox(tmp_path)
+        with sessions() as session:
+            store = SettingsStore(session, box)
+            for key, value in values.items():
+                store.set(key, value)
+        session = sessions()
+        return SettingsStore(session, box)
+
+    def test_request_sources_are_built_whenever_a_url_and_key_exist(self, sessions, tmp_path):
+        store = self._store(
+            sessions,
+            tmp_path,
+            {
+                "requests.enabled": False,
+                "requests.target": "arr",
+                "requests.overseerr.url": "http://s",
+                "requests.overseerr.apikey": "k",
+                "requests.radarr.url": "http://r",
+                "requests.radarr.apikey": "k",
+                "requests.tag": "shortlist",
+            },
+        )
+        src = ContextBuilder._build_request_sources(store)
+        assert src.overseerr.url == "http://s" and src.radarr.url == "http://r" and src.sonarr is None
+        assert src.exclude_seerr_user_id == 0  # requests are off, so no account is Shortlist's
+        assert src.shortlist_tag == "shortlist"
+
+    def test_the_request_as_account_is_excluded_only_when_shortlist_sends_via_overseerr(self, sessions, tmp_path):
+        store = self._store(
+            sessions,
+            tmp_path,
+            {
+                "requests.enabled": True,
+                "requests.target": "overseerr",
+                "requests.overseerr.url": "http://s",
+                "requests.overseerr.apikey": "k",
+                "requests.overseerr.request_as_user_id": 7,
+            },
+        )
+        assert ContextBuilder._build_request_sources(store).exclude_seerr_user_id == 7
+
+    def test_no_sources_is_none(self, sessions, tmp_path):
+        assert ContextBuilder._build_request_sources(self._store(sessions, tmp_path, {})) is None
+
+    def test_the_engine_config_carries_the_sources(self, sessions, tmp_path):
+        """`_engine_config` is the seam a forgotten field hides in: the setting saves and the engine
+        never sees it."""
+        store = self._store(sessions, tmp_path, {"requests.radarr.url": "http://r", "requests.radarr.apikey": "k"})
+        builder = ContextBuilder(sessions, SecretBox(tmp_path), EventBus())
+        with sessions() as session:
+            cfg = builder._engine_config(session, store)
+        assert cfg.request_sources is not None and cfg.request_sources.radarr.url == "http://r"
+
+
 class TestRequestTag:
     """`UserProfile.request_tag` carries only the tag the owner TYPED on a person.
 

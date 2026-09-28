@@ -426,6 +426,9 @@ describe("the setting register", () => {
     req_auto_min_demand: "No control; follows Settings > Requests (design §7).",
     req_auto_min_rating: "No control; follows Settings > Requests (design §7).",
     req_min_rating_other: "No control; the language toggle only clears it back to Settings (design §7).",
+    requests_row: "No control yet; the requests-row editor is the UI half of issue #127.",
+    requests_window_days: "No control yet; the requests-row editor is the UI half of issue #127.",
+    requests_tag_pattern: "No control yet; the requests-row editor is the UI half of issue #127.",
   };
 
   // Every state the fixtures can be in, so "visible somewhere" is checked against real rows.

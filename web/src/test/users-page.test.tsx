@@ -79,6 +79,7 @@ const SARAH: User = {
   history_depth: 120,
   last_run_at: null,
   request_tag: "",
+  requested_by_tag: "",
   hit_rate: null,
   nickname: "",
   friendly_name: "",

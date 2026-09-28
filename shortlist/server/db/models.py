@@ -140,6 +140,9 @@ class User(Base):
     cold_start: Mapped[bool] = mapped_column(Boolean, default=False)
     label: Mapped[str] = mapped_column(String(255), default="")  # as stored by Plex (title-cased)
     request_tag: Mapped[str] = mapped_column(String(64), default="")  # tag added to titles requested for them
+    # The tag Overseerr/Radarr/Sonarr put on what THIS person asked for (issue #127) — wins over a row's
+    # `requests_tag_pattern` for them. "" -> the pattern, or no tag match at all.
+    requested_by_tag: Mapped[str] = mapped_column(String(64), default="", nullable=False, server_default="")
     prefs: Mapped[dict] = mapped_column(JSON, default=dict)
 
     run_users: Mapped[list[RunUser]] = relationship(back_populates="user")
@@ -317,6 +320,13 @@ class Collection(Base):
     # Put before the row's name to make its Plex sort title, e.g. "!010_" — orders the row in the
     # library's Collections tab, not on Home. "" -> the sort title is left alone.
     sort_title_prefix: Mapped[str] = mapped_column(String(64), default="", nullable=False, server_default="")
+    # A "Your requests" row (issue #127): built from what each person asked for in Overseerr/Radarr/
+    # Sonarr, never from the candidate pool. Always per-person, never rewatch, never seasonal.
+    requests_row: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
+    # Keep a request on the row this many days after it lands; 0 = until watched.
+    requests_window_days: Mapped[int] = mapped_column(Integer, default=90, nullable=False, server_default="90")
+    # How the *arrs tag a person's requests, e.g. "req-{username}"; "" -> only `users.requested_by_tag`.
+    requests_tag_pattern: Mapped[str] = mapped_column(String(128), default="", nullable=False, server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

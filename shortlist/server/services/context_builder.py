@@ -40,6 +40,7 @@ from shortlist.engine.models import (
     PosterSpec,
     RequestConfig,
     RequestOverrides,
+    RequestSources,
     RowOverride,
     RowSpec,
     SeerrTarget,
@@ -962,6 +963,7 @@ class ContextBuilder:
                     blocked_seeds=blocked_ids(prefs),
                     row_name_template=prefs.get("row_name_tpl"),
                     request_tag=request_tag,
+                    requested_by_tag=(user.requested_by_tag or "").strip(),
                     row_overrides=overrides.get(user.id, {}),
                 )
             )
@@ -1078,6 +1080,7 @@ class ContextBuilder:
             # delivery only — classification/sync/sweep/promotion above still see the full list.
             build_only=self._build_only_slugs(session, collection_ids),
             requests=self._build_requests(store),
+            request_sources=self._build_request_sources(store),
         )
 
     def _build_rows(self, session: Session, store: SettingsStore) -> list[RowSpec]:
@@ -1165,6 +1168,11 @@ class ContextBuilder:
                     sort_title_prefix=collection.sort_title_prefix or "",
                     seasons=list(collection.seasons or []),
                     season=season,
+                    requests_row=bool(collection.requests_row),
+                    requests_window_days=int(
+                        collection.requests_window_days if collection.requests_window_days is not None else 90
+                    ),
+                    requests_tag_pattern=(collection.requests_tag_pattern or "").strip(),
                 )
             )
         return specs
@@ -1285,6 +1293,43 @@ class ContextBuilder:
                         before=bool(entry.get("before", False)),
                     )
         return anchors
+
+    @staticmethod
+    def _build_request_sources(store: SettingsStore) -> RequestSources | None:
+        """Where a requests row reads from — every app with a URL and key, whatever `requests.*` says.
+
+        Independent of `_build_requests`: the owner may send nothing through Shortlist and still want
+        the row. Only the Overseerr account Shortlist FILES AS is excluded, and only while it actually
+        files there — otherwise that account's requests are somebody's own.
+        """
+
+        def seerr() -> SeerrTarget | None:
+            url = (store.get("requests.overseerr.url") or "").strip()
+            key = store.get("requests.overseerr.apikey") or ""
+            if not (url and key):
+                return None
+            request_as = int(store.get("requests.overseerr.request_as_user_id") or 0)
+            return SeerrTarget(url=url, api_key=key, request_as_user_id=request_as)
+
+        def arr(prefix: str) -> ArrTarget | None:
+            url = (store.get(f"{prefix}.url") or "").strip()
+            key = store.get(f"{prefix}.apikey") or ""
+            if not (url and key):
+                return None
+            # Reading needs no profile, folder or tag — those say where a NEW request is filed.
+            return ArrTarget(url=url, api_key=key, quality_profile_id=0, root_folder="", tag="")
+
+        overseerr, radarr, sonarr = seerr(), arr("requests.radarr"), arr("requests.sonarr")
+        if not (overseerr or radarr or sonarr):
+            return None
+        sends_via_seerr = bool(store.get("requests.enabled")) and store.get("requests.target") == "overseerr"
+        return RequestSources(
+            overseerr=overseerr,
+            radarr=radarr,
+            sonarr=sonarr,
+            exclude_seerr_user_id=overseerr.request_as_user_id if overseerr and sends_via_seerr else 0,
+            shortlist_tag=(store.get("requests.tag") or "").strip(),
+        )
 
     @staticmethod
     def _build_requests(store: SettingsStore) -> RequestConfig | None:

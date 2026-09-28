@@ -3181,6 +3181,21 @@ export interface components {
              */
             request_tag: string;
             /**
+             * Requests Row
+             * @default false
+             */
+            requests_row: boolean;
+            /**
+             * Requests Tag Pattern
+             * @default
+             */
+            requests_tag_pattern: string;
+            /**
+             * Requests Window Days
+             * @default 90
+             */
+            requests_window_days: number;
+            /**
              * Rewatch
              * @default false
              */
@@ -3393,6 +3408,12 @@ export interface components {
             req_sonarr_root_folder: string | null;
             /** Request Tag */
             request_tag: string;
+            /** Requests Row */
+            requests_row: boolean;
+            /** Requests Tag Pattern */
+            requests_tag_pattern: string;
+            /** Requests Window Days */
+            requests_window_days: number;
             /** Rewatch */
             rewatch: boolean;
             /** Rewatch Cooldown Days */
@@ -5764,6 +5785,8 @@ export interface components {
             preview_titles: string[];
             /** Request Tag */
             request_tag: string;
+            /** Requested By Tag */
+            requested_by_tag: string;
             /** Restricted */
             restricted: boolean;
             /** Restriction Profile */
@@ -5789,6 +5812,8 @@ export interface components {
             prefs?: components["schemas"]["UserPrefs"] | null;
             /** Request Tag */
             request_tag?: string | null;
+            /** Requested By Tag */
+            requested_by_tag?: string | null;
         };
         /**
          * UserPickOut
