@@ -338,6 +338,8 @@ class UserProfile:
     request_tag: str = ""  # tag added to titles requested for this user (layered onto global + row tags)
     # Per-row overrides keyed by collection slug; a slug absent here uses the row's own settings.
     row_overrides: dict[str, RowOverride] = field(default_factory=dict)
+    # A Radarr/Sonarr tag that marks THIS person's requests when it fits no pattern (set on their Users page).
+    requested_by_tag: str = ""
 
     def __post_init__(self) -> None:
         if not self.slug:
@@ -566,6 +568,12 @@ class RowSpec:
     # clock). None on a seasonal row means it is between seasons: DORMANT — not gathered, not built, and
     # its collection kept hidden until its next season.
     season: RowSeason | None = None
+    # A "Your requests" row (issue #127): built from the person's Overseerr requests and Radarr/Sonarr
+    # requester tags, never from the candidate pool. `requests_window_days` 0 = keep until watched.
+    requests_row: bool = False
+    requests_window_days: int = 90
+    # Owner's own tag format for hand-managed Radarr/Sonarr setups, e.g. "req-{username}". "" = off.
+    requests_tag_pattern: str = ""
 
     @property
     def dormant(self) -> bool:
@@ -758,6 +766,25 @@ class SeerrTarget:
     #: own the request, which normally means auto-approved (that account is an admin). Pointing this
     #: at a non-auto-approve account is how the owner gets a second approval gate in the *seerr.
     request_as_user_id: int = 0
+
+
+@dataclass(frozen=True)
+class RequestSources:
+    """Where a "Your requests" row reads who asked for what. Independent of the request FEATURE:
+    the owner may send nothing through Shortlist and still want this row, so this is built whenever
+    a URL + key exist, whatever `requests.enabled` / `requests.target` say."""
+
+    overseerr: SeerrTarget | None = None
+    radarr: ArrTarget | None = None
+    sonarr: ArrTarget | None = None
+    # Requests Shortlist itself files via Overseerr land on this account; they are recommendations,
+    # not something the person asked for, so that account never gets a row from them.
+    exclude_seerr_user_id: int = 0
+    # Shortlist's own Radarr/Sonarr tag: an item carrying it never matches an own-pattern tag.
+    shortlist_tag: str = ""
+
+    def any(self) -> bool:
+        return bool(self.overseerr or self.radarr or self.sonarr)
 
 
 #: The two places a request can be filed. ``arr`` posts to Radarr/Sonarr directly (the original, and
@@ -1271,6 +1298,10 @@ class EngineConfig:
     # never build" about a perfectly healthy 10-person row. Default False = "this IS the roster",
     # the honest reading for a direct library caller.
     users_scoped: bool = False
+    # Where a "Your requests" row reads from (issue #127). None -> no requests row can build; the
+    # server adapter fills it whenever an Overseerr/Radarr/Sonarr URL + key exist, regardless of
+    # `requests` — the row and the request feature are independent.
+    request_sources: RequestSources | None = None
 
     def should_build(self, spec: RowSpec) -> bool:
         """Whether this run rebuilds ``spec`` (scoped run) or every row (full run)."""

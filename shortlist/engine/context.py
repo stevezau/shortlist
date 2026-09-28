@@ -12,6 +12,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
@@ -27,6 +28,9 @@ from shortlist.engine.history import HistorySource
 from shortlist.engine.models import EngineConfig, Pick, UserProfile, UserRunReport, WrittenDetails
 from shortlist.engine.privacy import SnapshotStore
 from shortlist.engine.seasons import SeasonTitles
+
+if TYPE_CHECKING:
+    from shortlist.engine.requests_row import RequestLedger
 
 
 @dataclass
@@ -182,6 +186,8 @@ class EngineContext:
     # promote still run for the users already delivered, so the server stays consistent. Default:
     # never cancels (direct engine runs and tests can't be cancelled).
     cancelled: Callable[[], bool] = lambda: False
+    # Built once per run by the pipeline when any row is a requests row; None otherwise.
+    request_ledger: RequestLedger | None = None
 
 
 def _emit(ctx: EngineContext, slug: str, stage: str, counts: dict, reason: str | None = None) -> None:
