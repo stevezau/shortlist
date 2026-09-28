@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -56,17 +57,23 @@ beforeEach(() => {
   rowSources.current = { ...rowSources.current, overseerr: "connected" };
 });
 
-function renderGallery(onPick = vi.fn()) {
+function galleryWrapper() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  render(
-    <MemoryRouter>
-      <QueryClientProvider client={client}>
-        <RowTemplateGallery open onPick={onPick} onClose={() => {}} />
-      </QueryClientProvider>
-    </MemoryRouter>,
-  );
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return (
+      <MemoryRouter>
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      </MemoryRouter>
+    );
+  };
+}
+
+function renderGallery(onPick = vi.fn(), onClose = vi.fn()) {
+  render(<RowTemplateGallery open onPick={onPick} onClose={onClose} />, {
+    wrapper: galleryWrapper(),
+  });
   return onPick;
 }
 
@@ -311,76 +318,175 @@ describe("row template kinds and grouping", () => {
 });
 
 describe("RowTemplateGallery", () => {
-  it("offers every template plus a way to skip them", async () => {
-    const onPick = renderGallery();
+  function templateButton(title: string) {
+    return screen.getByRole("button", { name: new RegExp(`^${title}.+`) });
+  }
 
+  it("offers every template with Picked for You selected initially", () => {
+    const onPick = renderGallery();
     for (const template of ROW_TEMPLATES) {
-      // getAllByText, not getByText: a kind heading and its one template can share exact wording
-      // (e.g. "Watch it again" is both the "again" group's heading and its only card's title).
-      expect(screen.getAllByText(template.title).length).toBeGreaterThan(0);
+      expect(templateButton(template.title)).toHaveAttribute(
+        "aria-pressed", String(template.id === "picked-for-you"),
+      );
     }
-
-    await userEvent.click(
-      screen.getByRole("button", { name: /Start from scratch/i }),
-    );
-    expect(onPick).toHaveBeenCalledWith(null);
+    expect(screen.getByRole("heading", { level: 2, name: "Picked for You" })).toBeInTheDocument();
+    expect(onPick).not.toHaveBeenCalled();
   });
 
-  it("shows a heading and one-line description for each kind", () => {
-    renderGallery();
-
-    for (const group of ROW_TEMPLATE_GROUPS) {
-      expect(
-        screen.getByRole("heading", { name: group.heading }),
-      ).toBeInTheDocument();
-      expect(screen.getByText(group.description)).toBeInTheDocument();
+  it("previews each selection and only confirms the unchanged template on Use template", async () => {
+    const user = userEvent.setup();
+    const onPick = renderGallery();
+    for (const template of ROW_TEMPLATES) {
+      await user.click(templateButton(template.title));
+      expect(onPick).not.toHaveBeenCalled();
+      expect(templateButton(template.title)).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByRole("heading", { level: 2, name: template.title })).toBeInTheDocument();
+      expect(screen.getByText(template.blurb)).toBeInTheDocument();
+      for (const highlight of template.highlights) {
+        expect(screen.getByText(highlight)).toBeInTheDocument();
+      }
+      await user.click(screen.getByRole("button", { name: /Use template/i }));
+      expect(onPick).toHaveBeenCalledExactlyOnceWith(template);
+      expect(onPick.mock.calls[0]?.[0]).toBe(template);
+      onPick.mockClear();
     }
   });
 
-  it("explains templates as starting points you can change afterwards", () => {
+  it("explains that a shared row refreshes every run", async () => {
     renderGallery();
-
-    expect(
-      screen.getByText(
-        "Pick a starting point. It fills in the settings for you; you can change any of them, including the kind of row, afterwards.",
-      ),
-    ).toBeInTheDocument();
+    await userEvent.click(templateButton("Popular on this server"));
+    expect(screen.getByText("Every run")).toBeInTheDocument();
   });
 
-  it("hands back the template that was clicked", async () => {
+  it("starts from scratch immediately", async () => {
     const onPick = renderGallery();
-
-    await userEvent.click(
-      screen.getByRole("button", { name: /Watch it again/i }),
-    );
-
-    expect(onPick).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "seen-it-already" }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: /Start from scratch/i }));
+    expect(onPick).toHaveBeenCalledExactlyOnceWith(null);
   });
 
-  it("offers Your requests while something can say who asked for what", async () => {
+  it.each([
+    ["All templates", ["picked", "byw", "again", "requests", "seasonal", "popular"]],
+    ["Discover", ["picked", "byw"]],
+    ["Rewatch", ["again"]],
+    ["Requests", ["requests"]],
+    ["Seasonal", ["seasonal"]],
+    ["Popular", ["popular"]],
+  ])("filters %s to its templates", async (label, kinds) => {
     const onPick = renderGallery();
-    const tile = await screen.findByRole("button", { name: /Your requests/i });
-    await userEvent.click(tile);
-    expect(onPick).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "your-requests" }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: label }));
+    for (const template of ROW_TEMPLATES) {
+      const tile = screen.queryByRole("button", { name: new RegExp(`^${template.title}.+`) });
+      if (kinds.includes(template.kind)) {
+        expect(tile).toBeInTheDocument();
+      } else {
+        expect(tile).not.toBeInTheDocument();
+      }
+    }
+    expect(onPick).not.toHaveBeenCalled();
   });
 
-  it("disables Your requests when every source is off, and says what to set up", async () => {
+  it.each(["MOVIE NIGHT", "Ten films", "Friday"])(
+    "searches template titles, summaries, and blurbs for %s",
+    async (query) => {
+      renderGallery();
+      await userEvent.type(screen.getByRole("searchbox", { name: /Find a template/i }), query);
+      expect(templateButton("Movie night")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^Fresh finds/ })).not.toBeInTheDocument();
+    },
+  );
+
+  it("clears both search and category from the no-results state", async () => {
+    const user = userEvent.setup();
+    renderGallery();
+    await user.click(screen.getByRole("button", { name: "Rewatch" }));
+    await user.type(screen.getByRole("searchbox", { name: /Find a template/i }), "Movie night");
+    expect(screen.getByText(/No templates found/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Clear filters/i }));
+    expect(screen.getByRole("searchbox", { name: /Find a template/i })).toHaveValue("");
+    expect(screen.getByRole("button", { name: "All templates" })).toHaveAttribute("aria-pressed", "true");
+    for (const template of ROW_TEMPLATES) {
+      expect(templateButton(template.title)).toBeInTheDocument();
+    }
+  });
+
+  it("keeps the selected template when filters hide its tile", async () => {
+    const user = userEvent.setup();
+    const onPick = renderGallery();
+    await user.click(templateButton("Watch it again"));
+    await user.click(screen.getByRole("button", { name: "Discover" }));
+    expect(screen.queryByRole("button", { name: /^Watch it again/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Watch it again" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Use template/i }));
+    expect(onPick).toHaveBeenCalledExactlyOnceWith(findRowTemplate("seen-it-already"));
+  });
+
+  it.each(["Cancel", "Close"])("closes with %s without choosing a template", async (label) => {
+    const onPick = vi.fn();
+    const onClose = vi.fn();
+    renderGallery(onPick, onClose);
+    await userEvent.click(screen.getByRole("button", { name: label }));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(onPick).not.toHaveBeenCalled();
+  });
+
+  it("resets the selection, search, and category when reopened", async () => {
+    const user = userEvent.setup();
+    const onPick = vi.fn();
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <RowTemplateGallery open onPick={onPick} onClose={onClose} />,
+      { wrapper: galleryWrapper() },
+    );
+    await user.click(templateButton("Watch it again"));
+    await user.click(screen.getByRole("button", { name: "Rewatch" }));
+    await user.type(screen.getByRole("searchbox", { name: /Find a template/i }), "favourites");
+    rerender(<RowTemplateGallery open={false} onPick={onPick} onClose={onClose} />);
+    rerender(<RowTemplateGallery open onPick={onPick} onClose={onClose} />);
+    expect(screen.getByRole("searchbox", { name: /Find a template/i })).toHaveValue("");
+    expect(screen.getByRole("button", { name: "All templates" })).toHaveAttribute("aria-pressed", "true");
+    expect(templateButton("Picked for You")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("heading", { level: 2, name: "Picked for You" })).toBeInTheDocument();
+    for (const template of ROW_TEMPLATES) {
+      expect(templateButton(template.title)).toBeInTheDocument();
+    }
+    expect(onPick).not.toHaveBeenCalled();
+  });
+
+  it("confirms Your requests when a source can say who asked for what", async () => {
+    const user = userEvent.setup();
+    const onPick = renderGallery();
+    await user.click(templateButton("Your requests"));
+    expect(screen.getByText("Every run")).toBeInTheDocument();
+    expect(onPick).not.toHaveBeenCalled();
+    const confirm = screen.getByRole("button", { name: /Use template/i });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await user.click(confirm);
+    expect(onPick).toHaveBeenCalledExactlyOnceWith(findRowTemplate("your-requests"));
+    expect(onPick.mock.calls[0]?.[0]).toBe(findRowTemplate("your-requests"));
+  });
+
+  it("explains unavailable requests while preventing confirmation", async () => {
     rowSources.current = { ...rowSources.current, overseerr: "off" };
-    renderGallery();
+    const user = userEvent.setup();
+    const onPick = renderGallery();
+    const tile = templateButton("Your requests");
+    expect(tile).toBeEnabled();
+    await user.click(tile);
+    expect(tile).toHaveAttribute("aria-pressed", "true");
     expect(
       await screen.findByText(
         /Needs a way to know who asked for what: an Overseerr or Jellyseerr connection, or Radarr\/Sonarr with request tags\./,
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Your requests/i })).toBeNull();
     expect(screen.getByRole("link", { name: /Settings/ })).toHaveAttribute(
-      "href",
-      "/settings#connections",
+      "href", "/settings#connections",
     );
+    const confirm = screen.getByRole("button", { name: /Use template/i });
+    expect(confirm).toBeDisabled();
+    await user.click(confirm);
+    expect(onPick).not.toHaveBeenCalled();
+    await user.click(templateButton("Picked for You"));
+    expect(confirm).toBeEnabled();
   });
 });
 

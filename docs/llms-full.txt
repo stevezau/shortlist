@@ -693,8 +693,10 @@ Start a row from a template, name it, choose how its titles are ordered, and pic
 
 **Rows → Add a row** opens a gallery rather than a blank form: _Picked for You_, _Because you
 watched…_, _Watch it again_, _Your requests_, _Fresh finds_, _Seasonal_, _From the vault_, _Popular
-on this server_, _Movie night_, _More TV to watch_, and _Start from scratch_. Each tile names the two or three settings it
-changes, so picking one also shows you which knobs matter. Nothing is locked in. Every field is
+on this server_, _Movie night_, _More TV to watch_, and _Start from scratch_. Search or filter the compact
+template list, then select a tile to see its preview and settings. **Use template** opens the row
+editor with those settings filled in; **Start from scratch** opens an empty row directly.
+Nothing is locked in. Every field is
 editable afterwards — including the row's kind, see [Row kinds](#row-kinds) below — and the template
 is not stored on the row.
 

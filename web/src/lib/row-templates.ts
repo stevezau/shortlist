@@ -6,8 +6,8 @@ import type { CollectionInput } from "@/lib/types";
  *
  * The form is the only place the app ever explained what a row COULD be, and it explained it one
  * control at a time — you had to already know what you wanted to build before it helped. These are
- * the answer to "what can I make here?", and `highlights` names the two or three settings each one
- * actually changes, so picking a template teaches the knobs rather than hiding them.
+ * the answer to "what can I make here?". `summary` keeps the chooser compact, while `highlights`
+ * names the settings each template changes in the selected template's details.
  *
  * `values` is deliberately a partial: everything it omits keeps `blankInput()`'s default, and every
  * field stays editable after picking. A template is a starting point, never a mode.
@@ -21,8 +21,9 @@ export interface RowTemplate {
   kind: RowKind;
   emoji: string;
   title: string;
+  summary: string;
   blurb: string;
-  /** The settings this template changes, in plain English, for the tile. */
+  /** The settings this template changes, in plain English. */
   highlights: string[];
   values: Partial<CollectionInput>;
 }
@@ -44,6 +45,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     kind: "picked",
     emoji: "✨",
     title: "Picked for You",
+    summary: "A little of everything they love",
     blurb:
       "The everyday row. Blends someone's whole recent history into a general set of suggestions.",
     // "15 picks" rather than the "follows your global defaults" this used to claim. Size is the one
@@ -73,6 +75,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     kind: "byw",
     emoji: "🎯",
     title: "Because you watched…",
+    summary: "One favourite leads to another",
     blurb:
       "Names one recent film and fills the row with things like it. The title tells them why it's there.",
     // "Films only" is first because it is the one thing about this template someone would not guess:
@@ -119,6 +122,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     kind: "again",
     emoji: "☕",
     title: "Watch it again",
+    summary: "Favourites worth another look",
     // `watched_pct` alone could never deliver this: it is a CEILING, so `_apply_watched_cap` shows
     // unwatched titles FIRST and merely PERMITS finished ones — at 1.0 a library with plenty of
     // unwatched candidates still yielded a mostly-unwatched row. `rewatch` (engine) inverts that
@@ -143,6 +147,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     kind: "requests",
     emoji: "📬",
     title: "Your requests",
+    summary: "What they asked for, ready to watch",
     blurb:
       "What they asked for in Overseerr, once it's on Plex. Each title leaves once they've watched it.",
     highlights: ["Only what they asked for", "Newest first", "Overseerr or Radarr/Sonarr tags"],
@@ -161,6 +166,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     kind: "picked",
     emoji: "🌱",
     title: "Fresh finds",
+    summary: "Something new, every evening",
     blurb:
       "Rebuilds every night, nothing they've seen. For people who want something new each evening.",
     highlights: ["Rebuilds nightly", "Nothing already watched"],
@@ -177,6 +183,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     kind: "seasonal",
     emoji: "🗓️",
     title: "Seasonal",
+    summary: "The right films at the right time",
     // Films only: TMDB tags a few dozen seasonal SHOWS against thousands of films (13 Christmas shows
     // on a 5,000-show library, measured for discussion #124), so a TV half would sit nearly empty.
     blurb:
@@ -210,6 +217,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     kind: "picked",
     emoji: "🕰️",
     title: "From the vault",
+    summary: "A shelf that takes its time",
     // "Never re-picks on a schedule" is the honest form of what `refresh_days: 0` buys. The row is
     // frozen against the CADENCE, not against everything: it inherits the global `watched_pct`, which
     // defaults to 0, and a 0% row drops any pick the person has since watched (`_reusable_prior`) —
@@ -230,6 +238,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     kind: "popular",
     emoji: "👥",
     title: "Popular on this server",
+    summary: "What everyone’s watching",
     blurb:
       "One row everybody sees, built only from titles several people have watched. Nothing personal in it.",
     highlights: ["Shared with everyone", "Needs 3 watchers"],
@@ -245,6 +254,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     kind: "picked",
     emoji: "🍿",
     title: "Movie night",
+    summary: "Ten films. One good evening.",
     blurb:
       "Films only, a short shelf, refreshed weekly. Something to pick from on a Friday.",
     highlights: ["Movies only", "10 picks", "Weekly"],
@@ -263,6 +273,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     kind: "picked",
     emoji: "📺",
     title: "More TV to watch",
+    summary: "Their next series starts here",
     // Now literally true: `unstarted_only` (engine) drops any series with a single viewed episode,
     // where the normal filter only drops FINISHED ones — so a show they are three episodes into no
     // longer turns up on a shelf that calls itself "to start".

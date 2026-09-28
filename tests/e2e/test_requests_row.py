@@ -106,6 +106,7 @@ def test_a_requests_row_reaches_only_the_person_who_asked_when_built_from_the_te
     # (a) The owner adds the row from its template tile and checks its sources from the editor.
     _open_add_a_row(page)
     page.get_by_role("button", name="Your requests").click()
+    page.get_by_role("button", name="Use template").click()
     expect(page.get_by_text("Which requests show up")).to_be_visible(timeout=LOAD)
     # The Check button lives under the collapsed "Use my own tags" disclosure.
     page.get_by_text("Use my own tags").click()
@@ -164,10 +165,14 @@ def test_a_requests_row_reaches_only_the_person_who_asked_when_built_from_the_te
     expect(page.get_by_role("row").filter(has_text="mike")).to_contain_text("No account")
 
 
-def test_the_your_requests_tile_is_disabled_when_no_source_is_connected(page: Page, app: ShortlistApp):
+def test_the_your_requests_template_cannot_be_confirmed_when_no_source_is_connected(page: Page, app: ShortlistApp):
     _open_add_a_row(page)
+    tile = page.get_by_role("button", name="Your requests")
+    tile.click()
+    expect(tile).to_have_attribute("aria-pressed", "true")
 
     expect(
         page.get_by_text("Needs a way to know who asked for what: an Overseerr or Jellyseerr connection")
     ).to_be_visible(timeout=CHECK)
-    expect(page.get_by_role("button", name="Your requests")).to_have_count(0)
+    expect(page.get_by_role("button", name="Use template")).to_be_disabled()
+    expect(page.get_by_role("link", name="Settings")).to_have_attribute("href", "/settings#connections")
