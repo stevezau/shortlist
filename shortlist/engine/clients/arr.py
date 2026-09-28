@@ -247,9 +247,23 @@ class _ArrClient:
             logger.debug("{}: created tag {!r} (id {})", self.app_name, label, tag_id)
         return tag_id
 
+    def tags(self) -> dict[int, str]:
+        """Every tag the app has, id -> label. A READ: `_resolve_tag` is the one that may create."""
+        payload = self._get("/api/v3/tag")
+        return {
+            int(t["id"]): str(t["label"])
+            for t in (payload if isinstance(payload, list) else [])
+            if isinstance(t, dict) and t.get("id") is not None and t.get("label")
+        }
+
 
 class RadarrClient(_ArrClient):
     app_name = "Radarr"
+
+    def movies(self) -> list[dict]:
+        """Every movie Radarr tracks, raw — `tags`, `hasFile`, `movieFile.dateAdded` are what a requests row reads."""
+        payload = self._get("/api/v3/movie")
+        return [m for m in payload if isinstance(m, dict)] if isinstance(payload, list) else []
 
     def library_tmdb_ids(self) -> set[int]:
         """Every tmdbId Radarr already tracks — so a title it has (or is still downloading) isn't
@@ -315,6 +329,14 @@ class RadarrClient(_ArrClient):
 
 class SonarrClient(_ArrClient):
     app_name = "Sonarr"
+
+    def series(self) -> list[dict]:
+        """Every series Sonarr tracks, raw.
+
+        `tags`, `tmdbId`, `added`, `statistics.episodeFileCount` are what a requests row reads.
+        """
+        payload = self._get("/api/v3/series")
+        return [s for s in payload if isinstance(s, dict)] if isinstance(payload, list) else []
 
     def library_ids(self) -> tuple[set[int], set[int]]:
         """(tvdbIds, tmdbIds) Sonarr already tracks, from ONE /series fetch.

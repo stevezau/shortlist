@@ -677,3 +677,30 @@ class TestTheWriteClockBelongsToTheServer:
         one = RadarrClient(ArrTarget(url="http://a", api_key="k", quality_profile_id=1, root_folder="/m"))
         two = RadarrClient(ArrTarget(url="http://b", api_key="k", quality_profile_id=1, root_folder="/m"))
         assert one._write_clock is not two._write_clock
+
+
+class TestTagReads:
+    def test_tags_is_a_read_only_id_to_label_map(self):
+        fx = json.loads((FIXTURES / "radarr_request_tags.json").read_text())
+        with respx.mock:
+            get = respx.get(f"{RADARR.url}/api/v3/tag").mock(return_value=httpx.Response(200, json=fx["tags"]))
+            post = respx.post(f"{RADARR.url}/api/v3/tag")
+            got = RadarrClient(RADARR).tags()
+        assert got == {t["id"]: t["label"] for t in fx["tags"]}
+        assert get.called and not post.called
+
+    def test_movies_returns_the_raw_items_with_tags_and_file_state(self):
+        fx = json.loads((FIXTURES / "radarr_request_tags.json").read_text())
+        with respx.mock:
+            respx.get(f"{RADARR.url}/api/v3/movie").mock(return_value=httpx.Response(200, json=fx["tagged_items"]))
+            got = RadarrClient(RADARR).movies()
+        assert [m["tmdbId"] for m in got] == [m["tmdbId"] for m in fx["tagged_items"]]
+        assert "hasFile" in got[0] and "tags" in got[0]
+
+    def test_series_returns_the_raw_items(self):
+        fx = json.loads((FIXTURES / "sonarr_request_tags.json").read_text())
+        with respx.mock:
+            respx.get(f"{SONARR.url}/api/v3/series").mock(return_value=httpx.Response(200, json=fx["tagged_items"]))
+            got = SonarrClient(SONARR).series()
+        assert [s["tvdbId"] for s in got] == [s["tvdbId"] for s in fx["tagged_items"]]
+        assert "statistics" in got[0]
