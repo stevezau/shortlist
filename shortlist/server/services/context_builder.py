@@ -611,8 +611,14 @@ class ContextBuilder:
         """
         with self._sessions() as session:
             store = SettingsStore(session, self._secrets)
-            profiles = self.enabled_profiles(session)
-            db_ids = {u.plex_account_id: u.id for u in session.query(User).filter_by(enabled=True).all()}
+            # The same roster the run resolves tags against, so the preview cannot show a tag as
+            # one person's that the run will read as ambiguous. A disabled person is still on the
+            # Users page, and their cell should not read "No account" because they are off.
+            profiles = self.all_profiles(session)
+            db_ids = {
+                u.plex_account_id: u.id
+                for u in session.query(User).filter(User.departed_at.is_(None), User.removed_at.is_(None)).all()
+            }
             return self._build_request_sources(store), profiles, db_ids
 
     def user_history(self, user_id: int, *, limit: int = 25) -> list[dict] | None:

@@ -224,6 +224,35 @@ class TestRowSourcesSetupCheck:
         assert people["sarah"] == {"user_id": ids["sarah"], "display_name": "sarah", "linked": True, "ready": 1}
         assert people["mike"] == {"user_id": ids["mike"], "display_name": "mike", "linked": True, "ready": 0}
 
+    def test_row_sources_resolves_tags_against_the_same_roster_as_the_run(self, client: TestClient):
+        """A disabled person is still on the Users page and still owns their tag: the check lists them,
+        and a tag typed on them and on someone enabled reads ambiguous here exactly as the run reads it
+        — an enabled-only preview would have shown the tag resolved to the one person switched on."""
+        with client.app.state.sessions() as session:
+            store = SettingsStore(session, client.app.state.secrets)
+            store.set("requests.radarr.url", "http://radarr")
+            store.set("requests.radarr.apikey", "k")
+            session.query(User).filter_by(username="sarah").update({"requested_by_tag": "fam"})
+            session.query(User).filter_by(username="mike").update({"enabled": False, "requested_by_tag": "fam"})
+            session.commit()
+            ids = {u.username: u.id for u in session.query(User).all()}
+        with respx.mock:
+            respx.get("http://radarr/api/v3/tag").mock(
+                return_value=httpx.Response(200, json=[{"id": 1, "label": "fam"}])
+            )
+            respx.get("http://radarr/api/v3/movie").mock(
+                return_value=httpx.Response(
+                    200, json=[{"tmdbId": 501, "title": "A", "tags": [1], "hasFile": True, "movieFile": {}}]
+                )
+            )
+            r = client.get("/api/requests/row-sources")
+
+        assert r.status_code == 200, r.text
+        out = r.json()
+        people = {p["display_name"]: p for p in out["people"]}
+        assert people["mike"]["user_id"] == ids["mike"]
+        assert [(t["label"], t["ambiguous"], t["user_id"]) for t in out["tags"]] == [("fam", True, None)]
+
     def test_row_sources_radarr_alone_is_connected_even_when_its_tags_need_overseerr(self, client: TestClient):
         """The Arr-tags-without-Overseerr setup this screen exists for: the engine's advice names
         Overseerr, and that must not read as a Radarr outage."""
