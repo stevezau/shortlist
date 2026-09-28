@@ -153,7 +153,13 @@ class TestRequestReads:
             got = _client().media_dates()
         row = page["results"][0]
         assert got[(row["mediaType"], row["tmdbId"])]["mediaAddedAt"] == row.get("mediaAddedAt")
-        assert set(got[(row["mediaType"], row["tmdbId"])]) == {"mediaAddedAt", "lastSeasonChange", "tvdbId", "status", "status4k"}
+        assert set(got[(row["mediaType"], row["tmdbId"])]) == {
+            "mediaAddedAt",
+            "lastSeasonChange",
+            "tvdbId",
+            "status",
+            "status4k",
+        }
 
     def test_a_request_read_failure_raises_seerr_error(self):
         with respx.mock:
@@ -175,62 +181,65 @@ In `_paged`, add `**params: object` to the signature and pass them through:
 Add after `users()`:
 
 ```python
-    def requests(self) -> list[dict]:
-        """Every request on the instance, newest first, as Seerr serialises them.
+def requests(self) -> list[dict]:
+    """Every request on the instance, newest first, as Seerr serialises them.
 
-        ``filter=all`` is explicit: the endpoint's default filter also says "all", but this read
-        exists to see DELETED-media and COMPLETED requests alike, so the intent is written down.
-        """
-        rows = self._paged("/request", filter="all", sort="added")
-        return [r for r in rows if isinstance(r, dict)]
+    ``filter=all`` is explicit: the endpoint's default filter also says "all", but this read
+    exists to see DELETED-media and COMPLETED requests alike, so the intent is written down.
+    """
+    rows = self._paged("/request", filter="all", sort="added")
+    return [r for r in rows if isinstance(r, dict)]
 
-    def user_plex_ids(self) -> dict[int, int | None]:
-        """Seerr user id -> ``plexId`` (None for a local account never linked to Plex).
 
-        The only identity Shortlist trusts: ``plexId`` is the same number as ``users.plex_account_id``
-        (fixture ``overseerr_requests_page.json``), so a request maps to a person with no name match.
-        """
-        out: dict[int, int | None] = {}
-        for row in self._paged("/user"):
-            if not isinstance(row, dict) or _int_or_none(row.get("id")) is None:
-                continue
-            out[int(row["id"])] = _int_or_none(row.get("plexId"))
-        return out
+def user_plex_ids(self) -> dict[int, int | None]:
+    """Seerr user id -> ``plexId`` (None for a local account never linked to Plex).
 
-    def arr_settings(self) -> dict[str, list[dict]]:
-        """The Radarr and Sonarr servers Seerr sends to, with each one's ``tagRequests`` switch.
+    The only identity Shortlist trusts: ``plexId`` is the same number as ``users.plex_account_id``
+    (fixture ``overseerr_requests_page.json``), so a request maps to a person with no name match.
+    """
+    out: dict[int, int | None] = {}
+    for row in self._paged("/user"):
+        if not isinstance(row, dict) or _int_or_none(row.get("id")) is None:
+            continue
+        out[int(row["id"])] = _int_or_none(row.get("plexId"))
+    return out
 
-        ``tagRequests`` is absent from the published schema but real (fixture
-        ``overseerr_arr_settings.json``); it is what stamps ``<userId>-<name>`` on each item sent.
-        """
-        out: dict[str, list[dict]] = {}
-        for kind in ("radarr", "sonarr"):
-            payload = self._get(f"/settings/{kind}")
-            out[kind] = [s for s in payload if isinstance(s, dict)] if isinstance(payload, list) else []
-        return out
 
-    def media_dates(self) -> dict[tuple[str, int], dict]:
-        """``(mediaType, tmdbId)`` -> the dates a requests row orders by, for every media row Seerr holds.
+def arr_settings(self) -> dict[str, list[dict]]:
+    """The Radarr and Sonarr servers Seerr sends to, with each one's ``tagRequests`` switch.
 
-        Read when a tagged title's request is gone: Seerr keeps the media row (and ``mediaAddedAt``)
-        after a request is deleted, which is what lets an owner who tidies their queue still get
-        arrival order.
-        """
-        out: dict[tuple[str, int], dict] = {}
-        for row in self._paged("/media"):
-            if not isinstance(row, dict):
-                continue
-            kind, tmdb_id = _media_type_of(row), _int_or_none(row.get("tmdbId"))
-            if kind is None or tmdb_id is None:
-                continue
-            out[(kind, tmdb_id)] = {
-                "mediaAddedAt": row.get("mediaAddedAt"),
-                "lastSeasonChange": row.get("lastSeasonChange"),
-                "tvdbId": _int_or_none(row.get("tvdbId")),
-                "status": _int_or_none(row.get("status")),
-                "status4k": _int_or_none(row.get("status4k")),
-            }
-        return out
+    ``tagRequests`` is absent from the published schema but real (fixture
+    ``overseerr_arr_settings.json``); it is what stamps ``<userId>-<name>`` on each item sent.
+    """
+    out: dict[str, list[dict]] = {}
+    for kind in ("radarr", "sonarr"):
+        payload = self._get(f"/settings/{kind}")
+        out[kind] = [s for s in payload if isinstance(s, dict)] if isinstance(payload, list) else []
+    return out
+
+
+def media_dates(self) -> dict[tuple[str, int], dict]:
+    """``(mediaType, tmdbId)`` -> the dates a requests row orders by, for every media row Seerr holds.
+
+    Read when a tagged title's request is gone: Seerr keeps the media row (and ``mediaAddedAt``)
+    after a request is deleted, which is what lets an owner who tidies their queue still get
+    arrival order.
+    """
+    out: dict[tuple[str, int], dict] = {}
+    for row in self._paged("/media"):
+        if not isinstance(row, dict):
+            continue
+        kind, tmdb_id = _media_type_of(row), _int_or_none(row.get("tmdbId"))
+        if kind is None or tmdb_id is None:
+            continue
+        out[(kind, tmdb_id)] = {
+            "mediaAddedAt": row.get("mediaAddedAt"),
+            "lastSeasonChange": row.get("lastSeasonChange"),
+            "tvdbId": _int_or_none(row.get("tvdbId")),
+            "status": _int_or_none(row.get("status")),
+            "status4k": _int_or_none(row.get("status4k")),
+        }
+    return out
 ```
 
 Check `_media_type_of` (seerr.py:491) returns `"movie"`/`"tv"` strings; if it returns `MediaType`, key on `row.get("mediaType")` instead so the key matches `request["type"]`/`media["mediaType"]` literally.
@@ -456,13 +465,17 @@ ARR = ArrTarget(url="http://arr", api_key="k", quality_profile_id=0, root_folder
 
 
 def _person(n: int, **kw) -> UserProfile:
-    return UserProfile(username=f"person{n}", plex_account_id=100000 + n, user_type=UserType.SHARED, slug=f"person{n}", **kw)
+    return UserProfile(
+        username=f"person{n}", plex_account_id=100000 + n, user_type=UserType.SHARED, slug=f"person{n}", **kw
+    )
 
 
 def _seerr(requests=None, users=None, media=None) -> MagicMock:
     c = MagicMock()
     c.requests.return_value = REQS["results"] if requests is None else requests
-    c.user_plex_ids.return_value = users if users is not None else {r["requestedBy"]["id"]: r["requestedBy"]["plexId"] for r in REQS["results"]}
+    c.user_plex_ids.return_value = (
+        users if users is not None else {r["requestedBy"]["id"]: r["requestedBy"]["plexId"] for r in REQS["results"]}
+    )
     c.arr_settings.return_value = {"radarr": [{"name": "r", "is4k": False, "tagRequests": True}], "sonarr": []}
     c.media_dates.return_value = media or {}
     return c
@@ -483,7 +496,9 @@ def _sonarr(items=None) -> MagicMock:
 
 
 class TestTagParsing:
-    @pytest.mark.parametrize("label,expected", [("12-sarah", 12), ("12 - sarah", 12), ("12-", None), ("sarah", None), ("requested", None)])
+    @pytest.mark.parametrize(
+        "label,expected", [("12-sarah", 12), ("12 - sarah", 12), ("12-", None), ("sarah", None), ("requested", None)]
+    )
     def test_parse_requester_tag(self, label, expected):
         assert parse_requester_tag(label) == expected
 
@@ -508,13 +523,20 @@ class TestCollectFromSeerr:
         assert ledger.seerr_requests == 7 and ledger.seerr_linked == 6
 
     def test_a_requester_with_no_plex_id_gets_no_titles(self):
-        req = dict(REQS["results"][0]); req["requestedBy"] = {**req["requestedBy"], "plexId": None}
-        ledger = collect_requests(RequestSources(overseerr=SEERR), [_person(10)], seerr=_seerr(requests=[req], users={req["requestedBy"]["id"]: None}))
+        req = dict(REQS["results"][0])
+        req["requestedBy"] = {**req["requestedBy"], "plexId": None}
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR),
+            [_person(10)],
+            seerr=_seerr(requests=[req], users={req["requestedBy"]["id"]: None}),
+        )
         assert ledger.titles == [] and ledger.complete
 
     def test_pending_and_declined_requests_are_ignored(self):
         rows = [dict(REQS["results"][0], status=1), dict(REQS["results"][1], status=3)]
-        ledger = collect_requests(RequestSources(overseerr=SEERR), [_person(n) for n in range(10, 18)], seerr=_seerr(requests=rows))
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR), [_person(n) for n in range(10, 18)], seerr=_seerr(requests=rows)
+        )
         assert ledger.titles == []
 
     def test_a_tv_request_is_landed_only_when_the_request_is_completed(self):
@@ -534,7 +556,9 @@ class TestCollectFromSeerr:
     def test_a_4k_request_lands_on_status4k_not_status(self):
         req = dict(REQS["results"][0], is4k=True, status=2)
         req["media"] = {**req["media"], "status": 5, "status4k": 3}
-        ledger = collect_requests(RequestSources(overseerr=SEERR), [_person(n) for n in range(10, 18)], seerr=_seerr(requests=[req]))
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR), [_person(n) for n in range(10, 18)], seerr=_seerr(requests=[req])
+        )
         assert [t.on_disk for t in ledger.titles] == [False]
 
     def test_two_seerr_accounts_with_one_plex_id_both_belong_to_that_person(self):
@@ -550,8 +574,11 @@ class TestCollectFromSeerr:
         assert ledger.complete is False and any("Overseerr" in p for p in ledger.problems)
 
     def test_a_seerr_error_marks_the_ledger_incomplete_and_keeps_going(self):
-        c = _seerr(); c.requests.side_effect = SeerrError("down")
-        ledger = collect_requests(RequestSources(overseerr=SEERR, radarr=ARR), [_person(n) for n in range(10, 18)], seerr=c, radarr=_radarr())
+        c = _seerr()
+        c.requests.side_effect = SeerrError("down")
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR, radarr=ARR), [_person(n) for n in range(10, 18)], seerr=c, radarr=_radarr()
+        )
         assert ledger.complete is False
         assert any(t.found_in == ("tag",) for t in ledger.titles)  # Radarr still read
 
@@ -559,7 +586,9 @@ class TestCollectFromSeerr:
 class TestCollectFromTags:
     def test_overseerr_tags_resolve_through_seerr_users(self):
         people = [_person(n) for n in range(10, 18)]
-        ledger = collect_requests(RequestSources(overseerr=SEERR, radarr=ARR), people, seerr=_seerr(requests=[]), radarr=_radarr())
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR, radarr=ARR), people, seerr=_seerr(requests=[]), radarr=_radarr()
+        )
         tagged = [t for t in ledger.titles if "tag" in t.found_in]
         assert len(tagged) == len(RADARR["tagged_items"])
         assert all(t.plex_account_id in {p.plex_account_id for p in people} for t in tagged)
@@ -573,33 +602,54 @@ class TestCollectFromTags:
     def test_radarr_on_disk_follows_has_file_and_lands_on_the_file_date(self):
         item = dict(RADARR["tagged_items"][0], hasFile=True, movieFile={"dateAdded": "2026-09-16T03:00:00Z"})
         people = [_person(n) for n in range(10, 18)]
-        ledger = collect_requests(RequestSources(overseerr=SEERR, radarr=ARR), people, seerr=_seerr(requests=[]), radarr=_radarr(items=[item]))
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR, radarr=ARR), people, seerr=_seerr(requests=[]), radarr=_radarr(items=[item])
+        )
         (t,) = ledger.titles
         assert t.on_disk and t.landed_at == datetime(2026, 9, 16, 3, tzinfo=UTC)
 
     def test_sonarr_on_disk_needs_an_episode_file(self):
-        item = dict(SONARR["tagged_items"][0]); item["statistics"] = {**item["statistics"], "episodeFileCount": 0}
+        item = dict(SONARR["tagged_items"][0])
+        item["statistics"] = {**item["statistics"], "episodeFileCount": 0}
         people = [_person(n) for n in range(10, 18)]
-        ledger = collect_requests(RequestSources(overseerr=SEERR, sonarr=ARR), people, seerr=_seerr(requests=[]), sonarr=_sonarr(items=[item]))
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR, sonarr=ARR), people, seerr=_seerr(requests=[]), sonarr=_sonarr(items=[item])
+        )
         assert [t.on_disk for t in ledger.titles] == [False]
 
     def test_a_series_without_tmdb_id_is_skipped_and_reported(self):
-        item = dict(SONARR["tagged_items"][0]); item.pop("tmdbId", None)
+        item = dict(SONARR["tagged_items"][0])
+        item.pop("tmdbId", None)
         people = [_person(n) for n in range(10, 18)]
-        ledger = collect_requests(RequestSources(overseerr=SEERR, sonarr=ARR), people, seerr=_seerr(requests=[]), sonarr=_sonarr(items=[item]))
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR, sonarr=ARR), people, seerr=_seerr(requests=[]), sonarr=_sonarr(items=[item])
+        )
         assert ledger.titles == [] and any("TMDB" in p for p in ledger.problems)
 
     def test_own_pattern_tags_match_people_and_skip_shortlists_own_items(self):
         sarah = _person(1)
         tags = [{"id": 1, "label": "req-person1"}, {"id": 2, "label": "shortlist"}]
-        asked = {"tmdbId": 501, "tags": [1], "hasFile": True, "movieFile": {"dateAdded": "2026-09-01T00:00:00Z"}, "title": "A"}
-        ours = {"tmdbId": 502, "tags": [1, 2], "hasFile": True, "movieFile": {"dateAdded": "2026-09-01T00:00:00Z"}, "title": "B"}
+        asked = {
+            "tmdbId": 501,
+            "tags": [1],
+            "hasFile": True,
+            "movieFile": {"dateAdded": "2026-09-01T00:00:00Z"},
+            "title": "A",
+        }
+        ours = {
+            "tmdbId": 502,
+            "tags": [1, 2],
+            "hasFile": True,
+            "movieFile": {"dateAdded": "2026-09-01T00:00:00Z"},
+            "title": "B",
+        }
         src = RequestSources(radarr=ARR, shortlist_tag="shortlist")
         ledger = collect_requests(src, [sarah], radarr=_radarr(items=[asked, ours], tags=tags))
         assert [t.tmdb_id for t in ledger.for_person(sarah.plex_account_id)] == [501]
 
     def test_an_ambiguous_pattern_tag_is_ignored_and_listed(self):
-        a = _person(1, nickname="Sam"); b = _person(2, nickname="Sam")
+        a = _person(1, nickname="Sam")
+        b = _person(2, nickname="Sam")
         tags = [{"id": 1, "label": "sam"}]
         item = {"tmdbId": 501, "tags": [1], "hasFile": True, "movieFile": {}, "title": "A"}
         ledger = collect_requests(RequestSources(radarr=ARR), [a, b], radarr=_radarr(items=[item], tags=tags))
@@ -618,8 +668,19 @@ class TestCollectFromTags:
         people = [_person(n) for n in range(10, 18)]
         tag_label = next(t["label"] for t in RADARR["tags"] if t["label"].startswith(f"{req['requestedBy']['id']}-"))
         tag_id = next(t["id"] for t in RADARR["tags"] if t["label"] == tag_label)
-        item = {"tmdbId": req["media"]["tmdbId"], "tags": [tag_id], "hasFile": True, "movieFile": {"dateAdded": "2020-01-01T00:00:00Z"}, "title": "A"}
-        ledger = collect_requests(RequestSources(overseerr=SEERR, radarr=ARR), people, seerr=_seerr(requests=[req]), radarr=_radarr(items=[item]))
+        item = {
+            "tmdbId": req["media"]["tmdbId"],
+            "tags": [tag_id],
+            "hasFile": True,
+            "movieFile": {"dateAdded": "2020-01-01T00:00:00Z"},
+            "title": "A",
+        }
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR, radarr=ARR),
+            people,
+            seerr=_seerr(requests=[req]),
+            radarr=_radarr(items=[item]),
+        )
         (t,) = [t for t in ledger.titles if t.tmdb_id == req["media"]["tmdbId"]]
         assert t.found_in == ("overseerr", "tag")
         assert t.requested_at == datetime.fromisoformat(req["createdAt"].replace("Z", "+00:00"))
@@ -627,8 +688,21 @@ class TestCollectFromTags:
     def test_a_tagged_title_whose_request_is_gone_dates_from_seerr_media(self):
         people = [_person(n) for n in range(10, 18)]
         item = dict(RADARR["tagged_items"][0], hasFile=True, movieFile={"dateAdded": "2026-09-16T03:00:00Z"})
-        media = {("movie", item["tmdbId"]): {"mediaAddedAt": "2026-09-15T00:00:00.000Z", "lastSeasonChange": None, "tvdbId": None, "status": 5, "status4k": 1}}
-        ledger = collect_requests(RequestSources(overseerr=SEERR, radarr=ARR), people, seerr=_seerr(requests=[], media=media), radarr=_radarr(items=[item]))
+        media = {
+            ("movie", item["tmdbId"]): {
+                "mediaAddedAt": "2026-09-15T00:00:00.000Z",
+                "lastSeasonChange": None,
+                "tvdbId": None,
+                "status": 5,
+                "status4k": 1,
+            }
+        }
+        ledger = collect_requests(
+            RequestSources(overseerr=SEERR, radarr=ARR),
+            people,
+            seerr=_seerr(requests=[], media=media),
+            radarr=_radarr(items=[item]),
+        )
         (t,) = ledger.titles
         assert t.landed_at == datetime(2026, 9, 15, tzinfo=UTC)
 ```
@@ -764,16 +838,33 @@ def collect_requests(
         if prev is None:
             merged[key] = t
         elif "overseerr" in prev.found_in:
-            merged[key] = RequestedTitle(**{**prev.__dict__, "found_in": tuple(dict.fromkeys(prev.found_in + t.found_in)), "title": prev.title or t.title})
+            merged[key] = RequestedTitle(
+                **{
+                    **prev.__dict__,
+                    "found_in": tuple(dict.fromkeys(prev.found_in + t.found_in)),
+                    "title": prev.title or t.title,
+                }
+            )
         else:
-            merged[key] = RequestedTitle(**{**t.__dict__, "found_in": tuple(dict.fromkeys(t.found_in + prev.found_in)), "title": t.title or prev.title})
+            merged[key] = RequestedTitle(
+                **{
+                    **t.__dict__,
+                    "found_in": tuple(dict.fromkeys(t.found_in + prev.found_in)),
+                    "title": t.title or prev.title,
+                }
+            )
 
     if seerr_client is not None:
         try:
             seerr_plex = seerr_client.user_plex_ids()
             rows = seerr_client.requests()
             ledger.seerr_servers = [
-                {"kind": kind, "name": s.get("name", ""), "is4k": bool(s.get("is4k")), "tag_requests": bool(s.get("tagRequests"))}
+                {
+                    "kind": kind,
+                    "name": s.get("name", ""),
+                    "is4k": bool(s.get("is4k")),
+                    "tag_requests": bool(s.get("tagRequests")),
+                }
                 for kind, servers in seerr_client.arr_settings().items()
                 for s in servers
             ]
@@ -806,7 +897,20 @@ def collect_requests(
             ledger.complete = False
             ledger.problems.append(f"{client.app_name} could not be read: {e}")
             continue
-        _add_tagged(ledger, kind, media, items, tags, people, by_plex, seerr_plex, seerr_client is not None, sources, patterns, add)
+        _add_tagged(
+            ledger,
+            kind,
+            media,
+            items,
+            tags,
+            people,
+            by_plex,
+            seerr_plex,
+            seerr_client is not None,
+            sources,
+            patterns,
+            add,
+        )
 
     # Tagged titles whose request is gone take their arrival date from Seerr's media table.
     undated = [k for k, t in merged.items() if t.landed_at is None and "overseerr" not in t.found_in]
@@ -823,14 +927,20 @@ def collect_requests(
             if landed:
                 merged[key] = RequestedTitle(**{**t.__dict__, "landed_at": landed})
 
-    ledger.titles = sorted(merged.values(), key=lambda t: (t.landed_at or datetime.min.replace(tzinfo=datetime.now().astimezone().tzinfo)), reverse=True)
+    ledger.titles = sorted(
+        merged.values(),
+        key=lambda t: t.landed_at or datetime.min.replace(tzinfo=datetime.now().astimezone().tzinfo),
+        reverse=True,
+    )
     return ledger
 ```
 
 Helpers `_from_seerr_request` and `_add_tagged`:
 
 ```python
-def _from_seerr_request(r: dict, seerr_plex: dict[int, int | None], by_plex: dict, exclude_uid: int) -> RequestedTitle | None:
+def _from_seerr_request(
+    r: dict, seerr_plex: dict[int, int | None], by_plex: dict, exclude_uid: int
+) -> RequestedTitle | None:
     who = r.get("requestedBy") if isinstance(r.get("requestedBy"), dict) else {}
     uid = who.get("id")
     if uid is None or (exclude_uid and uid == exclude_uid):
@@ -848,14 +958,27 @@ def _from_seerr_request(r: dict, seerr_plex: dict[int, int | None], by_plex: dic
     status = media.get("status4k" if r.get("is4k") else "status")
     on_disk = status == _MEDIA_AVAILABLE or (kind is MediaType.SHOW and r.get("status") == _REQ_COMPLETED)
     seasons = r.get("seasons") if isinstance(r.get("seasons"), list) else []
-    seasons_landed = kind is MediaType.MOVIE or r.get("status") == _REQ_COMPLETED or bool(seasons) and all(s.get("status") == _REQ_COMPLETED for s in seasons)
+    seasons_landed = (
+        kind is MediaType.MOVIE
+        or r.get("status") == _REQ_COMPLETED
+        or bool(seasons)
+        and all(s.get("status") == _REQ_COMPLETED for s in seasons)
+    )
     landed = None
     if kind is MediaType.SHOW:
         done = [_iso(s.get("updatedAt")) for s in seasons if s.get("status") == _REQ_COMPLETED]
         landed = max((d for d in done if d), default=None) or _iso(media.get("lastSeasonChange"))
     landed = landed or _iso(media.get("mediaAddedAt"))
-    return RequestedTitle(tmdb_id=tmdb_id, media_type=kind, plex_account_id=int(plex_id), requested_at=_iso(r.get("createdAt")), landed_at=landed, on_disk=bool(on_disk), seasons_landed=bool(seasons_landed), found_in=("overseerr",))
-
+    return RequestedTitle(
+        tmdb_id=tmdb_id,
+        media_type=kind,
+        plex_account_id=int(plex_id),
+        requested_at=_iso(r.get("createdAt")),
+        landed_at=landed,
+        on_disk=bool(on_disk),
+        seasons_landed=bool(seasons_landed),
+        found_in=("overseerr",),
+    )
 ```
 
 **Design note for the pattern:** the pattern is a per-row setting (`RowSpec.requests_tag_pattern`), but the ledger is per run. Resolve it like this: `collect_requests` takes `patterns: frozenset[str]` (every distinct non-empty pattern across requests rows, passed by the pipeline in Task 7) and records, per title, which pattern matched it; `RequestedTitle` gains `pattern: str = ""` (empty for Overseerr/override matches). `build_requests_picks` (Task 6) then keeps a title only if `t.pattern in ("", spec.requests_tag_pattern)`. Add `patterns: frozenset[str] = frozenset()` as a keyword argument of `collect_requests`, and in the tests above pass `patterns=frozenset({"req-{username}"})` / `frozenset({"{name}"})` for the pattern cases (the override and Overseerr cases need none).
@@ -863,18 +986,26 @@ def _from_seerr_request(r: dict, seerr_plex: dict[int, int | None], by_plex: dic
 `_add_tagged`, in full:
 
 ```python
-def _add_tagged(ledger, kind, media, items, tags, people, by_plex, seerr_plex, seerr_connected, sources, patterns, add) -> None:
-    shortlist_tag_ids = {i for i, label in tags.items() if sources.shortlist_tag and _norm(label) == _norm(sources.shortlist_tag)}
+def _add_tagged(
+    ledger, kind, media, items, tags, people, by_plex, seerr_plex, seerr_connected, sources, patterns, add
+) -> None:
+    shortlist_tag_ids = {
+        i for i, label in tags.items() if sources.shortlist_tag and _norm(label) == _norm(sources.shortlist_tag)
+    }
     override = {_norm(p.requested_by_tag): p for p in people if p.requested_by_tag}
     counts: dict[tuple[str, str], int] = {}
-    owner_of: dict[int, tuple[UserProfile | None, str, str, bool]] = {}  # tag id -> (person, source, pattern, ambiguous)
+    owner_of: dict[
+        int, tuple[UserProfile | None, str, str, bool]
+    ] = {}  # tag id -> (person, source, pattern, ambiguous)
     warned_seerr = False
     for tag_id, label in tags.items():
         uid = parse_requester_tag(label)
         if uid is not None:
             if not seerr_connected:
                 if not warned_seerr:
-                    ledger.problems.append("Overseerr requester tags were found in Radarr/Sonarr, but Overseerr isn't connected, so they can't be traced to a person")
+                    ledger.problems.append(
+                        "Overseerr requester tags were found in Radarr/Sonarr, but Overseerr isn't connected, so they can't be traced to a person"
+                    )
                     warned_seerr = True
                 continue
             plex_id = seerr_plex.get(uid)
@@ -892,7 +1023,9 @@ def _add_tagged(ledger, kind, media, items, tags, people, by_plex, seerr_plex, s
         tmdb_id = item.get("tmdbId")
         if not isinstance(tmdb_id, int):
             if any(t in owner_of for t in item.get("tags", [])):
-                ledger.problems.append(f"{item.get('title', '?')} carries a requester tag but has no TMDB id, so it can't be matched to Plex")
+                ledger.problems.append(
+                    f"{item.get('title', '?')} carries a requester tag but has no TMDB id, so it can't be matched to Plex"
+                )
             continue
         item_tags = [t for t in item.get("tags", []) if t in owner_of]
         ours = bool(shortlist_tag_ids & set(item.get("tags", [])))
@@ -907,9 +1040,30 @@ def _add_tagged(ledger, kind, media, items, tags, people, by_plex, seerr_plex, s
             else:
                 on_disk = int((item.get("statistics") or {}).get("episodeFileCount") or 0) > 0
                 landed = _iso(item.get("added"))
-            add(RequestedTitle(tmdb_id=tmdb_id, media_type=kind, plex_account_id=person.plex_account_id, requested_at=_iso(item.get("added")), landed_at=landed if on_disk else None, on_disk=on_disk, seasons_landed=True, found_in=("tag",), title=str(item.get("title") or ""), pattern=pattern))
+            add(
+                RequestedTitle(
+                    tmdb_id=tmdb_id,
+                    media_type=kind,
+                    plex_account_id=person.plex_account_id,
+                    requested_at=_iso(item.get("added")),
+                    landed_at=landed if on_disk else None,
+                    on_disk=on_disk,
+                    seasons_landed=True,
+                    found_in=("tag",),
+                    title=str(item.get("title") or ""),
+                    pattern=pattern,
+                )
+            )
     for tag_id, (person, source, _pattern, ambiguous) in owner_of.items():
-        ledger.tag_matches.append(TagMatch(label=tags[tag_id], source=source, plex_account_id=person.plex_account_id if person else None, titles=counts.get((tags[tag_id], source), 0), ambiguous=ambiguous))
+        ledger.tag_matches.append(
+            TagMatch(
+                label=tags[tag_id],
+                source=source,
+                plex_account_id=person.plex_account_id if person else None,
+                titles=counts.get((tags[tag_id], source), 0),
+                ambiguous=ambiguous,
+            )
+        )
 ```
 
 (Replace the sort key's awkward `datetime.min` expression with `datetime(1, 1, 1, tzinfo=UTC)` — import `UTC` from datetime.) Update the `add` merge to carry `pattern` too.
@@ -943,7 +1097,16 @@ from shortlist.engine.models import RowSpec
 
 def _title(tmdb_id, kind=MediaType.MOVIE, *, days_ago=1, person=100001, **kw):
     landed = datetime(2026, 9, 28, tzinfo=UTC) - timedelta(days=days_ago)
-    base = dict(tmdb_id=tmdb_id, media_type=kind, plex_account_id=person, requested_at=landed - timedelta(days=2), landed_at=landed, on_disk=True, seasons_landed=True, found_in=("overseerr",))
+    base = dict(
+        tmdb_id=tmdb_id,
+        media_type=kind,
+        plex_account_id=person,
+        requested_at=landed - timedelta(days=2),
+        landed_at=landed,
+        on_disk=True,
+        seasons_landed=True,
+        found_in=("overseerr",),
+    )
     return RequestedTitle(**{**base, **kw})
 
 
@@ -951,7 +1114,10 @@ def _policy(section_index, *, watched_movies=(), watched_shows=None, visible=Non
     policy = MagicMock()
     policy.user = _person(1)
     policy.ctx.section_index = section_index
-    policy.ctx.plex.fetch_items.side_effect = lambda keys: ([MagicMock(ratingKey=k, title=f"t{k}", year=2020) for k in keys], [])
+    policy.ctx.plex.fetch_items.side_effect = lambda keys: (
+        [MagicMock(ratingKey=k, title=f"t{k}", year=2020) for k in keys],
+        [],
+    )
     policy.watched_movies = set(watched_movies)
     policy.watched_shows = watched_shows or {}
     policy.visible.side_effect = lambda keys: visible if visible is not None else None
@@ -960,7 +1126,10 @@ def _policy(section_index, *, watched_movies=(), watched_shows=None, visible=Non
 
 
 def _section(key="1", kind="movie"):
-    s = MagicMock(); s.key = key; s.type = kind; s.title = "Movies" if kind == "movie" else "TV Shows"
+    s = MagicMock()
+    s.key = key
+    s.type = kind
+    s.title = "Movies" if kind == "movie" else "TV Shows"
     return s
 
 
@@ -970,7 +1139,9 @@ SPEC = RowSpec(slug="asked", name_template="📬 {library_name} you asked for", 
 
 class TestBuildRequestsPicks:
     def test_newest_landed_first_and_only_titles_on_plex(self):
-        ledger = RequestLedger(titles=[_title(1, days_ago=5), _title(2, days_ago=1), _title(3, days_ago=2)], complete=True)
+        ledger = RequestLedger(
+            titles=[_title(1, days_ago=5), _title(2, days_ago=1), _title(3, days_ago=2)], complete=True
+        )
         policy = _policy({"1": {1: 11, 2: 22}})
         picks = build_requests_picks(policy, SPEC, [_section()], 20, ledger, now=NOW)
         assert [p.tmdb_id for p in picks["1"]] == [2, 1]
@@ -980,7 +1151,9 @@ class TestBuildRequestsPicks:
 
     def test_a_watched_movie_and_a_finished_show_drop_but_an_unfinished_show_stays(self):
         ledger = RequestLedger(titles=[_title(1), _title(2, MediaType.SHOW), _title(3, MediaType.SHOW)], complete=True)
-        policy = _policy({"1": {1: 11}, "2": {2: 22, 3: 33}}, watched_movies={1}, watched_shows={2: (10, 10), 3: (4, 10)})
+        policy = _policy(
+            {"1": {1: 11}, "2": {2: 22, 3: 33}}, watched_movies={1}, watched_shows={2: (10, 10), 3: (4, 10)}
+        )
         picks = build_requests_picks(policy, SPEC, [_section(), _section("2", "show")], 20, ledger, now=NOW)
         assert picks["1"] == [] and [p.tmdb_id for p in picks["2"]] == [3]
 
@@ -996,7 +1169,12 @@ class TestBuildRequestsPicks:
         policy = _policy({"1": {1: 11, 2: 22}})
         assert [p.tmdb_id for p in build_requests_picks(policy, SPEC, [_section()], 20, ledger, now=NOW)["1"]] == [2]
         forever = RowSpec(slug="asked", name_template="n", size=20, requests_row=True, requests_window_days=0)
-        assert [p.tmdb_id for p in build_requests_picks(_policy({"1": {1: 11, 2: 22}}), forever, [_section()], 20, ledger, now=NOW)["1"]] == [2, 1]
+        assert [
+            p.tmdb_id
+            for p in build_requests_picks(_policy({"1": {1: 11, 2: 22}}), forever, [_section()], 20, ledger, now=NOW)[
+                "1"
+            ]
+        ] == [2, 1]
 
     def test_an_undated_title_is_kept_and_sorted_last(self):
         ledger = RequestLedger(titles=[_title(1, landed_at=None), _title(2, days_ago=1)], complete=True)
@@ -1005,7 +1183,9 @@ class TestBuildRequestsPicks:
 
     def test_hidden_titles_are_dropped_when_visibility_is_known(self):
         ledger = RequestLedger(titles=[_title(1), _title(2)], complete=True)
-        picks = build_requests_picks(_policy({"1": {1: 11, 2: 22}}, visible={22}), SPEC, [_section()], 20, ledger, now=NOW)
+        picks = build_requests_picks(
+            _policy({"1": {1: 11, 2: 22}}, visible={22}), SPEC, [_section()], 20, ledger, now=NOW
+        )
         assert [p.tmdb_id for p in picks["1"]] == [2]
 
     def test_the_row_size_caps_and_marks_the_rest(self):
@@ -1016,8 +1196,17 @@ class TestBuildRequestsPicks:
         assert [r["result"] for r in policy.report.trace["selection"][0]["requests"]][2:] == ["over_size", "over_size"]
 
     def test_only_this_persons_titles_and_this_rows_pattern(self):
-        ledger = RequestLedger(titles=[_title(1, person=999), _title(2, found_in=("tag",), pattern="other-{username}"), _title(3, found_in=("tag",), pattern="req-{username}")], complete=True)
-        spec = RowSpec(slug="asked", name_template="n", size=20, requests_row=True, requests_tag_pattern="req-{username}")
+        ledger = RequestLedger(
+            titles=[
+                _title(1, person=999),
+                _title(2, found_in=("tag",), pattern="other-{username}"),
+                _title(3, found_in=("tag",), pattern="req-{username}"),
+            ],
+            complete=True,
+        )
+        spec = RowSpec(
+            slug="asked", name_template="n", size=20, requests_row=True, requests_tag_pattern="req-{username}"
+        )
         picks = build_requests_picks(_policy({"1": {1: 11, 2: 22, 3: 33}}), spec, [_section()], 20, ledger, now=NOW)
         assert [p.tmdb_id for p in picks["1"]] == [3]
 
@@ -1032,7 +1221,9 @@ class TestBuildRequestsPicks:
 - [ ] **Step 3: Implement**
 
 ```python
-def build_requests_picks(policy: RowPolicy, spec: RowSpec, targets: list, k: int, ledger: RequestLedger, *, now: datetime) -> dict[str, list[Pick]]:
+def build_requests_picks(
+    policy: RowPolicy, spec: RowSpec, targets: list, k: int, ledger: RequestLedger, *, now: datetime
+) -> dict[str, list[Pick]]:
     """This person's requested titles that are on Plex, unwatched, visible to them and recent — newest first.
 
     No pool, no curator, no padding: the row is exactly what they asked for, or nothing. Every title
@@ -1058,7 +1249,17 @@ def build_requests_picks(policy: RowPolicy, spec: RowSpec, targets: list, k: int
                 result = "watched"
             elif cutoff and t.landed_at and t.landed_at < cutoff:
                 result = "too_old"
-            rows.append({"tmdb_id": t.tmdb_id, "media_type": t.media_type.value, "title": t.title, "asked_at": _stamp(t.requested_at), "landed_at": _stamp(t.landed_at), "found_in": list(t.found_in), "result": result})
+            rows.append(
+                {
+                    "tmdb_id": t.tmdb_id,
+                    "media_type": t.media_type.value,
+                    "title": t.title,
+                    "asked_at": _stamp(t.requested_at),
+                    "landed_at": _stamp(t.landed_at),
+                    "found_in": list(t.found_in),
+                    "result": result,
+                }
+            )
             if result == "in_row":
                 keep.append((t, key))
         seen = policy.visible([key for _, key in keep])
@@ -1079,9 +1280,31 @@ def build_requests_picks(policy: RowPolicy, spec: RowSpec, targets: list, k: int
             if item is None:
                 next(r for r in rows if r["tmdb_id"] == t.tmdb_id)["result"] = "not_on_plex"
                 continue
-            picks.append(Pick(tmdb_id=t.tmdb_id, rating_key=key, title=str(getattr(item, "title", "") or t.title), rank=len(picks) + 1, reason=_reason(t), media_type=kind, sources=["requests"], year=getattr(item, "year", None)))
+            picks.append(
+                Pick(
+                    tmdb_id=t.tmdb_id,
+                    rating_key=key,
+                    title=str(getattr(item, "title", "") or t.title),
+                    rank=len(picks) + 1,
+                    reason=_reason(t),
+                    media_type=kind,
+                    sources=["requests"],
+                    year=getattr(item, "year", None),
+                )
+            )
         out[section.key] = picks
-        policy.report.trace.setdefault("selection", []).append({"row": spec.slug, "library": getattr(section, "title", str(section.key)), "decision": "requests", "size": k, "delivered": len(picks), "candidates": len(rows), "pick_order": "newest", "requests": rows})
+        policy.report.trace.setdefault("selection", []).append(
+            {
+                "row": spec.slug,
+                "library": getattr(section, "title", str(section.key)),
+                "decision": "requests",
+                "size": k,
+                "delivered": len(picks),
+                "candidates": len(rows),
+                "pick_order": "newest",
+                "requests": rows,
+            }
+        )
     return out
 
 
@@ -1132,7 +1355,22 @@ def _requests_spec(**kw) -> RowSpec:
 
 def _ledger(*tmdb_ids: int, complete: bool = True, person: int = 100) -> RequestLedger:
     at = datetime(2026, 9, 27, tzinfo=UTC)
-    return RequestLedger(titles=[RequestedTitle(tmdb_id=t, media_type=MediaType.MOVIE, plex_account_id=person, requested_at=at, landed_at=at, on_disk=True, seasons_landed=True, found_in=("overseerr",)) for t in tmdb_ids], complete=complete)
+    return RequestLedger(
+        titles=[
+            RequestedTitle(
+                tmdb_id=t,
+                media_type=MediaType.MOVIE,
+                plex_account_id=person,
+                requested_at=at,
+                landed_at=at,
+                on_disk=True,
+                seasons_landed=True,
+                found_in=("overseerr",),
+            )
+            for t in tmdb_ids
+        ],
+        complete=complete,
+    )
 
 
 class TestRequestsRow:
@@ -1145,7 +1383,9 @@ class TestRequestsRow:
         mock_tmdb.suggestions.assert_not_called()
         ctx.curator.curate.assert_not_called() if hasattr(ctx.curator, "curate") else None
 
-    def test_an_empty_requests_row_is_removed_when_the_read_was_complete(self, ctx: EngineContext, mock_plextv, monkeypatch):
+    def test_an_empty_requests_row_is_removed_when_the_read_was_complete(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
         removed = []
         monkeypatch.setattr(rows_mod, "remove_row", lambda *a, **kw: removed.append(kw.get("sections")) or ["1"])
         ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
@@ -1153,7 +1393,9 @@ class TestRequestsRow:
         report = _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100))
         assert removed and report.removed_deliveries == [{"row_slug": "asked", "library_key": "1"}]
 
-    def test_an_empty_requests_row_is_left_alone_when_the_read_was_incomplete(self, ctx: EngineContext, mock_plextv, monkeypatch):
+    def test_an_empty_requests_row_is_left_alone_when_the_read_was_incomplete(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
         removed = []
         monkeypatch.setattr(rows_mod, "remove_row", lambda *a, **kw: removed.append(1) or [])
         ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
@@ -1168,10 +1410,21 @@ class TestRequestsRow:
         report = _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100))
         assert [p.tmdb_id for p in report.picks] == [10]
 
-    def test_the_pipeline_builds_the_ledger_once_when_a_requests_row_exists(self, ctx: EngineContext, mock_plextv, monkeypatch):
+    def test_the_pipeline_builds_the_ledger_once_when_a_requests_row_exists(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
         calls = []
-        monkeypatch.setattr(pipeline_mod, "collect_requests", lambda sources, people, **kw: calls.append(kw.get("patterns")) or _ledger(10))
-        ctx.config = replace(ctx.config, rows=[_requests_spec(requests_tag_pattern="req-{username}"), _requests_spec()], rows_defined=True, request_sources=RequestSources(overseerr=SeerrTarget(url="http://s", api_key="k")))
+        monkeypatch.setattr(
+            pipeline_mod,
+            "collect_requests",
+            lambda sources, people, **kw: calls.append(kw.get("patterns")) or _ledger(10),
+        )
+        ctx.config = replace(
+            ctx.config,
+            rows=[_requests_spec(requests_tag_pattern="req-{username}"), _requests_spec()],
+            rows_defined=True,
+            request_sources=RequestSources(overseerr=SeerrTarget(url="http://s", api_key="k")),
+        )
         pipeline_mod.engine_run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=101)])
         assert calls == [frozenset({"req-{username}"})]
 
@@ -1189,16 +1442,18 @@ Write `_run_one(ctx, mock_plextv, profile)` next to `_run_two_row_user` (:115) b
 
 `pipeline.py`, right after `ctx.section_index = section_index` (:391):
 ```python
-    # One read of who-asked-for-what per run, shared by every person's requests row. Built only when
-    # such a row exists, so a server without one pays nothing; and never fatal — an unreadable source
-    # leaves `complete=False`, which stops removals but not the rest of the night.
-    request_rows = [s for s in cfg.rows if s.requests_row]
-    if request_rows and cfg.request_sources is not None and cfg.request_sources.any():
-        ctx.request_ledger = collect_requests(
-            cfg.request_sources, users, patterns=frozenset(s.requests_tag_pattern for s in request_rows if s.requests_tag_pattern)
-        )
-        for problem in ctx.request_ledger.problems:
-            logger.warning("requests row: {}", problem)
+# One read of who-asked-for-what per run, shared by every person's requests row. Built only when
+# such a row exists, so a server without one pays nothing; and never fatal — an unreadable source
+# leaves `complete=False`, which stops removals but not the rest of the night.
+request_rows = [s for s in cfg.rows if s.requests_row]
+if request_rows and cfg.request_sources is not None and cfg.request_sources.any():
+    ctx.request_ledger = collect_requests(
+        cfg.request_sources,
+        users,
+        patterns=frozenset(s.requests_tag_pattern for s in request_rows if s.requests_tag_pattern),
+    )
+    for problem in ctx.request_ledger.problems:
+        logger.warning("requests row: {}", problem)
 ```
 (`users` is the roster list `engine_run` receives; use its actual name. Import `from shortlist.engine.requests_row import collect_requests` at module top.)
 
@@ -1263,23 +1518,41 @@ Also in `_run_user`, the cold early-return: check the block at ~:3226-3245 — i
 # tests/integration/test_api_collections.py — append inside the existing class or a new one
 class TestRequestsRowFields:
     def test_requests_row_fields_round_trip_and_reach_the_spec(self, client):
-        body = {"name": "📬 {library_name} you asked for", "build": "per_person", "requests_row": True, "requests_window_days": 30, "requests_tag_pattern": "req-{username}", "size": 20}
+        body = {
+            "name": "📬 {library_name} you asked for",
+            "build": "per_person",
+            "requests_row": True,
+            "requests_window_days": 30,
+            "requests_tag_pattern": "req-{username}",
+            "size": 20,
+        }
         r = client.post("/api/collections", json=body)
         assert r.status_code == 201, r.text
         out = r.json()
-        assert (out["requests_row"], out["requests_window_days"], out["requests_tag_pattern"]) == (True, 30, "req-{username}")
+        assert (out["requests_row"], out["requests_window_days"], out["requests_tag_pattern"]) == (
+            True,
+            30,
+            "req-{username}",
+        )
         with client.app.state.sessions() as session:
             store = SettingsStore(session, client.app.state.secrets)
-            spec = next(s for s in ContextBuilder._build_rows(client.app.state.run_service._ctx, session, store) if s.slug == out["slug"])
+            spec = next(
+                s
+                for s in ContextBuilder._build_rows(client.app.state.run_service._ctx, session, store)
+                if s.slug == out["slug"]
+            )
         assert (spec.requests_row, spec.requests_window_days, spec.requests_tag_pattern) == (True, 30, "req-{username}")
 
-    @pytest.mark.parametrize("bad,msg", [
-        ({"build": "shared"}, "one row per person"),
-        ({"rewatch": True}, "rewatch"),
-        ({"seasons": ["halloween"]}, "seasonal"),
-        ({"requests_tag_pattern": "req-sarah"}, "{username}"),
-        ({"requests_window_days": 4000}, "less than or equal to 3650"),
-    ])
+    @pytest.mark.parametrize(
+        "bad,msg",
+        [
+            ({"build": "shared"}, "one row per person"),
+            ({"rewatch": True}, "rewatch"),
+            ({"seasons": ["halloween"]}, "seasonal"),
+            ({"requests_tag_pattern": "req-sarah"}, "{username}"),
+            ({"requests_window_days": 4000}, "less than or equal to 3650"),
+        ],
+    )
     def test_a_requests_row_rejects_shapes_it_cannot_be(self, client, bad, msg):
         body = {"name": "n", "build": "per_person", "requests_row": True, **bad}
         r = client.post("/api/collections", json=body)
@@ -1303,7 +1576,17 @@ def test_requested_by_tag_round_trips(client):
 ```python
 # context builder test file — append (find how a SettingsStore is built there)
 def test_request_sources_are_built_whenever_a_url_and_key_exist(store_factory):
-    store = store_factory({"requests.enabled": False, "requests.target": "arr", "requests.overseerr.url": "http://s", "requests.overseerr.apikey": "k", "requests.radarr.url": "http://r", "requests.radarr.apikey": "k", "requests.tag": "shortlist"})
+    store = store_factory(
+        {
+            "requests.enabled": False,
+            "requests.target": "arr",
+            "requests.overseerr.url": "http://s",
+            "requests.overseerr.apikey": "k",
+            "requests.radarr.url": "http://r",
+            "requests.radarr.apikey": "k",
+            "requests.tag": "shortlist",
+        }
+    )
     src = ContextBuilder._build_request_sources(store)
     assert src.overseerr.url == "http://s" and src.radarr.url == "http://r" and src.sonarr is None
     assert src.exclude_seerr_user_id == 0  # requests are off, so no account is Shortlist's
@@ -1311,7 +1594,15 @@ def test_request_sources_are_built_whenever_a_url_and_key_exist(store_factory):
 
 
 def test_the_request_as_account_is_excluded_only_when_shortlist_sends_via_overseerr(store_factory):
-    store = store_factory({"requests.enabled": True, "requests.target": "overseerr", "requests.overseerr.url": "http://s", "requests.overseerr.apikey": "k", "requests.overseerr.request_as_user_id": 7})
+    store = store_factory(
+        {
+            "requests.enabled": True,
+            "requests.target": "overseerr",
+            "requests.overseerr.url": "http://s",
+            "requests.overseerr.apikey": "k",
+            "requests.overseerr.request_as_user_id": 7,
+        }
+    )
     assert ContextBuilder._build_request_sources(store).exclude_seerr_user_id == 7
 
 
@@ -1327,6 +1618,7 @@ def test_no_sources_is_none(store_factory):
 Migration `0094_requests_row.py` (copy 0091's guarded pattern):
 ```python
 """Requests row (issue #127): three per-row settings and one per-person tag."""
+
 import sqlalchemy as sa
 from alembic import op
 
@@ -1368,22 +1660,35 @@ Models: matching `mapped_column(..., default=..., server_default=...)` lines in 
 
 `_build_request_sources`:
 ```python
-    @staticmethod
-    def _build_request_sources(store: SettingsStore) -> RequestSources | None:
-        """Where a requests row reads from — every app with a URL and key, whatever `requests.*` says."""
-        def seerr() -> SeerrTarget | None:
-            url, key = (store.get("requests.overseerr.url") or "").strip(), store.get("requests.overseerr.apikey") or ""
-            return SeerrTarget(url=url, api_key=key, request_as_user_id=int(store.get("requests.overseerr.request_as_user_id") or 0)) if url and key else None
+@staticmethod
+def _build_request_sources(store: SettingsStore) -> RequestSources | None:
+    """Where a requests row reads from — every app with a URL and key, whatever `requests.*` says."""
 
-        def arr(prefix: str) -> ArrTarget | None:
-            url, key = (store.get(f"{prefix}.url") or "").strip(), store.get(f"{prefix}.apikey") or ""
-            return ArrTarget(url=url, api_key=key, quality_profile_id=0, root_folder="", tag="") if url and key else None
+    def seerr() -> SeerrTarget | None:
+        url, key = (store.get("requests.overseerr.url") or "").strip(), store.get("requests.overseerr.apikey") or ""
+        return (
+            SeerrTarget(
+                url=url, api_key=key, request_as_user_id=int(store.get("requests.overseerr.request_as_user_id") or 0)
+            )
+            if url and key
+            else None
+        )
 
-        overseerr, radarr, sonarr = seerr(), arr("requests.radarr"), arr("requests.sonarr")
-        if not (overseerr or radarr or sonarr):
-            return None
-        sends_via_seerr = bool(store.get("requests.enabled")) and store.get("requests.target") == "overseerr"
-        return RequestSources(overseerr=overseerr, radarr=radarr, sonarr=sonarr, exclude_seerr_user_id=overseerr.request_as_user_id if overseerr and sends_via_seerr else 0, shortlist_tag=(store.get("requests.tag") or "").strip())
+    def arr(prefix: str) -> ArrTarget | None:
+        url, key = (store.get(f"{prefix}.url") or "").strip(), store.get(f"{prefix}.apikey") or ""
+        return ArrTarget(url=url, api_key=key, quality_profile_id=0, root_folder="", tag="") if url and key else None
+
+    overseerr, radarr, sonarr = seerr(), arr("requests.radarr"), arr("requests.sonarr")
+    if not (overseerr or radarr or sonarr):
+        return None
+    sends_via_seerr = bool(store.get("requests.enabled")) and store.get("requests.target") == "overseerr"
+    return RequestSources(
+        overseerr=overseerr,
+        radarr=radarr,
+        sonarr=sonarr,
+        exclude_seerr_user_id=overseerr.request_as_user_id if overseerr and sends_via_seerr else 0,
+        shortlist_tag=(store.get("requests.tag") or "").strip(),
+    )
 ```
 and in `_engine_config`: `request_sources=self._build_request_sources(store)`.
 
@@ -1405,16 +1710,34 @@ Regenerate the snapshot + web types with the command in `tests/unit/test_openapi
 **Interfaces:**
 - `GET /api/requests/row-sources?pattern=<str>` → `RowSourcesOut`:
   ```python
-  class RowSourceServerOut(BaseModel): kind: str; name: str; is4k: bool; tag_requests: bool
-  class TagMatchOut(BaseModel): label: str; source: str; user_id: int | None; display_name: str; titles: int; ambiguous: bool
+  class RowSourceServerOut(BaseModel):
+      kind: str
+      name: str
+      is4k: bool
+      tag_requests: bool
+
+
+  class TagMatchOut(BaseModel):
+      label: str
+      source: str
+      user_id: int | None
+      display_name: str
+      titles: int
+      ambiguous: bool
+
+
   class RowSourcesOut(BaseModel):
       overseerr: str  # "connected" | "unreachable" | "off"
-      radarr: str; sonarr: str
+      radarr: str
+      sonarr: str
       complete: bool
       problems: list[str]
-      seerr_requests: int; seerr_requesters: int; seerr_linked: int
+      seerr_requests: int
+      seerr_requesters: int
+      seerr_linked: int
       servers: list[RowSourceServerOut]
-      tagged_movies: int; tagged_shows: int
+      tagged_movies: int
+      tagged_shows: int
       people: list[PersonReadyOut]  # user_id, display_name, linked: bool, ready: int (titles on disk, any library)
       tags: list[TagMatchOut]
   ```
@@ -1426,22 +1749,31 @@ Regenerate the snapshot + web types with the command in `tests/unit/test_openapi
 # tests/integration/test_api_requests.py — append
 import respx, httpx, json
 from pathlib import Path
+
 FIX = Path(__file__).resolve().parents[1] / "fixtures"
 
 
 def test_row_sources_reports_each_source_and_who_is_linked(client):
     with client.app.state.sessions() as session:
         store = SettingsStore(session, client.app.state.secrets)
-        store.set("requests.overseerr.url", "http://seerr"); store.set("requests.overseerr.apikey", "k")
+        store.set("requests.overseerr.url", "http://seerr")
+        store.set("requests.overseerr.apikey", "k")
         session.commit()
     reqs = json.loads((FIX / "overseerr_requests_page.json").read_text())
-    users = {"pageInfo": {"results": 1, "pages": 1}, "results": [{"id": reqs["results"][0]["requestedBy"]["id"], "plexId": 100, "displayName": "Sarah"}]}
+    users = {
+        "pageInfo": {"results": 1, "pages": 1},
+        "results": [{"id": reqs["results"][0]["requestedBy"]["id"], "plexId": 100, "displayName": "Sarah"}],
+    }
     with respx.mock:
         respx.get("http://seerr/api/v1/request").mock(return_value=httpx.Response(200, json=reqs))
         respx.get("http://seerr/api/v1/user").mock(return_value=httpx.Response(200, json=users))
-        respx.get("http://seerr/api/v1/settings/radarr").mock(return_value=httpx.Response(200, json=[{"name": "r", "is4k": False, "tagRequests": True}]))
+        respx.get("http://seerr/api/v1/settings/radarr").mock(
+            return_value=httpx.Response(200, json=[{"name": "r", "is4k": False, "tagRequests": True}])
+        )
         respx.get("http://seerr/api/v1/settings/sonarr").mock(return_value=httpx.Response(200, json=[]))
-        respx.get("http://seerr/api/v1/media").mock(return_value=httpx.Response(200, json={"pageInfo": {"results": 0}, "results": []}))
+        respx.get("http://seerr/api/v1/media").mock(
+            return_value=httpx.Response(200, json={"pageInfo": {"results": 0}, "results": []})
+        )
         r = client.get("/api/requests/row-sources")
     assert r.status_code == 200, r.text
     out = r.json()
