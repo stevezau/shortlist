@@ -217,7 +217,7 @@ function sharedRowCount(run: RunDetail): number {
  *  The roster is therefore also the filter on the log: a section title and a `shared_*` slug are in
  *  nobody's roster, so neither can make an unstarted run look started.
  */
-function peopleProgress(
+export function peopleProgress(
   run: RunDetail,
   entries: RunLogEntry[],
 ): { done: number; total: number } | null {

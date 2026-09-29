@@ -5,6 +5,17 @@ heading: Requests (Radarr and Sonarr)
 nav_order: 6
 ---
 
+## Reviewing the inbox
+
+The Waiting, Sent and Rejected views keep their existing filters and actions. Waiting cards show
+the title, rating, demand and current status; open **Details & title links** for the synopsis,
+recommendation reasons and TMDB, IMDb and Trakt links. Opening details or an external link does not
+select the title. Batch actions appear once you select titles.
+
+**Delete** removes a waiting title for now, so a later run may suggest it again. **Reject** blocks
+future requests for it until you choose **Allow again**. Clearing a sent log entry only clears the
+record in Shortlist; it does not remove the title from the connected app.
+
 ## Requests (Radarr / Sonarr, or Overseerr)
 
 Off by default. When on, Shortlist notices the titles your people's taste surfaced that your library
@@ -151,8 +162,8 @@ web UI fetches. An install behind a restrictive network, or a browser with an ad
 placeholder tile instead; so will a title TMDB has no artwork for, and one queued before posters existed
 (those fill in on the next run that re-surfaces the title). Nothing else on the page depends on it.
 
-Every title carries its own **Send**, **Delete** and **Reject** buttons, so you can work straight down
-the list deciding one at a time. For a batch, tick the ones you want instead and use the same three
+Every waiting title carries visible **Send**, **Delete** and **Reject** buttons, so you can
+work straight down the list deciding one at a time. For a batch, tick the ones you want instead and use the same three
 buttons on the action bar above the queue — they act on everything ticked, and **Clear selection**
 unticks them. The two ways don't interfere:
 deciding a single title from its own row leaves a selection you're part-way through assembling alone.

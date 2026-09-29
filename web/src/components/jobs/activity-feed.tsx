@@ -30,7 +30,7 @@ function ActivityRow({
         type="button"
         onClick={() => setOpen(!open)}
         aria-expanded={open}
-        className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        className="flex w-full flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2 text-left text-sm hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <ChevronRight
           aria-hidden="true"
@@ -50,12 +50,12 @@ function ActivityRow({
         )}
         {/* Which JOB this was, in the same words as the Jobs tab — the old flat table showed the raw
             kind (`sync.check`), which means nothing to someone reading their own server's history. */}
-        <span className="w-36 shrink-0 truncate font-medium lg:w-48">
+        <span className="min-w-0 flex-1 font-medium sm:w-36 sm:flex-none lg:w-48">
           {label}
         </span>
         {/* w-44, not w-32: the longest status ("Failed after 3 attempts", 146px) was clipped to
             "Failed after 3 atte…" at EVERY width — the one column here whose text must survive. */}
-        <span className={`w-44 shrink-0 truncate ${jobStatusTone(job.status)}`}>
+        <span className={`order-1 w-full pl-7 sm:order-none sm:w-44 sm:shrink-0 sm:pl-0 ${jobStatusTone(job.status)}`}>
           {jobStatusLabel(job)}
         </span>
         {/* Detail and duration only from `lg`: below it, five columns plus a 240px nav rail leave the

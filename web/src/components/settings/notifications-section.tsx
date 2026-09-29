@@ -1,6 +1,7 @@
 import { ArrowRight } from "lucide-react";
 import { useState } from "react";
 
+import { SaveStatus } from "@/components/save-status";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { settingBool, settingString } from "@/lib/format";
@@ -122,11 +123,15 @@ export function NotificationsSection({ settings }: { settings: Settings }) {
             />
           </div>
 
-          {save.isError && (
-            <p role="alert" className="text-sm text-destructive-text">
-              Couldn’t save that. Try again.
-            </p>
-          )}
+          <p className="text-xs text-muted-foreground">{hasAddress ? `${events.length} events selected · webhook configured` : "Webhook address missing"}</p>
+          <SaveStatus fallback="Couldn’t save that. Try again." isPending={save.isPending} isError={save.isError} error={save.error} saved={save.isSuccess} onRetry={() => {
+            const values = save.variables;
+            if (!values) return;
+            save.mutate(values, { onSuccess: () => {
+              if (typeof values["notify.webhook.enabled"] === "boolean") setEnabled(values["notify.webhook.enabled"]);
+              if (Array.isArray(values["notify.webhook.events"])) setEvents(values["notify.webhook.events"] as string[]);
+            } });
+          }} />
 
           {enabled && !hasAddress && (
             <p className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-sm">

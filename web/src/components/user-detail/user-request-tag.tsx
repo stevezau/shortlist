@@ -26,11 +26,12 @@ export function UserRequestTag({ user }: { user: User }) {
   };
 
   return (
-    <Card>
-      <CardContent className="space-y-2 pt-6">
-        <div className="flex items-center gap-2">
+    <Card className="shadow-none">
+      <CardContent className="space-y-2 p-4">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <Label htmlFor="user-request-tag">Request tag (optional)</Label>
           <SavedIndicator show={saved} />
+          <span className="ml-auto text-xs text-muted-foreground">{patchUser.isPending ? "Saving…" : "Saves when you leave the field"}</span>
         </div>
         <Input
           id="user-request-tag"
@@ -41,11 +42,9 @@ export function UserRequestTag({ user }: { user: User }) {
           maxLength={64}
           className="max-w-xs"
         />
-        <p className="text-sm text-muted-foreground">
-          When Requests are on, titles asked for because{" "}
-          {user.display_name || user.username} wanted them get this tag in
-          Sonarr/Radarr — on top of your global tag and each row’s own tag.
-          Leave blank for none.
+        <p className="break-words text-sm text-muted-foreground">
+          Added in Sonarr/Radarr to titles Shortlist requests for this person,
+          alongside your global and row tags. Leave blank for none.
         </p>
         {patchUser.isError && (
           <p role="alert" className="text-sm text-destructive-text">

@@ -45,8 +45,8 @@ class TestWatchHistorySearch:
         query-string or response shape passes both unit suites and dies here."""
         page.goto("/users")
         page.get_by_role("link", name=re.compile("sarah", re.I)).first.click()
-        # The user-detail tabs are a `Segmented` control — aria-pressed buttons, not role=tab.
-        page.get_by_role("button", name=re.compile("^watched$", re.I)).click()
+        # User detail exposes the same watched panel through a semantic tab.
+        page.get_by_role("tab", name=re.compile("^watched$", re.I)).click()
 
         search = page.get_by_label(re.compile("Search watched titles", re.I))
         expect(search).to_be_visible(timeout=20_000)

@@ -1,3 +1,4 @@
+import { Link } from "react-router";
 import { useState } from "react";
 
 import { SaveStatus } from "@/components/save-status";
@@ -88,7 +89,7 @@ export function RowPlacementSection({ settings }: { settings: Settings }) {
               Each row chooses its own spot, on the row itself — top of the
               shelf, just after or before a collection you pick, or not
               positioned at all. Open a row and look for{" "}
-              <strong className="text-foreground">Where it sits</strong>.
+              <strong className="text-foreground">Where it sits</strong>.{" "}<Link to="/rows" className="text-primary hover:underline">Open Rows</Link>
             </p>
           )}
 

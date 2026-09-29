@@ -1,7 +1,8 @@
 import { ListChecks, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
+import { FakePlexRow } from "@/components/fake-plex-row";
 import { RowRequestSettings } from "@/components/rows/row-request-settings";
 import { AudiencePicker } from "@/components/rows/audience-picker";
 import { InheritableField } from "@/components/rows/inheritable-field";
@@ -25,6 +26,7 @@ import { RowEnableToggle } from "@/components/rows/row-enable-toggle";
 import { RowEffectivenessPanel } from "@/components/rows/row-effectiveness";
 import { RowPreview } from "@/components/rows/row-preview";
 import { RowRunAction } from "@/components/rows/row-run-action";
+import { RowSectionNavigation } from "@/components/rows/row-section-navigation";
 import { SettingsGroup } from "@/components/rows/settings-group";
 import { RowShelfPlacement } from "@/components/rows/row-shelf-placement";
 import { effectiveSources } from "@/components/rows/row-sources-field";
@@ -34,11 +36,12 @@ import { RefreshDaysField } from "@/components/settings/refresh-days-field";
 import { IdleHoldField } from "@/components/settings/idle-hold-field";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { RowSizeField } from "@/components/row-size-field";
 import { apiErrorMessage } from "@/lib/api";
 import { blankInput, hasUnsavedChanges, toInput } from "@/lib/collections";
-import { settingString } from "@/lib/format";
+import { renderRowName, sampleLibraryName, settingString } from "@/lib/format";
 import {
   useCollectionEffectiveness,
   useCollections,
@@ -59,7 +62,6 @@ import {
   FILL_META,
   followsAWatch as rowFollowsAWatch,
   hiddenButRead,
-  KIND_GROUP,
   KIND_META,
   kindBaseline as baselineOf,
   kindDisabledReason,
@@ -146,6 +148,8 @@ export function RowEditor({
   collection,
   template = null,
   users,
+  audienceState = "ready",
+  onRetryAudience,
   onClose,
   onRename,
 }: {
@@ -154,12 +158,21 @@ export function RowEditor({
    *  stays editable — a template is a starting point, not a mode. */
   template?: RowTemplate | null;
   users: User[];
+  audienceState?: "loading" | "error" | "ready";
+  onRetryAudience?: () => void;
   onClose: () => void;
   /** Hands a name to the rename screen, which owns the Plex work: the typed-but-unapplied name from
    *  Rename…, or — with `saved` — the one a kind switch proposed, which the save already carried, so
    *  the screen only streams the rename from the title the collections still carry. */
   onRename?: (proposedName: string, saved?: { oldTemplate: string }) => void;
 }) {
+  const settingsRoot = useRef<HTMLDivElement>(null);
+  const [previewOpen, setPreviewOpen] = useState(() => window.innerWidth >= 1024);
+  useEffect(() => {
+    const resize = () => setPreviewOpen(window.innerWidth >= 1024);
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
   const save = useSaveCollection();
   const saveSettings = useSaveSettings();
   // Read-only here: the editor never writes settings, it only names the globals a row inherits.
@@ -210,6 +223,7 @@ export function RowEditor({
   // that is what a rename rewrites; `name` is only its rendered form.
   const savedName = collection?.name_template || collection?.name || "";
   const [renameDraft, setRenameDraft] = useState(savedName);
+  const [discardForRename, setDiscardForRename] = useState(false);
   const renamePending = renameDraft.trim() !== savedName.trim();
   // Drives only the note beside Run — Save is never gated on it, because a form that refuses to
   // save what it thinks is unchanged is unfixable when the comparison is the thing that is wrong.
@@ -470,18 +484,11 @@ export function RowEditor({
   };
 
   return (
-    // A PAGE, not a dialog. A modal caps at 90% of the viewport, and it was that height limit — not
-    // the number of settings — that forced every group into a collapsed accordion. Which in turn hid
-    // the one warning that stops a movies-and-TV row building half empty, since it lived inside a
-    // section that starts closed. With the cap gone the groups can stay open, warnings can sit
-    // permanently beside the setting they concern, and there is room for the preview panel that
-    // turns each abstract setting into "here is what Sarah will see tonight".
     <div className="w-full space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
-        <div>
-          <h1 className="text-2xl font-semibold">
-            {collection ? "Edit row" : "Add a row"}
-          </h1>
+        <div className="min-w-0 max-w-full">
+          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{collection ? "Edit row" : "New row"}</p>
+          <h1 className="[overflow-wrap:anywhere] text-2xl font-semibold">{collection ? (collection.name_template || collection.name) : "Add a row"}</h1>
         </div>
 
         {/* What you reach for repeatedly while tuning a row: turn it on or off, rebuild it, and look
@@ -559,41 +566,54 @@ export function RowEditor({
         </p>
       )}
 
-      {/* Across the top, like the dashboard's Impact strip — not down in the sidebar.
-          It lived at the BOTTOM of the sticky sidebar, which has its own scroller, so "is this row
-          working?" was hidden inside a second scroll area most people never noticed: the page looked
-          finished while the numbers sat below the fold of a column they had no reason to scroll.
-          It is also the one thing here that is not a setting — it is the outcome the settings are
-          for — so it belongs above them rather than beside them.
-          Saved rows only: a row being created has no history, and a strip of dashes answers nothing. */}
       {collection && (
-        <RowEffectivenessPanel
-          data={effectiveness.data}
-          isLoading={effectiveness.isLoading}
-          isError={effectiveness.isError}
-          onRetry={() => effectiveness.refetch()}
-          rowSlug={collection.slug}
-        />
+        <RowEffectivenessPanel compact data={effectiveness.data} isLoading={effectiveness.isLoading} isError={effectiveness.isError} onRetry={() => effectiveness.refetch()} rowSlug={collection.slug} />
       )}
 
-      <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start">
         {/* `min-w-0`, because a grid item's default `min-width: auto` resolves to its MIN-CONTENT
             width. The `minmax(0,1fr)` above only covers `lg` and up; below it the single implicit
             column took its floor from the widest unbreakable thing inside — measured at 380px in a
             320px viewport, so the whole page scrolled sideways and every heading and paragraph on
             it ran past the right edge. Same fix, and the same reason, as the dashboard's cards. */}
-        <div className="min-w-0 space-y-5">
-          {/* Names the left column, so the page reads as three labelled parts — how it is doing,
-              what you can change, what that will produce — instead of an unlabelled wall of cards
-              with a panel floating beside it. */}
-          <h2 className="text-base font-semibold">Row settings</h2>
+        <div ref={settingsRoot} className="order-2 min-w-0 space-y-4 lg:order-1">
+          <RowSectionNavigation root={settingsRoot} showRequests={!input.requests_row} />
+          {/* Directly under what people see: the kind decides every setting below it (design §3). */}
+            <details data-setting="kind" className="rounded-lg border bg-card p-4">
+              <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <span className="min-w-0"><span className="mb-1 block text-xs font-medium uppercase tracking-wide text-muted-foreground">Row type</span><span className="block font-medium">{kindTitle(current)}</span><span className="text-xs text-muted-foreground">{KIND_META[current.kind].description}</span></span>
+                <span className="shrink-0 whitespace-nowrap rounded-md border border-primary/30 bg-primary/10 px-2.5 py-2 text-center text-xs font-medium text-primary">Change row type</span>
+              </summary>
+              <div className="pt-3"><RowKindPicker
+                value={current.kind}
+                onChange={pickKind}
+                // The row's own kind is never disabled, even before the season list loads.
+                disabledReason={(kind) => {
+                  if (kind === current.kind) return null;
+                  const reason = kindDisabledReason(kind, draft, kindCtx);
+                  if (reason !== SEED_NAME_IN_SETTINGS) return reason;
+                  return (
+                    <>
+                      {reason}{" "}
+                      <Link
+                        to={DEFAULT_ROW_NAME_SETTINGS}
+                        className="not-italic underline underline-offset-2 hover:text-foreground"
+                      >
+                        Settings › Row defaults
+                      </Link>
+                    </>
+                  );
+                }}
+              />
+            </div></details>
+
           <SettingsGroup
-            title="How it looks on Plex"
+            title="Appearance"
             description="The name, description and picture people see."
           >
             {/* Everything someone SEES of the row, together and first. The description and poster used
                 to be folded groups near the bottom, three groups away from the name they describe. */}
-            <div className="grid gap-6 sm:grid-cols-[minmax(0,1fr)_11rem]">
+            <div className="space-y-4">
               <div className="min-w-0 space-y-4">
                 <div data-setting="name" className="space-y-2">
                   <Label htmlFor="row-name">Name</Label>
@@ -634,6 +654,7 @@ export function RowEditor({
                             !renameDraft.trim()
                           }
                           onClick={() => {
+                            if (unsaved) { setDiscardForRename(true); return; }
                             onClose();
                             onRename?.(renameDraft.trim());
                           }}
@@ -712,9 +733,9 @@ export function RowEditor({
                     hasImage={collection?.poster?.has_image ?? false}
                     seasonal={isSeasonal}
                   />
-                </div>
-              </div>
+          <div className="mt-3 rounded-lg border bg-muted/10 p-3">
               <RowPlexCard
+                compact
                 // The name as typed: the card previews what the row will be called.
                 input={
                   pendingRename
@@ -729,38 +750,14 @@ export function RowEditor({
                 hasImage={collection?.poster?.has_image ?? false}
                 sampleSeason={chosenSeasons[0]}
               />
+          </div>
+                </div>
+              </div>
+
             </div>
           </SettingsGroup>
 
-          {/* Directly under what people see: the kind decides every setting below it (design §3). */}
-          <SettingsGroup
-            title={KIND_GROUP.title}
-            description={KIND_GROUP.description}
-            summary={kindTitle(current)}
-          >
-            <div data-setting="kind">
-              <RowKindPicker
-                value={current.kind}
-                onChange={pickKind}
-                // The row's own kind is never disabled, even before the season list loads.
-                disabledReason={(kind) => {
-                  if (kind === current.kind) return null;
-                  const reason = kindDisabledReason(kind, draft, kindCtx);
-                  if (reason !== SEED_NAME_IN_SETTINGS) return reason;
-                  return (
-                    <>
-                      {reason}{" "}
-                      <Link
-                        to={DEFAULT_ROW_NAME_SETTINGS}
-                        className="not-italic underline underline-offset-2 hover:text-foreground"
-                      >
-                        Settings › Row defaults
-                      </Link>
-                    </>
-                  );
-                }}
-              />
-            </div>
+          <SettingsGroup title="Row settings" description="The choices specific to this kind of row." summary={kindTitle(current)} defaultOpen={false}>
             <RowKindSettings
               choice={current}
               onChooseFill={(fill) => requestKind({ kind: "seasonal", fill })}
@@ -785,21 +782,24 @@ export function RowEditor({
           </SettingsGroup>
 
           <SettingsGroup
-            title="Who gets it"
+            title="Audience"
+            summary={audienceState === "error" ? "Couldn’t load the audience — saved audience unchanged" : audienceState === "loading" ? "Loading people…" : undefined}
+            defaultOpen={false}
             description="Which people get this row."
           >
             <div data-setting="audience">
-              <AudiencePicker
+              {audienceState === "error" ? <div role="alert" className="space-y-2 text-sm"><p className="text-destructive-text">Couldn’t load the audience. Your saved audience is unchanged.</p><Button type="button" variant="outline" size="sm" onClick={onRetryAudience}>Retry audience</Button></div> : audienceState === "loading" ? <p role="status" className="text-sm text-muted-foreground">Loading people…</p> : <AudiencePicker
                 audience={input.audience}
                 audienceUserIds={input.audience_user_ids}
                 users={users}
                 onChange={set}
-              />
+              />}
             </div>
           </SettingsGroup>
 
           <SettingsGroup
-            title="What goes in it"
+            title="Titles & filters"
+            defaultOpen={false}
             description="Where titles come from, how many, and in what order."
             summary={drawsOnSummary}
           >
@@ -861,7 +861,7 @@ export function RowEditor({
                     data-setting="rated_by"
                     className="space-y-1.5 rounded-md border bg-muted/30 p-3"
                   >
-                    <Label htmlFor="row-rating-source">Rated by</Label>
+                    <Label htmlFor="row-rating-source">Rated by · global setting</Label>
                     <select
                       id="row-rating-source"
                       value={ratingSource}
@@ -881,12 +881,15 @@ export function RowEditor({
                         </option>
                       ))}
                     </select>
+                    {saveSettings.isPending && <p role="status" className="text-xs text-muted-foreground">Saving global rating source…</p>}
+                    {saveSettings.isSuccess && <p role="status" className="text-xs text-success">Global rating source saved.</p>}
+                    {saveSettings.isError && <p role="alert" className="text-xs text-destructive-text">{apiErrorMessage(saveSettings.error, "Couldn’t save the global rating source. Try again.")}</p>}
                     <p className="text-xs text-muted-foreground">
                       {ratingSource === "tmdb"
                         ? "TMDB scores need no setup. IMDb, Trakt, Rotten Tomatoes and Metacritic all come from MDBList, a free service that fetches every site’s score in one lookup — add its key under Settings → Connections."
                         : `Scores come from MDBList, a free service that fetches every site’s score in one lookup. Add its key under Settings → Connections, or ${ratingLabel} rows quietly fall back to TMDB.`}{" "}
-                      Shared by every row and by requests: changing it here
-                      changes it everywhere.
+                      Shared by every row and by requests. Changes save immediately, separately from Save changes below.
+                      {" "}<Link to={DEFAULT_ROW_NAME_SETTINGS} className="underline underline-offset-2">Global row defaults</Link>
                     </p>
                   </div>
                 )}
@@ -916,7 +919,8 @@ export function RowEditor({
           </SettingsGroup>
 
           <SettingsGroup
-            title="When it updates"
+            title="Schedule"
+            defaultOpen={false}
             description="When Shortlist rebuilds the row, and how often its titles change."
             summary={updatesSummary}
           >
@@ -1003,7 +1007,8 @@ export function RowEditor({
           </SettingsGroup>
 
           <SettingsGroup
-            title="Where and when people see it"
+            title="Plex placement"
+            defaultOpen={false}
             description="Which Plex screens it shows on, where it sits, and on which days."
             summary={`${placementSummary} · ${showDaysSummary(input.show_days)}`}
           >
@@ -1133,16 +1138,18 @@ export function RowEditor({
             The max-height + scroll is a safety valve for a very tall preview on a short window, not
             a place to put content: anything parked below the fold here is effectively invisible,
             which is exactly why the effectiveness panel moved to the top of the page. */}
-        <aside ref={summaryRef} style={{ top: summaryTop }} className="min-w-0 space-y-5 lg:sticky">
+        <aside ref={summaryRef} style={{ top: summaryTop }} className="order-1 min-w-0 space-y-3 lg:order-2 lg:sticky">
+          <details open={previewOpen} onToggle={(event) => setPreviewOpen(event.currentTarget.open)} className="group rounded-lg border bg-card p-4 lg:border-0 lg:bg-transparent lg:p-0"><summary className="cursor-pointer text-sm font-medium lg:hidden">Illustrative Plex preview · {kindTitle(current)}</summary><div className="space-y-3 pt-3 lg:pt-0">
           {/* Outside the card, matching "Row settings" opposite, so the two columns start level. */}
           <div>
-            <h2 className="text-base font-semibold">What this row will do</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Updates as you change things. Nothing is saved until you press
-              save.
-            </p>
+            <p className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">Outcome preview</p><h2 className="mt-1 text-sm font-semibold">What this row will do</h2>
+
           </div>
+          <div className="rounded-lg border bg-card p-4"><FakePlexRow illustrative title={renderRowName(pendingRename?.name.trim() || draft.name_template || draft.name, "Fargo", "Sarah", sampleLibraryName(draft.media), chosenSeasons[0]) || "Picked for You"} className="[&>p]:[overflow-wrap:anywhere] [&>p]:text-sm [&>div>div]:p-1.5 [&>div>div>span:last-child]:text-[8px] [&>div>div>span:last-child]:tracking-normal" /><p className="mt-3 text-[10px] leading-relaxed text-muted-foreground">Illustrative titles, not a prediction of the next run. Names vary with each person’s viewing and library.</p></div>
+          </div></details>
+          <p className="text-sm font-medium lg:hidden">What this row will do</p>
           <RowPreview
+            compact
             input={draft}
             ctx={kindCtx}
             // The header's switch saves straight away, so the saved row says whether it is on.
@@ -1153,12 +1160,16 @@ export function RowEditor({
             seasons={chosenSeasons}
             rowNames={rowNames}
           />
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+              Settings stay a draft until Save. Rename, artwork, on/off and the global rating source have their own immediate actions.
+            </p>
         </aside>
       </div>
 
       {/* Pinned to the bottom of the viewport: on a long page the save button would otherwise be
           somewhere off-screen, and "where did Save go" is exactly the friction a dialog didn't have. */}
-      <div className="sticky bottom-0 z-10 -mx-4 flex justify-end gap-2 border-t bg-background px-4 py-3 sm:-mx-6 sm:px-6">
+      <div className="sticky bottom-0 z-10 -mx-4 flex items-center justify-end gap-2 border-t bg-background px-4 py-3 md:-mx-8 md:px-8">
+        <p className="mr-auto text-xs text-muted-foreground" role="status">{unsaved ? "Unsaved row settings" : "Row settings up to date"}</p>
         <Button variant="outline" onClick={onClose}>
           Cancel
         </Button>
@@ -1172,6 +1183,13 @@ export function RowEditor({
           {collection ? "Save changes" : "Add row"}
         </Button>
       </div>
+
+      <Dialog open={discardForRename} onOpenChange={setDiscardForRename}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Discard unsaved settings and rename?</DialogTitle><DialogDescription>Rename uses the saved row settings. Your other unsaved changes will be discarded. Keep editing to save those settings first.</DialogDescription></DialogHeader>
+          <DialogFooter><Button variant="outline" onClick={() => setDiscardForRename(false)}>Keep editing</Button><Button onClick={() => { setDiscardForRename(false); onClose(); onRename?.(renameDraft.trim()); }}>Discard settings and rename</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {pendingKind && (
         <RowKindChangeDialog

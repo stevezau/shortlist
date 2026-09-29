@@ -25,6 +25,7 @@ import type { ReactNode } from "react";
 import { createContext, useContext, useMemo, useState } from "react";
 import { useParams } from "react-router";
 
+import { MutationAlert } from "@/components/mutation-alert";
 import { BackLink } from "@/components/back-link";
 import { EmptyState, QueryBoundary } from "@/components/query-boundary";
 import { RowName } from "@/components/rows/row-name";
@@ -47,7 +48,6 @@ import {
   useRunSharedRowTrace,
   useRunUserTrace,
 } from "@/lib/queries";
-import { rowDisplayName } from "@/lib/run-rows";
 import {
   buildLibraries,
   fateLabel,
@@ -108,13 +108,9 @@ export function RunUserTracePage() {
   const userQuery = useRunUserTrace(runId, uid, valid && !isRow);
   const rowQuery = useRunSharedRowTrace(runId, rowSlug ?? "", valid && isRow);
   const query = isRow ? rowQuery : userQuery;
-  // The row's configured name, stripped of its `{placeholder}` — exactly what the run page shows —
-  // so the trace and the row card never disagree about what the row is called.
   const collections = useCollections();
   const rowName = isRow
-    ? rowDisplayName(
-        collections.data?.find((row) => row.slug === rowSlug)?.name ?? "",
-      ) || undefined
+    ? collections.data?.find((row) => row.slug === rowSlug)?.name || undefined
     : undefined;
   // Every row's configured name by slug, for the same reason: the trace's own `selection` entries
   // carry slugs, and printing one in prose reads as a stray token. Kept as the template — each
@@ -155,7 +151,7 @@ export function RunUserTracePage() {
           isEmpty={(d) => isEmptyTrace(d)}
           empty={
             <EmptyState
-              title="Nothing was recorded for this person"
+              title={rowSlug ? "Nothing was recorded for this row" : "Nothing was recorded for this person"}
               hint="This run happened before traces were added, or they were skipped before we gathered anything."
             />
           }
@@ -188,7 +184,7 @@ function isEmptyTrace(d: RunUserTraceResponse): boolean {
 function TraceSkeleton() {
   return (
     <div className="space-y-4">
-      <Skeleton className="h-10 w-96" />
+      <Skeleton className="h-10 w-96 max-w-full" />
       <Skeleton className="h-[28rem] w-full" />
     </div>
   );
@@ -228,8 +224,8 @@ export function TraceView({
     <RequestsContext.Provider value={data.requests ?? {}}>
       <div className="space-y-6">
         <header className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">
-            How we picked for {name}
+          <h1 className="break-words text-2xl font-semibold tracking-tight">
+            How we picked for {sharedRow ? <RowName name={name} /> : name}
           </h1>
           <p className="max-w-2xl text-sm text-muted-foreground">
             {sharedRow
@@ -585,6 +581,17 @@ function LibraryTabs({
             type="button"
             role="tab"
             aria-selected={selected}
+            tabIndex={selected ? 0 : -1}
+            onKeyDown={(event) => {
+              if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) return;
+              event.preventDefault();
+              const index = libraries.findIndex((item) => item.key === lib.key);
+              const next = event.key === "Home" ? 0 : event.key === "End" ? libraries.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + libraries.length) % libraries.length;
+              const target = libraries[next];
+              if (target) onSelect(target.key);
+              const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("[role=tab]");
+              buttons?.[next]?.focus();
+            }}
             onClick={() => onSelect(lib.key)}
             className={cn(
               "-mb-px flex items-center gap-2 rounded-t-md border-b-2 px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -812,7 +819,12 @@ function LibraryFlow({
   const active = useScrollSpy(steps.map((s) => s.id));
 
   return (
-    <div className="flex gap-6">
+    <div className="flex flex-col gap-4 md:flex-row md:gap-6">
+      <label className="sticky top-16 z-10 flex items-center gap-3 rounded-md border bg-background p-2 text-sm md:hidden">Jump to step
+        <select aria-label="Trace step" value={active || steps[0]?.id} className="min-w-0 flex-1 rounded border bg-card p-2" onChange={(event) => document.getElementById(event.target.value)?.scrollIntoView({ block: "start" })}>
+          {steps.map((step) => <option key={step.id} value={step.id}>{step.n}. {step.rail}</option>)}
+        </select>
+      </label>
       <StepRail steps={steps} active={active} />
       <div className="min-w-0 flex-1 space-y-4">
         {steps.map((step) => (
@@ -1010,24 +1022,26 @@ function BlockSeedButton({
   userId: number;
 }) {
   const block = useBlockSeed(userId);
+  const submit = () => block.mutate({
+    tmdbId: seed.tmdb_id,
+    title: seed.title,
+    mediaType: seed.media === "show" ? "show" : "movie",
+  });
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      className="h-6 px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
-      disabled={block.isPending}
-      title={`Stop "${seed.title}" shaping this person's picks. It stays in their history — it just stops being a seed.`}
-      onClick={() =>
-        block.mutate({
-          tmdbId: seed.tmdb_id,
-          title: seed.title,
-          mediaType: seed.media === "show" ? "show" : "movie",
-        })
-      }
-    >
-      <Ban className="h-3 w-3" aria-hidden />
-      Don&rsquo;t seed
-    </Button>
+    <div className="min-w-0 space-y-1">
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 px-1.5 text-xs text-muted-foreground"
+        disabled={block.isPending || block.isSuccess}
+        title={`Stop "${seed.title}" shaping this person's picks. It stays in their history — it just stops being a seed.`}
+        onClick={submit}
+      >
+        {block.isSuccess ? <Check className="h-3 w-3" aria-hidden /> : <Ban className="h-3 w-3" aria-hidden />}
+        {block.isSuccess ? "Seed blocked" : block.isPending ? "Blocking…" : "Don’t seed"}
+      </Button>
+      {block.isError && <MutationAlert error={block.error} fallback="Couldn’t block this seed." onRetry={submit} retryDisabled={block.isPending} />}
+    </div>
   );
 }
 
@@ -1037,10 +1051,10 @@ function SeedList({ seeds, userId }: { seeds: TraceSeed[]; userId?: number }) {
       {seeds.map((s) => (
         <li
           key={`${s.media}-${s.tmdb_id}`}
-          className="group flex items-baseline justify-between gap-3"
+          className="group flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3"
         >
-          <span className="truncate text-sm font-medium">{s.title}</span>
-          <span className="flex shrink-0 items-baseline gap-2">
+          <span className="min-w-0 break-words text-sm font-medium">{s.title}</span>
+          <div className="flex min-w-0 flex-wrap items-baseline gap-2">
             {seedWhy(s) && (
               <span className="text-xs text-muted-foreground">
                 {seedWhy(s)}
@@ -1052,7 +1066,7 @@ function SeedList({ seeds, userId }: { seeds: TraceSeed[]; userId?: number }) {
             {userId !== undefined && (
               <BlockSeedButton seed={s} userId={userId} />
             )}
-          </span>
+          </div>
         </li>
       ))}
     </ol>

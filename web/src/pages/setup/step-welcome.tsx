@@ -9,7 +9,7 @@ const PROMISES = [
   {
     icon: Sparkles,
     title: "A row of their own",
-    body: "Every user gets a “✨ Picked for You” row on their Plex Home, built from what they actually watched — and visible only to them.",
+    body: "Every user gets a “✨ Picked for You” row on their Plex Home, built from what they actually watched — with sharing rules that keep personal rows separate.",
   },
   {
     icon: RotateCcw,
@@ -41,11 +41,12 @@ export function StepWelcome({ next }: StepProps) {
         ))}
       </div>
 
+      <p className="text-sm text-muted-foreground">Plex cannot hide other people’s rows from the server owner on every surface. Managed accounts with parental profiles also have limitations; setup explains these before your first run.</p>
+
       <div className="space-y-3">
         <p className="text-sm text-muted-foreground">
-          Setup takes about ten minutes, including your first rows. Shortlist
-          picks the titles itself, so it needs no AI keys and nothing in the
-          cloud. Adding an AI provider (Claude, GPT, Gemini, or one you run
+          Shortlist uses a free TMDB key to discover titles and Plex to build
+          rows in your own library. It needs no AI subscription. Adding an AI provider (Claude, GPT, Gemini, or one you run
           yourself) is optional &mdash; it unlocks rows built from a live web
           search, and AI-drawn artwork.
         </p>

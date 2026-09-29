@@ -5,7 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { describeCron } from "@/lib/cron";
 import { timeUntil } from "@/lib/format";
 import { useSchedule } from "@/lib/queries";
-import { rowDisplayName } from "@/lib/run-rows";
+import { RowName } from "@/components/rows/row-name";
 
 /**
  * The rows that build on a timer, listed alongside the jobs that do.
@@ -103,12 +103,7 @@ export function RowSchedules() {
                   could mean. It read as "edit this schedule" and could not be. */}
               <div className="flex flex-wrap gap-1.5">
                 {rows.map((row) => {
-                  // The row's own name with its `{placeholders}` stripped, exactly as the run pages
-                  // do it. Printed raw, a template row rendered here with literal braces —
-                  // "Because you watched {top_seed}" — which reads as a substitution that failed.
-                  // The slug is the fallback for a name that is nothing BUT a placeholder, the same
-                  // fallback `run-rows.ts` uses.
-                  const label = rowDisplayName(row.name) || row.slug;
+                  const label = row.name || row.slug;
                   return (
                     <Link
                       key={row.id}
@@ -116,9 +111,7 @@ export function RowSchedules() {
                       title={`Edit ${label}`}
                       className="inline-flex max-w-full items-center rounded-full border bg-muted/40 px-2.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
-                      {/* `truncate` needs `min-w-0` on the flex child to shrink; a long row name
-                          ("👥 Popular Movies on SFLIX") matters on a phone. */}
-                      <span className="min-w-0 truncate">{label}</span>
+                      <RowName name={label} className="min-w-0 break-words font-normal" />
                     </Link>
                   );
                 })}

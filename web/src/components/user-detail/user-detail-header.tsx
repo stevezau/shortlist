@@ -22,13 +22,13 @@ export function UserDetailHeader({ user }: { user: User }) {
   // When they're OFF, "paused" is moot, so we show the off state instead of an "Active" that lies.
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-4">
       <header className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
+        <div className="flex w-full min-w-0 items-start gap-3 lg:w-auto lg:flex-1">
           <UserAvatar name={user.username} size="lg" />
-          <div className="space-y-1">
+          <div className="min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-3">
-              <h1 className="text-2xl font-semibold tracking-tight">
+              <h1 className="min-w-0 break-words text-2xl font-semibold tracking-tight">
                 {user.display_name || user.username}
               </h1>
               <UserBadges user={user} />
@@ -37,7 +37,7 @@ export function UserDetailHeader({ user }: { user: User }) {
                 <Badge variant="secondary">paused</Badge>
               )}
             </div>
-            <p className="text-sm text-muted-foreground">
+            <p className="break-words text-sm text-muted-foreground">
               {user.display_name && user.display_name !== user.username && (
                 <>Plex username: {user.username} · </>
               )}
@@ -72,7 +72,7 @@ export function UserDetailHeader({ user }: { user: User }) {
               className="flex items-center gap-2 text-sm text-muted-foreground"
               title="Pausing skips this person on runs but keeps their row — unlike turning them off on the Users list."
             >
-              {paused ? "Paused" : "Active"}
+              {paused ? "Rebuilding paused" : "Rebuild their rows"}
               <Switch
                 checked={!paused}
                 onCheckedChange={(active) =>
@@ -89,13 +89,16 @@ export function UserDetailHeader({ user }: { user: User }) {
             variant="secondary"
             onClick={() => startRun.mutate({ user_ids: [user.id] })}
             loading={startRun.isPending}
+            aria-label={`Run for ${user.display_name || user.username}`}
             title={`Rebuilds only ${user.display_name || user.username}'s rows, just for them — no one else is touched.`}
           >
             {!startRun.isPending && <RefreshCw aria-hidden="true" />}
-            Run for {user.display_name || user.username}
+            Run now
           </Button>
         </div>
       </header>
+
+      {user.enabled && <p className="text-xs text-muted-foreground">Pausing skips this person on runs and keeps their current rows on Plex. Turning them off in Users removes their rows.</p>}
 
       {/* Runs are watched on the Runs page — the Dashboard is the watch-tracking report and shows
           nothing live, so pointing there sent people somewhere the run never appears. */}

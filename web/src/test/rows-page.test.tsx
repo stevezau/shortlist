@@ -1,5 +1,6 @@
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -270,4 +271,17 @@ describe("RowsPage — the day-schedule badge", () => {
 
     expect(await screen.findByText("Hidden today")).toBeInTheDocument();
   });
+});
+
+
+it("returns keyboard focus to the template gallery opener after Escape", async () => {
+  getUsers.mockResolvedValue([]);
+  listCollections.mockResolvedValue([SUBSET_ROW]);
+  renderPage();
+  const opener = screen.getByRole("button", { name: "Add a row" });
+  await waitFor(() => expect(opener).toBeEnabled());
+  await userEvent.click(opener);
+  expect(screen.getByRole("dialog")).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+  await waitFor(() => expect(opener).toHaveFocus());
 });

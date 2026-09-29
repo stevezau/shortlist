@@ -45,16 +45,19 @@ function renderPreview(
     settings = SETTINGS,
     enabled,
     rowNames,
+    compact = false,
   }: {
     ctx?: RowKindContext;
     settings?: Settings;
     enabled?: boolean;
     rowNames?: Record<string, string>;
+    compact?: boolean;
   } = {},
 ) {
   render(
     <RowPreview
       input={input}
+      compact={compact}
       ctx={ctx}
       enabled={enabled}
       rowNames={rowNames}
@@ -329,5 +332,16 @@ describe("the Shelf position line", () => {
     renderPreview(anchored());
 
     expect(valueOf("Shelf position").className).toContain("[overflow-wrap:anywhere]");
+  });
+});
+
+
+describe("compact outcome essentials", () => {
+  it("keeps audience, size, basis, sources, watched policy and delivery visible", () => {
+    renderPreview(toInput(row({ ...named(BYW_NAME), max_seeds: 2 })), { compact: true });
+    for (const label of ["Who gets it", "How many", "Based on", "Found via", "Contents", "Rebuilds", "Appears on"]) {
+      expect(line(label).closest("details")).toBeNull();
+    }
+    expect(screen.getByText("All outcome details")).toBeInTheDocument();
   });
 });

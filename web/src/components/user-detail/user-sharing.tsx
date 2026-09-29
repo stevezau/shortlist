@@ -23,12 +23,11 @@ import type { User } from "@/lib/types";
 export function UserSharing({ user }: { user: User }) {
   const patchUser = usePatchUser();
   const [saved, setSaved] = useState(false);
-  const who = user.display_name || user.username;
 
   if (user.user_type === "owner") {
     return (
-      <Card>
-        <CardContent className="pt-6">
+      <Card className="shadow-none">
+        <CardContent className="p-4">
           <p className="text-sm text-muted-foreground">
             Plex has no sharing settings for the account that owns the server,
             so there is nothing here for Shortlist to change either way.
@@ -47,8 +46,8 @@ export function UserSharing({ user }: { user: User }) {
   };
 
   return (
-    <Card>
-      <CardContent className="space-y-3 pt-6">
+    <Card className="shadow-none">
+      <CardContent className="space-y-3 break-words p-4">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-0.5">
             <div className="flex items-center gap-2">
@@ -63,18 +62,15 @@ export function UserSharing({ user }: { user: User }) {
                 badge this same choice produces already said it plainly. The decision is made here,
                 so the outcome belongs here. */}
             <p className="text-sm text-muted-foreground">
-              <strong className="text-foreground">On:</strong> Shortlist edits{" "}
-              {who}&rsquo;s Plex sharing so the only personal row they see is
-              their own.
+              <strong className="text-foreground">On:</strong> Shortlist edits
+              their Plex sharing so they see only their own personal rows.
             </p>
             <p className="text-sm text-muted-foreground">
-              <strong className="text-destructive-text">Off:</strong> {who} will
-              be able to see everyone else&rsquo;s personal rows. Shortlist
-              removes what it added to their account and leaves the rest of their
-              restrictions as you set them.
-              Nobody else&rsquo;s account changes — everyone still has{" "}
-              {who}&rsquo;s row hidden, and a shared row you&rsquo;ve limited to
-              certain people stays hidden either way.
+              <strong className="text-destructive-text">Off:</strong> They can
+              see everyone else&rsquo;s personal rows. Shortlist removes its
+              filters from their account and preserves restrictions you set.
+              Nobody else&rsquo;s account changes: this person&rsquo;s row stays
+              hidden from others, and shared-row audience limits remain.
             </p>
           </div>
           <Switch
@@ -87,10 +83,9 @@ export function UserSharing({ user }: { user: User }) {
         </div>
         {!user.manage_sharing && (
           <p className="text-sm text-warning">
-            {who} can see other people&rsquo;s rows unless their own Plex
-            restrictions stop them. An &ldquo;allow only&rdquo; label list does:
-            it hides every row without one of its labels — their own row
-            included.
+            They can see other people&rsquo;s rows unless their own Plex
+            restrictions stop them. An &ldquo;allow only&rdquo; label list hides
+            every row without an allowed label — including their own.
           </p>
         )}
         {patchUser.isError && (

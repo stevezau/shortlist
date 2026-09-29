@@ -1,5 +1,6 @@
 import { Film, Inbox, Tv } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
+import { useLocation, useNavigate } from "react-router";
 
 import { SaveStatus } from "@/components/save-status";
 import { Segmented } from "@/components/segmented";
@@ -529,6 +530,8 @@ function OverseerrCard({
 }
 
 export function RequestsSettings({ settings }: { settings: Settings }) {
+  const navigate = useNavigate();
+  const { search } = useLocation();
   const [form, setForm] = useState<RequestsForm>(() => readForm(settings));
   const viaSeerr = form.target === "overseerr";
   const set = (patch: Partial<RequestsForm>) =>
@@ -603,10 +606,9 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
     maxPerRun: form.maxPerRun,
   });
 
+  // Use the section link so repeated jumps also work after scrolling away from Connections.
   const goToConnections = () =>
-    document
-      .getElementById("connections")
-      ?.scrollIntoView({ behavior: "smooth" });
+    void navigate({ pathname: "/settings", search, hash: "#connections" });
 
   // Auto-save: no Save button. Any change persists shortly after you stop (so text fields never
   // save mid-keystroke; toggles feel instant).
@@ -644,6 +646,13 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
   return (
     <Card>
       <CardContent className="space-y-5 pt-6">
+        <div className="sticky top-36 z-10 bg-card/95 py-1 md:top-20"><SaveStatus
+          isPending={save.isPending}
+          isError={save.isError}
+          error={save.error}
+          saved={save.saved}
+          onRetry={save.retry}
+        /></div>
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1">
             <p className="font-medium">Fill in the gaps automatically</p>
@@ -1249,14 +1258,6 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
             </fieldset>
           </div>
         )}
-
-        <SaveStatus
-          isPending={save.isPending}
-          isError={save.isError}
-          error={save.error}
-          saved={save.saved}
-          onRetry={save.retry}
-        />
       </CardContent>
     </Card>
   );

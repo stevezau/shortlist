@@ -6,7 +6,7 @@ import { BackLink } from "@/components/back-link";
 import { OwnerNote } from "@/components/owner-note";
 import { RestrictedNote } from "@/components/restricted-note";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
-import { Segmented } from "@/components/segmented";
+import { Tabs, TabPanel } from "@/components/ui/tabs";
 import { BlockedSeedsList } from "@/components/user-detail/blocked-seeds";
 import { RecentRuns } from "@/components/user-detail/recent-runs";
 import { UserDetailHeader } from "@/components/user-detail/user-detail-header";
@@ -52,13 +52,15 @@ export function UserDetailBody({ user }: { user: User }) {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-5">
       <UserDetailHeader user={user} />
 
       {user.user_type === "owner" && <OwnerNote />}
       <RestrictedNote user={user} />
 
-      <Segmented
+      <Tabs
+        id="user-detail"
+        ariaLabel="User details"
         options={[
           { value: "rows", label: "Rows" },
           { value: "runs", label: "Runs" },
@@ -73,6 +75,7 @@ export function UserDetailBody({ user }: { user: User }) {
         onChange={(value) => setTab(value as UserTab)}
       />
 
+      <TabPanel id="user-detail" value={tab}>
       {tab === "rows" && (
         <section className="space-y-3">
           <SectionHeading>Their personal rows</SectionHeading>
@@ -106,34 +109,37 @@ export function UserDetailBody({ user }: { user: User }) {
       )}
 
       {tab === "settings" && (
-        <div className="space-y-8">
-          <section className="space-y-3">
-            <SectionHeading>What to call them</SectionHeading>
-            <UserNickname user={user} />
-          </section>
-
-          <section className="space-y-3">
-            <SectionHeading>Requests</SectionHeading>
-            <UserRequestTag user={user} />
-            <UserRequestedByTag user={user} />
-          </section>
-
-          <section className="space-y-3">
-            <SectionHeading>Plex sharing</SectionHeading>
-            <UserSharing user={user} />
-          </section>
-
-          <section className="space-y-3">
-            <SectionHeading>Blocked titles</SectionHeading>
-            <p className="text-sm text-muted-foreground">
-              Shortlist builds someone&rsquo;s picks by looking for things
-              similar to what they recently watched. Block a title and it stays
-              in their watch history but stops being used that way. Use it for a
-              one-off that isn&rsquo;t really them: a film watched for someone
-              else, a genre they don&rsquo;t want more of.
-            </p>
-            <BlockedSeedsList user={user} />
-          </section>
+        <div className="grid items-start gap-5 lg:grid-cols-2">
+          <div className="min-w-0 space-y-5">
+            <section aria-labelledby="user-name-heading" className="space-y-3">
+              <h2 id="user-name-heading" className="text-lg font-semibold">Nickname</h2>
+              <UserNickname user={user} />
+            </section>
+            <section aria-labelledby="user-requests-heading" className="space-y-3">
+              <h2 id="user-requests-heading" className="text-lg font-semibold">Request tags</h2>
+              <UserRequestTag user={user} />
+              <UserRequestedByTag user={user} />
+            </section>
+          </div>
+          <div className="min-w-0 space-y-5">
+            <section aria-labelledby="user-sharing-heading" className="space-y-3">
+              <h2 id="user-sharing-heading" className="text-lg font-semibold">Plex sharing</h2>
+              <UserSharing user={user} />
+            </section>
+            <section aria-labelledby="user-blocked-heading" className="space-y-3">
+              <h2 id="user-blocked-heading" className="text-lg font-semibold">Blocked titles</h2>
+              <Card className="shadow-none">
+                <CardContent className="space-y-4 p-4">
+                  <p className="text-sm text-muted-foreground">
+                    Blocked titles stay in their watch history but stop shaping
+                    recommendations. Block a one-off watch when they don&rsquo;t
+                    want more like it.
+                  </p>
+                  <BlockedSeedsList user={user} />
+                </CardContent>
+              </Card>
+            </section>
+          </div>
         </div>
       )}
 
@@ -169,6 +175,7 @@ export function UserDetailBody({ user }: { user: User }) {
           </section>
         </div>
       )}
+      </TabPanel>
     </div>
   );
 }

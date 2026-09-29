@@ -54,13 +54,14 @@ export function RowRenamePage() {
   // the form. That is the only path that still asks.
   const autoStart = !!navState?.proposedName?.trim();
   const [confirmed, setConfirmed] = useState(autoStart);
-  const [newName, setNewName] = useState(
+  const [newNameDraft, setNewName] = useState<string | null>(
     // Carried from the editor when you typed a name there, so you don't retype it.
     navState?.proposedName ||
       collection?.name_template ||
       collection?.name ||
-      "",
+      null,
   );
+  const newName = newNameDraft ?? (collection?.name_template || collection?.name || "");
   const [saving, setSaving] = useState(false);
 
   const [events, setEvents] = useState<RenameEvent[]>([]);
@@ -187,11 +188,11 @@ export function RowRenamePage() {
     <div className="space-y-6">
       <BackLink to="/rows" label="Back to Rows" />
       <header className="space-y-1">
-        <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-          <Pen className="h-5 w-5" aria-hidden="true" />
-          {confirmed
+        <h1 className="flex min-w-0 items-start gap-2 text-2xl font-semibold tracking-tight">
+          <Pen className="mt-1.5 h-5 w-5 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 [overflow-wrap:anywhere]">{confirmed
             ? `Renaming ${collection?.name || "row"}`
-            : `Rename ${collection?.name || "row"}`}
+            : `Rename ${collection?.name || "row"}`}</span>
         </h1>
         <p className="text-sm text-muted-foreground">
           {confirmed
@@ -309,7 +310,7 @@ export function RowRenamePage() {
             Starting rename...
           </div>
         )}
-        {results.length === 0 && !running && !error && (
+        {results.length === 0 && !running && !error && doneEvent && (
           <p className="p-4 text-sm text-muted-foreground">
             Nothing to rename — every collection already has the correct title.
           </p>
@@ -319,7 +320,7 @@ export function RowRenamePage() {
             {results.map((e, i) => (
               <li
                 key={i}
-                className="flex items-center gap-3 border-b px-4 py-2 text-sm last:border-b-0"
+                className="flex min-w-0 flex-wrap items-center gap-3 border-b px-4 py-2 text-sm [overflow-wrap:anywhere] last:border-b-0"
               >
                 {e.error ? (
                   <X
@@ -355,7 +356,7 @@ export function RowRenamePage() {
                   </>
                 )}
                 {(e.libraries?.length || e.library) && (
-                  <Badge variant="secondary" className="ml-auto shrink-0">
+                  <Badge variant="secondary" className="ml-auto max-w-full whitespace-normal">
                     {e.libraries?.join(", ") || e.library}
                   </Badge>
                 )}

@@ -157,21 +157,24 @@ The wizard has **7 steps**, and the progress bar counts them the same way this l
    Every address Plex advertises for your server is tried from where Shortlist actually runs, and
    the one that answered is preselected. You can always type a different one.
 
-3. **Recommendations & history**. Choose where picks come from (TMDB, Trakt, AI web search).
+3. **Recommendations & history**. Save and test the required TMDB key.
    Watch history comes straight from Plex with no setup. Tautulli is optional, and only improves
    the names people are shown by.
-4. **Choose your AI provider** — Claude / GPT / Gemini / a local server / **None**. Keys stay
+4. **Add an AI provider (optional)** — choose the built-in picker, or Claude / GPT / Gemini / a local server. Keys stay
    yours: stored encrypted, and hidden again once saved. Picking None is a perfectly good choice.
 5. **Pick your users** — everyone you share with, with badges showing how much history each
    person has.
-6. **Make it yours** — the row's name, how many titles it holds, and how often it refreshes. Each
-   row keeps its own schedule; there's no single global one.
+6. **Make it yours** — choose the row's name and how many titles it holds, alongside a live title
+   preview. **Save & continue** saves both choices before moving on. Rows start with a nightly
+   schedule; each row's editor lets you change it later.
 
    The name can be plain text, or use a placeholder that fills itself in per person, such as
    `{library_name}`, `{user}` or `{top_seed}`. See [Naming a row](https://shortlistapp.dev/guides/rows/#naming-a-row)
    for what each one becomes.
 
-7. **First run** — watch it build, person by person. When it finishes, everyone has their row.
+7. **First run** — watch it build, person by person. Reloading resumes the same run. Results
+   distinguish built, skipped and failed users. You can finish setup while the run continues,
+   or skip building until later.
 
 ## Trying it safely
 
@@ -365,7 +368,11 @@ Source: https://shortlistapp.dev/guides/interface/
 
 What every page in the Shortlist web interface does, and what each number on the dashboard actually means.
 
-Eight pages in the sidebar. This is what each one is for.
+Eight pages in the sidebar. On a phone, **Open menu** shows the same navigation; Escape closes
+it and returns focus to the menu button. The activity indicator shows running, queued and recent
+background work, while the bell holds notifications and actions that need your attention.
+
+This is what each page is for.
 
 After you update Shortlist, the next page you open shows **What's new**: the release notes for
 every version since you last read them. Close it and it stays closed, in every browser, until the
@@ -391,6 +398,14 @@ lives. See [Rows and templates](https://shortlistapp.dev/guides/rows/).
 Everyone the server is shared with, plus you (badged `owner`, because plex.tv's user list leaves the owner
 out, so Shortlist adds you itself).
 
+Search the roster by name and filter **All**, **Active**, **Paused**, **Off** or **Needs attention**.
+Active means enabled, not paused and not blocked by a Plex restriction profile; a paused person
+can still have their Enabled switch on.
+Account type, request-link status and picks watched stay visible beside each person's identity.
+Open a person for
+**Rows**, **Runs**, **Settings** and **Watched**; these tabs keep their own links, and keyboard
+users can move between them with the arrow, Home and End keys.
+
 ### Keeping the list current
 
 **Sync from Plex** pulls the roster again after you invite someone new, or to pick up your own owner
@@ -401,6 +416,7 @@ back on if they return.
 ### Turning people on and off
 
 Enable or disable each person, or use **Enable all / Disable all** at once.
+Select specific people to **Pause rebuilding** or **Resume rebuilding** without changing their Enabled setting.
 
 - **Off** removes their rows from Plex and rewrites the share filters so they stop seeing the shared
   rows too. Turning them back **on** undoes the second half straight away, and their own row returns
@@ -416,6 +432,21 @@ Set a request tag, or add per-person row overrides: mute a row, resize it, or se
 depth just for them. Opening a person shows their recent watch history (distinct titles, with season
 and episode numbers for TV), their picks grouped by row (long lists collapse behind a "show more"),
 and a **Run now** button to rebuild just that person.
+
+Their Settings tab groups **Nickname**, **Request tags**, **Plex sharing** and **Blocked titles**
+into labelled sections. Nickname and tag fields save when you leave them. Saving a nickname also
+renames existing Plex rows; it does not change privacy. Blocking a title keeps it in watch history
+but stops it shaping recommendations, and you can unblock it from the same section.
+
+### Sharing and your watching account
+
+**Sharing** shows what Shortlist knows about each account’s visibility rules, including the
+read time, exceptions and failures. Stored rules and verified effects are different; an unavailable
+read is reported rather than treated as success.
+
+**Watching account** explains the owner exception and offers a separate-account flow. It retains
+the source and destination preview, explicit copy confirmation, partial-result details and undo
+where available. Reviewing a preview does not itself copy watch history.
 
 ### Leaving someone's Plex sharing alone
 
@@ -513,6 +544,9 @@ The AI web-search card shows the exact Exa queries and the prompt the model sear
 each proposed title kept or dropped, or struck through when it resolved to no real match (a
 hallucination). Long lists of returned titles expand in place.
 
+Each watch-history seed has a **Don’t seed** action, also visible on mobile. A successful change
+shows **Seed blocked**; a failed change shows an error and **Try again** without claiming it saved.
+
 A **cold-start** user, with too little history to search from, gets the same page, showing the
 highest-rated titles pulled from the server as their fallback — or, when their rows are set to skip
 instead (see [Rows → People without enough watch history](https://shortlistapp.dev/guides/rows/#people-without-enough-watch-history)),
@@ -589,13 +623,14 @@ Both are applied by the nightly **Clear out old records** job.
 
 ## Settings
 
-One scrolling page, organised into a grouped sidebar sub-nav that jumps to each section and tracks
-where you are:
+Settings is one continuous page. Its section links sit beneath Settings in the main sidebar and
+highlight the section you are reading as you scroll. On mobile, a sticky section selector jumps to
+the same sections. All forms stay mounted, so jumping between sections preserves unfinished edits.
 
 - **Connect** — Connections
 - **Rows** — Finding titles, Row defaults, Row placement
 - **Add-ons** — Requests
-- **System** — Advanced, API access, Danger Zone
+- **System** — Notifications, Advanced, API access, Danger Zone
 
 Each section is walled off by a rule, and its own sub-headings sit a clear rank below the section
 title. Every connection is re-testable in place.
@@ -700,10 +735,29 @@ Nothing is locked in. Every field is
 editable afterwards — including the row's kind, see [Row kinds](#row-kinds) below — and the template
 is not stored on the row.
 
+## Editing a row
+
+The editor labels its current **Row type** and starts with the appearance fields. The sticky section
+buttons use the same names as their headings: **Appearance**, **Row settings**, **Audience**,
+**Titles & filters**, **Schedule**, **Plex placement** and **Requests**. Choosing one opens it,
+places its heading below the navigation and briefly highlights the destination. The active button
+also follows the section you read while scrolling. Keyboard focus moves to the section heading;
+reduced-motion preferences disable animated scrolling. Folding a section keeps its draft intact.
+Delivery and watch metrics are visible under **How this row is doing**, including when it is too
+early to judge a row. The preview shows an explicitly illustrative row, audience, size, the viewing
+basis and sources, watched-title policy, schedule and placement. **All outcome details** retains
+the remaining settings summary.
+The outcome facts stay beside the form on a desktop and remain visible above the settings on a
+phone; only the illustrative artwork preview is folded there. **Save changes** remains at the bottom of the screen.
+
+Row settings stay a draft until you save. **Rename**, artwork operations and the row's on/off switch
+keep their separate actions. **Rated by · global setting** saves immediately and affects every row
+and Requests; its saving, success or error message appears beside that control.
+
 ## Row kinds
 
-Every row is one of six kinds. The **Row editor** shows a "What kind of row is this?" picker under
-**How it looks on Plex**; each kind fills the row in a different way, and picking one changes which
+Every row is one of six kinds. The **Row editor** starts with the selected kind; open **Change row type** to
+see the "What kind of row is this?" picker. Each kind fills the row in a different way, and picking one changes which
 settings appear below it, so you're never hunting for a setting that doesn't apply to what your row
 does:
 
@@ -1769,6 +1823,17 @@ Source: https://shortlistapp.dev/guides/requests/
 
 Let Shortlist ask Radarr or Sonarr for titles your people want that the library doesn't have yet, with an approval inbox and guardrails.
 
+## Reviewing the inbox
+
+The Waiting, Sent and Rejected views keep their existing filters and actions. Waiting cards show
+the title, rating, demand and current status; open **Details & title links** for the synopsis,
+recommendation reasons and TMDB, IMDb and Trakt links. Opening details or an external link does not
+select the title. Batch actions appear once you select titles.
+
+**Delete** removes a waiting title for now, so a later run may suggest it again. **Reject** blocks
+future requests for it until you choose **Allow again**. Clearing a sent log entry only clears the
+record in Shortlist; it does not remove the title from the connected app.
+
 ## Requests (Radarr / Sonarr, or Overseerr)
 
 Off by default. When on, Shortlist notices the titles your people's taste surfaced that your library
@@ -1915,8 +1980,8 @@ web UI fetches. An install behind a restrictive network, or a browser with an ad
 placeholder tile instead; so will a title TMDB has no artwork for, and one queued before posters existed
 (those fill in on the next run that re-surfaces the title). Nothing else on the page depends on it.
 
-Every title carries its own **Send**, **Delete** and **Reject** buttons, so you can work straight down
-the list deciding one at a time. For a batch, tick the ones you want instead and use the same three
+Every waiting title carries visible **Send**, **Delete** and **Reject** buttons, so you can
+work straight down the list deciding one at a time. For a batch, tick the ones you want instead and use the same three
 buttons on the action bar above the queue — they act on everything ticked, and **Clear selection**
 unticks them. The two ways don't interfere:
 deciding a single title from its own row leaves a selection you're part-way through assembling alone.
@@ -2465,6 +2530,21 @@ chosen, and how rows are kept private. → **[How Shortlist decides things](http
 Source: https://shortlistapp.dev/reference/settings/
 
 Every Shortlist configuration key, container environment variable, per-row override and default value, plus what changes on Plex the moment you save one.
+
+## Finding and saving settings
+
+Settings is one continuous page with all nine sections. The links beneath Settings in the main
+sidebar jump to each section and highlight the section you are reading. On mobile, use the sticky
+section selector. Section links, scrolling and browser Back/Forward keep unfinished form edits intact.
+Common refresh and variety controls are visible in Finding titles; **More recommendation controls**
+contains the additional watch-history and rating controls. Links to a specific control reveal its
+group automatically.
+
+Each form keeps its existing save behavior. Automatic saves show progress, confirmation or an error
+near that section; connection forms still use their explicit save and test controls. In Finding
+titles, number fields accept a complete draft before applying bounds when you leave the field or
+press Enter. Replacing or revoking an API token asks for confirmation because existing scripts lose
+access immediately.
 
 ## Environment variables (container)
 

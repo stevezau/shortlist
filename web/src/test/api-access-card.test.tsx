@@ -78,6 +78,17 @@ describe("ApiAccessCard", () => {
     expect(screen.queryByText("shl_secret_value")).not.toBeInTheDocument();
   });
 
+  it("can cancel replacing a token without changing it", async () => {
+    getApiToken.mockResolvedValue(ACTIVE);
+    renderCard();
+    await userEvent.click(await screen.findByRole("button", { name: "Regenerate" }));
+    expect(createApiToken).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Keep current token" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Regenerate" })).toHaveFocus());
+    expect(createApiToken).not.toHaveBeenCalled();
+  });
+
   it("offers regenerate and revoke for an active token", async () => {
     getApiToken.mockResolvedValue(ACTIVE);
     revokeApiToken.mockResolvedValue(OFF);
@@ -87,6 +98,9 @@ describe("ApiAccessCard", () => {
       await screen.findByRole("button", { name: /regenerate/i }),
     ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /revoke/i }));
+    expect(revokeApiToken).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toHaveTextContent(/scripts using the current token will stop working/i);
+    await userEvent.click(screen.getByRole("button", { name: "Revoke token" }));
     await waitFor(() => expect(revokeApiToken).toHaveBeenCalledOnce());
   });
 });

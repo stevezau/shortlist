@@ -10,8 +10,8 @@ import { IdleHoldField } from "@/components/settings/idle-hold-field";
 import { InlineKeyField } from "@/components/settings/inline-key-field";
 import { RecencySlider } from "@/components/settings/recency-slider";
 import { WatchedSlider } from "@/components/settings/watched-slider";
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { SettingDisclosure } from "@/components/settings/setting-disclosure";
+import { SettingsNumberField } from "@/components/settings/number-field";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import type { ColdStart } from "@/lib/cold-start";
@@ -181,120 +181,62 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
 
   return (
     <section aria-labelledby="recs-heading" className="space-y-6">
-      <header className="space-y-1 border-b pb-4">
-        <h2 id="recs-heading" className="text-lg font-semibold">
-          Finding titles
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          Where Shortlist looks for titles to suggest, and how AI enhances the
-          search. This is the <strong>default every row inherits</strong> — any
-          row can override in its editor.
-        </p>
+      <header className="space-y-2">
+        <h2 id="recs-heading" className="text-xl font-semibold tracking-tight">Finding titles</h2>
+        <p className="text-sm text-muted-foreground">Choose where recommendations come from and when rows change.</p>
+        <SaveStatus isPending={save.isPending} isError={save.isError} error={save.error} saved={save.saved} onRetry={save.retry} />
       </header>
 
-      {/* Each sub-heading hugs the card it labels (tight gap inside, wide gap between), and sits a
-          clear rank below the section title — three same-weight headings under one h2 read as three
-          separate sections rather than as the parts of this one. */}
-      <div className="space-y-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Title sources
-        </h3>
-        <Card>
-          <CardContent className="space-y-4 pt-6">
-            <p className="text-sm text-muted-foreground">
-              Shortlist gathers from every source you enable, keeps only titles
-              already in your library, then ranks them. More sources → wider
-              reach.
-            </p>
-            {SIMPLE_SOURCES.map((source) => (
-              <div key={source.id} className="space-y-2">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="space-y-0.5">
-                    <p className="text-sm font-medium">{source.label}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {source.desc}
-                    </p>
-                  </div>
-                  <Switch
-                    checked={enabled.includes(source.id)}
-                    onCheckedChange={() => toggle(source.id)}
-                    aria-label={`Enable ${source.label}`}
-                  />
+      <div className="space-y-2.5">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-medium">Title sources</h3>
+          <span className="text-xs text-muted-foreground">{enabled.filter((id) => id !== "llm_web").length} enabled</span>
+        </div>
+        <div className="divide-y rounded-lg border bg-card">
+          {SIMPLE_SOURCES.map((source) => (
+            <div key={source.id} className="space-y-2 px-4 py-4 sm:px-5">
+              <div className="flex items-center justify-between gap-5">
+                <div className="space-y-1">
+                  <p className="text-[13px] font-medium">{source.label}</p>
+                  <p className="text-xs leading-relaxed text-muted-foreground">{source.desc}</p>
                 </div>
-                {enabled.includes(source.id) && (
-                  <InlineFix sourceId={source.id} settings={settings} />
-                )}
+                <Switch checked={enabled.includes(source.id)} onCheckedChange={() => toggle(source.id)} aria-label={`Enable ${source.label}`} />
               </div>
-            ))}
-            {enabled.length === 0 && (
-              // Empty isn't "no discovery" — the engine floors it to its defaults, so say so out loud
-              // (the setting must never read as fully off while a run still uses two sources). It's an
-              // advisory, not an error, so it's role="status".
-              <p role="status" className="text-sm text-warning">
-                Nothing enabled — Shortlist falls back to its defaults (TMDB
-                similar + discover). Turn on at least one source to choose your
-                own.
-              </p>
-            )}
-          </CardContent>
-        </Card>
+              {enabled.includes(source.id) && <InlineFix sourceId={source.id} settings={settings} />}
+            </div>
+          ))}
+          {enabled.length === 0 && <p role="status" className="px-4 py-3 text-xs text-warning">Nothing enabled — Shortlist falls back to its defaults (TMDB similar + discover). Turn on at least one source to choose your own.</p>}
+        </div>
       </div>
 
-      <div className="space-y-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          AI enhancement
-        </h3>
-        {/* Three paragraphs became one line. The point a reader needs here is that AI is optional
-            and what turning it off costs — not a walk through which source uses which key. */}
-        <p className="text-sm text-muted-foreground">
-          Optional. The TMDB sources above find most titles with no AI at all;
-          this searches the web for the ones they miss. Set the provider to{" "}
-          <strong>None</strong> in{" "}
-          <Link to="/settings#connections" className="font-medium underline">
-            Connections
-          </Link>{" "}
-          and you still get full rows, ranked by score with plain reasons.
-        </p>
-
-        <AiWebSearchCard
-          settings={settings}
-          enabled={enabled.includes("llm_web")}
-          onToggle={() => toggle("llm_web")}
-        />
+      <div className="space-y-2.5">
+        <h3 className="text-sm font-medium">Refresh &amp; variety</h3>
+        <div className="divide-y rounded-lg border bg-card">
+          <SettingDisclosure defaultOpen title="How often rows rebuild" value={refreshDays === 0 ? "Never" : refreshDays === 1 ? "Every day" : `Every ${refreshDays} days`} description="Between rebuilds, titles stay in place. Each row keeps its own schedule.">
+            <Label className="sr-only" htmlFor="refresh-days">How often rows rebuild</Label>
+            <p className="text-xs leading-relaxed text-muted-foreground">Longer = stickier and cheaper, shorter = fresher. This decides which titles a row holds; the row’s Order setting decides their order.</p>
+            <RefreshDaysField id="refresh-days" value={refreshDays} onChange={setRefreshDays} />
+          </SettingDisclosure>
+          <SettingDisclosure defaultOpen title="Already-watched titles" value={`Up to ${watchedPct}%`} description="How much of a row may be familiar.">
+            <Label className="sr-only" htmlFor="watched-pct">Already-watched titles</Label>
+            <WatchedSlider id="watched-pct" value={watchedPct} onChange={setWatchedPct} />
+          </SettingDisclosure>
+          <SettingDisclosure defaultOpen title="Recent releases" value={`${recency}% preference`} description="Give newer titles more weight without filtering older ones out.">
+            <Label className="sr-only" htmlFor="recency">Recent releases</Label>
+            <RecencySlider id="recency" value={recency} onChange={setRecency} />
+          </SettingDisclosure>
+        </div>
       </div>
 
-      <div className="space-y-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Row behavior
-        </h3>
-        <Card>
-          <CardContent className="space-y-4 pt-6">
-            <div className="space-y-2">
-              <Label htmlFor="watched-pct">Already-watched titles</Label>
-              <p className="text-sm text-muted-foreground">
-                How much of a row may be things a person has already finished.
-              </p>
-              <WatchedSlider
-                id="watched-pct"
-                value={watchedPct}
-                onChange={setWatchedPct}
-              />
-            </div>
-            <div className="space-y-2 border-t pt-4">
-              <Label htmlFor="refresh-days">How often rows rebuild</Label>
-              <p className="text-sm text-muted-foreground">
-                How often a row swaps in new titles; in between, it is left
-                exactly as it is. Longer = stickier and cheaper, shorter =
-                fresher. Decides <strong>which</strong> titles a row holds, not
-                the order they appear in — that is the row’s own{" "}
-                <strong>Order</strong> setting.
-              </p>
-              <RefreshDaysField
-                id="refresh-days"
-                value={refreshDays}
-                onChange={setRefreshDays}
-              />
-            </div>
+      <div className="rounded-lg border border-dashed">
+        <SettingDisclosure title="Web search" value={enabled.includes("llm_web") ? "On" : "Off"} description="Optional discovery beyond your library’s usual recommendation sources." defaultOpen={enabled.includes("llm_web")}>
+          <p className="text-xs leading-relaxed text-muted-foreground">The TMDB sources find titles without AI. Set the provider to <strong>None</strong> in <Link to="/settings#connections" className="font-medium text-primary hover:underline">Connections</Link> and you still get full rows, ranked by score with plain reasons.</p>
+          <AiWebSearchCard settings={settings} enabled={enabled.includes("llm_web")} onToggle={() => toggle("llm_web")} />
+        </SettingDisclosure>
+      </div>
+
+      <div className="rounded-lg border border-dashed">
+        <SettingDisclosure title="More recommendation controls" value="Edit" description="Watch history, ratings and inactive viewers.">
             <div className="space-y-2 border-t pt-4">
               <Label htmlFor="idle-hold-days">
                 Hold rows for inactive viewers
@@ -314,26 +256,6 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
               />
             </div>
             <div className="space-y-2 border-t pt-4">
-              <Label htmlFor="recency">Recent releases</Label>
-              <p className="text-sm text-muted-foreground">
-                How much a title’s <strong>release date</strong> counts when
-                ranking it. A preference, not a filter — older titles still
-                reach rows, they just have to be a better match.
-              </p>
-              <RecencySlider
-                id="recency"
-                value={recency}
-                onChange={setRecency}
-              />
-            </div>
-            {/* The narrower knob is NESTED inside the broader one, the way "Treat as didn't like
-                it" nests under "Respect Plex ratings" — because it is not a peer of it: it is a
-                slice of the very list above (`candidates.py` searches `seeds[:recent_count]`).
-                Side by side, the only clue to that was word order, and the sub-field had to spend
-                a whole paragraph explaining the setting above it. Both labels are imported, not
-                retyped: they are shared with the row editor, and a setting that goes by two names
-                across two screens is the bug this pairing already shipped once. */}
-            <div className="space-y-2 border-t pt-4">
               <Label htmlFor="max-seeds">{MAX_SEEDS_LABEL}</Label>
               <p className="text-sm text-muted-foreground">
                 How far back Shortlist looks when working out someone&rsquo;s
@@ -341,17 +263,13 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 more about a couple of things; more covers more of their taste.
               </p>
               <div className="flex items-center gap-2">
-                <Input
+                <SettingsNumberField
                   id="max-seeds"
-                  type="number"
+
                   min={5}
                   max={100}
                   value={maxSeeds}
-                  onChange={(e) =>
-                    setMaxSeeds(
-                      Math.max(5, Math.min(100, Number(e.target.value) || 5)),
-                    )
-                  }
+                  onCommit={setMaxSeeds}
                   className="w-24"
                 />
                 <span className="text-sm text-muted-foreground">watches</span>
@@ -366,18 +284,14 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                   than the number above changes nothing.
                 </p>
                 <div className="flex items-center gap-2">
-                  <Input
+                  <SettingsNumberField
                     id="recent-count"
-                    type="number"
+
                     min={1}
                     max={25}
                     value={recentCount}
-                    onChange={(e) =>
-                      setRecentCount(
-                        Math.max(1, Math.min(25, Number(e.target.value) || 1)),
-                      )
-                    }
-                    className="w-24"
+                    onCommit={setRecentCount}
+                  className="w-24"
                   />
                   <span className="text-sm text-muted-foreground">watches</span>
                 </div>
@@ -417,9 +331,9 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                     A thumbs-down in Plex counts as 1 star.
                   </p>
                   <div className="flex items-center gap-2">
-                    <Input
+                    <SettingsNumberField
                       id="dislike-threshold"
-                      type="number"
+
                       min={0.5}
                       max={3}
                       step={0.5}
@@ -427,15 +341,8 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                       // in Plex. Halving/doubling here rather than storing stars keeps the setting in
                       // the same units as the raw `userRating` every comparison uses.
                       value={dislikeThreshold / 2}
-                      onChange={(e) =>
-                        setDislikeThreshold(
-                          Math.max(
-                            1,
-                            Math.min(6, (Number(e.target.value) || 1) * 2),
-                          ),
-                        )
-                      }
-                      className="w-24"
+                      onCommit={(value) => setDislikeThreshold(value * 2)}
+                  className="w-24"
                     />
                     <span className="text-sm text-muted-foreground">
                       stars and below
@@ -454,17 +361,13 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 whatever you choose next.
               </p>
               <div className="flex items-center gap-2">
-                <Input
+                <SettingsNumberField
                   id="min-history"
-                  type="number"
+
                   min={1}
                   max={100}
                   value={minHistory}
-                  onChange={(e) =>
-                    setMinHistory(
-                      Math.max(1, Math.min(100, Number(e.target.value) || 1)),
-                    )
-                  }
+                  onCommit={setMinHistory}
                   className="w-24"
                 />
                 <span className="text-sm text-muted-foreground">
@@ -526,18 +429,9 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 ))}
               </select>
             </div>
-            <div className="pt-1">
-              <SaveStatus
-                isPending={save.isPending}
-                isError={save.isError}
-                error={save.error}
-                saved={save.saved}
-                onRetry={save.retry}
-              />
-            </div>
-          </CardContent>
-        </Card>
+        </SettingDisclosure>
       </div>
+      <p className="border-l-2 border-primary/30 pl-3 text-xs leading-relaxed text-muted-foreground">These are defaults. Each row can override them in its editor. Plex ratings are server-wide and do not change shared rows.</p>
     </section>
   );
 }

@@ -16,10 +16,29 @@ Nothing is locked in. Every field is
 editable afterwards — including the row's kind, see [Row kinds](#row-kinds) below — and the template
 is not stored on the row.
 
+## Editing a row
+
+The editor labels its current **Row type** and starts with the appearance fields. The sticky section
+buttons use the same names as their headings: **Appearance**, **Row settings**, **Audience**,
+**Titles & filters**, **Schedule**, **Plex placement** and **Requests**. Choosing one opens it,
+places its heading below the navigation and briefly highlights the destination. The active button
+also follows the section you read while scrolling. Keyboard focus moves to the section heading;
+reduced-motion preferences disable animated scrolling. Folding a section keeps its draft intact.
+Delivery and watch metrics are visible under **How this row is doing**, including when it is too
+early to judge a row. The preview shows an explicitly illustrative row, audience, size, the viewing
+basis and sources, watched-title policy, schedule and placement. **All outcome details** retains
+the remaining settings summary.
+The outcome facts stay beside the form on a desktop and remain visible above the settings on a
+phone; only the illustrative artwork preview is folded there. **Save changes** remains at the bottom of the screen.
+
+Row settings stay a draft until you save. **Rename**, artwork operations and the row's on/off switch
+keep their separate actions. **Rated by · global setting** saves immediately and affects every row
+and Requests; its saving, success or error message appears beside that control.
+
 ## Row kinds
 
-Every row is one of six kinds. The **Row editor** shows a "What kind of row is this?" picker under
-**How it looks on Plex**; each kind fills the row in a different way, and picking one changes which
+Every row is one of six kinds. The **Row editor** starts with the selected kind; open **Change row type** to
+see the "What kind of row is this?" picker. Each kind fills the row in a different way, and picking one changes which
 settings appear below it, so you're never hunting for a setting that doesn't apply to what your row
 does:
 

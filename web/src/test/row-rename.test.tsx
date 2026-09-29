@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -30,8 +31,7 @@ function streamOf(events: object[]) {
   };
 }
 
-function renderRename(state: object = { proposedName: "New Name" }) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderRename(state: object = { proposedName: "New Name" }, client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[{ pathname: "/rows/7/rename", state }]}>
@@ -50,6 +50,24 @@ describe("RowRenamePage — what each person's rename came to", () => {
     updateCollection.mockResolvedValue({});
   });
   afterEach(() => vi.unstubAllGlobals());
+
+  it("prefills the saved name after a direct page load without claiming a rename happened", async () => {
+    renderRename({});
+    expect(await screen.findByDisplayValue("Old Name")).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing to rename/)).not.toBeInTheDocument();
+    expect(updateCollection).not.toHaveBeenCalled();
+  });
+
+  it("keeps a typed draft when the collection refreshes", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderRename({}, client);
+    const input = await screen.findByDisplayValue("Old Name");
+    await userEvent.clear(input);
+    await userEvent.type(input, "My draft");
+    listCollections.mockResolvedValue([{ id: 7, slug: "comedy", name: "Refreshed", name_template: "Refreshed" }]);
+    await client.invalidateQueries({ queryKey: ["collections"] });
+    expect(screen.getByDisplayValue("My draft")).toBeInTheDocument();
+  });
 
   it("keeps going past one person Plex refused, and says why in plain words", async () => {
     vi.stubGlobal(

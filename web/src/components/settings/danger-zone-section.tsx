@@ -1,6 +1,7 @@
 import { Link } from "react-router";
 
 import { Button } from "@/components/ui/button";
+import { MutationAlert } from "@/components/mutation-alert";
 import { Card, CardContent } from "@/components/ui/card";
 import { useSaveSettings } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
@@ -48,6 +49,12 @@ export function DangerZoneSection({ settings }: { settings: Settings }) {
               {pausedAll ? "Resume all" : "Pause all"}
             </Button>
           </div>
+          {saveSettings.isError && <MutationAlert error={saveSettings.error}
+            fallback="Couldn’t change whether processing is paused. Try again."
+            onRetry={() => saveSettings.mutate({ paused_all: !pausedAll })} />}
+          {saveSettings.isSuccess && <p role="status" className="text-sm text-success">
+            {saveSettings.variables?.paused_all ? "Processing paused. Existing rows stay where they are." : "Processing resumed."}
+          </p>}
           <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
             <div>
               <p className="font-medium">Full uninstall</p>

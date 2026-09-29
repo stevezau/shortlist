@@ -699,7 +699,7 @@ describe("RunDetailPage — grouped by library", () => {
     expect(
       await screen.findByText("building rows — 1 of 3 people done"),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Right now/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Building your rows" })).toBeVisible();
     expect(screen.queryByText(/Finishing up/)).toBeNull();
   });
 
@@ -804,10 +804,12 @@ describe("RunDetailPage — grouped by library", () => {
     renderDetail("");
 
     const list = await screen.findByRole("list", { name: "In progress" });
-    expect(within(list).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
-      "mike — waiting for Plex — Picked",
-      "Samantha — writing the row to Plex — Because you watched Dune · TV Shows · adding 3 titles · removing 2 titles",
-    ]);
+    const people = within(list).getAllByRole("listitem");
+    expect(within(people[0]!).getByText("Samantha")).toBeVisible();
+    expect(people[0]).toHaveTextContent("Because you watched Dune");
+    expect(within(people[0]!).getByText(/adding 3 titles · removing 2 titles/)).toBeVisible();
+    expect(within(people[1]!).getByText("mike")).toBeVisible();
+    expect(people[1]).toHaveTextContent("Waiting for Plex");
   });
 
   it("falls back to the flat pick list for legacy runs with no breakdown", async () => {
@@ -1235,7 +1237,7 @@ describe("RunDetail — where the phase breakdown lives", () => {
 
     await expandRows();
 
-    await screen.findByRole("button", { name: /Log/i });
+    await screen.findByRole("tab", { name: /Log/i });
     expect(screen.queryByText(/Where the time went/i)).toBeNull();
   });
 
@@ -1370,7 +1372,8 @@ describe("RunDetailPage — a queued run has not started", () => {
     renderDetail();
     await expandRows();
 
-    expect(await screen.findByText(/waiting to start/i)).toBeInTheDocument();
+    const header = (await screen.findByRole("heading", { level: 1 })).closest("header")!;
+    expect(within(header).getByText(/waiting to start/i)).toBeInTheDocument();
     expect(screen.queryByText(/still running/i)).toBeNull();
   });
 

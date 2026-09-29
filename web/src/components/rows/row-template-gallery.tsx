@@ -299,18 +299,19 @@ function TemplatePicker({ onPick, onClose, noSource }: {
   );
 }
 
-export function RowTemplateGallery({ open, onPick, onClose }: {
+export function RowTemplateGallery({ open, onPick, onClose, onReturnFocus }: {
   open: boolean;
   /** Null = start from scratch. */
   onPick: (template: RowTemplate | null) => void;
   onClose: () => void;
+  onReturnFocus?: () => void;
 }) {
   // Source checks run only while browsing; the editor handles unresolved checks in more detail.
   const sources = useRequestRowSources("", open);
   const noSource = sources.data !== undefined && noRequestSource(sources.data);
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden rounded-xl p-0 motion-reduce:animate-none sm:max-w-[1080px]">
+      <DialogContent onCloseAutoFocus={(event) => { if (onReturnFocus) { event.preventDefault(); onReturnFocus(); } }} className="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden rounded-xl p-0 motion-reduce:animate-none sm:max-w-[1080px]">
         {/* Each opening starts a new choice, even when the parent keeps this dialog mounted. */}
         {open && <TemplatePicker onPick={onPick} onClose={onClose} noSource={noSource} />}
       </DialogContent>

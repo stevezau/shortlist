@@ -1,7 +1,7 @@
 import { Activity, Check, CircleAlert, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { useDismissable } from "@/lib/use-dismissable";
+import { HeaderPopover } from "./header-popover";
 import { Link } from "react-router";
 import { toast } from "sonner";
 
@@ -108,14 +108,10 @@ export function ActivityIndicator({
   const query = useJobActivity();
   const labelFor = useJobLabels();
   const [open, setOpen] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
   // What we announced last poll. A ref, not state: it must not itself trigger a render, and the
   // very first poll seeds it silently — announcing a server's entire recent history on page load
   // would be a wall of toasts for work that finished yesterday.
   const seen = useRef<Map<number, Job["status"]> | null>(null);
-
-  // Same behaviour as the notification bell beside it, which had this and this one did not.
-  useDismissable(open, panelRef, () => setOpen(false));
 
   const jobs = query.data ?? [];
   const writesPlexFor = useWritesPlex();
@@ -164,11 +160,10 @@ export function ActivityIndicator({
   const runActive = useRunActive(queued.length > 0);
 
   return (
-    <div className="relative" ref={panelRef}>
+    <HeaderPopover open={open} onOpenChange={setOpen} align={align} label="Background work" className="p-3" trigger={
       <Button
         variant="ghost"
         size="icon"
-        onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-label={
           inFlight.length
@@ -201,15 +196,7 @@ export function ActivityIndicator({
         </span>
       </Button>
 
-      {open && (
-        <div
-          className={cn(
-            "absolute z-50 mt-2 w-80 rounded-lg border bg-elevated p-3 shadow-lg",
-            align === "left" ? "left-0" : "right-0",
-          )}
-          role="dialog"
-          aria-label="Background work"
-        >
+      }>
           {inFlight.length === 0 && recent.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               Nothing running. Background work shows up here as it happens.
@@ -277,8 +264,6 @@ export function ActivityIndicator({
           >
             Open Jobs →
           </Link>
-        </div>
-      )}
-    </div>
+    </HeaderPopover>
   );
 }

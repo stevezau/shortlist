@@ -163,7 +163,7 @@ describe("StepUsers — the owner's own line", () => {
     // The sentence is split by <em>/<strong>, so match a fragment that lives in one text node.
     expect(
       screen.getByText(
-        /you own the server, so you have no share with yourself/i,
+        /because the owner has no sharing restrictions/i,
       ),
     ).toBeInTheDocument();
   });

@@ -15,7 +15,7 @@ vi.mock("@/lib/api", () => ({
   api: { putSettings, testConnection: vi.fn() },
 }));
 
-function renderSection(settings: Settings) {
+function renderSection(settings: Settings, expand = true) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -26,10 +26,23 @@ function renderSection(settings: Settings) {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  if (!expand) return;
+  // These tests exercise the full controls; the compact disclosure defaults are checked separately.
+  for (const title of ["How often rows rebuild", "Already-watched titles", "Recent releases", "Web search", "More recommendation controls"]) {
+    const summary = screen.getAllByText(title).map((node) => node.closest("summary")).find(Boolean);
+    if (summary && !(summary.parentElement as HTMLDetailsElement).open) fireEvent.click(summary);
+  }
 }
 
 describe("RecommendationsSection", () => {
   beforeEach(() => putSettings.mockClear());
+
+  it("keeps common controls and enabled web-search guidance visible", () => {
+    renderSection({ "candidates.sources": ["llm_web"], "curator.provider": "none", "llm_web.search_provider": "native" }, false);
+    expect(screen.getAllByText("How often rows rebuild").find((node) => node.closest("summary"))?.closest("details")).toHaveAttribute("open");
+    expect(screen.getByText("More recommendation controls").closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText(/the search runs inside it/i)).toBeVisible();
+  });
 
   // The model is "intent + inline fix": a source's toggle is never disabled; when it's on but its
   // dependency is missing, the card shows exactly how to satisfy it right there.
@@ -263,6 +276,7 @@ describe("RecommendationsSection", () => {
     expect(input).toHaveValue(10);
 
     fireEvent.change(input, { target: { value: "4" } });
+    fireEvent.blur(input);
 
     await waitFor(() => expect(putSettings).toHaveBeenCalled());
     expect(

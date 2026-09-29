@@ -68,3 +68,13 @@ export const SETTINGS_SECTIONS: NavSection[] = [
     group: "System",
   },
 ];
+
+/** Existing links can target a specific control rather than the section heading. */
+export function settingsSectionForHash(hash: string): string {
+  const id = hash.replace(/^#/, "");
+  if (SETTINGS_SECTIONS.some((section) => section.id === id)) return id;
+  if (id === "row-defaults") return "defaults";
+  if (["recs-heading", "watched-pct", "refresh-days", "idle-hold-days", "recency", "max-seeds", "recent-count", "use-plex-ratings", "dislike-threshold", "min-history", "cold-start", "rating-source"].includes(id)) return "recommendations";
+  const heading = id.replace(/-heading$/, "");
+  return SETTINGS_SECTIONS.some((section) => section.id === heading) ? heading : "connections";
+}

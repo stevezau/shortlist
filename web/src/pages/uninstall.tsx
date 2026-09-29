@@ -5,6 +5,7 @@ import { Link } from "react-router";
 
 import { BackLink } from "@/components/back-link";
 import { PageHeader } from "@/components/page-header";
+import { MutationAlert } from "@/components/mutation-alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -214,6 +215,10 @@ export function UninstallPage() {
                     <AccountsNotRestored result={preview.data} preview />
                   </div>
                 </div>
+              )}
+              {preview.isError && (
+                <MutationAlert error={preview.error} fallback="Couldn’t preview the uninstall. Try again."
+                  onRetry={() => preview.mutate()} />
               )}
             </div>
 

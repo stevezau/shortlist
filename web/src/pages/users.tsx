@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Eye, RefreshCw, ShieldCheck, Users as UsersIcon } from "lucide-react";
+import { Eye, RefreshCw, Search, ShieldCheck, Users as UsersIcon } from "lucide-react";
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
@@ -32,6 +32,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { GatedSwitch } from "@/components/ui/gated-switch";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -55,7 +56,7 @@ import {
   useUsers,
 } from "@/lib/queries";
 
-/** The Requests column for one person: whether a Your requests row can find anything of theirs.
+/** Request context for one person: whether a Your requests row can find anything of theirs.
  *
  *  Reads the ONE row-sources query the page makes (`useRequestRowSources("")` costs up to a few
  *  dozen HTTP calls to Overseerr and the Arrs, so it is never made per row). A dash carries its
@@ -72,11 +73,12 @@ function RequestsCell({
     return <Skeleton data-testid="requests-loading" className="h-5 w-24" />;
   }
   const tag = user.requested_by_tag ? (
-    <Badge variant="outline">Tag: {user.requested_by_tag}</Badge>
+    <Badge variant="outline" className="max-w-full break-all">Tag: {user.requested_by_tag}</Badge>
   ) : null;
   const cell = (badge: ReactNode, note: string | null) => (
-    <span className="flex flex-col gap-1">
-      <span className="flex flex-wrap items-center gap-1.5">
+    <span className="inline-flex max-w-full flex-wrap items-center gap-x-2 gap-y-1">
+      <span className="sr-only">Request status: </span>
+      <span className="inline-flex max-w-full flex-wrap items-center gap-1.5">
         {badge}
         {tag}
       </span>
@@ -85,8 +87,8 @@ function RequestsCell({
   );
   const dash = (reason: string) =>
     cell(
-      <span title={reason} aria-label={reason}>
-        —
+      <span title={reason} aria-label={reason} data-empty-request={reason === "No request source connected" || reason === "Overseerr isn’t connected" ? "true" : undefined}>
+        <span className="hidden lg:inline">—</span><span className="lg:hidden">{reason}</span>
       </span>,
       null,
     );
@@ -110,7 +112,7 @@ function RequestsCell({
       : dash("Overseerr isn’t connected");
   }
   if (person?.linked) {
-    return cell(<Badge variant="success">Linked</Badge>, readyNote);
+    return cell(<Badge variant="success" title="Requests linked to their Overseerr account">Linked</Badge>, readyNote);
   }
   if (user.user_type === "managed") {
     return cell(
@@ -156,8 +158,41 @@ function UsersSkeleton() {
 
 export function UsersPage() {
   const usersQuery = useUsers();
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("all");
+  const [sort, setSort] = useState("name");
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchError, setBatchError] = useState("");
+  const matchesStatus = (user: User, value: string) => value === "all" ||
+    (value === "active" && user.enabled && !user.prefs.paused && !user.restriction_profile) ||
+    (value === "paused" && user.enabled && user.prefs.paused) ||
+    (value === "off" && !user.enabled) ||
+    (value === "attention" && Boolean(user.restriction_profile || user.unhidden_rows || user.departed));
+  const statusOptions = [["all", "All"], ["active", "Active"], ["paused", "Paused"], ["off", "Off"], ["attention", "Needs attention"]] as const;
+  const attentionCount = (usersQuery.data ?? []).filter((user) => matchesStatus(user, "attention")).length;
+  const visibleUsers = (usersQuery.data ?? []).filter((user) => {
+    const matchesName = `${user.display_name} ${user.username}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase());
+    return matchesName && matchesStatus(user, status);
+  }).sort((a, b) => sort === "history" ? b.history_depth - a.history_depth :
+    sort === "last-run" ? (b.last_run_at ?? "").localeCompare(a.last_run_at ?? "") :
+    (a.display_name || a.username).localeCompare(b.display_name || b.username));
   const navigate = useNavigate();
   const patchUser = usePatchUser();
+  const toggleSelected = (id: number) => setSelected((before) => { const next = new Set(before); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  const selectedUsers = (usersQuery.data ?? []).filter((user) => selected.has(user.id));
+  const selectedVisible = visibleUsers.filter((user) => selected.has(user.id));
+  const pauseSelected = async (paused: boolean) => {
+    setBatchBusy(true); setBatchError("");
+    const failed = new Set<number>();
+    for (const user of selectedUsers) {
+      try { await patchUser.mutateAsync({ id: user.id, patch: { prefs: { paused } } }); }
+      catch { failed.add(user.id); }
+    }
+    setSelected(failed); setBatchBusy(false);
+    if (failed.size) setBatchError(`${failed.size} ${failed.size === 1 ? "person couldn’t" : "people couldn’t"} be updated. They stay selected; try again. Other changes were saved.`);
+    else toast.success(paused ? "Rebuilding paused. Existing rows stay on Plex." : "Rebuilding resumed for enabled people.");
+  };
   const ratesMatured = useHitRatesMatured();
   // ONCE for the page, never per row — see RequestsCell.
   const requestSources = useRequestRowSources("", true);
@@ -239,7 +274,8 @@ export function UsersPage() {
       <PageHeader
         icon={UsersIcon}
         title="Users"
-        subtitle="Turn someone on and they start getting the rows you’ve built."
+        subtitle="Who’s getting recommendations, and who needs a look."
+        className="[&>div>span]:hidden"
         actions={
           // Wraps: three buttons need 345px in one line and ran off a 320px screen.
           <div className="flex flex-wrap gap-2">
@@ -263,6 +299,9 @@ export function UsersPage() {
                 Sharing and privacy
               </Link>
             </Button>
+            <details className="relative">
+              <summary className="flex h-9 cursor-pointer list-none items-center rounded-md border px-3 text-sm font-medium hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">All users…</summary>
+              <div className="absolute right-0 z-20 mt-2 grid min-w-40 gap-2 rounded-md border bg-popover p-2 shadow-md">
             <Button
               variant="outline"
               onClick={() => setConfirmEnableOpen(true)}
@@ -275,6 +314,8 @@ export function UsersPage() {
             >
               Disable all
             </Button>
+              </div>
+            </details>
             {/* Always here, and deliberately not behind the owner note — that note is dismissible,
                 and dismissing "you see everyone's rows" is how people say "yes, I know" rather than
                 "I never want the tool again". Before this, hiding the note hid the only way back to
@@ -454,111 +495,43 @@ export function UsersPage() {
         {(users) => (
           <div className="space-y-4">
             {users.some((user) => user.user_type === "owner") && <OwnerNote />}
-            <div className="overflow-hidden rounded-xl border">
+            <div className="flex flex-wrap items-center justify-between gap-4" role="search" aria-label="Find a user">
+              <div className="relative w-full sm:max-w-xs"><Search aria-hidden="true" className="absolute left-3 top-2.5 size-4 text-muted-foreground" /><Input type="search" aria-label="Search users" placeholder="Find a person…" value={search} onChange={(event) => setSearch(event.target.value)} className="pl-9" /></div>
+              <div aria-label="User status" className="flex flex-wrap gap-1">{statusOptions.map(([value, label]) => <button key={value} type="button" aria-pressed={status === value} onClick={() => setStatus(value)} className={`rounded-md border px-3 py-2 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${status === value ? "border-primary/30 bg-primary/10 text-primary" : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground"}`}>{label}<span className="ml-2 opacity-70">{users.filter((user) => matchesStatus(user, value)).length}</span></button>)}</div>
+            </div>
+            {attentionCount > 0 && <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/25 bg-warning/5 px-4 py-3 text-sm"><p className="text-muted-foreground"><strong className="font-medium text-warning">{attentionCount} {attentionCount === 1 ? "person needs" : "people need"} attention.</strong> Check their Plex sharing or account status.</p><Button variant="ghost" size="sm" className="shrink-0 text-warning" onClick={() => setStatus("attention")}>Review →</Button></div>}
+            {selectedUsers.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3"><div className="text-sm"><strong>{selectedUsers.length} selected</strong><button type="button" className="ml-3 text-xs text-muted-foreground underline" disabled={batchBusy} onClick={() => setSelected(new Set())}>Clear</button><p className="mt-1 text-xs text-muted-foreground">Pausing keeps current rows on Plex. Off accounts stay off.</p></div><div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={batchBusy} onClick={() => void pauseSelected(false)}>Resume rebuilding</Button><Button size="sm" variant="outline" loading={batchBusy} onClick={() => void pauseSelected(true)}>Pause rebuilding</Button></div></div>}
+            {batchError && <p role="alert" className="text-sm text-destructive-text">{batchError}</p>}
+            {visibleUsers.length === 0 && <EmptyState title="No matching users" hint="Try another name or status." action={<Button variant="outline" onClick={() => { setSearch(""); setStatus("all"); }}>Clear filters</Button>} />}
+            <div className="overflow-hidden rounded-xl border bg-card">
               <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    {/* Six columns do not fit a phone. Unhidden they simply ran off the card —
-                        356px of container for 463px of table — so "Picks watched" and "Enabled"
-                        sat outside it, cut mid-number, inside a horizontal scroller with no
-                        visible edge to suggest scrolling. Dropping the two time columns below `lg`
-                        gets the remaining four under 356px. Type stays at every width: its badges
-                        are the warnings ("Sees 8 rows of others'", "Older Kid"), which is the last
-                        thing a narrow screen should lose — and rendering them twice, once per
-                        breakpoint, would announce every one of them twice to a screen reader. */}
-                    <TableHead>User</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead className="hidden lg:table-cell">
-                      Watch history
-                    </TableHead>
-                    <TableHead className="hidden lg:table-cell">
-                      Last run
-                    </TableHead>
-                    <TableHead className="hidden lg:table-cell">
-                      Requests
-                    </TableHead>
-                    {/* One more column goes at 320: four still overran by 32px there, and the one
-                        left outside the card was Enabled — a switch you could not reach. A number
-                        you cannot see is a nuisance; a control you cannot press is a broken page,
-                        so the number is what yields. */}
-                    <TableHead
-                      className="hidden sm:table-cell"
-                      // NOT "a pick gets a month before it counts" — that is the DASHBOARD's
-                      // landing rate, which uses a matured cohort. This figure is lifetime
-                      // watched-over-delivered with no maturity filter at all (`api/users.py`), so
-                      // borrowing that sentence would describe a different number. All the blank
-                      // means is "too early for a zero to tell you anything".
-                      title={
-                        ratesMatured
-                          ? "Share of Shortlist's picks this person has watched, over all time"
-                          : "Share of Shortlist's picks this person has watched, over all time. Blank while every pick on the server is still too new to judge."
-                      }
-                    >
-                      Picks watched
-                      {/* Visible, not only in the `title`. Before maturity this column is a dash
-                          for every person, and a whole column of dashes with its explanation
-                          hover-only tells a phone or keyboard user nothing at all. The tooltip
-                          stays for the detail; this says the one word that makes the dashes read
-                          as "not yet" instead of "broken". */}
-                      {!ratesMatured && (
-                        <span className="ml-1.5 font-normal text-muted-foreground">
-                          (too early)
-                        </span>
-                      )}
-                    </TableHead>
-                    <TableHead className="text-right">Enabled</TableHead>
-                  </TableRow>
+                <TableHeader className="hidden lg:table-header-group bg-muted/20">
+                  <TableRow className="hover:bg-transparent"><TableHead className="w-10 pl-4"><input type="checkbox" aria-label="Select visible users" checked={visibleUsers.length > 0 && selectedVisible.length === visibleUsers.length} ref={(box) => { if (box) box.indeterminate = selectedVisible.length > 0 && selectedVisible.length < visibleUsers.length; }} disabled={batchBusy || visibleUsers.length === 0} onChange={(event) => setSelected((before) => { const next = new Set(before); for (const user of visibleUsers) { if (event.target.checked) next.add(user.id); else next.delete(user.id); } return next; })} className="size-4 accent-primary" /></TableHead><TableHead>Person</TableHead><TableHead>Rebuilding</TableHead><TableHead>Watch history</TableHead><TableHead>Last run</TableHead><TableHead className="pr-4 text-right">Enabled</TableHead></TableRow>
                 </TableHeader>
-                <TableBody>
-                  {users.map((user) => (
-                    <TableRow key={user.id} className="group">
-                      <TableCell>
-                        <Link
-                          to={`/users/${user.id}`}
-                          className="flex items-center gap-3 rounded-sm font-medium text-foreground group-hover:text-primary"
-                          title={`Plex username: ${user.username}`}
-                        >
-                          <UserAvatar name={user.username} size="sm" />
-                          <span className="group-hover:underline">
-                            {user.display_name || user.username}
-                          </span>
-                        </Link>
-                      </TableCell>
-                      <TableCell>
-                        <span className="flex flex-wrap items-center gap-1.5">
-                          <UserTypeBadge user={user} />
-                          <RestrictedBadge user={user} />
-                          <UnhiddenRowsBadge user={user} />
-                          <SharingUntouchedBadge user={user} />
-                          <DepartedBadge user={user} />
-                        </span>
-                      </TableCell>
-                      <TableCell className="hidden text-muted-foreground lg:table-cell">
-                        {/* "New viewer" belongs HERE, next to the number it explains — it's a
-                            state, not a type, and in the Type column it read as one. */}
-                        <span className="flex flex-wrap items-center gap-2">
-                          <span className="tabular-nums">
-                            {user.history_depth} titles
-                          </span>
-                          <ColdStartBadge user={user} />
-                        </span>
-                      </TableCell>
-                      <TableCell className="hidden text-muted-foreground lg:table-cell">
-                        {timeAgo(user.last_run_at)}
-                      </TableCell>
-                      <TableCell className="hidden lg:table-cell">
-                        <RequestsCell user={user} sources={requestSources} />
-                      </TableCell>
-                      {/* An em dash, not "0%", until a pick has actually had its chance. On day one
-                          this whole column read 0% for everybody — a number the dashboard itself
-                          refuses to compute yet. */}
-                      <TableCell className="hidden text-muted-foreground tabular-nums sm:table-cell">
-                        {formatHitRate(user.hit_rate, ratesMatured)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {/* Gated on the PRESET, not on `restricted` — plex.tv sets that for every Plex
-                            Home user, so keying on it greyed out ordinary managed accounts that can
-                            perfectly well have a row (#20). */}
+                <TableBody className="grid lg:table-row-group">
+                  {visibleUsers.map((user) => <TableRow key={user.id} className={`group flex flex-wrap gap-x-3 gap-y-2 px-4 py-3 lg:table-row lg:p-0 [&>td]:p-0 lg:[&>td]:px-3 lg:[&>td]:py-3 ${selected.has(user.id) ? "bg-primary/5" : ""}`}>
+                    <TableCell className="col-start-1 row-start-1 align-top lg:pl-4"><input type="checkbox" aria-label={`Select ${user.display_name || user.username}`} checked={selected.has(user.id)} disabled={batchBusy} onChange={() => toggleSelected(user.id)} className="mt-1.5 size-4 accent-primary" /></TableCell>
+                    <TableCell className="col-start-2 row-start-1 min-w-0 basis-[calc(100%-5rem)] lg:basis-auto lg:w-[42%]">
+                      <div className="flex items-start gap-3">
+                        <UserAvatar name={user.username} size="sm" />
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <Link to={`/users/${user.id}`} className="min-w-0 break-words font-medium hover:text-primary hover:underline" title={`Plex username: ${user.username}`}>{user.display_name || user.username}</Link>
+                            <UserTypeBadge user={user} />
+                          </div>
+                          {(user.restriction_profile || user.unhidden_rows || !user.manage_sharing || user.departed) ? <div className="flex flex-wrap gap-1.5"><RestrictedBadge user={user} /><UnhiddenRowsBadge user={user} /><SharingUntouchedBadge user={user} /><DepartedBadge user={user} /></div> : null}
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                            {user.display_name && user.display_name !== user.username && <span className="break-all" title="Plex username">{user.username}</span>}
+                            <RequestsCell user={user} sources={requestSources} />
+                            <span title="Share of Shortlist’s picks this person has watched, over all time">Picks watched {!ratesMatured && (user.hit_rate ?? 0) <= 0 && "(too early)"}: <span className="tabular-nums">{formatHitRate(user.hit_rate, ratesMatured)}</span></span>
+                          </div>
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="order-1 ml-7 text-xs lg:ml-0 lg:text-sm"><span className={user.restriction_profile ? "text-warning" : user.enabled ? user.prefs.paused ? "text-warning" : "text-success" : "text-muted-foreground"}>{user.restriction_profile ? "Restricted" : !user.enabled ? "Off" : user.prefs.paused ? "Paused" : "Active"}</span></TableCell>
+                    <TableCell className="order-1 text-xs text-muted-foreground lg:text-sm"><span className="flex flex-wrap items-center gap-2"><span className="tabular-nums">{user.history_depth} titles</span><ColdStartBadge user={user} /></span></TableCell>
+                    <TableCell className="order-1 text-xs text-muted-foreground lg:text-sm"><span className="lg:hidden">Last run: </span>{timeAgo(user.last_run_at)}</TableCell>
+                    <TableCell className="col-start-3 row-start-1 whitespace-nowrap text-right lg:pr-4">
                         <GatedSwitch
                           checked={user.enabled && !user.restriction_profile}
                           reason={
@@ -584,12 +557,13 @@ export function UsersPage() {
                             Remove
                           </Button>
                         )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                    </TableCell>
+                  </TableRow>)}
                 </TableBody>
               </Table>
             </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground"><p role="status">Showing {visibleUsers.length} of {users.length} people</p><label className="flex items-center gap-2">Sort by<select aria-label="Sort users" value={sort} onChange={(event) => setSort(event.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-xs"><option value="name">Name A–Z</option><option value="history">Most watch history</option><option value="last-run">Latest run</option></select></label></div>
+            <p className="text-xs leading-relaxed text-muted-foreground">Pausing keeps their current rows on Plex. Turning a person off removes their rows.<br />Select people to pause or resume rebuilding; Enabled controls whether Shortlist builds their rows.</p>
           </div>
         )}
       </QueryBoundary>

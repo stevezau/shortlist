@@ -63,6 +63,13 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
       <h2 id="advanced-heading" className="text-lg font-semibold">
         Advanced
       </h2>
+      <div className="sticky top-36 z-10 rounded-md bg-background/95 py-1 md:top-20"><SaveStatus
+              isPending={saveSettings.isPending}
+              isError={saveSettings.isError}
+              error={saveSettings.error}
+              saved={saved}
+              onRetry={() => lastPayload.current && save(lastPayload.current)}
+            /></div>
       {/* Moved out of the Danger zone: it only READS Plex and reports what it finds, so filing it
           under a destructive heading made the safest control on the page look like the riskiest. */}
       <CleanupAuditCard />
@@ -186,15 +193,6 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
                 save({ "privacy.hide_shared_from_disabled": on })
               }
               aria-label="Hide shared rows from disabled users"
-            />
-          </div>
-          <div className="pt-1">
-            <SaveStatus
-              isPending={saveSettings.isPending}
-              isError={saveSettings.isError}
-              error={saveSettings.error}
-              saved={saved}
-              onRetry={() => lastPayload.current && save(lastPayload.current)}
             />
           </div>
         </CardContent>

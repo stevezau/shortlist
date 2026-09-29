@@ -36,11 +36,12 @@ export function UserNickname({ user }: { user: User }) {
   };
 
   return (
-    <Card>
-      <CardContent className="space-y-2 pt-6">
-        <div className="flex items-center gap-2">
+    <Card className="shadow-none">
+      <CardContent className="space-y-2 p-4">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <Label htmlFor="user-nickname">Nickname (optional)</Label>
           <SavedIndicator show={saved} />
+          <span className="ml-auto text-xs text-muted-foreground">{patchUser.isPending ? "Saving…" : "Saves when you leave the field"}</span>
         </div>
         <Input
           id="user-nickname"
@@ -51,15 +52,12 @@ export function UserNickname({ user }: { user: User }) {
           maxLength={255}
           className="max-w-xs"
         />
-        <p className="text-sm text-muted-foreground">
-          Used wherever a row title says <code>{"{user}"}</code> — so “
-          {"{user}'s picks"}” becomes “
-          {(nickname.trim() || fallback) + "’s picks"}”. Leave blank to use{" "}
+        <p className="break-words text-sm text-muted-foreground">
+          Used for <code>{"{user}"}</code> in row names. Leave blank to use{" "}
           {fallbackSource === "Tautulli"
             ? "their Tautulli name"
-            : "their Plex username"}{" "}
-          ({fallback}). Existing rows are renamed on Plex when you save; their
-          privacy is unaffected.
+            : "their Plex username"}
+          . Saving renames existing Plex rows; privacy is unchanged.
         </p>
         {patchUser.isError && (
           <p role="alert" className="text-sm text-destructive-text">

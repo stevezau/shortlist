@@ -53,6 +53,13 @@ def _edit_row(page: Page, name: str) -> None:
     actions.get_by_role("button", name="Edit").click()
 
 
+def _open_group(page: Page, title: str) -> None:
+    """Reveal a compact editor section through its native disclosure before editing it."""
+    group = page.locator(f'details[data-settings-group="{title}"]')
+    if group.get_attribute("open") is None:
+        group.locator(":scope > summary").click()
+
+
 def _open_rows(page: Page) -> None:
     page.goto("/rows")
     expect(page.get_by_role("heading", name="Rows", exact=True)).to_be_visible(timeout=LOAD)
@@ -81,8 +88,10 @@ def test_a_shared_row_created_in_the_ui_is_stored_as_shared(page: Page, app: Sho
     _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Popular Here")
     # One row for everyone is the Popular on this server kind; a new row switches with no dialog.
+    page.locator("details[data-setting=kind] > summary").click()
     page.get_by_role("radio", name="Popular on this server", exact=True).click()
     # The aggregate-privacy control appears only for shared rows.
+    _open_group(page, "Row settings")
     expect(page.get_by_text("Only titles watched by at least")).to_be_visible()
     page.get_by_role("button", name="Add row").click()
 
@@ -101,7 +110,7 @@ def test_a_row_can_be_given_a_built_in_text_poster(page: Page, app: ShortlistApp
     # Re-open it and choose a built-in text poster — this needs no AI provider, so it works on any setup.
     _edit_row(page, "Poster Row")
     expect(page.get_by_label("Name", exact=True)).to_have_value("Poster Row")
-    # The poster sits in the open "How it looks on Plex" group, beside the name it belongs to.
+    # The poster sits in the open "Appearance" group, beside the name it belongs to.
     page.get_by_role("button", name="Text", exact=True).click()
     page.get_by_label("Title text").fill("Weekend Picks")
     page.get_by_role("button", name="Save changes").click()
@@ -126,6 +135,7 @@ def test_a_row_can_be_given_a_description_and_sort_title_prefix(page: Page, app:
     _edit_row(page, "Sorted Row")
     expect(page.get_by_label("Name", exact=True)).to_have_value("Sorted Row")
     page.get_by_label("Description", exact=True).fill("Picked for {user}")
+    _open_group(page, "Plex placement")
     page.get_by_label("Sort title prefix").fill("!010_")
     expect(page.get_by_text("!010_Sorted Row")).to_be_visible()
     page.get_by_role("button", name="Save changes").click()
@@ -141,7 +151,7 @@ def test_the_default_rows_name_can_be_edited_and_updates_the_global_template(pag
     _open_rows(page)
     # The default row is the only one on a fresh install, so its Edit button is the first.
     page.get_by_role("button", name="Edit").first.click()
-    expect(page.get_by_role("heading", name="Edit row")).to_be_visible()
+    expect(page.get_by_role("heading", name="✨ {library_name} Picked for You", exact=True)).to_be_visible()
 
     name = page.get_by_label("Name", exact=True)
     expect(name).to_be_enabled()  # type here, but Save never carries it — only Rename applies it
@@ -205,6 +215,7 @@ def test_every_surface_can_be_turned_off_and_reaches_the_api(page: Page, app: Sh
     _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Quiet Row")
 
+    _open_group(page, "Plex placement")
     for name in PLACEMENT_SWITCHES:
         page.get_by_role("switch", name=name).click()
     for name in PLACEMENT_SWITCHES:
@@ -225,6 +236,7 @@ def test_the_two_placement_columns_are_saved_independently(page: Page, app: Shor
     _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Split Row")
 
+    _open_group(page, "Plex placement")
     page.get_by_role("switch", name="Friends Library Recommended").click()
     page.get_by_role("button", name="Add row").click()
     expect(_saved_row(page, "Split Row")).to_be_visible(timeout=LOAD)
@@ -242,6 +254,7 @@ def test_the_pick_order_chosen_in_the_editor_reaches_the_api(page: Page, app: Sh
     _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Shuffled Row")
 
+    _open_group(page, "Titles & filters")
     # Default first, so a control that silently ignored the click couldn't pass this.
     expect(page.get_by_role("button", name="Best match")).to_have_attribute("aria-pressed", "true")
     page.get_by_role("button", name="Shuffled").click()

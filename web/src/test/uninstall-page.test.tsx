@@ -37,7 +37,17 @@ function renderPage() {
 }
 
 describe("UninstallPage", () => {
-  beforeEach(() => uninstall.mockReset());
+  beforeEach(() => { uninstall.mockReset(); });
+
+  it("explains a failed preview and lets the owner retry the preview", async () => {
+    uninstall.mockRejectedValue(new Error("Preview unavailable"));
+    renderPage();
+    await userEvent.click(screen.getByRole("button", { name: /preview/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/preview/i);
+    await userEvent.click(screen.getByRole("button", { name: /try again/i }));
+    expect(uninstall).toHaveBeenCalledTimes(2);
+    expect(uninstall).toHaveBeenLastCalledWith(true);
+  });
 
   it("gates the destructive action behind the exact confirm phrase", async () => {
     renderPage();

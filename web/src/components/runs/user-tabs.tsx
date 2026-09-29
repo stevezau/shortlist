@@ -57,7 +57,7 @@ function UserRow({
       )}
     >
       <UserAvatar name={result.username} size="sm" />
-      <span className="min-w-0 flex-1 truncate font-medium">
+      <span className="min-w-0 flex-1 break-words font-medium">
         {result.display_name || result.username}
       </span>
       {failed ? (
@@ -158,7 +158,18 @@ export function UserTabs({
       .length > 1;
 
   return (
-    <div className="space-y-3" role="tablist" aria-label="Users in this run">
+    <div className="space-y-3" role="tablist" aria-label="Users in this run" aria-orientation="vertical"
+      onKeyDown={(event) => {
+        if (!(event.target instanceof HTMLElement) || event.target.getAttribute("role") !== "tab") return;
+        const tabs = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+        const index = tabs.indexOf(event.target as HTMLButtonElement);
+        const next = event.key === "ArrowDown" ? (index + 1) % tabs.length : event.key === "ArrowUp" ? (index + tabs.length - 1) % tabs.length : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : null;
+        if (next === null) return;
+        event.preventDefault();
+        tabs[next]?.focus();
+        tabs[next]?.click();
+      }}>
+
       <div className="space-y-2">
         {mixed ? (
           <Segmented<"all" | "failed" | "ok">
@@ -168,7 +179,7 @@ export function UserTabs({
             options={[
               { value: "all", label: `All ${results.length}` },
               { value: "failed", label: `Failed ${failedTotal}` },
-              { value: "ok", label: `OK ${okTotal + skippedTotal}` },
+              { value: "ok", label: `No errors ${results.length - failedTotal}` },
             ]}
           />
         ) : (

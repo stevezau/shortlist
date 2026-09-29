@@ -90,6 +90,7 @@ export function RowEffectivenessPanel({
   isError,
   onRetry,
   rowSlug,
+  compact = false,
 }: {
   data: RowEffectiveness | undefined;
   isLoading: boolean;
@@ -101,10 +102,13 @@ export function RowEffectivenessPanel({
   onRetry?: () => void;
   /** The row's SLUG, not its id: `/runs?row=` filters on the slug picks are stamped with. */
   rowSlug: string;
+  compact?: boolean;
 }) {
   const runsHref = `/runs?row=${encodeURIComponent(rowSlug)}`;
   return (
-    <div className="space-y-4 rounded-lg border bg-card p-5">
+    <div className={compact
+      ? "space-y-3 rounded-lg border bg-card p-4 [&_.grid>a]:border-0 [&_.grid>a]:bg-transparent [&_.grid>a]:p-0 [&_.grid>div]:border-0 [&_.grid>div]:bg-transparent [&_.grid>div]:p-0 [&_.text-2xl]:text-xl"
+      : "space-y-4 rounded-lg border bg-card p-5"}>
       <h2 className="text-base font-semibold">How this row is doing</h2>
 
       {isError ? (

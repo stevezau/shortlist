@@ -5,7 +5,11 @@ heading: The web interface
 nav_order: 1
 ---
 
-Eight pages in the sidebar. This is what each one is for.
+Eight pages in the sidebar. On a phone, **Open menu** shows the same navigation; Escape closes
+it and returns focus to the menu button. The activity indicator shows running, queued and recent
+background work, while the bell holds notifications and actions that need your attention.
+
+This is what each page is for.
 
 After you update Shortlist, the next page you open shows **What's new**: the release notes for
 every version since you last read them. Close it and it stays closed, in every browser, until the
@@ -31,6 +35,14 @@ lives. See [Rows and templates](rows.md).
 Everyone the server is shared with, plus you (badged `owner`, because plex.tv's user list leaves the owner
 out, so Shortlist adds you itself).
 
+Search the roster by name and filter **All**, **Active**, **Paused**, **Off** or **Needs attention**.
+Active means enabled, not paused and not blocked by a Plex restriction profile; a paused person
+can still have their Enabled switch on.
+Account type, request-link status and picks watched stay visible beside each person's identity.
+Open a person for
+**Rows**, **Runs**, **Settings** and **Watched**; these tabs keep their own links, and keyboard
+users can move between them with the arrow, Home and End keys.
+
 ### Keeping the list current
 
 **Sync from Plex** pulls the roster again after you invite someone new, or to pick up your own owner
@@ -41,6 +53,7 @@ back on if they return.
 ### Turning people on and off
 
 Enable or disable each person, or use **Enable all / Disable all** at once.
+Select specific people to **Pause rebuilding** or **Resume rebuilding** without changing their Enabled setting.
 
 - **Off** removes their rows from Plex and rewrites the share filters so they stop seeing the shared
   rows too. Turning them back **on** undoes the second half straight away, and their own row returns
@@ -56,6 +69,21 @@ Set a request tag, or add per-person row overrides: mute a row, resize it, or se
 depth just for them. Opening a person shows their recent watch history (distinct titles, with season
 and episode numbers for TV), their picks grouped by row (long lists collapse behind a "show more"),
 and a **Run now** button to rebuild just that person.
+
+Their Settings tab groups **Nickname**, **Request tags**, **Plex sharing** and **Blocked titles**
+into labelled sections. Nickname and tag fields save when you leave them. Saving a nickname also
+renames existing Plex rows; it does not change privacy. Blocking a title keeps it in watch history
+but stops it shaping recommendations, and you can unblock it from the same section.
+
+### Sharing and your watching account
+
+**Sharing** shows what Shortlist knows about each account’s visibility rules, including the
+read time, exceptions and failures. Stored rules and verified effects are different; an unavailable
+read is reported rather than treated as success.
+
+**Watching account** explains the owner exception and offers a separate-account flow. It retains
+the source and destination preview, explicit copy confirmation, partial-result details and undo
+where available. Reviewing a preview does not itself copy watch history.
 
 ### Leaving someone's Plex sharing alone
 
@@ -153,6 +181,9 @@ The AI web-search card shows the exact Exa queries and the prompt the model sear
 each proposed title kept or dropped, or struck through when it resolved to no real match (a
 hallucination). Long lists of returned titles expand in place.
 
+Each watch-history seed has a **Don’t seed** action, also visible on mobile. A successful change
+shows **Seed blocked**; a failed change shows an error and **Try again** without claiming it saved.
+
 A **cold-start** user, with too little history to search from, gets the same page, showing the
 highest-rated titles pulled from the server as their fallback — or, when their rows are set to skip
 instead (see [Rows → People without enough watch history](rows.md#people-without-enough-watch-history)),
@@ -229,13 +260,14 @@ Both are applied by the nightly **Clear out old records** job.
 
 ## Settings
 
-One scrolling page, organised into a grouped sidebar sub-nav that jumps to each section and tracks
-where you are:
+Settings is one continuous page. Its section links sit beneath Settings in the main sidebar and
+highlight the section you are reading as you scroll. On mobile, a sticky section selector jumps to
+the same sections. All forms stay mounted, so jumping between sections preserves unfinished edits.
 
 - **Connect** — Connections
 - **Rows** — Finding titles, Row defaults, Row placement
 - **Add-ons** — Requests
-- **System** — Advanced, API access, Danger Zone
+- **System** — Notifications, Advanced, API access, Danger Zone
 
 Each section is walled off by a rule, and its own sub-headings sit a clear rank below the section
 title. Every connection is re-testable in place.

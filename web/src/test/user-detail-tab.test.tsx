@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
@@ -67,6 +67,15 @@ function renderAt(url: string) {
 }
 
 describe("UserDetailBody — which tab the URL selects", () => {
+  it("identifies blocked titles as a settings section with its controls visible", () => {
+    renderAt("/users/1?tab=settings");
+    const section = screen.getByRole("region", { name: "Blocked titles" });
+    expect(within(section).getByRole("textbox", { name: "Search a title to block" })).toBeVisible();
+    expect(within(section).getByRole("button", { name: "Search" })).toBeVisible();
+    expect(screen.getByLabelText("Nickname (optional)")).toBeVisible();
+    expect(screen.getByLabelText("Manage Plex sharing settings for sarah")).toBeVisible();
+  });
+
   it("honours ?tab=watched, which is where the dashboard links land", async () => {
     // The dashboard asserts the href it EMITS; without this nothing asserts the page honours it, so
     // renaming the key or the parse would leave every test green and land people on Rows.

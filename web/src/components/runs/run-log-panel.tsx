@@ -25,7 +25,7 @@ function LogLine({ entry }: { entry: RunLogEntry }) {
   const server = isServerStage(entry.user) || !entry.user;
 
   return (
-    <div className="flex gap-2 py-px">
+    <div className="flex flex-wrap gap-x-2 gap-y-0.5 py-1 sm:flex-nowrap sm:py-px">
       {time && (
         <span className="w-20 shrink-0 tabular-nums text-muted-foreground">
           {time}
@@ -43,7 +43,7 @@ function LogLine({ entry }: { entry: RunLogEntry }) {
       </span>
       <span
         className={cn(
-          "min-w-0",
+          "min-w-0 w-full break-words sm:w-auto",
           entry.stage === "error"
             ? "text-destructive-text"
             : entry.level === "warning"

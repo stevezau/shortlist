@@ -392,7 +392,7 @@ export function RunRowsTab({
       <CommonFailure run={run} />
       {groups.map((group) => (
         <RowCard
-          key={`${group.kind}:${group.slug}`}
+          key={`${group.kind}:${group.slug}:${focusUser ?? ""}`}
           group={group}
           run={run}
           liveLog={liveLog}

@@ -103,14 +103,11 @@ export function LogsPage() {
     if (!follow) return;
     const pane = paneRef.current;
     if (!pane) return;
-    const reduce = window.matchMedia?.(
-      "(prefers-reduced-motion: reduce)",
-    )?.matches;
     // Optional-called: jsdom gives an element no `scrollTo`, and a test environment should not be
     // able to crash the page it is rendering.
     pane.scrollTo?.({
       top: pane.scrollHeight,
-      behavior: reduce ? "auto" : "smooth",
+      behavior: "auto",
     });
   }, [lines.length, follow]);
 
@@ -119,7 +116,7 @@ export function LogsPage() {
       <PageHeader
         icon={ScrollText}
         title="Logs"
-        subtitle="What Shortlist has been doing. Passwords, tokens and API keys are stripped out — safe to paste into a bug report."
+        subtitle="What Shortlist has been doing. Passwords, tokens and API keys are redacted. Review account names, titles and server addresses before sharing."
         actions={
           <div className="flex gap-2">
             <Button
@@ -173,6 +170,7 @@ export function LogsPage() {
           />
           Follow
         </label>
+        {!follow && <Button variant="outline" size="sm" onClick={() => setFollow(true)}>Jump to latest</Button>}
       </div>
 
       <QueryBoundary
@@ -222,6 +220,10 @@ export function LogsPage() {
             <div className="overflow-hidden rounded-xl border bg-background">
               <div
                 ref={paneRef}
+                onScroll={(event) => {
+                  const pane = event.currentTarget;
+                  if (follow && pane.scrollHeight - pane.clientHeight - pane.scrollTop > 16) setFollow(false);
+                }}
                 className="max-h-[65vh] overflow-y-auto font-mono text-xs leading-relaxed"
                 role="log"
                 aria-label="Application logs"

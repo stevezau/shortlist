@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { QueryBoundary } from "@/components/query-boundary";
+import { ErrorState, QueryBoundary } from "@/components/query-boundary";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,7 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { runOutcome } from "@/lib/run-outcome";
 import type { RunFinishedEvent } from "@/lib/types";
 import { api, apiErrorMessage } from "@/lib/api";
-import { useUsers } from "@/lib/queries";
+import { useRun, useUsers } from "@/lib/queries";
 import { describeCounts, RUN_STAGES, STAGE_LABELS } from "@/lib/run-stages";
 import { useSSE } from "@/lib/sse";
 import type { RunUserStageEvent, User } from "@/lib/types";
@@ -71,19 +71,19 @@ function ProgressCard({
   runFinished: boolean;
 }) {
   const stage = progress?.stage;
-  const terminal = stage === "done" || stage === "error" || stage === "skipped";
+  const terminal = stage === "done" || stage === "cold_start" || stage === "error" || stage === "skipped";
   const active = !!progress && stage !== "queued" && !terminal && !runFinished;
 
   let detail: string;
   if (!progress || stage === "queued") {
     const position = progress?.counts.position;
     detail = runFinished
-      ? "done"
+      ? "not recorded for this person — check the run details"
       : `queued${position ? ` — #${position} in line` : ""} · rows build one user at a time`;
-  } else if (stage === "done") {
+  } else if (stage === "done" || stage === "cold_start") {
     const picks = progress.counts.picks ?? 0;
     const seconds = progress.counts.seconds;
-    detail = `row built — ${picks} picks${seconds ? ` in ${seconds}s` : ""}`;
+    detail = `${stage === "cold_start" ? `popular-title picks — ${picks} found` : `row built — ${picks} picks`}${seconds ? ` in ${seconds}s` : ""}`;
   } else if (stage === "skipped") {
     // The engine says WHY (no per-person row enabled, not in an audience, muted…). The old copy
     // hardcoded one of those reasons and stated it as fact for all of them (issue #3).
@@ -107,18 +107,16 @@ function ProgressCard({
             {active && <StageTrail stage={stage ?? ""} />}
           </div>
           <p
-            // The line is truncated to keep the card one row tall, so the full text — a skip reason
-            // is a whole sentence — stays reachable on hover.
             title={detail}
             className={cn(
-              "truncate text-sm",
+              "text-sm break-words",
               stage === "error" ? "text-destructive-text" : "text-muted-foreground",
             )}
           >
             {detail}
           </p>
         </div>
-        {stage === "done" && (
+        {(stage === "done" || stage === "cold_start") && (
           <Check className="h-4 w-4 shrink-0 text-success" aria-hidden="true" />
         )}
         {stage === "skipped" && (
@@ -150,29 +148,13 @@ function ProgressCard({
  * (queued → history → candidates → curating → delivering → done), and the
  * owner can leave at any point — the run keeps going server-side.
  */
-export function StepFirstRun({ complete }: StepProps) {
+export function StepFirstRun({ data, update, complete }: StepProps) {
   const usersQuery = useUsers();
   const [progress, setProgress] = useState<Record<string, UserProgress>>({});
-  const [finishedStatus, setFinishedStatus] = useState<
+  const [eventStatus, setFinishedStatus] = useState<
     RunFinishedEvent["status"] | null
   >(null);
-  const [finishedError, setFinishedError] = useState<string | null>(null);
-
-  useSSE({
-    onRunUserStage: (event: RunUserStageEvent) =>
-      setProgress((current) => ({
-        ...current,
-        [event.user]: {
-          stage: event.stage,
-          counts: event.counts ?? {},
-          reason: event.reason ?? null,
-        },
-      })),
-    onRunFinished: (event) => {
-      setFinishedStatus(event.status);
-      setFinishedError(event.error ?? null);
-    },
-  });
+  const [eventError, setFinishedError] = useState<string | null>(null);
 
   const run = useMutation({
     mutationFn: () => api.startRun({}),
@@ -181,23 +163,63 @@ export function StepFirstRun({ complete }: StepProps) {
       setFinishedStatus(null);
       setFinishedError(null);
     },
+    onSuccess: (result) => update({ first_run_id: result.run_id }),
+  });
+  const runId = run.data?.run_id ?? data.first_run_id;
+  const savedRun = useRun(runId ?? 0, runId !== undefined);
+  const storedStatus = savedRun.data?.status;
+  const finishedStatus = eventStatus ?? (storedStatus === "ok" || storedStatus === "error" || storedStatus === "aborted" ? storedStatus : null);
+  const finishedError = eventError ?? savedRun.data?.error;
+  const recordedProgress: Record<string, UserProgress> = {};
+  for (const person of savedRun.data?.users ?? []) {
+    recordedProgress[person.slug] = {
+      stage: person.status === "ok" ? "done" : person.status,
+      counts: { picks: person.picks.length, ...(person.duration_ms ? { seconds: Math.round(person.duration_ms / 1000) } : {}) },
+      reason: person.reason,
+    };
+  }
+  // Stored terminal results are authoritative after a reconnect; live stages fill the in-flight gaps.
+  const userProgress = (user: User) => {
+    const recorded = recordedProgress[user.slug];
+    return recorded && ["done", "cold_start", "error", "skipped"].includes(recorded.stage)
+      ? recorded : progress[user.slug] ?? progress[user.username] ?? recorded;
+  };
+
+  useSSE({
+    onRunUserStage: (event: RunUserStageEvent) => {
+      if (event.run_id !== runId) return;
+      setProgress((current) => ({ ...current, [event.user]: { stage: event.stage, counts: event.counts ?? {}, reason: event.reason ?? null } }));
+    },
+    onRunFinished: (event) => {
+      if (event.run_id !== runId) return;
+      setFinishedStatus(event.status);
+      setFinishedError(event.error ?? null);
+      void savedRun.refetch();
+    },
   });
 
-  const started = run.isSuccess;
+  const started = runId !== undefined;
   const finished = finishedStatus !== null;
   const outcome = finishedStatus === null ? null : runOutcome(finishedStatus);
   const failed = outcome === "failed";
   const stopped = outcome === "stopped";
+  // Candidate picks and a completed stage do not prove delivery: a row can lack a usable name.
+  // Use the recorded Plex diff, including retained titles, and stay neutral until it is available.
+  const hasBuiltRows = [...(savedRun.data?.users ?? []), ...(savedRun.data?.shared_rows ?? [])].some(
+    (result) => (result.diff?.added?.length ?? 0) + (result.diff?.kept?.length ?? 0) > 0,
+  );
 
   return (
     <div className="space-y-6">
+      {started && <p className="text-sm text-muted-foreground">Run #{runId} · progress is saved, so you can return to this step.</p>}
+      {started && savedRun.isError && <ErrorState error={savedRun.error} onRetry={() => void savedRun.refetch()} />}
       {!started && (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
             This looks at what everyone has watched, finds titles they should
             enjoy, and adds a row to each person&rsquo;s Plex. You can watch it
-            happen, one person at a time. Every row is delivered hidden and only
-            ever shown to the person it&rsquo;s for.
+            happen as rows are built. Shortlist applies sharing rules before promoting
+            rows; the owner and parental-profile limitations still apply.
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <Button
@@ -243,10 +265,11 @@ export function StepFirstRun({ complete }: StepProps) {
             const allUsersDone =
               enabled.length > 0 &&
               enabled.every((user) => {
-                const p = progress[user.slug] ?? progress[user.username];
+                const p = userProgress(user);
                 return (
                   p &&
                   (p.stage === "done" ||
+                    p.stage === "cold_start" ||
                     p.stage === "error" ||
                     p.stage === "skipped")
                 );
@@ -257,7 +280,7 @@ export function StepFirstRun({ complete }: StepProps) {
                   <ProgressCard
                     key={user.id}
                     user={user}
-                    progress={progress[user.slug] ?? progress[user.username]}
+                    progress={userProgress(user)}
                     runFinished={finished}
                   />
                 ))}
@@ -276,7 +299,7 @@ export function StepFirstRun({ complete }: StepProps) {
                       className="h-3.5 w-3.5 animate-spin"
                       aria-hidden="true"
                     />
-                    All rows built — finishing up: hiding each person&rsquo;s
+                    All users processed — finishing up: hiding each person&rsquo;s
                     row from everyone else, then putting them on the Home
                     screen.
                   </p>
@@ -324,10 +347,10 @@ export function StepFirstRun({ complete }: StepProps) {
               <PartyPopper className="h-5 w-5" aria-hidden="true" />
             )}
             {failed
-              ? "The run failed — no rows were built"
+              ? "The run needs attention"
               : stopped
                 ? "Stopped — the rows built before you stopped it are live"
-                : "Rows are live on Plex"}
+                : hasBuiltRows ? "Rows are live on Plex" : "First run complete"}
           </p>
           {/* "warning", not "destructive", for a stop: the owner did it on purpose. */}
           <Badge
@@ -343,10 +366,10 @@ export function StepFirstRun({ complete }: StepProps) {
           </Badge>
           <p className="text-sm text-muted-foreground">
             {failed
-              ? "Nothing was half-applied — fix the cause and run it again. Full per-user detail is on the Runs page."
+              ? "Check the per-person results before trying again. The Runs page keeps the full result and error details."
               : stopped
                 ? "Everyone the run reached kept their row, and their privacy filters were applied. Run it again whenever you like — it picks up from where things are."
-                : 'Tell your users to look for their new row tonight — something like: "Your Plex now has a private Picked-for-You row, built from what you actually watch. Enjoy."'}
+                : hasBuiltRows ? "Review each person’s result above, then check their rows in Plex. Skipped accounts may need a different setup before they can receive a row." : "No built rows were recorded for the people in this run. Review their results and check the full run details after finishing setup."}
           </p>
           {failed && finishedError && (
             <div className="space-y-1">

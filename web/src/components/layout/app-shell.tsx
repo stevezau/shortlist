@@ -11,24 +11,22 @@ import {
   ListChecks,
   ScrollText,
   LogOut,
-  Menu,
   Rows3,
   Settings as SettingsIcon,
   Star,
   Users as UsersIcon,
   Wrench,
-  X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router";
 
 import { HomeWordmark } from "@/components/brand";
 import { ActivityPill } from "@/components/layout/activity-pill";
 import { ActivityIndicator } from "@/components/layout/activity-indicator";
+import { MobileNavigation } from "@/components/layout/mobile-navigation";
 import { NotificationBell } from "@/components/layout/notification-bell";
 import { WhatsNewDialog } from "@/components/layout/whats-new-dialog";
-import { SettingsSubNav } from "@/components/settings/settings-nav";
 import { Button } from "@/components/ui/button";
+import { SettingsSubNav } from "@/components/settings/settings-nav";
 import { api } from "@/lib/api";
 import { buildLabel } from "@/lib/format";
 import { useSession, useVersion } from "@/lib/queries";
@@ -196,7 +194,6 @@ function NavBody() {
                 </>
               )}
             </NavLink>
-            {/* Settings' sections nest here, so the page needs no middle rail. Shown only on /settings. */}
             {to === "/settings" && <SettingsSubNav />}
           </div>
         ))}
@@ -209,24 +206,6 @@ function NavBody() {
 }
 
 export function AppShell() {
-  const [menuOpen, setMenuOpen] = useState(false);
-
-  // Close the drawer on Escape, and lock body scroll behind it — a phone shouldn't scroll the page
-  // under the open menu.
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMenuOpen(false);
-    };
-    document.addEventListener("keydown", onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [menuOpen]);
-
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
       {/* One Toaster for the whole app — background work announces itself from the header's
@@ -276,57 +255,9 @@ export function AppShell() {
         <div className="flex items-center gap-1">
           <ActivityIndicator align="right" />
           <NotificationBell align="right" />
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Open menu"
-            aria-expanded={menuOpen}
-            aria-controls="mobile-nav"
-            onClick={() => setMenuOpen(true)}
-          >
-            <Menu aria-hidden="true" />
-          </Button>
+          <MobileNavigation><NavBody /></MobileNavigation>
         </div>
       </header>
-
-      {/* Mobile slide-out drawer. A backdrop + a left panel; any link tap, the backdrop, Escape, or
-          the close button dismisses it. */}
-      {menuOpen && (
-        <div className="fixed inset-0 z-50 md:hidden">
-          <button
-            type="button"
-            aria-label="Close menu"
-            className="absolute inset-0 bg-black/50 motion-safe:animate-fade-in"
-            onClick={() => setMenuOpen(false)}
-          />
-          <aside
-            id="mobile-nav"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Main menu"
-            className="absolute inset-y-0 left-0 flex w-72 max-w-[85%] flex-col bg-card shadow-xl motion-safe:animate-slide-in-left"
-            // Delegate: any link tapped inside the drawer closes it, main nav and Settings sections alike.
-            onClick={(event) => {
-              if ((event.target as HTMLElement).closest("a"))
-                setMenuOpen(false);
-            }}
-          >
-            <div className="flex items-center justify-between border-b px-4 py-3">
-              <HomeWordmark />
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="Close menu"
-                autoFocus
-                onClick={() => setMenuOpen(false)}
-              >
-                <X aria-hidden="true" />
-              </Button>
-            </div>
-            <NavBody />
-          </aside>
-        </div>
-      )}
 
       {/* Desktop sidebar. Hidden on mobile (the drawer replaces it). `z-30` matters: the sidebar's
           `backdrop-blur` opens its own stacking context, and the notification panel (w-80) overflows
@@ -348,7 +279,7 @@ export function AppShell() {
         {/* Fill the width next to the left nav — dense pages (Runs, Requests, Users) were wasting half
             the screen at max-w-6xl. A high cap keeps line lengths sane on an ultrawide without floating
             a narrow block in the middle. Individual pages that want to stay narrow cap their own content. */}
-        <div className="mx-auto max-w-[1800px] animate-fade-in">
+        <div className="mx-auto max-w-[1800px] motion-safe:animate-fade-in">
           <Outlet />
         </div>
       </main>

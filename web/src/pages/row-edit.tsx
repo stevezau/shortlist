@@ -59,6 +59,8 @@ export function RowEditPage() {
               collection={collection}
               template={template}
               users={users.data ?? []}
+              audienceState={users.isError ? "error" : users.isPending ? "loading" : "ready"}
+              onRetryAudience={() => { void users.refetch(); }}
               onClose={() => navigate("/rows")}
               onRename={(proposedName, saved) =>
                 collection &&

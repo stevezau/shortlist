@@ -3,6 +3,7 @@ import { useId, useState } from "react";
 import { RowSizeField } from "@/components/row-size-field";
 import { SaveStatus } from "@/components/save-status";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAutosavedSettings } from "@/lib/autosave";
@@ -43,28 +44,10 @@ export function DefaultsSection({ settings }: { settings: Settings }) {
               value={rowNameTpl}
               onChange={(event) => setRowNameTpl(event.target.value)}
             />
-            <p className="text-sm text-muted-foreground">
-              The name each person sees on their row. You can drop in:
-            </p>
-            <ul className="space-y-1 text-sm text-muted-foreground">
-              <li>
-                <span className="font-mono">{"{library_name}"}</span> — the
-                library&rsquo;s name (Movies, TV Shows)
-              </li>
-              <li>
-                <span className="font-mono">{"{user}"}</span> — the
-                person&rsquo;s name
-              </li>
-              <li>
-                <span className="font-mono">{"{top_seed}"}</span> — a title they
-                recently watched
-              </li>
-            </ul>
-            <p className="text-sm text-muted-foreground">
-              Each person&rsquo;s row stays private whether or not their name is
-              in it, so leaving <span className="font-mono">{"{user}"}</span>{" "}
-              out is fine.
-            </p>
+            <div className="flex flex-wrap items-center gap-2" aria-label="Insert a name variable">
+              {["library_name", "user", "top_seed"].map((token) => <Button key={token} type="button" size="sm" variant="outline" onClick={() => setRowNameTpl((name) => `${name}${name.endsWith(" ") ? "" : " "}{${token}}`)}>{token.replaceAll("_", " ")}</Button>)}
+            </div>
+            <details className="text-sm text-muted-foreground"><summary className="cursor-pointer">How name variables work</summary><p className="pt-2">Library name becomes Movies or TV Shows; user becomes the person’s name; top seed becomes a title they recently watched. Row names do not change your Plex sharing settings.</p></details>
             <div className="rounded-md border bg-card p-3">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">
                 On Plex this looks like

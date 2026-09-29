@@ -107,6 +107,7 @@ def test_a_requests_row_reaches_only_the_person_who_asked_when_built_from_the_te
     _open_add_a_row(page)
     page.get_by_role("button", name="Your requests").click()
     page.get_by_role("button", name="Use template").click()
+    page.locator('details[data-settings-group="Row settings"] > summary').click()
     expect(page.get_by_text("Which requests show up")).to_be_visible(timeout=LOAD)
     # The Check button lives under the collapsed "Use my own tags" disclosure.
     page.get_by_text("Use my own tags").click()
@@ -160,9 +161,9 @@ def test_a_requests_row_reaches_only_the_person_who_asked_when_built_from_the_te
 
     # (e) The Users page reads the same sources: sarah is linked, mike has no Overseerr account.
     page.goto("/users")
-    expect(page.get_by_role("columnheader", name="Requests")).to_be_visible(timeout=LOAD)
-    expect(page.get_by_role("row").filter(has_text="sarah")).to_contain_text("Linked", timeout=CHECK)
-    expect(page.get_by_role("row").filter(has_text="mike")).to_contain_text("No account")
+    for username, status in (("sarah", "Linked"), ("mike", "No account")):
+        person = page.get_by_role("row").filter(has=page.get_by_role("link", name=username, exact=True))
+        expect(person.get_by_text(status, exact=True)).to_be_visible(timeout=CHECK)
 
 
 def test_the_your_requests_template_cannot_be_confirmed_when_no_source_is_connected(page: Page, app: ShortlistApp):

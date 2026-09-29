@@ -49,7 +49,7 @@ describe("UserRequestedByTag", () => {
       screen.getByLabelText("Their request tag in Radarr/Sonarr"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/doesn.t fit the row.s pattern, put it here, e\.g\. children/),
+      screen.getByText(/when it differs from the row.s pattern, e\.g\. children/),
     ).toBeInTheDocument();
   });
 

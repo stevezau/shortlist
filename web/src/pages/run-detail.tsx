@@ -1,5 +1,4 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Info, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 
@@ -13,7 +12,7 @@ import { RunLogPanel } from "@/components/runs/run-log-panel";
 import { RunPhaseTimeline } from "@/components/runs/run-phase-timeline";
 import { RunStatTiles } from "@/components/runs/run-stat-tiles";
 import { RunRowsTab } from "@/components/runs/run-rows-tab";
-import { Segmented } from "@/components/segmented";
+import { Tabs, TabPanel } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -32,7 +31,9 @@ import {
   useUsers,
 } from "@/lib/queries";
 import { mergeRunLog, stageBelongsToRun } from "@/lib/run-log";
-import { currentPhase, errorBucket, inFlight } from "@/lib/run-format";
+import { errorBucket } from "@/lib/run-format";
+import { RunProgress } from "@/components/runs/run-progress";
+import { useHashScroll } from "@/lib/use-hash-scroll";
 import { useSSE } from "@/lib/sse";
 import type { RunDetail, RunLogEntry, RunUserStageEvent } from "@/lib/types";
 
@@ -169,6 +170,7 @@ export function RunDetailPage() {
   // the link was still built, nothing read it, and clicking "Run #NN" from someone's page landed on
   // the top of a run with forty others in it.
   const focusUser = searchParams.get("user");
+  useHashScroll(runQuery.isSuccess);
   const setTab = (next: RunTab) => {
     const params = new URLSearchParams(searchParams);
     if (next === "rows") params.delete("tab");
@@ -238,14 +240,6 @@ export function RunDetailPage() {
     },
   });
 
-  // Computed once per render rather than called twice (header line + phase text below it). Takes the
-  // run as well as the log: the people count comes off the run's own roster, not off log subjects —
-  // the library index and shared rows narrate under names that are in nobody's roster.
-  const phase = runQuery.data ? currentPhase(runQuery.data, liveLog) : null;
-  const working =
-    runQuery.data && !runQuery.data.finished_at
-      ? inFlight(runQuery.data, liveLog)
-      : [];
   // A failed log fetch with nothing to show is otherwise indistinguishable from "no log was ever
   // recorded" — RunLogPanel's own empty state says the latter, which is a lie when the former is
   // true. Live SSE stage events can still fill `liveLog` even if the initial snapshot failed, so
@@ -275,10 +269,10 @@ export function RunDetailPage() {
             <div className="space-y-6">
               <header className="space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="text-2xl font-semibold tracking-tight">
+                  <h1 className="text-3xl font-semibold tracking-tight">
                     Run #{run.id}
                   </h1>
-                  <Badge variant={runStatusVariant(run.status)}>
+                  <Badge variant={run.status === "running" ? "warning" : runStatusVariant(run.status)}>
                     {runStatusLabel(run.status)}
                   </Badge>
                   {run.dry_run && (
@@ -288,7 +282,7 @@ export function RunDetailPage() {
                   )}
                   {!run.finished_at && (
                     <Button
-                      variant="destructive"
+                      variant="outline"
                       size="sm"
                       className="ml-auto"
                       loading={cancel.isPending}
@@ -331,44 +325,11 @@ export function RunDetailPage() {
                     </>
                   )}
                 </p>
-                {/* The direct fix for "all users finished but it still says running": say WHAT it
-                    is doing. Everything after the last person is server-wide and used to be silent.
-                    The lead-in is NOT fixed text: "Finishing up" is a claim about where the run is,
-                    and hardcoding it told the owner a run 9 people into 46 was nearly done. */}
-                {!run.finished_at && phase && (
-                  <p className="flex items-center gap-1.5 text-sm">
-                    <Loader2
-                      className="h-3.5 w-3.5 animate-spin text-muted-foreground"
-                      aria-hidden="true"
-                    />
-                    <span className="text-muted-foreground">
-                      {phase.tail ? "Finishing up · " : "Right now · "}
-                    </span>
-                    <span className="font-medium">{phase.label}</span>
-                  </p>
-                )}
-                {/* The count says how far the run has got; this says what it is doing. One line per
-                    person it is on — at most the run's concurrency — each naming the row, the library
-                    and the write, or that they are queued behind someone else's Plex write. */}
-                {working.length > 0 && (
-                  <ul
-                    aria-label="In progress"
-                    className="space-y-0.5 pl-5 text-sm text-muted-foreground"
-                  >
-                    {working.map((person) => (
-                      <li key={person.slug} className="truncate" title={person.text}>
-                        <span className="font-medium text-foreground">
-                          {person.name}
-                        </span>
-                        {" — "}
-                        {person.text}
-                      </li>
-                    ))}
-                  </ul>
-                )}
               </header>
 
-              <Segmented
+              <RunProgress run={run} entries={liveLog} />
+
+              <Tabs id="run-detail"
                 value={tab}
                 onChange={setTab}
                 ariaLabel="Run detail sections"
@@ -393,36 +354,19 @@ export function RunDetailPage() {
                   run it churned under the header while you were trying to read the people list —
                   the Log tab is the place to watch a run, not this one. */}
 
-              {!run.finished_at && (
-                <div className="flex gap-3 rounded-lg border bg-muted/40 p-4 text-sm">
-                  <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                  <div className="space-y-1">
-                    <p className="font-medium">
-                      Why a refresh can take a while
-                    </p>
-                    <p className="text-muted-foreground">
-                      Plex removes titles from a collection one at a time, and
-                      on a very large TV library that is slow — a row dropping
-                      ten titles there can take a few minutes. Rows whose titles haven't
-                      changed skip that. Each person's panel shows what their
-                      row is adding and removing while it happens.
-                    </p>
-                  </div>
-                </div>
-              )}
 
               {tab === "rows" && (
-                <RunRowsTab
+                <TabPanel id="run-detail" value="rows"><div id="run-rows" className="scroll-mt-20"><RunRowsTab
                   run={run}
                   titles={rowTitles}
                   idBySlug={idBySlug}
                   liveLog={liveLog}
                   focusUser={focusUser}
-                />
+                /></div></TabPanel>
               )}
 
               {tab === "log" &&
-                (logFailed ? (
+                <TabPanel id="run-detail" value="log">{logFailed ? (
                   <ErrorState
                     error={logQuery.error}
                     onRetry={() => void logQuery.refetch()}
@@ -437,7 +381,7 @@ export function RunDetailPage() {
                       people={[...new Set(run.users.map((u) => u.slug))].sort()}
                     />
                   </>
-                ))}
+                )}</TabPanel>}
             </div>
           )}
         </QueryBoundary>

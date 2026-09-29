@@ -41,14 +41,14 @@ export function SharingPage() {
   const query = usePrivacyStatus();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 [overflow-wrap:anywhere]">
       <PageHeader
         icon={ShieldCheck}
         title="Sharing and privacy"
         // Promise first, mechanism second. It used to lead with what each account is "set to do",
         // which is how the hiding WORKS — the reader has to already know about share filters for
         // that sentence to mean anything. What they came for is whether it holds.
-        subtitle="Nobody should see anyone else's row. This page checks that account by account, read live from plex.tv rather than from what Shortlist last wrote."
+        subtitle="Check which personal rows each account can see, using live plex.tv restrictions. The server owner remains an exception: Plex cannot filter its own account."
       />
       <QueryBoundary
         query={query}
@@ -195,7 +195,7 @@ function Summary({
         </p>
         <p>
           Set that account&rsquo;s Restriction Profile to <strong>None</strong>{" "}
-          in Plex, and the next run can hide their view.{" "}
+          in Plex only if that matches the account’s parental-control needs. This changes Plex’s age restrictions; Shortlist never changes that profile for you. The next run can then hide their view.{" "}
           <ReadAt at={data.read_at} />
         </p>
       </Banner>
@@ -343,8 +343,8 @@ function AccountsTable({ accounts }: { accounts: AccountPrivacy[] }) {
       </CardHeader>
       <CardContent>
         {/* Its own scroller: a long row name must never push the whole page sideways. */}
-        <div className="overflow-x-auto">
-          <ul className="min-w-[20rem] divide-y">
+        <div className="min-w-0">
+          <ul className="min-w-0 divide-y">
             {accounts.map((account) => (
               <AccountRow key={account.account_id} account={account} />
             ))}
@@ -361,10 +361,10 @@ function AccountRow({ account }: { account: AccountPrivacy }) {
 
   return (
     <li className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-      <div className="flex min-w-0 items-start gap-3">
+      <div className="flex min-w-0 flex-1 items-start gap-3 [overflow-wrap:anywhere]">
         <UserAvatar name={account.display_name} />
         <div className="min-w-0">
-          <p className="truncate font-medium">
+          <p className="break-words font-medium">
             {account.user_id !== null ? (
               <Link
                 to={`/users/${account.user_id}`}

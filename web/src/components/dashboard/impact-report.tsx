@@ -406,7 +406,7 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
   // something useful on a touch screen, where there is no hover at all.
   const [hovered, setHovered] = useState<string | null>(null);
   const max = Math.max(1, ...trend.map((t) => t.watched));
-  if (trend.length === 0)
+  if (trend.length === 0 || trend.every((week) => week.watched === 0))
     return (
       <p className="text-sm text-muted-foreground">
         No watches recorded yet — this fills in as people watch their picks.
@@ -1032,6 +1032,7 @@ function ReportBody({
             {runs.total === 0
               ? "Nothing has reached anyone's rows yet. Build them once from Runs — “Run all rows now” — and this page fills in as people start watching what Shortlist picked."
               : `Nothing reached a row, and nothing was watched, in ${WINDOW_PHRASE[reportWindow]}. Try a longer window.`}
+            <div className="mt-3"><Button asChild variant="outline" size="sm"><Link to="/runs">Open Runs</Link></Button></div>
           </CardContent>
         </Card>
       </div>
@@ -1059,8 +1060,8 @@ function ReportBody({
           different roundings (1% beside 0.5%) is how a dashboard comes to disagree with itself. */}
       <div className="grid gap-4 lg:grid-cols-2">
         <Section
-          title="Watches per week"
-          hint="Always the last 16 weeks, whatever window is selected."
+          title="Watches per week · 16-week trend"
+          hint="Fixed period: the last 16 weeks. The report window above applies to the other summaries."
         >
           <Trend trend={report.trend} />
         </Section>

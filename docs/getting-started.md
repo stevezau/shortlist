@@ -83,21 +83,24 @@ The wizard has **7 steps**, and the progress bar counts them the same way this l
    Every address Plex advertises for your server is tried from where Shortlist actually runs, and
    the one that answered is preselected. You can always type a different one.
 
-3. **Recommendations & history**. Choose where picks come from (TMDB, Trakt, AI web search).
+3. **Recommendations & history**. Save and test the required TMDB key.
    Watch history comes straight from Plex with no setup. Tautulli is optional, and only improves
    the names people are shown by.
-4. **Choose your AI provider** — Claude / GPT / Gemini / a local server / **None**. Keys stay
+4. **Add an AI provider (optional)** — choose the built-in picker, or Claude / GPT / Gemini / a local server. Keys stay
    yours: stored encrypted, and hidden again once saved. Picking None is a perfectly good choice.
 5. **Pick your users** — everyone you share with, with badges showing how much history each
    person has.
-6. **Make it yours** — the row's name, how many titles it holds, and how often it refreshes. Each
-   row keeps its own schedule; there's no single global one.
+6. **Make it yours** — choose the row's name and how many titles it holds, alongside a live title
+   preview. **Save & continue** saves both choices before moving on. Rows start with a nightly
+   schedule; each row's editor lets you change it later.
 
    The name can be plain text, or use a placeholder that fills itself in per person, such as
    `{library_name}`, `{user}` or `{top_seed}`. See [Naming a row](guides/rows.md#naming-a-row)
    for what each one becomes.
 
-7. **First run** — watch it build, person by person. When it finishes, everyone has their row.
+7. **First run** — watch it build, person by person. Reloading resumes the same run. Results
+   distinguish built, skipped and failed users. You can finish setup while the run continues,
+   or skip building until later.
 
 ## Trying it safely
 

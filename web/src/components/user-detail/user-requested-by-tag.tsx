@@ -29,13 +29,14 @@ export function UserRequestedByTag({ user }: { user: User }) {
   };
 
   return (
-    <Card>
-      <CardContent className="space-y-2 pt-6">
-        <div className="flex items-center gap-2">
+    <Card className="shadow-none">
+      <CardContent className="space-y-2 p-4">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <Label htmlFor="user-requested-by-tag">
             Their request tag in Radarr/Sonarr
           </Label>
           <SavedIndicator show={saved} />
+          <span className="ml-auto text-xs text-muted-foreground">{patchUser.isPending ? "Saving…" : "Saves when you leave the field"}</span>
         </div>
         <Input
           id="user-requested-by-tag"
@@ -47,8 +48,8 @@ export function UserRequestedByTag({ user }: { user: User }) {
           className="max-w-xs"
         />
         <p className="text-sm text-muted-foreground">
-          If their requests carry a tag that doesn&rsquo;t fit the row&rsquo;s
-          pattern, put it here, e.g. children.
+          Use the tag already attached to their requests in Radarr/Sonarr when
+          it differs from the row&rsquo;s pattern, e.g. children.
         </p>
         {patchUser.isError && (
           <p role="alert" className="text-sm text-destructive-text">

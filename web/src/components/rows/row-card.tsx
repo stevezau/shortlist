@@ -74,7 +74,7 @@ export function RowCard({
 
   return (
     <Card className={cn(!collection.enabled && "opacity-60")}>
-      <CardContent className="flex flex-wrap items-center justify-between gap-4 pt-6">
+      <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
         {/* The slot is always here, poster or not — otherwise a row without one loses 11rem of
             leading space and its name no longer lines up with every other card in the list. */}
         {collection.poster?.has_image ? (
@@ -104,7 +104,7 @@ export function RowCard({
         )}
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
-            <RowName name={collection.name} />
+            <RowName name={collection.name} className="min-w-0 max-w-full font-medium [overflow-wrap:anywhere]" />
             <Badge
               variant={collection.build === "shared" ? "warning" : "secondary"}
             >
@@ -154,7 +154,7 @@ export function RowCard({
         {/* Wraps: five controls need well over 400px in one line, so on a phone they ran off the
             screen and the last one was unreachable. Wrapping costs a row of height on narrow
             screens and changes nothing above it. */}
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="flex w-full flex-wrap items-center justify-end gap-2 border-t pt-3 sm:w-auto sm:border-0 sm:pt-0">
           <RowEnableToggle collection={collection} />
           {/* Rebuild, then the history of rebuilding — "Run" beside "Runs" in that order, because
               the answer to "did that work?" is the screen the Run button already sends you to. */}

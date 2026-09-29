@@ -30,7 +30,7 @@ def _open_row_requests(page: Page) -> None:
     page.goto("/rows")
     expect(page.get_by_role("heading", name="Rows", exact=True)).to_be_visible(timeout=LOAD)
     page.get_by_role("button", name="Edit").first.click()
-    expect(page.get_by_role("heading", name="Edit row")).to_be_visible(timeout=LOAD)
+    expect(page.get_by_role("heading", name="✨ {library_name} Picked for You", exact=True)).to_be_visible(timeout=LOAD)
     page.locator("details:has(> summary:has-text('Requests')) > summary").click()
 
 
@@ -40,7 +40,7 @@ def _enable_requests(app: ShortlistApp, **extra) -> None:
 
 def test_it_ships_on_any_language_so_an_upgrade_changes_nothing(page: Page, app: ShortlistApp):
     _enable_requests(app)
-    page.goto("/settings")
+    page.goto("/settings#requests")
     expect(page.get_by_role("button", name="Any language")).to_have_attribute("aria-pressed", "true", timeout=LOAD)
     # Neither the language list nor the second bar is read on "any", and a number on screen that
     # nothing applies reads as a bar that is in force.
@@ -55,7 +55,7 @@ def test_the_second_bar_follows_the_owners_own_floor_and_saves_as_null(page: Pag
     silently stop moving it — the field would still say "following" while doing nothing of the sort.
     """
     _enable_requests(app, **{"requests.min_rating": 7.0})
-    page.goto("/settings")
+    page.goto("/settings#requests")
 
     page.get_by_role("button", name="Prefer these").click()
 
@@ -63,7 +63,7 @@ def test_the_second_bar_follows_the_owners_own_floor_and_saves_as_null(page: Pag
     expect(bar).to_have_value("8.5", timeout=LOAD)  # 7.0 + 1.5, shown without anyone typing it
     expect(page.get_by_text(re.compile("Following your minimum rating", re.I))).to_be_visible()
 
-    expect(page.get_by_text(re.compile("Saved|Saving", re.I)).first).to_be_visible(timeout=LOAD)
+    expect(page.locator("#requests").get_by_text(re.compile(r"^Saved|^Saving", re.I)).first).to_be_visible(timeout=LOAD)
     page.wait_for_timeout(2000)
 
     saved = app.api("GET", "/api/settings").json()
@@ -80,7 +80,7 @@ def test_the_second_bar_follows_the_owners_own_floor_and_saves_as_null(page: Pag
 
 def test_typing_a_bar_stops_it_following_and_it_can_be_put_back(page: Page, app: ShortlistApp):
     _enable_requests(app, **{"requests.min_rating": 7.0, "requests.language_mode": "prefer"})
-    page.goto("/settings")
+    page.goto("/settings#requests")
 
     bar = page.get_by_label(OTHER_BAR)
     expect(bar).to_have_value("8.5", timeout=LOAD)
@@ -96,7 +96,7 @@ def test_typing_a_bar_stops_it_following_and_it_can_be_put_back(page: Page, app:
 
 def test_only_mode_hides_the_bar_and_warns_on_an_empty_list(page: Page, app: ShortlistApp):
     _enable_requests(app)
-    page.goto("/settings")
+    page.goto("/settings#requests")
 
     page.get_by_role("button", name="Only these").click()
     # No rating can rescue a title in "only" mode, so offering a rating bar would be offering a
@@ -114,7 +114,7 @@ def test_only_mode_hides_the_bar_and_warns_on_an_empty_list(page: Page, app: Sho
 
 def test_adding_a_language_saves_it(page: Page, app: ShortlistApp):
     _enable_requests(app, **{"requests.language_mode": "prefer"})
-    page.goto("/settings")
+    page.goto("/settings#requests")
 
     page.get_by_label("Add a language").select_option("ja", timeout=LOAD)
     page.wait_for_timeout(2000)

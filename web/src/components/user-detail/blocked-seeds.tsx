@@ -69,7 +69,7 @@ function RecentWatchPicker({
               size="sm"
               variant="outline"
               disabled={isBlocked || block.isPending}
-              className={isBlocked ? "opacity-50" : undefined}
+              className={`max-w-full ${isBlocked ? "opacity-50" : ""}`}
               title={isBlocked ? "Already blocked" : `Block ${item.title}`}
               onClick={() =>
                 block.mutate({
@@ -85,7 +85,7 @@ function RecentWatchPicker({
               ) : (
                 <Plus className="h-3 w-3" aria-hidden />
               )}
-              <span className="max-w-[16rem] truncate">{item.title}</span>
+              <span className="min-w-0 truncate" title={item.title}>{item.title}</span>
               {item.year && (
                 <span className="text-muted-foreground">{item.year}</span>
               )}
@@ -152,7 +152,7 @@ function AddBlockedSeed({ userId }: { userId: number }) {
           }}
           placeholder="Search a title to block…"
           aria-label="Search a title to block"
-          className="h-8 w-56"
+          className="h-8 w-full sm:w-56"
         />
         <Segmented
           value={mediaType}
@@ -189,12 +189,13 @@ function AddBlockedSeed({ userId }: { userId: number }) {
       {found?.map((result) => (
         <div
           key={result.tmdb_id}
-          className="flex items-center justify-between gap-3 text-sm"
+          className="flex min-w-0 items-center justify-between gap-3 text-sm"
         >
-          <span className="truncate">{seedLabel(result)}</span>
+          <span className="min-w-0 break-words">{seedLabel(result)}</span>
           <Button
             size="sm"
             variant="outline"
+            className="shrink-0"
             disabled={block.isPending}
             onClick={() =>
               block.mutate(
@@ -251,12 +252,13 @@ export function BlockedSeedsList({ user }: { user: User }) {
           {blocked.map((seed) => (
             <li
               key={seed.tmdb_id}
-              className="flex items-center justify-between rounded-md border px-3 py-2 text-sm"
+              className="flex min-w-0 items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm"
             >
-              <span className="truncate">{seedLabel(seed)}</span>
+              <span className="min-w-0 break-words">{seedLabel(seed)}</span>
               <Button
                 variant="ghost"
                 size="sm"
+                className="shrink-0"
                 onClick={() => unblock.mutate(seed.tmdb_id)}
                 title={`Let ${seed.title || "this title"} shape their picks again`}
                 aria-label={`Unblock ${seed.title || `TMDB ${seed.tmdb_id}`}`}

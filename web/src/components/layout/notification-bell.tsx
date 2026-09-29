@@ -1,7 +1,7 @@
 import { Bell, CircleAlert, Info, TriangleAlert, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 
-import { useDismissable } from "@/lib/use-dismissable";
+import { HeaderPopover } from "./header-popover";
 import { Link } from "react-router";
 
 import { Button } from "@/components/ui/button";
@@ -85,23 +85,21 @@ export function NotificationBell({
   align?: "left" | "right";
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
   const notifications = useNotifications();
   const dismiss = useDismissNotification();
   const items = notifications.data?.notifications ?? [];
   const count = items.length;
   const hasError = items.some((n) => n.severity === "error");
 
-  useDismissable(open, ref, () => setOpen(false));
 
   return (
-    <div ref={ref} className="relative">
+    <HeaderPopover open={open} onOpenChange={setOpen} align={align} label="Notifications" trigger={
       <Button
         variant="ghost"
         size="icon"
+        className="relative"
         aria-label={count ? `Notifications (${count})` : "Notifications"}
         aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
       >
         <Bell aria-hidden="true" />
         {count > 0 && (
@@ -117,15 +115,7 @@ export function NotificationBell({
           </span>
         )}
       </Button>
-      {open && (
-        <div
-          role="dialog"
-          aria-label="Notifications"
-          className={cn(
-            "absolute z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border bg-card shadow-lg",
-            align === "left" ? "left-0" : "right-0",
-          )}
-        >
+      }>
           <div className="flex items-center justify-between border-b px-3 py-2">
             <span className="text-sm font-medium">Notifications</span>
             <Button
@@ -175,8 +165,6 @@ export function NotificationBell({
               ))}
             </ul>
           )}
-        </div>
-      )}
-    </div>
+    </HeaderPopover>
   );
 }

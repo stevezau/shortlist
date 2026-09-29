@@ -33,6 +33,8 @@ export interface WizardData {
    */
   curator_ready?: boolean;
   customized?: boolean;
+  /** Resume the exact first run after refresh; do not offer another build while it is running. */
+  first_run_id?: number;
 }
 
 export interface WizardStepMeta {
@@ -44,7 +46,7 @@ export interface WizardStepMeta {
 export const WIZARD_STEPS: readonly WizardStepMeta[] = [
   {
     title: "Welcome",
-    why: "A private, AI-curated Picked-for-You row for every user on your Plex server.",
+    why: "Personalized rows for the people on your Plex server.",
   },
   {
     title: "Connect Plex",
@@ -68,7 +70,7 @@ export const WIZARD_STEPS: readonly WizardStepMeta[] = [
   },
   {
     title: "Make it yours",
-    why: "Row name, row size, and when rows refresh.",
+    why: "Give your first row a name and choose how many titles to show. See how it will look on Plex as you go.",
   },
   {
     title: "First run",

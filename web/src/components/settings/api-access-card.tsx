@@ -8,10 +8,11 @@ import {
   TriangleAlert,
   Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiErrorMessage, apiUrl } from "@/lib/api";
 import { formatDate, timeAgo } from "@/lib/format";
@@ -84,6 +85,8 @@ function TokenField({ token }: { token: string }) {
  * revoking invalidates the old one immediately.
  */
 export function ApiAccessCard() {
+  const [confirm, setConfirm] = useState<"regenerate" | "revoke" | null>(null);
+  const confirmTrigger = useRef<HTMLButtonElement | null>(null);
   const status = useApiToken();
   const create = useCreateApiToken();
   const revoke = useRevokeApiToken();
@@ -97,6 +100,19 @@ export function ApiAccessCard() {
       <h2 id="api-access-heading" className="text-lg font-semibold">
         API access
       </h2>
+      <Dialog open={confirm !== null} onOpenChange={(open) => { if (!open) setConfirm(null); }}>
+        <DialogContent onCloseAutoFocus={(event) => { event.preventDefault(); confirmTrigger.current?.focus(); }}>
+          <DialogTitle>{confirm === "regenerate" ? "Replace the API token?" : "Revoke the API token?"}</DialogTitle>
+          <DialogDescription>Scripts using the current token will stop working immediately. {confirm === "regenerate" ? "Update them with the new token after replacing it." : "You can generate a new token later."}</DialogDescription>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirm(null)}>Keep current token</Button>
+            <Button variant={confirm === "revoke" ? "destructive" : "default"} onClick={() => {
+              if (confirm === "regenerate") create.mutate(); else revoke.mutate();
+              setConfirm(null);
+            }}>{confirm === "regenerate" ? "Replace token" : "Revoke token"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Card>
         <CardContent className="space-y-4 pt-6">
           <p className="text-sm text-muted-foreground">
@@ -147,7 +163,7 @@ export function ApiAccessCard() {
               <div className="flex flex-wrap gap-2">
                 <Button
                   variant="outline"
-                  onClick={() => create.mutate()}
+                  onClick={(event) => { confirmTrigger.current = event.currentTarget; setConfirm("regenerate"); }}
                   loading={create.isPending}
                 >
                   {!create.isPending && <RefreshCw aria-hidden="true" />}
@@ -156,7 +172,7 @@ export function ApiAccessCard() {
                 <Button
                   variant="ghost"
                   className="text-destructive-text hover:text-destructive-text"
-                  onClick={() => revoke.mutate()}
+                  onClick={(event) => { confirmTrigger.current = event.currentTarget; setConfirm("revoke"); }}
                   loading={revoke.isPending}
                 >
                   {!revoke.isPending && <Trash2 aria-hidden="true" />}

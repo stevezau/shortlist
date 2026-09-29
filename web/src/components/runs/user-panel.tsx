@@ -152,7 +152,7 @@ function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
         title={isNew ? "New this run" : "Kept from last run"}
       />
       <span className="min-w-0 flex-1 text-sm">
-        <span className="block truncate">
+        <span className="block break-words">
           <span className="font-medium">{pick.title}</span>
           {/* Release year sits with the TITLE, not on the metadata line: "is this an old film?" is
               asked while reading the name, and the Recent releases setting is judged on it. Absent
@@ -164,7 +164,7 @@ function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
             </span>
           )}
           {pick.reason && (
-            <span className="text-muted-foreground"> — {pick.reason}</span>
+            <span className="block text-xs leading-relaxed text-muted-foreground">{pick.reason}</span>
           )}
         </span>
         {/* Where it came from. This page has its own pick renderer rather than using PickList, so

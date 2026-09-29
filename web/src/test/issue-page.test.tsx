@@ -1084,3 +1084,14 @@ describe("IssuePage — the surfaces verdict cannot say all-clear over a real fi
     ).toBeTruthy();
   });
 });
+
+
+it("filters the check catalogue without running a check", async () => {
+  supportStatus.mockResolvedValue(ON);
+  renderPage();
+  await userEvent.click(await screen.findByRole("button", { name: /Show all .* checks/ }));
+  const healthReads = supportHealth.mock.calls.length;
+  await userEvent.type(screen.getByRole("searchbox", { name: "Search diagnostic checks" }), "zzznomatch");
+  expect(screen.getByText("No checks match that search.")).toBeInTheDocument();
+  expect(supportHealth).toHaveBeenCalledTimes(healthReads);
+});

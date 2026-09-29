@@ -1,5 +1,5 @@
 import { Rows3 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useNavigate } from "react-router";
 
 import { PageHeader } from "@/components/page-header";
@@ -59,6 +59,7 @@ export function RowsPage() {
   const navigate = useNavigate();
   // Adding goes through the gallery first — a blank 17-field form only ever helped someone who
   // already knew what they wanted to build.
+  const templateTrigger = useRef<HTMLButtonElement | null>(null);
   const [pickingTemplate, setPickingTemplate] = useState(false);
   // When set, the matching RowCard opens its rename dialog on mount.
 
@@ -70,7 +71,7 @@ export function RowsPage() {
         subtitle="The strips Shortlist builds on your users’ Plex home screens."
         actions={
           <Button
-            onClick={() => setPickingTemplate(true)}
+            onClick={(event) => { templateTrigger.current = event.currentTarget; setPickingTemplate(true); }}
             // Without the user list, the editor's audience picker would offer nobody to choose —
             // and an owner could save "chosen people: none" believing they'd picked everyone.
             disabled={!usersQuery.isSuccess}
@@ -96,7 +97,7 @@ export function RowsPage() {
                   title="No rows yet"
                   hint="Add a row to start building recommendations. The default “Picked for You” usually seeds itself."
                   action={
-                    <Button onClick={() => setPickingTemplate(true)}>
+                    <Button onClick={(event) => { templateTrigger.current = event.currentTarget; setPickingTemplate(true); }}>
                       Add a row
                     </Button>
                   }
@@ -121,6 +122,7 @@ export function RowsPage() {
             <RowTemplateGallery
               open={pickingTemplate}
               onClose={() => setPickingTemplate(false)}
+              onReturnFocus={() => templateTrigger.current?.focus()}
               onPick={(template) => {
                 setPickingTemplate(false);
                 // null = "start from scratch" — the gallery's last tile.

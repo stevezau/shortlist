@@ -613,6 +613,7 @@ export function RowPreview({
   settings,
   seasons = [],
   rowNames = {},
+  compact = false,
 }: {
   input: CollectionInput;
   /** The globals the row's kind is read against — the editor's own, so the two cannot disagree. */
@@ -627,19 +628,28 @@ export function RowPreview({
   seasons?: Season[];
   /** Every row's name by slug, to name a row this one is placed beside. */
   rowNames?: Record<string, string>;
+  compact?: boolean;
 }) {
   const facts = rowFacts({ input, ctx, enabled, users, libraries, settings, seasons, rowNames });
+  const primaryLabels = new Set([
+    "Status", "Who gets it", "How many", "Based on", "Built from", "Counts",
+    "Which requests", "When they run out", "Found via", "Contents", "Skips",
+    "Rebuilds", "Appears on", "Only on", "Seasons", "Shelf position",
+  ]);
+  const primary = compact ? facts.filter((fact) => primaryLabels.has(fact.label)) : facts;
+  const secondary = compact ? facts.filter((fact) => !primaryLabels.has(fact.label)) : [];
 
   // The heading lives in the PAGE, above this card, not inside it — so it lines up with "Row
   // settings" over the left column and both columns start at the same y. A heading inside the card
   // sat a card's padding lower than the one beside it, which read as two unrelated things.
   return (
-    <div className="space-y-4 rounded-lg border bg-card p-5">
+    <div aria-label="Outcome facts" className="space-y-3 rounded-lg border bg-card p-4 [&_dt]:w-20 [&_dd]:text-xs [&_dt]:text-xs">
       <dl className="divide-y">
-        {facts.map((fact) => (
+        {primary.map((fact) => (
           <Fact key={fact.label} {...fact} />
         ))}
       </dl>
+      {secondary.length > 0 && <details className="border-t pt-3"><summary className="cursor-pointer text-xs text-muted-foreground">All outcome details</summary><dl className="mt-2 divide-y">{secondary.map((fact) => <Fact key={fact.label} {...fact} />)}</dl></details>}
     </div>
   );
 }

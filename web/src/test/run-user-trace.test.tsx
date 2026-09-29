@@ -1,7 +1,9 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { api } from "@/lib/api";
 import { TraceView } from "@/pages/run-user-trace";
 import type {
   RunUserTraceResponse,
@@ -1006,11 +1008,11 @@ describe("TraceView for a shared row", () => {
 
   it("drops the person framing and names the row as the run page does", () => {
     render(
-      <TraceView data={sharedData} rowName="👥 Popular on SFLIX" sharedRow />,
+      <TraceView data={sharedData} rowName="👥 Popular {library_name} on SFLIX" sharedRow />,
     );
 
     expect(
-      screen.getByText(/How we picked for 👥 Popular on SFLIX/),
+      screen.getByRole("heading", { name: /How we picked for 👥 Popular library name on SFLIX/ }),
     ).toBeInTheDocument();
     expect(screen.getByText(/for this shared row/i)).toBeInTheDocument();
     expect(screen.queryByText(/for this person/i)).not.toBeInTheDocument();
@@ -1181,5 +1183,21 @@ describe("TraceView — a Your requests row", () => {
     expect(screen.getByText("What they asked for")).toBeInTheDocument();
     expect(screen.getByText(/What they watched recently/)).toBeInTheDocument();
     expect(screen.getByText(/How we ordered the shortlist/)).toBeInTheDocument();
+  });
+});
+
+
+describe("Trace seed action feedback", () => {
+  it("reports a rejected seed change and permits a successful retry with the same seed", async () => {
+    const block = vi.spyOn(api, "blockSeed").mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({ blocked_seeds: [] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><TraceView data={okTrace()} userId={7} /></QueryClientProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "Don’t seed" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn’t block this seed");
+    expect(screen.queryByRole("button", { name: "Seed blocked" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("button", { name: "Seed blocked" })).toBeDisabled();
+    expect(block).toHaveBeenLastCalledWith(7, { tmdbId: 862, title: "Toy Story", mediaType: "movie" });
+    block.mockRestore();
   });
 });

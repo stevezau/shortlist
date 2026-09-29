@@ -89,6 +89,7 @@ function renderEditor(collection: Collection | null, template: RowTemplate | nul
       </QueryClientProvider>
     </MemoryRouter>,
   );
+  document.querySelectorAll<HTMLDetailsElement>("details[data-settings-group], details[data-setting='kind']").forEach((group) => { group.open = true; });
   return { onClose, onRename };
 }
 
@@ -462,7 +463,7 @@ describe("wording", () => {
 
   it("says Rated by is shared with every row and with requests", () => {
     renderEditor(row({ pick_order: "rating" }));
-    expect(screen.getByText(/Shared by every row and by requests: changing it here changes it everywhere/)).toBeInTheDocument();
+    expect(screen.getByText(/Shared by every row and by requests. Changes save immediately/)).toBeInTheDocument();
   });
 
   it("groups a Watch it again row's fill-up settings under their own heading", () => {

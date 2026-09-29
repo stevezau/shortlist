@@ -228,15 +228,18 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
   const lastFinishedRun = runs.data?.find((r) => r.finished_at);
   return (
     <section
-      id="connections"
       aria-labelledby="connections-heading"
       className="scroll-mt-6 space-y-3"
     >
       <h2 id="connections-heading" className="text-lg font-semibold">
         Connections
       </h2>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <ConnectionCard
+      <p className="text-sm text-muted-foreground">Your services, their status, and the details they need.</p>
+      <div className="space-y-7">
+        <div className="space-y-2.5">
+          <h3 className="text-sm font-medium">Essential</h3>
+          <div className="divide-y overflow-hidden rounded-lg border bg-card">
+<ConnectionCard
           service="plex"
           title="Plex"
           need="required"
@@ -254,24 +257,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
             { key: "plex.token", label: "Plex token", kind: "password" },
           ]}
         />
-        <ConnectionCard
-          service="tautulli"
-          title="Tautulli"
-          purpose="Supplies the friendlier names your users go by, so rows say “Sarah” and not an email address."
-          settings={settings}
-          summary={settingString(settings, "tautulli.url")}
-          glyph={<TautulliGlyph />}
-          fields={[
-            {
-              key: "tautulli.url",
-              label: "Address",
-              kind: "text",
-              placeholder: "http://your-host:8181",
-            },
-            { key: "tautulli.apikey", label: "API key", kind: "password" },
-          ]}
-        />
-        <ConnectionCard
+<ConnectionCard
           service="tmdb"
           title="TMDB"
           need="required"
@@ -290,15 +276,12 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
             },
           ]}
         />
-        {/* ONE card, not two. The AI provider and the web search are halves of a single decision:
-            which half you need depends on where you search, and nothing on screen said so. Named
-            "AI & Web search" rather than "Web search" precisely because the AI key has a second
-            consumer (poster art, OpenAI/Gemini only) — a box called "Web search" could not honestly
-            own it, which is what blocked this merge for so long.
-
-            The duplication this used to cause is avoided by there being exactly ONE home: the
-            provider picker lives here and nowhere else, so two copies cannot disagree. */}
-        <ConnectionCard
+          </div>
+        </div>
+        <div className="space-y-2.5">
+          <h3 className="text-sm font-medium">Discovery & watch history</h3>
+          <div className="divide-y overflow-hidden rounded-lg border bg-card">
+<ConnectionCard
           service={testableSearchService(settings)}
           testId="connection-llm"
           title="AI & Web search"
@@ -404,70 +387,24 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
             },
           ]}
         />
-        <ConnectionCard
-          service="overseerr"
-          title="Overseerr / Jellyseerr"
-          purpose="An alternative to connecting Radarr and Sonarr directly: Shortlist files a request here and it fetches the title, using its own quality settings and approval rules. Works with Overseerr, Jellyseerr and Seerr — they share one API."
+<ConnectionCard
+          service="tautulli"
+          title="Tautulli"
+          purpose="Supplies the friendlier names your users go by, so rows say “Sarah” and not an email address."
           settings={settings}
-          summary={settingString(settings, "requests.overseerr.url")}
-          glyph={<Inbox aria-hidden className="text-primary" />}
+          summary={settingString(settings, "tautulli.url")}
+          glyph={<TautulliGlyph />}
           fields={[
             {
-              key: "requests.overseerr.url",
+              key: "tautulli.url",
               label: "Address",
               kind: "text",
-              placeholder: "http://your-host:5055",
+              placeholder: "http://your-host:8181",
             },
-            {
-              key: "requests.overseerr.apikey",
-              label: "API key",
-              kind: "password",
-            },
+            { key: "tautulli.apikey", label: "API key", kind: "password" },
           ]}
         />
-        <ConnectionCard
-          service="radarr"
-          title="Radarr"
-          purpose="Fetches films Shortlist wanted to recommend but couldn’t find on your server."
-          settings={settings}
-          summary={settingString(settings, "requests.radarr.url")}
-          glyph={<Film aria-hidden className="text-primary" />}
-          fields={[
-            {
-              key: "requests.radarr.url",
-              label: "Address",
-              kind: "text",
-              placeholder: "http://your-host:7878",
-            },
-            {
-              key: "requests.radarr.apikey",
-              label: "API key",
-              kind: "password",
-            },
-          ]}
-        />
-        <ConnectionCard
-          service="sonarr"
-          title="Sonarr"
-          purpose="Fetches shows Shortlist wanted to recommend but couldn’t find on your server."
-          settings={settings}
-          summary={settingString(settings, "requests.sonarr.url")}
-          glyph={<Tv aria-hidden className="text-primary" />}
-          fields={[
-            {
-              key: "requests.sonarr.url",
-              label: "Address",
-              kind: "text",
-              placeholder: "http://your-host:8989",
-            },
-            {
-              key: "requests.sonarr.apikey",
-              label: "API key",
-              kind: "password",
-            },
-          ]}
-        />
-        <ConnectionCard
+<ConnectionCard
           service="trakt"
           title="Trakt"
           // Trakt made API keys VIP-only, so people followed our instructions, found no way to
@@ -488,7 +425,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
             },
           ]}
         />
-        <ConnectionCard
+<ConnectionCard
           service="mdblist"
           title="MDBList"
           // Two consumers, not one: `requests.rating_source` gates what gets requested, and
@@ -514,7 +451,80 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
             },
           ]}
         />
-        <ConnectionCard
+          </div>
+        </div>
+        <div className="space-y-2.5">
+          <h3 className="text-sm font-medium">Requests</h3>
+          <div className="divide-y overflow-hidden rounded-lg border bg-card">
+<ConnectionCard
+          service="overseerr"
+          title="Overseerr / Jellyseerr"
+          purpose="An alternative to connecting Radarr and Sonarr directly: Shortlist files a request here and it fetches the title, using its own quality settings and approval rules. Works with Overseerr, Jellyseerr and Seerr — they share one API."
+          settings={settings}
+          summary={settingString(settings, "requests.overseerr.url")}
+          glyph={<Inbox aria-hidden className="text-primary" />}
+          fields={[
+            {
+              key: "requests.overseerr.url",
+              label: "Address",
+              kind: "text",
+              placeholder: "http://your-host:5055",
+            },
+            {
+              key: "requests.overseerr.apikey",
+              label: "API key",
+              kind: "password",
+            },
+          ]}
+        />
+<ConnectionCard
+          service="radarr"
+          title="Radarr"
+          purpose="Fetches films Shortlist wanted to recommend but couldn’t find on your server."
+          settings={settings}
+          summary={settingString(settings, "requests.radarr.url")}
+          glyph={<Film aria-hidden className="text-primary" />}
+          fields={[
+            {
+              key: "requests.radarr.url",
+              label: "Address",
+              kind: "text",
+              placeholder: "http://your-host:7878",
+            },
+            {
+              key: "requests.radarr.apikey",
+              label: "API key",
+              kind: "password",
+            },
+          ]}
+        />
+<ConnectionCard
+          service="sonarr"
+          title="Sonarr"
+          purpose="Fetches shows Shortlist wanted to recommend but couldn’t find on your server."
+          settings={settings}
+          summary={settingString(settings, "requests.sonarr.url")}
+          glyph={<Tv aria-hidden className="text-primary" />}
+          fields={[
+            {
+              key: "requests.sonarr.url",
+              label: "Address",
+              kind: "text",
+              placeholder: "http://your-host:8989",
+            },
+            {
+              key: "requests.sonarr.apikey",
+              label: "API key",
+              kind: "password",
+            },
+          ]}
+        />
+          </div>
+        </div>
+        <div className="space-y-2.5">
+          <h3 className="text-sm font-medium">Notifications</h3>
+          <div className="divide-y overflow-hidden rounded-lg border bg-card">
+<ConnectionCard
           service="notify"
           title="Webhook"
           purpose="Where Shortlist sends its alerts: a Discord or Slack channel, ntfy, Gotify, Home Assistant, n8n, or anything else that accepts a webhook."
@@ -556,6 +566,8 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
             },
           ]}
         />
+          </div>
+        </div>
       </div>
       {/* Required by the TMDB API terms of use whenever their data is displayed. */}
       <p className="text-xs text-muted-foreground">

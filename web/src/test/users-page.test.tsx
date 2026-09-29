@@ -149,6 +149,56 @@ describe("UsersPage", () => {
     getRequestRowSources.mockResolvedValue(sources([]));
   });
 
+  it("finds people by display or Plex name and filters their current status", async () => {
+    getUsers.mockResolvedValue([SARAH, { ...MIKE, display_name: "Michael", prefs: { paused: true } }]);
+    renderPage();
+    await screen.findByText("sarah");
+    await userEvent.type(screen.getByRole("searchbox", { name: "Search users" }), "mike");
+    expect(screen.getByRole("link", { name: "Michael" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "sarah" })).not.toBeInTheDocument();
+    await userEvent.clear(screen.getByRole("searchbox", { name: "Search users" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Paused/ }));
+    expect(screen.getByRole("link", { name: "Michael" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "sarah" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^Active/ }));
+    expect(screen.getByRole("link", { name: "sarah" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Michael" })).not.toBeInTheDocument();
+  });
+
+  it("shows request and viewing context directly without repeating the account type", async () => {
+    getUsers.mockResolvedValue([{ ...SARAH, hit_rate: 0.25 }]);
+    getRequestRowSources.mockResolvedValue(sources([{ user_id: SARAH.id, linked: true, ready: 3 }]));
+    renderPage();
+    expect(await screen.findByText("Linked")).toBeVisible();
+    expect(screen.getByText("3 ready")).toBeVisible();
+    expect(screen.getByText("25%", { exact: true })).toBeVisible();
+    expect(screen.getAllByText("Shared", { exact: true })).toHaveLength(1);
+    expect(screen.queryByText("Shared account", { exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByText("Requests & results", { exact: true })).not.toBeInTheDocument();
+  });
+
+  it("pauses only selected people without turning them off", async () => {
+    getUsers.mockResolvedValue([SARAH, MIKE]);
+    patchUser.mockResolvedValue(SARAH);
+    renderPage();
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Select sarah" }));
+    await userEvent.click(screen.getByRole("button", { name: "Pause rebuilding" }));
+    await waitFor(() => expect(patchUser).toHaveBeenCalledWith(SARAH.id, { prefs: { paused: true } }));
+    expect(patchUser).toHaveBeenCalledTimes(1);
+    expect(setAllUsersEnabled).not.toHaveBeenCalled();
+  });
+
+  it("keeps failed people selected after a partially saved batch", async () => {
+    getUsers.mockResolvedValue([SARAH, MIKE]);
+    patchUser.mockImplementation((id: number) => id === SARAH.id ? Promise.resolve(SARAH) : Promise.reject(new Error("Unavailable")));
+    renderPage();
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Select visible users" }));
+    await userEvent.click(screen.getByRole("button", { name: "Pause rebuilding" }));
+    expect(await screen.findByText(/1 person couldn’t be updated/)).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select mike" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select sarah" })).not.toBeChecked();
+  });
+
   // `hit_rate` is watched-over-delivered across all time, so on a fresh install it is 0 for
   // everyone and the column read "0%" down the page — which says "nobody watches any of this" when
   // the truth is that no pick has had time to be watched. The dashboard already withholds its own
@@ -182,6 +232,7 @@ describe("UsersPage", () => {
     renderPage();
 
     expect(await screen.findByText("50%")).toBeInTheDocument();
+    expect(screen.queryByText(/Picks watched \(too early\)/)).not.toBeInTheDocument();
   });
 
   it("tells the owner where they DO see everyone's rows — but only once they're in the list", async () => {
@@ -614,6 +665,18 @@ describe("UsersPage — Plex Home accounts", () => {
     restricted: true,
     restriction_profile,
     enabled: false,
+  });
+
+  it("excludes Plex-restricted accounts from Active even when enabled is stored", async () => {
+    const ui = userEvent.setup();
+    getUsers.mockResolvedValue([SARAH, { ...managed("Younger Kid"), enabled: true }]);
+    renderPage();
+    await screen.findByRole("link", { name: "kid" });
+    await ui.click(screen.getByRole("button", { name: /^Active/ }));
+    expect(screen.getByRole("link", { name: "sarah" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "kid" })).not.toBeInTheDocument();
+    await ui.click(screen.getByRole("button", { name: /^Needs attention/ }));
+    expect(screen.getByRole("link", { name: "kid" })).toBeVisible();
   });
 
   it("says an account LEFT rather than just showing it switched off", async () => {

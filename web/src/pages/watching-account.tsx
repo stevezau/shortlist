@@ -62,7 +62,7 @@ function Step({
         )}
         {title}
       </h2>
-      <div className={n === undefined ? "space-y-3" : "space-y-3 pl-10"}>
+      <div className={n === undefined ? "space-y-3" : "space-y-3 sm:pl-10"}>
         {children}
       </div>
     </section>
@@ -82,7 +82,7 @@ function OptionCard({
 }) {
   return (
     <Card className={recommended ? "border-foreground/30" : undefined}>
-      <CardContent className="flex flex-col gap-3 pt-6 sm:flex-row sm:items-center sm:justify-between">
+      <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 space-y-1">
           <p className="flex items-center gap-2 font-medium">
             {title}
@@ -154,7 +154,7 @@ export function WatchingAccountPage() {
   });
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-5">
       <BackLink to="/users" label="Users" />
       <PageHeader
         icon={Eye}
@@ -162,7 +162,7 @@ export function WatchingAccountPage() {
         subtitle="Why the Recommended shelf in your libraries shows every person's row to you, and the three ways to deal with it."
       />
 
-      <Step n={1} title="What's happening">
+      <details className="rounded-lg border bg-card p-4"><summary className="cursor-pointer text-sm font-medium">Why the owner sees everyone’s rows</summary><div className="pt-3"><Step title="What's happening">
         <p className="text-sm text-muted-foreground">
           Shortlist gives each person their own row and keeps them apart with a
           Plex label, hidden from everyone else through the{" "}
@@ -182,7 +182,9 @@ export function WatchingAccountPage() {
         </p>
       </Step>
 
-      <Step n={2} title="Your options">
+      </div></details>
+
+      <Step n={1} title="Choose how you want to watch">
         <OptionCard
           title="Take the rows off the library shelf"
           // `collectionsQuery.data ?? []` cannot tell "no row is on the shelf" from "nobody has
@@ -534,7 +536,7 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
     preview === null || staleTarget || (removals > 0 && !acceptedRemovals);
 
   return (
-    <div ref={ref} className="scroll-mt-6">
+    <div ref={ref} className="min-w-0 scroll-mt-6 [overflow-wrap:anywhere]">
       <Step n={numbered ? 3 : undefined} title="Set up the watching account">
         <div className="space-y-2">
           <p className="text-sm text-muted-foreground">
@@ -553,7 +555,7 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
                 Copy the history from
               </span>
               <select
-                className="rounded-md border bg-background px-2 py-1 text-sm"
+                className="min-w-0 max-w-full rounded-md border bg-background px-2 py-1 text-sm"
                 value={effectiveSource ?? ""}
                 onChange={(e) => {
                   setSource(e.target.value ? Number(e.target.value) : null);
@@ -717,6 +719,7 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
                     <Button
                       variant="outline"
                       size="sm"
+                      className="h-auto max-w-full whitespace-normal py-2 text-left"
                       disabled={undoPreviewCall.isPending || !snapshot.complete}
                       onClick={() => (
                         setUndoFailure(null),

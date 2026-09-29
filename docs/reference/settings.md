@@ -4,6 +4,21 @@ description: Every Shortlist configuration key, container environment variable, 
 heading: Settings reference
 ---
 
+## Finding and saving settings
+
+Settings is one continuous page with all nine sections. The links beneath Settings in the main
+sidebar jump to each section and highlight the section you are reading. On mobile, use the sticky
+section selector. Section links, scrolling and browser Back/Forward keep unfinished form edits intact.
+Common refresh and variety controls are visible in Finding titles; **More recommendation controls**
+contains the additional watch-history and rating controls. Links to a specific control reveal its
+group automatically.
+
+Each form keeps its existing save behavior. Automatic saves show progress, confirmation or an error
+near that section; connection forms still use their explicit save and test controls. In Finding
+titles, number fields accept a complete draft before applying bounds when you leave the field or
+press Enter. Replacing or revoking an API token asks for confirmation because existing scripts lose
+access immediately.
+
 ## Environment variables (container)
 
 | Variable                                                                   | Default   | Live or seed                                                                                                                                                                                                                                                                                                      |

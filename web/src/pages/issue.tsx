@@ -313,6 +313,8 @@ export function IssuePage() {
   // opening the second used to destroy the first, so each had to be copied before moving on.
   const [openIds, setOpenIds] = useState<string[]>([]);
   const [showAll, setShowAll] = useState(false);
+  const [checkSearch, setCheckSearch] = useState("");
+  const visibleChecks = CHECKS.filter((check) => `${check.label} ${check.blurb}`.toLocaleLowerCase().includes(checkSearch.trim().toLocaleLowerCase()));
 
   /** A problem card: show exactly its checks, or close them all if they are already showing. */
   const pickProblem = (checks: string[]) => {
@@ -361,7 +363,7 @@ export function IssuePage() {
   const enabled = status.data?.enabled ?? false;
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
+    <div className="flex min-w-0 flex-col gap-5">
       <header className="flex flex-col gap-2">
         <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
           <LifeBuoy className="h-6 w-6 text-primary" aria-hidden="true" />
@@ -468,8 +470,11 @@ export function IssuePage() {
               {showAll ? "Hide" : "Show"} all {CHECKS.length} checks
             </button>
             {showAll ? (
-              <div className="grid gap-2 sm:grid-cols-2">
-                {CHECKS.map((check) => {
+              <div className="space-y-3">
+              <Input type="search" aria-label="Search diagnostic checks" placeholder="Find a check…" value={checkSearch} onChange={(event) => setCheckSearch(event.target.value)} className="sm:max-w-sm" />
+              {visibleChecks.length === 0 && <p className="text-sm text-muted-foreground">No checks match that search.</p>}
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                {visibleChecks.map((check) => {
                   const showing =
                     openFrom === "all" && openIds.includes(check.id);
                   return (
@@ -493,7 +498,7 @@ export function IssuePage() {
                     </button>
                   );
                 })}
-              </div>
+              </div></div>
             ) : null}
           </section>
 

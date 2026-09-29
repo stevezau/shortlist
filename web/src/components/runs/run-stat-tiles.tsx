@@ -148,7 +148,7 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
         ? "sm:grid-cols-3 xl:grid-cols-6"
         : "sm:grid-cols-3 lg:grid-cols-5";
   return (
-    <div className={`grid grid-cols-2 gap-3 ${columns}`}>
+    <div className={`grid grid-cols-2 gap-2 [&>div]:px-3 [&>div]:py-2 [&>div>div:nth-child(2)]:text-xl ${columns}`}>
       <StatTile
         icon={Clock}
         label="Duration"

@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -128,6 +127,7 @@ export function ConnectionCard({
   const test = useMutation({ mutationFn: () => api.testConnection(service) });
   const save = useSaveSettings();
   const [editing, setEditing] = useState(false);
+  const [testRequested, setTestRequested] = useState(false);
   // Idle-card "Remove" is a two-tap confirm: removing a connection is destructive (it wipes the
   // saved URL/key), so the first tap asks and the second commits — no accidental one-click wipe.
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -254,14 +254,14 @@ export function ConnectionCard({
   };
 
   return (
-    <Card data-testid={testId ?? `connection-${service}`}>
-      <CardHeader className="pb-3">
+    <Card data-testid={testId ?? `connection-${service}`} className="rounded-none border-0 bg-transparent shadow-none">
+      <CardHeader className="space-y-2 px-4 py-4 sm:px-5">
         {/* Wraps, and the name side may shrink: the glyph, the service name and the Set up/Test
             buttons together held the card open to 326px on a 320px screen. */}
         <CardTitle className="flex flex-wrap items-center justify-between gap-2">
-          <span className="flex min-w-0 items-center gap-2.5">
+          <span className="flex min-w-0 items-center gap-3">
             <span className="relative">
-              <span className="grid h-9 w-9 place-items-center rounded-lg border bg-elevated [&>svg]:h-5 [&>svg]:w-5">
+              <span className="grid h-8 w-8 place-items-center rounded-lg border bg-elevated [&>svg]:h-5 [&>svg]:w-5">
                 {glyph}
               </span>
               <span
@@ -271,9 +271,11 @@ export function ConnectionCard({
                   dot,
                 )}
               />
-              <span className="sr-only">{status}</span>
             </span>
-            {title}
+            <span className="min-w-0">
+              <span className="flex flex-wrap items-center gap-2 text-[13px]">{title}<span className="text-[10px] font-normal text-muted-foreground">{need === "required" ? "Required" : "Optional"}</span></span>
+              <span className={`mt-1 block text-[11px] font-normal ${test.isSuccess && test.data.ok ? "text-success" : "text-muted-foreground"}`}>{status}</span>
+            </span>
           </span>
           {!editing &&
             (confirmRemove ? (
@@ -313,7 +315,7 @@ export function ConnectionCard({
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => test.mutate()}
+                  onClick={() => { setTestRequested(true); test.mutate(); }}
                   loading={test.isPending}
                   disabled={!configured}
                 >
@@ -334,26 +336,18 @@ export function ConnectionCard({
               </div>
             ))}
         </CardTitle>
-        {/* Four separate things, four separate lines: is it needed, what does it cost, what is it,
-            what do I do next. As one paragraph they all read at the same weight, and the one that
-            stops you (a paid subscription) was the easiest to skim past. */}
-        <CardDescription className="space-y-2">
-          <span className="flex flex-wrap items-center gap-1.5">
-            <Badge variant={need === "required" ? "default" : "secondary"}>
-              {need === "required" ? "Required" : "Optional"}
-            </Badge>
-            {requires && (
-              <Badge variant="warning">
-                <TriangleAlert aria-hidden className="h-3 w-3" />
-                {requires}
-              </Badge>
-            )}
-          </span>
-          <span className="block">{purpose}</span>
-          {next && <span className="block">{next}</span>}
-        </CardDescription>
+        <div className="pl-11 text-xs text-muted-foreground">
+          {requires && <Badge variant="warning" className="mb-2"><TriangleAlert aria-hidden className="h-3 w-3" />{requires}</Badge>}
+          <details>
+            <summary className="w-fit cursor-pointer text-[11px] hover:text-foreground">About {title}</summary>
+            <p className="pt-2 leading-relaxed">{purpose}</p>
+            {next && <p className="pt-1 leading-relaxed">{next}</p>}
+            {summary && <p className="break-words pt-1">{summary}</p>}
+            {test.isSuccess && !testRequested && test.data.message !== status && <div className="pt-2"><TestResult result={test.data} /></div>}
+          </details>
+        </div>
       </CardHeader>
-      <CardContent>
+      {(editing || testRequested || test.isError || (test.isSuccess && !test.data.ok) || footnote) && <CardContent className="px-4 pb-4 pt-0 sm:px-5">
         {editing ? (
           <div className="space-y-3">
             {fields.map((field, i) => {
@@ -496,7 +490,7 @@ export function ConnectionCard({
         {footnote && !editing && (
           <p className="mt-2 text-xs text-muted-foreground">{footnote}</p>
         )}
-      </CardContent>
+      </CardContent>}
     </Card>
   );
 }
