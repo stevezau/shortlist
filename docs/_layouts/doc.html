@@ -115,6 +115,8 @@ nothing: no trail beats a trail with a blank name in it.
       {%- if page.description %}<p>{{ page.description }}</p>{% endif -%}
     </div>
 
+    <p class="release-note">Default install: <strong>stable {{ site.stable_version }}</strong>. Upcoming features and interface changes are marked <strong>Development preview</strong>. <a href="{{ "/getting-started/#release-channels" | relative_url }}">Release channels</a>.</p>
+
     {{ content }}
 
     <a class="edit-link" href="{{ site.repo }}/edit/dev/docs/{{ page.path | remove_first: 'docs/' }}">

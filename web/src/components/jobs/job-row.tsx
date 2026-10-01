@@ -186,13 +186,13 @@ export function JobRow({
             check" looking broken next to neighbours that all showed a time, with no way to tell an
             opt-in schedule from a missing one. */}
         {entry.scheduled && entry.next_run ? (
-          <span className="hidden w-32 shrink-0 items-center gap-1.5 text-xs text-muted-foreground sm:flex">
+          <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground sm:w-32">
             <Clock className="size-3 shrink-0" aria-hidden="true" />
             {timeUntil(entry.next_run)}
           </span>
         ) : entry.schedule_optional ? (
           <span
-            className="hidden w-32 shrink-0 items-center gap-1.5 text-xs text-muted-foreground/60 sm:flex"
+            className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground sm:w-32"
             title="Off by choice, not broken — open this job to give it a schedule."
           >
             <Clock className="size-3 shrink-0" aria-hidden="true" />

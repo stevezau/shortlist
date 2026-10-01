@@ -83,6 +83,29 @@ jobs:
           print(f"lock covers all {len(want)} declared runtime dependencies")
           PY
 
+  docs:
+    name: Website
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+        env:
+          BUNDLE_GEMFILE: docs/Gemfile
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install playwright
+      - run: python -m playwright install --with-deps chromium
+      - name: Build the published website
+        run: bundle exec jekyll build --source docs --destination /tmp/shortlist-docs
+        env:
+          BUNDLE_GEMFILE: docs/Gemfile
+      - name: Check rendered links and responsive navigation
+        run: python scripts/check_docs_site.py /tmp/shortlist-docs --browser
+
   test-python-shard:
     # SHARDED, reversing the note that used to sit here. That note was right when it was written
     # and its premise has since expired: it measured this job at 2m52 and off the critical path

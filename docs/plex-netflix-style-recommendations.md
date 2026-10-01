@@ -41,8 +41,7 @@ configures.
 **Smart collections** get you the _shape_ of Netflix rows cheaply — "highly rated thrillers", "90s
 action", saved filters that stay current as the library grows and can be promoted to Home. Worth
 doing, and where most people should start. What they can't do is follow the viewer, so everyone still
-sees the same row: [how to improve Plex
-recommendations](improve-plex-recommendations.md#smart-collections-the-real-ceiling-of-the-built-in-tools)
+sees the same row: [how to improve Plex recommendations](improve-plex-recommendations.md#smart-collections-the-real-ceiling-of-the-built-in-tools)
 covers what to build and where it stops.
 
 That's the ceiling of the built-in features. Rows that look right, contents that aren't personal.
@@ -89,8 +88,7 @@ row can hold, or weight recent watches more heavily.
 Verify every pick exists in your library before it goes in a collection, and drop anything the person
 has already watched. The order is what makes that possible: generate the candidates from your library,
 then let a model rank and explain them. Ask a model for titles instead and it returns films you don't
-own, films under alternate names, and occasionally films that don't exist. [AI recommendations for
-Plex](plex-ai-recommendations.md) is the long version.
+own, films under alternate names, and occasionally films that don't exist. [AI recommendations for Plex](plex-ai-recommendations.md) is the long version.
 
 ## Where this leaves you
 

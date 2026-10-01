@@ -7,16 +7,22 @@ nav_order: 2
 
 ## Starting from a template
 
-**Rows → Add a row** opens a gallery rather than a blank form: _Picked for You_, _Because you
-watched…_, _Watch it again_, _Your requests_, _Fresh finds_, _Seasonal_, _From the vault_, _Popular
-on this server_, _Movie night_, _More TV to watch_, and _Start from scratch_. Search or filter the compact
-template list, then select a tile to see its preview and settings. **Use template** opens the row
-editor with those settings filled in; **Start from scratch** opens an empty row directly.
-Nothing is locked in. Every field is
-editable afterwards — including the row's kind, see [Row kinds](#row-kinds) below — and the template
-is not stored on the row.
+Stable {{ site.stable_version }} has nine starting templates: _Picked for You_, _Because you
+watched…_, _Watch it again_, _Fresh finds_, _Seasonal_, _From the vault_, _Popular on this server_,
+_Movie night_ and _More TV to watch_. **Rows → Add a row** opens the gallery. Each tile describes
+what it changes; every field remains editable afterwards.
+
+**Development preview:** the compact gallery adds search, filters and a selected-template preview.
+**Use template** opens the editor; **Start from scratch** opens an empty row directly. The development
+build also adds _Your requests_, for titles someone requested that are now ready on Plex.
 
 ## Editing a row
+
+On stable, the row editor groups its fields under descriptive headings such as **How it looks on
+Plex** and **What kind of row is this?**. Settings stay a draft until you save; renaming and artwork
+operations have their own actions.
+
+### Development preview: editor navigation
 
 The editor labels its current **Row type** and starts with the appearance fields. The sticky section
 buttons use the same names as their headings: **Appearance**, **Row settings**, **Audience**,
@@ -29,7 +35,8 @@ early to judge a row. The preview shows an explicitly illustrative row, audience
 basis and sources, watched-title policy, schedule and placement. **All outcome details** retains
 the remaining settings summary.
 The outcome facts stay beside the form on a desktop and remain visible above the settings on a
-phone; only the illustrative artwork preview is folded there. **Save changes** remains at the bottom of the screen.
+phone; its section buttons appear immediately below the page heading, before the visible performance
+and outcome facts. Only the illustrative artwork preview is folded there. **Save changes** remains at the bottom of the screen.
 
 Row settings stay a draft until you save. **Rename**, artwork operations and the row's on/off switch
 keep their separate actions. **Rated by · global setting** saves immediately and affects every row
@@ -37,8 +44,8 @@ and Requests; its saving, success or error message appears beside that control.
 
 ## Row kinds
 
-Every row is one of six kinds. The **Row editor** starts with the selected kind; open **Change row type** to
-see the "What kind of row is this?" picker. Each kind fills the row in a different way, and picking one changes which
+Stable has five row kinds; the development build adds **Your requests** as a sixth. In stable,
+use **What kind of row is this?**; in the development editor, choose **Change row type**. Each kind fills the row in a different way, and picking one changes which
 settings appear below it, so you're never hunting for a setting that doesn't apply to what your row
 does:
 
@@ -46,7 +53,7 @@ does:
 - **Because you watched** — More like one thing they watched recently. Named after it, like "Because
   you watched Dune".
 - **Watch it again** — Favourites they've already finished, ready to rewatch.
-- **Your requests** — What they asked for in Overseerr, once it's on Plex. Each title leaves once
+- **Your requests — Development preview** — What they asked for in Overseerr, once it's on Plex. Each title leaves once
   they've watched it. See [Your requests rows](#your-requests-rows) below.
 - **Seasonal** — Only appears around the holidays you pick, like Halloween or Christmas. Filled in any
   of the ways above, except Your requests.
@@ -250,6 +257,8 @@ of a rewatch row). A fill-up title can still be requested if your library doesn'
 [Requests on a row](#requests-on-a-row) below.
 
 ## Your requests rows
+
+**Development preview:** this row kind is available on `:dev`, not stable {{ site.stable_version }}.
 
 Choose **Your requests** as a row's kind — or start from the _Your requests_ template — and each
 person gets a private row of the titles **they** asked for that are now on Plex and they haven't
@@ -496,7 +505,7 @@ By default Plex adds new collections at the **end** of a library's _Recommended_
 tool (like **Kometa**) manages collections on the same server, Shortlist's rows can end up buried at
 the bottom.
 
-Each row chooses its own spot, per library, in the **Row editor** under "Where it sits":
+Each row chooses its own spot, per library, in the **Row editor** under **Where it sits** on stable, or **Plex placement** in the development preview:
 
 - **Top of the shelf** — the default, and the one position that always works.
 - **Right after / before a collection**. Pick an existing collection and sit the row next to it. It
@@ -583,7 +592,7 @@ still reorders the shelf, so the two options above still apply.
 
 ## Row posters
 
-Each row can have its own artwork on Plex. In the **Row editor** → **How it looks on Plex** → **Poster**, pick one of:
+Each row can have its own artwork on Plex. In the **Row editor** → **How it looks on Plex** (called **Appearance** in the development preview) → **Poster**, pick one of:
 
 - **Plex default** — leave Plex's own collection artwork alone (the default). Switching a row _back_
   to this after it had a custom poster reverts the artwork on Plex on save.
@@ -603,7 +612,7 @@ user. Posters are cosmetic. A poster that can't be made never blocks a row from 
 
 Each row can also set two of its Plex collection's own fields in the **Row editor**:
 
-- **Description**, under **How it looks on Plex** — the summary Plex shows when someone opens the
+- **Description**, under **How it looks on Plex** (**Appearance** in the development preview) — the summary Plex shows when someone opens the
   row. It fills in `{user}`, `{library_name}` and `{top_seed}` the same way the row's name does, so
   every person's copy can say something about them. A `{top_seed}` description for someone with
   nothing watched is left empty. The **On Plex** card beside it shows the name, description and

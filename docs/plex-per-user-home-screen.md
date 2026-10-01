@@ -102,10 +102,10 @@ user gets their own rows built from their own watch history; every run sweeps ro
 delivers rows unpromoted, merges the `label!=` exclusions into every other account's share filter,
 and only then promotes anything onto Home. In that order, every time.
 
-It copies your share filters before its first write and restores them exactly if you uninstall, and
-it never touches a collection it didn't create, so Kometa and anything else managing collections on
-the same server keep working. [Per-user
-collections](plex-per-user-collections.md#the-automated-version) lists the rest.
+It copies your share filters before its first write. The in-app uninstall flow previews restoring
+those snapshots and reports any failures; removing the container alone does not clean up Plex.
+It changes collection contents, names and artwork only for its own collections. Placing rows can
+move other shelves while preserving their relative order, so Kometa can keep working alongside it. [Per-user collections](plex-per-user-collections.md#the-automated-version) lists the rest.
 
 ```bash
 docker run -d --name shortlist -p 5959:5959 \

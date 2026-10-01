@@ -35,10 +35,13 @@ lives. See [Rows and templates](rows.md).
 Everyone the server is shared with, plus you (badged `owner`, because plex.tv's user list leaves the owner
 out, so Shortlist adds you itself).
 
-Search the roster by name and filter **All**, **Active**, **Paused**, **Off** or **Needs attention**.
+**Development preview:** the redesigned roster adds search and filters. Search by name and filter **All**, **Active**, **Paused**, **Off** or **Needs attention**.
 Active means enabled, not paused and not blocked by a Plex restriction profile; a paused person
 can still have their Enabled switch on.
 Account type, request-link status and picks watched stay visible beside each person's identity.
+**Select visible users** and **Sort** sit above the roster at every screen width. **All users…**
+closes with Escape or an outside click; its Enable/Disable actions still require confirmation.
+
 Open a person for
 **Rows**, **Runs**, **Settings** and **Watched**; these tabs keep their own links, and keyboard
 users can move between them with the arrow, Home and End keys.
@@ -70,7 +73,7 @@ depth just for them. Opening a person shows their recent watch history (distinct
 and episode numbers for TV), their picks grouped by row (long lists collapse behind a "show more"),
 and a **Run now** button to rebuild just that person.
 
-Their Settings tab groups **Nickname**, **Request tags**, **Plex sharing** and **Blocked titles**
+**Development preview:** their Settings tab groups **Nickname**, **Request tags**, **Plex sharing** and **Blocked titles**
 into labelled sections. Nickname and tag fields save when you leave them. Saving a nickname also
 renames existing Plex rows; it does not change privacy. Blocking a title keeps it in watch history
 but stops it shaping recommendations, and you can unblock it from the same section.
@@ -181,7 +184,9 @@ The AI web-search card shows the exact Exa queries and the prompt the model sear
 each proposed title kept or dropped, or struck through when it resolved to no real match (a
 hallucination). Long lists of returned titles expand in place.
 
-Each watch-history seed has a **Don’t seed** action, also visible on mobile. A successful change
+**Development preview:** mobile trace navigation keeps the chosen heading below the sticky
+controls, highlights it and moves keyboard focus to it. Each watch-history seed has a **Don’t seed**
+action, also visible on mobile. A successful change
 shows **Seed blocked**; a failed change shows an error and **Try again** without claiming it saved.
 
 A **cold-start** user, with too little history to search from, gets the same page, showing the
@@ -210,6 +215,7 @@ Every piece of background maintenance Shortlist does, in two areas.
 ### The Jobs list
 
 One per line: the name, how the last run went, when the next one fires, and the button.
+The development preview keeps the next-run time, or **Not scheduled**, visible on mobile too.
 
 **Run now** holds the six you start yourself:
 
@@ -260,8 +266,8 @@ Both are applied by the nightly **Clear out old records** job.
 
 ## Settings
 
-Settings is one continuous page. Its section links sit beneath Settings in the main sidebar and
-highlight the section you are reading as you scroll. On mobile, a sticky section selector jumps to
+Settings is one continuous page on stable and development. Its section links sit beneath Settings in the main sidebar and
+highlight the section you are reading as you scroll. In the development preview, a sticky mobile section selector jumps to
 the same sections. All forms stay mounted, so jumping between sections preserves unfinished edits.
 
 - **Connect** — Connections
@@ -353,3 +359,16 @@ selected. Each column is split: the solid part is what got finished, the faded p
 going. A past week's solid part can GROW later, when someone finally finishes a series they started
 back then — the bar answers "what became of what landed that week", and that answer genuinely
 changes.
+
+## Development preview: the updated interface
+
+These screenshots show the upcoming `:dev` interface using sample accounts and titles.
+Stable {{ site.stable_version }} remains the default installation; see [Release channels](../getting-started.md#release-channels).
+
+<div class="preview-gallery">
+  <figure><a href="{{ '/images/preview-row-editor.webp' | relative_url }}"><img src="{{ '/images/preview-row-editor.webp' | relative_url }}" alt="Development preview: row editor with matching section buttons and headings" loading="lazy"></a><figcaption>Row editor: clear section destinations and visible outcome facts.</figcaption></figure>
+  <figure><a href="{{ '/images/preview-run-live.webp' | relative_url }}"><img src="{{ '/images/preview-run-live.webp' | relative_url }}" alt="Development preview: live run progress with people and status details" loading="lazy"></a><figcaption>Live run: one progress summary and each person's current work.</figcaption></figure>
+  <figure><a href="{{ '/images/preview-users.webp' | relative_url }}"><img src="{{ '/images/preview-users.webp' | relative_url }}" alt="Development preview: Users roster with search, status filters, select and sort controls" loading="lazy"></a><figcaption>Users: compact identities, visible account context and reachable bulk controls.</figcaption></figure>
+  <figure><a href="{{ '/images/preview-requests.webp' | relative_url }}"><img src="{{ '/images/preview-requests.webp' | relative_url }}" alt="Development preview: Requests with direct Send, Delete and Reject actions" loading="lazy"></a><figcaption>Requests: the available actions stay beside each title.</figcaption></figure>
+  <figure><a href="{{ '/images/preview-settings.webp' | relative_url }}"><img src="{{ '/images/preview-settings.webp' | relative_url }}" alt="Development preview: continuous Settings page with sidebar section navigation" loading="lazy"></a><figcaption>Settings: one scrolling page with section tracking.</figcaption></figure>
+</div>

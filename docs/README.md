@@ -29,7 +29,25 @@ outage, is the comment above `url:` in _config.yml.
 | [Per-user Plex collections](plex-per-user-collections.md) | The label + share-filter mechanism everything above is built on    |
 
 **The short version:** run the container, log in with Plex, pick your users, and every night each
-user gets a personal "✨ Picked for You" row built from their own watch history — visible only to
-them. Each row is delivered unpromoted, the exclusions that keep it private are merged into everyone
+user gets a personal "✨ Picked for You" row built from their own watch history, using Plex sharing
+filters. The server owner and Plex restriction profiles have visibility exceptions. Each row is delivered unpromoted, the exclusions that keep it private are merged into everyone
 else's share — straight away for someone's first row or a new shared row — and only then is it promoted onto Home. Your
-share filters are snapshotted first, so uninstalling puts them back exactly.
+share filters are snapshotted first. Use the in-app uninstall flow to preview and restore them
+before removing the container; deleting Docker alone does not clean up Plex.
+
+## Checking the website
+
+Use Ruby 3.3 and the pinned GitHub Pages renderer dependencies:
+
+```bash
+BUNDLE_GEMFILE=docs/Gemfile bundle install
+BUNDLE_GEMFILE=docs/Gemfile bundle exec jekyll build --source docs --destination /tmp/shortlist-docs
+python scripts/check_docs_site.py /tmp/shortlist-docs --browser
+python scripts/build_llms_full.py
+```
+
+The browser check uses Playwright Chromium and checks generated links and assets, all pages at
+320, 390 and 1440 pixels, mobile navigation, focus and search. It serves only the local build.
+The default installation follows `stable_version` in `_config.yml`; update that value at release
+and remove the Development preview markers only when the corresponding features reach stable.
+Recapture sample-account screenshots against the documented build, keeping their channel labels.

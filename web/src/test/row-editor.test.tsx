@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -1425,6 +1426,31 @@ describe("RowEditor — focused sections retain every control", () => {
     "Plex placement",
     "Requests",
   ] as const;
+
+  it("puts mobile section navigation before the overview while keeping all outcome facts visible", async () => {
+    const width = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });
+    try {
+      renderEditor(row(), [], false);
+      const nav = screen.getByRole("navigation", { name: "Row settings sections" });
+      const performance = screen.getByRole("heading", { name: "How this row is doing" });
+      expect(nav.compareDocumentPosition(performance) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(performance.closest("details")).toBeNull();
+      expect(document.querySelector('[aria-label="Outcome facts"]')?.closest("details")).toBeNull();
+      await userEvent.click(within(nav).getByRole("button", { name: "Audience" }));
+      expect(groupNamed("Audience")).toHaveAttribute("open");
+      expect(groupNamed("Audience")?.querySelector("summary")).toHaveFocus();
+      expect(screen.getByLabelText("Description")).toBeInTheDocument();
+      await userEvent.type(screen.getByLabelText("Description"), "My unfinished changes");
+      Object.defineProperty(window, "innerWidth", { value: 1440, configurable: true });
+      fireEvent.resize(window);
+      expect(screen.getAllByRole("navigation", { name: "Row settings sections" })).toHaveLength(1);
+      expect(screen.getByLabelText("Description")).toHaveValue("My unfinished changes");
+      expect(performance.compareDocumentPosition(screen.getByRole("navigation", { name: "Row settings sections" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    } finally {
+      Object.defineProperty(window, "innerWidth", { value: width, configurable: true });
+    }
+  });
 
   it("leads with appearance and keeps advanced groups mounted behind section navigation", async () => {
     renderEditor(row(), [], false);

@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { api } from "@/lib/api";
 import { TraceView } from "@/pages/run-user-trace";
@@ -1200,4 +1200,56 @@ describe("Trace seed action feedback", () => {
     expect(block).toHaveBeenLastCalledWith(7, { tmdbId: 862, title: "Toy Story", mediaType: "movie" });
     block.mockRestore();
   });
+});
+
+
+describe("Trace step navigation", () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  function layout(pickerHeight = 57) {
+    let searchedTop = 900;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const picker = this.tagName === "LABEL" && this.querySelector('[aria-label="Trace step"]');
+      const top = picker ? 64 : this.id === "Movies-searched" ? searchedTop : this.id === "Movies-watched" ? -200 : 2000;
+      const height = picker ? pickerHeight : 500;
+      return { top, bottom: top + height, left: 0, right: 358, width: 358, height, x: 0, y: top, toJSON() {} };
+    });
+    const getStyle = window.getComputedStyle.bind(window);
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element) => {
+      const style = getStyle(element);
+      if (element.tagName === "LABEL" && element.querySelector('[aria-label="Trace step"]')) Object.defineProperty(style, "top", { value: "64px", configurable: true });
+      return style;
+    });
+    const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    return { scroll, setSearchedTop: (top: number) => { searchedTop = top; } };
+  }
+
+  it("keeps the destination below both sticky bars, focuses its heading and marks the section", () => {
+    const { scroll } = layout();
+    render(<TraceView data={okTrace()} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Trace step" }), { target: { value: "Movies-searched" } });
+    const heading = screen.getByRole("heading", { name: /Where we searched/ });
+    expect(scroll).toHaveBeenLastCalledWith({ top: 767, behavior: "smooth" });
+    expect(heading).toHaveFocus();
+    expect(heading.closest("section")).toHaveAttribute("data-navigation-highlight", "true");
+  });
+
+  it("measures a taller step picker and respects reduced motion", () => {
+    const { scroll } = layout(90);
+    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: true }));
+    render(<TraceView data={okTrace()} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Trace step" }), { target: { value: "Movies-searched" } });
+    expect(scroll).toHaveBeenLastCalledWith({ top: 734, behavior: "instant" });
+  });
+  it("tracks the heading below the measured picker when scrolling between steps", () => {
+    const { setSearchedTop } = layout();
+    render(<TraceView data={okTrace()} />);
+    setSearchedTop(133);
+    fireEvent.scroll(window);
+    expect(screen.getByRole("combobox", { name: "Trace step" })).toHaveValue("Movies-searched");
+    setSearchedTop(900);
+    fireEvent.scroll(window);
+    expect(screen.getByRole("combobox", { name: "Trace step" })).toHaveValue("Movies-watched");
+  });
+
 });

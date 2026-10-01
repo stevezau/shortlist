@@ -31,7 +31,7 @@
 
 - emoji: "🕰️"
   title: From the vault
-  blurb: Built once and left alone. A shelf that stays put, for a curated set you don't want reshuffled.
+  blurb: No scheduled rebuilds. The shelf stays put apart from titles they watch, which are replaced.
 
 - emoji: "🍿"
   title: Movie night
@@ -45,3 +45,8 @@
   title: Popular on this server
   blurb: One row everybody sees, built only from titles several people have watched. Nothing personal in it.
   shared: true
+
+- emoji: "📬"
+  title: Your requests
+  blurb: What they asked for in Overseerr, once it is ready on Plex. Available in the development build.
+  development: true

@@ -104,6 +104,17 @@ Requirements, Docker install, first login and the setup wizard that connects you
   Exa needs a free-tier signup; SearXNG is free and runs on your own hardware. See
   [Which web-search backend should I use?](https://shortlistapp.dev/faq/#which-web-search-backend-should-i-use).
 
+## Release channels
+
+The commands below install **stable 1.9.3**, using the `:latest` image tag.
+This is the default for a new installation.
+
+**Development preview (`:dev`)** includes unreleased changes, including the redesigned editor,
+Users and Settings screens and **Your requests** rows. Screenshots marked Development preview
+show that build, so some controls differ from stable. To choose it deliberately, replace `:latest`
+with `:dev` in your image configuration and recreate the container. Back up `/config` before
+changing channels; do not downgrade a migrated database in place.
+
 ## Install (Docker)
 
 With Docker Compose:
@@ -135,8 +146,10 @@ Open `http://your-host:5959`. A fresh install goes straight into the wizard. The
 nothing to sign in to yet. Step 1 connects your Plex account (that's the sign-in, and it's
 what claims the instance for you); from then on Shortlist only opens for that account.
 
-<img src="https://shortlistapp.dev/images/wizard.webp" width="1440" height="588"
-     alt="The Shortlist setup wizard on its Welcome step, with a seven-segment progress bar and a Get started button">
+<p class="release-note"><strong>Development preview.</strong> This screenshot shows the upcoming wizard layout; the stable steps are described below.</p>
+
+<img src="https://shortlistapp.dev/images/wizard.webp" width="1440" height="1000"
+     alt="Development preview: the Shortlist setup wizard on its Welcome step, with a seven-segment progress bar and a Get started button">
 
 Every screenshot on this page is of a throwaway test server, so no real account, address or
 library appears in one.
@@ -145,7 +158,7 @@ library appears in one.
 > anyone who can open the page could claim it as theirs, so don't put it on the public internet
 > until you've finished the wizard. Once you've claimed it, it's yours.
 
-The wizard has **7 steps**, and the progress bar counts them the same way this list does:
+The wizard has **7 steps**. The list below follows stable 1.9.3:
 
 1. **Welcome** — a short intro screen. Read it and continue.
 2. **Connect Plex** — sign in with a PIN, then pick your server. Shortlist checks your Plex
@@ -157,16 +170,15 @@ The wizard has **7 steps**, and the progress bar counts them the same way this l
    Every address Plex advertises for your server is tried from where Shortlist actually runs, and
    the one that answered is preselected. You can always type a different one.
 
-3. **Recommendations & history**. Save and test the required TMDB key.
+3. **Recommendations & history**. Choose where picks come from and save the required TMDB key.
    Watch history comes straight from Plex with no setup. Tautulli is optional, and only improves
    the names people are shown by.
-4. **Add an AI provider (optional)** — choose the built-in picker, or Claude / GPT / Gemini / a local server. Keys stay
+4. **Choose your AI provider** — Claude / GPT / Gemini / a local server / **None**. Keys stay
    yours: stored encrypted, and hidden again once saved. Picking None is a perfectly good choice.
 5. **Pick your users** — everyone you share with, with badges showing how much history each
    person has.
-6. **Make it yours** — choose the row's name and how many titles it holds, alongside a live title
-   preview. **Save & continue** saves both choices before moving on. Rows start with a nightly
-   schedule; each row's editor lets you change it later.
+6. **Make it yours** — choose the row's name, how many titles it holds and its refresh cadence.
+   Each row keeps its own schedule.
 
    The name can be plain text, or use a placeholder that fills itself in per person, such as
    `{library_name}`, `{user}` or `{top_seed}`. See [Naming a row](https://shortlistapp.dev/guides/rows/#naming-a-row)
@@ -193,7 +205,7 @@ share filter. Later runs are much faster. Most rows are unchanged and skipped.
 Every row is hidden from every other account before it is ever put on a home screen, so nobody finds
 a row that was built for someone else. (You are the exception: Plex cannot hide anything from the
 server owner — see below.) Your share filters are copied before the first change, so **Uninstall**
-(Settings → Danger Zone) puts them back exactly as they were. The hiding relies on Plex Media Server
+(Settings → Danger Zone) restores that saved copy and reports any accounts it cannot restore. The hiding relies on Plex Media Server
 1.43.2.10687 or newer — older builds ignore it, which is why the wizard surfaces your version before
 you begin.
 
@@ -214,7 +226,7 @@ Everyone has a row and it will refresh on its own. Worth doing next:
 
 - **Check it landed.** Sign in as somebody who isn't you and confirm they see their row, and only
   theirs. The owner account sees everybody's, so it can't tell you this.
-- **Add another kind of row.** "Picked for You" is one of eight templates.
+- **Add another kind of row.** Stable includes nine templates; the development build also includes "Your requests".
   See [Rows and templates](https://shortlistapp.dev/guides/rows/).
 - **Decide how often rows change.** Each row keeps its own schedule.
   See [Schedules](https://shortlistapp.dev/guides/schedules/).
@@ -222,6 +234,8 @@ Everyone has a row and it will refresh on its own. Worth doing next:
   want but you don't have. See [Requests](https://shortlistapp.dev/guides/requests/).
 
 If a row doesn't turn up, [Troubleshooting](https://shortlistapp.dev/guides/troubleshooting/) lists what usually causes it.
+
+**Development preview:** the customization step shows a live title preview and uses **Save & continue** to save the name and size before moving on.
 
 ---
 
@@ -398,10 +412,13 @@ lives. See [Rows and templates](https://shortlistapp.dev/guides/rows/).
 Everyone the server is shared with, plus you (badged `owner`, because plex.tv's user list leaves the owner
 out, so Shortlist adds you itself).
 
-Search the roster by name and filter **All**, **Active**, **Paused**, **Off** or **Needs attention**.
+**Development preview:** the redesigned roster adds search and filters. Search by name and filter **All**, **Active**, **Paused**, **Off** or **Needs attention**.
 Active means enabled, not paused and not blocked by a Plex restriction profile; a paused person
 can still have their Enabled switch on.
 Account type, request-link status and picks watched stay visible beside each person's identity.
+**Select visible users** and **Sort** sit above the roster at every screen width. **All users…**
+closes with Escape or an outside click; its Enable/Disable actions still require confirmation.
+
 Open a person for
 **Rows**, **Runs**, **Settings** and **Watched**; these tabs keep their own links, and keyboard
 users can move between them with the arrow, Home and End keys.
@@ -433,7 +450,7 @@ depth just for them. Opening a person shows their recent watch history (distinct
 and episode numbers for TV), their picks grouped by row (long lists collapse behind a "show more"),
 and a **Run now** button to rebuild just that person.
 
-Their Settings tab groups **Nickname**, **Request tags**, **Plex sharing** and **Blocked titles**
+**Development preview:** their Settings tab groups **Nickname**, **Request tags**, **Plex sharing** and **Blocked titles**
 into labelled sections. Nickname and tag fields save when you leave them. Saving a nickname also
 renames existing Plex rows; it does not change privacy. Blocking a title keeps it in watch history
 but stops it shaping recommendations, and you can unblock it from the same section.
@@ -544,7 +561,9 @@ The AI web-search card shows the exact Exa queries and the prompt the model sear
 each proposed title kept or dropped, or struck through when it resolved to no real match (a
 hallucination). Long lists of returned titles expand in place.
 
-Each watch-history seed has a **Don’t seed** action, also visible on mobile. A successful change
+**Development preview:** mobile trace navigation keeps the chosen heading below the sticky
+controls, highlights it and moves keyboard focus to it. Each watch-history seed has a **Don’t seed**
+action, also visible on mobile. A successful change
 shows **Seed blocked**; a failed change shows an error and **Try again** without claiming it saved.
 
 A **cold-start** user, with too little history to search from, gets the same page, showing the
@@ -573,6 +592,7 @@ Every piece of background maintenance Shortlist does, in two areas.
 ### The Jobs list
 
 One per line: the name, how the last run went, when the next one fires, and the button.
+The development preview keeps the next-run time, or **Not scheduled**, visible on mobile too.
 
 **Run now** holds the six you start yourself:
 
@@ -623,8 +643,8 @@ Both are applied by the nightly **Clear out old records** job.
 
 ## Settings
 
-Settings is one continuous page. Its section links sit beneath Settings in the main sidebar and
-highlight the section you are reading as you scroll. On mobile, a sticky section selector jumps to
+Settings is one continuous page on stable and development. Its section links sit beneath Settings in the main sidebar and
+highlight the section you are reading as you scroll. In the development preview, a sticky mobile section selector jumps to
 the same sections. All forms stay mounted, so jumping between sections preserves unfinished edits.
 
 - **Connect** — Connections
@@ -717,6 +737,19 @@ going. A past week's solid part can GROW later, when someone finally finishes a 
 back then — the bar answers "what became of what landed that week", and that answer genuinely
 changes.
 
+## Development preview: the updated interface
+
+These screenshots show the upcoming `:dev` interface using sample accounts and titles.
+Stable 1.9.3 remains the default installation; see [Release channels](https://shortlistapp.dev/getting-started/#release-channels).
+
+<div class="preview-gallery">
+  <figure><a href="https://shortlistapp.dev/images/preview-row-editor.webp"><img src="https://shortlistapp.dev/images/preview-row-editor.webp" alt="Development preview: row editor with matching section buttons and headings" loading="lazy"></a><figcaption>Row editor: clear section destinations and visible outcome facts.</figcaption></figure>
+  <figure><a href="https://shortlistapp.dev/images/preview-run-live.webp"><img src="https://shortlistapp.dev/images/preview-run-live.webp" alt="Development preview: live run progress with people and status details" loading="lazy"></a><figcaption>Live run: one progress summary and each person's current work.</figcaption></figure>
+  <figure><a href="https://shortlistapp.dev/images/preview-users.webp"><img src="https://shortlistapp.dev/images/preview-users.webp" alt="Development preview: Users roster with search, status filters, select and sort controls" loading="lazy"></a><figcaption>Users: compact identities, visible account context and reachable bulk controls.</figcaption></figure>
+  <figure><a href="https://shortlistapp.dev/images/preview-requests.webp"><img src="https://shortlistapp.dev/images/preview-requests.webp" alt="Development preview: Requests with direct Send, Delete and Reject actions" loading="lazy"></a><figcaption>Requests: the available actions stay beside each title.</figcaption></figure>
+  <figure><a href="https://shortlistapp.dev/images/preview-settings.webp"><img src="https://shortlistapp.dev/images/preview-settings.webp" alt="Development preview: continuous Settings page with sidebar section navigation" loading="lazy"></a><figcaption>Settings: one scrolling page with section tracking.</figcaption></figure>
+</div>
+
 ---
 
 # Rows and templates
@@ -726,16 +759,22 @@ Start a row from a template, name it, choose how its titles are ordered, and pic
 
 ## Starting from a template
 
-**Rows → Add a row** opens a gallery rather than a blank form: _Picked for You_, _Because you
-watched…_, _Watch it again_, _Your requests_, _Fresh finds_, _Seasonal_, _From the vault_, _Popular
-on this server_, _Movie night_, _More TV to watch_, and _Start from scratch_. Search or filter the compact
-template list, then select a tile to see its preview and settings. **Use template** opens the row
-editor with those settings filled in; **Start from scratch** opens an empty row directly.
-Nothing is locked in. Every field is
-editable afterwards — including the row's kind, see [Row kinds](#row-kinds) below — and the template
-is not stored on the row.
+Stable 1.9.3 has nine starting templates: _Picked for You_, _Because you
+watched…_, _Watch it again_, _Fresh finds_, _Seasonal_, _From the vault_, _Popular on this server_,
+_Movie night_ and _More TV to watch_. **Rows → Add a row** opens the gallery. Each tile describes
+what it changes; every field remains editable afterwards.
+
+**Development preview:** the compact gallery adds search, filters and a selected-template preview.
+**Use template** opens the editor; **Start from scratch** opens an empty row directly. The development
+build also adds _Your requests_, for titles someone requested that are now ready on Plex.
 
 ## Editing a row
+
+On stable, the row editor groups its fields under descriptive headings such as **How it looks on
+Plex** and **What kind of row is this?**. Settings stay a draft until you save; renaming and artwork
+operations have their own actions.
+
+### Development preview: editor navigation
 
 The editor labels its current **Row type** and starts with the appearance fields. The sticky section
 buttons use the same names as their headings: **Appearance**, **Row settings**, **Audience**,
@@ -748,7 +787,8 @@ early to judge a row. The preview shows an explicitly illustrative row, audience
 basis and sources, watched-title policy, schedule and placement. **All outcome details** retains
 the remaining settings summary.
 The outcome facts stay beside the form on a desktop and remain visible above the settings on a
-phone; only the illustrative artwork preview is folded there. **Save changes** remains at the bottom of the screen.
+phone; its section buttons appear immediately below the page heading, before the visible performance
+and outcome facts. Only the illustrative artwork preview is folded there. **Save changes** remains at the bottom of the screen.
 
 Row settings stay a draft until you save. **Rename**, artwork operations and the row's on/off switch
 keep their separate actions. **Rated by · global setting** saves immediately and affects every row
@@ -756,8 +796,8 @@ and Requests; its saving, success or error message appears beside that control.
 
 ## Row kinds
 
-Every row is one of six kinds. The **Row editor** starts with the selected kind; open **Change row type** to
-see the "What kind of row is this?" picker. Each kind fills the row in a different way, and picking one changes which
+Stable has five row kinds; the development build adds **Your requests** as a sixth. In stable,
+use **What kind of row is this?**; in the development editor, choose **Change row type**. Each kind fills the row in a different way, and picking one changes which
 settings appear below it, so you're never hunting for a setting that doesn't apply to what your row
 does:
 
@@ -765,7 +805,7 @@ does:
 - **Because you watched** — More like one thing they watched recently. Named after it, like "Because
   you watched Dune".
 - **Watch it again** — Favourites they've already finished, ready to rewatch.
-- **Your requests** — What they asked for in Overseerr, once it's on Plex. Each title leaves once
+- **Your requests — Development preview** — What they asked for in Overseerr, once it's on Plex. Each title leaves once
   they've watched it. See [Your requests rows](#your-requests-rows) below.
 - **Seasonal** — Only appears around the holidays you pick, like Halloween or Christmas. Filled in any
   of the ways above, except Your requests.
@@ -969,6 +1009,8 @@ of a rewatch row). A fill-up title can still be requested if your library doesn'
 [Requests on a row](#requests-on-a-row) below.
 
 ## Your requests rows
+
+**Development preview:** this row kind is available on `:dev`, not stable 1.9.3.
 
 Choose **Your requests** as a row's kind — or start from the _Your requests_ template — and each
 person gets a private row of the titles **they** asked for that are now on Plex and they haven't
@@ -1215,7 +1257,7 @@ By default Plex adds new collections at the **end** of a library's _Recommended_
 tool (like **Kometa**) manages collections on the same server, Shortlist's rows can end up buried at
 the bottom.
 
-Each row chooses its own spot, per library, in the **Row editor** under "Where it sits":
+Each row chooses its own spot, per library, in the **Row editor** under **Where it sits** on stable, or **Plex placement** in the development preview:
 
 - **Top of the shelf** — the default, and the one position that always works.
 - **Right after / before a collection**. Pick an existing collection and sit the row next to it. It
@@ -1302,7 +1344,7 @@ still reorders the shelf, so the two options above still apply.
 
 ## Row posters
 
-Each row can have its own artwork on Plex. In the **Row editor** → **How it looks on Plex** → **Poster**, pick one of:
+Each row can have its own artwork on Plex. In the **Row editor** → **How it looks on Plex** (called **Appearance** in the development preview) → **Poster**, pick one of:
 
 - **Plex default** — leave Plex's own collection artwork alone (the default). Switching a row _back_
   to this after it had a custom poster reverts the artwork on Plex on save.
@@ -1322,7 +1364,7 @@ user. Posters are cosmetic. A poster that can't be made never blocks a row from 
 
 Each row can also set two of its Plex collection's own fields in the **Row editor**:
 
-- **Description**, under **How it looks on Plex** — the summary Plex shows when someone opens the
+- **Description**, under **How it looks on Plex** (**Appearance** in the development preview) — the summary Plex shows when someone opens the
   row. It fills in `{user}`, `{library_name}` and `{top_seed}` the same way the row's name does, so
   every person's copy can say something about them. A `{top_seed}` description for someone with
   nothing watched is left empty. The **On Plex** card beside it shows the name, description and
@@ -3661,7 +3703,7 @@ How Shortlist makes a Plex collection visible to only one user, what the server 
 
 It does, indirectly. Plex lets you hide things from someone by **label**, so Shortlist gives each
 person's row a label of its own and tells every _other_ account to hide that label. The result is a
-row only its owner can see.
+row for that person, hidden from other supported accounts using Plex sharing filters.
 
 The order those steps happen in is what makes it safe, and it is the same every run:
 
@@ -3675,12 +3717,15 @@ The order those steps happen in is what makes it safe, and it is the same every 
   On nobody's Home
   3
   Now show it
-  Only now does the row appear, so it is never visible before it is private.
-  On its owner's Home, and nobody else's
-  The first two steps leave the row on nobody's home screen. There is no moment where it
-  exists and is visible to the wrong person.
+  Only after the sharing filters are applied is the row promoted onto Home.
+  On the intended viewer's Home
+  The first two steps keep a new row off Home. An unpromoted row can still appear in the library’s
+  Collections tab until its sharing filters apply. Plex cannot hide collections from the server
+  owner, and restriction profiles can prevent the filters from working.
+  Read the visibility exceptions.
 
-Your existing sharing settings are saved beforehand, and **Uninstall** puts them back exactly.
+Your existing sharing settings are saved beforehand. The in-app **Uninstall** flow previews
+restoring that saved copy and reports any accounts it cannot restore.
 
 This needs Plex Media Server **1.43.2.10687 or newer**, and **Plex Pass** on the admin account,
 because the hiding rule is a Pass feature. Older versions ignore it.
@@ -3705,8 +3750,8 @@ rows**.
 So it adds hide-this-label rules to every account your server is shared with — unless you've asked
 it to leave one alone, which you can do per person if their own Plex restrictions clash with
 Shortlist's. Nothing else in their settings is touched. Shortlist reads what's there, adds only its
-own entries, and leaves the rest exactly as they were. The original is saved first, and Uninstall
-restores all of them.
+own entries, and leaves the rest exactly as they were. The original is saved first;
+[the in-app Uninstall flow](#what-if-i-uninstall) previews restoring the saved settings and reports failures.
 
 ## Someone has an "allow only" label or rating list. Do they still get a row?
 
@@ -3776,7 +3821,7 @@ provider's own search, or to no web search at all.
 
 ## Will it fight with Kometa?
 
-No. Shortlist only ever touches collections carrying its own `shortlist_*` label. Kometa overlays
+Shortlist changes the contents, names and artwork only of collections carrying its own `shortlist_*` label. Placing its rows can move other shelves while preserving their relative order. Kometa overlays
 and your own collections are detected and left alone.
 
 They also solve different problems. Kometa's collections are the same for everyone; Shortlist's are
@@ -3789,11 +3834,12 @@ what to watch next. No usernames, no account IDs, no genres, no viewing times.
 
 ## What if I uninstall?
 
-One flow, with a preview first. Every account's sharing settings are restored from the copy taken
-before Shortlist's first change, every Shortlist collection is deleted, and you get a report of
-exactly what changed. Your server ends up exactly as it was before you installed Shortlist.
+Open **Settings → Danger zone → Uninstall** before removing the container. Review the preview,
+then confirm the cleanup. It restores the saved sharing settings and deletes Shortlist's collections,
+with a report of what succeeded and what needs attention. Deleting the Docker container alone does
+not remove its rows or sharing filters from Plex.
 
-The one exception is an account that has since left your server. Shortlist can no longer reach a
+An account that has since left your server cannot be restored. Shortlist can no longer reach a
 departed account's settings on plex.tv, so there is nothing there to put back — the report names
 those accounts rather than quietly counting them as restored, and the uninstall finishes regardless.
 
@@ -4045,8 +4091,7 @@ an identical home screen.
 like "highly rated thrillers you haven't seen" gives your shelf real shape for no cost. It just
 doesn't read anyone's watch history. The filter runs against the library rather than the viewer, so
 `Unplayed` means unplayed **by the admin account**, and every user sees the same row whatever they
-have watched. [How to improve Plex
-recommendations](https://shortlistapp.dev/improve-plex-recommendations/#smart-collections-the-real-ceiling-of-the-built-in-tools)
+have watched. [How to improve Plex recommendations](https://shortlistapp.dev/improve-plex-recommendations/#smart-collections-the-real-ceiling-of-the-built-in-tools)
 covers what to build and exactly where it stops.
 
 Everything below is about the thing smart collections can't reach: a row built from one person's own
@@ -4106,7 +4151,8 @@ library-popular or recently-added is fine; producing an empty row is not.
 [**Shortlist**](https://github.com/stevezau/shortlist) is a self-hosted container that does this for
 every user on your server, on a schedule. It reads each person's own watch history through their
 own share's access key, finds similar titles verified to exist in your library, and builds them a
-"Picked for You" collection that only they can see.
+"Picked for You" collection, hidden from other supported accounts using Plex sharing filters.
+The [server owner and some restriction profiles](https://shortlistapp.dev/plex-per-user-collections/#two-things-to-watch-out-for) are exceptions.
 
 Every pick carries its reason. AI is optional — the built-in picker runs entirely in code with no
 keys and no cloud — and if you do enable a provider (Claude, GPT, Gemini, or a local model via
@@ -4238,10 +4284,10 @@ user gets their own rows built from their own watch history; every run sweeps ro
 delivers rows unpromoted, merges the `label!=` exclusions into every other account's share filter,
 and only then promotes anything onto Home. In that order, every time.
 
-It copies your share filters before its first write and restores them exactly if you uninstall, and
-it never touches a collection it didn't create, so Kometa and anything else managing collections on
-the same server keep working. [Per-user
-collections](https://shortlistapp.dev/plex-per-user-collections/#the-automated-version) lists the rest.
+It copies your share filters before its first write. The in-app uninstall flow previews restoring
+those snapshots and reports any failures; removing the container alone does not clean up Plex.
+It changes collection contents, names and artwork only for its own collections. Placing rows can
+move other shelves while preserving their relative order, so Kometa can keep working alongside it. [Per-user collections](https://shortlistapp.dev/plex-per-user-collections/#the-automated-version) lists the rest.
 
 ```bash
 docker run -d --name shortlist -p 5959:5959 \
@@ -4269,7 +4315,7 @@ Plex has no per-user collections, but label restrictions on share filters get yo
 
 **Short answer:** Plex has no per-user collections, but it does have **label restrictions**. Give the
 collection a label, then tell every _other_ account to exclude that label. What's left is a
-collection only one person can see.
+collection hidden from other supported accounts. The [server owner and some restriction profiles](#two-things-to-watch-out-for) are exceptions.
 
 It works, it's supported, and it needs **Plex Media Server 1.43.2.10687 or newer** plus a **Plex
 Pass** on the admin account. The rest of this page is how to do it, and the one mistake that quietly
@@ -4377,8 +4423,7 @@ _other_ account, so the work grows with the square of your user count — twenty
 is 380 filter entries, every one of them a string you must edit without corrupting. Add a user, or a
 second row, and you touch them all again.
 
-Doing it by hand is realistic for one or two collections. Past that you want it automated. [A
-different home screen per user](https://shortlistapp.dev/plex-per-user-home-screen/#what-it-costs-at-your-servers-size) has
+Doing it by hand is realistic for one or two collections. Past that you want it automated. [A different home screen per user](https://shortlistapp.dev/plex-per-user-home-screen/#what-it-costs-at-your-servers-size) has
 the numbers for a server your size.
 
 ## The automated version
@@ -4389,8 +4434,10 @@ own Plex watch history, labels it `shortlist_<user>`, merges the exclusions into
 account's share filter, and only then promotes the rows to Home. In that order, every run.
 
 It also handles the parts this page warns you about: it snapshots your share filters before the first
-change and restores them exactly on uninstall, it merges rather than rebuilds, it skips the owner, and
-it never modifies a collection it didn't create (so Kometa keeps working alongside it).
+change, then offers an in-app uninstall flow that previews restoring those snapshots and reports
+failures. It merges rather than rebuilds, skips the owner, and changes collection contents, names
+and artwork only for its own collections. Row placement can move other shelves while keeping their
+relative order, so Kometa keeps working alongside it.
 
 ```bash
 docker run -d --name shortlist -p 5959:5959 \
@@ -4458,8 +4505,7 @@ configures.
 **Smart collections** get you the _shape_ of Netflix rows cheaply — "highly rated thrillers", "90s
 action", saved filters that stay current as the library grows and can be promoted to Home. Worth
 doing, and where most people should start. What they can't do is follow the viewer, so everyone still
-sees the same row: [how to improve Plex
-recommendations](https://shortlistapp.dev/improve-plex-recommendations/#smart-collections-the-real-ceiling-of-the-built-in-tools)
+sees the same row: [how to improve Plex recommendations](https://shortlistapp.dev/improve-plex-recommendations/#smart-collections-the-real-ceiling-of-the-built-in-tools)
 covers what to build and where it stops.
 
 That's the ceiling of the built-in features. Rows that look right, contents that aren't personal.
@@ -4506,8 +4552,7 @@ row can hold, or weight recent watches more heavily.
 Verify every pick exists in your library before it goes in a collection, and drop anything the person
 has already watched. The order is what makes that possible: generate the candidates from your library,
 then let a model rank and explain them. Ask a model for titles instead and it returns films you don't
-own, films under alternate names, and occasionally films that don't exist. [AI recommendations for
-Plex](https://shortlistapp.dev/plex-ai-recommendations/) is the long version.
+own, films under alternate names, and occasionally films that don't exist. [AI recommendations for Plex](https://shortlistapp.dev/plex-ai-recommendations/) is the long version.
 
 ## Where this leaves you
 
@@ -4718,7 +4763,8 @@ a library, and it's excellent at it.
 
 It is not a recommender. It doesn't read anyone's watch history to decide what to suggest, and its
 collections are library-wide: everyone with access sees the same ones. Shortlist is built to run
-alongside Kometa rather than instead of it — it never touches a collection it didn't create.
+alongside Kometa rather than instead of it. It leaves other collections’ contents, names and
+artwork alone; changing row placement can change their relative positions.
 
 **[SuggestArr](https://github.com/giuseppe99barchetta/SuggestArr)** watches what you recently
 played and automatically requests similar content through Jellyseerr/Overseerr, so your library
@@ -4778,11 +4824,14 @@ is genuinely for.
 
 Per-user "Picked for You" rows built from each person's own watch history, made private with Plex's
 label restrictions — every other account's share filter gets `label!=shortlist_<user>` merged into it,
-so a row is visible only to its owner. Rows are delivered unpromoted, exclusions merged — straight away
+so the row is hidden from other supported accounts. The [server owner and some restriction profiles](https://shortlistapp.dev/plex-per-user-collections/#two-things-to-watch-out-for) are exceptions. Rows are delivered unpromoted, exclusions merged — straight away
 for someone's first row or a new shared row — and only then promoted onto Home.
 
-Share filters are snapshotted before the first write and restored exactly on uninstall; it merges
-rather than rebuilds them, skips the owner, and never modifies a collection it didn't create.
+Share filters are snapshotted before the first write. The in-app uninstall flow previews restoring
+them and reports any accounts it cannot restore; removing the container alone does not clean up Plex.
+Sharing filters are merged rather than rebuilt, and the owner is skipped. Shortlist changes collection
+contents, names and artwork only for collections it owns; row placement can also change other
+collections’ relative positions.
 Everything supports `--dry-run`. AI is optional — the built-in picker needs no keys.
 
 Plex-only, and it will stay that way: the privacy model depends on Plex's label-based share filters,

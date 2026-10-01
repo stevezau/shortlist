@@ -177,6 +177,41 @@ describe("UsersPage", () => {
     expect(screen.queryByText("Requests & results", { exact: true })).not.toBeInTheDocument();
   });
 
+  it("keeps select-visible and sorting together before the roster for every screen size", async () => {
+    getUsers.mockResolvedValue([SARAH, MIKE]);
+    renderPage();
+    await screen.findByRole("link", { name: "sarah" });
+    const controls = screen.getByRole("group", { name: "User list controls" });
+    const select = within(controls).getByRole("checkbox", { name: "Select visible users" });
+    expect(within(controls).getByRole("combobox", { name: "Sort users" })).toBeVisible();
+    expect(controls.compareDocumentPosition(screen.getByRole("table")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await userEvent.type(screen.getByRole("searchbox", { name: "Search users" }), "sarah");
+    await userEvent.click(select);
+    expect(screen.getByRole("checkbox", { name: "Select sarah" })).toBeChecked();
+    await userEvent.clear(screen.getByRole("searchbox", { name: "Search users" }));
+    expect(screen.getByRole("checkbox", { name: "Select mike" })).not.toBeChecked();
+    expect(select).toBePartiallyChecked();
+  });
+
+  it("dismisses all-user actions with Escape or an outside click and keeps confirmations separate", async () => {
+    getUsers.mockResolvedValue([SARAH]);
+    renderPage();
+    const trigger = screen.getByRole("button", { name: "All users…" });
+    await userEvent.click(trigger);
+    expect(screen.getByRole("dialog", { name: "All user actions" })).toBeVisible();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "All user actions" })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    await userEvent.click(trigger);
+    await userEvent.click(screen.getByRole("heading", { name: "Users" }));
+    expect(screen.queryByRole("dialog", { name: "All user actions" })).not.toBeInTheDocument();
+    await userEvent.click(trigger);
+    await userEvent.click(screen.getByRole("button", { name: /^Enable all$/ }));
+    expect(screen.queryByRole("dialog", { name: "All user actions" })).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Turn on all 1 users?" })).toBeVisible();
+    expect(setAllUsersEnabled).not.toHaveBeenCalled();
+  });
+
   it("pauses only selected people without turning them off", async () => {
     getUsers.mockResolvedValue([SARAH, MIKE]);
     patchUser.mockResolvedValue(SARAH);
@@ -265,6 +300,8 @@ describe("UsersPage", () => {
     getUsers.mockResolvedValue([SARAH]);
     renderPage();
 
+    await userEvent.click(screen.getByRole("button", { name: "All users…" }));
+
     await userEvent.click(
       await screen.findByRole("button", { name: /Enable all/i }),
     );
@@ -284,6 +321,8 @@ describe("UsersPage", () => {
   it("only disables everyone after confirming (it removes rows)", async () => {
     getUsers.mockResolvedValue([SARAH]);
     renderPage();
+
+    await userEvent.click(screen.getByRole("button", { name: "All users…" }));
 
     await userEvent.click(
       await screen.findByRole("button", { name: /Disable all/i }),

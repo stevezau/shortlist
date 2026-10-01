@@ -3,7 +3,7 @@ tagline: Per-user Plex recommendations, built from each person's own watch histo
 description: >-
   Give every user on your Plex server their own recommendations, based on what
   they actually watched. Shortlist builds a private "Picked for You" row on each
-  person's Plex home screen — visible only to them. Self-hosted, one Docker
+  person's Plex home screen, using Plex sharing filters. Self-hosted, one Docker
   container, no AI key required.
 
 # Where the site lives. Every page derives its links from these two through
@@ -29,6 +29,9 @@ url: https://shortlistapp.dev
 baseurl: ""
 
 repo: https://github.com/stevezau/shortlist
+
+# Update when a stable release is published; previews remain explicitly marked.
+stable_version: 1.9.3
 
 # The host shown in the landing page's fake address bars. A `.local` name says
 # "this runs on your own network" without a sentence about it, and 5959 is the

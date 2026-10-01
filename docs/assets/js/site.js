@@ -24,14 +24,49 @@
   /* ------------------------------------------------------- mobile sidebar */
 
   var burger = document.getElementById("menu-toggle");
-  var sidebar = document.getElementById("sidebar");
-  if (burger && sidebar) {
+  var mobileNav = document.getElementById("mobile-navigation");
+  if (burger && mobileNav) {
+    var closeMenu = function (restoreFocus) {
+      mobileNav.hidden = true;
+      burger.setAttribute("aria-expanded", "false");
+      burger.setAttribute("aria-label", "Open navigation");
+      if (restoreFocus) burger.focus();
+    };
+    closeMenu(false);
+    burger.hidden = false;
+    root.classList.add("js-mobile-nav");
     burger.addEventListener("click", function () {
-      var open = sidebar.classList.toggle("is-open");
-      burger.setAttribute("aria-expanded", String(open));
+      if (!mobileNav.hidden) {
+        closeMenu(true);
+        return;
+      }
+      mobileNav.hidden = false;
+      burger.setAttribute("aria-expanded", "true");
+      burger.setAttribute("aria-label", "Close navigation");
+      mobileNav.querySelector("a").focus();
     });
-  } else if (burger) {
-    burger.hidden = true; // the landing page has no sidebar to open
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && !mobileNav.hidden) {
+        event.preventDefault();
+        closeMenu(true);
+      }
+    });
+    document.addEventListener("click", function (event) {
+      if (!mobileNav.hidden && !mobileNav.contains(event.target) && !burger.contains(event.target)) {
+        closeMenu(false);
+      }
+    });
+    document.addEventListener("focusin", function (event) {
+      if (!mobileNav.hidden && !mobileNav.contains(event.target) && event.target !== burger) {
+        closeMenu(false);
+      }
+    });
+    mobileNav.addEventListener("click", function (event) {
+      if (event.target.closest("a")) closeMenu(false);
+    });
+    window.matchMedia("(min-width: 901px)").addEventListener("change", function (event) {
+      if (event.matches) closeMenu(false);
+    });
   }
 
   /* ------------------------------------------------------- copy to clipboard */

@@ -55,10 +55,22 @@
       <span class="nav-pill__label">Star</span>
     </a>
 
-    <button class="icon-btn nav__burger" id="menu-toggle" type="button" aria-label="Show page navigation" aria-expanded="false">
+    <button class="icon-btn nav__burger" id="menu-toggle" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="mobile-navigation" hidden>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <path d="M3 6h18M3 12h18M3 18h18"/>
       </svg>
     </button>
   </div>
+  <nav class="mobile-nav" id="mobile-navigation" aria-label="Mobile navigation">
+    {%- for item in site.nav -%}
+      <a href="{{ item.url | relative_url }}" {% if page.url == item.url %}aria-current="page"{% endif %}>{{ item.title }}</a>
+      {%- if item.children and page.url contains item.url -%}
+        <div class="mobile-nav__children">
+          {%- for child in item.children -%}
+            <a href="{{ child.url | relative_url }}" {% if page.url == child.url %}aria-current="page"{% endif %}>{{ child.title }}</a>
+          {%- endfor -%}
+        </div>
+      {%- endif -%}
+    {%- endfor -%}
+  </nav>
 </header>

@@ -21,8 +21,8 @@ and left the reader to work out which picture went with which step.
         <h1>Every Plex user gets <em>their own</em> recommendations</h1>
         <p class="hero__sub">
           Shortlist looks at what each person on your server has watched, then builds them a
-          &ldquo;Picked for You&rdquo; row on their Plex home screen that only they can see. It
-          refreshes overnight.
+          &ldquo;Picked for You&rdquo; row on their Plex home screen, using Plex’s sharing controls. It
+          updates on the schedule you choose.
         </p>
         <div class="hero__cta">
           <a class="btn btn--primary btn--lg" href="{{ '/getting-started/' | relative_url }}">
@@ -49,7 +49,7 @@ and left the reader to work out which picture went with which step.
           </span>
           <span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
-            Undoes itself if you remove it
+            In-app cleanup before removal
           </span>
           {%- comment -%}
           The one thing that DISQUALIFIES a reader, said in the hero rather than 71% down the page.
@@ -90,11 +90,11 @@ and left the reader to work out which picture went with which step.
         <li class="stat">
           <p class="stat__value"><span data-countup>1</span></p>
           <p class="stat__label">container to run</p>
-          <p class="stat__note">No database of its own, and nothing else to install.</p>
+          <p class="stat__note">No separate database service to install.</p>
         </li>
         <li class="stat">
-          <p class="stat__value"><span data-countup>{{ site.data.templates | size }}</span></p>
-          <p class="stat__label">row templates</p>
+          <p class="stat__value"><span data-countup>{{ site.data.templates | where_exp: "template", "template.development != true" | size }}</span></p>
+          <p class="stat__label">stable row templates</p>
           <p class="stat__note">Start from one instead of a blank form, then change anything.</p>
         </li>
         <li class="stat">
@@ -137,8 +137,8 @@ and left the reader to work out which picture went with which step.
         <span class="eyebrow">How it works</span>
         <h2>From an empty container to a private row</h2>
         <p class="section__lede">
-          You do the first two once. Shortlist does the other three every night, on a schedule you
-          choose.
+          You do the first two once. Shortlist checks rows on your schedule; each row has its own
+          rebuild cadence.
         </p>
       </div>
 
@@ -159,6 +159,7 @@ and left the reader to work out which picture went with which step.
       --tour-steps is the row count the pinned layout needs: `grid-row: 1 / -1` only
       spans the whole column when the rows are explicit, and they are implicit here.
       {%- endcomment -%}
+      <p class="release-note"><strong>Development preview.</strong> These app screenshots show the upcoming interface on <code>:dev</code>. The default install is stable {{ site.stable_version }}; its layout differs. <a href="{{ "/getting-started/#release-channels" | relative_url }}">Choose a release channel</a>.</p>
       <div class="tour" style="--tour-steps:{{ site.data.tour | size }}">
         <div class="tour__rail" aria-hidden="true"><span class="tour__rail-fill"></span></div>
 
@@ -179,7 +180,7 @@ and left the reader to work out which picture went with which step.
               without anybody having to read a sentence about it. The port is the real
               default, so it doubles as a hint about where the app turns up.
               {%- endcomment -%}
-              <span class="frame__title">{{ site.demo_host }}{{ s.path }}</span>
+              <span class="frame__title">{{ site.demo_host }}{{ s.path }} · Development preview</span>
             </div>
             {%- endif -%}
             <img src="{{ s.image | prepend: '/images/' | relative_url }}" alt="{{ s.alt }}"
@@ -217,6 +218,7 @@ and left the reader to work out which picture went with which step.
           <div>
             <h3>
               {{ t.title }}
+              {%- if t.development %} <span class="tag">development preview</span>{% endif -%}
               {%- if t.shared %} <span class="tag">shared</span>{% endif -%}
             </h3>
             <p>{{ t.blurb }}</p>
@@ -237,11 +239,11 @@ and left the reader to work out which picture went with which step.
     <div class="wrap reveal">
       <div class="section__head section__head--center">
         <span class="eyebrow">Privacy</span>
-        <h2>A row nobody else can see</h2>
+        <h2>Sharing filters keep rows personal</h2>
         <p class="section__lede">
           Plex can't share a collection with one person. What it can do is hide things by
           <strong>label</strong>. So Shortlist labels each row, then tells every other account to
-          hide that label. What's left is a row only its owner sees.
+          hide that label. The server owner and Plex restriction profiles have exceptions, explained below.
         </p>
       </div>
 
@@ -260,7 +262,7 @@ and left the reader to work out which picture went with which step.
             </svg>
           </div>
           <h3>Your settings are saved first</h3>
-          <p>Shortlist copies your sharing settings before it changes anything. Removing it puts them back the way they were.</p>
+          <p>Shortlist saves your sharing settings first. Its in-app uninstall flow previews and restores those saved settings before you remove the container.</p>
         </div>
         <div class="card">
           <div class="card__icon">

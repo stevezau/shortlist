@@ -167,9 +167,13 @@ export function RowEditor({
   onRename?: (proposedName: string, saved?: { oldTemplate: string }) => void;
 }) {
   const settingsRoot = useRef<HTMLDivElement>(null);
+  const [compactLayout, setCompactLayout] = useState(() => window.innerWidth < 1024);
   const [previewOpen, setPreviewOpen] = useState(() => window.innerWidth >= 1024);
   useEffect(() => {
-    const resize = () => setPreviewOpen(window.innerWidth >= 1024);
+    const resize = () => {
+      setCompactLayout(window.innerWidth < 1024);
+      setPreviewOpen(window.innerWidth >= 1024);
+    };
     window.addEventListener("resize", resize);
     return () => window.removeEventListener("resize", resize);
   }, []);
@@ -566,6 +570,8 @@ export function RowEditor({
         </p>
       )}
 
+      {compactLayout && <RowSectionNavigation root={settingsRoot} showRequests={!input.requests_row} />}
+
       {collection && (
         <RowEffectivenessPanel compact data={effectiveness.data} isLoading={effectiveness.isLoading} isError={effectiveness.isError} onRetry={() => effectiveness.refetch()} rowSlug={collection.slug} />
       )}
@@ -577,7 +583,7 @@ export function RowEditor({
             320px viewport, so the whole page scrolled sideways and every heading and paragraph on
             it ran past the right edge. Same fix, and the same reason, as the dashboard's cards. */}
         <div ref={settingsRoot} className="order-2 min-w-0 space-y-4 lg:order-1">
-          <RowSectionNavigation root={settingsRoot} showRequests={!input.requests_row} />
+          {!compactLayout && <RowSectionNavigation root={settingsRoot} showRequests={!input.requests_row} />}
           {/* Directly under what people see: the kind decides every setting below it (design §3). */}
             <details data-setting="kind" className="rounded-lg border bg-card p-4">
               <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">

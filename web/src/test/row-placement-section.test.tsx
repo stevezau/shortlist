@@ -77,7 +77,7 @@ describe("RowPlacementSection", () => {
   it("points at the row editor for where a row actually goes", async () => {
     renderSection({ "rows.manage_shelf_order": true });
 
-    expect(await screen.findByText(/Where it sits/)).toBeTruthy();
+    expect(await screen.findByText(/Plex placement/)).toBeTruthy();
   });
 
   it("says what happens when ordering is off — new rows land at the end of the shelf", async () => {

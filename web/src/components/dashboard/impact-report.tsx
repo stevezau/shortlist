@@ -124,7 +124,7 @@ function Rate({
         />
       </div>
       {detail && (
-        <p className="mt-1 text-[11px] tabular-nums text-muted-foreground/70">
+        <p className="mt-1 text-xs tabular-nums text-muted-foreground">
           {detail}
         </p>
       )}
@@ -271,7 +271,7 @@ function Verdict({
                 // the Watched figure above reads live credits, so a pick credited today can sit above an empty
                 // share; on a new install everyone's history predates their rows; and on a server with only
                 // shared rows it stays empty for good, so it must not promise a figure is on its way.
-                <p className="mt-1 text-[11px] leading-snug text-muted-foreground/70">
+                <p className="mt-1 text-xs leading-snug text-muted-foreground">
                   Nothing to count yet. This counts people with a row of their
                   own, from their first pick, as the nightly watch sync records
                   what they watch.

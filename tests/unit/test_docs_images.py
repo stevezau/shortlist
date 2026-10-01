@@ -25,6 +25,7 @@ SOURCES = (
     "docs/_config.yml",
     "docs/_data/tour.yml",
     "docs/getting-started.md",
+    "docs/guides/interface.md",
     "docs/_layouts/home.html",
     "unraid-templates/shortlist.xml",
     "unraid-templates/ca_profile.xml",

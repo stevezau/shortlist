@@ -30,6 +30,17 @@ heading: Getting started
   Exa needs a free-tier signup; SearXNG is free and runs on your own hardware. See
   [Which web-search backend should I use?](faq.md#which-web-search-backend-should-i-use).
 
+## Release channels
+
+The commands below install **stable {{ site.stable_version }}**, using the `:latest` image tag.
+This is the default for a new installation.
+
+**Development preview (`:dev`)** includes unreleased changes, including the redesigned editor,
+Users and Settings screens and **Your requests** rows. Screenshots marked Development preview
+show that build, so some controls differ from stable. To choose it deliberately, replace `:latest`
+with `:dev` in your image configuration and recreate the container. Back up `/config` before
+changing channels; do not downgrade a migrated database in place.
+
 ## Install (Docker)
 
 With Docker Compose:
@@ -61,8 +72,10 @@ Open `http://your-host:5959`. A fresh install goes straight into the wizard. The
 nothing to sign in to yet. Step 1 connects your Plex account (that's the sign-in, and it's
 what claims the instance for you); from then on Shortlist only opens for that account.
 
-<img src="{{ '/images/wizard.webp' | relative_url }}" width="1440" height="588"
-     alt="The Shortlist setup wizard on its Welcome step, with a seven-segment progress bar and a Get started button">
+<p class="release-note"><strong>Development preview.</strong> This screenshot shows the upcoming wizard layout; the stable steps are described below.</p>
+
+<img src="{{ '/images/wizard.webp' | relative_url }}" width="1440" height="1000"
+     alt="Development preview: the Shortlist setup wizard on its Welcome step, with a seven-segment progress bar and a Get started button">
 
 Every screenshot on this page is of a throwaway test server, so no real account, address or
 library appears in one.
@@ -71,7 +84,7 @@ library appears in one.
 > anyone who can open the page could claim it as theirs, so don't put it on the public internet
 > until you've finished the wizard. Once you've claimed it, it's yours.
 
-The wizard has **7 steps**, and the progress bar counts them the same way this list does:
+The wizard has **7 steps**. The list below follows stable {{ site.stable_version }}:
 
 1. **Welcome** — a short intro screen. Read it and continue.
 2. **Connect Plex** — sign in with a PIN, then pick your server. Shortlist checks your Plex
@@ -83,16 +96,15 @@ The wizard has **7 steps**, and the progress bar counts them the same way this l
    Every address Plex advertises for your server is tried from where Shortlist actually runs, and
    the one that answered is preselected. You can always type a different one.
 
-3. **Recommendations & history**. Save and test the required TMDB key.
+3. **Recommendations & history**. Choose where picks come from and save the required TMDB key.
    Watch history comes straight from Plex with no setup. Tautulli is optional, and only improves
    the names people are shown by.
-4. **Add an AI provider (optional)** — choose the built-in picker, or Claude / GPT / Gemini / a local server. Keys stay
+4. **Choose your AI provider** — Claude / GPT / Gemini / a local server / **None**. Keys stay
    yours: stored encrypted, and hidden again once saved. Picking None is a perfectly good choice.
 5. **Pick your users** — everyone you share with, with badges showing how much history each
    person has.
-6. **Make it yours** — choose the row's name and how many titles it holds, alongside a live title
-   preview. **Save & continue** saves both choices before moving on. Rows start with a nightly
-   schedule; each row's editor lets you change it later.
+6. **Make it yours** — choose the row's name, how many titles it holds and its refresh cadence.
+   Each row keeps its own schedule.
 
    The name can be plain text, or use a placeholder that fills itself in per person, such as
    `{library_name}`, `{user}` or `{top_seed}`. See [Naming a row](guides/rows.md#naming-a-row)
@@ -119,7 +131,7 @@ share filter. Later runs are much faster. Most rows are unchanged and skipped.
 Every row is hidden from every other account before it is ever put on a home screen, so nobody finds
 a row that was built for someone else. (You are the exception: Plex cannot hide anything from the
 server owner — see below.) Your share filters are copied before the first change, so **Uninstall**
-(Settings → Danger Zone) puts them back exactly as they were. The hiding relies on Plex Media Server
+(Settings → Danger Zone) restores that saved copy and reports any accounts it cannot restore. The hiding relies on Plex Media Server
 1.43.2.10687 or newer — older builds ignore it, which is why the wizard surfaces your version before
 you begin.
 
@@ -140,7 +152,7 @@ Everyone has a row and it will refresh on its own. Worth doing next:
 
 - **Check it landed.** Sign in as somebody who isn't you and confirm they see their row, and only
   theirs. The owner account sees everybody's, so it can't tell you this.
-- **Add another kind of row.** "Picked for You" is one of eight templates.
+- **Add another kind of row.** Stable includes nine templates; the development build also includes "Your requests".
   See [Rows and templates](guides/rows.md).
 - **Decide how often rows change.** Each row keeps its own schedule.
   See [Schedules](guides/schedules.md).
@@ -148,3 +160,5 @@ Everyone has a row and it will refresh on its own. Worth doing next:
   want but you don't have. See [Requests](guides/requests.md).
 
 If a row doesn't turn up, [Troubleshooting](guides/troubleshooting.md) lists what usually causes it.
+
+**Development preview:** the customization step shows a live title preview and uses **Save & continue** to save the name and size before moving on.

@@ -3,7 +3,7 @@ import { useCallback, useLayoutEffect, useRef, type ReactElement, type ReactNode
 import { cn } from "@/lib/utils";
 
 /** Header panels stay inside the viewport even when their trigger is beside other mobile icons. */
-export function HeaderPopover({ open, onOpenChange, align, label, trigger, children, className }: {
+export function HeaderPopover({ open, onOpenChange, align, label, trigger, children, className, width = 320 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   align: "left" | "right";
@@ -11,18 +11,20 @@ export function HeaderPopover({ open, onOpenChange, align, label, trigger, child
   trigger: ReactElement;
   children: ReactNode;
   className?: string;
+  width?: number;
 }) {
   const anchor = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const position = useCallback(() => {
     if (!anchor.current || !panel.current) return;
     const rect = anchor.current.getBoundingClientRect();
-    const width = Math.min(320, window.innerWidth - 24);
-    const left = Math.max(12, Math.min(align === "left" ? rect.left : rect.right - width, window.innerWidth - width - 12));
+    const panelWidth = Math.min(width, window.innerWidth - 24);
+    const left = Math.max(12, Math.min(align === "left" ? rect.left : rect.right - panelWidth, window.innerWidth - panelWidth - 12));
+    panel.current.style.width = `${panelWidth}px`;
     panel.current.style.left = `${left}px`;
     panel.current.style.top = `${rect.bottom + 8}px`;
     panel.current.style.maxHeight = `${Math.max(120, window.innerHeight - rect.bottom - 20)}px`;
-  }, [align]);
+  }, [align, width]);
   // Portal content mounts after the parent's layout effect. Position on attachment as well as resize.
   const attachPanel = useCallback((node: HTMLDivElement | null) => {
     panel.current = node;

@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { apiErrorMessage } from "@/lib/api";
 
 import { MutationAlert } from "@/components/mutation-alert";
+import { HeaderPopover } from "@/components/layout/header-popover";
 import { OwnerNote } from "@/components/owner-note";
 import { PageHeader } from "@/components/page-header";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
@@ -163,6 +164,7 @@ export function UsersPage() {
   const [sort, setSort] = useState("name");
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [batchBusy, setBatchBusy] = useState(false);
+  const [allActionsOpen, setAllActionsOpen] = useState(false);
   const [batchError, setBatchError] = useState("");
   const matchesStatus = (user: User, value: string) => value === "all" ||
     (value === "active" && user.enabled && !user.prefs.paused && !user.restriction_profile) ||
@@ -299,23 +301,20 @@ export function UsersPage() {
                 Sharing and privacy
               </Link>
             </Button>
-            <details className="relative">
-              <summary className="flex h-9 cursor-pointer list-none items-center rounded-md border px-3 text-sm font-medium hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">All users…</summary>
-              <div className="absolute right-0 z-20 mt-2 grid min-w-40 gap-2 rounded-md border bg-popover p-2 shadow-md">
+            <HeaderPopover open={allActionsOpen} onOpenChange={setAllActionsOpen} align="right" label="All user actions" width={192} className="grid gap-2 p-2" trigger={<Button variant="outline">All users…</Button>}>
             <Button
               variant="outline"
-              onClick={() => setConfirmEnableOpen(true)}
+              onClick={() => { setAllActionsOpen(false); setConfirmEnableOpen(true); }}
             >
               Enable all
             </Button>
             <Button
               variant="outline"
-              onClick={() => setConfirmDisableOpen(true)}
+              onClick={() => { setAllActionsOpen(false); setConfirmDisableOpen(true); }}
             >
               Disable all
             </Button>
-              </div>
-            </details>
+            </HeaderPopover>
             {/* Always here, and deliberately not behind the owner note — that note is dismissible,
                 and dismissing "you see everyone's rows" is how people say "yes, I know" rather than
                 "I never want the tool again". Before this, hiding the note hid the only way back to
@@ -500,13 +499,23 @@ export function UsersPage() {
               <div aria-label="User status" className="flex flex-wrap gap-1">{statusOptions.map(([value, label]) => <button key={value} type="button" aria-pressed={status === value} onClick={() => setStatus(value)} className={`rounded-md border px-3 py-2 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${status === value ? "border-primary/30 bg-primary/10 text-primary" : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground"}`}>{label}<span className="ml-2 opacity-70">{users.filter((user) => matchesStatus(user, value)).length}</span></button>)}</div>
             </div>
             {attentionCount > 0 && <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/25 bg-warning/5 px-4 py-3 text-sm"><p className="text-muted-foreground"><strong className="font-medium text-warning">{attentionCount} {attentionCount === 1 ? "person needs" : "people need"} attention.</strong> Check their Plex sharing or account status.</p><Button variant="ghost" size="sm" className="shrink-0 text-warning" onClick={() => setStatus("attention")}>Review →</Button></div>}
+            <div role="group" aria-label="User list controls" className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <label className="flex cursor-pointer items-center gap-2 text-foreground">
+                  <input type="checkbox" aria-label="Select visible users" checked={visibleUsers.length > 0 && selectedVisible.length === visibleUsers.length} ref={(box) => { if (box) box.indeterminate = selectedVisible.length > 0 && selectedVisible.length < visibleUsers.length; }} disabled={batchBusy || visibleUsers.length === 0} onChange={(event) => setSelected((before) => { const next = new Set(before); for (const user of visibleUsers) { if (event.target.checked) next.add(user.id); else next.delete(user.id); } return next; })} className="size-4 shrink-0 accent-primary" />
+                  Select visible
+                </label>
+                <p role="status">Showing {visibleUsers.length} of {users.length} people</p>
+              </div>
+              <label className="flex items-center gap-2">Sort by<select aria-label="Sort users" value={sort} onChange={(event) => setSort(event.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-xs"><option value="name">Name A–Z</option><option value="history">Most watch history</option><option value="last-run">Latest run</option></select></label>
+            </div>
             {selectedUsers.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3"><div className="text-sm"><strong>{selectedUsers.length} selected</strong><button type="button" className="ml-3 text-xs text-muted-foreground underline" disabled={batchBusy} onClick={() => setSelected(new Set())}>Clear</button><p className="mt-1 text-xs text-muted-foreground">Pausing keeps current rows on Plex. Off accounts stay off.</p></div><div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={batchBusy} onClick={() => void pauseSelected(false)}>Resume rebuilding</Button><Button size="sm" variant="outline" loading={batchBusy} onClick={() => void pauseSelected(true)}>Pause rebuilding</Button></div></div>}
             {batchError && <p role="alert" className="text-sm text-destructive-text">{batchError}</p>}
             {visibleUsers.length === 0 && <EmptyState title="No matching users" hint="Try another name or status." action={<Button variant="outline" onClick={() => { setSearch(""); setStatus("all"); }}>Clear filters</Button>} />}
             <div className="overflow-hidden rounded-xl border bg-card">
               <Table>
                 <TableHeader className="hidden lg:table-header-group bg-muted/20">
-                  <TableRow className="hover:bg-transparent"><TableHead className="w-10 pl-4"><input type="checkbox" aria-label="Select visible users" checked={visibleUsers.length > 0 && selectedVisible.length === visibleUsers.length} ref={(box) => { if (box) box.indeterminate = selectedVisible.length > 0 && selectedVisible.length < visibleUsers.length; }} disabled={batchBusy || visibleUsers.length === 0} onChange={(event) => setSelected((before) => { const next = new Set(before); for (const user of visibleUsers) { if (event.target.checked) next.add(user.id); else next.delete(user.id); } return next; })} className="size-4 accent-primary" /></TableHead><TableHead>Person</TableHead><TableHead>Rebuilding</TableHead><TableHead>Watch history</TableHead><TableHead>Last run</TableHead><TableHead className="pr-4 text-right">Enabled</TableHead></TableRow>
+                  <TableRow className="hover:bg-transparent"><TableHead className="w-10 pl-4"><span className="sr-only">Selection</span></TableHead><TableHead>Person</TableHead><TableHead>Rebuilding</TableHead><TableHead>Watch history</TableHead><TableHead>Last run</TableHead><TableHead className="pr-4 text-right">Enabled</TableHead></TableRow>
                 </TableHeader>
                 <TableBody className="grid lg:table-row-group">
                   {visibleUsers.map((user) => <TableRow key={user.id} className={`group flex flex-wrap gap-x-3 gap-y-2 px-4 py-3 lg:table-row lg:p-0 [&>td]:p-0 lg:[&>td]:px-3 lg:[&>td]:py-3 ${selected.has(user.id) ? "bg-primary/5" : ""}`}>
@@ -562,7 +571,7 @@ export function UsersPage() {
                 </TableBody>
               </Table>
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground"><p role="status">Showing {visibleUsers.length} of {users.length} people</p><label className="flex items-center gap-2">Sort by<select aria-label="Sort users" value={sort} onChange={(event) => setSort(event.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-xs"><option value="name">Name A–Z</option><option value="history">Most watch history</option><option value="last-run">Latest run</option></select></label></div>
+
             <p className="text-xs leading-relaxed text-muted-foreground">Pausing keeps their current rows on Plex. Turning a person off removes their rows.<br />Select people to pause or resume rebuilding; Enabled controls whether Shortlist builds their rows.</p>
           </div>
         )}

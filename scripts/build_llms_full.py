@@ -34,7 +34,7 @@ JSON_LD = re.compile(r'<script type="application/ld\+json">.*?</script>', re.DOT
 INCLUDE = re.compile(r"\{%-?\s*include\s+([\w.-]+)\s*-?%\}")
 RELATIVE_URL = re.compile(r"""\{\{\s*['"]([^'"]+)['"]\s*\|\s*relative_url\s*\}\}""")
 PAGE_VAR = re.compile(r"\{\{\s*page\.(\w+)(?:\s*\|[^}]*)?\}\}")
-SITE_VAR = re.compile(r"\{\{\s*site\.(\w+)(?:\s*\|[^}]*)?\}\}")
+SITE_VAR = re.compile(r"\{\{\s*site\.(\w+)(?:\s*\|[^}]*)?\s*\}\}")
 HTML_TAG = re.compile(r"<[^>]+>")
 SVG = re.compile(r"<svg\b.*?</svg>", re.DOTALL)
 BLANK_RUN = re.compile(r"\n{3,}")

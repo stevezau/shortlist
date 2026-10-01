@@ -27,7 +27,7 @@
     The setup wizard's connect step, showing a Plex sign-in and the servers found on that account
   path: /setup
   width: 1440
-  height: 783
+  height: 1000
 
 - title: Decide what rows people get
   body: >-
@@ -40,18 +40,18 @@
     row, a rewatch row, and one shared row
   path: /rows
   width: 1440
-  height: 860
+  height: 1000
 
 - title: It runs while everyone is asleep
   body: >-
-    One person at a time, so a problem with one row never stops anyone else getting theirs. Read
+    People are processed independently, so a problem with one row does not stop everyone else. Read
     their history, find things like it, throw away anything not in your library, then choose. If a
     row does not turn up, this page names the step that failed.
   image: run-detail.webp
   alt: A run detail page showing per-user timings, the picks delivered, and a live activity log
   path: /runs/42
   width: 1440
-  height: 947
+  height: 1000
 
 - title: Every pick carries its reason
   body: >-
@@ -62,12 +62,12 @@
   alt: A user detail page listing that person's ranked picks, each with the title that inspired it
   path: /users/sarah
   width: 1440
-  height: 1151
+  height: 1000
 
-- title: And nobody else can see it
+- title: Sharing filters keep rows personal
   body: >-
-    The row goes to Plex hidden, every other account is told to hide its label, and only then does it
-    appear. Here are two accounts on one server on the same night, each read using that account's own
+    The row is kept off Home while sharing filters are applied, then promoted. The server owner and
+    restricted Plex profiles have exceptions. Here are two accounts on one server on the same night, each read using that account's own
     Plex token.
   image: two-account.webp
   alt: >-

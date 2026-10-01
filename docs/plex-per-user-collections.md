@@ -6,7 +6,7 @@ heading: How to make a Plex collection visible to only one user
 
 **Short answer:** Plex has no per-user collections, but it does have **label restrictions**. Give the
 collection a label, then tell every _other_ account to exclude that label. What's left is a
-collection only one person can see.
+collection hidden from other supported accounts. The [server owner and some restriction profiles](#two-things-to-watch-out-for) are exceptions.
 
 It works, it's supported, and it needs **Plex Media Server 1.43.2.10687 or newer** plus a **Plex
 Pass** on the admin account. The rest of this page is how to do it, and the one mistake that quietly
@@ -114,8 +114,7 @@ _other_ account, so the work grows with the square of your user count — twenty
 is 380 filter entries, every one of them a string you must edit without corrupting. Add a user, or a
 second row, and you touch them all again.
 
-Doing it by hand is realistic for one or two collections. Past that you want it automated. [A
-different home screen per user](plex-per-user-home-screen.md#what-it-costs-at-your-servers-size) has
+Doing it by hand is realistic for one or two collections. Past that you want it automated. [A different home screen per user](plex-per-user-home-screen.md#what-it-costs-at-your-servers-size) has
 the numbers for a server your size.
 
 ## The automated version
@@ -126,8 +125,10 @@ own Plex watch history, labels it `shortlist_<user>`, merges the exclusions into
 account's share filter, and only then promotes the rows to Home. In that order, every run.
 
 It also handles the parts this page warns you about: it snapshots your share filters before the first
-change and restores them exactly on uninstall, it merges rather than rebuilds, it skips the owner, and
-it never modifies a collection it didn't create (so Kometa keeps working alongside it).
+change, then offers an in-app uninstall flow that previews restoring those snapshots and reports
+failures. It merges rather than rebuilds, skips the owner, and changes collection contents, names
+and artwork only for its own collections. Row placement can move other shelves while keeping their
+relative order, so Kometa keeps working alongside it.
 
 ```bash
 docker run -d --name shortlist -p 5959:5959 \

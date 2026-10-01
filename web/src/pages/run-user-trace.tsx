@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router";
 
 import { MutationAlert } from "@/components/mutation-alert";
@@ -63,7 +63,7 @@ import {
   webMechanism,
   type LibraryView,
 } from "@/lib/trace";
-import { useScrollSpy } from "@/lib/use-scroll-spy";
+import { traceReadingLine, useScrollSpy } from "@/lib/use-scroll-spy";
 import type {
   Pick,
   RunLibraryBreakdown,
@@ -816,12 +816,44 @@ function LibraryFlow({
     : [...pickSteps, ...requestSteps, deliveredStep];
   const steps: FlowStepDef[] = defs.map((def, i) => ({ ...def, n: i + 1 }));
 
-  const active = useScrollSpy(steps.map((s) => s.id));
+  const stepPicker = useRef<HTMLLabelElement>(null);
+  const active = useScrollSpy(steps.map((s) => s.id), stepPicker);
+  const highlight = useRef<{ section: HTMLElement; timer: ReturnType<typeof setTimeout> } | null>(null);
+  useEffect(() => () => {
+    if (highlight.current) {
+      clearTimeout(highlight.current.timer);
+      delete highlight.current.section.dataset.navigationHighlight;
+      highlight.current = null;
+    }
+  }, [lib.key]);
+
+  const jumpToStep = (id: string) => {
+    const section = document.getElementById(id);
+    const picker = stepPicker.current;
+    if (!section || !picker) return;
+    // The picker sticks below the app header. Measure it so wrapped labels and zoom do not
+    // put the destination heading underneath either bar.
+    const offset = traceReadingLine(picker);
+    section.querySelector<HTMLElement>("h2")?.focus({ preventScroll: true });
+    window.scrollTo({
+      top: Math.max(0, window.scrollY + section.getBoundingClientRect().top - offset),
+      behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
+    });
+    if (highlight.current) {
+      clearTimeout(highlight.current.timer);
+      delete highlight.current.section.dataset.navigationHighlight;
+    }
+    section.dataset.navigationHighlight = "true";
+    highlight.current = { section, timer: setTimeout(() => {
+      delete section.dataset.navigationHighlight;
+      highlight.current = null;
+    }, 1400) };
+  };
 
   return (
     <div className="flex flex-col gap-4 md:flex-row md:gap-6">
-      <label className="sticky top-16 z-10 flex items-center gap-3 rounded-md border bg-background p-2 text-sm md:hidden">Jump to step
-        <select aria-label="Trace step" value={active || steps[0]?.id} className="min-w-0 flex-1 rounded border bg-card p-2" onChange={(event) => document.getElementById(event.target.value)?.scrollIntoView({ block: "start" })}>
+      <label ref={stepPicker} className="sticky top-16 z-10 flex items-center gap-3 rounded-md border bg-background p-2 text-sm md:hidden">Jump to step
+        <select aria-label="Trace step" value={active || steps[0]?.id} className="min-w-0 flex-1 rounded border bg-card p-2" onChange={(event) => jumpToStep(event.target.value)}>
           {steps.map((step) => <option key={step.id} value={step.id}>{step.n}. {step.rail}</option>)}
         </select>
       </label>
@@ -909,14 +941,14 @@ function FlowStep({ step }: { step: FlowStepDef }) {
   return (
     <section
       id={step.id}
-      className="scroll-mt-6 rounded-xl border bg-card p-5 shadow-sm transition-shadow target:ring-2 target:ring-primary/40 hover:shadow-md"
+      className="scroll-mt-6 rounded-xl border bg-card p-5 shadow-sm motion-safe:transition-shadow target:ring-2 target:ring-primary/40 data-[navigation-highlight=true]:ring-2 data-[navigation-highlight=true]:ring-primary/50 hover:shadow-md"
     >
       <div className="mb-4 flex items-start gap-3">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary ring-1 ring-inset ring-primary/20">
           <Icon className="h-4 w-4" aria-hidden={true} />
         </span>
         <div className="min-w-0 flex-1 space-y-1">
-          <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight">
+          <h2 tabIndex={-1} className="flex items-center gap-2 rounded-sm text-base font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             {step.title}
             {step.count !== undefined && step.count > 0 && (
               <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">

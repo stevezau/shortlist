@@ -31,7 +31,8 @@ a library, and it's excellent at it.
 
 It is not a recommender. It doesn't read anyone's watch history to decide what to suggest, and its
 collections are library-wide: everyone with access sees the same ones. Shortlist is built to run
-alongside Kometa rather than instead of it — it never touches a collection it didn't create.
+alongside Kometa rather than instead of it. It leaves other collections’ contents, names and
+artwork alone; changing row placement can change their relative positions.
 
 **[SuggestArr](https://github.com/giuseppe99barchetta/SuggestArr)** watches what you recently
 played and automatically requests similar content through Jellyseerr/Overseerr, so your library
@@ -91,11 +92,14 @@ is genuinely for.
 
 Per-user "Picked for You" rows built from each person's own watch history, made private with Plex's
 label restrictions — every other account's share filter gets `label!=shortlist_<user>` merged into it,
-so a row is visible only to its owner. Rows are delivered unpromoted, exclusions merged — straight away
+so the row is hidden from other supported accounts. The [server owner and some restriction profiles](plex-per-user-collections.md#two-things-to-watch-out-for) are exceptions. Rows are delivered unpromoted, exclusions merged — straight away
 for someone's first row or a new shared row — and only then promoted onto Home.
 
-Share filters are snapshotted before the first write and restored exactly on uninstall; it merges
-rather than rebuilds them, skips the owner, and never modifies a collection it didn't create.
+Share filters are snapshotted before the first write. The in-app uninstall flow previews restoring
+them and reports any accounts it cannot restore; removing the container alone does not clean up Plex.
+Sharing filters are merged rather than rebuilt, and the owner is skipped. Shortlist changes collection
+contents, names and artwork only for collections it owns; row placement can also change other
+collections’ relative positions.
 Everything supports `--dry-run`. AI is optional — the built-in picker needs no keys.
 
 Plex-only, and it will stay that way: the privacy model depends on Plex's label-based share filters,

@@ -39,8 +39,7 @@ an identical home screen.
 like "highly rated thrillers you haven't seen" gives your shelf real shape for no cost. It just
 doesn't read anyone's watch history. The filter runs against the library rather than the viewer, so
 `Unplayed` means unplayed **by the admin account**, and every user sees the same row whatever they
-have watched. [How to improve Plex
-recommendations](improve-plex-recommendations.md#smart-collections-the-real-ceiling-of-the-built-in-tools)
+have watched. [How to improve Plex recommendations](improve-plex-recommendations.md#smart-collections-the-real-ceiling-of-the-built-in-tools)
 covers what to build and exactly where it stops.
 
 Everything below is about the thing smart collections can't reach: a row built from one person's own
@@ -100,7 +99,8 @@ library-popular or recently-added is fine; producing an empty row is not.
 [**Shortlist**](https://github.com/stevezau/shortlist) is a self-hosted container that does this for
 every user on your server, on a schedule. It reads each person's own watch history through their
 own share's access key, finds similar titles verified to exist in your library, and builds them a
-"Picked for You" collection that only they can see.
+"Picked for You" collection, hidden from other supported accounts using Plex sharing filters.
+The [server owner and some restriction profiles](plex-per-user-collections.md#two-things-to-watch-out-for) are exceptions.
 
 Every pick carries its reason. AI is optional — the built-in picker runs entirely in code with no
 keys and no cloud — and if you do enable a provider (Claude, GPT, Gemini, or a local model via
