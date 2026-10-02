@@ -30,6 +30,7 @@ from shortlist.server.net_guard import BlockedUrl, check_url
 from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services import jobs
 from shortlist.server.services.audit import actor_of, add_audit
+from shortlist.server.services.plex_reachability import describe_address, error_text, explained
 from shortlist.server.settings_store import DEFAULTS, PRIVATE_KEYS, SECRET_KEYS, SettingsStore
 
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_owner)])
@@ -568,6 +569,8 @@ async def put_settings(
             # serves the cached result rather than re-authenticating.
             add_audit(session, "settings.change", "info", changed=changed, actor=actor_of(auth, request))
             session.commit()
+            if "plex.url" in changed:
+                logger.info("settings: the Plex address is now {}", describe_address(str(store.get("plex.url") or "")))
         if "log.level" in update.values:
             # Apply immediately so a live "turn on DEBUG to watch this run" takes effect without a
             # container restart. The file sink is preserved from boot.
@@ -665,7 +668,9 @@ async def test_connection(service: str, request: Request) -> dict:
             if service == "plex":
                 from shortlist.engine.clients.plex_pms import PlexClient
 
-                plex = PlexClient(get("plex.url"), get("plex.token"))
+                url = get("plex.url")
+                with explained(url):
+                    plex = PlexClient(url, get("plex.token"))
                 # "PMS" is our word for it, not Plex's own UI's — an owner reading this on the
                 # Connections card has no reason to know the abbreviation.
                 return f"Connected to {plex.server_name} (Plex Media Server {plex.version})"
@@ -790,9 +795,9 @@ async def test_connection(service: str, request: Request) -> dict:
     except HTTPException:
         raise
     except Exception as e:
-        # plexapi/PMS exceptions can embed the tokened request URL — redact before it reaches the
-        # API response (plex-safety rule 9: tokens never leave the box, even in an error string).
-        return {"ok": False, "message": redact(f"{type(e).__name__}: {e}")}
+        # plexapi/PMS exceptions can embed the tokened request URL — `error_text` redacts before it
+        # reaches the API response (plex-safety rule 9: tokens never leave the box, even in an error string).
+        return {"ok": False, "message": error_text(e)}
 
 
 class QualityProfileOut(PassthroughModel):

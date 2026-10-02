@@ -159,7 +159,11 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
         icon={Layers}
         label="Rows built"
         value={rowsBuilt}
-        hint={rowsHint || "nothing was due"}
+        // A failed run that built nothing did not find "nothing due" — it never got that far.
+        hint={
+          rowsHint ||
+          (run.status === "error" ? "none were built" : "nothing was due")
+        }
         tone={rowsBuilt > 0 ? "success" : undefined}
       />
       <StatTile
@@ -179,7 +183,9 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
               : // Everyone can succeed while the RUN fails (a refused share filter belongs to no
                 // person) — "all succeeded" under a "Failed" badge is how that looked before.
                 run.status === "error"
-                ? "built, but not promoted"
+                ? (s.users_ok ?? 0) > 0
+                  ? "built, but not promoted"
+                  : "nobody was built"
                 : "all succeeded"
         }
         tone={

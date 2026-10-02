@@ -391,6 +391,28 @@ describe("RunRowsTab — a run that is still going", () => {
 
     expect(screen.getByText("This run built no rows")).toBeInTheDocument();
   });
+
+  it("says a run that failed at the start stopped, not that it is too old to show rows", () => {
+    // Issue #139: Plex was unreachable, so the run errored before it knew which rows it would build
+    // — and the page blamed a legacy run for one that had been started a minute earlier.
+    renderTab(
+      run({
+        users: [],
+        shared_rows: [],
+        status: "error",
+        error:
+          "Shortlist could not reach Plex at http://pms:32400: it did not answer in time.",
+      } as unknown as Partial<RunDetail>),
+    );
+
+    expect(
+      screen.getByText("This run stopped before it built any rows"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/The error above says why/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/before this view existed/i),
+    ).not.toBeInTheDocument();
+  });
 });
 
 describe("RunRowsTab — per-row cost", () => {

@@ -33,7 +33,8 @@ from shortlist.server.db.models import Collection, Run, RunUser, User
 from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.services import jobs, notify, run_persistence
 from shortlist.server.services.context_builder import ContextBuilder
-from shortlist.server.services.run_log import RunLogBuffer, capture_warnings
+from shortlist.server.services.plex_reachability import error_text
+from shortlist.server.services.run_log import RunLogBuffer, capture_warnings, problem_line
 from shortlist.server.services.run_persistence import HIT_WINDOW_DAYS  # noqa: F401  (re-export)
 from shortlist.server.services.sse import EventBus
 from shortlist.server.services.watch_sync import WatchSync
@@ -329,6 +330,7 @@ class RunService:
                     self.flush_run_log(run_id)
                 return
             self._bus.publish("run.progress", {"run_id": run_id, "status": "running"})
+            log_sink: Callable[[dict], None] | None = None
             try:
                 # Inside the try so a failure here (e.g. reading users) still marks the run errored
                 # AND runs the finally that frees the cancel Event — never leaves a run stuck "running".
@@ -429,15 +431,18 @@ class RunService:
                 await loop.run_in_executor(None, notify.after_run, self._sessions, run_id, shortlist.__version__)
             except Exception as e:
                 logger.exception("run {} failed", run_id)
-                self._mark_run_error(run_id, {"error": f"{type(e).__name__}: {e}"})
+                error = error_text(e)
+                # The engine's own warnings are captured only while it runs; a failure before that
+                # (or one it raised rather than logged) would leave the run's Log tab with no reason.
+                if log_sink is not None:
+                    log_sink(problem_line(run_id, "error", f"The run failed: {error}"))
+                self._mark_run_error(run_id, {"error": error})
                 # Both ways a run reaches `error` get the alert, and they are genuinely two paths: the
                 # engine returning a not-ok report, and it raising. Hooking only the tidy one would
                 # stay silent for exactly the failures worth waking up for.
                 notify.enqueue_run_outcome(self._sessions, run_id)
                 await loop.run_in_executor(None, notify.after_run, self._sessions, run_id, shortlist.__version__)
-                self._bus.publish(
-                    "run.finished", {"run_id": run_id, "status": "error", "error": f"{type(e).__name__}: {e}"}
-                )
+                self._bus.publish("run.finished", {"run_id": run_id, "status": "error", "error": error})
                 return
             finally:
                 self._cancels.pop(run_id, None)

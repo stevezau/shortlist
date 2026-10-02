@@ -27,6 +27,7 @@ from shortlist.server.db.adapters import DbCache, DbSnapshotStore
 from shortlist.server.db.models import Delivery, Event, Job, PickRow, Run, RunUser, User
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.services.context_builder import ContextBuilder
+from shortlist.server.services.plex_reachability import PlexUnreachable
 from shortlist.server.services.run_service import RunService
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.services.sse import EventBus
@@ -833,6 +834,61 @@ class TestRunExecution:
         run = asyncio.run(scenario())
         assert run.status == "error"
         assert "not configured" in run.stats["error"]
+
+    def test_an_unreachable_plex_is_recorded_as_the_explanation_not_the_exception(
+        self, sessions, tmp_path, monkeypatch
+    ):
+        # Issue #139: the run page printed `ConnectionError: HTTPSConnectionPool(host=...)`.
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+
+        def boom(**kw):
+            raise PlexUnreachable("Shortlist could not reach Plex at http://pms:32400: it did not answer in time.")
+
+        monkeypatch.setattr(service, "build_context", boom)
+
+        async def scenario():
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        run = asyncio.run(scenario())
+        assert run.stats["error"] == "Shortlist could not reach Plex at http://pms:32400: it did not answer in time."
+
+    def test_a_failed_runs_error_is_scrubbed_of_tokens(self, sessions, tmp_path, monkeypatch):
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+
+        def boom(**kw):
+            raise RuntimeError("GET http://pms:32400/library?X-Plex-Token=abcdefghij0123456789 failed")
+
+        monkeypatch.setattr(service, "build_context", boom)
+
+        async def scenario():
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        run = asyncio.run(scenario())
+        assert run.stats["error"].startswith("RuntimeError: GET http://pms:32400/library")
+        assert "abcdefghij0123456789" not in run.stats["error"]
+
+    def test_a_run_that_fails_before_it_starts_says_why_in_its_own_log(self, sessions, tmp_path, monkeypatch):
+        # The engine's warnings are only captured once it is running, so a failure building the
+        # context reached the container log and left the run's Log tab empty.
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+
+        def boom(**kw):
+            raise RuntimeError("Plex connection is not configured yet")
+
+        monkeypatch.setattr(service, "build_context", boom)
+
+        async def scenario():
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            await _wait_for_run(sessions, run_id)
+            return run_id
+
+        run_id = asyncio.run(scenario())
+        errors = [line for line in service.run_log(run_id) if line["level"] == "error"]
+        assert [line["reason"] for line in errors] == [
+            "The run failed: RuntimeError: Plex connection is not configured yet"
+        ]
 
     def test_user_ids_narrows_but_never_widens_past_enabled(self, sessions, tmp_path):
         service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))

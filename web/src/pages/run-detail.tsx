@@ -132,7 +132,9 @@ function RunFailureBanner({ run }: { run: RunDetail }) {
           </div>
         ))
       ) : (
-        <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-background/60 p-2.5 font-mono text-xs text-destructive-text">
+        // `break-words`, not `break-all`: this is usually a sentence now (an unreachable Plex is
+        // explained in words), and `break-all` splits those mid-word. A long URL still wraps.
+        <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-background/60 p-2.5 font-mono text-xs text-destructive-text">
           {blockers.length > 0 ? blockers.join("\n") : run.error}
         </pre>
       )}

@@ -36,6 +36,26 @@ _TIMING_KEY = "timing"
 _forwarding = threading.local()
 
 
+def problem_line(run_id: int, level: str, reason: str, at: datetime | None = None) -> dict:
+    """A warning or error as a run-log line: no person, and the level as its stage.
+
+    Args:
+        run_id: The run whose log receives the line.
+        level: `"warning"` or `"error"`.
+        reason: What happened. Scrubbed here, because the Logs page serves it (rule 9).
+        at: When, defaulting to now.
+    """
+    return {
+        "ts": iso_utc(at or datetime.now(UTC)),
+        "run_id": run_id,
+        "user": "",
+        "stage": level,
+        "counts": {},
+        "reason": redact(reason),
+        "level": level,
+    }
+
+
 @contextmanager
 def capture_warnings(run_id: int, sink: Callable[[dict], None]) -> Iterator[None]:
     """Copy every WARNING and ERROR logged by this run's own work into the run's activity log.
@@ -54,18 +74,7 @@ def capture_warnings(run_id: int, sink: Callable[[dict], None]) -> Iterator[None
         level = "error" if record["level"].no >= logger.level("ERROR").no else "warning"
         _forwarding.active = True
         try:
-            sink(
-                {
-                    "ts": iso_utc(record["time"].astimezone(UTC)),
-                    "run_id": run_id,
-                    "user": "",
-                    "stage": level,
-                    "counts": {},
-                    # The Logs page scrubs every line it serves; this one is served too (rule 9).
-                    "reason": redact(record["message"]),
-                    "level": level,
-                }
-            )
+            sink(problem_line(run_id, level, record["message"], record["time"].astimezone(UTC)))
         finally:
             _forwarding.active = False
 

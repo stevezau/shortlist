@@ -941,6 +941,31 @@ class TestSettingsApi:
         assert "super-secret-abc" not in body["message"]
         assert "X-Plex-Token=REDACTED" in body["message"]
 
+    def test_an_unreachable_plex_is_explained_rather_than_dumped(self, client: TestClient, monkeypatch):
+        # Issue #139: `localhost` typed into a container came back as
+        # `ConnectionError: HTTPSConnectionPool(host='localhost', port=34000): Max retries exceeded...`.
+        import requests
+
+        from shortlist.server.services import plex_reachability
+
+        def refuse(self, url, *a, **k):
+            raise requests.exceptions.ConnectionError(
+                "HTTPSConnectionPool(host='localhost', port=34000): Max retries exceeded with url: / "
+                "(Caused by NewConnectionError('[Errno 111] Connection refused'))",
+                request=requests.Request("GET", url).prepare(),
+            )
+
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.PlexClient.__init__", refuse)
+        monkeypatch.setattr(plex_reachability, "in_container", lambda: True)
+        client.put("/api/settings", json={"values": {"plex.url": "https://localhost:34000", "plex.token": "tok"}})
+
+        body = client.post("/api/settings/test/plex").json()
+
+        assert body["ok"] is False
+        assert body["message"].startswith("Shortlist could not reach Plex at https://localhost:34000.")
+        assert "http://host.docker.internal:32400" in body["message"]
+        assert "HTTPSConnectionPool" not in body["message"]
+
 
 class TestSettingsThatDoRealWork:
     """Two settings change what is on somebody's Plex server, and saving them used to change only the
@@ -1046,6 +1071,19 @@ class TestRepointingPlexAtAnotherServer:
 
         assert r.status_code == 200
         assert client.get("/api/settings").json()["plex.url"] == "http://not-up-yet:32400"
+
+    def test_a_changed_plex_address_logs_what_kind_it_now_is(self, client: TestClient, monkeypatch):
+        from loguru import logger
+
+        self._machine(client, monkeypatch, None)
+        lines: list[str] = []
+        sink = logger.add(lines.append, level="INFO", format="{level}|{message}")
+        try:
+            client.put("/api/settings", json={"values": {"plex.url": "https://localhost:34000"}})
+        finally:
+            logger.remove(sink)
+
+        assert "INFO|settings: the Plex address is now a loopback address (https)\n" in lines
 
     def test_settings_unrelated_to_plex_never_probe(self, client: TestClient, monkeypatch):
         """The check costs a PMS round-trip. Every other save on the page must not pay it."""

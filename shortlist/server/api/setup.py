@@ -26,6 +26,12 @@ from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import owned_machine_ids, require_setup_access
 from shortlist.server.db.models import Server
 from shortlist.server.net_guard import BlockedUrl
+from shortlist.server.services.plex_reachability import (
+    address_kind,
+    describe_address,
+    explain_unreachable,
+    failure_reason,
+)
 from shortlist.server.services.setup_probe import run_capability_probe
 from shortlist.server.settings_store import SettingsStore
 
@@ -120,7 +126,14 @@ async def list_servers(request: Request) -> list[dict]:
         except Exception as e:
             # "Shortlist can't reach my Plex URL" is the #1 first-run question — record the reason
             # (refused vs TLS vs timeout vs DNS) so it's answerable from the log, not just a bare False.
-            logger.debug("setup probe: {} unreachable ({})", uri, type(e).__name__)
+            # At info, and by KIND of address rather than the address: which one a setup landed on,
+            # and why the local one lost, is what a support report needs and never had (#139).
+            logger.info(
+                "setup probe: a {} address did not answer ({}: {})",
+                address_kind(uri),
+                type(e).__name__,
+                failure_reason(e) or "other",
+            )
             return {"uri": uri, "ok": False}
 
     out = []
@@ -233,7 +246,8 @@ async def probe(body: ProbeRequest, request: Request) -> dict:
         # A refused address is the caller's mistake, not an unreachable server — say which, and say why.
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"could not reach that server: {type(e).__name__}") from e
+        detail = explain_unreachable(body.plex_url, e) or f"could not reach that server: {type(e).__name__}"
+        raise HTTPException(status_code=502, detail=detail) from e
 
 
 class LinkRequest(BaseModel):
@@ -302,6 +316,7 @@ async def link_server(body: LinkRequest, request: Request) -> dict:
             server.owner_account_id = body.owner_account_id
             server.plex_pass = body.plex_pass
         db.commit()
+    logger.info("setup: linked Plex at {}", describe_address(body.plex_url))
     return {"linked": True, "server_name": body.server_name}
 
 

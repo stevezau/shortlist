@@ -71,6 +71,7 @@ from shortlist.server.db.models import (
     utcnow,
 )
 from shortlist.server.prefs import blocked_ids
+from shortlist.server.services.plex_reachability import explained
 from shortlist.server.services.poster_service import load_upload, make_studio
 from shortlist.server.services.sse import EventBus
 from shortlist.server.settings_store import SettingsStore
@@ -385,7 +386,9 @@ class ContextBuilder:
                 raise RuntimeError("Plex connection is not configured yet — finish setup first")
             # A large TV library's collection rebuild legitimately takes 15-20s+; the configured
             # per-call timeout (default 45s) gives those headroom instead of timing out + retrying.
-            plex = PlexClient(plex_url, plex_token, timeout=int(store.get("plex.timeout_s") or 45))
+            # The run page is where this lands, so say where the address is changed.
+            with explained(plex_url, fix_hint=" Change the address under Settings → Connections."):
+                plex = PlexClient(plex_url, plex_token, timeout=int(store.get("plex.timeout_s") or 45))
             _refuse_a_different_server(session, plex.machine_id)
             plextv = PlexTvClient(plex_token, plex.machine_id, min_write_interval=float(store.get("plextv.throttle_s")))
             tmdb = TmdbClient(store.get("tmdb.apikey"), cache=DbCache(self._sessions))

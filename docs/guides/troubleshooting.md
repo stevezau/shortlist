@@ -61,6 +61,29 @@ faster than a list of questions: _"open /issue, switch the checks on, type the t
 
 ## Troubleshooting
 
+- **Shortlist can't reach Plex** ("Shortlist could not reach Plex at …" on a run, or on the Plex
+  card under Settings → Connections) — the server address is tried from where Shortlist runs, and
+  in Docker that is _inside the container_, not your desktop. Change it under Settings →
+  Connections, then press **Test**. The usual causes:
+  - **`localhost` or `127.0.0.1`.** Inside a container that is the container itself, even when Plex
+    is on the same machine. On Docker Desktop (Windows or Mac) use
+    `http://host.docker.internal:32400`. On Linux use the machine's own network address, such as
+    `http://192.168.1.10:32400`.
+  - **An address ending in `.plex.direct` that starts with your public IP.** That is your server's
+    internet address. It only works while your internet connection is up and your public IP has
+    not changed, so it can stop working after an outage or a router restart. Use an address on
+    your own network instead.
+  - **`https://` with an IP address or hostname.** Plex's certificate only covers its own
+    `.plex.direct` name, so use `http://` for anything else. If Plex has **Settings → Network →
+    Secure connections** set to _Required_ it refuses plain `http://`; set it to _Preferred_.
+  - **The wrong port.** Plex listens on `32400` unless you mapped it to something else.
+  - **"… sent Shortlist on to …".** The address you saved answered with a redirect, and it is the
+    second address that failed. The message names both, so you can tell which one to fix.
+
+  To check an address from where Shortlist actually runs, ask the container itself (swap in your
+  container's name and the address): `docker exec shortlist curl -s http://192.168.1.10:32400/identity`.
+  A line of XML means Shortlist can reach it; an error means the container can't, whatever a
+  browser on your desktop says.
 - **A run says "skipped" and no collections were made** — a skip is always a configuration
   outcome, and the run page now says which one. The two common ones: _every enabled row is a
   **shared** row_, so there is no per-person row to build for anybody (add one under Rows), or a

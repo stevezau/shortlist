@@ -417,6 +417,44 @@ class TestSetupApi:
         assert "tautulli" not in r.json()["checks"]
         assert r.json()["checks"]["libraries"] == {"ok": False, "message": "No movie/show libraries found"}
 
+    def test_the_probe_explains_an_address_that_does_not_answer(self, client: TestClient, monkeypatch):
+        # "Shortlist can't reach my Plex URL" is the #1 first-run question, and `localhost` in a
+        # container is the usual reason — the answer used to be `could not reach that server: ConnectionError`.
+        import requests
+
+        from shortlist.server.services import plex_reachability, setup_probe
+
+        def refuse(url, *a, **k):
+            raise requests.exceptions.ConnectionError(
+                "HTTPConnectionPool(host='localhost', port=32400): Max retries exceeded with url: / "
+                "(Caused by NewConnectionError('[Errno 111] Connection refused'))",
+                request=requests.Request("GET", url).prepare(),
+            )
+
+        self._sign_in_with_a_plex_token(client)
+        monkeypatch.setattr(setup_probe, "PlexClient", refuse)
+        monkeypatch.setattr(plex_reachability, "in_container", lambda: True)
+
+        r = client.post("/api/setup/probe", json={"plex_url": "http://localhost:32400"})
+
+        assert r.status_code == 502
+        assert r.json()["detail"].startswith("Shortlist could not reach Plex at http://localhost:32400.")
+        assert "http://host.docker.internal:32400" in r.json()["detail"]
+
+    def test_the_probe_keeps_its_own_wording_for_any_other_failure(self, client: TestClient, monkeypatch):
+        from shortlist.server.services import setup_probe
+
+        def broken(*a, **k):
+            raise RuntimeError("X-Plex-Token=abcdefghij0123456789")
+
+        self._sign_in_with_a_plex_token(client)
+        monkeypatch.setattr(setup_probe, "PlexClient", broken)
+
+        r = client.post("/api/setup/probe", json={"plex_url": "http://pms:32400"})
+
+        assert r.status_code == 502
+        assert r.json()["detail"] == "could not reach that server: RuntimeError"
+
     def test_the_server_picker_reports_every_advertised_address_it_tried(self, client: TestClient):
         self._sign_in_with_a_plex_token(client)
         resources = [
@@ -441,6 +479,58 @@ class TestSetupApi:
         assert [set(s) for s in body] == [{"name", "machine_id", "owned", "version", "connections"}]
         assert body[0]["machine_id"] == "m1"  # the player is filtered out: it doesn't "provide" a server
         assert body[0]["connections"] == [{"uri": "http://10.0.0.5:32400", "local": True, "relay": False, "ok": False}]
+
+    def test_the_server_picker_logs_why_an_address_did_not_answer(self, client: TestClient):
+        # Issue #139: a setup that landed on the internet address left nothing in the log to say why
+        # the local one lost. The line names what KIND of address it was, never the address.
+        from loguru import logger
+
+        self._sign_in_with_a_plex_token(client)
+        resources = [
+            {
+                "name": "SFLIX",
+                "clientIdentifier": "m1",
+                "provides": "server",
+                "owned": True,
+                "connections": [{"uri": "http://10.0.0.5:32400", "local": True, "relay": False}],
+            }
+        ]
+        lines: list[str] = []
+        sink = logger.add(lines.append, level="INFO", format="{level}|{message}")
+        try:
+            with respx.mock:
+                respx.get("https://plex.tv/api/v2/resources").mock(return_value=httpx.Response(200, json=resources))
+                respx.get("http://10.0.0.5:32400/identity").mock(side_effect=httpx.ConnectError("refused"))
+                client.get("/api/setup/servers")
+        finally:
+            logger.remove(sink)
+
+        assert "INFO|setup probe: a private IP address did not answer (ConnectError: refused)\n" in lines
+
+    def test_linking_a_server_logs_what_kind_of_address_was_saved(self, client: TestClient):
+        from loguru import logger
+
+        self._sign_in_with_a_plex_token(client)
+        owned = [{"clientIdentifier": "m1", "provides": "server", "owned": True}]
+        lines: list[str] = []
+        sink = logger.add(lines.append, level="INFO", format="{level}|{message}")
+        try:
+            with respx.mock:
+                respx.get("https://plex.tv/api/v2/resources").mock(return_value=httpx.Response(200, json=owned))
+                client.post(
+                    "/api/setup/link",
+                    json={
+                        "plex_url": f"https://8-8-8-8.{'a' * 32}.plex.direct:32400",
+                        "machine_id": "m1",
+                        "server_name": "SFLIX",
+                        "version": "1.43.3.10793",
+                        "owner_account_id": OWNER_ID,
+                    },
+                )
+        finally:
+            logger.remove(sink)
+
+        assert "INFO|setup: linked Plex at a plex.direct (internet) address (https)\n" in lines
 
     def test_linking_a_server_answers_with_the_receipt_the_wizard_reads(self, client: TestClient):
         """The happy path, which only the rejection cases were covered for. plex.tv is asked whether

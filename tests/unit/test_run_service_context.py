@@ -9,6 +9,7 @@ from typing import ClassVar
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 import shortlist.server.services.context_builder as context_builder_mod
 from shortlist.engine.clients.search import ExaClient, SearxngClient
@@ -17,6 +18,7 @@ from shortlist.engine.models import MediaType
 from shortlist.server.db.models import PickRow, User
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.services.context_builder import ContextBuilder, make_search_client
+from shortlist.server.services.plex_reachability import PlexUnreachable
 from shortlist.server.services.run_service import RunService
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.services.sse import EventBus
@@ -276,6 +278,23 @@ class TestBuildContext:
             SettingsStore(session, configured).set("plex.timeout_s", 90)
         service.build_context(dry_run=True)
         assert captured["timeout"] == 90  # an explicit setting overrides it
+
+    def test_an_unreachable_plex_is_explained_and_points_at_settings(self, service, configured, monkeypatch):
+        # Issue #139: the saved address stopped answering, and the run page showed the Python exception.
+        def _refuse(url, token, timeout=20):
+            raise requests.exceptions.ConnectionError(
+                "HTTPConnectionPool(host='pms', port=32400): Max retries exceeded with url: / "
+                "(Caused by NewConnectionError('[Errno 111] Connection refused'))",
+                request=requests.Request("GET", url).prepare(),
+            )
+
+        monkeypatch.setattr(context_builder_mod, "PlexClient", _refuse)
+
+        with pytest.raises(PlexUnreachable) as raised:
+            service.build_context(dry_run=True)
+
+        assert "could not reach Plex at http://pms:32400" in str(raised.value)
+        assert str(raised.value).endswith(" Change the address under Settings → Connections.")
 
     def test_an_instance_still_stored_as_ollama_keeps_its_url(self):
         """Ollama was merged into the one local/OpenAI-compatible provider. An instance configured
