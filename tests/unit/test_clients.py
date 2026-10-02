@@ -897,20 +897,14 @@ class TestTmdbClient:
 
     @respx.mock
     def test_search_keywords_counts_each_tags_films_from_discover(self):
-        """The editor shows how many films each tag holds; page 1 of discover carries ``total_results``."""
-        respx.get("https://api.themoviedb.org/3/search/keyword").mock(
-            return_value=httpx.Response(
-                200,
-                json={
-                    "results": [
-                        {"id": 207317, "name": "christmas"},
-                        {"id": 272698, "name": "christmas romance"},
-                        {"id": 1, "name": "not asked for"},
-                    ]
-                },
-            )
+        """The editor shows how many films each tag holds; page 1 of discover carries ``total_results``. The
+        keyword search answers what TMDB really answered (`tmdb_search_keyword.json`, rule 11); the counts are
+        the ones TMDB gave for those tags the same day."""
+        recorded = json.loads((FIXTURES / "tmdb_search_keyword.json").read_text())
+        search = respx.get("https://api.themoviedb.org/3/search/keyword").mock(
+            return_value=httpx.Response(200, json=recorded)
         )
-        totals = {"207317": 3370, "272698": 0}
+        totals = {"4543": 133, "337336": 1}
         discover = respx.get("https://api.themoviedb.org/3/discover/movie").mock(
             side_effect=lambda request: httpx.Response(
                 200, json={"page": 1, "results": [], "total_results": totals[request.url.params["with_keywords"]]}
@@ -918,14 +912,15 @@ class TestTmdbClient:
         )
         cache = _MemoryCache()
 
-        found = TmdbClient("k", cache=cache).search_keywords("christmas", limit=2)
-        TmdbClient("k", cache=cache).search_keywords("christmas", limit=2)
+        found = TmdbClient("k", cache=cache).search_keywords("thanksgiving", limit=2)
+        TmdbClient("k", cache=cache).search_keywords("thanksgiving", limit=2)
 
         assert found == [
-            {"id": 207317, "name": "christmas", "movies": 3370},
-            {"id": 272698, "name": "christmas romance", "movies": 0},
+            {"id": 4543, "name": "thanksgiving", "movies": 133},
+            {"id": 337336, "name": "thanksgiving prayer", "movies": 1},
         ]
-        assert sorted(call.request.url.params["with_keywords"] for call in discover.calls) == ["207317", "272698"]
+        assert search.calls[0].request.url.params["query"] == "thanksgiving"
+        assert sorted(call.request.url.params["with_keywords"] for call in discover.calls) == ["337336", "4543"]
         assert all(call.request.url.params["include_adult"] == "false" for call in discover.calls)
 
     def test_search_keywords_for_a_blank_query_makes_no_call(self):
