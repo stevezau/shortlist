@@ -53,11 +53,13 @@ from shortlist.engine.placeholders import (
     season_renderings,
     uses_season,
 )
+from shortlist.engine.seasons import Catalogue
 from shortlist.server.db.models import DEFAULT_SLUG, Collection, Delivery, Run, User
 from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.services import jobs
 from shortlist.server.services.audit import write_audit
 from shortlist.server.services.context_builder import ContextBuilder
+from shortlist.server.services.season_catalogue import load_catalogue
 from shortlist.server.settings_store import SettingsStore
 
 
@@ -208,23 +210,25 @@ def title_key(template: str) -> str:
     return render_row_name(probe, _PROBE_PROFILE, [], library_name=_PROBE_LIBRARY).casefold()
 
 
-def title_keys(template: str) -> set[str]:
+def title_keys(template: str, *, catalogue: Catalogue) -> set[str]:
     """Every key ``template`` can collide on: `title_key` itself, plus, for a seasonal name, the title it
     renders to in each season. In December `{season} picks` IS "Christmas picks", so a plain row with that
     name would share its collection. Every catalogue season rather than only the row's own: refusing a
     few names too many is recoverable, one collection for two rows is not."""
-    keys = {title_key(template)} | {title_key(rendering) for rendering in season_renderings(template or "")}
+    keys = {title_key(template)} | {title_key(rendering) for rendering in season_renderings(template or "", catalogue)}
     return {key for key in keys if key}
 
 
-def _title_keys(session, collection: Collection, secrets) -> set[str]:
+def _title_keys(session, collection: Collection, secrets, *, catalogue: Catalogue) -> set[str]:
     """Every title this row can end up with: from its own template, and from its fallback name.
 
     Both, because a row now has two ways to be named (issue #84) and either can collide. Empties are
     dropped — a `{top_seed}` row with no fallback renders to nothing for a person with no watch, and
     "no title" cannot clash with "no title": neither row is built for them.
     """
-    keys = title_keys(row_template(session, collection.slug, secrets)) | {title_key(collection.fallback_name or "")}
+    keys = title_keys(row_template(session, collection.slug, secrets), catalogue=catalogue) | {
+        title_key(collection.fallback_name or "")
+    }
     return {k for k in keys if k}
 
 
@@ -303,7 +307,8 @@ def rows_titled_from(
     check.
     """
     # Both of the incoming row's possible titles, for the same reason `_title_keys` collects both.
-    wanted_keys = title_keys(template) | {k for k in (title_key(fallback_name),) if k}
+    catalogue = load_catalogue(session)
+    wanted_keys = title_keys(template, catalogue=catalogue) | {k for k in (title_key(fallback_name),) if k}
     # An unrenderable template has no title to collide on. Since issue #84 that includes every
     # `{top_seed}` template, which renders to "" without picks — an improvement: they all used to
     # render the same substitute name and so were refused against each other and against any row
@@ -319,7 +324,7 @@ def rows_titled_from(
             continue
         if not rows_can_share_a_library(media, library_keys, other.media or "both", other.library_keys or []):
             continue
-        if _title_keys(session, other, secrets) & wanted_keys:
+        if _title_keys(session, other, secrets, catalogue=catalogue) & wanted_keys:
             clashes.append(other)
     return clashes
 
@@ -831,6 +836,7 @@ def reconcile_row_rename_iter(
         )
         ledger_titles = _ledger_titles(session, slug) if seeded_old else {}
         ledger_keys = _ledger_keys(session, slug) if seeded_old else {}
+        catalogue = load_catalogue(session)
     ctx = state.run_service.build_context(dry_run=dry_run, plex_only=True)
     dry_run = ctx.config.dry_run or dry_run  # the chokepoint may force a preview ON, never off
     total = 0
@@ -847,7 +853,14 @@ def reconcile_row_rename_iter(
             # The label alone identifies a shared row's collection, so a plain name needs no old title. A
             # seasonal one does: it is the only way to know which season the collection wears.
             renamed = (
-                _renamed_titles(old_template or "", new_template, _shared_profile(), _shared_profile(), lib_name)
+                _renamed_titles(
+                    old_template or "",
+                    new_template,
+                    _shared_profile(),
+                    _shared_profile(),
+                    lib_name,
+                    catalogue=catalogue,
+                )
                 if seasonal
                 else None
             )
@@ -953,6 +966,7 @@ def reconcile_row_rename_iter(
                 old_profile,
                 profile,
                 lib_name,
+                catalogue=catalogue,
                 recorded=ledger_titles.get((udata["slug"], str(section.key))),
             )
             if not renamed:  # unnameable — see render_row_name and `_renamed_titles`
@@ -1048,6 +1062,7 @@ def _renamed_titles(
     profile: UserProfile,
     library_name: str,
     *,
+    catalogue: Catalogue,
     recorded: str | None = None,
 ) -> dict[str, str | None]:
     """{title the row may be wearing -> the title it takes}, for one library. None: the next run names it.
@@ -1065,7 +1080,7 @@ def _renamed_titles(
     seeded = names_a_seed(new_template)
     if seeded and old_template == new_template and old_profile.display_name == profile.display_name:
         return {}  # renders exactly as before, so nothing is taking a new name
-    seasons = catalogue_seasons() if uses_season(old_template) else [None]
+    seasons = catalogue_seasons(catalogue) if uses_season(old_template) else [None]
     pairs: dict[str, str | None] = {}
     for season in seasons:
         old = render_row_name(fill_season(old_template, season), old_profile, [], library_name=library_name)

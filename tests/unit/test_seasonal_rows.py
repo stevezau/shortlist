@@ -26,6 +26,7 @@ from shortlist.engine.delivery import (
 from shortlist.engine.models import CollectionDiff, EngineConfig, MediaType, Pick, RowSeason, RowSpec, Seed, UserType
 from shortlist.engine.placeholders import uses_season
 from shortlist.engine.rows import effective_row_sources, row_recipe
+from shortlist.engine.seasons import BUILTIN_SEASONS
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
 CHRISTMAS = RowSeason(slug="christmas", name="Christmas", emoji="🎄", anchor=date(2026, 12, 25))
@@ -92,7 +93,11 @@ class TestOtherRowsClaimEverySeasonsTitle:
 
         section = SimpleNamespace(title="Movies", key="1", type="movie")
         claimed = titles_other_rows_build(
-            [section], make_profile("sarah"), EngineConfig(), [seasonal_spec(season=None)], slug="plain"
+            [section],
+            make_profile("sarah"),
+            EngineConfig(seasons=dict(BUILTIN_SEASONS)),
+            [seasonal_spec(season=None)],
+            slug="plain",
         )
         assert claimed == {
             ("1", "🎃 Halloween picks"),
@@ -310,6 +315,7 @@ def ctx(engine_config: EngineConfig, mock_plextv, mock_tmdb, mock_curator) -> En
 
     mock_plextv.update_user_filters.side_effect = put
     mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+    engine_config.seasons = dict(BUILTIN_SEASONS)
     return EngineContext(
         config=engine_config,
         plex=plex,
@@ -575,6 +581,17 @@ class TestWhatDecidesARebuild:
         shipped — the churn the cadence exists to prevent."""
         plain = RowSpec(slug="plain", name_template="Plain", size=5)
         assert "season" not in row_recipe(self._policy(ctx, plain), plain)
+
+    def test_recipe_carries_the_hash_for_custom_seasons_only(self, ctx):
+        """A custom season's sources are in its hash, so editing them rebuilds its rows (#137 D11). A built-in's
+        recipe part stays exactly what it was before custom seasons, so no existing row rebuilds (D2)."""
+        built_in = seasonal_spec()
+        custom = seasonal_spec(
+            seasons=["pat"],
+            season=RowSeason("pat", "St Patrick's Day", "☘️", date(2027, 3, 17), content_hash="abc"),
+        )
+        assert row_recipe(self._policy(ctx, built_in), built_in).endswith("season=christmas@2026-12-25")
+        assert "season=pat@2027-03-17#abc" in row_recipe(self._policy(ctx, custom), custom)
 
     def test_rows_following_different_seasons_never_share_a_pool(self, ctx):
         christmas = seasonal_spec()

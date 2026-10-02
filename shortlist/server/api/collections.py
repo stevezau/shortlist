@@ -67,6 +67,7 @@ from shortlist.server.scheduler import crontab_trigger, rebuild_schedule
 from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services import jobs, poster_service, report_service
 from shortlist.server.services.poster_service import load_upload
+from shortlist.server.services.season_catalogue import load_catalogue
 from shortlist.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/collections", tags=["collections"], dependencies=[Depends(require_owner)])
@@ -323,12 +324,6 @@ class CollectionIn(StrictRequestModel):
     @classmethod
     def _check_show_days(cls, days: list[int]) -> list[int]:
         return _normalise_show_days(days)
-
-    @field_validator("seasons")
-    @classmethod
-    def _check_seasons(cls, slugs: list[str]) -> list[str]:
-        """Known seasons only, de-duplicated and in calendar order, so equal choices compare equal."""
-        return seasons_mod.normalise_slugs(slugs)
 
 
 class HubAnchorOut(PassthroughModel):
@@ -832,19 +827,22 @@ def _season_window_view(window: seasons_mod.SeasonWindow | None) -> dict | None:
     }
 
 
-def _season_status(collection: Collection, now: datetime) -> dict | None:
+def _season_status(collection: Collection, now: datetime, *, catalogue: seasons_mod.Catalogue) -> dict | None:
     """Which season a seasonal row shows today and which comes next, on the server's clock; None if not seasonal."""
     if not collection.seasons:
         return None
     args = (list(collection.seasons), collection.season_lead_days, collection.season_after_days, now.date())
-    showing = seasons_mod.shown_on(*args)
+    showing = seasons_mod.shown_on(*args, catalogue=catalogue)
     if showing is not None:
         # Its last day on screen, which is not its window's end when a following season takes over first.
-        showing = replace(showing, ends=seasons_mod.last_shown_day(*args))
-    return {"showing": _season_window_view(showing), "next": _season_window_view(seasons_mod.next_after(*args))}
+        showing = replace(showing, ends=seasons_mod.last_shown_day(*args, catalogue=catalogue))
+    upcoming = seasons_mod.next_after(*args, catalogue=catalogue)
+    return {"showing": _season_window_view(showing), "next": _season_window_view(upcoming)}
 
 
-def _serialize(session, collection: Collection, now: datetime | None = None) -> dict:
+def _serialize(
+    session, collection: Collection, now: datetime | None = None, *, catalogue: seasons_mod.Catalogue
+) -> dict:
     # One clock read for everything this row reports about today: the badge and the season status must
     # describe the same day, even for a response built across midnight.
     now = now or context_builder.local_now()
@@ -935,11 +933,12 @@ def _serialize(session, collection: Collection, now: datetime | None = None) -> 
             collection.season_lead_days,
             collection.season_after_days,
             now,
+            catalogue=catalogue,
         ),
         "seasons": list(collection.seasons or []),
         "season_lead_days": collection.season_lead_days,
         "season_after_days": collection.season_after_days,
-        "season_status": _season_status(collection, now),
+        "season_status": _season_status(collection, now, catalogue=catalogue),
         "placement_friends": collection.placement_friends or "both",
         "pin_top": bool(collection.pin_top),
         "hub_anchor": collection.hub_anchor or {},
@@ -1010,7 +1009,9 @@ def _reject_duplicate_name(
     # sending the operator to the box that isn't the problem.
     culprit = template
     where = "name"
-    if fallback_name and reconcile.title_key(fallback_name) in reconcile._title_keys(session, clash, secrets):
+    if fallback_name and reconcile.title_key(fallback_name) in reconcile._title_keys(
+        session, clash, secrets, catalogue=load_catalogue(session)
+    ):
         culprit = fallback_name
         where = "\u201cName for people with nothing watched yet\u201d"
     raise HTTPException(
@@ -1122,23 +1123,43 @@ async def list_collections(request: Request) -> list[dict]:
         # millisecond either side of midnight, two rows in one list would otherwise report different
         # days.
         now = context_builder.local_now()
-        return [_serialize(session, c, now) for c in collections]
+        catalogue = load_catalogue(session)
+        return [_serialize(session, c, now, catalogue=catalogue) for c in collections]
 
 
 @router.get("/seasons", response_model=list[SeasonOut])
-async def list_seasons() -> list[dict]:
+async def list_seasons(request: Request) -> list[dict]:
     """Every season a row can follow, in calendar order (discussion #124)."""
-    return [
-        {
-            "slug": season.slug,
-            "name": season.name,
-            "emoji": season.emoji,
-            "month": season.month,
-            "day": season.day,
-            "description": season.description,
-        }
-        for season in seasons_mod.SEASONS.values()
-    ]
+    with request.app.state.sessions() as session:
+        catalogue = load_catalogue(session)
+    year = context_builder.local_now().year  # a season on a moving date reports this year's day
+    listed = []
+    for slug in seasons_mod.normalise_slugs(list(catalogue), catalogue=catalogue):
+        season = catalogue[slug]
+        day = season.rule.anchor(year)
+        listed.append(
+            {
+                "slug": season.slug,
+                "name": season.name,
+                "emoji": season.emoji,
+                "month": day.month,
+                "day": day.day,
+                "description": season.description,
+            }
+        )
+    return listed
+
+
+def _known_seasons(slugs: list[str], *, catalogue: seasons_mod.Catalogue) -> list[str]:
+    """Known seasons only, de-duplicated and in calendar order, so equal choices compare equal.
+
+    In the handlers rather than a field validator on ``CollectionIn``: the catalogue holds the owner's own
+    seasons (issue #137), which live in the database, and a validator has no session to read them with.
+    """
+    try:
+        return seasons_mod.normalise_slugs(slugs, catalogue=catalogue)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
 
 
 @router.post("", status_code=201, response_model=CollectionOut)
@@ -1152,6 +1173,8 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
     _validate(body)
     _reject_season_name_without_seasons(body.name_template or body.name, body.seasons)
     with request.app.state.sessions() as session:
+        catalogue = load_catalogue(session)
+        body.seasons = _known_seasons(body.seasons, catalogue=catalogue)
         # The template this row will actually be titled from, not the bare name — a POST may set both.
         _reject_duplicate_name(
             session,
@@ -1215,7 +1238,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
         session.flush()
         _set_audience(session, collection, body)
         session.commit()
-        result = _serialize(session, collection)
+        result = _serialize(session, collection, catalogue=catalogue)
     rebuild_schedule(request.app)  # a new row may carry a schedule — register its cron job now
     return result
 
@@ -1460,6 +1483,9 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
         collection = session.get(Collection, collection_id)
         if collection is None:
             raise HTTPException(status_code=404, detail="collection not found")
+        catalogue = load_catalogue(session)
+        if "seasons" in sent:
+            body.seasons = _known_seasons(body.seasons, catalogue=catalogue)
         _validate_anchor_rows(session, body, editing_slug=collection.slug)
         before = _snapshot(session, collection)
         is_default = collection.slug == DEFAULT_SLUG
@@ -1616,7 +1642,7 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                 template_after=template_after,
                 defer_rename=body.defer_rename,
             )
-            preview_row = _serialize(session, collection)
+            preview_row = _serialize(session, collection, catalogue=catalogue)
         else:
             _apply_patch(
                 session,
@@ -1631,7 +1657,7 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
             after = _snapshot(session, collection)
             if touching_name:
                 template_after = collection.name_template or collection.name
-            result = _serialize(session, collection)
+            result = _serialize(session, collection, catalogue=catalogue)
 
     if body.dry_run:
         warnings: list[str] = []

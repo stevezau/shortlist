@@ -477,8 +477,12 @@ class TestEveryTemplateDelivers:
         values = TEMPLATES["seasonal"]
         assert values["seasons"] == ["valentines", "halloween", "christmas"]
         lead, after = values["season_lead_days"], values["season_after_days"]
-        assert seasons.shown_on(values["seasons"], lead, after, date(2026, 9, 30)) is None
-        assert seasons.shown_on(values["seasons"], lead, after, date(2026, 10, 1)).season.slug == "halloween"
+        catalogue = seasons.BUILTIN_SEASONS
+        assert seasons.shown_on(values["seasons"], lead, after, date(2026, 9, 30), catalogue=catalogue) is None
+        assert (
+            seasons.shown_on(values["seasons"], lead, after, date(2026, 10, 1), catalogue=catalogue).season.slug
+            == "halloween"
+        )
         spec = _spec("seasonal", season=RowSeason("halloween", "Halloween", "🎃", date(2026, 10, 31)))
         assert all(_is_refresh_night(spec.slug, "sarah", day, spec.refresh_days) for day in range(1, 30))
 
@@ -491,6 +495,7 @@ class TestEveryTemplateDelivers:
             else []
         )
         engine_ctx.config.rows = [spec]
+        engine_ctx.config.seasons = dict(catalogue)
         mock_plextv.users = [plextv_user(100, "sarah")]
         profile = make_profile("sarah", account_id=100)
 

@@ -73,6 +73,7 @@ from shortlist.server.db.models import (
 from shortlist.server.prefs import blocked_ids
 from shortlist.server.services.plex_reachability import explained
 from shortlist.server.services.poster_service import load_upload, make_studio
+from shortlist.server.services.season_catalogue import load_catalogue
 from shortlist.server.services.sse import EventBus
 from shortlist.server.settings_store import SettingsStore
 
@@ -1068,6 +1069,9 @@ class ContextBuilder:
         a field forgotten here is invisible: the setting saves, the UI shows it, and the engine simply
         never sees it.
         """
+        # One catalogue for the whole run: the rows' specs resolve tonight's season from it, and the engine
+        # reads each season's titles from the same one.
+        catalogue = load_catalogue(session)
         return EngineConfig(
             row_size=int(store.get("row.size")),
             row_name_template=store.get("row.name_template"),
@@ -1109,7 +1113,7 @@ class ContextBuilder:
             dislike_threshold=(_dislike_threshold(store) if store.get("recommendations.use_plex_ratings") else None),
             hide_shared_from_disabled=bool(store.get("privacy.hide_shared_from_disabled")),
             dry_run=dry_run,
-            rows=self._build_rows(session, store),
+            rows=self._build_rows(session, store, catalogue=catalogue),
             # The server owns the row list: an empty one means every row is DISABLED, not
             # 'unconfigured' — so nothing new is delivered, rather than the legacy default row
             # being resurrected behind a Rows page that shows it switched off.
@@ -1123,9 +1127,10 @@ class ContextBuilder:
             build_only=self._build_only_slugs(session, collection_ids),
             requests=self._build_requests(store),
             request_sources=self._build_request_sources(store),
+            seasons=catalogue,
         )
 
-    def _build_rows(self, session: Session, store: SettingsStore) -> list[RowSpec]:
+    def _build_rows(self, session: Session, store: SettingsStore, *, catalogue: seasons_mod.Catalogue) -> list[RowSpec]:
         """Build the engine's row specs from the enabled collections.
 
         The default 'picked' row keeps an empty name_template here, so the per-user row-name on the
@@ -1159,11 +1164,20 @@ class ContextBuilder:
             # before a season opens, that season, so it is built while still hidden. None between
             # seasons is what makes the row dormant.
             shown = row_shown_today(
-                collection.show_days, collection.seasons, collection.season_lead_days, collection.season_after_days, now
+                collection.show_days,
+                collection.seasons,
+                collection.season_lead_days,
+                collection.season_after_days,
+                now,
+                catalogue=catalogue,
             )
             season = (
                 seasons_mod.row_season_on(
-                    list(collection.seasons), collection.season_lead_days, collection.season_after_days, now.date()
+                    list(collection.seasons),
+                    collection.season_lead_days,
+                    collection.season_after_days,
+                    now.date(),
+                    catalogue=catalogue,
                 )
                 if collection.seasons
                 else None

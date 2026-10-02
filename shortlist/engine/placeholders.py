@@ -10,10 +10,12 @@ every ``"{top_seed}" in`` in the codebase. The answers live here; the callers de
 
 from __future__ import annotations
 
-from datetime import date
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from shortlist.engine.models import RowSeason
+
+if TYPE_CHECKING:
+    from shortlist.engine.seasons import Catalogue
 
 USER = "{user}"
 LIBRARY_NAME = "{library_name}"
@@ -53,21 +55,17 @@ def fill_season(text: str, season: RowSeason | None) -> str:
     return text.replace(SEASON_EMOJI, season.emoji).replace(SEASON, season.name)
 
 
-def catalogue_seasons() -> list[RowSeason]:
+def catalogue_seasons(catalogue: Catalogue) -> list[RowSeason]:
     """Every season a row can follow, as a name-filling season (the anchor's year is irrelevant to a name)."""
-    from shortlist.engine.seasons import SEASONS
-
-    return [
-        RowSeason(slug=s.slug, name=s.name, emoji=s.emoji, anchor=date(2000, s.month, s.day)) for s in SEASONS.values()
-    ]
+    return [RowSeason(slug=s.slug, name=s.name, emoji=s.emoji, anchor=s.rule.anchor(2000)) for s in catalogue.values()]
 
 
-def season_renderings(template: str) -> list[str]:
+def season_renderings(template: str, catalogue: Catalogue) -> list[str]:
     """``template`` once per catalogue season, for the checks that must see every title a seasonal row
     can wear — out of season it keeps the last one, and no single night's spec can render that."""
     if not uses_season(template):
         return [template]
-    return [fill_season(template, season) for season in catalogue_seasons()]
+    return [fill_season(template, season) for season in catalogue_seasons(catalogue)]
 
 
 #: Where a name is being written, for `refusal`.

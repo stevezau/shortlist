@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from shortlist.engine.rows import ROW_ORDERS
 from shortlist.server.auth import SESSION_COOKIE
 from shortlist.server.db.models import DEFAULT_SLUG, User
+from shortlist.server.services.season_catalogue import load_catalogue
 from shortlist.server.settings_store import SettingsStore
 
 pytestmark = pytest.mark.integration
@@ -280,7 +281,9 @@ class TestCollectionsSeed:
         client.put("/api/settings", json={"values": {"row.size": 10}})
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         picked = next(spec for spec in specs if spec.slug == "picked")
         assert picked.size == 10  # follows the setting, not the collection's seeded 15
         assert picked.name_template == ""  # falls through to the global row name
@@ -296,7 +299,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         assert next(s for s in specs if s.slug == "rewatch_row").watched_pct == 0.5
 
     def test_per_row_auto_user_tag_round_trips_and_reaches_the_spec(self, client: TestClient):
@@ -317,7 +322,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         assert next(s for s in specs if s.slug == "kids_row").auto_user_tag is False
         # ...and the untouched default row still inherits, so one row's override reaches no other.
         assert next(s for s in specs if s.slug == "picked").auto_user_tag is None
@@ -339,7 +346,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         assert next(s for s in specs if s.slug == "fresh_row").refresh_days == 3
 
     def test_per_row_idle_hold_round_trips_and_reaches_the_spec(self, client: TestClient):
@@ -359,7 +368,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         assert next(s for s in specs if s.slug == "patient_row").idle_hold_days == 28
         # An untouched row still inherits, so one row's ceiling reaches no other.
         assert next(s for s in specs if s.slug == "picked").idle_hold_days is None
@@ -384,7 +395,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         assert next(s for s in specs if s.slug == "old_favourites").rewatch_cooldown_days == 90
         assert next(s for s in specs if s.slug == "anything_goes").rewatch_cooldown_days == 0
 
@@ -421,7 +434,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         gems = next(s for s in specs if s.slug == "hidden_gems")
         assert (gems.description, gems.sort_title_prefix) == ("", "01 ")
 
@@ -439,7 +454,7 @@ class TestCollectionsSeed:
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
             store = SettingsStore(session, client.app.state.secrets)
-            specs = builder._build_rows(session, store)
+            specs = builder._build_rows(session, store, catalogue=load_catalogue(session))
             assert builder._engine_config(session, store).recency == 0.4
         assert next(s for s in specs if s.slug == "new_row").recency == 0.8
 
@@ -456,7 +471,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         assert next(s for s in specs if s.slug == "plain_row").recency is None
 
     def test_an_explicit_zero_is_stored_and_not_swallowed_as_unset(self, client: TestClient):
@@ -485,7 +502,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         assert next(s for s in specs if s.slug == "because_row").max_seeds == 1
         # A row that never set one keeps None, so the engine falls back to its own budget.
         assert next(s for s in specs if s.slug == "picked").max_seeds is None
@@ -508,7 +527,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         assert next(s for s in specs if s.slug == "cycling_row").seed_window == 3
         # A row that never set one takes their most recent watch — the behaviour before cycling existed.
         assert next(s for s in specs if s.slug == "picked").seed_window == 1
@@ -582,7 +603,9 @@ class TestCollectionsSeed:
         with client.app.state.sessions() as session:
             from shortlist.server.settings_store import SettingsStore
 
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         by_slug = {s.slug: s for s in specs}
         assert by_slug[inherits.json()["slug"]].cold_start is None
         assert by_slug[created.json()["slug"]].cold_start is None  # the PATCH above handed it back
@@ -599,7 +622,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         spec = next(s for s in specs if s.slug == "top_row")
         assert spec.placement == "library" and spec.pin_top is True
         assert spec.show_library and not spec.show_home  # library-only
@@ -621,7 +646,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         spec = next(s for s in specs if s.slug == created.json()["slug"])
         assert spec.pick_order == order, f"{order!r} did not reach the engine spec"
 
@@ -647,7 +674,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         spec = next(s for s in specs if s.slug == "quiet_row")
         assert not spec.show_home and not spec.show_friends_home
         assert not spec.show_owner_library and not spec.show_friends_library
@@ -666,7 +695,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         spec = next(s for s in specs if s.slug == "split_row")
         assert spec.show_owner_library and not spec.show_friends_library
         assert spec.show_home and spec.show_friends_home
@@ -797,7 +828,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         assert next(s for s in specs if s.slug == "gems_row").hub_anchors == {
             "2": HubAnchor(anchor_title="New Series", before=True)
         }
@@ -825,7 +858,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
 
         assert next(s for s in specs if s.slug == follower.json()["slug"]).hub_anchors == {
             "2": HubAnchor(anchor_row=target, before=True)
@@ -845,7 +880,7 @@ class TestCollectionsSeed:
         with client.app.state.sessions() as session:
             store = SettingsStore(session, client.app.state.secrets)
             retired = builder._retired_rows(session, store)
-            built = builder._build_rows(session, store)
+            built = builder._build_rows(session, store, catalogue=load_catalogue(session))
 
         assert "hidden_gems" not in {s.slug for s in built}  # not delivered
         assert "hidden_gems" in {s.slug for s in retired}  # but queued for removal
@@ -977,7 +1012,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         spec = next(s for s in specs if s.slug == "poster_row")
         assert spec.poster is not None and spec.poster.mode == "generate" and spec.poster.style == "neon"
 
@@ -3347,7 +3384,9 @@ class TestRowShowDaysApi:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         return next(s for s in specs if s.slug == slug)
 
     def test_show_days_round_trips(self, client: TestClient):
@@ -3480,7 +3519,9 @@ class TestSeasonalRowsApi:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         return next(s for s in specs if s.slug == slug)
 
     def test_seasons_round_trip_in_calendar_order(self, client: TestClient):
@@ -3498,6 +3539,20 @@ class TestSeasonalRowsApi:
         body = client.post("/api/collections", json={"name": "Plain"}).json()
         assert body["seasons"] == []
         assert body["season_status"] is None
+
+    def test_a_patch_refuses_an_unknown_season_and_stores_its_seasons_in_calendar_order(self, client: TestClient):
+        """The catalogue lives partly in the database (#137), so the check runs in the handlers rather than a
+        field validator — and a PATCH has to get it as surely as a POST."""
+        cid = client.post("/api/collections", json={"name": "Seasonal", "seasons": ["halloween"]}).json()["id"]
+
+        refused = client.patch(f"/api/collections/{cid}", json={"name": "Seasonal", "seasons": ["easter"]})
+        assert refused.status_code == 422
+        assert "easter" in refused.text
+        r = client.patch(
+            f"/api/collections/{cid}", json={"name": "Seasonal", "seasons": ["christmas", "valentines", "christmas"]}
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["seasons"] == ["valentines", "christmas"]
 
     def test_an_unknown_season_is_refused(self, client: TestClient):
         r = client.post("/api/collections", json={"name": "Seasonal", "seasons": ["easter"]})
@@ -4207,7 +4262,9 @@ class TestRequestsRowFields:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         spec = next(s for s in specs if s.slug == out["slug"])
         assert (spec.requests_row, spec.requests_window_days, spec.requests_tag_pattern) == (True, 30, "req-{username}")
 

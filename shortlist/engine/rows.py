@@ -127,6 +127,8 @@ def row_shown_today(
     lead_days: int,
     after_days: int,
     now: datetime,
+    *,
+    catalogue: seasons_mod.Catalogue,
 ) -> bool:
     """Is a row on its surfaces on ``now``'s date, by its day schedule AND its seasons? (#102, #124)
 
@@ -136,7 +138,10 @@ def row_shown_today(
     """
     if not row_is_shown(show_days, now):
         return False
-    return not season_slugs or seasons_mod.shown_on(season_slugs, lead_days, after_days, now.date()) is not None
+    return (
+        not season_slugs
+        or seasons_mod.shown_on(season_slugs, lead_days, after_days, now.date(), catalogue=catalogue) is not None
+    )
 
 
 def effective_seed_window(spec: RowSpec) -> int:
@@ -1003,8 +1008,16 @@ def row_recipe(policy: RowPolicy, spec: RowSpec) -> str:
             *((f"cooldown={spec.rewatch_cooldown_days}",) if spec.rewatch else ()),
             # Seasonal rows only, again so no other row's recipe changes. The season's DAY is in it, so a
             # new season — or next year's Christmas — rebuilds the row rather than carrying last one's
-            # picks forward, cadence and idle hold notwithstanding.
-            *((f"season={spec.season.slug}@{spec.season.anchor.isoformat()}",) if spec.season else ()),
+            # picks forward, cadence and idle hold notwithstanding. A custom season adds its sources'
+            # hash (#137), so editing them rebuilds its rows; a built-in has none, so its part is unchanged.
+            *(
+                (
+                    f"season={spec.season.slug}@{spec.season.anchor.isoformat()}"
+                    + (f"#{spec.season.content_hash}" if spec.season.content_hash else ""),
+                )
+                if spec.season
+                else ()
+            ),
         )
     )
 

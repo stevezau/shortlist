@@ -753,7 +753,7 @@ def titles_other_rows_build(
             continue  # builds nothing for this person, so no title of theirs can be its collection
         # A seasonal row claims the title of EVERY season, not only tonight's: its collection wears
         # whichever season it was last built for. Claiming more only ever removes less.
-        templates = season_renderings(raw_row_template(other, profile, config))
+        templates = season_renderings(raw_row_template(other, profile, config), config.seasons)
         for section in target_sections(sections, other):
             for template in templates:
                 display = render_row_name(

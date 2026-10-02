@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
+from typing import Any
 
 
 class MediaType(StrEnum):
@@ -393,6 +394,9 @@ class RowSeason:
     name: str
     emoji: str
     anchor: date
+    #: The custom season's source fingerprint (issue #137), so editing its sources rebuilds the row. Empty
+    #: for a built-in, which keeps its recipe byte-identical to before custom seasons existed.
+    content_hash: str = ""
 
 
 @dataclass
@@ -1302,6 +1306,9 @@ class EngineConfig:
     # server adapter fills it whenever an Overseerr/Radarr/Sonarr URL + key exist, regardless of
     # `requests` — the row and the request feature are independent.
     request_sources: RequestSources | None = None
+    # Every season a row may follow, built-ins and the owner's own (issue #137), by slug — what this run
+    # reads a seasonal row's titles from. Empty -> no seasonal row can build; the server always fills it.
+    seasons: Mapping[str, Any] = field(default_factory=dict)  # seasons.Catalogue; Any avoids an import cycle
 
     def should_build(self, spec: RowSpec) -> bool:
         """Whether this run rebuilds ``spec`` (scoped run) or every row (full run)."""

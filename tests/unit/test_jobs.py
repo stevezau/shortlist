@@ -24,6 +24,7 @@ from shortlist.engine.models import EngineConfig, RowSpec
 from shortlist.server.db.models import Event, Job
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.services import jobs
+from shortlist.server.services.season_catalogue import load_catalogue
 from shortlist.server.settings_store import SettingsStore
 
 
@@ -2101,7 +2102,9 @@ class TestScheduledRowVisibility:
             collections=[("🎃 Halloween picks" + row_marker(self.ACCOUNT), 4242, "shortlist_sarah")],
         )
         with sessions() as session:
-            specs = state.run_service.builder._build_rows(session, SettingsStore(session, state.secrets))
+            specs = state.run_service.builder._build_rows(
+                session, SettingsStore(session, state.secrets), catalogue=load_catalogue(session)
+            )
         state.run_service.build_context(False).config.rows[:] = specs
 
         jobs._HANDLERS["rows.visibility"](state, {})

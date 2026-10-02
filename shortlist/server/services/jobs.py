@@ -1786,9 +1786,9 @@ def _rows_visibility(state, payload: dict) -> dict:
     mean anything, and it is why the schedule is a MIDNIGHT job rather than a flag a run reads.
 
     **This handler keeps no state of its own.** Today's answer is
-    ``row_shown_today(show_days, seasons, lead, after, now)`` — schedule, seasons and calendar, nothing
-    else — so there is nothing to cache, nothing to keep in sync, and no ordering rule about when to
-    record it. An earlier version cached the last-applied answer per row to skip work, and that cache
+    ``row_shown_today(show_days, seasons, lead, after, now, catalogue=...)`` — schedule, seasons and
+    calendar, nothing else — so there is nothing to cache, nothing to keep in sync, and no ordering rule
+    about when to record it. An earlier version cached the last-applied answer per row to skip work, and that cache
     produced two bugs by itself: it recorded rows as converged under ``paused_all``, and again for a
     collection the pass had SKIPPED. Both left a row visible on a day its schedule said to hide it,
     permanently, because the cache then agreed that there was nothing to do. Recomputing is simpler AND
@@ -1823,6 +1823,7 @@ def _rows_visibility(state, payload: dict) -> dict:
     from shortlist.engine.rows import row_shown_today
     from shortlist.server.db.models import Collection, Delivery
     from shortlist.server.services.context_builder import local_now
+    from shortlist.server.services.season_catalogue import load_catalogue
 
     requested = bool(payload.get("dry_run", False))
     now = local_now()
@@ -1833,9 +1834,10 @@ def _rows_visibility(state, payload: dict) -> dict:
         # Every enabled row's answer, scheduled or not: a pass queued for ONE row reports that row, and a
         # seasonal row with no day schedule is missing from `scheduled` on most nights, hidden or shown.
         today: dict[str, bool] = {}
+        catalogue = load_catalogue(session)
         for row in session.query(Collection).filter_by(enabled=True):
             calendar = (row.seasons, row.season_lead_days, row.season_after_days)
-            shown = today[row.slug] = row_shown_today(row.show_days, *calendar, now)
+            shown = today[row.slug] = row_shown_today(row.show_days, *calendar, now, catalogue=catalogue)
             # A seasonal row with no day schedule takes a pass only in the week after a season opens or
             # closes for it (discussion #124) — stateless, since each earlier day's answer is the same pure
             # call — so a server whose only scheduled row is seasonal converges a few weeks a year, not
@@ -1843,7 +1845,7 @@ def _rows_visibility(state, payload: dict) -> dict:
             if row.show_days or (
                 row.seasons
                 and any(
-                    shown != row_shown_today(row.show_days, *calendar, now - timedelta(days=back))
+                    shown != row_shown_today(row.show_days, *calendar, now - timedelta(days=back), catalogue=catalogue)
                     for back in range(1, _SEASON_TURNOVER_LOOKBACK_DAYS + 1)
                 )
             ):
