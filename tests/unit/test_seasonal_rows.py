@@ -1234,6 +1234,31 @@ class TestWhyASeasonalRowBuiltNothing:
             "audience yet, so it had nothing to show tonight."
         )
 
+    def test_someone_whose_other_row_built_picks_gets_no_reason(self, ctx):
+        """The person's reason is read as "why they got nothing": the Runs page shows it in place of their pick
+        counts. Their seasonal row being empty beside a row that delivered is not that."""
+        ctx.tmdb.discover_all.side_effect = lambda media_type, params: []
+        ctx.config.rows = [seasonal_spec(), RowSpec(slug="plain", name_template="Plain picks", size=5)]
+
+        report = pipeline_mod.run(ctx, _people())
+
+        sarah = next(u for u in report.users if u.username == "sarah")
+        assert _picks(report, "sarah", "seasonal") == [] and _picks(report, "sarah", "plain") != []
+        assert sarah.reason is None
+
+    def test_two_empty_seasonal_rows_each_name_their_own_season(self, ctx):
+        """Joined, two sentences that both said "this row's libraries" could not be told apart."""
+        ctx.tmdb.discover_all.side_effect = lambda media_type, params: []
+        ctx.config.rows = [seasonal_spec(), seasonal_spec(slug="spooky", season=HALLOWEEN)]
+
+        report = pipeline_mod.run(ctx, _people())
+
+        sarah = next(u for u in report.users if u.username == "sarah")
+        assert sarah.reason == (
+            "No 🎄 Christmas films are in the Christmas row's libraries, so it had nothing to show tonight. "
+            "No 🎃 Halloween films are in the Halloween row's libraries, so it had nothing to show tonight."
+        )
+
     def test_a_row_that_built_something_gets_no_such_reason(self, ctx):
         self._row_alone(ctx)
 

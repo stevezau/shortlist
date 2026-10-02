@@ -1756,7 +1756,12 @@ def _season_in_row_libraries(ctx: EngineContext, spec: RowSpec) -> set[tuple[int
 
 
 def _why_season_row_empty(
-    ctx: EngineContext, spec: RowSpec, *, seen: set[tuple[int, MediaType]] | None = None, audience: str = ""
+    ctx: EngineContext,
+    spec: RowSpec,
+    *,
+    seen: set[tuple[int, MediaType]] | None = None,
+    audience: str = "",
+    several: bool = False,
 ) -> str | None:
     """Plain-English reason a seasonal row built nothing tonight, naming the season — for the same reason
     `_why_no_rows` exists: an empty row reported `ok` reads as a bug, and thin seasons (Mother's Day holds 2
@@ -1767,6 +1772,8 @@ def _why_season_row_empty(
         spec: A seasonal row that ended with no picks.
         seen: A per-person row's: what this person has already watched (`zero_pct_exclusions`).
         audience: A shared row's: why its audience gave it nothing, completing "has been watched by …".
+        several: This sentence is joined to another empty seasonal row's, so "this row" would not say which:
+            the row is named by its season instead.
 
     Returns:
         The sentence, or None for a season that could not be read tonight, which is reported as that.
@@ -1775,14 +1782,15 @@ def _why_season_row_empty(
         return None
     season = f"{spec.season.emoji} {spec.season.name}".strip()
     one, many = _TITLE_NOUNS.get(spec.media, _TITLE_NOUNS["both"])
+    libraries = f"the {spec.season.name} row's libraries" if several else "this row's libraries"
     held = _season_in_row_libraries(ctx, spec)
     if not held:
-        return f"No {season} {many} are in this row's libraries, so it had nothing to show tonight."
+        return f"No {season} {many} are in {libraries}, so it had nothing to show tonight."
     if audience:
-        return f"No {season} {one} in this row's libraries {audience}, so it had nothing to show tonight."
+        return f"No {season} {one} in {libraries} {audience}, so it had nothing to show tonight."
     if seen is not None and held <= seen:
         return f"No {season} {many} are left for them — they've seen {f'all {len(held)}' if len(held) > 1 else 'it'}."
-    return f"None of the {len(held)} {season} {many} in this row's libraries could be picked for them tonight."
+    return f"None of the {len(held)} {season} {many} in {libraries} could be picked for them tonight."
 
 
 def _why_cold_skipped(user: UserProfile, cfg: EngineConfig, specs: list[RowSpec], removed: int) -> str:
@@ -3580,12 +3588,15 @@ def _run_user(
     user_report.counts.picks = len(all_picks)
     # Only when nothing else already explains this person: the skip and cancellation reasons are more
     # specific than anything this can say, and they are set before the rows are walked. A seasonal row that
-    # built nothing comes first: it leaves no selection entry, so the sentence below cannot see it.
-    if user_report.reason is None:
-        built = {pick.collection_slug for pick in all_picks}
-        empty = [spec for spec in specs if spec.season is not None and spec.slug not in built]
+    # built nothing comes first: it leaves no selection entry, so the sentence below cannot see it. Only for a
+    # person who got NOTHING: the Runs page reads this reason as "why they got nothing", in place of their pick
+    # counts (`recent-runs.tsx`, `user-panel.tsx`, `run-user-trace.tsx`), so an empty seasonal row beside a row
+    # that delivered must not set it.
+    if user_report.reason is None and not all_picks:
+        empty = [spec for spec in specs if spec.season is not None]
         seen = policy.zero_pct_exclusions() if empty else set()
-        reasons = [why for spec in empty if (why := _why_season_row_empty(ctx, spec, seen=seen))]
+        several = len(empty) > 1
+        reasons = [why for spec in empty if (why := _why_season_row_empty(ctx, spec, seen=seen, several=several))]
         user_report.reason = " ".join(dict.fromkeys(reasons)) or None
     if user_report.reason is None:
         user_report.reason = _why_nothing_rebuilt(user_report.trace.get("selection") or [])
