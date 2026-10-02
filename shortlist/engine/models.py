@@ -6,7 +6,7 @@ import re
 import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
@@ -398,37 +398,43 @@ class RowSeason:
     #: for a built-in, which keeps its recipe byte-identical to before custom seasons existed.
     content_hash: str = ""
 
+    #: The window tonight's season shows in (`seasons.row_season_on` sets it): from ``starts`` to ``ends``. Left
+    #: out of equality, since it follows from the season, its day and the row's timing. None on a season built
+    #: by hand, which then counts as showing on its day alone.
+    starts: date | None = field(default=None, compare=False)
+    ends: date | None = field(default=None, compare=False)
+
     @property
     def built_for(self) -> str:
         """``slug@anchor``: the season, and the exact day of it, a collection built tonight was built for.
 
         The recipe's season part and the delivery ledger's record both use it. The recipe needs the full day, so
-        moving a season's date rebuilds its rows; what a collection is SHOWN for is compared on `season_year`.
+        moving a season's date rebuilds its rows; whether a collection is SHOWN for tonight is `holds`.
         """
         return f"{self.slug}@{self.anchor.isoformat()}"
 
-    @property
-    def year_key(self) -> str:
-        """`season_year` of tonight's season: ``slug@year``."""
-        return f"{self.slug}@{self.anchor.year}"
+    def holds(self, built: str) -> bool:
+        """Whether a collection recorded as built for ``built`` holds this season, so it may be shown tonight.
 
+        True only for this season's slug with a day inside tonight's window, from the day before it opens to the
+        day it closes (#137 C-1). Another season, another year's showing, or an earlier day of this year that
+        the owner has since moved the season from, is a collection built for something else. A day moved
+        within the window is not: its films were chosen for this showing, and the recipe's full day rebuilds
+        the row at its next run. The day before the window covers a day moved to just after the old one
+        (28 Dec to 5 Jan with a 7-day lead).
 
-def season_year(built: str) -> str:
-    """``slug@year`` of a recorded `RowSeason.built_for`: which season, and which year of it, a collection holds.
-
-    What promotion compares (#137): another season, or the same season in another year, is a collection built
-    for something else. A date moved within the year is not — the films were chosen for this year's season,
-    and the recipe's full day rebuilds the row at its next run anyway. The year is the rule year `_windows`
-    anchors each window in, since every rule's anchor falls inside its own year.
-
-    Args:
-        built: ``slug@YYYY-MM-DD`` as the ledger and the recipe record it, or "" for no season.
-
-    Returns:
-        ``slug@YYYY``, or ``built`` unchanged when it names no season.
-    """
-    slug, at, anchor = built.rpartition("@")
-    return f"{slug}@{anchor[:4]}" if at else built
+        Args:
+            built: The record, ``slug@YYYY-MM-DD`` as `built_for` writes it. "" (built while the row followed no
+                season) and a record with no readable day are never this season.
+        """
+        slug, at, day = built.rpartition("@")
+        if not at or slug != self.slug:
+            return False
+        try:
+            anchor = date.fromisoformat(day)
+        except ValueError:
+            return False
+        return (self.starts or self.anchor) - timedelta(days=1) <= anchor <= (self.ends or self.anchor)
 
 
 @dataclass

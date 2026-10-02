@@ -351,6 +351,8 @@ def row_season_on(
         emoji=window.season.emoji,
         anchor=window.anchor,
         content_hash=window.season.content_hash,
+        starts=window.starts,
+        ends=window.ends,
     )
 
 

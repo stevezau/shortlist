@@ -870,7 +870,16 @@ class TestASharedSeasonalRow:
         ctx.plex.promote.assert_any_call(collection, shared=False, home=False, recommended=False)
 
 
-PAT = RowSeason(slug="pat", name="St Patrick's Day", emoji="☘️", anchor=date(2027, 3, 17), content_hash="abc")
+#: As `row_season_on` resolves it with the season's own 7-day lead: shown 10-17 March 2027.
+PAT = RowSeason(
+    slug="pat",
+    name="St Patrick's Day",
+    emoji="☘️",
+    anchor=date(2027, 3, 17),
+    content_hash="abc",
+    starts=date(2027, 3, 10),
+    ends=date(2027, 3, 17),
+)
 
 
 class TestLastSeasonsCollection:
@@ -1048,17 +1057,6 @@ class TestLastSeasonsCollection:
 
         ctx.plex.promote.assert_called_once_with(stale, shared=False, home=False, recommended=False)
 
-    @pytest.mark.parametrize(
-        ("recorded", "key"),
-        [("christmas@2026-12-25", "christmas@2026"), ("pat@2027-03-14", "pat@2027"), ("", "")],
-    )
-    def test_a_recorded_season_is_compared_on_its_slug_and_year(self, recorded, key):
-        """The ledger and the recipe keep the full day; promotion compares only the season and its year."""
-        from shortlist.engine.models import season_year
-
-        assert season_year(recorded) == key
-        assert PAT.year_key == "pat@2027" and PAT.built_for == "pat@2027-03-17"
-
     def test_what_a_run_delivers_or_removes_replaces_the_ledgers_record(self, ctx):
         from shortlist.engine.models import RunReport, UserRunReport
 
@@ -1077,6 +1075,92 @@ class TestLastSeasonsCollection:
             ("sarah", "plain", "1"): "",
             ("mike", "seasonal", "1"): "halloween@2026-10-31",
         }
+
+
+def _custom(slug: str, month: int, day: int, *, lead: int, after: int = 0):
+    from shortlist.engine.seasons import DateRule, Season
+
+    return Season(
+        slug=slug,
+        name=slug.title(),
+        emoji="🗓️",
+        rule=DateRule("fixed", month=month, day=day),
+        description="",
+        keywords=(1,),
+        lead_days=lead,
+        after_days=after,
+    )
+
+
+class TestWhichCollectionIsTonightsSeason:
+    """#137 C-1, round 3: a collection is built for tonight's season only when its record names the same season
+    AND a day inside tonight's window (from the day before it opens to the day it closes). A slug-and-year
+    comparison let an earlier date of the same year through: Diwali moved from March to November showed March's
+    collection all of November. Every case resolves tonight's season with the real `row_season_on` and asks the
+    real guard, `pipeline._unless_built_for_another_season`."""
+
+    @staticmethod
+    def _shown(
+        day: date, built: str | None, seasons: dict, *, slugs: list[str], lead: int = 30, after: int = 0
+    ) -> bool:
+        from shortlist.engine.seasons import row_season_on
+
+        catalogue = {**BUILTIN_SEASONS, **seasons}
+        tonight = row_season_on(slugs, lead, after, day, catalogue=catalogue)
+        assert tonight is not None, "the row is in season on that day"
+        spec = seasonal_spec(seasons=slugs, season=tonight)
+        guarded = pipeline_mod._unless_built_for_another_season(spec, built, SimpleNamespace(title="row"))
+        return not guarded.dormant
+
+    @pytest.mark.parametrize(
+        ("day", "built", "season"),
+        [
+            (date(2026, 10, 30), "diwali@2026-03-01", _custom("diwali", 11, 8, lead=14, after=3)),
+            (date(2026, 12, 20), "hols@2026-01-01", _custom("hols", 12, 31, lead=14)),
+            # Deleted on 1 Oct and made again under the same slug for 8 Nov: DELETE leaves the ledger's record.
+            (date(2026, 10, 30), "diwali@2026-10-01", _custom("diwali", 11, 8, lead=14, after=3)),
+        ],
+        ids=["march_moved_to_november", "january_moved_to_december", "deleted_and_made_again_for_another_day"],
+    )
+    def test_an_earlier_day_of_the_same_season_and_year_is_kept_hidden(self, day, built, season):
+        # The season alone, so nothing but its own day can hide it: beside Christmas, 20 December would show
+        # Christmas and hide the row for the wrong reason.
+        assert self._shown(day, built, {season.slug: season}, slugs=[season.slug]) is False
+
+    @pytest.mark.parametrize(
+        ("day", "built", "season"),
+        [
+            (date(2027, 3, 12), "pat@2027-03-14", _custom("pat", 3, 17, lead=7)),
+            (date(2026, 12, 30), "ny@2026-12-28", _custom("ny", 1, 5, lead=7, after=3)),
+        ],
+        ids=["14_moved_to_17_march", "28_december_moved_to_5_january"],
+    )
+    def test_a_day_moved_within_the_window_is_still_shown(self, day, built, season):
+        """The films were chosen for this showing of the season; the recipe's full day rebuilds it next run."""
+        assert self._shown(day, built, {season.slug: season}, slugs=[season.slug]) is True
+
+    @pytest.mark.parametrize("day", [date(2027, 1, 1), date(2027, 1, 2)], ids=["1_january", "2_january"])
+    def test_new_years_eve_staying_into_january_shows_its_own_collection_and_hides_last_years(self, day):
+        """The window crosses New Year: neither tonight's year nor the record's year alone can decide it."""
+        nye = {"nye": _custom("nye", 12, 31, lead=7, after=2)}
+        assert self._shown(day, "nye@2026-12-31", nye, slugs=["nye"]) is True
+        assert self._shown(day, "nye@2025-12-31", nye, slugs=["nye"]) is False
+
+    def test_valentines_shown_from_december_shows_its_own_collection_and_hides_last_years(self):
+        """A 90-day lead opens February's season in November of the year before."""
+        day = date(2026, 12, 20)
+        assert self._shown(day, "valentines@2027-02-14", {}, slugs=["valentines"], lead=90) is True
+        assert self._shown(day, "valentines@2026-02-14", {}, slugs=["valentines"], lead=90) is False
+
+    @pytest.mark.parametrize(
+        ("built", "shown"),
+        [(None, True), ("", False), ("pat@", False), ("pat", False), ("christmas@2027-03-17", False)],
+        ids=["no_record", "built_while_not_seasonal", "no_date", "no_anchor_at_all", "another_season"],
+    )
+    def test_a_record_that_names_no_day_of_this_season_keeps_todays_answer(self, built, shown):
+        """No record is promoted as it always was; anything else that names no day of tonight's season is not."""
+        pat = {"pat": _custom("pat", 3, 17, lead=7)}
+        assert self._shown(date(2027, 3, 12), built, pat, slugs=["pat"]) is shown
 
 
 class TestSeasonInTheDescriptionAndPoster:

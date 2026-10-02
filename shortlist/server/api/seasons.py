@@ -25,7 +25,7 @@ from shortlist.engine import seasons as seasons_mod
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.delivery import section_kind
-from shortlist.engine.models import MediaType
+from shortlist.engine.models import MediaType, RowSeason
 from shortlist.engine.placeholders import uses_season
 from shortlist.engine.rows import row_shown_today
 from shortlist.engine.seasons import (
@@ -308,7 +308,7 @@ async def update_season(slug: str, body: SeasonIn, request: Request) -> dict:
         changed = [
             c.slug
             for c in following
-            if _today(c, c.seasons, now, catalogue_before) != _today(c, c.seasons, now, catalogue_after)
+            if _pass_owed(_today(c, c.seasons, now, catalogue_before), _today(c, c.seasons, now, catalogue_after))
         ]
         view = _season_view(season_from_row(row), row, used_by, now.date())
     if changed:
@@ -347,8 +347,10 @@ async def delete_season(slug: str, request: Request) -> Response:
             c.slug
             for c in following
             if c.enabled
-            and _today(c, c.seasons, now, catalogue_before)
-            != _today(c, [s for s in c.seasons if s != slug], now, catalogue_after)
+            and _pass_owed(
+                _today(c, c.seasons, now, catalogue_before),
+                _today(c, [s for s in c.seasons if s != slug], now, catalogue_after),
+            )
         ]
         for collection in following:
             collection.seasons = [s for s in collection.seasons if s != slug]
@@ -562,17 +564,34 @@ def _enabled_followers(session: Session, slug: str) -> list[Collection]:
     return [row for row in rows if slug in (row.seasons or [])]
 
 
-def _today(row: Collection, seasons: list[str], now: datetime, catalogue: seasons_mod.Catalogue) -> tuple:
-    """What a `rows.visibility` pass applies to a row today: whether it is shown, and which season and year it is
-    built for (a collection built for another is kept hidden). Compared as promotion compares it, on
-    `season_year`: a date moved within the year changes neither, so it needs no pass."""
+def _today(
+    row: Collection, seasons: list[str], now: datetime, catalogue: seasons_mod.Catalogue
+) -> tuple[bool, RowSeason | None]:
+    """What a `rows.visibility` pass works from for a row today: whether it is shown, and the season (with its
+    window) it builds for."""
     shown = row_shown_today(
         row.show_days, seasons, row.season_lead_days, row.season_after_days, now, catalogue=catalogue
     )
     season = seasons_mod.row_season_on(
         list(seasons), row.season_lead_days, row.season_after_days, now.date(), catalogue=catalogue
     )
-    return shown, season.year_key if season else None
+    return shown, season
+
+
+def _pass_owed(before: tuple[bool, RowSeason | None], after: tuple[bool, RowSeason | None]) -> bool:
+    """Whether a season edit changes what a `rows.visibility` pass would do to the row today.
+
+    Its collection is taken to be built for the season's day before the edit. A pass is owed when the row's
+    shown-today answer moves, or when it is shown and that collection no longer `holds` the season it shows
+    after the edit — the promotion guard would now hide it (#137 C-1). A day moved within the window changes
+    neither, so it needs no pass, and a row hidden before and after needs none either.
+    """
+    (shown_before, season_before), (shown_after, season_after) = before, after
+    if shown_before != shown_after:
+        return True
+    if not shown_after:
+        return False
+    return season_before is None or season_after is None or not season_after.holds(season_before.built_for)
 
 
 def _reject_row_title_clashes(session: Session, state: State, season: Season) -> None:

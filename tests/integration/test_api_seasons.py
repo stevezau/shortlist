@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from shortlist.engine.clients.plex_pms import LibraryCollection, LibraryTitle
 from shortlist.engine.models import MediaType
+from shortlist.engine.seasons import BUILTIN_SEASONS, DateRule, Season
 from shortlist.server.db.adapters import DbCache
 from shortlist.server.db.models import CacheRow
 from shortlist.server.services import library_index as library_index_mod
@@ -354,6 +355,47 @@ class TestUpdate:
 
         assert r.json()["rule"] == {"kind": "nth", "month": 11, "day": 1, "nth": 4, "weekday": 3, "offset": 0}
         assert queued == []
+
+
+class TestWhetherASeasonEditOwesAPass:
+    """`_today` and `_pass_owed`, the season-edit gate, called directly: a pass is owed exactly when the guard
+    would now treat the row's collection differently (#137 round 3). The collection is taken to be built for the
+    season's day before the edit."""
+
+    ROW = SimpleNamespace(show_days=[], season_lead_days=30, season_after_days=0)
+
+    @staticmethod
+    def _season(month: int, day: int, *, lead: int, after: int = 0) -> Season:
+        return Season(
+            slug="moved",
+            name="Moved",
+            emoji="🗓️",
+            rule=DateRule("fixed", month=month, day=day),
+            description="",
+            keywords=(1,),
+            lead_days=lead,
+            after_days=after,
+        )
+
+    @pytest.mark.parametrize(
+        ("now", "before", "after", "owed"),
+        [
+            (datetime(2026, 10, 30, 12), (3, 1, 14, 3), (11, 8, 14, 3), True),
+            (datetime(2026, 12, 20, 12), (1, 1, 14, 0), (12, 31, 14, 0), True),
+            (datetime(2027, 3, 12, 12), (3, 14, 7, 0), (3, 17, 7, 0), False),
+            (datetime(2026, 12, 30, 12), (12, 28, 7, 3), (1, 5, 7, 3), False),
+        ],
+        ids=["march_to_november", "january_to_december", "14_to_17_march", "28_december_to_5_january"],
+    )
+    def test_a_pass_is_owed_only_when_the_collection_stops_being_tonights(self, now, before, after, owed):
+        from shortlist.server.api import seasons as seasons_api
+
+        def catalogue(month, day, lead, after_days):
+            return {**BUILTIN_SEASONS, "moved": self._season(month, day, lead=lead, after=after_days)}
+
+        answers = [seasons_api._today(self.ROW, ["moved"], now, catalogue(*rule)) for rule in (before, after)]
+
+        assert seasons_api._pass_owed(*answers) is owed
 
 
 class TestDelete:

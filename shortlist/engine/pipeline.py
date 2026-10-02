@@ -50,7 +50,6 @@ from shortlist.engine.models import (
     UserProfile,
     UserRunReport,
     UserType,
-    season_year,
 )
 from shortlist.engine.placeholders import names_a_seed
 from shortlist.engine.privacy import (
@@ -1345,8 +1344,8 @@ def built_seasons(ctx: EngineContext, report: RunReport | None = None) -> dict[t
 def _unless_built_for_another_season(spec: RowSpec | None, built: str | None, collection) -> RowSpec | None:
     """``spec``, or the same row out of season when this collection was built for another season or year.
 
-    Compared on `season_year`, not the full day: a season whose date the owner moved within the year still
-    holds this year's films, so its collection stays shown.
+    Judged by `RowSeason.holds`: the same season, recorded for a day inside tonight's window. A season whose
+    date the owner moved within that window still holds this showing's films, so its collection stays shown.
 
     Out of season is DORMANT, which `_promote_one` hides whatever the placement says: last season's
     collection is treated exactly like a row between seasons until a run builds tonight's season into it.
@@ -1358,7 +1357,7 @@ def _unless_built_for_another_season(spec: RowSpec | None, built: str | None, co
             such a collection is promoted as it always was.
         collection: For the log line.
     """
-    if spec is None or spec.season is None or built is None or season_year(built) == spec.season.year_key:
+    if spec is None or spec.season is None or built is None or spec.season.holds(built):
         return spec
     logger.info(
         "{}: built for {}, not tonight's {} — kept hidden until a run builds {} into it",
