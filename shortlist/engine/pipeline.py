@@ -420,11 +420,11 @@ def _load_season_titles(
             ctx.season_failures[slug] = "it is not a season this version knows"
             continue
         try:
-            ctx.season_titles[slug] = seasons_mod.load_titles(ctx.tmdb, catalogued, library_index)
+            ctx.season_titles[slug] = seasons_mod.load_titles(ctx.tmdb, ctx.plex, catalogued, library_index)
         except Exception as e:
             ctx.season_failures[slug] = f"{type(e).__name__}: {e}"
             logger.warning(
-                "the {} list could not be read from TMDB ({}) — seasonal rows keep what they have tonight",
+                "the {} list could not be read ({}) — seasonal rows keep what they have tonight",
                 season.name,
                 type(e).__name__,
             )
@@ -437,6 +437,12 @@ def _load_season_titles(
             len(titles.ids[MediaType.SHOW]),
             sum(len(items) for items in titles.in_library.values()),
         )
+        if titles.missing_collections:
+            logger.info(
+                "{} list: built without {} — not in your library tonight",
+                season.name,
+                ", ".join(f"“{title}”" for title in titles.missing_collections),
+            )
 
 
 def _load_request_ledger(ctx: EngineContext, users: list[UserProfile]) -> None:

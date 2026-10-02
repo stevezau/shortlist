@@ -37,6 +37,11 @@ _LIST_FIELDS = (
     "poster_path",
     "original_language",
 )
+#: What `list_item` keeps of a detail payload: a list item's fields (``genre_ids`` is built from ``genres``),
+#: plus the synopsis, which a detail read carries anyway.
+_ITEM_FIELDS = (*(field for field in _LIST_FIELDS if field != "genre_ids"), "overview")
+#: Tags whose film counts `search_keywords` reads at once.
+_KEYWORD_COUNT_WORKERS = 6
 
 
 class Cache(Protocol):
@@ -187,6 +192,48 @@ class TmdbClient:
         kind = "movie" if media_type is MediaType.MOVIE else "tv"
         return self._get(f"/{kind}/{tmdb_id}", params={"append_to_response": "credits"})
 
+    def list_item(self, tmdb_id: int, media_type: MediaType) -> dict | None:
+        """One title in the shape a TMDB list gives it, or None when TMDB no longer has it.
+
+        For the titles a season names by id — hand picks and Plex collection members (#137) — which the pool
+        reads exactly as it reads a discover result. Built from the cached `details` read, so a title the
+        run already looked up costs nothing.
+        """
+        data = self.details(tmdb_id, media_type)
+        if not data:
+            return None
+        item = {field: data[field] for field in _ITEM_FIELDS if field in data}
+        item["genre_ids"] = [g["id"] for g in data.get("genres") or [] if isinstance(g, dict) and "id" in g]
+        return item
+
+    def search_keywords(self, query: str, limit: int = 10) -> list[dict]:
+        """TMDB tags whose name matches ``query``, each with how many films carry it — the season editor's
+        tag search.
+
+        A tag's count is ``total_results`` from page 1 of discover, read for every tag at once. Both reads
+        are cached like any other.
+
+        Returns:
+            ``{"id", "name", "movies"}`` per tag, in TMDB's order, at most ``limit`` of them.
+        """
+        query = query.strip()
+        if not query:
+            return []
+        tags = (self._get("/search/keyword", params={"query": query}).get("results") or [])[:limit]
+
+        def films(tag: dict) -> int:
+            page = self._get("/discover/movie", params={"with_keywords": str(tag["id"]), "include_adult": "false"})
+            return int(page.get("total_results") or 0)
+
+        # In copies of the caller's context, as `discover_all` reads its pages, so a retry warning stays
+        # with the request that caused it.
+        contexts = [contextvars.copy_context() for _ in tags]
+        with ThreadPoolExecutor(max_workers=_KEYWORD_COUNT_WORKERS) as pool:
+            counts = list(pool.map(lambda context, tag: context.run(films, tag), contexts, tags))
+        return [
+            {"id": tag["id"], "name": tag["name"], "movies": movies} for tag, movies in zip(tags, counts, strict=True)
+        ]
+
     def genre_ids_for(self, tmdb_id: int, media_type: MediaType) -> list[int]:
         """A title's own genre ids — used to derive a person's dominant genres for discover."""
         data = self.details(tmdb_id, media_type)
@@ -230,7 +277,7 @@ class TmdbClient:
         }
         return self._get(f"/discover/{kind}", params=params).get("results", [])
 
-    def discover_all(self, media_type: MediaType, params: dict) -> list[dict]:
+    def discover_all(self, media_type: MediaType, params: dict, *, workers: int = _LIST_PAGE_WORKERS) -> list[dict]:
         """Every title a discover query matches, read to its last page and cached as ONE entry.
 
         What a season's list is read with (discussion #124). Three things about it are measured, not
@@ -248,6 +295,8 @@ class TmdbClient:
             media_type: Films or shows.
             params: The query itself, e.g. ``{"with_keywords": "3335|9694"}``. Sort order and the adult
                 filter are added here.
+            workers: How many pages after the first are read at once; 1 reads them one by one, in order.
+                The list and its cache entry are the same either way.
 
         Returns:
             The matching titles, de-duplicated by id, each reduced to ``_LIST_FIELDS``.
@@ -282,14 +331,16 @@ class TmdbClient:
             )
         last = min(total_pages, MAX_DISCOVER_PAGES)
         pages = [first]
-        if last > 1:
-            numbers = range(2, last + 1)
+        numbers = range(2, last + 1)
+        if workers > 1 and numbers:
             # In copies of the caller's contextvars, so a page read's warnings stay with the run that
             # asked for them (see `pipeline._deliver_phase`); one copy per call, as a context can be
             # entered by only one thread at a time.
             contexts = [contextvars.copy_context() for _ in numbers]
-            with ThreadPoolExecutor(max_workers=_LIST_PAGE_WORKERS) as pool:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
                 pages += pool.map(lambda context, page: context.run(read, page), contexts, numbers)
+        else:
+            pages += [read(page) for page in numbers]
         titles: dict[int, dict] = {}
         for page in pages:
             for item in page.get("results") or []:

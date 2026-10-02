@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import dataclasses
 from datetime import date, datetime
+from typing import ClassVar
 
 import pytest
 
 from shortlist.engine import seasons
+from shortlist.engine.clients.plex_pms import LibraryTitle
 from shortlist.engine.models import MediaType
 from shortlist.engine.rows import row_shown_today
 
@@ -200,16 +202,53 @@ CHRISTMAS_KEYWORDS = "207317|272698|193048|255088|186933|5570|196450|1991|260365
 
 
 class _Tmdb:
-    """Answers `discover_all` from a table keyed by (media type, the param that defines the query)."""
+    """Answers `discover_all` from a table keyed by (media type, the param that defines the query), and
+    `list_item` from a table of single titles (None = TMDB no longer has it)."""
 
-    def __init__(self, answers: dict[tuple[MediaType, str], list[dict]]):
+    def __init__(
+        self,
+        answers: dict[tuple[MediaType, str], list[dict]],
+        details: dict[int, dict | None] | None = None,
+    ):
         self.answers = answers
+        self.details = details or {}
         self.queries: list[tuple[MediaType, dict]] = []
+        self.looked_up: list[int] = []
 
-    def discover_all(self, media_type: MediaType, params: dict) -> list[dict]:
-        self.queries.append((media_type, params))
+    def discover_all(self, media_type: MediaType, params: dict, *, workers: int = 1) -> list[dict]:
+        self.queries.append((media_type, dict(params)))
         key = params.get("with_keywords") or params.get("with_genres")
         return self.answers.get((media_type, key), [])
+
+    def list_item(self, tmdb_id: int, media_type: MediaType) -> dict | None:
+        self.looked_up.append(tmdb_id)
+        return self.details.get(tmdb_id)
+
+
+class _Plex:
+    """Answers `collection_members` from a table; a collection not in it is absent tonight (None)."""
+
+    def __init__(self, members: dict[tuple[str, str], list[LibraryTitle] | None]) -> None:
+        self.members = members
+
+    def collection_members(self, section_key: str, title: str) -> list[LibraryTitle] | None:
+        return self.members.get((section_key, title))
+
+
+NO_PLEX = _Plex({})
+
+
+def _item(tmdb_id: int, genres: tuple[int, ...] = ()) -> dict:
+    return {"id": tmdb_id, "title": f"t{tmdb_id}", "genre_ids": list(genres), "vote_average": 7.0, "vote_count": 100}
+
+
+def _custom_season(**overrides) -> seasons.Season:
+    """A custom season with no sources unless given; ``excluded`` is ``keyword_excluded_genres``."""
+    if "excluded" in overrides:
+        overrides["keyword_excluded_genres"] = overrides.pop("excluded")
+    return seasons.Season(
+        slug="c", name="C", emoji="*", rule=seasons.DateRule("fixed", month=3, day=17), description="", **overrides
+    )
 
 
 class TestLoadTitles:
@@ -224,7 +263,7 @@ class TestLoadTitles:
             }
         )
         titles = seasons.load_titles(
-            tmdb, seasons.BUILTIN_SEASONS["halloween"], {MediaType.MOVIE: {}, MediaType.SHOW: {}}
+            tmdb, NO_PLEX, seasons.BUILTIN_SEASONS["halloween"], {MediaType.MOVIE: {}, MediaType.SHOW: {}}
         )
         assert titles.ids[MediaType.MOVIE] == frozenset({1, 2, 3})
         assert titles.ids[MediaType.SHOW] == frozenset({1})
@@ -235,13 +274,17 @@ class TestLoadTitles:
         """Christmas TV films are exactly the season and often have a handful of votes; a whole genre has
         tens of thousands of titles, so it takes the same floor the discover source uses."""
         tmdb = _Tmdb({})
-        seasons.load_titles(tmdb, seasons.BUILTIN_SEASONS["halloween"], {MediaType.MOVIE: {}, MediaType.SHOW: {}})
+        seasons.load_titles(
+            tmdb, NO_PLEX, seasons.BUILTIN_SEASONS["halloween"], {MediaType.MOVIE: {}, MediaType.SHOW: {}}
+        )
         assert (MediaType.MOVIE, {"with_genres": "27", "vote_count.gte": 200}) in tmdb.queries
         assert (MediaType.MOVIE, {"with_keywords": self.HALLOWEEN_KEYWORDS}) in tmdb.queries
 
     def test_a_season_with_no_genre_makes_no_genre_query(self):
         tmdb = _Tmdb({})
-        seasons.load_titles(tmdb, seasons.BUILTIN_SEASONS["christmas"], {MediaType.MOVIE: {}, MediaType.SHOW: {}})
+        seasons.load_titles(
+            tmdb, NO_PLEX, seasons.BUILTIN_SEASONS["christmas"], {MediaType.MOVIE: {}, MediaType.SHOW: {}}
+        )
         assert [params for _media, params in tmdb.queries if "with_genres" in params] == []
 
     def test_only_titles_the_library_holds_are_kept_as_candidates(self):
@@ -251,7 +294,7 @@ class TestLoadTitles:
             {(MediaType.MOVIE, "207317|272698|193048|255088|186933|5570|196450|1991|260365"): [{"id": 1}, {"id": 2}]}
         )
         library = {MediaType.MOVIE: {2: 9002}, MediaType.SHOW: {1: 9101}}
-        titles = seasons.load_titles(tmdb, seasons.BUILTIN_SEASONS["christmas"], library)
+        titles = seasons.load_titles(tmdb, NO_PLEX, seasons.BUILTIN_SEASONS["christmas"], library)
         assert [item["id"] for item in titles.in_library[MediaType.MOVIE]] == [2]
         assert titles.in_library[MediaType.SHOW] == []
         assert titles.ids[MediaType.MOVIE] == frozenset({1, 2})
@@ -259,7 +302,7 @@ class TestLoadTitles:
     def test_a_title_both_queries_return_is_one_candidate(self):
         tmdb = _Tmdb({(MediaType.MOVIE, self.HALLOWEEN_KEYWORDS): [{"id": 2}], (MediaType.MOVIE, "27"): [{"id": 2}]})
         titles = seasons.load_titles(
-            tmdb, seasons.BUILTIN_SEASONS["halloween"], {MediaType.MOVIE: {2: 1}, MediaType.SHOW: {}}
+            tmdb, NO_PLEX, seasons.BUILTIN_SEASONS["halloween"], {MediaType.MOVIE: {2: 1}, MediaType.SHOW: {}}
         )
         assert [item["id"] for item in titles.in_library[MediaType.MOVIE]] == [2]
 
@@ -279,7 +322,7 @@ class TestLoadTitles:
             }
         )
         titles = seasons.load_titles(
-            tmdb, seasons.BUILTIN_SEASONS["halloween"], {MediaType.MOVIE: {}, MediaType.SHOW: {}}
+            tmdb, NO_PLEX, seasons.BUILTIN_SEASONS["halloween"], {MediaType.MOVIE: {}, MediaType.SHOW: {}}
         )
         assert titles.ids[MediaType.MOVIE] == frozenset({3, 4, 5})
 
@@ -287,17 +330,161 @@ class TestLoadTitles:
         """Love Actually is a Christmas film. The exclusion is Halloween's, not every season's."""
         tmdb = _Tmdb({(MediaType.MOVIE, CHRISTMAS_KEYWORDS): [{"id": 1, "genre_ids": [35, 10749, 18]}]})
         titles = seasons.load_titles(
-            tmdb, seasons.BUILTIN_SEASONS["christmas"], {MediaType.MOVIE: {}, MediaType.SHOW: {}}
+            tmdb, NO_PLEX, seasons.BUILTIN_SEASONS["christmas"], {MediaType.MOVIE: {}, MediaType.SHOW: {}}
         )
         assert titles.ids[MediaType.MOVIE] == frozenset({1})
 
     def test_contains_asks_by_media_type(self):
         tmdb = _Tmdb({(MediaType.MOVIE, self.HALLOWEEN_KEYWORDS): [{"id": 5}]})
         titles = seasons.load_titles(
-            tmdb, seasons.BUILTIN_SEASONS["halloween"], {MediaType.MOVIE: {}, MediaType.SHOW: {}}
+            tmdb, NO_PLEX, seasons.BUILTIN_SEASONS["halloween"], {MediaType.MOVIE: {}, MediaType.SHOW: {}}
         )
         assert titles.contains(5, MediaType.MOVIE) is True
         assert titles.contains(5, MediaType.SHOW) is False
+
+
+class TestLoadTitlesFromEverySource:
+    """A custom season's films come from tags, a genre, Plex collections and hand picks (#137 D3)."""
+
+    LIB: ClassVar[dict[MediaType, dict[int, int]]] = {
+        MediaType.MOVIE: {1: 11, 2: 12, 3: 13, 50: 150, 60: 160},
+        MediaType.SHOW: {},
+    }
+
+    def test_a_season_with_no_tags_never_runs_a_keyword_query(self) -> None:
+        """An empty ``with_keywords`` is no filter at all to TMDB, so it would read ALL of TMDB."""
+        tmdb = _Tmdb({}, {50: _item(50)})
+        season = _custom_season(picks=((50, MediaType.MOVIE),))
+        titles = seasons.load_titles(tmdb, NO_PLEX, season, self.LIB)
+        assert not [query for query in tmdb.queries if "with_keywords" in query[1]]
+        assert titles.contains(50, MediaType.MOVIE)
+
+    def test_collection_members_join_the_season_and_are_in_library(self) -> None:
+        plex = _Plex({("1", "Father's Day Movies"): [LibraryTitle(60, MediaType.MOVIE, "Big Fish", 2003)]})
+        tmdb = _Tmdb({}, {60: _item(60, (18,))})
+        season = _custom_season(collections=(seasons.CollectionRef("1", "Father's Day Movies"),))
+        titles = seasons.load_titles(tmdb, plex, season, self.LIB)
+        assert [item["id"] for item in titles.in_library[MediaType.MOVIE]] == [60]
+        assert titles.in_library[MediaType.MOVIE][0]["genre_ids"] == [18]
+
+    def test_a_missing_collection_is_reported_not_raised(self) -> None:
+        """Kometa deletes its seasonal collections out of season (D5); a night without one builds from the rest."""
+        tmdb = _Tmdb({(MediaType.MOVIE, "1"): [_item(1)]})
+        season = _custom_season(keywords=(1,), collections=(seasons.CollectionRef("1", "Thanksgiving Movies"),))
+        titles = seasons.load_titles(tmdb, NO_PLEX, season, self.LIB)
+        assert titles.missing_collections == ("Thanksgiving Movies",)
+        assert titles.contains(1, MediaType.MOVIE)
+
+    def test_left_out_genres_drop_tag_and_collection_films_but_never_a_hand_pick(self) -> None:
+        plex = _Plex({("1", "C"): [LibraryTitle(60, MediaType.MOVIE, "Scary", 2000)]})
+        tmdb = _Tmdb(
+            {(MediaType.MOVIE, "1"): [_item(1, (27,)), _item(2, (35,))]},
+            {60: _item(60, (27,)), 50: _item(50, (27,))},
+        )
+        season = _custom_season(
+            keywords=(1,),
+            excluded=(27,),
+            collections=(seasons.CollectionRef("1", "C"),),
+            picks=((50, MediaType.MOVIE),),
+        )
+        ids = {item["id"] for item in seasons.load_titles(tmdb, plex, season, self.LIB).in_library[MediaType.MOVIE]}
+        assert ids == {2, 50}
+
+    def test_a_collection_film_with_the_seasons_own_genre_is_kept(self) -> None:
+        """The same rule as a tag film: a horror drama is still horror."""
+        plex = _Plex({("1", "C"): [LibraryTitle(60, MediaType.MOVIE, "Horror Drama", 2000)]})
+        tmdb = _Tmdb({}, {60: _item(60, (27, 18))})
+        season = _custom_season(movie_genres=(27,), excluded=(18,), collections=(seasons.CollectionRef("1", "C"),))
+        assert seasons.load_titles(tmdb, plex, season, self.LIB).contains(60, MediaType.MOVIE)
+
+    def test_a_title_tmdb_no_longer_has_is_skipped(self) -> None:
+        tmdb = _Tmdb({}, {50: None})
+        season = _custom_season(picks=((50, MediaType.MOVIE),))
+        titles = seasons.load_titles(tmdb, NO_PLEX, season, self.LIB)
+        assert titles.in_library[MediaType.MOVIE] == []
+        assert not titles.contains(50, MediaType.MOVIE)
+
+    def test_a_picked_show_is_a_show(self) -> None:
+        tmdb = _Tmdb({}, {50: _item(50)})
+        season = _custom_season(picks=((50, MediaType.SHOW),))
+        titles = seasons.load_titles(tmdb, NO_PLEX, season, {MediaType.MOVIE: {50: 1}, MediaType.SHOW: {50: 2}})
+        assert titles.contains(50, MediaType.SHOW) and not titles.contains(50, MediaType.MOVIE)
+        assert [item["id"] for item in titles.in_library[MediaType.SHOW]] == [50]
+
+    def test_a_title_tmdb_already_listed_is_not_looked_up_again(self) -> None:
+        plex = _Plex(
+            {
+                ("1", "C"): [
+                    LibraryTitle(1, MediaType.MOVIE, "One", 2000),
+                    LibraryTitle(60, MediaType.MOVIE, "Sixty", 2000),
+                ]
+            }
+        )
+        tmdb = _Tmdb({(MediaType.MOVIE, "1"): [_item(1)]}, {60: _item(60)})
+        season = _custom_season(
+            keywords=(1,), collections=(seasons.CollectionRef("1", "C"),), picks=((60, MediaType.MOVIE),)
+        )
+        titles = seasons.load_titles(tmdb, plex, season, self.LIB)
+        assert tmdb.looked_up == [60]
+        assert titles.ids[MediaType.MOVIE] == frozenset({1, 60})
+
+    def test_plex_sourced_titles_stop_at_the_cap_and_picks_come_first(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(seasons, "MAX_PLEX_SOURCED", 2)
+        plex = _Plex({("1", "C"): [LibraryTitle(i, MediaType.MOVIE, f"t{i}", 2000) for i in (60, 61, 62)]})
+        tmdb = _Tmdb({}, {i: _item(i) for i in (50, 60, 61, 62)})
+        season = _custom_season(collections=(seasons.CollectionRef("1", "C"),), picks=((50, MediaType.MOVIE),))
+        titles = seasons.load_titles(tmdb, plex, season, self.LIB)
+        assert sorted(tmdb.looked_up) == [50, 60]
+        assert titles.ids[MediaType.MOVIE] == frozenset({50, 60})
+
+    def test_a_tmdb_failure_on_one_title_fails_the_season(self) -> None:
+        """Only a title TMDB no longer has is skipped; an outage must not build the season from part of it."""
+
+        class _Down(_Tmdb):
+            def list_item(self, tmdb_id: int, media_type: MediaType) -> dict | None:
+                raise RuntimeError("TMDB API error HTTP 503 for /movie/50")
+
+        with pytest.raises(RuntimeError, match="503"):
+            seasons.load_titles(_Down({}), NO_PLEX, _custom_season(picks=((50, MediaType.MOVIE),)), self.LIB)
+
+    def test_built_in_queries_are_unchanged(self) -> None:
+        tmdb = _Tmdb({})
+        seasons.load_titles(tmdb, NO_PLEX, seasons.BUILTIN_SEASONS["halloween"], self.LIB)
+        assert tmdb.queries == [
+            (MediaType.MOVIE, {"with_keywords": "3335|180193|232795|9694|182794"}),
+            (MediaType.SHOW, {"with_keywords": "3335|180193|232795|9694|182794"}),
+            (MediaType.MOVIE, {"with_genres": "27", "vote_count.gte": 200}),
+        ]
+        assert tmdb.looked_up == []
+
+
+class TestContentHash:
+    def test_changes_with_sources_not_with_name_or_timing(self) -> None:
+        a = _custom_season(keywords=(1,))
+        assert seasons.season_content_hash(a) == seasons.season_content_hash(
+            dataclasses.replace(a, name="Other", lead_days=3)
+        )
+        assert seasons.season_content_hash(a) != seasons.season_content_hash(dataclasses.replace(a, keywords=(1, 2)))
+
+    @pytest.mark.parametrize(
+        "change",
+        [
+            {"movie_genres": (27,)},
+            {"keyword_excluded_genres": (18,)},
+            {"collections": (seasons.CollectionRef("1", "C"),)},
+            {"picks": ((1, MediaType.SHOW),)},
+        ],
+    )
+    def test_every_source_changes_it(self, change: dict) -> None:
+        a = _custom_season(keywords=(1,), picks=((1, MediaType.MOVIE),))
+        assert seasons.season_content_hash(a) != seasons.season_content_hash(dataclasses.replace(a, **change))
+
+    def test_order_does_not_change_it_and_it_fits_the_recipe(self) -> None:
+        """The recipe column is 128 characters, so the hash stays short."""
+        a = _custom_season(keywords=(1, 2), picks=((5, MediaType.MOVIE), (4, MediaType.SHOW)))
+        b = _custom_season(keywords=(2, 1), picks=((4, MediaType.SHOW), (5, MediaType.MOVIE)))
+        assert seasons.season_content_hash(a) == seasons.season_content_hash(b)
+        assert len(seasons.season_content_hash(a)) == 16
 
 
 class TestRowShownToday:

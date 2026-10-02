@@ -587,6 +587,40 @@ class TestADormantRow:
         pipeline_mod._load_season_titles(ctx, _people(), {})
         assert ctx.season_titles == {} and ctx.season_failures == {}
 
+    def test_a_custom_seasons_collection_missing_tonight_is_logged_and_the_season_still_builds(self, ctx):
+        """Kometa deletes its seasonal collections out of season (#137 D5). The run reads the collection from
+        the server's own Plex, says it was missing, and builds the season from its picks."""
+        from loguru import logger
+
+        from shortlist.engine.seasons import CollectionRef, DateRule, Season
+
+        pat = Season(
+            slug="pat",
+            name="St Patrick's Day",
+            emoji="☘️",
+            rule=DateRule("fixed", month=3, day=17),
+            description="",
+            collections=(CollectionRef("1", "St Patrick's Movies"),),
+            picks=((30, MediaType.MOVIE),),
+        )
+        ctx.config.seasons = {**BUILTIN_SEASONS, "pat": pat}
+        ctx.config.rows = [
+            seasonal_spec(seasons=["pat"], season=RowSeason("pat", pat.name, pat.emoji, date(2027, 3, 17)))
+        ]
+        ctx.plex.collection_members.return_value = None
+        ctx.tmdb.list_item.side_effect = lambda tmdb_id, media_type: {"id": tmdb_id, "title": "Brooklyn"}
+        lines: list[str] = []
+        sink = logger.add(lines.append, level="INFO", format="{message}")
+        try:
+            pipeline_mod._load_season_titles(ctx, _people(), {MediaType.MOVIE: {30: 1030}, MediaType.SHOW: {}})
+        finally:
+            logger.remove(sink)
+
+        ctx.plex.collection_members.assert_called_once_with("1", "St Patrick's Movies")
+        assert ctx.season_failures == {}
+        assert ctx.season_titles["pat"].contains(30, MediaType.MOVIE)
+        assert any("St Patrick's Day list: built without “St Patrick's Movies”" in line for line in lines)
+
 
 class TestWhatDecidesARebuild:
     def _policy(self, ctx, spec: RowSpec):

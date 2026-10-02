@@ -18,13 +18,22 @@ custom season.
 
 from __future__ import annotations
 
+import contextvars
+import hashlib
+import json
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
+
+from loguru import logger
 
 from shortlist.engine.clients.tmdb import DISCOVER_MIN_VOTES
 from shortlist.engine.models import MediaType, RowSeason
+
+if TYPE_CHECKING:
+    from shortlist.engine.clients.plex_pms import LibraryTitle
 
 _MONTHS = (
     "January",
@@ -352,62 +361,159 @@ def next_anchors(season: Season, day: date, count: int = 2) -> list[date]:
     return found
 
 
+#: At most this many titles a season names by id — hand picks first, then Plex collection members — are
+#: read from TMDB for one season, one detail read each (#137). The largest collection measured held 1,187.
+MAX_PLEX_SOURCED = 1000
+#: Detail reads at once for those titles.
+_DETAIL_WORKERS = 4
+
+
 class _ListReader(Protocol):
     def discover_all(self, media_type: MediaType, params: dict) -> list[dict]: ...
+
+    def list_item(self, tmdb_id: int, media_type: MediaType) -> dict | None: ...
+
+
+class _CollectionReader(Protocol):
+    def collection_members(self, section_key: str, title: str) -> list[LibraryTitle] | None: ...
 
 
 @dataclass(frozen=True)
 class SeasonTitles:
     """A season's titles for one run.
 
-    ``ids`` is every title TMDB puts in the season, whether or not the server has it — what a row's pool
-    is filtered to, so a missing Christmas film similar to someone's watches can still be requested.
-    ``in_library`` is the subset the server's libraries hold, as TMDB list items — what the season
-    source adds to a pool. Adding anything else would turn the whole list into request demand.
+    ``ids`` is every title in the season, whether or not the server has it — what a row's pool is filtered
+    to, so a missing Christmas film similar to someone's watches can still be requested. ``in_library`` is
+    the subset the server's libraries hold, as TMDB list items — what the season source adds to a pool.
+    Adding anything else would turn the whole list into request demand.
     """
 
     ids: dict[MediaType, frozenset[int]]
     in_library: dict[MediaType, list[dict]]
+    #: Collections the season names that were not in their library tonight. Kometa creates its seasonal
+    #: collections in season only (#137 D5), so this is a normal night, not a failure.
+    missing_collections: tuple[str, ...] = ()
 
     def contains(self, tmdb_id: int, media_type: MediaType) -> bool:
         """Whether a title is in this season. By media type: TMDB ids are unique only within one."""
         return tmdb_id in self.ids.get(media_type, frozenset())
 
 
-def load_titles(tmdb: _ListReader, season: Season, library_index: dict[MediaType, dict[int, int]]) -> SeasonTitles:
-    """Read a season's titles from TMDB and split out the ones the libraries hold.
+def season_content_hash(season: Season) -> str:
+    """A short fingerprint of where a season's films come from — never its name, emoji or timing.
 
-    Films: the season's keywords OR'd together, plus its genre at ``DISCOVER_MIN_VOTES``. Shows: the
-    keywords alone. The keyword query takes no vote floor — a made-for-TV Christmas film is exactly the
-    season and often has a handful of votes. Raises when TMDB fails, so the rows that need this season
-    keep what they have tonight rather than rebuild from half a list.
+    A row's recipe carries it (#137 D11), so editing a source rebuilds the rows that follow the season while
+    a rename only renames them. Blind to order, since the same sources may be saved in any order. 16 hex
+    characters, to fit the recipe column.
     """
-    keywords = "|".join(str(keyword) for keyword in season.keywords)
-    queries: list[tuple[MediaType, dict]] = [
-        (MediaType.MOVIE, {"with_keywords": keywords}),
-        (MediaType.SHOW, {"with_keywords": keywords}),
+    sources = [
+        sorted(season.keywords),
+        sorted(season.movie_genres),
+        sorted(season.keyword_excluded_genres),
+        sorted((ref.section_key, ref.title) for ref in season.collections),
+        sorted((tmdb_id, media_type.value) for tmdb_id, media_type in season.picks),
     ]
+    return hashlib.blake2b(json.dumps(sources).encode(), digest_size=8).hexdigest()
+
+
+def _queries(season: Season) -> list[tuple[MediaType, dict]]:
+    """The season's TMDB list queries. No tag query for a season without tags: an empty ``with_keywords`` is
+    no filter at all to TMDB, and would read every title it holds."""
+    queries: list[tuple[MediaType, dict]] = []
+    if season.keywords:
+        keywords = "|".join(str(keyword) for keyword in season.keywords)
+        queries += [(MediaType.MOVIE, {"with_keywords": keywords}), (MediaType.SHOW, {"with_keywords": keywords})]
     if season.movie_genres:
         genres = "|".join(str(genre) for genre in season.movie_genres)
         queries.append((MediaType.MOVIE, {"with_genres": genres, "vote_count.gte": DISCOVER_MIN_VOTES}))
+    return queries
+
+
+def _left_out(season: Season, media_type: MediaType, item: dict) -> bool:
+    """Whether a film carries one of the season's left-out genres and none of its own. A horror drama is
+    still horror, so only a film with none of the season's own genres is dropped."""
+    genres = set(item.get("genre_ids") or [])
+    return (
+        media_type is MediaType.MOVIE
+        and bool(genres & set(season.keyword_excluded_genres))
+        and not genres & set(season.movie_genres)
+    )
+
+
+def _read_items(tmdb: _ListReader, titles: list[tuple[int, MediaType]]) -> list[dict | None]:
+    """``tmdb.list_item`` for each title, ``_DETAIL_WORKERS`` at once, in order. Raises on the first failure."""
+    if not titles:
+        return []
+    # In copies of the caller's context, as `TmdbClient.discover_all` reads its pages, so a retry warning
+    # stays with the run that caused it.
+    contexts = [contextvars.copy_context() for _ in titles]
+    with ThreadPoolExecutor(max_workers=_DETAIL_WORKERS) as pool:
+        return list(pool.map(lambda context, title: context.run(tmdb.list_item, *title), contexts, titles))
+
+
+def load_titles(
+    tmdb: _ListReader,
+    plex: _CollectionReader,
+    season: Season,
+    library_index: dict[MediaType, dict[int, int]],
+) -> SeasonTitles:
+    """Read a season's titles and split out the ones the libraries hold.
+
+    The union of its sources (#137 D3):
+
+    * its TMDB tags, OR'd together, for films and shows alike. No vote floor: a made-for-TV Christmas film is
+      exactly the season and often has a handful of votes;
+    * its TMDB genre, films only, at ``DISCOVER_MIN_VOTES``;
+    * the members of the Plex collections it names. One that is not there tonight is reported in
+      ``missing_collections``, and the season builds from the rest;
+    * the owner's hand picks.
+
+    Titles the last two name by id are read from TMDB, picks first, at most ``MAX_PLEX_SOURCED`` of them;
+    one TMDB no longer has is skipped. ``keyword_excluded_genres`` drops a tag or collection film, never a
+    hand pick. Raises when TMDB or Plex fails, so the rows that need this season keep what they have tonight
+    rather than rebuild from half a list.
+    """
     found: dict[MediaType, dict[int, dict]] = {MediaType.MOVIE: {}, MediaType.SHOW: {}}
-    excluded = set(season.keyword_excluded_genres)
-    for media_type, params in queries:
+    for media_type, params in _queries(season):
         for item in tmdb.discover_all(media_type, params):
-            genres = set(item.get("genre_ids") or [])
-            # A horror drama is still horror: only a film with none of the season's own genres is dropped.
-            if (
-                "with_keywords" in params
-                and media_type is MediaType.MOVIE
-                and excluded & genres
-                and not genres & set(season.movie_genres)
-            ):
+            if "with_keywords" in params and _left_out(season, media_type, item):
                 continue
             found[media_type].setdefault(int(item["id"]), item)
+
+    missing: list[str] = []
+    members: list[tuple[int, MediaType]] = []
+    for ref in season.collections:
+        titles = plex.collection_members(ref.section_key, ref.title)
+        if titles is None:
+            missing.append(ref.title)
+            logger.warning(
+                "{}: collection “{}” isn't in your library tonight — using the season's other sources",
+                season.name,
+                ref.title,
+            )
+            continue
+        members += [(title.tmdb_id, title.media_type) for title in titles]
+
+    picks = set(season.picks)
+    by_id = [title for title in dict.fromkeys([*season.picks, *members]) if title[0] not in found[title[1]]]
+    if len(by_id) > MAX_PLEX_SOURCED:
+        logger.warning(
+            "{}: {} titles from its collections and picks; only the first {} are used",
+            season.name,
+            len(by_id),
+            MAX_PLEX_SOURCED,
+        )
+        by_id = by_id[:MAX_PLEX_SOURCED]
+    for (tmdb_id, media_type), item in zip(by_id, _read_items(tmdb, by_id), strict=True):
+        if item is None or ((tmdb_id, media_type) not in picks and _left_out(season, media_type, item)):
+            continue
+        found[media_type].setdefault(tmdb_id, item)
+
     return SeasonTitles(
         ids={media_type: frozenset(items) for media_type, items in found.items()},
         in_library={
             media_type: [item for tmdb_id, item in items.items() if tmdb_id in library_index.get(media_type, {})]
             for media_type, items in found.items()
         },
+        missing_collections=tuple(missing),
     )

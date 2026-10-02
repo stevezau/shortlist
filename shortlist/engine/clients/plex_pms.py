@@ -82,6 +82,29 @@ class WatchedRead:
     dropped_keys: frozenset[str] = frozenset()
 
 
+@dataclass(frozen=True)
+class LibraryTitle:
+    """A title the owner's libraries hold, by its TMDB id: a member of a Plex collection a season reads, or a
+    result of the season editor's title search (issue #137)."""
+
+    tmdb_id: int
+    media_type: MediaType
+    title: str
+    year: int | None
+
+
+@dataclass(frozen=True)
+class LibraryCollection:
+    """A collection a season may read its films from — never one of Shortlist's own rows."""
+
+    section_key: str
+    section_title: str
+    title: str
+    count: int
+    smart: bool
+    media_type: MediaType
+
+
 class SectionNotShared(RuntimeError):
     """A library this person's token cannot see — the PMS answered 403.
 
@@ -308,6 +331,27 @@ def log_title(title: str) -> str:
     if account is None:
         return title
     return f"{title[:-64]} [acct {account}]"
+
+
+def _section_media_type(section: LibrarySection) -> MediaType:
+    return MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
+
+
+def _library_titles(items: list, section: LibrarySection) -> list[LibraryTitle]:
+    """``items`` as TMDB-identified titles of ``section``'s media type; anything else is skipped.
+
+    A TV collection may hold seasons or episodes (Kometa builds them), whose ``tmdb://`` guid is an EPISODE
+    id — read as a show id it would name an unrelated series, so only items of the library's own type count.
+    """
+    media_type = _section_media_type(section)
+    titles = []
+    for item in items:
+        if item.type != section.type:
+            continue
+        tmdb_id = _tmdb_guid(item)
+        if tmdb_id is not None:
+            titles.append(LibraryTitle(tmdb_id, media_type, item.title, item.year))
+    return titles
 
 
 def parse_pms_version(version: str) -> tuple[int, ...]:
@@ -734,6 +778,70 @@ class PlexClient:
                 break
         self._top_rated_cache[cache_key] = out
         return out
+
+    def list_collections(self) -> list[LibraryCollection]:
+        """Every collection in the movie and TV libraries that a season may read its films from.
+
+        Read-only, like everything a season does with a collection Shortlist does not own (#137 D6,
+        plex-safety rule 4). Shortlist's own rows are never offered: a row reading another row's picks
+        would feed itself.
+        """
+        found = []
+        for section in self.sections():
+            for collection in self._section_collections(section):
+                if has_shortlist_marker(collection.title):
+                    continue
+                found.append(
+                    LibraryCollection(
+                        section_key=str(section.key),
+                        section_title=section.title,
+                        title=collection.title,
+                        count=int(collection.childCount or 0),
+                        smart=bool(collection.smart),
+                        media_type=_section_media_type(section),
+                    )
+                )
+        return found
+
+    def collection_members(self, section_key: str, title: str) -> list[LibraryTitle] | None:
+        """A collection's titles by TMDB id, or None when that library has no collection of that title.
+
+        Found by library and TITLE, never ratingKey (#137 D5): Kometa deletes its seasonal collections out of
+        season and recreates them under a new key, so "absent tonight" is a normal answer, not an error. The
+        title is compared as Plex compares it (`_tag_name`), so a re-cased title still matches. Smart and
+        regular collections read alike; every member carries its ``tmdb://`` guid inline
+        (tests/fixtures/pms_collection_children.xml.txt). Read-only.
+        """
+        section = next((s for s in self.sections() if str(s.key) == str(section_key)), None)
+        if section is None:
+            return None
+        wanted = _tag_name(title)
+        collection = next(
+            (
+                c
+                for c in self._section_collections(section)
+                if not has_shortlist_marker(c.title) and _tag_name(c.title) == wanted
+            ),
+            None,
+        )
+        if collection is None:
+            return None
+        return _library_titles(collection.items(), section)
+
+    def search_titles(self, query: str, limit: int = 10) -> list[LibraryTitle]:
+        """Titles in the movie and TV libraries whose name contains ``query`` — the season editor's film search.
+
+        Plex's ``title=`` is a substring match (tests/fixtures/pms_section_title_search.xml.txt). Each library
+        is asked for at most ``limit``, and a title two libraries hold (a 4K one and an HD one) is listed once.
+        """
+        query = query.strip()
+        found: dict[tuple[int, MediaType], LibraryTitle] = {}
+        for section in self.sections():
+            if not query or len(found) >= limit:
+                break
+            for title in _library_titles(section.search(title=query, maxresults=limit), section):
+                found.setdefault((title.tmdb_id, title.media_type), title)
+        return list(found.values())[:limit]
 
     def owned_collections(self, label_prefix: str = "shortlist") -> dict[str, OwnedRow]:
         """Map slug -> OwnedRow for every shortlist-owned collection, across every library.
