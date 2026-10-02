@@ -6,7 +6,7 @@ import re
 import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -416,25 +416,29 @@ class RowSeason:
     def holds(self, built: str) -> bool:
         """Whether a collection recorded as built for ``built`` holds this season, so it may be shown tonight.
 
-        True only for this season's slug with a day inside tonight's window, from the day before it opens to the
-        day it closes (#137 C-1). Another season, another year's showing, or an earlier day of this year that
-        the owner has since moved the season from, is a collection built for something else. A day moved
-        within the window is not: its films were chosen for this showing, and the recipe's full day rebuilds
-        the row at its next run. The day before the window covers a day moved to just after the old one
-        (28 Dec to 5 Jan with a 7-day lead).
+        True only for this season's slug with a recorded day no further from tonight's day, either side, than
+        tonight's window is wide (lead + after): the showing it was built for overlaps this one (#137 C-1).
+        Another season, another year's showing (365 days off against a window of at most 120), or a day of this
+        year that the owner has since moved the season far from, is a collection built for something else. A
+        day moved by no more than that is not: its films were chosen for this showing, and the recipe's full day
+        rebuilds the row at its next run. Symmetric on purpose: a one-sided "day before it opens to the day it
+        closes" hid a row moved one day EARLIER with no days after (the default), and one moved later by more
+        than lead + 1.
 
         Args:
             built: The record, ``slug@YYYY-MM-DD`` as `built_for` writes it. "" (built while the row followed no
-                season) and a record with no readable day are never this season.
+                season) and a record with no readable day are never this season. A season with no window (built
+                by hand, not by `seasons.row_season_on`) holds only its own day.
         """
         slug, at, day = built.rpartition("@")
         if not at or slug != self.slug:
             return False
         try:
-            anchor = date.fromisoformat(day)
+            recorded = date.fromisoformat(day)
         except ValueError:
             return False
-        return (self.starts or self.anchor) - timedelta(days=1) <= anchor <= (self.ends or self.anchor)
+        width = (self.ends - self.starts).days if self.starts is not None and self.ends is not None else 0
+        return abs((recorded - self.anchor).days) <= width
 
 
 @dataclass

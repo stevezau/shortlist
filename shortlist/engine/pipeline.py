@@ -1344,8 +1344,9 @@ def built_seasons(ctx: EngineContext, report: RunReport | None = None) -> dict[t
 def _unless_built_for_another_season(spec: RowSpec | None, built: str | None, collection) -> RowSpec | None:
     """``spec``, or the same row out of season when this collection was built for another season or year.
 
-    Judged by `RowSeason.holds`: the same season, recorded for a day inside tonight's window. A season whose
-    date the owner moved within that window still holds this showing's films, so its collection stays shown.
+    Judged by `RowSeason.holds`: the same season, recorded for a day no further from tonight's than the window
+    is wide. A season whose date the owner moved by no more than that still holds this showing's films, so its
+    collection stays shown.
 
     Out of season is DORMANT, which `_promote_one` hides whatever the placement says: last season's
     collection is treated exactly like a row between seasons until a run builds tonight's season into it.

@@ -305,18 +305,20 @@ class TestUpdate:
 
         assert (queued, drains) == ([], [])
 
-    def test_a_date_moved_within_a_window_it_stays_shown_in_queues_no_pass(self, client: TestClient, monkeypatch):
-        """On 20 Nov Thanksgiving (US) shows on the 26th or a day later: same season, same year, same films, so
-        nothing on Plex changes and the row's collection must not be hidden by a pass (#137 round 2)."""
+    def test_a_date_moved_while_the_row_shows_queues_a_pass(self, client: TestClient, monkeypatch):
+        """On 20 Nov Thanksgiving (US) shows on the 26th or a day later. The pass re-reads the ledger's own record
+        rather than this edit's guess at it, so a second edit before the next run cannot skip one (#137 round 4);
+        the guard keeps the collection shown, since its day is within the window's width of the new one."""
         _on(monkeypatch, datetime(2026, 11, 20, 12, 0))
         _create(client)
-        _row(client, "Turkey", ["thanksgiving"])
+        row = _row(client, "Turkey", ["thanksgiving"])
         queued, drains = _jobs(monkeypatch)
 
         r = client.put("/api/seasons/thanksgiving", json=_body(rule={"kind": "fixed", "month": 11, "day": 27}))
 
         assert r.status_code == 200, r.text
-        assert (queued, drains) == ([], [])
+        assert queued == [("rows.visibility", {"row": row["slug"]})]
+        assert drains == ["season 'thanksgiving' moved"]
 
     def test_a_move_that_hands_the_row_to_another_season_queues_a_pass(self, client: TestClient, monkeypatch):
         """Shown before and after, but for another season: the collection built for the first is hidden now
@@ -358,15 +360,16 @@ class TestUpdate:
 
 
 class TestWhetherASeasonEditOwesAPass:
-    """`_today` and `_pass_owed`, the season-edit gate, called directly: a pass is owed exactly when the guard
-    would now treat the row's collection differently (#137 round 3). The collection is taken to be built for the
-    season's day before the edit."""
+    """`_today` and `_pass_owed`, the season-edit gate, called directly. A pass is owed for a row shown before or
+    after the edit whenever the day or window of the season it shows changed (#137 round 4). Guessing whether the
+    guard's answer changes, from the season's day before the edit, missed a second edit made before the next run:
+    the ledger's record is the day the row was BUILT for, which the pass reads and the gate does not."""
 
     ROW = SimpleNamespace(show_days=[], season_lead_days=30, season_after_days=0)
 
     @staticmethod
-    def _season(month: int, day: int, *, lead: int, after: int = 0) -> Season:
-        return Season(
+    def _catalogue(month: int, day: int, lead: int, after: int = 0) -> dict:
+        moved = Season(
             slug="moved",
             name="Moved",
             emoji="🗓️",
@@ -376,26 +379,47 @@ class TestWhetherASeasonEditOwesAPass:
             lead_days=lead,
             after_days=after,
         )
+        return {**BUILTIN_SEASONS, "moved": moved}
+
+    def _owed(self, now: datetime, before: tuple, after: tuple, seasons: tuple[str, ...] = ("moved",)) -> bool:
+        from shortlist.server.api import seasons as seasons_api
+
+        answers = [seasons_api._today(self.ROW, list(seasons), now, self._catalogue(*rule)) for rule in (before, after)]
+        return seasons_api._pass_owed(*answers)
 
     @pytest.mark.parametrize(
-        ("now", "before", "after", "owed"),
+        ("now", "before", "after"),
         [
-            (datetime(2026, 10, 30, 12), (3, 1, 14, 3), (11, 8, 14, 3), True),
-            (datetime(2026, 12, 20, 12), (1, 1, 14, 0), (12, 31, 14, 0), True),
-            (datetime(2027, 3, 12, 12), (3, 14, 7, 0), (3, 17, 7, 0), False),
-            (datetime(2026, 12, 30, 12), (12, 28, 7, 3), (1, 5, 7, 3), False),
+            (datetime(2026, 10, 30, 12), (3, 1, 14, 3), (11, 8, 14, 3)),
+            (datetime(2026, 12, 20, 12), (1, 1, 14, 0), (12, 31, 14, 0)),
+            (datetime(2027, 3, 12, 12), (3, 14, 7, 0), (3, 17, 7, 0)),
+            (datetime(2026, 12, 30, 12), (12, 28, 7, 3), (1, 5, 7, 3)),
         ],
         ids=["march_to_november", "january_to_december", "14_to_17_march", "28_december_to_5_january"],
     )
-    def test_a_pass_is_owed_only_when_the_collection_stops_being_tonights(self, now, before, after, owed):
-        from shortlist.server.api import seasons as seasons_api
+    def test_a_pass_is_owed_when_the_day_of_a_shown_season_moves(self, now, before, after):
+        assert self._owed(now, before, after) is True
 
-        def catalogue(month, day, lead, after_days):
-            return {**BUILTIN_SEASONS, "moved": self._season(month, day, lead=lead, after=after_days)}
+    def test_moving_it_back_after_a_pass_hid_it_is_owed_a_pass(self):
+        """17 to 16 March hid the row under the old rule; moving it back to 17 asked the gate about 16, which the
+        new day's window holds, so no pass ran and the hidden row stayed hidden until the next run."""
+        now = datetime(2027, 3, 12, 12)
+        assert self._owed(now, (3, 16, 7, 0), (3, 17, 7, 0)) is True
 
-        answers = [seasons_api._today(self.ROW, ["moved"], now, catalogue(*rule)) for rule in (before, after)]
+    def test_each_of_two_moves_before_a_run_is_owed_a_pass(self):
+        """10 to 17 to 24 June with no run between: the second move was judged against 17, a day the row was never
+        built for, while the ledger still says 10."""
+        now = datetime(2026, 6, 18, 12)
+        assert self._owed(now, (6, 10, 7, 10), (6, 17, 7, 10)) is True
+        assert self._owed(now, (6, 17, 7, 10), (6, 24, 7, 10)) is True
 
-        assert seasons_api._pass_owed(*answers) is owed
+    def test_a_row_hidden_before_and_after_is_owed_none(self):
+        assert self._owed(datetime(2026, 10, 2, 12), (11, 26, 14, 0), (11, 26, 3, 0)) is False
+
+    def test_a_row_showing_another_season_is_owed_none(self):
+        """It shows Halloween today either way: the edit moves nothing it shows."""
+        now = datetime(2026, 10, 15, 12)
+        assert self._owed(now, (3, 1, 7, 0), (4, 1, 7, 0), seasons=("halloween", "moved")) is False
 
 
 class TestDelete:

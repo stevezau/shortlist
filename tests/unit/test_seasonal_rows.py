@@ -1139,6 +1139,21 @@ class TestWhichCollectionIsTonightsSeason:
         """The films were chosen for this showing of the season; the recipe's full day rebuilds it next run."""
         assert self._shown(day, built, {season.slug: season}, slugs=[season.slug]) is True
 
+    @pytest.mark.parametrize(
+        ("day", "built", "season"),
+        [
+            (date(2027, 3, 12), "pat@2027-03-17", _custom("pat", 3, 16, lead=7)),
+            (date(2027, 6, 13), "june@2027-06-10", _custom("june", 6, 19, lead=7, after=3)),
+            (date(2026, 12, 30), "ny@2026-12-28", _custom("ny", 1, 6, lead=7, after=3)),
+        ],
+        ids=["17_moved_back_to_16_march", "10_moved_to_19_june", "28_december_moved_to_6_january"],
+    )
+    def test_a_day_moved_by_no_more_than_the_windows_width_is_still_shown(self, day, built, season):
+        """Round 4: the record is held when it is within the window's width (lead + after) of tonight's day, either
+        side. The one-sided "day before it opens to the day it closes" hid a row moved a day EARLIER when it had
+        no days after (the default), and one moved later by more than lead + 1."""
+        assert self._shown(day, built, {season.slug: season}, slugs=[season.slug]) is True
+
     @pytest.mark.parametrize("day", [date(2027, 1, 1), date(2027, 1, 2)], ids=["1_january", "2_january"])
     def test_new_years_eve_staying_into_january_shows_its_own_collection_and_hides_last_years(self, day):
         """The window crosses New Year: neither tonight's year nor the record's year alone can decide it."""

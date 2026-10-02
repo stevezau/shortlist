@@ -579,19 +579,25 @@ def _today(
 
 
 def _pass_owed(before: tuple[bool, RowSeason | None], after: tuple[bool, RowSeason | None]) -> bool:
-    """Whether a season edit changes what a `rows.visibility` pass would do to the row today.
+    """Whether a season edit owes a row a `rows.visibility` pass now.
 
-    Its collection is taken to be built for the season's day before the edit. A pass is owed when the row's
-    shown-today answer moves, or when it is shown and that collection no longer `holds` the season it shows
-    after the edit — the promotion guard would now hide it (#137 C-1). A day moved within the window changes
-    neither, so it needs no pass, and a row hidden before and after needs none either.
+    Owed for a row shown before or after the edit whenever its shown-today answer, or the day or window of the
+    season it shows, changed. The pass decides from the delivery ledger's own record of what the row's collection
+    was built for (`RowSeason.holds`); this gate cannot, and guessing from the season's day before the edit
+    missed a second edit made before the next run (10 to 17 to 24 June was judged against the 17th, a day the
+    row was never built for). A rename or an edit to a field the rule's kind ignores moves no day, and a row
+    hidden before and after needs no pass.
     """
     (shown_before, season_before), (shown_after, season_after) = before, after
-    if shown_before != shown_after:
-        return True
-    if not shown_after:
+    if not (shown_before or shown_after):
         return False
-    return season_before is None or season_after is None or not season_after.holds(season_before.built_for)
+    return shown_before != shown_after or _when(season_before) != _when(season_after)
+
+
+def _when(season: RowSeason | None) -> tuple | None:
+    """The season a row shows, its day and its window: everything a season edit can move for the row. Spelled
+    out because `RowSeason` equality leaves the window out."""
+    return None if season is None else (season.slug, season.anchor, season.starts, season.ends)
 
 
 def _reject_row_title_clashes(session: Session, state: State, season: Season) -> None:
