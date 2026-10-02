@@ -1178,6 +1178,72 @@ class TestWhichCollectionIsTonightsSeason:
         assert self._shown(date(2027, 3, 12), built, pat, slugs=["pat"]) is shown
 
 
+class TestWhyASeasonalRowBuiltNothing:
+    """A seasonal row that builds nothing used to report `ok` with no reason (a real run: a shared New Year's Eve
+    row whose audience had watched none of its films together). Thin seasons make it common — Easter holds 5
+    films on a 10,000-film server, Mother's Day 2 — so the run report says why, naming the season. Nothing about
+    what is built or promoted changes."""
+
+    def _row_alone(self, ctx, **overrides) -> None:
+        ctx.config.rows = [seasonal_spec(**overrides)]
+
+    def test_a_season_with_nothing_in_this_rows_libraries_says_so(self, ctx):
+        ctx.tmdb.discover_all.side_effect = lambda media_type, params: (
+            [{"id": 77, "title": "Not On This Server", "genre_ids": [28], "vote_average": 8.0}]
+            if media_type is MediaType.MOVIE and params.get("with_keywords") == CHRISTMAS_KEYWORDS
+            else []
+        )
+        self._row_alone(ctx)
+
+        report = pipeline_mod.run(ctx, _people())
+
+        sarah = next(u for u in report.users if u.username == "sarah")
+        assert _picks(report, "sarah", "seasonal") == []
+        assert sarah.reason == "No 🎄 Christmas films are in this row's libraries, so it had nothing to show tonight."
+
+    def test_a_season_they_have_seen_all_of_says_so(self, ctx):
+        ctx.history_source.fetch.return_value = [
+            make_watched("Die Hard", days_ago=1, rating_key=999),
+            make_watched("Die Hard 2", days_ago=2, rating_key=1020, tmdb_id=20),
+            make_watched("Elf", days_ago=3, rating_key=1030, tmdb_id=30),
+            make_watched("Violent Night", days_ago=4, rating_key=1031, tmdb_id=31),
+        ]
+        self._row_alone(ctx)
+
+        report = pipeline_mod.run(ctx, _people())
+
+        sarah = next(u for u in report.users if u.username == "sarah")
+        assert _picks(report, "sarah", "seasonal") == []
+        assert sarah.reason == "No 🎄 Christmas films are left for them — they've seen all 3."
+
+    def test_a_shared_row_no_season_film_was_watched_by_enough_of_says_so(self, ctx):
+        elf = make_watched("Elf", days_ago=2, rating_key=1030, tmdb_id=30)
+        violent = make_watched("Violent Night", days_ago=2, rating_key=1031, tmdb_id=31)
+        other = make_watched("Not Christmas", days_ago=2, rating_key=1010, tmdb_id=10)
+        people = _shared_people(ctx)
+        for person, history in zip(people, ([elf, other], [violent, other], [other]), strict=True):
+            person.history = history
+        ctx.config.rows = [seasonal_spec(slug="season-shared", shared=True, min_watchers=2)]
+
+        report = pipeline_mod.run(ctx, people)
+
+        shared = next(u for u in report.users if u.slug == "shared_season-shared")
+        assert shared.picks == []
+        assert shared.reason == (
+            "No 🎄 Christmas film in this row's libraries has been watched by 2 or more of the 3 people in its "
+            "audience yet, so it had nothing to show tonight."
+        )
+
+    def test_a_row_that_built_something_gets_no_such_reason(self, ctx):
+        self._row_alone(ctx)
+
+        report = pipeline_mod.run(ctx, _people())
+
+        sarah = next(u for u in report.users if u.username == "sarah")
+        assert _picks(report, "sarah", "seasonal") != []
+        assert sarah.reason is None
+
+
 class TestSeasonInTheDescriptionAndPoster:
     def test_the_description_takes_the_season(self, ctx):
         ctx.config.rows = [seasonal_spec(description="{season_emoji} {season} films for {user}")]
