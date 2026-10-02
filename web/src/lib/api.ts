@@ -24,12 +24,14 @@ import type {
   PlexCollectionMatch,
   LibraryTitle,
   Season,
+  SeasonDate,
   SeasonInput,
   SeasonPreset,
   SeasonPreview,
   SeasonPreviewInput,
   TmdbTag,
   ConnectionTestResult,
+  DateRule,
   LinkRequest,
   PinCreated,
   CleanupResult,
@@ -552,6 +554,10 @@ export const api = {
    *  take several seconds while the server reads the libraries. */
   previewSeason: (body: SeasonPreviewInput): Promise<SeasonPreview> =>
     request("/api/seasons/preview", { method: "POST", body: JSON.stringify(body) }),
+
+  /** When a date rule next falls, from the rule alone: no TMDB key or Plex needed. */
+  getSeasonNextDate: (rule: DateRule): Promise<SeasonDate> =>
+    request("/api/seasons/next-date", { method: "POST", body: JSON.stringify(rule) }),
 
   /** TMDB tags whose name matches, each with how many films TMDB gives it. */
   getTmdbTags: (q: string): Promise<TmdbTag[]> =>

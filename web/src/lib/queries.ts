@@ -15,6 +15,7 @@ import { useLiveClock } from "./use-live-clock";
 import type {
   ArrStatus,
   CollectionInput,
+  DateRule,
   ReportWindow,
   Run,
   RowOverridePatch,
@@ -81,6 +82,7 @@ export const queryKeys = {
   seasons: ["seasons"] as const,
   seasonPresets: ["season-presets"] as const,
   seasonPreview: (draft: SeasonPreviewInput) => ["season-preview", draft] as const,
+  seasonNextDate: (rule: DateRule) => ["season-next-date", rule] as const,
   seasonSearch: (kind: "tags" | "collections" | "library", q: string) =>
     ["season-search", kind, q] as const,
   libraryCollections: (key: string) => ["library-collections", key] as const,
@@ -599,6 +601,18 @@ export function useSeasonPreview(
     refetchOnWindowFocus: (query) => needsSetup(query.state.error),
     placeholderData: keepPrevious ? keepPreviousData : undefined,
     enabled,
+  });
+}
+
+/** When a date rule next falls, for the editor's "Next: …" line. Asked apart from the count, so a count
+ *  that fails never takes the date with it. The answer only moves at midnight. */
+export function useSeasonNextDate(rule: DateRule) {
+  return useQuery({
+    queryKey: queryKeys.seasonNextDate(rule),
+    queryFn: () => api.getSeasonNextDate(rule),
+    staleTime: 60 * 60_000,
+    retry: false,
+    refetchOnWindowFocus: false,
   });
 }
 

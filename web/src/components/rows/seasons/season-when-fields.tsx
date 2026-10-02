@@ -38,11 +38,17 @@ const EASTER_DAYS: Readonly<Record<number, string>> = {
   49: "Pentecost",
 };
 
+function easterDays(offset: number): string {
+  const days = Math.abs(offset);
+  return `${days} day${days === 1 ? "" : "s"} ${offset < 0 ? "before" : "after"}`;
+}
+
+/** "21 days before", or a day people know by its name alone — "Mothering Sunday", in its place in the
+ *  list — so every option fits a phone's narrow select; the hint under it gives a named day's distance.
+ *  "Easter" is in the field's label. */
 function easterOption(offset: number): string {
   if (offset === 0) return "Easter Sunday";
-  const days = Math.abs(offset);
-  const words = `${days} day${days === 1 ? "" : "s"} ${offset < 0 ? "before" : "after"} Easter`;
-  return EASTER_DAYS[offset] ? `${words} (${EASTER_DAYS[offset]})` : words;
+  return EASTER_DAYS[offset] ?? easterDays(offset);
 }
 
 const EASTER_OFFSETS = Array.from({ length: MAX_EASTER_OFFSET * 2 + 1 }, (_, i) => i - MAX_EASTER_OFFSET);
@@ -179,7 +185,7 @@ export function SeasonWhenFields({
           </>
         )}
         {rule.kind === "easter" && (
-          <Field id={ids.easter} label="Day" wide>
+          <Field id={ids.easter} label="Days from Easter" wide>
             <select
               id={ids.easter}
               aria-describedby={describedBy}
@@ -197,7 +203,10 @@ export function SeasonWhenFields({
         )}
       </div>
       {rule.kind === "easter" && (
-        <p className="text-sm text-muted-foreground">Easter moves each year; Shortlist works it out for you.</p>
+        <p className="text-sm text-muted-foreground">
+          {EASTER_DAYS[rule.offset] && `${EASTER_DAYS[rule.offset]} is ${easterDays(rule.offset)} Easter Sunday. `}
+          Easter moves each year; Shortlist works it out for you.
+        </p>
       )}
       {ruleError && (
         <p id={errorId} role="alert" className="text-sm text-destructive-text">

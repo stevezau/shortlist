@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   createSeason: vi.fn(),
   updateSeason: vi.fn(),
   deleteSeason: vi.fn(),
+  getSeasonNextDate: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -72,6 +73,7 @@ beforeEach(() => {
   mocks.getTmdbTags.mockResolvedValue([]);
   mocks.getPlexCollections.mockResolvedValue([]);
   mocks.searchLibrary.mockResolvedValue([]);
+  mocks.getSeasonNextDate.mockResolvedValue({ next_date: "2026-11-26", rule_error: null });
 });
 
 describe("SeasonEditorDialog", () => {
@@ -194,6 +196,36 @@ describe("SeasonEditorDialog", () => {
     expect(await within(confirm).findByText(refusal)).toBeInTheDocument();
     expect(mocks.deleteSeason).toHaveBeenCalledWith("thanksgiving");
     expect(onDeleted).not.toHaveBeenCalled();
+    // It no longer asks the question it just failed to carry out, and offers no second try.
+    expect(within(confirm).getByRole("heading", { name: "Can't delete “Thanksgiving” yet" })).toBeInTheDocument();
+    expect(within(confirm).getByRole("button", { name: "Delete season" })).toBeDisabled();
+    expect(within(confirm).queryByText(/keeps its other seasons/)).toBeNull();
+  });
+
+  it("says one row keeps its other seasons, and two rows keep theirs", async () => {
+    renderEditor({ kind: "edit", season: { ...THANKSGIVING, used_by: [{ id: 7, name: "🦃 Thanksgiving picks" }] } });
+    await userEvent.click(screen.getByRole("button", { name: "Delete season" }));
+    const one = await screen.findByRole("dialog", { name: "Remove “Thanksgiving” from 🦃 Thanksgiving picks and delete it?" });
+    expect(one).toHaveAccessibleDescription(/^That row keeps its other seasons\./);
+  });
+
+  it("says those rows keep their other seasons when there are several", async () => {
+    renderEditor({
+      kind: "edit",
+      season: { ...THANKSGIVING, used_by: [{ id: 7, name: "A" }, { id: 8, name: "B" }] },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Delete season" }));
+    const several = await screen.findByRole("dialog", { name: "Remove “Thanksgiving” from A and B and delete it?" });
+    expect(several).toHaveAccessibleDescription(/^Those rows keep their other seasons\./);
+  });
+
+  it("gives focus back to Delete season when the confirm is cancelled", async () => {
+    renderEditor({ kind: "edit", season: THANKSGIVING });
+    const opener = screen.getByRole("button", { name: "Delete season" });
+    await userEvent.click(opener);
+    const confirm = await screen.findByRole("dialog", { name: "Delete “Thanksgiving”?" });
+    await userEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(opener).toHaveFocus());
   });
 
   it("asks plainly when no row uses the season", async () => {
@@ -209,7 +241,7 @@ describe("SeasonEditorDialog", () => {
 
   it("shows what is wrong with the date under the date pickers", async () => {
     const problem = "29 February isn't every year — pick 28 February or 1 March.";
-    mocks.previewSeason.mockResolvedValue(preview({ next_date: null, rule_error: problem }));
+    mocks.getSeasonNextDate.mockResolvedValue({ next_date: null, rule_error: problem });
     renderEditor({ kind: "create" });
 
     expect(await screen.findByText(problem)).toBeInTheDocument();
@@ -321,9 +353,11 @@ describe("SeasonEditorDialog", () => {
   it("won't delete the only season ticked in this row", async () => {
     renderEditor({ kind: "edit", season: THANKSGIVING }, { tickedHere: ["thanksgiving"] });
     await userEvent.click(screen.getByRole("button", { name: "Delete season" }));
-    const confirm = await screen.findByRole("dialog", { name: "Delete “Thanksgiving”?" });
-    expect(within(confirm).getByText(/only season ticked in this row/)).toBeInTheDocument();
-    expect(within(confirm).getByRole("button", { name: "Delete season" })).toBeDisabled();
+    const confirm = await screen.findByRole("dialog", { name: "Can't delete “Thanksgiving” yet" });
+    expect(confirm).toHaveAccessibleDescription(/only season ticked in this row/);
+    expect(within(confirm).queryByRole("button", { name: "Delete season" })).toBeNull();
+    // The footer's Close, beside the corner ×, which Radix also names "Close".
+    expect(within(confirm).getAllByRole("button", { name: "Close" })).toHaveLength(2);
   });
 
   it("asks for the row to be saved first when, as saved, it follows only this season", async () => {
@@ -333,12 +367,59 @@ describe("SeasonEditorDialog", () => {
       { tickedHere: ["thanksgiving", "christmas"], savedRow: { id: 3, seasons: ["thanksgiving"] } },
     );
     await userEvent.click(screen.getByRole("button", { name: "Delete season" }));
-    const confirm = await screen.findByRole("dialog", { name: "Remove “Thanksgiving” from Turkey and delete it?" });
-    expect(within(confirm).getByText(/Save this row first, then delete the season\./)).toBeInTheDocument();
-    const remove = within(confirm).getByRole("button", { name: "Delete season" });
-    expect(remove).toBeDisabled();
-    await userEvent.click(remove);
+    const confirm = await screen.findByRole("dialog", { name: "Can't delete “Thanksgiving” yet" });
+    expect(confirm).toHaveAccessibleDescription(/^Save this row first, then delete the season\./);
+    expect(within(confirm).queryByText(/keep their other seasons|keeps its other seasons/)).toBeNull();
+    expect(within(confirm).queryByRole("button", { name: "Delete season" })).toBeNull();
+    await userEvent.click(within(confirm).getAllByRole("button", { name: "Close" }).at(-1) as HTMLElement);
     expect(mocks.deleteSeason).not.toHaveBeenCalled();
+  });
+
+  it("keeps the next date when the count fails: it comes from the date, not the count", async () => {
+    mocks.previewSeason.mockRejectedValue(new ApiError(500, "Internal error"));
+    renderEditor({ kind: "preset", preset: THANKSGIVING_US });
+    expect(await screen.findByText("Internal error")).toBeInTheDocument();
+    expect(await screen.findByText(/^Next: /)).toBeInTheDocument();
+    expect(mocks.getSeasonNextDate).toHaveBeenCalledWith(expect.objectContaining({ kind: "nth", month: 11, nth: 4 }));
+  });
+
+  it("invites a source, rather than judging a season with none", async () => {
+    renderEditor({ kind: "create" });
+    expect(
+      await screen.findByText("Add a tag, a collection or a film to see what this season finds."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Too few/)).toBeNull();
+    expect(mocks.previewSeason).not.toHaveBeenCalled();
+  });
+
+  it("keeps the count and verdict in one line by the buttons, for a screen too narrow for the summary", async () => {
+    mocks.previewSeason.mockResolvedValue(preview({ total: 26, from_tags: 26 }));
+    renderEditor({ kind: "preset", preset: THANKSGIVING_US });
+    // Radix portals the dialog to <body>, outside the render container.
+    await waitFor(() =>
+      expect(document.querySelector("[data-count-line]")).toHaveTextContent("26 films · People's rows will be much alike"),
+    );
+  });
+
+  it("names the first thing missing and how many more, with every one there for a screen reader", async () => {
+    renderEditor({ kind: "create" });
+    await userEvent.clear(screen.getByLabelText("Emoji"));
+    const save = screen.getByRole("button", { name: "Save and add to this row" });
+    expect(screen.getByText("+2 more")).toBeInTheDocument();
+    expect(save).toHaveAccessibleDescription("Add a name. Add an emoji. Add at least one tag, collection or film.");
+  });
+
+  it("names the days from Easter people know by name alone, short enough for a phone, and says how far they are", async () => {
+    renderEditor({ kind: "create" });
+    await userEvent.click(screen.getByRole("button", { name: "Days from Easter" }));
+    const days = screen.getByLabelText("Days from Easter");
+    expect(within(days).getByRole("option", { name: "Mothering Sunday" })).toBeInTheDocument();
+    expect(within(days).getByRole("option", { name: "Easter Sunday" })).toBeInTheDocument();
+    expect(within(days).getByRole("option", { name: "5 days after" })).toBeInTheDocument();
+    expect(Math.max(...[...(days as HTMLSelectElement).options].map((o) => o.text.length))).toBeLessThanOrEqual(16);
+
+    await userEvent.selectOptions(days, "-21");
+    expect(screen.getByText(/Mothering Sunday is 21 days before Easter Sunday\./)).toBeInTheDocument();
   });
 
   it("refuses a name another season already has, before saving", async () => {

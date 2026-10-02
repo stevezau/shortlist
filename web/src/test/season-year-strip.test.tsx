@@ -23,12 +23,20 @@ describe("SeasonYearStrip", () => {
     expect(screen.getByText(/No seasons overlap\./)).toBeInTheDocument();
   });
 
-  it("leaves the drawing to sighted readers: the bars are hidden from screen readers", () => {
-    const { container } = render(
-      <SeasonYearStrip seasons={[THANKSGIVING, CHRISTMAS]} leadDays={30} afterDays={0} today="2026-10-02" />,
+  it("is one labelled image to a screen reader: each season's window, and today", () => {
+    render(<SeasonYearStrip seasons={[THANKSGIVING, CHRISTMAS]} leadDays={30} afterDays={0} today="2026-10-02" />);
+    expect(screen.getByRole("img")).toHaveAccessibleName(
+      `When this row shows each season: Thanksgiving, ${seasonDate("2026-11-12")} – ${seasonDate("2026-11-26")}; ` +
+        `Christmas, ${seasonDate("2026-11-25")} – ${seasonDate("2026-12-25")}. Today is ${seasonDate("2026-10-02")}.`,
     );
-    const drawing = container.querySelector("[data-year-strip]");
-    expect(drawing).not.toBeNull();
-    expect(drawing).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("names each lane, so two seasons with one emoji can be told apart", () => {
+    const mothers = { ...THANKSGIVING, slug: "mothers-day", name: "Mother's Day", emoji: "💐" };
+    const mothering = { ...THANKSGIVING, slug: "mothering-sunday", name: "Mothering Sunday", emoji: "💐" };
+    render(<SeasonYearStrip seasons={[mothering, mothers]} leadDays={30} afterDays={0} today="2026-10-02" />);
+    expect(screen.getByText("💐 Mothering Sunday")).toBeInTheDocument();
+    expect(screen.getByText("💐 Mother's Day")).toBeInTheDocument();
+    expect(screen.getByText("Today")).toBeInTheDocument();
   });
 });

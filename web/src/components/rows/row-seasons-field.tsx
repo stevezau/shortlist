@@ -143,8 +143,11 @@ export function RowSeasonsField({
 
   const onDeleted = (slug: string) => {
     // The server took it out of every saved row; the form here follows.
-    if (value.seasons.includes(slug)) onChange({ seasons: value.seasons.filter((s) => s !== slug) });
-    setSaved(null);
+    const ticked = value.seasons.includes(slug);
+    if (ticked) onChange({ seasons: value.seasons.filter((s) => s !== slug) });
+    const season = editor?.kind === "edit" ? editor.season : null;
+    const label = season ? `“${season.emoji} ${season.name}”` : "the season";
+    setSaved(`Deleted ${label}${ticked ? " and unticked it here" : ""}.`);
     focusAfterClose.current = "";
     setEditor(null);
   };

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { seasonVerdict, titleNoun } from "@/lib/season-verdict";
+import { seasonVerdict, titleNoun, verdictInBrief } from "@/lib/season-verdict";
 
 const films = (size: number, perPerson: boolean) => ({ size, perPerson, media: "movie" as const });
 const both = (size: number) => ({ size, perPerson: false, media: "both" as const });
@@ -77,5 +77,15 @@ describe("titleNoun", () => {
     ["both", 72, "titles"],
   ] as const)("calls %s × %i “%s”", (media, count, noun) => {
     expect(titleNoun(media, count)).toBe(noun);
+  });
+});
+
+describe("verdictInBrief", () => {
+  it.each([
+    [10, true, "Too few for this row"],
+    [40, true, "People's rows will be much alike"],
+    [150, true, "Enough for this row"],
+  ] as const)("a count of %i reads “%s”", (total, perPerson, brief) => {
+    expect(verdictInBrief(seasonVerdict({ total }, films(15, perPerson)))).toBe(brief);
   });
 });

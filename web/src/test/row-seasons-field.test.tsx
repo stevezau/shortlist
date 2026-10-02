@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   createSeason: vi.fn(),
   updateSeason: vi.fn(),
   deleteSeason: vi.fn(),
+  getSeasonNextDate: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -79,6 +80,7 @@ beforeEach(() => {
   mocks.getTmdbTags.mockResolvedValue([]);
   mocks.getPlexCollections.mockResolvedValue([]);
   mocks.searchLibrary.mockResolvedValue([]);
+  mocks.getSeasonNextDate.mockResolvedValue({ next_date: "2026-11-26", rule_error: null });
 });
 
 describe("RowSeasonsField", () => {
@@ -253,6 +255,7 @@ describe("RowSeasonsField", () => {
     await waitFor(() => expect(onChange).toHaveBeenCalledWith({ seasons: ["christmas"] }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(screen.getByRole("heading", { name: "Seasons" })).toHaveFocus());
+    expect(screen.getByRole("status")).toHaveTextContent("Deleted “🦃 Thanksgiving” and unticked it here.");
   });
 
   it("drops a ready-made season's card once it is saved, ticks it, and puts focus on its checkbox", async () => {

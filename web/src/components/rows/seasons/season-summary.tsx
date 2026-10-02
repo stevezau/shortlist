@@ -1,8 +1,8 @@
 import type { UseQueryResult } from "@tanstack/react-query";
-import { useId } from "react";
+import { useId, type ReactNode } from "react";
 
 import { Skeleton } from "@/components/ui/skeleton";
-import { seasonVerdict, titleNoun, type SeasonRow } from "@/lib/season-verdict";
+import { seasonVerdict, titleNoun, verdictInBrief, type SeasonRow } from "@/lib/season-verdict";
 import type { SeasonPreview, SeasonPreviewInput } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -25,10 +25,13 @@ function verdictHelp(level: "few" | "alike" | "ok", titles: string): string {
 export function SeasonSummary({
   preview,
   row,
+  hasSources,
   alsoUsedBy,
 }: {
   preview: UseQueryResult<CountedPreview>;
   row: SeasonRow;
+  /** Whether the draft has any source yet; before one, there is nothing to count or judge. */
+  hasSources: boolean;
   /** Other rows that follow this season, by name. */
   alsoUsedBy: string[];
 }) {
@@ -39,13 +42,60 @@ export function SeasonSummary({
       <h3 id={headingId} className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         This season draws from
       </h3>
-      <SummaryBody preview={preview} row={row} />
+      {hasSources ? (
+        <SummaryBody preview={preview} row={row} />
+      ) : (
+        <p className="text-sm text-muted-foreground">{nothingYet(row)}</p>
+      )}
       {alsoUsedBy.length > 0 && (
         <p className="border-t pt-3 text-sm">
           <span className="text-muted-foreground">Also used by:</span> {alsoUsedBy.join(", ")}
         </p>
       )}
     </aside>
+  );
+}
+
+/** Before any source: a prompt, not a verdict — "too few" for a season not yet given any is no news. */
+function nothingYet(row: SeasonRow): string {
+  return `Add a tag, a collection or a ${titleNoun(row.media, 1)} to see what this season finds.`;
+}
+
+/**
+ * The count and verdict in one line, for the editor's footer below 1024px, where the summary sits at the
+ * bottom of a long form: "26 films · People's rows will be much alike". Nothing before any source.
+ */
+export function SeasonCountLine({
+  preview,
+  row,
+  hasSources,
+  className,
+}: {
+  preview: UseQueryResult<CountedPreview>;
+  row: SeasonRow;
+  hasSources: boolean;
+  className?: string;
+}) {
+  if (!hasSources) return null;
+  const titles = titleNoun(row.media, 2);
+  let line: ReactNode;
+  if (preview.isPending) line = `Counting ${titles}…`;
+  else if (preview.isError) line = `Couldn’t count the ${titles} — see the summary below.`;
+  else {
+    const verdict = seasonVerdict(preview.data, row);
+    line = (
+      <>
+        {`${preview.data.total} ${titleNoun(row.media, preview.data.total)} · `}
+        <span className={cn("font-medium", verdict.level === "ok" ? "text-success" : "text-warning")}>
+          {verdictInBrief(verdict)}
+        </span>
+      </>
+    );
+  }
+  return (
+    <p data-count-line className={cn("truncate", className)}>
+      {line}
+    </p>
   );
 }
 

@@ -148,7 +148,8 @@ export function ChosenItem({
         type="button"
         aria-label={removeLabel}
         onClick={onRemove}
-        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        // Drawn at 28px so the chip stays small; the ::after reaches 4px further each way, for a 36px target.
+        className="relative inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground after:absolute after:-inset-1 after:content-[''] hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <X aria-hidden="true" className="h-4 w-4" />
       </button>

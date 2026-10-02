@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef, useState } from "react";
+import { Fragment, useId, useMemo, useRef, useState, type RefObject } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -12,12 +12,20 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError, apiErrorMessage } from "@/lib/api";
-import { useCreateSeason, useDeleteSeason, useSeasonPreview, useSeasons, useUpdateSeason } from "@/lib/queries";
+import {
+  useCreateSeason,
+  useDeleteSeason,
+  useSeasonNextDate,
+  useSeasonPreview,
+  useSeasons,
+  useUpdateSeason,
+} from "@/lib/queries";
 import {
   blankDraft,
   draftFrom,
   draftProblems,
   emojiProblem,
+  hasSource,
   nameClash,
   previewInput,
   ruleProblem,
@@ -28,11 +36,12 @@ import { titleNoun, type SeasonRow } from "@/lib/season-verdict";
 import { addDays, longDate, weekdayDate } from "@/lib/seasons";
 import type { Season, SeasonPreset, SeasonPreviewInput } from "@/lib/types";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
+import { cn } from "@/lib/utils";
 
 import { SeasonCollectionPicker } from "./season-collection-picker";
 import { SeasonGenreFields } from "./season-genre-fields";
 import { SeasonPicksPicker } from "./season-picks-picker";
-import { SeasonSummary } from "./season-summary";
+import { SeasonCountLine, SeasonSummary } from "./season-summary";
 import { SeasonTagPicker } from "./season-tag-picker";
 import { SeasonWhenFields } from "./season-when-fields";
 
@@ -105,14 +114,24 @@ export function SeasonEditorDialog({
   const draftKey = JSON.stringify(previewInput(draft, row));
   const countedKey = useDebouncedValue(draftKey, 400);
   const counted = useMemo(() => JSON.parse(countedKey) as SeasonPreviewInput, [countedKey]);
-  const preview = useSeasonPreview(counted, { keepPrevious: true });
+  const sourcesNow = hasSource(draft);
+  // Nothing to count before a source: the summary says so instead of judging an empty season "too few".
+  const preview = useSeasonPreview(counted, {
+    keepPrevious: true,
+    enabled: hasSource({
+      tags: counted.tags ?? [],
+      genre: counted.genre ?? null,
+      collections: counted.collections ?? [],
+      picks: counted.picks ?? [],
+    }),
+  });
   const counting = preview.isFetching || draftKey !== countedKey;
-  // What the count says about the date, only while it is about the date on screen.
-  const countedRule =
-    preview.data && JSON.stringify(preview.data.draft.rule) === JSON.stringify(previewInput(draft, row).rule)
-      ? preview.data
-      : null;
-  const ruleError = (countedRule?.rule_error ?? null) || ruleProblem(draft.rule);
+  // The date comes from the rule alone, asked apart from the count, so a failed count keeps it. Only an
+  // answer about the rule on screen is used: while a change waits out the debounce, it is being worked out.
+  const dates = useSeasonNextDate(counted.rule);
+  const ruleSettled = JSON.stringify(previewInput(draft, row).rule) === JSON.stringify(counted.rule);
+  const dateAnswer = ruleSettled ? dates.data : undefined;
+  const ruleError = (dateAnswer?.rule_error ?? null) || ruleProblem(draft.rule);
 
   const clash = nameClash(draft.name, catalogue.data ?? [], editing?.slug ?? null);
   const emojiError = emojiProblem(draft.emoji);
@@ -149,13 +168,13 @@ export function SeasonEditorDialog({
         ? "Save this row first, then delete the season. As saved, it follows only this season."
         : null;
 
-  const nextDate = countedRule?.next_date ?? null;
+  const nextDate = dateAnswer?.next_date ?? null;
   const nextLine = ruleError
     ? null
     : nextDate
       ? `Next: ${longDate(nextDate)} — shows from ${weekdayDate(addDays(nextDate, -draft.lead_days))}, hidden again from ${weekdayDate(addDays(nextDate, draft.after_days + 1))}`
-      : preview.isError
-        ? null
+      : ruleSettled && dates.isError
+        ? "Couldn’t work out the next date. Check Shortlist is running."
         : "Working out the next date…";
 
   const submit = async () => {
@@ -170,6 +189,7 @@ export function SeasonEditorDialog({
     }
   };
 
+  const deleteButton = useRef<HTMLButtonElement>(null);
   const ids = {
     nameHeading: useId(),
     emoji: useId(),
@@ -295,18 +315,25 @@ export function SeasonEditorDialog({
             </section>
           </div>
 
-          <SeasonSummary preview={preview} row={row} alsoUsedBy={alsoUsedBy} />
+          <SeasonSummary preview={preview} row={row} hasSources={sourcesNow} alsoUsedBy={alsoUsedBy} />
         </div>
 
-        <DialogFooter className="sticky bottom-0 -mx-4 flex-col gap-3 border-t bg-background px-4 py-3 sm:-mx-6 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:space-x-0 sm:px-6">
-          <div className="min-w-0 flex-1 space-y-1 text-sm">
+        {/* Compact on a phone: one line of count, one line of what's missing, one row of buttons — the
+            footer stays in view, so every line here costs the form above it. */}
+        <DialogFooter className="sticky bottom-0 -mx-4 flex-col gap-2 border-t bg-background px-4 py-2 sm:-mx-6 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:space-x-0 sm:px-6 sm:py-3">
+          <div className="min-w-0 flex-1 space-y-0.5 text-xs sm:text-sm">
+            <SeasonCountLine preview={preview} row={row} hasSources={sourcesNow} className="lg:hidden" />
             {problems.length > 0 && (
               <p id={ids.problems} className="text-muted-foreground">
-                {problems.map((problem) => (
-                  <span key={problem} className="mr-1.5 inline-block">
-                    {problem}
-                  </span>
+                {problems.map((problem, index) => (
+                  <Fragment key={problem}>
+                    {index > 0 && " "}
+                    <span className={cn("mr-1.5 inline-block", index > 0 && "max-sm:sr-only")}>{problem}</span>
+                  </Fragment>
                 ))}
+                {problems.length > 1 && (
+                  <span aria-hidden="true" className="sm:hidden">{`+${problems.length - 1} more`}</span>
+                )}
               </p>
             )}
             {footerError && (
@@ -315,22 +342,28 @@ export function SeasonEditorDialog({
               </p>
             )}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             {editing && (
               <Button
+                ref={deleteButton}
                 type="button"
+                size="sm"
                 variant="ghost"
-                className="text-destructive-text hover:text-destructive-text"
+                aria-label="Delete season"
+                className="text-destructive-text hover:text-destructive-text sm:h-9 sm:px-4 sm:text-sm"
                 onClick={() => setConfirmingDelete(true)}
               >
-                Delete season
+                <span className="sm:hidden">Delete</span>
+                <span className="max-sm:hidden">Delete season</span>
               </Button>
             )}
-            <Button type="button" variant="outline" onClick={onClose}>
+            <Button type="button" size="sm" variant="outline" className="sm:h-9 sm:px-4 sm:text-sm" onClick={onClose}>
               Cancel
             </Button>
             <Button
               type="button"
+              size="sm"
+              className="sm:h-9 sm:px-4 sm:text-sm"
               disabled={problems.length > 0}
               loading={saving}
               aria-describedby={problems.length > 0 ? ids.problems : undefined}
@@ -345,6 +378,7 @@ export function SeasonEditorDialog({
           <DeleteSeasonDialog
             season={editing}
             blocked={deleteBlocked}
+            returnFocusTo={deleteButton}
             onCancel={() => setConfirmingDelete(false)}
             onDeleted={() => onDeleted(editing.slug)}
           />
@@ -355,61 +389,80 @@ export function SeasonEditorDialog({
 }
 
 /**
- * "Delete “Thanksgiving”?" (#137 D12): deleting unticks the season in every row, in one go. The server
- * refuses while it is any row's only season (409), and says which; that refusal shows here.
+ * "Delete “Thanksgiving”?" (#137 D12): deleting unticks the season in every row, in one go.
+ *
+ * Refused before anything is sent when this row's form or its saved state stands in the way (`blocked`),
+ * and by the server while the season is any row's only season (409). Either way it says so first, under
+ * "Can't delete … yet", and offers nothing to press that would only be refused.
  */
 function DeleteSeasonDialog({
   season,
   blocked,
+  returnFocusTo,
   onCancel,
   onDeleted,
 }: {
   season: Season;
   /** Why it can't be deleted from here (nothing is sent); null when it can. */
   blocked: string | null;
+  /** The Delete button that opened this, given focus back on Cancel: this dialog has no Radix trigger. */
+  returnFocusTo: RefObject<HTMLButtonElement | null>;
   onCancel: () => void;
   onDeleted: () => void;
 }) {
   const remove = useDeleteSeason();
   const rows = season.used_by.map((row) => row.name);
-  const title = rows.length > 0 ? `Remove “${season.name}” from ${andList(rows)} and delete it?` : `Delete “${season.name}”?`;
-  const refusal =
-    remove.error instanceof ApiError && remove.error.status === 409
-      ? remove.error.message
-      : remove.error
-        ? apiErrorMessage(remove.error, "Couldn’t delete the season. Check Shortlist is running, then try again.")
-        : null;
+  const refused = remove.error instanceof ApiError && remove.error.status === 409 ? remove.error.message : null;
+  const failed =
+    remove.error && !refused
+      ? apiErrorMessage(remove.error, "Couldn’t delete the season. Check Shortlist is running, then try again.")
+      : null;
+  const reason = blocked ?? refused;
+  const title = reason
+    ? `Can't delete “${season.name}” yet`
+    : rows.length > 0
+      ? `Remove “${season.name}” from ${andList(rows)} and delete it?`
+      : `Delete “${season.name}”?`;
+  const consequence =
+    rows.length === 1
+      ? "That row keeps its other seasons. The season is deleted for the whole server, and can't be brought back."
+      : rows.length > 1
+        ? "Those rows keep their other seasons. The season is deleted for the whole server, and can't be brought back."
+        : "It's deleted for the whole server, and can't be brought back.";
 
   return (
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
-      <DialogContent className="w-[calc(100%-2rem)]">
+      <DialogContent
+        className="w-[calc(100%-2rem)]"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          if (returnFocusTo.current?.isConnected) returnFocusTo.current.focus();
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="leading-snug">{title}</DialogTitle>
-          <DialogDescription>
-            {rows.length > 0
-              ? "Those rows keep their other seasons. The season is deleted for the whole server, and can't be brought back."
-              : "It's deleted for the whole server, and can't be brought back."}
-          </DialogDescription>
+          <DialogDescription>{reason ?? consequence}</DialogDescription>
         </DialogHeader>
-        {blocked && <p className="rounded-md bg-muted/60 p-3 text-sm">{blocked}</p>}
-        {refusal && (
+        {failed && (
           <p role="alert" className="rounded-md border border-destructive/40 p-3 text-sm">
-            {refusal}
+            {failed}
           </p>
         )}
         <DialogFooter className="gap-2">
           <Button type="button" variant="outline" onClick={onCancel}>
-            Cancel
+            {reason ? "Close" : "Cancel"}
           </Button>
-          <Button
-            type="button"
-            variant="destructive"
-            disabled={blocked !== null}
-            loading={remove.isPending}
-            onClick={() => remove.mutate(season.slug, { onSuccess: onDeleted })}
-          >
-            Delete season
-          </Button>
+          {!blocked && (
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={refused !== null}
+              loading={remove.isPending}
+              onClick={() => remove.mutate(season.slug, { onSuccess: onDeleted })}
+            >
+              Delete season
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

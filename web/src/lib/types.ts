@@ -141,6 +141,8 @@ export type SeasonInput = Schemas["SeasonIn"];
 /** A draft season to count (POST /api/seasons/preview), and what the count found. */
 export type SeasonPreviewInput = Schemas["SeasonPreviewIn"];
 export type SeasonPreview = Schemas["SeasonPreviewOut"];
+/** When a draft date rule next falls, or why it can't be used (POST /api/seasons/next-date). */
+export type SeasonDate = Schemas["SeasonDateOut"];
 /** When a season falls: a fixed day, the nth weekday of a month, or days from Easter. Monday is 0. */
 export type DateRule = Schemas["DateRuleIO"];
 export type SeasonTag = Schemas["TagIO"];

@@ -62,3 +62,11 @@ export function seasonVerdict(count: SeasonCount, row: Pick<SeasonRow, "size" | 
     return { level: "alike", text: "People's rows will be much alike — works best in a shared row" };
   return { level: "ok", text: `Enough ${titles} for this row` };
 }
+
+/** A verdict in a few words, for the one-line count the editor keeps in view on a narrow screen:
+ *  "26 films · People's rows will be much alike". */
+export function verdictInBrief(verdict: SeasonVerdict): string {
+  if (verdict.level === "few") return "Too few for this row";
+  if (verdict.level === "alike") return "People's rows will be much alike";
+  return "Enough for this row";
+}
