@@ -351,9 +351,9 @@ strip under the list draws every ticked season's window and says where two overl
 
 **Adding a ready-made season.** Open **Add more seasons** and press **Add** on a card. The editor opens
 filled in, so you can check it, rename it or change the films before saving. Saving ticks it in the row
-you are editing. Ready-made seasons cover New Year's Eve, 4th of July, Thanksgiving (US and Canada), St
-Patrick's Day, Easter, Mother's Day, Mothering Sunday, and Father's Day (US and UK). A card shows its
-region, but the season's name does not, because the name appears in Plex row titles. Season names must
+you are editing. Ready-made seasons are New Year's Eve, 4th of July, Thanksgiving (US), Thanksgiving (Canada), St
+Patrick's Day, Easter, Mother's Day (US, CA, AU, NZ), Mothering Sunday (UK, IE), Father's Day (US, UK,
+CA, IE) and Father's Day (AU, NZ). A card shows its region, but the season's name does not, because the name appears in Plex row titles. Season names must
 be unique, so to add both regional versions of a holiday, rename one first.
 
 **Making your own.** Press **Create your own**. Give it a name and an emoji, then choose when it is:
@@ -369,12 +369,12 @@ date and the window it gives.
 **Where its films come from.** A season's films are the union of four sources. Add at least one:
 
 - **TMDB tags** — search TMDB's keywords (for example "thanksgiving") and add as many as you like.
-- **One genre** — optionally include every film of one TMDB genre. Use **Leave out** to drop genres you
-  don't want (Horror from a St Patrick's Day season, say). Leave-out never drops a film you picked by hand.
-- **Plex collections** — pick collections on your server. They are only read, never changed, and are
+- **Also include a genre** — optionally include every film of one TMDB genre. Use **Leave out films of
+  these genres** to drop genres you don't want (Horror from a St Patrick's Day season, say). Leave-out never drops a film you picked by hand.
+- **From your library** — pick Plex collections on your server. They are only read, never changed, and are
   matched by title. A Kometa collection that is absent out of season is normal: the season counts it
   as empty until Kometa recreates it, and picks it up on the next run.
-- **Films you pick by hand** — search your libraries and add titles one at a time.
+- **Picked by hand** — search your libraries and add titles one at a time.
 
 Only films that are in your libraries are used, whatever the source.
 
@@ -382,8 +382,8 @@ Only films that are in your libraries are used, whatever the source.
 the count against the row's size. A season shows one of three verdicts:
 
 - **Too few to fill this row (n of size)** — add a tag, a collection or a few films.
-- **People's rows will be much alike — works best in a shared row** — there are barely more films than
-  the row holds, so everyone's per-person row would be nearly the same.
+- **People's rows will be much alike — works best in a shared row** — a per-person row has fewer than
+  100 films to draw from, so everyone's row would be nearly the same. This never shows for a shared row.
 - **Enough for this row.**
 
 **Editing and deleting.** Built-in seasons can't be edited or deleted. Deleting one of your own seasons

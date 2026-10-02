@@ -1103,9 +1103,9 @@ strip under the list draws every ticked season's window and says where two overl
 
 **Adding a ready-made season.** Open **Add more seasons** and press **Add** on a card. The editor opens
 filled in, so you can check it, rename it or change the films before saving. Saving ticks it in the row
-you are editing. Ready-made seasons cover New Year's Eve, 4th of July, Thanksgiving (US and Canada), St
-Patrick's Day, Easter, Mother's Day, Mothering Sunday, and Father's Day (US and UK). A card shows its
-region, but the season's name does not, because the name appears in Plex row titles. Season names must
+you are editing. Ready-made seasons are New Year's Eve, 4th of July, Thanksgiving (US), Thanksgiving (Canada), St
+Patrick's Day, Easter, Mother's Day (US, CA, AU, NZ), Mothering Sunday (UK, IE), Father's Day (US, UK,
+CA, IE) and Father's Day (AU, NZ). A card shows its region, but the season's name does not, because the name appears in Plex row titles. Season names must
 be unique, so to add both regional versions of a holiday, rename one first.
 
 **Making your own.** Press **Create your own**. Give it a name and an emoji, then choose when it is:
@@ -1121,12 +1121,12 @@ date and the window it gives.
 **Where its films come from.** A season's films are the union of four sources. Add at least one:
 
 - **TMDB tags** — search TMDB's keywords (for example "thanksgiving") and add as many as you like.
-- **One genre** — optionally include every film of one TMDB genre. Use **Leave out** to drop genres you
-  don't want (Horror from a St Patrick's Day season, say). Leave-out never drops a film you picked by hand.
-- **Plex collections** — pick collections on your server. They are only read, never changed, and are
+- **Also include a genre** — optionally include every film of one TMDB genre. Use **Leave out films of
+  these genres** to drop genres you don't want (Horror from a St Patrick's Day season, say). Leave-out never drops a film you picked by hand.
+- **From your library** — pick Plex collections on your server. They are only read, never changed, and are
   matched by title. A Kometa collection that is absent out of season is normal: the season counts it
   as empty until Kometa recreates it, and picks it up on the next run.
-- **Films you pick by hand** — search your libraries and add titles one at a time.
+- **Picked by hand** — search your libraries and add titles one at a time.
 
 Only films that are in your libraries are used, whatever the source.
 
@@ -1134,8 +1134,8 @@ Only films that are in your libraries are used, whatever the source.
 the count against the row's size. A season shows one of three verdicts:
 
 - **Too few to fill this row (n of size)** — add a tag, a collection or a few films.
-- **People's rows will be much alike — works best in a shared row** — there are barely more films than
-  the row holds, so everyone's per-person row would be nearly the same.
+- **People's rows will be much alike — works best in a shared row** — a per-person row has fewer than
+  100 films to draw from, so everyone's row would be nearly the same. This never shows for a shared row.
 - **Enough for this row.**
 
 **Editing and deleting.** Built-in seasons can't be edited or deleted. Deleting one of your own seasons
@@ -3271,7 +3271,7 @@ POST /api/seasons/preview (a draft season body) -> {next_date, rule_error, total
 GET  /api/seasons/tmdb-tags?q= · GET /api/seasons/plex-collections?q= · GET /api/seasons/library-search?q=
      Search TMDB keywords, the PMS's collections (read only), and the libraries' titles. A `q` under 2
      characters returns `[]` without asking anyone.
-GET/POST /api/collections · PATCH/DELETE /api/collections/{id} (incl. `request_tag`, `candidate_sources`, `library_keys`, `max_seeds` — how many watched titles the row is built from (1–100; null inherits the engine default of 30), `recency` — how much a title's release date counts when ranking it for this row (0.0–1.0; null inherits the global `recommendations.recency`), `cold_start` — what the row does for someone below `recommendations.min_history` (`popular` | `skip`; null inherits the global `recommendations.cold_start`), `fallback_name` — what to call this row for someone whose name cannot be filled in, i.e. a `{top_seed}` row for a person with nothing watched. `""` (the default) means there is no such name and the row is simply not built for them — Shortlist never invents one, and a value containing `{top_seed}` is refused because it could not be filled in either, `seed_window` — how many recent watches a one-title row cycles between, one per run (1–20, default 1 = always their most recent; no global to inherit), `pick_order` — how the delivered collection is ordered (`best` | `rating` | `newest` | `shuffle` | `new_first` — titles that arrived this run lead | `rotate` — the front advances by one title a day, default `best`), `show_days` — which days the row appears, as ISO weekdays 1=Mon..7=Sun (`[]` = every day; values outside 1-7 are refused, and the list is stored sorted and de-duplicated), `seasons` — the seasons a seasonal row follows (`valentines` | `halloween` | `christmas`; `[]` = not seasonal; stored de-duplicated in calendar order, unknown slugs refused), `season_lead_days` (0–90, default 30) and `season_after_days` (0–30, default 0) — how many days before and after each built-in season's day the row shows (your own seasons carry their own timing). A name using `{season}`/`{season_emoji}` is refused on a row with no seasons. The response also carries read-only `shown_today`, resolved on the SERVER's clock so a UI badge cannot disagree with what Plex is showing — it is false outside a seasonal row's seasons — and `season_status` (`{showing, next}`, each `{slug, name, emoji, starts, ends}` or null; null for a row with no seasons), `hub_anchor` — per-row shelf-placement override, and `poster` — custom row artwork {mode: ""|upload|generate, title, subtitle, style}. A top-level field the row body does not declare is refused with 422 rather than ignored, so a misspelt setting cannot save as a no-op (fields inside `poster` and `hub_anchor` are not yet checked this way))
+GET/POST /api/collections · PATCH/DELETE /api/collections/{id} (incl. `request_tag`, `candidate_sources`, `library_keys`, `max_seeds` — how many watched titles the row is built from (1–100; null inherits the engine default of 30), `recency` — how much a title's release date counts when ranking it for this row (0.0–1.0; null inherits the global `recommendations.recency`), `cold_start` — what the row does for someone below `recommendations.min_history` (`popular` | `skip`; null inherits the global `recommendations.cold_start`), `fallback_name` — what to call this row for someone whose name cannot be filled in, i.e. a `{top_seed}` row for a person with nothing watched. `""` (the default) means there is no such name and the row is simply not built for them — Shortlist never invents one, and a value containing `{top_seed}` is refused because it could not be filled in either, `seed_window` — how many recent watches a one-title row cycles between, one per run (1–20, default 1 = always their most recent; no global to inherit), `pick_order` — how the delivered collection is ordered (`best` | `rating` | `newest` | `shuffle` | `new_first` — titles that arrived this run lead | `rotate` — the front advances by one title a day, default `best`), `show_days` — which days the row appears, as ISO weekdays 1=Mon..7=Sun (`[]` = every day; values outside 1-7 are refused, and the list is stored sorted and de-duplicated), `seasons` — the seasons a seasonal row follows (the built-ins `valentines` | `halloween` | `christmas`, or the slug of one of your own seasons — see `/api/seasons`; `[]` = not seasonal; stored de-duplicated in calendar order, unknown slugs refused), `season_lead_days` (0–90, default 30) and `season_after_days` (0–30, default 0) — how many days before and after each built-in season's day the row shows (your own seasons carry their own timing). A name using `{season}`/`{season_emoji}` is refused on a row with no seasons. The response also carries read-only `shown_today`, resolved on the SERVER's clock so a UI badge cannot disagree with what Plex is showing — it is false outside a seasonal row's seasons — and `season_status` (`{showing, next}`, each `{slug, name, emoji, starts, ends}` or null; null for a row with no seasons), `hub_anchor` — per-row shelf-placement override, and `poster` — custom row artwork {mode: ""|upload|generate, title, subtitle, style}. A top-level field the row body does not declare is refused with 422 rather than ignored, so a misspelt setting cannot save as a no-op (fields inside `poster` and `hub_anchor` are not yet checked this way))
 GET  /api/collections/{id}/effectiveness -> {delivered, watched, finished, first_delivered_at, matured_days, matured, per_library} (has this row actually landed? `matured` is null until picks are old enough to judge — a pick counts as a hit only if watched while the row was still showing it, so a newer row is reported as "too early" rather than scored 0%)
      `finished` accompanies every `watched` here too, including per library. A row spanning Movies and TV can land the same share in
      both and finish almost none of the TV — that gap is the panel's most useful line, and it is invisible in `watched` alone.
