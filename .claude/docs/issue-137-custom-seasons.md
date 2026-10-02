@@ -69,9 +69,13 @@ a feature request. Nothing is broken.
 15. **A season that finds nothing keeps last season's collection hidden** (final review C-1, 2026-10-02).
     A library where a seasonal row builds nothing for tonight's season keeps the collection it last built,
     with that season's title and films. Promotion never shows a seasonal row's collection unless it was last
-    BUILT for tonight's season and year (`slug@anchor` recorded per library in `deliveries.season`, migration
-    0096, else read from a per-person row's stored picks' recipe; compared on slug and year, so moving a
-    season's date within the year hides nothing). A mismatch is treated as dormant: hidden, placement off.
+    BUILT for tonight's showing of the season (`slug@anchor` recorded per library in `deliveries.season`,
+    migration 0096, else read from a per-person row's stored picks' recipe). It counts as tonight's only when
+    the slug matches AND the recorded day falls inside tonight's window, from the day before it opens to the
+    day it closes (`RowSeason.holds`): a date moved within the window hides nothing, while an earlier day of
+    the same year (Diwali moved from March to November), another year's showing, or a season deleted and made
+    again under its slug for another day does. A slug-and-year comparison was tried and let that earlier day
+    through (review round 3). A mismatch is treated as dormant: hidden, placement off.
     Nothing is deleted. A collection with neither record is promoted as before, so no row loses its place
     on the night this ships.
 16. **The editor counts for its row** (final review I-1). `POST /preview` takes the row's `media` and

@@ -395,7 +395,10 @@ row's libraries. It sets the count against the row's size. A season shows one of
 season everyone has already watched, a TV library no tag reaches, or a Kometa collection that does not
 exist yet. The row then builds nothing there, and that library's collection still holds the previous
 season's films under its title. Shortlist keeps that collection hidden, as it does between seasons,
-until a run builds the new season into it. It is never deleted.
+until a run builds the new season into it. It is never deleted. The same goes for a collection built for
+another year's showing, or for a day you have since moved your season away from. Moving a season's day
+within the window it is showing in keeps its row on screen, and the row is rebuilt for the new day at its
+next run.
 
 **Editing and deleting.** Built-in seasons can't be edited or deleted. Deleting one of your own seasons
 unticks it in every row that follows it. If it is a row's only season, Shortlist refuses and names the

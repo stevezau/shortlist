@@ -701,15 +701,19 @@ added later that calls a `PlexClient` write method directly must check `ctx.conf
   "a library with no picks is left alone"), still titled and filled for the previous season. Every door that
   promotes — the run's `_promote_phase`, `rows.visibility` (which a season PUT or DELETE also queues), and
   `user.restore` — now passes `pipeline.built_seasons`, and `promote_user_rows`/`promote_shared_row` treat a
-  collection whose record is not tonight's season as dormant: hidden, never deleted. Compared on the season
-  and its YEAR (`season_year`), not the full day, so a season whose date the owner moves within the year keeps
-  its correctly built rows shown; the recipe keeps the full day, so the row still rebuilds at its next run.
+  collection whose record is not tonight's season as dormant: hidden, never deleted. Tonight's means the same
+  slug with a recorded day inside tonight's window, from the day before it opens to the day it closes
+  (`RowSeason.holds`, with the window `row_season_on` sets). A season whose date the owner moves within that
+  window keeps its correctly built rows shown, and the recipe's full day still rebuilds them at the next run;
+  an earlier day of the same year does not pass, which a slug-and-YEAR comparison let through (Diwali moved
+  from March to November showed March's collection).
   The record is `deliveries.season` (0096), written on the persist path from each breakdown entry, with the
   stored picks' recipe as the fallback for older PER-PERSON deliveries — a shared row stores no picks recipe,
   so its deliveries from before 0096 have no record and are promoted as before. A run lays its own deliveries
   over both, as `live_delivered_keys` does. A person whose in-season seasonal row built nothing is a promotion candidate,
   as one with a dormant row is, so the hiding happens on the run too. Season PUT/DELETE queue a pass only
-  for rows whose shown-today, or tonight's season and its year, actually changes.
+  when it would change something (`api/seasons._pass_owed`): the row's shown-today answer moves, or it is
+  shown and the collection built for the season's old day no longer `holds` the season it shows now.
 
 ### Corrections to this document
 
