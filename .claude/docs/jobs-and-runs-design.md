@@ -701,12 +701,15 @@ added later that calls a `PlexClient` write method directly must check `ctx.conf
   "a library with no picks is left alone"), still titled and filled for the previous season. Every door that
   promotes — the run's `_promote_phase`, `rows.visibility` (which a season PUT or DELETE also queues), and
   `user.restore` — now passes `pipeline.built_seasons`, and `promote_user_rows`/`promote_shared_row` treat a
-  collection whose record is not tonight's `slug@anchor` as dormant: hidden, never deleted. The record is
-  `deliveries.season` (0096), written on the persist path from each breakdown entry, with the stored picks'
-  recipe as the fallback for older deliveries; a run lays its own deliveries over both, as
-  `live_delivered_keys` does. A person whose in-season seasonal row built nothing is a promotion candidate,
+  collection whose record is not tonight's season as dormant: hidden, never deleted. Compared on the season
+  and its YEAR (`season_year`), not the full day, so a season whose date the owner moves within the year keeps
+  its correctly built rows shown; the recipe keeps the full day, so the row still rebuilds at its next run.
+  The record is `deliveries.season` (0096), written on the persist path from each breakdown entry, with the
+  stored picks' recipe as the fallback for older PER-PERSON deliveries — a shared row stores no picks recipe,
+  so its deliveries from before 0096 have no record and are promoted as before. A run lays its own deliveries
+  over both, as `live_delivered_keys` does. A person whose in-season seasonal row built nothing is a promotion candidate,
   as one with a dormant row is, so the hiding happens on the run too. Season PUT/DELETE queue a pass only
-  for rows whose shown-today or tonight's season actually changes.
+  for rows whose shown-today, or tonight's season and its year, actually changes.
 
 ### Corrections to this document
 

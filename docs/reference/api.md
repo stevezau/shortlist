@@ -183,9 +183,10 @@ PUT  /api/seasons/{slug} -> season · DELETE /api/seasons/{slug} -> 204
      every row and returns 409, naming the rows, when it is a row's only season. The slug never changes on
      PUT. A PUT that moves the season's dates, or a DELETE, re-applies today's visibility to the rows whose
      answer for today changes.
-POST /api/seasons/preview (a draft season body, plus the row's `media` — `movie`|`show`|`both`, default `both` — and `library_keys`, default every library) -> {next_date, rule_error, total, from_tags, from_genre, from_collections, from_picks, per_tag, per_collection, sample}
+POST /api/seasons/preview (a draft season body, plus the row's `media` — `movie`|`show`|`both`, default `both` — and `library_keys`, default every library) -> {next_date, rule_error, total, movies, shows, from_tags, from_genre, from_collections, from_picks, per_tag, per_collection, sample}
      How many of the draft's titles the row can draw — of its media type, in its libraries — split by
-     source, plus up to 10 titles. An invalid rule returns 200 with `rule_error` set. 503 without a TMDB
+     source, plus up to 10 titles. `movies`/`shows` split `total` by type, and are null for a type the row
+     builds in no library of. An invalid rule returns 200 with `rule_error` set. 503 without a TMDB
      key or before Plex is connected; 502 when either fails.
 GET  /api/seasons/tmdb-tags?q= · GET /api/seasons/plex-collections?q= · GET /api/seasons/library-search?q=
      Search TMDB keywords, the PMS's collections (read only; each with its library's `media_type`), and the

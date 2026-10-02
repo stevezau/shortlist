@@ -3296,7 +3296,9 @@ def _run_user(
             user_report.status = "cold_start"
             deleted_now = len(user_report.diff.deleted) if user_report.diff else 0
             user_report.reason = _why_cold_skipped(user, cfg, due, deleted_now - deleted_before)
-            return owes_hiding  # nothing built, but an out-of-season row of theirs still needs hiding
+            # Nothing built, but a row of theirs out of season, or in season with last season's collection,
+            # may still need hiding.
+            return owes_hiding
 
     policy = RowPolicy(
         ctx=ctx,

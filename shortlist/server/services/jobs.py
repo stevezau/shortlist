@@ -1942,7 +1942,8 @@ def _rows_visibility(state, payload: dict) -> dict:
         )
 
     # A seasonal row whose new season found nothing in a library still has LAST season's collection there:
-    # it stays hidden on the day the season opens rather than being shown under last season's title (#137).
+    # it stays hidden on the day the season opens rather than being shown under last season's title (#137),
+    # when the gate admits the row; a hand-over between seasons, shown on both days, is hidden by the run.
     built_for = built_seasons(ctx)
     for profile in profiles:
         # All-or-nothing on purpose: raising leaves the whole pass owed, and the durable queue retries

@@ -384,7 +384,9 @@ Only films that are in your libraries are used, whatever the source.
 sources: titles of the row's type (films for a films row, shows for a shows row, titles for both) in the
 row's libraries. It sets the count against the row's size. A season shows one of three verdicts:
 
-- **Too few films to fill this row (n of size)** — add a tag, a collection or a few films.
+- **Too few films to fill this row (n of size)** — add a tag, a collection or a few films. A row of films
+  and shows fills each library from its own type, so it is short when either half is: **Too few shows to
+  fill this row's TV library (0 of 15)**.
 - **People's rows will be much alike — works best in a shared row** — a per-person row has fewer than
   100 films to draw from, so everyone's row would be nearly the same. This never shows for a shared row.
 - **Enough films for this row.**

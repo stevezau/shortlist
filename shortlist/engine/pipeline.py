@@ -1314,8 +1314,10 @@ def built_seasons(ctx: EngineContext, report: RunReport | None = None) -> dict[t
 
     Three sources, later ones winning: the season part of the stored picks' recipe (`rows.recipe_season`),
     the delivery ledger's record, and — given ``report`` — what THIS run delivered or removed, laid over the
-    ledger in the order `live_delivered_keys` replays it. The recipe covers collections delivered before the
-    ledger recorded seasons; the ledger outlives pruned picks; the run's own deliveries are newer than both.
+    ledger in the order `live_delivered_keys` replays it. The recipe covers PER-PERSON collections delivered
+    before the ledger recorded seasons (0096); a shared row stores no picks recipe, so its deliveries from
+    before then have no record at all and are promoted as before. The ledger outlives pruned picks; the run's
+    own deliveries are newer than both.
 
     A key absent from all three is a collection nothing describes. It is promoted exactly as before, so no
     row loses its place on the night the record starts being kept.

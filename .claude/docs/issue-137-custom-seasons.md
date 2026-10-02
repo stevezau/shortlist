@@ -69,12 +69,15 @@ a feature request. Nothing is broken.
 15. **A season that finds nothing keeps last season's collection hidden** (final review C-1, 2026-10-02).
     A library where a seasonal row builds nothing for tonight's season keeps the collection it last built,
     with that season's title and films. Promotion never shows a seasonal row's collection unless it was last
-    BUILT for tonight's season (`slug@anchor`, recorded per library in `deliveries.season`, migration 0096,
-    else read from the stored picks' recipe). A mismatch is treated as dormant: hidden, placement off.
+    BUILT for tonight's season and year (`slug@anchor` recorded per library in `deliveries.season`, migration
+    0096, else read from a per-person row's stored picks' recipe; compared on slug and year, so moving a
+    season's date within the year hides nothing). A mismatch is treated as dormant: hidden, placement off.
     Nothing is deleted. A collection with neither record is promoted as before, so no row loses its place
     on the night this ships.
 16. **The editor counts for its row** (final review I-1). `POST /preview` takes the row's `media` and
-    `library_keys`, and the editor says "films", "shows" or "titles" to match.
+    `library_keys`, and the editor says "films", "shows" or "titles" to match. It also returns the films and
+    shows separately (null for a type the row has no library of), and a row of both is "too few" when either
+    half is, since each library is filled from its own type.
 17. **A season's name cannot give two rows one title** (final review I-2). `POST`/`PUT` render every
     `{season}` row's template with the proposed name and emoji and run the row editor's duplicate-title
     check; a row PATCH that ticks a season checks the title it gives the row in that season.
