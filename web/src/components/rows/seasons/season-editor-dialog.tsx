@@ -47,6 +47,9 @@ function andList(names: readonly string[]): string {
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
+/** What the sources section is headed, in the row's word for its titles. */
+const SOURCES_HEADING = { movie: "Films", show: "Shows", both: "Titles" } as const;
+
 /** The server's refusal of a name already taken (`api/seasons.py` `_checked`), which belongs by the name. */
 const NAME_CLASH = /already a season called/;
 
@@ -260,7 +263,7 @@ export function SeasonEditorDialog({
             <section aria-labelledby={ids.films} className="space-y-6">
               <div className="space-y-1">
                 <h3 id={ids.films} className="text-base font-semibold">
-                  Films
+                  {SOURCES_HEADING[row.media]}
                 </h3>
                 <p className="text-sm text-muted-foreground">
                   {`A ${titleNoun(row.media, 1)} belongs to this season if any source below finds it. Only ${titleNoun(row.media, 2)} in your libraries are used. Mix sources freely.`}

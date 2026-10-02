@@ -6728,6 +6728,17 @@
             "title": "From Tags",
             "type": "integer"
           },
+          "movies": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Movies"
+          },
           "next_date": {
             "anyOf": [
               {
@@ -6771,6 +6782,17 @@
             "title": "Sample",
             "type": "array"
           },
+          "shows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shows"
+          },
           "total": {
             "title": "Total",
             "type": "integer"
@@ -6780,6 +6802,8 @@
           "next_date",
           "rule_error",
           "total",
+          "movies",
+          "shows",
           "from_tags",
           "from_genre",
           "from_collections",

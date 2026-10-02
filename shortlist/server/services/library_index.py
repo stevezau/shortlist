@@ -68,11 +68,16 @@ def library_index(
         The index, in the shape `seasons.load_titles` and `seasons.preview` take.
     """
     cache = DbCache(sessions, kind="library_index")
-    row = RowSpec(slug="", name_template="", size=0, media=media, library_keys=[str(key) for key in library_keys])
     index: dict[MediaType, dict[int, int]] = {MediaType.MOVIE: {}, MediaType.SHOW: {}}
-    for section in target_sections(plex.sections(), row):
+    for section in row_sections(plex, media=media, library_keys=library_keys):
         index[section_kind(section)].update(_section_index(plex, cache, section))
     return index
+
+
+def row_sections(plex: _LibraryReader, *, media: str, library_keys: Collection[str]) -> list[LibrarySection]:
+    """The libraries a row with this ``media`` and ``library_keys`` builds in, by `delivery.target_sections`."""
+    row = RowSpec(slug="", name_template="", size=0, media=media, library_keys=[str(key) for key in library_keys])
+    return target_sections(plex.sections(), row)
 
 
 def forget() -> None:

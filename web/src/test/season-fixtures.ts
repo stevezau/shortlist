@@ -131,6 +131,8 @@ export function preview(patch: Partial<SeasonPreview> = {}): SeasonPreview {
     next_date: "2026-11-26",
     rule_error: null,
     total: 0,
+    movies: null,
+    shows: null,
     from_tags: 0,
     from_genre: 0,
     from_collections: 0,

@@ -40,7 +40,7 @@ export function SeasonFilmCount({
   }
 
   const { total } = preview.data;
-  const verdict = seasonVerdict(total, row);
+  const verdict = seasonVerdict(preview.data, row);
   return (
     <span className="flex flex-wrap items-center gap-2">
       <span className="text-sm">{`${total} ${titleNoun(row.media, total)}${inLibraries ? " in your libraries" : ""}`}</span>

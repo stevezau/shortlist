@@ -67,7 +67,7 @@ function SummaryBody({ preview, row }: { preview: UseQueryResult<CountedPreview>
   }
 
   const data = preview.data;
-  const verdict = seasonVerdict(data.total, row);
+  const verdict = seasonVerdict(data, row);
   const help = verdictHelp(verdict.level, titles);
   const used = data.draft;
   const breakdown: { label: string; value: number }[] = [

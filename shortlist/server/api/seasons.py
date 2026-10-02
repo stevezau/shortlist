@@ -24,6 +24,7 @@ import shortlist.server.services.context_builder as context_builder
 from shortlist.engine import seasons as seasons_mod
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.clients.plex_pms import PlexClient
+from shortlist.engine.delivery import section_kind
 from shortlist.engine.models import MediaType
 from shortlist.engine.placeholders import uses_season
 from shortlist.engine.rows import row_shown_today
@@ -44,7 +45,7 @@ from shortlist.server.auth import require_owner
 from shortlist.server.db.models import Collection, SeasonDef
 from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services import jobs
-from shortlist.server.services.library_index import library_index
+from shortlist.server.services.library_index import library_index, row_sections
 from shortlist.server.services.season_catalogue import load_catalogue, make_slug, season_from_row
 
 router = APIRouter(prefix="/seasons", tags=["seasons"], dependencies=[Depends(require_owner)])
@@ -194,6 +195,10 @@ class SeasonPreviewOut(PassthroughModel):
     #: Why the date rule is invalid, worded for the owner.
     rule_error: str | None
     total: int
+    #: ``total``'s films and shows. A row fills each library from its own type, so a row of both needs each
+    #: half to be enough. None for a type the row builds in no library of.
+    movies: int | None
+    shows: int | None
     #: The total split by the first of these sources, in this order, to give each title.
     from_tags: int
     from_genre: int
@@ -368,14 +373,17 @@ async def preview_season(body: SeasonPreviewIn, request: Request) -> dict:
     draft = _draft(body)
     today = context_builder.local_now().date()
 
-    def count() -> seasons_mod.SeasonPreview:
+    def count() -> tuple[seasons_mod.SeasonPreview, set[MediaType]]:
         plex = _plex(state)
         index = library_index(plex, state.sessions, media=body.media, library_keys=body.library_keys)
-        return seasons_mod.preview(tmdb, plex, draft, index, today=today, workers=_PREVIEW_PAGE_WORKERS)
+        kinds = {section_kind(s) for s in row_sections(plex, media=body.media, library_keys=body.library_keys)}
+        return seasons_mod.preview(tmdb, plex, draft, index, today=today, workers=_PREVIEW_PAGE_WORKERS), kinds
 
-    result = await _off_loop(count, "season preview")
+    result, kinds = await _off_loop(count, "season preview")
     return {
         **dataclasses.asdict(result),
+        "movies": result.movies if MediaType.MOVIE in kinds else None,
+        "shows": result.shows if MediaType.SHOW in kinds else None,
         "next_date": result.next_date.isoformat() if result.next_date else None,
         "per_collection": [dataclasses.asdict(c) for c in result.per_collection],
         "sample": list(result.sample),

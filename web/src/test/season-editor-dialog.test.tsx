@@ -235,7 +235,9 @@ describe("SeasonEditorDialog", () => {
   });
 
   it("counts for the row it was opened from: its media and libraries, in that row's word", async () => {
-    mocks.previewSeason.mockResolvedValue(preview({ total: 72, from_tags: 72, per_tag: { "4543": 72 } }));
+    mocks.previewSeason.mockResolvedValue(
+      preview({ total: 72, movies: 56, shows: 16, from_tags: 72, per_tag: { "4543": 72 } }),
+    );
     renderEditor(
       { kind: "preset", preset: THANKSGIVING_US },
       { row: { size: 15, perPerson: false, media: "both", libraryKeys: ["1", "2"] } },
@@ -245,6 +247,25 @@ describe("SeasonEditorDialog", () => {
     expect(screen.getByText("Enough titles for this row")).toBeInTheDocument();
     const body = mocks.previewSeason.mock.calls[0]?.[0] as SeasonPreviewInput;
     expect([body.media, body.library_keys]).toEqual(["both", ["1", "2"]]);
+  });
+
+  it("says a row of both is short when one of its libraries' types is, whatever the total", async () => {
+    mocks.previewSeason.mockResolvedValue(preview({ total: 40, movies: 40, shows: 0, from_tags: 40 }));
+    renderEditor(
+      { kind: "preset", preset: THANKSGIVING_US },
+      { row: { size: 15, perPerson: false, media: "both", libraryKeys: [] } },
+    );
+
+    expect(await screen.findByText("Too few shows to fill this row's TV library (0 of 15)")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["movie", "Films"],
+    ["show", "Shows"],
+    ["both", "Titles"],
+  ] as const)("heads the sources of a %s row “%s”", async (media, heading) => {
+    renderEditor({ kind: "create" }, { row: { size: 15, perPerson: true, media, libraryKeys: [] } });
+    expect(await screen.findByRole("heading", { name: heading })).toBeInTheDocument();
   });
 
   it("says a TV collection holds shows", async () => {

@@ -5731,6 +5731,8 @@ export interface components {
             from_picks: number;
             /** From Tags */
             from_tags: number;
+            /** Movies */
+            movies: number | null;
             /** Next Date */
             next_date: string | null;
             /** Per Collection */
@@ -5743,6 +5745,8 @@ export interface components {
             rule_error: string | null;
             /** Sample */
             sample: string[];
+            /** Shows */
+            shows: number | null;
             /** Total */
             total: number;
         } & {

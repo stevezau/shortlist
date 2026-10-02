@@ -606,6 +606,9 @@ class SeasonPreview:
     rule_error: str | None
     #: What `load_titles` puts in the season's ``in_library``.
     total: int
+    #: ``total`` split by type: a row of both fills each library from its own type, so each half must fill it.
+    movies: int
+    shows: int
     #: The total split by the first source, in this order, that gives each title: they add up to ``total``.
     from_tags: int
     from_genre: int
@@ -696,6 +699,8 @@ def preview(
         next_date=next_date,
         rule_error=rule_error,
         total=len(in_library),
+        movies=sum(1 for _tmdb_id, media_type in in_library if media_type is MediaType.MOVIE),
+        shows=sum(1 for _tmdb_id, media_type in in_library if media_type is MediaType.SHOW),
         from_tags=len(from_tags),
         from_genre=len(from_genre),
         from_collections=len(from_collections),

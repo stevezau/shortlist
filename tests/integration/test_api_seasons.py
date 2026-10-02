@@ -681,6 +681,29 @@ class TestPreview:
         assert result["per_tag"] == {"4543": total}
         assert result["per_collection"][0]["in_library"] == collection
 
+    @pytest.mark.parametrize(
+        ("media", "library_keys", "movies", "shows"),
+        [
+            ("both", [], 2, 2),
+            ("movie", [], 2, None),
+            ("show", [], None, 2),
+            ("both", ["1", "5"], 2, None),
+            ("both", ["2"], None, 2),
+        ],
+        ids=["both_row", "films_row", "shows_row", "both_row_in_film_libraries", "both_row_in_its_tv_library"],
+    )
+    def test_it_splits_the_count_by_type_for_each_type_the_row_builds_in(
+        self, client: TestClient, monkeypatch, media, library_keys, movies, shows
+    ):
+        """A row of both builds one collection per library, each filled from its own type: "Enough titles" for 40
+        films and 0 shows left the TV library empty (#137 round 2). A type the row builds in no library of is
+        null, not 0, so the editor never warns about a library the row does not have."""
+        _connect(monkeypatch, client, _Tmdb(self.BOTH_KINDS), self._Libraries())
+
+        result = self._preview(client, tags=[self.TAG], media=media, library_keys=library_keys)
+
+        assert (result["movies"], result["shows"]) == (movies, shows)
+
     def test_without_a_row_it_counts_every_library_of_both_kinds(self, client: TestClient, monkeypatch):
         _connect(monkeypatch, client, _Tmdb(self.BOTH_KINDS), self._Libraries())
         assert self._preview(client, tags=[self.TAG])["total"] == 4
