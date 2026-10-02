@@ -3727,8 +3727,8 @@ def _shared_row(
     if spec.season is not None and season is None:
         user_report.status = "skipped"
         user_report.reason = (
-            f"The {spec.season.name} list could not be read from TMDB tonight, so this seasonal row was left "
-            "as it was. It rebuilds on the next run that can read it."
+            f"The {spec.season.name} films could not be read tonight, so this seasonal row was left as it was. "
+            "It rebuilds on the next run that can read them."
         )
         return None
     ranked_titles = sorted(

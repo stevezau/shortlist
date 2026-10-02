@@ -532,6 +532,18 @@ class TestADormantRow:
 
         ctx.plex.promote.assert_any_call(halloween_copy, shared=False, home=False, recommended=False)
 
+    def test_a_failed_list_keeps_any_credential_out_of_the_saved_error(self, ctx):
+        ctx.tmdb.discover_all.side_effect = RuntimeError(
+            "GET https://api.themoviedb.org/3/discover/movie?api_key=SECRETKEY failed"
+        )
+        ctx.config.rows = [seasonal_spec()]
+
+        report = pipeline_mod.run(ctx, _people())
+
+        sarah = next(u for u in report.users if u.username == "sarah")
+        assert "Christmas list could not be read" in (sarah.error or "")
+        assert "SECRETKEY" not in (sarah.error or "") and "SECRETKEY" not in ctx.season_failures["christmas"]
+
     @pytest.mark.parametrize("thin_history", [False, True], ids=["enough_history", "cold_start"])
     def test_it_is_still_hidden_when_every_row_due_tonight_has_nothing_to_build_from(self, ctx, thin_history):
         """Halloween is over and the Christmas list cannot be read. Failing the person used to take them out of
@@ -838,7 +850,11 @@ class TestASharedSeasonalRow:
 
         shared = next(u for u in report.users if u.slug == "shared_season-shared")
         assert shared.status == "skipped"
-        assert "Christmas" in shared.reason
+        # A Plex collection a custom season names can fail it too, so the owner is not told TMDB failed.
+        assert shared.reason == (
+            "The Christmas films could not be read tonight, so this seasonal row was left as it was. "
+            "It rebuilds on the next run that can read them."
+        )
 
     def test_out_of_season_it_is_hidden_not_built(self, ctx):
         collection = SimpleNamespace(title="🎃 Halloween picks" + row_marker(0), ratingKey=5151, labels=[])

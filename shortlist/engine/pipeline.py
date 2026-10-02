@@ -422,7 +422,8 @@ def _load_season_titles(
         try:
             ctx.season_titles[slug] = seasons_mod.load_titles(ctx.tmdb, ctx.plex, catalogued, library_index)
         except Exception as e:
-            ctx.season_failures[slug] = f"{type(e).__name__}: {e}"
+            # Redacted: it reaches the person's saved run error, and a TMDB or Plex error can carry a credential.
+            ctx.season_failures[slug] = redact(f"{type(e).__name__}: {e}")
             logger.warning(
                 "the {} list could not be read ({}) — seasonal rows keep what they have tonight",
                 season.name,
