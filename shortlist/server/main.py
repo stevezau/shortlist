@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -466,6 +466,11 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
 
         @app.get("/{path:path}", include_in_schema=False)
         async def spa(path: str):  # SPA fallback: every non-API path serves the app shell
+            if path == "api" or path.startswith("api/"):
+                # Not a page: an endpoint that does not exist. The shell here answered a removed or misspelt
+                # endpoint with HTML and a 200, so a JSON client parsed a web page and "this endpoint is gone"
+                # could only be checked on a server whose SPA had not been built.
+                raise HTTPException(status_code=404)
             if path:
                 # Containment guard: `path` is caller-controlled and uvicorn does NOT collapse
                 # `..`/`%2e%2e`, so a crafted `../../config/secret.key` would otherwise escape the
