@@ -278,7 +278,7 @@ describe("row template kinds and grouping", () => {
         kind: "seasonal",
         heading: "Seasonal",
         description:
-          "Only appears around the holidays you pick, like Halloween or Christmas. Filled in any of the ways above.",
+          "Only appears around the holidays you pick, like Halloween or Christmas, or a season you add yourself. Filled in any of the ways above.",
         ids: ["seasonal"],
       },
       {
@@ -649,7 +649,7 @@ describe("sentenceCaseHighlights", () => {
     // The Seasonal banner read "halloween, Christmas & Valentine's" — the first word lowercased, the
     // rest untouched, which is the worst of both.
     const seasonal = ROW_TEMPLATES.find((template) => template.kind === "seasonal")!;
-    expect(seasonal.highlights).toContain("Halloween, Christmas & Valentine's");
+    expect(seasonal.highlights).toContain("Halloween, Christmas & Valentine's, or your own");
     expect(sentenceCaseHighlights(["Halloween, Christmas & Valentine's", "Christmas only", "Valentine's Day"])).toEqual([
       "Halloween, Christmas & Valentine's",
       "Christmas only",

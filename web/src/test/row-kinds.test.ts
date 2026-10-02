@@ -115,7 +115,7 @@ describe("kind metadata", () => {
       seasonal: {
         title: "Seasonal",
         description:
-          "Only appears around the holidays you pick, like Halloween or Christmas. Filled in any of the ways above.",
+          "Only appears around the holidays you pick, like Halloween or Christmas, or a season you add yourself. Filled in any of the ways above.",
       },
       popular: {
         title: "Popular on this server",

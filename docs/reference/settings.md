@@ -318,6 +318,19 @@ seven nights after its shown-state changes (a season opening or closing), not ev
 than one night, so a pass that fails, is deferred behind a run, or is skipped while everything is paused
 is still redone. Each run of the row keeps it right in between. See [Seasonal rows](../guides/rows.md#seasonal-rows).
 
+`collections.seasons` holds the slugs of the seasons a row follows: the built-ins `valentines`,
+`halloween` and `christmas`, plus any season of your own. Your own seasons are rows of the `seasons`
+table, not settings, and are managed through `/api/seasons`:
+
+| Column                                       | Holds                                                                                          |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `slug`, `name`, `emoji`                      | the season's identity; the slug is unique, never changes and is what `collections.seasons` holds |
+| `rule_kind`, `month`, `day`, `nth`, `weekday`, `easter_offset` | its date: a fixed day, the nth or last weekday of a month, or a day counted from Easter |
+| `lead_days`, `after_days`                    | its own window (default 7 before, 0 after); built-ins use the row's `season_lead_days`/`season_after_days` instead |
+| `tags`, `genre`, `excluded_genres`           | TMDB keywords, one optional genre, and genres to leave out                                     |
+| `collections`, `picks`                       | Plex collections (read only, matched by title) and films picked by hand                        |
+| `preset`                                     | the ready-made season it was added from, if any                                                |
+
 Days are the **server's** local days — the same clock a row's rebuild cron runs on. A viewer in
 another timezone sees a row turn over at the server's midnight, not their own. Some Plex clients
 cache the Home screen; a Roku re-reads it on its own, a Shield needs you to leave Home and come back.

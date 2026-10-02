@@ -187,9 +187,9 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     // Films only: TMDB tags a few dozen seasonal SHOWS against thousands of films (13 Christmas shows
     // on a 5,000-show library, measured for discussion #124), so a TV half would sit nearly empty.
     blurb:
-      "Follows the calendar: Halloween films and horror in October, Christmas films in December, romance for Valentine's. Hidden between seasons.",
+      "Follows the calendar: Halloween, Christmas and Valentine's, plus any season you add. Hidden between seasons.",
     highlights: [
-      "Halloween, Christmas & Valentine's",
+      "Halloween, Christmas & Valentine's, or your own",
       "Shows a month before",
       "Changes nightly",
     ],

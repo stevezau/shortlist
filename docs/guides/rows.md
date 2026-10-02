@@ -327,11 +327,13 @@ Christmas films, and before Valentine's Day romance. Between seasons it is hidde
 _Seasonal_ template, or choose **Seasonal** as a row's kind in the Row editor.
 
 Seasonal is a schedule wrapped around one of the other four kinds, not a fifth way of picking titles —
-see [Row kinds](#row-kinds) above. Picking Seasonal ticks every season to start, then shows **How it's
-filled**: Picked for You, Because you watched, Watch it again, or Popular on this server. Whichever you
-choose, that kind's own settings (described elsewhere in this guide) show underneath.
+see [Row kinds](#row-kinds) above. Picking Seasonal ticks the three built-in seasons to start, then shows
+**How it's filled**: Picked for You, Because you watched, Watch it again, or Popular on this server.
+Whichever you choose, that kind's own settings (described elsewhere in this guide) show underneath.
 
 **The seasons**
+
+Three seasons are built in. You can add ready-made ones for other holidays, or make your own.
 
 | Season          | Its day | What the row holds                                                                          |
 | --------------- | ------- | ------------------------------------------------------------------------------------------- |
@@ -339,10 +341,54 @@ choose, that kind's own settings (described elsewhere in this guide) show undern
 | Halloween       | 31 Oct  | Films TMDB tags for Halloween (not dramas and romances merely set on the night), and horror |
 | Christmas       | 25 Dec  | Films TMDB tags for Christmas: Home Alone and Klaus, and also Die Hard                      |
 
-Tick the ones the row follows. **Start showing (days before)** (0–90, default 30) and **Keep it up
-(days after)** (0–30, default 0) set each season's window: with the defaults, Halloween shows 1–31
-October and Christmas 25 November – 25 December. When two windows overlap, the season coming up next
-wins. Weekdays under **Where and when people see it** narrow a season further.
+Tick the ones this row follows. Each season is ticked per row, so one seasonal row can follow Halloween
+and another Christmas. Built-in seasons use the row's timing: **Built-in seasons show from N days
+before and stay N days after** (0–90 before, default 30; 0–30 after, default 0). With the defaults,
+Halloween shows 1–31 October and Christmas 25 November – 25 December. Your own seasons carry their own
+timing instead (see below). When two windows overlap, the season coming up next wins, and the year
+strip under the list draws every ticked season's window and says where two overlap. Weekdays under
+**Where and when people see it** narrow a season further.
+
+**Adding a ready-made season.** Open **Add more seasons** and press **Add** on a card. The editor opens
+filled in, so you can check it, rename it or change the films before saving. Saving ticks it in the row
+you are editing. Ready-made seasons cover New Year's Eve, 4th of July, Thanksgiving (US and Canada), St
+Patrick's Day, Easter, Mother's Day, Mothering Sunday, and Father's Day (US and UK). A card shows its
+region, but the season's name does not, because the name appears in Plex row titles. Season names must
+be unique, so to add both regional versions of a holiday, rename one first.
+
+**Making your own.** Press **Create your own**. Give it a name and an emoji, then choose when it is:
+
+- a fixed day, such as 17 March;
+- the nth or last weekday of a month, such as the 4th Thursday of November;
+- a day counted from Easter, up to 63 days either side.
+
+29 February is refused, because the season would skip three years in four. Under **Shows from N days
+before / stays N days after** (default 7 before, 0 after) set its window. The editor shows the next
+date and the window it gives.
+
+**Where its films come from.** A season's films are the union of four sources. Add at least one:
+
+- **TMDB tags** — search TMDB's keywords (for example "thanksgiving") and add as many as you like.
+- **One genre** — optionally include every film of one TMDB genre. Use **Leave out** to drop genres you
+  don't want (Horror from a St Patrick's Day season, say). Leave-out never drops a film you picked by hand.
+- **Plex collections** — pick collections on your server. They are only read, never changed, and are
+  matched by title. A Kometa collection that is absent out of season is normal: the season counts it
+  as empty until Kometa recreates it, and picks it up on the next run.
+- **Films you pick by hand** — search your libraries and add titles one at a time.
+
+Only films that are in your libraries are used, whatever the source.
+
+**Counts and verdicts.** The editor counts the films in your libraries as you change sources, and sets
+the count against the row's size. A season shows one of three verdicts:
+
+- **Too few to fill this row (n of size)** — add a tag, a collection or a few films.
+- **People's rows will be much alike — works best in a shared row** — there are barely more films than
+  the row holds, so everyone's per-person row would be nearly the same.
+- **Enough for this row.**
+
+**Editing and deleting.** Built-in seasons can't be edited or deleted. Deleting one of your own seasons
+unticks it in every row that follows it. If it is a row's only season, Shortlist refuses and names the
+rows: give them another season, or delete them, first.
 
 **What goes in it.** The season's films that are on your server, ranked for each person: films close to
 what they watch lead the row, and the rest are weighed by how well their genres fit that person's

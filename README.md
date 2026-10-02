@@ -136,9 +136,9 @@ anything.</sub>
   from a run's "How we picked" page; the watch stays in their Plex history, it just stops seeding.
 - 🗓️ **A rebuild cadence you control** — nightly, weekly, monthly or never, so nobody opens Plex to
   a completely reshuffled row every day.
-- 🎃 **Seasonal rows** — one row that follows the calendar: Halloween films and horror in October,
-  Christmas films in December, romance for Valentine's, picked for each person and hidden between
-  seasons.
+- 🎃 **Seasonal rows** — one row that follows the calendar: Halloween, Christmas and Valentine's, plus
+  any season you add — ready-made ones like Thanksgiving and Easter, or your own with its own date and
+  films. Picked for each person and hidden between seasons.
 - 📍 **Row placement** — choose which Plex shelf each row lands on (Home, the library's Recommended
   tab, or both) and where it sits.
 - 🎨 **Custom row posters (optional)** — upload artwork or generate it from text, reusing your AI key.
