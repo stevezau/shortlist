@@ -362,7 +362,7 @@ export const SETTING_LABELS: Readonly<Record<RowSettingKey, string>> = {
   poster: "Poster",
   audience: "Who gets it",
   min_watchers: "How many people must have watched a title",
-  seasons: "Which seasons",
+  seasons: "Seasons",
   requests_window_days: "Show titles that landed in the last",
   requests_sources: "Where requests are read from",
   requests_tag_pattern: "Use my own tags",
@@ -786,7 +786,7 @@ function changeLines(
       count === 0
         ? "Stops following the calendar, so the row can show all year."
         : before.seasons.length === 0
-          ? `Follows the calendar with ${all} picked. Narrow them down under Which seasons.`
+          ? `Follows the calendar with ${all} picked. Narrow them down under Seasons.`
           : `Follows ${all} instead of the ${before.seasons.length} picked now.`,
     );
   }

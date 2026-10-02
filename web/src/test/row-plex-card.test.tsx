@@ -5,6 +5,8 @@ import { RowPlexCard } from "@/components/rows/row-plex-card";
 import { blankInput } from "@/lib/collections";
 import type { CollectionInput } from "@/lib/types";
 
+import { HALLOWEEN } from "./season-fixtures";
+
 function input(patch: Partial<CollectionInput> = {}): CollectionInput {
   return { ...blankInput(), name: "Hidden Gems", ...patch };
 }
@@ -35,7 +37,7 @@ describe("RowPlexCard", () => {
         input={input({ name_template: "{season} picks", description: "{season_emoji} {season} favourites", seasons: ["halloween"] })}
         collectionId={null}
         hasImage={false}
-        sampleSeason={{ slug: "halloween", name: "Halloween", emoji: "🎃", month: 10, day: 31, description: "" }}
+        sampleSeason={HALLOWEEN}
       />,
     );
 

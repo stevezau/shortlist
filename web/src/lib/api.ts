@@ -21,7 +21,14 @@ import type {
   EngagementReport,
   OwnedCollectionsAudit,
   PlexLibrary,
+  PlexCollectionMatch,
+  LibraryTitle,
   Season,
+  SeasonInput,
+  SeasonPreset,
+  SeasonPreview,
+  SeasonPreviewInput,
+  TmdbTag,
   ConnectionTestResult,
   LinkRequest,
   PinCreated,
@@ -521,8 +528,42 @@ export const api = {
   /** The server's Plex libraries, for the Rows editor's per-row delivery-target picker. */
   getLibraries: (): Promise<PlexLibrary[]> => request("/api/system/libraries"),
 
-  /** Every season a row can follow, in calendar order (discussion #124). */
-  getSeasons: (): Promise<Season[]> => request("/api/collections/seasons"),
+  /** Every season a row can follow, in calendar order: the built-ins and the owner's own (#137). */
+  getSeasons: (): Promise<Season[]> => request("/api/seasons"),
+
+  /** The ready-made seasons not added yet. */
+  getSeasonPresets: (): Promise<SeasonPreset[]> => request("/api/seasons/presets"),
+
+  /** Save a new season for the whole server. Its slug comes back and never changes. */
+  createSeason: (body: SeasonInput): Promise<Season> =>
+    request("/api/seasons", { method: "POST", body: JSON.stringify(body) }),
+
+  updateSeason: (slug: string, body: SeasonInput): Promise<Season> =>
+    request(`/api/seasons/${encodeURIComponent(slug)}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  /** Delete a season and untick it in every row. 409 while it is any row's only season. */
+  deleteSeason: (slug: string): Promise<void> =>
+    request(`/api/seasons/${encodeURIComponent(slug)}`, { method: "DELETE" }),
+
+  /** Count a draft season's films in the libraries, as a run would, saving nothing. The first call can
+   *  take several seconds while the server reads the libraries. */
+  previewSeason: (body: SeasonPreviewInput): Promise<SeasonPreview> =>
+    request("/api/seasons/preview", { method: "POST", body: JSON.stringify(body) }),
+
+  /** TMDB tags whose name matches, each with how many films TMDB gives it. */
+  getTmdbTags: (q: string): Promise<TmdbTag[]> =>
+    request(`/api/seasons/tmdb-tags?q=${encodeURIComponent(q)}`),
+
+  /** The libraries' collections whose title contains `q` (never one of Shortlist's own rows). */
+  getPlexCollections: (q: string): Promise<PlexCollectionMatch[]> =>
+    request(`/api/seasons/plex-collections?q=${encodeURIComponent(q)}`),
+
+  /** Films and shows in the libraries whose title contains `q`, for picking by hand. */
+  searchLibrary: (q: string): Promise<LibraryTitle[]> =>
+    request(`/api/seasons/library-search?q=${encodeURIComponent(q)}`),
 
   /** The running app version + update check (for the footer + update banner). */
   getVersion: (): Promise<VersionInfo> => request("/api/system/version"),

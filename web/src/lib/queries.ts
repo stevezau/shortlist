@@ -1,4 +1,5 @@
 import {
+  keepPreviousData,
   useInfiniteQuery,
   useMutation,
   useQuery,
@@ -17,6 +18,8 @@ import type {
   Run,
   RowOverridePatch,
   RunRequest,
+  SeasonInput,
+  SeasonPreviewInput,
   Settings,
   User,
   UserPatch,
@@ -75,6 +78,10 @@ export const queryKeys = {
   schedule: ["schedule"] as const,
   libraries: ["libraries"] as const,
   seasons: ["seasons"] as const,
+  seasonPresets: ["season-presets"] as const,
+  seasonPreview: (draft: SeasonPreviewInput) => ["season-preview", draft] as const,
+  seasonSearch: (kind: "tags" | "collections" | "library", q: string) =>
+    ["season-search", kind, q] as const,
   libraryCollections: (key: string) => ["library-collections", key] as const,
   ownedCollections: ["owned-collections"] as const,
   notifications: ["notifications"] as const,
@@ -546,14 +553,113 @@ export function useCuratorModels(
   });
 }
 
-/** The season catalogue. It only changes with the app, so it is never refetched; `enabled` lets a
- *  component that shows seasons only on a seasonal row avoid asking for them on every other row. */
+/** The season catalogue: the built-ins and the owner's own (#137). `enabled` lets a component that
+ *  shows seasons only on a seasonal row avoid asking for them on every other row. Saving a season
+ *  refreshes it; the minute's `staleTime` is for what changes elsewhere — which rows use a season,
+ *  and its next dates at midnight. */
 export function useSeasons(enabled = true) {
   return useQuery({
     queryKey: queryKeys.seasons,
     queryFn: () => api.getSeasons(),
-    staleTime: Infinity,
+    staleTime: 60_000,
     enabled,
+  });
+}
+
+export function useSeasonPresets(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.seasonPresets,
+    queryFn: () => api.getSeasonPresets(),
+    staleTime: 60_000,
+    retry: false,
+    enabled,
+  });
+}
+
+/** How many films a draft season finds in the libraries. Debounce `draft` in the caller: every change
+ *  of source is a new count. The first count of a session can take several seconds (the server reads
+ *  the libraries), so nothing here retries on its own, and the same draft is never counted twice in
+ *  five minutes — a list of seasons and the editor opened on one of them share the count.
+ *
+ *  `keepPrevious` holds the last count on screen while the next one runs, for the editor, where a
+ *  number that blinks to a skeleton on every tick would be harder to follow than one that updates. */
+export function useSeasonPreview(
+  draft: SeasonPreviewInput,
+  { enabled = true, keepPrevious = false }: { enabled?: boolean; keepPrevious?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: queryKeys.seasonPreview(draft),
+    // The draft rides along, so a count held on screen while the next one runs says what it counted.
+    queryFn: async () => ({ ...(await api.previewSeason(draft)), draft }),
+    staleTime: 5 * 60_000,
+    retry: false,
+    refetchOnWindowFocus: false,
+    placeholderData: keepPrevious ? keepPreviousData : undefined,
+    enabled,
+  });
+}
+
+/** The editor's searches answer nothing under 2 characters, so they aren't asked. */
+const MIN_SEARCH = 2;
+
+function useSeasonSearch<T>(kind: "tags" | "collections" | "library", q: string, load: (q: string) => Promise<T[]>) {
+  const query = q.trim();
+  return useQuery({
+    queryKey: queryKeys.seasonSearch(kind, query),
+    queryFn: () => load(query),
+    staleTime: 5 * 60_000,
+    retry: false,
+    refetchOnWindowFocus: false,
+    enabled: query.length >= MIN_SEARCH,
+  });
+}
+
+export function useTmdbTags(q: string) {
+  return useSeasonSearch("tags", q, api.getTmdbTags);
+}
+
+export function usePlexCollections(q: string) {
+  return useSeasonSearch("collections", q, api.getPlexCollections);
+}
+
+export function useLibrarySearch(q: string) {
+  return useSeasonSearch("library", q, api.searchLibrary);
+}
+
+/** After any season is saved or deleted: the catalogue, the presets still on offer, and the rows —
+ *  a delete unticks the season from every row that had it. Awaited, so a caller that ticks the new
+ *  season reads a catalogue that already has it. */
+function useInvalidateSeasons() {
+  const queryClient = useQueryClient();
+  return () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.seasons }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.seasonPresets }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.collections }),
+    ]);
+}
+
+export function useCreateSeason() {
+  const invalidate = useInvalidateSeasons();
+  return useMutation({
+    mutationFn: (body: SeasonInput) => api.createSeason(body),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateSeason() {
+  const invalidate = useInvalidateSeasons();
+  return useMutation({
+    mutationFn: ({ slug, body }: { slug: string; body: SeasonInput }) => api.updateSeason(slug, body),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeleteSeason() {
+  const invalidate = useInvalidateSeasons();
+  return useMutation({
+    mutationFn: (slug: string) => api.deleteSeason(slug),
+    onSuccess: invalidate,
   });
 }
 

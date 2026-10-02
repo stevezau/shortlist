@@ -25,6 +25,7 @@ import {
 import { findRowTemplate, type RowTemplate } from "@/lib/row-templates";
 import type { Collection, CollectionInput } from "@/lib/types";
 import { BYW_NAME, CTX, FIXTURES, named, row } from "@/test/row-kind-fixtures";
+import { BUILTINS } from "@/test/season-fixtures";
 
 const { updateCollection, createCollection, settingsData, librariesData, rowSources } = vi.hoisted(() => ({
   updateCollection: vi.fn((id: number, body: unknown) =>
@@ -65,12 +66,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getSettings: () => Promise.resolve(settingsData.current),
       getLibraries: () => Promise.resolve(librariesData.current),
       getLibraryCollections: () => Promise.resolve([]),
-      getSeasons: () =>
-        Promise.resolve([
-          { slug: "valentines", name: "Valentine's Day", emoji: "💘", month: 2, day: 14, description: "Valentine's films and romance" },
-          { slug: "halloween", name: "Halloween", emoji: "🎃", month: 10, day: 31, description: "Halloween films and horror" },
-          { slug: "christmas", name: "Christmas", emoji: "🎄", month: 12, day: 25, description: "Christmas films" },
-        ]),
+      getSeasons: () => Promise.resolve(BUILTINS),
+      getSeasonPresets: () => Promise.resolve([]),
       getImageProvider: () => Promise.resolve({ capable: false, provider: "", reason: "" }),
       getRequestRowSources: () => Promise.resolve(rowSources),
       startRun: () => Promise.resolve({ run_id: 1 }),

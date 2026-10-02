@@ -1,18 +1,21 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  addDays,
   isNightly,
+  ruleLabel,
   seasonDate,
+  seasonOverlaps,
   seasonStatusLine,
+  seasonTiming,
   seasonWindowLabel,
+  timingLabel,
 } from "@/lib/seasons";
 
-const HALLOWEEN = { month: 10, day: 31 };
-const CHRISTMAS = { month: 12, day: 25 };
-const VALENTINES = { month: 2, day: 14 };
+import { CHRISTMAS, HALLOWEEN, THANKSGIVING, VALENTINES } from "./season-fixtures";
 
 describe("seasonWindowLabel", () => {
-  it("runs from its lead through its day", () => {
+  it("runs from its lead through its next day", () => {
     expect(seasonWindowLabel(HALLOWEEN, 30, 0)).toBe(
       `${seasonDate("2026-10-01")} – ${seasonDate("2026-10-31")}`,
     );
@@ -28,6 +31,76 @@ describe("seasonWindowLabel", () => {
     expect(seasonWindowLabel(VALENTINES, 60, 0)).toBe(
       `${seasonDate("2026-12-16")} – ${seasonDate("2027-02-14")}`,
     );
+  });
+
+  it("follows the server's next date, so a moving holiday is never worked out here", () => {
+    expect(seasonWindowLabel(THANKSGIVING, 14, 0)).toBe(
+      `${seasonDate("2026-11-12")} – ${seasonDate("2026-11-26")}`,
+    );
+  });
+});
+
+describe("seasonTiming", () => {
+  it("gives a built-in the row's timing", () => {
+    expect(seasonTiming(HALLOWEEN, 30, 2)).toEqual({ lead: 30, after: 2 });
+  });
+
+  it("gives a season of the owner's its own", () => {
+    expect(seasonTiming(THANKSGIVING, 30, 2)).toEqual({ lead: 14, after: 0 });
+  });
+});
+
+describe("timingLabel", () => {
+  it.each([
+    [30, 0, "from 30 days before"],
+    [1, 0, "from 1 day before"],
+    [7, 1, "from 7 days before to 1 day after"],
+    [0, 3, "the day and 3 days after"],
+    [0, 0, "on the day only"],
+  ])("lead %i, after %i reads %s", (lead, after, text) => {
+    expect(timingLabel(lead, after)).toBe(text);
+  });
+});
+
+describe("ruleLabel", () => {
+  it.each([
+    [{ kind: "fixed", month: 3, day: 17, nth: 1, weekday: 0, offset: 0 }, "17 March"],
+    [{ kind: "nth", month: 11, day: 1, nth: 4, weekday: 3, offset: 0 }, "4th Thursday of November"],
+    [{ kind: "nth", month: 5, day: 1, nth: -1, weekday: 0, offset: 0 }, "Last Monday of May"],
+    [{ kind: "easter", month: 1, day: 1, nth: 1, weekday: 0, offset: 0 }, "Easter Sunday"],
+    [{ kind: "easter", month: 1, day: 1, nth: 1, weekday: 0, offset: -21 }, "21 days before Easter"],
+    [{ kind: "easter", month: 1, day: 1, nth: 1, weekday: 0, offset: 1 }, "1 day after Easter"],
+  ] as const)("names %o as the server does", (rule, label) => {
+    expect(ruleLabel(rule)).toBe(label);
+  });
+});
+
+describe("addDays", () => {
+  it("crosses a month and a year", () => {
+    expect(addDays("2026-12-31", 1)).toBe("2027-01-01");
+    expect(addDays("2026-03-01", -1)).toBe("2026-02-28");
+  });
+});
+
+describe("seasonOverlaps", () => {
+  it("names two seasons whose windows share days, and the days", () => {
+    expect(seasonOverlaps([THANKSGIVING, CHRISTMAS], 30, 0)).toEqual([
+      { first: THANKSGIVING, second: CHRISTMAS, start: "2026-11-25", end: "2026-11-26" },
+    ]);
+  });
+
+  it("finds an overlap a year out, when today sits between the two", () => {
+    // Today is after Christmas's window has started but Thanksgiving's has passed: their NEXT windows
+    // are a year apart, but they still overlap every year.
+    const thanksgivingNextYear = { ...THANKSGIVING, next_dates: ["2027-11-25", "2028-11-23"] };
+    const christmasNow = { ...CHRISTMAS, next_dates: ["2026-12-25", "2027-12-25"] };
+    expect(seasonOverlaps([thanksgivingNextYear, christmasNow], 30, 0)).toEqual([
+      { first: thanksgivingNextYear, second: christmasNow, start: "2027-11-25", end: "2027-11-25" },
+    ]);
+  });
+
+  it("says nothing when no windows meet", () => {
+    expect(seasonOverlaps([HALLOWEEN, CHRISTMAS], 30, 0)).toEqual([]);
   });
 });
 

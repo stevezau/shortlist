@@ -1,16 +1,18 @@
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useSeasons } from "@/lib/queries";
-import { usesSeason } from "@/lib/placeholders";
-import { isNightly, seasonStatusLine, seasonWindowLabel } from "@/lib/seasons";
-import type { SeasonStatus } from "@/lib/types";
+import { useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 
-/** The API's bounds (`seasons.MAX_LEAD_DAYS` / `MAX_AFTER_DAYS`), so the field never offers a value
- *  the save would refuse. */
-const MAX_LEAD_DAYS = 90;
-const MAX_AFTER_DAYS = 30;
+import { SeasonEditorDialog, type SeasonEditorTarget } from "@/components/rows/seasons/season-editor-dialog";
+import { SeasonListItem } from "@/components/rows/seasons/season-list-item";
+import { SeasonPresets } from "@/components/rows/seasons/season-presets";
+import { SeasonYearStrip } from "@/components/rows/seasons/season-year-strip";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { queryKeys, useSeasons } from "@/lib/queries";
+import { usesSeason } from "@/lib/placeholders";
+import { MAX_AFTER_DAYS, MAX_LEAD_DAYS, clampDays } from "@/lib/season-draft";
+import { isNightly, seasonStatusLine } from "@/lib/seasons";
+import type { Season, SeasonStatus } from "@/lib/types";
 
 type SeasonsValue = {
   seasons: string[];
@@ -18,16 +20,16 @@ type SeasonsValue = {
   season_after_days: number;
 };
 
-function clampDays(raw: string, max: number): number {
-  return Math.min(max, Math.max(0, Math.round(Number(raw) || 0)));
-}
-
 /**
- * Which seasons a Seasonal row follows, and how early and late it shows each one (discussion #124).
+ * Which seasons a Seasonal row follows (discussion #124), and the owner's own seasons (#137).
  *
  * The row holds only the season it is in — Halloween films and horror in October, Christmas films in
  * December — and is hidden between seasons, keeping its collection so it comes straight back. Where it
  * is TODAY comes from the server (`status`), on the clock Plex follows.
+ *
+ * Every season on the server is listed to tick. Below the list, ready-made seasons and Create your own
+ * open the season editor; a season saved there is kept for the whole server and ticked here. The row's
+ * own timing applies to the built-ins only: a season of the owner's carries its own (#137 D8).
  *
  * Only rendered for a Seasonal row: the editor's kind picker is what makes a row seasonal or not
  * (`row-kinds.ts`), so this has no on/off switch of its own.
@@ -40,6 +42,9 @@ export function RowSeasonsField({
   schedule,
   name,
   status,
+  rowSize,
+  perPerson,
+  rowId,
 }: {
   value: SeasonsValue;
   onChange: (patch: Partial<SeasonsValue>) => void;
@@ -49,17 +54,61 @@ export function RowSeasonsField({
   name: string;
   /** Where the SAVED row is in its calendar; null for a new row or one not yet seasonal. */
   status: SeasonStatus | null;
+  /** The row's size and whether each person gets their own: what a season's film count is judged by. */
+  rowSize: number;
+  perPerson: boolean;
+  /** The saved row's id, so the editor names only OTHER rows that use a season; null for a new row. */
+  rowId: number | null;
 }) {
   const catalogue = useSeasons();
+  const queryClient = useQueryClient();
+  const [editor, setEditor] = useState<SeasonEditorTarget | null>(null);
+  const [keptLast, setKeptLast] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
+
+  const seasons = catalogue.data ?? [];
+  const ticked = seasons.filter((season) => value.seasons.includes(season.slug));
+  const builtinTicked = catalogue.isSuccess ? ticked.some((season) => season.builtin) : catalogue.isError;
+
+  /** The row's seasons in calendar order: the server's catalogue order. */
+  const setSeasons = (chosen: string[], catalogueNow: readonly Season[] = seasons) => {
+    const known = catalogueNow.map((season) => season.slug);
+    onChange({
+      seasons: [...known.filter((slug) => chosen.includes(slug)), ...chosen.filter((slug) => !known.includes(slug))],
+    });
+  };
 
   const toggleSeason = (slug: string) => {
     const chosen = value.seasons.includes(slug)
       ? value.seasons.filter((s) => s !== slug)
       : [...value.seasons, slug];
     // The last one cannot be unticked: no seasons means "not seasonal", which is the kind picker's call.
+    setKeptLast(chosen.length === 0);
     if (chosen.length === 0) return;
-    const order = (catalogue.data ?? []).map((s) => s.slug);
-    onChange({ seasons: order.filter((s) => chosen.includes(s)) });
+    setSaved(null);
+    setSeasons(chosen);
+  };
+
+  const onSaved = (slug: string) => {
+    // The save awaited the catalogue's refetch, so the cache already has the new season in its place.
+    const catalogueNow = queryClient.getQueryData<Season[]>(queryKeys.seasons) ?? seasons;
+    const season = catalogueNow.find((s) => s.slug === slug);
+    const label = season ? `“${season.emoji} ${season.name}”` : "The season";
+    if (value.seasons.includes(slug)) {
+      setSaved(`Saved ${label}.`);
+    } else {
+      setSeasons([...value.seasons, slug], catalogueNow);
+      setSaved(`Saved ${label} and ticked it here. Save this row to keep it ticked.`);
+    }
+    setKeptLast(false);
+    setEditor(null);
+  };
+
+  const onDeleted = (slug: string) => {
+    // The server took it out of every saved row; the form here follows.
+    if (value.seasons.includes(slug)) onChange({ seasons: value.seasons.filter((s) => s !== slug) });
+    setSaved(null);
+    setEditor(null);
   };
 
   const statusLine = seasonStatusLine(status);
@@ -67,87 +116,100 @@ export function RowSeasonsField({
   return (
     <div className="space-y-4">
       <div className="space-y-1">
-        <p className="text-sm font-medium">Which seasons</p>
+        <h3 className="text-sm font-semibold">Seasons</h3>
         <p className="text-sm text-muted-foreground">
-          This row holds only the season it’s in, and is hidden between seasons. It keeps its
-          collection, so it comes straight back next time.
+          Ticked seasons show in this row on their dates. Only films in your libraries are used.
         </p>
       </div>
 
-      {catalogue.isLoading ? (
+      {catalogue.isPending ? (
         <div className="space-y-2" aria-hidden="true">
-          <Skeleton className="h-12 w-full" />
-          <Skeleton className="h-12 w-full" />
-          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-16 w-full" />
         </div>
       ) : catalogue.isError ? (
-        <div className="flex items-center gap-3 rounded-md border border-destructive/40 p-3 text-sm">
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-destructive/40 p-3 text-sm">
           <p>Couldn’t load the seasons. Check Shortlist is running, then try again.</p>
-          <Button type="button" variant="outline" size="sm" onClick={() => catalogue.refetch()}>
+          <Button type="button" variant="outline" size="sm" onClick={() => void catalogue.refetch()}>
             Retry
           </Button>
         </div>
       ) : (
-        <fieldset className="space-y-2">
-          <legend className="sr-only">Which seasons</legend>
-          {(catalogue.data ?? []).map((season) => {
-            const checked = value.seasons.includes(season.slug);
-            return (
-              <label
+        <fieldset>
+          <legend className="sr-only">Seasons</legend>
+          <ul className="space-y-2">
+            {seasons.map((season) => (
+              <SeasonListItem
                 key={season.slug}
-                className="flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2 text-sm transition-colors hover:bg-muted/50"
-              >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => toggleSeason(season.slug)}
-                  className="mt-0.5 h-4 w-4 accent-primary"
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="font-medium">
-                    <span aria-hidden="true">{season.emoji}</span> {season.name}
-                  </span>
-                  <span className="block text-muted-foreground">
-                    {season.description} · shows{" "}
-                    {seasonWindowLabel(season, value.season_lead_days, value.season_after_days)}
-                  </span>
-                </span>
-              </label>
-            );
-          })}
+                season={season}
+                checked={value.seasons.includes(season.slug)}
+                onToggle={() => toggleSeason(season.slug)}
+                rowLeadDays={value.season_lead_days}
+                rowAfterDays={value.season_after_days}
+                rowSize={rowSize}
+                perPerson={perPerson}
+                onEdit={() => setEditor({ kind: "edit", season })}
+              />
+            ))}
+          </ul>
         </fieldset>
       )}
+      {keptLast && (
+        <p role="status" className="text-sm text-muted-foreground">
+          This row needs at least one season, so the last one stays ticked. Tick another season first.
+        </p>
+      )}
+      {saved && (
+        <p role="status" className="text-sm">
+          {saved}
+        </p>
+      )}
 
-      <div className="flex flex-wrap gap-6">
-        <div className="space-y-2">
-          <Label htmlFor="row-season-lead">Start showing (days before)</Label>
-          <Input
-            id="row-season-lead"
-            type="number"
-            min={0}
-            max={MAX_LEAD_DAYS}
-            value={value.season_lead_days}
-            onChange={(e) => onChange({ season_lead_days: clampDays(e.target.value, MAX_LEAD_DAYS) })}
-            className="w-24"
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="row-season-after">Keep it up (days after)</Label>
-          <Input
-            id="row-season-after"
-            type="number"
-            min={0}
-            max={MAX_AFTER_DAYS}
-            value={value.season_after_days}
-            onChange={(e) => onChange({ season_after_days: clampDays(e.target.value, MAX_AFTER_DAYS) })}
-            className="w-24"
-          />
-        </div>
+      {catalogue.isSuccess && (
+        <SeasonPresets
+          defaultOpen={ticked.every((season) => season.builtin)}
+          rowSize={rowSize}
+          perPerson={perPerson}
+          onAdd={(preset) => setEditor({ kind: "preset", preset })}
+          onCreate={() => setEditor({ kind: "create" })}
+        />
+      )}
+
+      <div className="space-y-3">
+        <h4 className="text-sm font-medium">When this row shows</h4>
+        {builtinTicked && (
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-2 text-sm">
+            <label className="inline-flex flex-wrap items-center gap-2">
+              Built-in seasons show from{" "}
+              <Input
+                type="number"
+                min={0}
+                max={MAX_LEAD_DAYS}
+                value={value.season_lead_days}
+                onChange={(e) => onChange({ season_lead_days: clampDays(e.target.value, MAX_LEAD_DAYS) })}
+                className="w-20"
+              />{" "}
+              days before
+            </label>{" "}
+            <label className="inline-flex flex-wrap items-center gap-2">
+              and stay{" "}
+              <Input
+                type="number"
+                min={0}
+                max={MAX_AFTER_DAYS}
+                value={value.season_after_days}
+                onChange={(e) => onChange({ season_after_days: clampDays(e.target.value, MAX_AFTER_DAYS) })}
+                className="w-20"
+              />{" "}
+              days after.
+            </label>
+          </p>
+        )}
+        {ticked.length > 0 && (
+          <SeasonYearStrip seasons={ticked} leadDays={value.season_lead_days} afterDays={value.season_after_days} />
+        )}
       </div>
-      <p className="text-sm text-muted-foreground">
-        When two seasons overlap, the one coming up next wins. Seasons change at midnight on the
-        server.
-      </p>
 
       {statusLine && <p className="text-sm font-medium">{statusLine}</p>}
 
@@ -163,6 +225,19 @@ export function RowSeasonsField({
           This row doesn’t run every night, so it won’t change daily, and a new season can appear a
           few days late. Set its schedule to <strong>Nightly</strong> under “When it updates”.
         </p>
+      )}
+
+      {editor && (
+        <SeasonEditorDialog
+          target={editor}
+          rowSize={rowSize}
+          perPerson={perPerson}
+          rowId={rowId}
+          tickedHere={value.seasons}
+          onClose={() => setEditor(null)}
+          onSaved={onSaved}
+          onDeleted={onDeleted}
+        />
       )}
     </div>
   );

@@ -494,19 +494,22 @@ function FillBlock({ fill, ...props }: KindBlockProps & { fill: RowFill }) {
 
 /**
  * The settings that belong to the row's kind, under the kind picker (design §5). A Seasonal row gets
- * "Which seasons" and "How it's filled" first, then exactly what that fill shows on its own — which
+ * "Seasons" and "How it's filled" first, then exactly what that fill shows on its own — which
  * is what keeps every seasonal combination reachable.
  */
 export function RowKindSettings({
   choice,
   onChooseFill,
   seasonStatus,
+  rowId,
   ...props
 }: KindBlockProps & {
   choice: RowKindChoice;
   onChooseFill: (fill: RowFill) => void;
   /** Where the SAVED row is in its calendar, while the form still matches it; else null. */
   seasonStatus: SeasonStatus | null;
+  /** The saved row's id; null for a row not saved yet. */
+  rowId: number | null;
 }) {
   if (choice.kind !== "seasonal") return <FillBlock {...props} fill={choice.fill} />;
   const { input, set } = props;
@@ -524,6 +527,9 @@ export function RowKindSettings({
             schedule={input.schedule}
             name={input.name_template || input.name}
             status={seasonStatus}
+            rowSize={input.size}
+            perPerson={input.build !== "shared"}
+            rowId={rowId}
           />
         </div>
       )}

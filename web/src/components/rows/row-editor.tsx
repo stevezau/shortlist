@@ -774,6 +774,7 @@ export function RowEditor({
               hidden={hidden}
               settings={settings.data}
               users={users}
+              rowId={collection?.id ?? null}
               // Only while the form still matches what is saved: the status describes the SAVED row.
               seasonStatus={
                 collection &&

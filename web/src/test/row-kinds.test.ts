@@ -370,7 +370,7 @@ describe("visibleSettings", () => {
       expect(visible(defaultRow, ctx)).toEqual(expected(name, media, { isDefault: true }));
     });
 
-    it.each(fixtureNames)("shows the %s fill's settings plus Which seasons on a seasonal row", (name) => {
+    it.each(fixtureNames)("shows the %s fill's settings plus Seasons on a seasonal row", (name) => {
       expect(visible(seasonal({ ...FIXTURES[name], media }))).toEqual(expected(name, media, { seasonal: true }));
     });
   });
@@ -1217,7 +1217,7 @@ describe("describeKindChange", () => {
         saved: loaded,
       });
       expect(change.title).toBe("Change this row to Seasonal (Watch it again)?");
-      expect(change.lines).toEqual(["Follows the calendar with all 3 seasons picked. Narrow them down under Which seasons."]);
+      expect(change.lines).toEqual(["Follows the calendar with all 3 seasons picked. Narrow them down under Seasons."]);
     });
 
     it("names the kind, and the fill for Seasonal", () => {
@@ -1289,7 +1289,7 @@ describe("describeKindChange", () => {
 
     it("describes following and leaving the calendar", () => {
       expect(describeKindChange(FIXTURES.picked, { kind: "seasonal", fill: "picked" }, CTX).lines).toEqual([
-        "Follows the calendar with all 3 seasons picked. Narrow them down under Which seasons.",
+        "Follows the calendar with all 3 seasons picked. Narrow them down under Seasons.",
       ]);
       expect(describeKindChange(seasonal(FIXTURES.picked), { kind: "picked", fill: "picked" }, CTX).lines).toEqual([
         "Stops following the calendar, so the row can show all year.",

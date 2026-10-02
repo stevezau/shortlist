@@ -130,9 +130,26 @@ export type CollectionBody = Partial<CollectionInput> & {
  *  `hub_anchor` needs no override: its dynamic keys are Plex section keys, which the schema already
  *  expresses as an index signature, and its VALUES are modelled (`HubAnchorOut`). */
 export type Collection = Schemas["CollectionOut"];
-/** A season a row can follow (GET /api/collections/seasons), and where a seasonal row is today. */
+/** A season a row can follow (GET /api/seasons): a built-in, or one of the owner's own (#137). */
 export type Season = Schemas["SeasonOut"];
+/** Where a seasonal row is today. */
 export type SeasonStatus = Schemas["SeasonStatusOut"];
+/** A ready-made season not added yet (GET /api/seasons/presets). */
+export type SeasonPreset = Schemas["PresetOut"];
+/** A season to save (POST /api/seasons, PUT /api/seasons/{slug}). Refuses any field it doesn't name. */
+export type SeasonInput = Schemas["SeasonIn"];
+/** A draft season to count (POST /api/seasons/preview), and what the count found. */
+export type SeasonPreviewInput = Schemas["SeasonPreviewIn"];
+export type SeasonPreview = Schemas["SeasonPreviewOut"];
+/** When a season falls: a fixed day, the nth weekday of a month, or days from Easter. Monday is 0. */
+export type DateRule = Schemas["DateRuleIO"];
+export type SeasonTag = Schemas["TagIO"];
+export type SeasonCollection = Schemas["CollectionIO"];
+export type SeasonPick = Schemas["PickIO"];
+/** The editor's three searches: TMDB tags, Plex collections, and titles in the libraries. */
+export type TmdbTag = Schemas["TagOut"];
+export type PlexCollectionMatch = Schemas["PlexCollectionOut"];
+export type LibraryTitle = Schemas["LibraryTitleOut"];
 export type RowEffectiveness = Schemas["RowEffectivenessOut"];
 
 /** A Plex library on the server (GET /api/system/libraries). */

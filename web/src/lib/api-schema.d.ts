@@ -93,26 +93,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/collections/seasons": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Seasons
-         * @description Every season a row can follow, in calendar order (discussion #124).
-         */
-        get: operations["list_seasons_api_collections_seasons_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/collections/{collection_id}": {
         parameters: {
             query?: never;
@@ -1028,6 +1008,161 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/seasons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Seasons
+         * @description Every season a row can follow, in calendar order: the built-ins and the owner's own.
+         */
+        get: operations["list_seasons_api_seasons_get"];
+        put?: never;
+        /**
+         * Create Season
+         * @description Save a new season. Its slug is made from its name now and never changes (D14).
+         */
+        post: operations["create_season_api_seasons_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/seasons/library-search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Library Search
+         * @description Films and shows in the libraries whose title contains ``q``, for picking by hand.
+         */
+        get: operations["library_search_api_seasons_library_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/seasons/plex-collections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Plex Collections
+         * @description The libraries' collections whose title contains ``q``, in any case, by title. Never one of Shortlist's.
+         */
+        get: operations["plex_collections_api_seasons_plex_collections_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/seasons/presets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Presets
+         * @description The ready-made seasons not added yet (#137 D9).
+         */
+        get: operations["list_presets_api_seasons_presets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/seasons/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Season
+         * @description Count a draft season's films in the libraries, as a run would, without saving anything.
+         *
+         *     An invalid date rule still counts: the editor shows what is wrong with the date beside the films.
+         */
+        post: operations["preview_season_api_seasons_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/seasons/tmdb-tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tmdb Tags
+         * @description TMDB tags whose name matches ``q``, each with how many films TMDB tags with it.
+         */
+        get: operations["tmdb_tags_api_seasons_tmdb_tags_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/seasons/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update Season
+         * @description Replace a custom season, keeping its slug.
+         *
+         *     A change of date or timing changes which days its rows are shown on, so it is applied to Plex now, as a
+         *     change to a row's own seasons is. A source change rebuilds its rows on their next build (D11).
+         */
+        put: operations["update_season_api_seasons__slug__put"];
+        post?: never;
+        /**
+         * Delete Season
+         * @description Delete a custom season and untick it in every row, in one transaction (D12).
+         *
+         *     Refused, naming the rows, while it is any row's only season: that row would be left following nothing.
+         */
+        delete: operations["delete_season_api_seasons__slug__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3043,6 +3178,33 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** CollectionCountOut */
+        CollectionCountOut: {
+            /** Found */
+            found: boolean;
+            /** In Library */
+            in_library: number;
+            /** Section Key */
+            section_key: string;
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * CollectionIO
+         * @description A Plex collection, by library and title — never ratingKey: Kometa recreates its seasonal ones each year.
+         */
+        CollectionIO: {
+            /** Section Key */
+            section_key: string;
+            /** Section Title */
+            section_title: string;
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** CollectionIn */
         CollectionIn: {
             /**
@@ -3248,7 +3410,7 @@ export interface components {
             season_lead_days: number;
             /**
              * Seasons
-             * @description Seasons this row follows (see GET /api/collections/seasons). Empty means it is not seasonal.
+             * @description Seasons this row follows (see GET /api/seasons). Empty means it is not seasonal.
              */
             seasons?: string[];
             /**
@@ -3550,6 +3712,44 @@ export interface components {
             ollama_url?: string | null;
             /** Provider */
             provider?: string | null;
+        };
+        /**
+         * DateRuleIO
+         * @description When a season falls: see `seasons.DateRule`. ``weekday`` is Monday=0; ``nth`` is 1-4, or -1 for the last.
+         */
+        DateRuleIO: {
+            /**
+             * Day
+             * @default 1
+             */
+            day: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "fixed" | "nth" | "easter";
+            /**
+             * Month
+             * @default 1
+             */
+            month: number;
+            /**
+             * Nth
+             * @default 1
+             */
+            nth: number;
+            /**
+             * Offset
+             * @default 0
+             */
+            offset: number;
+            /**
+             * Weekday
+             * @default 0
+             */
+            weekday: number;
+        } & {
+            [key: string]: unknown;
         };
         /** DeletedOut */
         DeletedOut: {
@@ -3983,6 +4183,22 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** LibraryTitleOut */
+        LibraryTitleOut: {
+            /**
+             * Media Type
+             * @enum {string}
+             */
+            media_type: "movie" | "show";
+            /** Title */
+            title: string;
+            /** Tmdb Id */
+            tmdb_id: number;
+            /** Year */
+            year: number | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** LinkRequest */
         LinkRequest: {
             /** Machine Id */
@@ -4245,6 +4461,25 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * PickIO
+         * @description A title the owner picked by hand.
+         */
+        PickIO: {
+            /**
+             * Media Type
+             * @enum {string}
+             */
+            media_type: "movie" | "show";
+            /** Title */
+            title: string;
+            /** Tmdb Id */
+            tmdb_id: number;
+            /** Year */
+            year?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * PickOut
          * @description One delivered recommendation, as the run detail lists it.
          */
@@ -4330,6 +4565,21 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** PlexCollectionOut */
+        PlexCollectionOut: {
+            /** Count */
+            count: number;
+            /** Section Key */
+            section_key: string;
+            /** Section Title */
+            section_title: string;
+            /** Smart */
+            smart: boolean;
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * PlexServerOut
          * @description A server plex.tv says this account can reach, with every advertised address already tried.
@@ -4407,6 +4657,47 @@ export interface components {
             mode: string;
             /** Ok */
             ok: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PresetOut
+         * @description A ready-made season: a `SeasonIn` the editor opens pre-filled. ``preset`` is ``key``.
+         */
+        PresetOut: {
+            /**
+             * After Days
+             * @default 0
+             */
+            after_days: number;
+            /** Collections */
+            collections?: components["schemas"]["CollectionIO"][];
+            /** Emoji */
+            emoji: string;
+            /** Excluded Genres */
+            excluded_genres?: number[];
+            /** Genre */
+            genre?: number | null;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /**
+             * Lead Days
+             * @default 7
+             */
+            lead_days: number;
+            /** Name */
+            name: string;
+            /** Note */
+            note: string;
+            /** Picks */
+            picks?: components["schemas"]["PickIO"][];
+            /** Preset */
+            preset?: string | null;
+            rule: components["schemas"]["DateRuleIO"];
+            /** Tags */
+            tags?: components["schemas"]["TagIO"][];
         } & {
             [key: string]: unknown;
         };
@@ -5319,22 +5610,126 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * SeasonIn
+         * @description A custom season, to create or replace.
+         */
+        SeasonIn: {
+            /**
+             * After Days
+             * @default 0
+             */
+            after_days: number;
+            /** Collections */
+            collections?: components["schemas"]["CollectionIO"][];
+            /** Emoji */
+            emoji: string;
+            /** Excluded Genres */
+            excluded_genres?: number[];
+            /** Genre */
+            genre?: number | null;
+            /**
+             * Lead Days
+             * @default 7
+             */
+            lead_days: number;
+            /** Name */
+            name: string;
+            /** Picks */
+            picks?: components["schemas"]["PickIO"][];
+            /** Preset */
+            preset?: string | null;
+            rule: components["schemas"]["DateRuleIO"];
+            /** Tags */
+            tags?: components["schemas"]["TagIO"][];
+        };
+        /**
          * SeasonOut
-         * @description A season a row can follow.
+         * @description A season a row can follow. A built-in's sources live in code and are not listed.
          */
         SeasonOut: {
-            /** Day */
-            day: number;
+            /** After Days */
+            after_days: number | null;
+            /** Builtin */
+            builtin: boolean;
+            /** Collections */
+            collections?: components["schemas"]["CollectionIO"][];
             /** Description */
             description: string;
             /** Emoji */
             emoji: string;
-            /** Month */
-            month: number;
+            /** Excluded Genres */
+            excluded_genres?: number[];
+            /** Genre */
+            genre?: number | null;
+            /** Lead Days */
+            lead_days: number | null;
             /** Name */
             name: string;
+            /** Next Dates */
+            next_dates: string[];
+            /** Picks */
+            picks?: components["schemas"]["PickIO"][];
+            /** Preset */
+            preset: string | null;
+            rule: components["schemas"]["DateRuleIO"];
+            /** Rule Label */
+            rule_label: string;
             /** Slug */
             slug: string;
+            /** Tags */
+            tags?: components["schemas"]["TagIO"][];
+            /** Used By */
+            used_by: components["schemas"]["UsedByOut"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SeasonPreviewIn
+         * @description A draft season to count. Undeclared fields are let through, not refused: the editor posts its whole
+         *     draft, and a preview stores nothing that a misspelt field could silently fail to set.
+         */
+        SeasonPreviewIn: {
+            /** Collections */
+            collections?: components["schemas"]["CollectionIO"][];
+            /** Excluded Genres */
+            excluded_genres?: number[];
+            /** Genre */
+            genre?: number | null;
+            /** Picks */
+            picks?: components["schemas"]["PickIO"][];
+            rule: components["schemas"]["DateRuleIO"];
+            /** Tags */
+            tags?: components["schemas"]["TagIO"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SeasonPreviewOut
+         * @description What the editor's summary shows. Every count is of titles in the libraries.
+         */
+        SeasonPreviewOut: {
+            /** From Collections */
+            from_collections: number;
+            /** From Genre */
+            from_genre: number;
+            /** From Picks */
+            from_picks: number;
+            /** From Tags */
+            from_tags: number;
+            /** Next Date */
+            next_date: string | null;
+            /** Per Collection */
+            per_collection: components["schemas"]["CollectionCountOut"][];
+            /** Per Tag */
+            per_tag: {
+                [key: string]: number;
+            };
+            /** Rule Error */
+            rule_error: string | null;
+            /** Sample */
+            sample: string[];
+            /** Total */
+            total: number;
         } & {
             [key: string]: unknown;
         };
@@ -5612,6 +6007,18 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * TagIO
+         * @description A TMDB tag (keyword), with its name so the editor can show it without asking TMDB.
+         */
+        TagIO: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * TagMatchOut
          * @description How one requester tag on Radarr/Sonarr resolved — the preview under "Use my own tags".
          */
@@ -5631,6 +6038,17 @@ export interface components {
             titles: number;
             /** User Id */
             user_id: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** TagOut */
+        TagOut: {
+            /** Id */
+            id: number;
+            /** Movies */
+            movies: number;
+            /** Name */
+            name: string;
         } & {
             [key: string]: unknown;
         };
@@ -5862,6 +6280,18 @@ export interface components {
             reason: string;
             /** User */
             user: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * UsedByOut
+         * @description A row that follows the season.
+         */
+        UsedByOut: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
         } & {
             [key: string]: unknown;
         };
@@ -6477,26 +6907,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_seasons_api_collections_seasons_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SeasonOut"][];
                 };
             };
         };
@@ -7685,6 +8095,269 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScheduleOut"];
+                };
+            };
+        };
+    };
+    list_seasons_api_seasons_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeasonOut"][];
+                };
+            };
+        };
+    };
+    create_season_api_seasons_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SeasonIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeasonOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    library_search_api_seasons_library_search_get: {
+        parameters: {
+            query?: {
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryTitleOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    plex_collections_api_seasons_plex_collections_get: {
+        parameters: {
+            query?: {
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlexCollectionOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_presets_api_seasons_presets_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresetOut"][];
+                };
+            };
+        };
+    };
+    preview_season_api_seasons_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SeasonPreviewIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeasonPreviewOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tmdb_tags_api_seasons_tmdb_tags_get: {
+        parameters: {
+            query?: {
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TagOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_season_api_seasons__slug__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SeasonIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeasonOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_season_api_seasons__slug__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
