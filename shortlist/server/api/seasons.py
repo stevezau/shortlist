@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 from collections.abc import Callable
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -25,6 +25,8 @@ from shortlist.engine import seasons as seasons_mod
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.models import MediaType
+from shortlist.engine.placeholders import uses_season
+from shortlist.engine.rows import row_shown_today
 from shortlist.engine.seasons import (
     BUILTIN_SEASONS,
     MAX_AFTER_DAYS,
@@ -40,6 +42,7 @@ from shortlist.server.api.collections import row_display_name
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import Collection, SeasonDef
+from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services import jobs
 from shortlist.server.services.library_index import library_index
 from shortlist.server.services.season_catalogue import load_catalogue, make_slug, season_from_row
@@ -254,13 +257,16 @@ async def create_season(body: SeasonIn, request: Request) -> dict:
     """Save a new season. Its slug is made from its name now and never changes (D14)."""
     if body.preset is not None and body.preset not in {preset.key for preset in PRESETS}:
         raise HTTPException(status_code=422, detail=f"There's no ready-made season “{body.preset}”.")
+    state = request.app.state
     today = context_builder.local_now().date()
-    with request.app.state.sessions() as session:
+    with state.sessions() as session:
         rule = _checked(session, body, editing=None)
         # Every stored slug, not the catalogue's: a stored season the catalogue skips still owns its slug.
         taken = set(session.scalars(select(SeasonDef.slug)))
         row = SeasonDef(slug=make_slug(body.name, taken), preset=body.preset, **_columns(body, rule))
         session.add(row)
+        session.flush()
+        _reject_row_title_clashes(session, state, season_from_row(row))
         session.commit()
         return _season_view(season_from_row(row), row, {}, today)
 
@@ -274,20 +280,34 @@ async def update_season(slug: str, body: SeasonIn, request: Request) -> dict:
     """
     if slug in BUILTIN_SEASONS:
         raise HTTPException(status_code=403, detail="Built-in seasons can't be edited.")
-    today = context_builder.local_now().date()
-    with request.app.state.sessions() as session:
+    state = request.app.state
+    now = context_builder.local_now()
+    with state.sessions() as session:
         row = _stored(session, slug)
         rule = _checked(session, body, editing=slug)
         before = _calendar(row)
+        titled_before = (row.name, row.emoji)
+        catalogue_before = load_catalogue(session)
         for column, value in _columns(body, rule).items():
             setattr(row, column, value)
         moved = _calendar(row) != before
+        if (row.name, row.emoji) != titled_before:
+            # Only a new name or emoji retitles a row: re-checking an unchanged one would refuse a date or
+            # source edit over a clash this edit did not make.
+            session.flush()
+            _reject_row_title_clashes(session, state, season_from_row(row))
         session.commit()
         used_by = _used_by(session)
-        followers = _enabled_rows(session, [entry["id"] for entry in used_by.get(slug, [])]) if moved else []
-        view = _season_view(season_from_row(row), row, used_by, today)
-    if followers:
-        _apply_visibility(request.app.state, followers, f"season '{slug}' moved")
+        catalogue_after = {**catalogue_before, slug: season_from_row(row)}
+        following = _enabled_followers(session, slug) if moved else []
+        changed = [
+            c.slug
+            for c in following
+            if _today(c, c.seasons, now, catalogue_before) != _today(c, c.seasons, now, catalogue_after)
+        ]
+        view = _season_view(season_from_row(row), row, used_by, now.date())
+    if changed:
+        _apply_visibility(state, changed, f"season '{slug}' moved")
     return view
 
 
@@ -299,8 +319,11 @@ async def delete_season(slug: str, request: Request) -> Response:
     """
     if slug in BUILTIN_SEASONS:
         raise HTTPException(status_code=403, detail="Built-in seasons can't be deleted.")
+    now = context_builder.local_now()
     with request.app.state.sessions() as session:
         row = _stored(session, slug)
+        catalogue_before = load_catalogue(session)
+        catalogue_after = {key: season for key, season in catalogue_before.items() if key != slug}
         following = [
             c
             for c in session.scalars(select(Collection).order_by(Collection.sort_order, Collection.id))
@@ -315,21 +338,28 @@ async def delete_season(slug: str, request: Request) -> Response:
                     "Give those rows another season, or delete them, first."
                 ),
             )
-        followers = [c.slug for c in following if c.enabled]
+        changed = [
+            c.slug
+            for c in following
+            if c.enabled
+            and _today(c, c.seasons, now, catalogue_before)
+            != _today(c, [s for s in c.seasons if s != slug], now, catalogue_after)
+        ]
         for collection in following:
             collection.seasons = [s for s in collection.seasons if s != slug]
         session.delete(row)
         session.commit()
-    if followers:
-        _apply_visibility(request.app.state, followers, f"season '{slug}' was deleted")
+    if changed:
+        _apply_visibility(request.app.state, changed, f"season '{slug}' was deleted")
     return Response(status_code=204)
 
 
 @router.post("/preview", response_model=SeasonPreviewOut)
 async def preview_season(body: SeasonPreviewIn, request: Request) -> dict:
-    """Count a draft season's films in the libraries, as a run would, without saving anything.
+    """Count a draft season's titles in one row's libraries, as a run would, without saving anything.
 
-    An invalid date rule still counts: the editor shows what is wrong with the date beside the films.
+    Only the row's own media type and libraries count: that is all the row draws from (#137 I-1). An invalid
+    date rule still counts: the editor shows what is wrong with the date beside the count.
     """
     state = request.app.state
     tmdb = state.run_service.build_tmdb_only()
@@ -516,10 +546,63 @@ def _used_by(session: Session) -> dict[str, list[dict]]:
     return used
 
 
-def _enabled_rows(session: Session, ids: list[int]) -> list[str]:
-    if not ids:
-        return []
-    return list(session.scalars(select(Collection.slug).where(Collection.id.in_(ids), Collection.enabled.is_(True))))
+def _enabled_followers(session: Session, slug: str) -> list[Collection]:
+    """The enabled rows that follow the season, in the Rows page's order."""
+    rows = session.scalars(
+        select(Collection).where(Collection.enabled.is_(True)).order_by(Collection.sort_order, Collection.id)
+    )
+    return [row for row in rows if slug in (row.seasons or [])]
+
+
+def _today(row: Collection, seasons: list[str], now: datetime, catalogue: seasons_mod.Catalogue) -> tuple:
+    """What a `rows.visibility` pass applies to a row today: whether it is shown, and which season it is built
+    for (a collection built for another is kept hidden). A season edit that changes neither needs no pass."""
+    shown = row_shown_today(
+        row.show_days, seasons, row.season_lead_days, row.season_after_days, now, catalogue=catalogue
+    )
+    season = seasons_mod.row_season_on(
+        list(seasons), row.season_lead_days, row.season_after_days, now.date(), catalogue=catalogue
+    )
+    return shown, season.built_for if season else None
+
+
+def _reject_row_title_clashes(session: Session, state: State, season: Season) -> None:
+    """422 when ``season`` would title a row what another row is already titled, in a library both can build in.
+
+    A row named ``{season}`` is titled after whichever season it shows, so a new or renamed season can give
+    it the title of a plain row beside it, and delivery would then write both rows into one Plex collection
+    (#137 I-2). The row editor refuses such a name (`collections._reject_duplicate_name`); this is the same
+    check, `collection_reconcile.rows_titled_from`, on each seasonal row's title in this season. Every row
+    named after its season, not only those that tick this one: any of them may tick it later. The season is
+    already in ``session``, so the rows checked against see its name too.
+    """
+    clashes: list[tuple[str, str, str]] = []
+    for row in session.scalars(select(Collection).order_by(Collection.sort_order, Collection.id)):
+        template = reconcile.row_template(session, row.slug, state.secrets)
+        if not uses_season(template):
+            continue
+        title = reconcile.season_title(template, season)
+        for other in reconcile.rows_titled_from(
+            session,
+            title,
+            secrets=state.secrets,
+            exclude_slug=row.slug,
+            build=row.build or "",
+            media=row.media or "both",
+            library_keys=row.library_keys or [],
+        ):
+            clashes.append((row_display_name(session, row), title, row_display_name(session, other)))
+    if not clashes:
+        return
+    which = "; and ".join(f"“{row}” “{title}”, the title “{other}” already has" for row, title, other in clashes)
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            f"This season would title {which}, in a library they can share. Two rows with one title in one "
+            "library become a single collection on Plex: choose another name or emoji for the season, or "
+            "rename one of those rows."
+        ),
+    )
 
 
 def _season_view(season: Season, stored: SeasonDef | None, used_by: dict[str, list[dict]], today: date) -> dict:

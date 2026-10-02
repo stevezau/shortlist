@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import date
+from datetime import date, datetime
 from types import SimpleNamespace
 from typing import ClassVar
 
@@ -78,6 +78,13 @@ def _default_row_follows(client: TestClient, slug: str) -> None:
 
 def _rows(client: TestClient) -> dict[int, list[str]]:
     return {c["id"]: c["seasons"] for c in client.get("/api/collections").json()}
+
+
+def _on(monkeypatch, day: datetime) -> None:
+    """The server's clock reads ``day``: whether an edit changes what a row shows TODAY depends on the date."""
+    import shortlist.server.services.context_builder as context_builder
+
+    monkeypatch.setattr(context_builder, "local_now", lambda: day)
 
 
 class _Tmdb:
@@ -271,7 +278,9 @@ class TestUpdate:
         self, client: TestClient, monkeypatch
     ):
         """Which days a row is shown on has just changed, as it would had the row's own seasons changed. Each pass
-        is a whole privacy sync, so the saved season is answered first and the passes run behind it."""
+        is a whole privacy sync, so the saved season is answered first and the passes run behind it. On 15 Nov
+        a 14-day lead shows Thanksgiving (26 Nov) and a 3-day one does not."""
+        _on(monkeypatch, datetime(2026, 11, 15, 12, 0))
         _create(client)
         row = _row(client, "Turkey", ["thanksgiving"])
         queued, drains = _jobs(monkeypatch)
@@ -283,7 +292,33 @@ class TestUpdate:
         assert queued == [("rows.visibility", {"row": row["slug"]})]
         assert drains == ["season 'thanksgiving' moved"]
 
+    def test_a_move_that_changes_nothing_today_queues_no_pass(self, client: TestClient, monkeypatch):
+        """In October Thanksgiving is hidden with either lead, so the pass would be a whole privacy sync for
+        nothing (#137 ARCH-LOW-2)."""
+        _on(monkeypatch, datetime(2026, 10, 2, 12, 0))
+        _create(client)
+        _row(client, "Turkey", ["thanksgiving"])
+        queued, drains = _jobs(monkeypatch)
+
+        assert client.put("/api/seasons/thanksgiving", json=_body(lead_days=3)).status_code == 200
+
+        assert (queued, drains) == ([], [])
+
+    def test_a_move_that_hands_the_row_to_another_season_queues_a_pass(self, client: TestClient, monkeypatch):
+        """Shown before and after, but for another season: the collection built for the first is hidden now
+        (#137 C-1), so the pass is owed even though the row is on Home either way."""
+        _on(monkeypatch, datetime(2026, 12, 10, 12, 0))
+        _create(client, rule={"kind": "fixed", "month": 12, "day": 31}, lead_days=7)
+        row = _row(client, "Holidays", ["christmas", "thanksgiving"])
+        queued, _drains = _jobs(monkeypatch)
+
+        client.put("/api/seasons/thanksgiving", json=_body(rule={"kind": "fixed", "month": 12, "day": 12}, lead_days=7))
+
+        assert queued == [("rows.visibility", {"row": row["slug"]})]
+
     def test_a_disabled_row_is_not_given_a_pass(self, client: TestClient, monkeypatch):
+        # The day after Thanksgiving: two days after brings it back.
+        _on(monkeypatch, datetime(2026, 11, 27, 12, 0))
         _create(client)
         on = _row(client, "On", ["thanksgiving"])
         _row(client, "Off", ["thanksgiving"], enabled=False)
@@ -310,6 +345,8 @@ class TestUpdate:
 
 class TestDelete:
     def test_a_season_that_is_a_rows_only_season_is_not_deleted(self, client: TestClient, monkeypatch):
+        # 20 Nov: both rows show Thanksgiving today, and neither shows anything once it is gone.
+        _on(monkeypatch, datetime(2026, 11, 20, 12, 0))
         _create(client)
         a = _row(client, "Row A", ["halloween", "thanksgiving"])
         b = _row(client, "Row B", ["thanksgiving"])
@@ -339,6 +376,17 @@ class TestDelete:
         assert {kind for kind, _payload in queued} == {"rows.visibility"}
         assert drains == ["season 'thanksgiving' was deleted"], "queued behind the response, never waited on"
 
+    def test_a_row_whose_day_is_unchanged_by_the_delete_gets_no_pass(self, client: TestClient, monkeypatch):
+        """On 2 October the row shows Halloween with or without Thanksgiving (#137 ARCH-LOW-2)."""
+        _on(monkeypatch, datetime(2026, 10, 2, 12, 0))
+        _create(client)
+        _row(client, "Row A", ["halloween", "thanksgiving"])
+        queued, drains = _jobs(monkeypatch)
+
+        assert client.delete("/api/seasons/thanksgiving").status_code == 204
+
+        assert (queued, drains) == ([], [])
+
     def test_the_default_row_is_named_as_the_rows_page_names_it(self, client: TestClient):
         """Its title is the global `row.name_template`; its own `name` column is stale seed data."""
         from shortlist.server.db.models import DEFAULT_SLUG
@@ -367,6 +415,102 @@ class TestDelete:
         _row(client, "Row C", ["thanksgiving"])
         detail = client.delete("/api/seasons/thanksgiving").json()["detail"]
         assert detail.startswith("“Thanksgiving” is the only season in “Row B” and “Row C”.")
+
+
+class TestASeasonCannotGiveTwoRowsOneTitle:
+    """#137 I-2. A row named after its season wears the season's name, so a season can give it the title of a plain
+    row beside it, and delivery would write both rows into one Plex collection. The row editor refuses that name;
+    a season's name and a newly ticked season are checked the same way."""
+
+    def _seasonal_row(self, client: TestClient, seasons: list[str] | None = None, **fields) -> dict:
+        body = {"name": "{season} picks", "seasons": seasons or ["christmas"], **fields}
+        r = client.post("/api/collections", json=body)
+        assert r.status_code == 201, r.text
+        return r.json()
+
+    def _plain_row(self, client: TestClient, name: str, **fields) -> dict:
+        r = client.post("/api/collections", json={"name": name, **fields})
+        assert r.status_code == 201, r.text
+        return r.json()
+
+    def test_a_new_season_that_would_title_a_row_like_another_is_refused(self, client: TestClient):
+        self._seasonal_row(client)
+        self._plain_row(client, "Diwali picks")
+
+        r = client.post("/api/seasons", json=_body(name="Diwali", emoji="🪔"))
+
+        assert r.status_code == 422
+        assert r.json()["detail"].startswith(
+            "This season would title “{season} picks” “Diwali picks”, the title “Diwali picks” already has"
+        )
+        assert "diwali" not in [s["slug"] for s in client.get("/api/seasons").json()], "nothing was saved"
+
+    def test_every_row_named_after_its_season_is_checked_not_only_its_followers(self, client: TestClient):
+        """Any of them may tick the season later; the row editor would then be the first to find the clash."""
+        self._seasonal_row(client, ["halloween"])
+        self._plain_row(client, "Thanksgiving picks")
+
+        assert client.post("/api/seasons", json=_body()).status_code == 422
+
+    def test_renaming_a_season_is_checked_too(self, client: TestClient):
+        _create(client)
+        self._seasonal_row(client, ["thanksgiving"])
+        self._plain_row(client, "Turkey Day picks")
+
+        r = client.put("/api/seasons/thanksgiving", json=_body(name="Turkey Day"))
+
+        assert r.status_code == 422 and "“Turkey Day picks”" in r.json()["detail"]
+        assert [s["name"] for s in client.get("/api/seasons").json() if s["slug"] == "thanksgiving"] == ["Thanksgiving"]
+
+    def test_rows_that_never_build_in_one_library_may_share_a_title(self, client: TestClient):
+        self._seasonal_row(client, media="movie")
+        self._plain_row(client, "Diwali picks", media="show")
+
+        assert client.post("/api/seasons", json=_body(name="Diwali", emoji="🪔")).status_code == 201
+
+    def test_ticking_a_season_that_titles_the_row_like_another_is_refused(self, client: TestClient):
+        """The PATCH checked a row's title only when its name, libraries or build moved, so ticking a season was
+        the one door left open. The clash is set up as an older database can hold it: the plain row renamed
+        after the season existed."""
+        from shortlist.server.db.models import Collection
+
+        _create(client)
+        seasonal = self._seasonal_row(client, ["christmas"])
+        plain = self._plain_row(client, "Turkey picks")
+        with client.app.state.sessions() as session:
+            row = session.get(Collection, plain["id"])
+            row.name = "Thanksgiving picks"
+            session.commit()
+
+        r = client.patch(
+            f"/api/collections/{seasonal['id']}",
+            json={"name": "{season} picks", "seasons": ["christmas", "thanksgiving"]},
+        )
+
+        assert r.status_code == 422
+        assert r.json()["detail"].startswith(
+            "'Thanksgiving picks' is already the title of the row 'Thanksgiving picks'"
+        )
+        assert _rows(client)[seasonal["id"]] == ["christmas"]
+
+    def test_ticking_a_season_with_no_clash_is_allowed_beside_one_that_has(self, client: TestClient):
+        """Only the seasons ticked are rendered, so an existing clash in a season the row does not tick does not
+        block an unrelated edit."""
+        from shortlist.server.db.models import Collection
+
+        _create(client)
+        seasonal = self._seasonal_row(client, ["christmas"])
+        plain = self._plain_row(client, "Turkey picks")
+        with client.app.state.sessions() as session:
+            session.get(Collection, plain["id"]).name = "Thanksgiving picks"
+            session.commit()
+
+        r = client.patch(
+            f"/api/collections/{seasonal['id']}",
+            json={"name": "{season} picks", "seasons": ["valentines", "christmas"]},
+        )
+
+        assert r.status_code == 200, r.text
 
 
 class TestRowsFollowCustomSeasons:

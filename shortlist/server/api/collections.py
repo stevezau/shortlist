@@ -36,7 +36,7 @@ from shortlist.engine.models import (
     row_monitor_or_inherit,
     slugify,
 )
-from shortlist.engine.placeholders import refusal
+from shortlist.engine.placeholders import refusal, uses_season
 from shortlist.engine.rows import row_shown_today
 from shortlist.server.api.row_changes import (
     POSTER_RESET,
@@ -1555,6 +1555,23 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                     exclude_slug=collection.slug,
                     build=merged_build,
                     fallback_name=merged_fallback,
+                    media=merged_media,
+                    library_keys=merged_keys,
+                )
+        # A season newly ticked gives a `{season}` row a title it never wore: "{season} picks" becomes
+        # "Thanksgiving picks", the title a plain row beside it may already have (#137 I-2). The checks above run
+        # only when the name, libraries or build move, so ticking a season was the one door left open. Only
+        # the seasons ADDED are checked, each as the row would be titled in it: unticking can add no clash.
+        if "seasons" in sent and not is_default:
+            ticked = [slug for slug in body.seasons if slug not in (collection.seasons or [])]
+            seasonal_template = _merged_template(collection, body, sent)
+            for slug in ticked if uses_season(seasonal_template) else []:
+                _reject_duplicate_name(
+                    session,
+                    state.secrets,
+                    reconcile.season_title(seasonal_template, catalogue[slug]),
+                    exclude_slug=collection.slug,
+                    build=merged_build,
                     media=merged_media,
                     library_keys=merged_keys,
                 )

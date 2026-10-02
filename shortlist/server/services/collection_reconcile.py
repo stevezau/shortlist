@@ -53,7 +53,7 @@ from shortlist.engine.placeholders import (
     season_renderings,
     uses_season,
 )
-from shortlist.engine.seasons import Catalogue
+from shortlist.engine.seasons import Catalogue, Season
 from shortlist.server.db.models import DEFAULT_SLUG, Collection, Delivery, Run, User
 from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.services import jobs
@@ -221,6 +221,12 @@ def title_keys(template: str, *, catalogue: Catalogue) -> set[str]:
     few names too many is recoverable, one collection for two rows is not."""
     keys = {title_key(template)} | {title_key(rendering) for rendering in season_renderings(template or "", catalogue)}
     return {key for key in keys if key}
+
+
+def season_title(template: str, season: Season) -> str:
+    """``template`` as a row following ``season`` is titled in it: the one rendering `title_keys` checks per
+    season, for a check about one season — a row newly ticking it, or the season being named (#137 I-2)."""
+    return season_renderings(template or "", {season.slug: season})[0]
 
 
 def _title_keys(session, collection: Collection, secrets, *, catalogue: Catalogue) -> set[str]:
