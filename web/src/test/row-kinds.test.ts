@@ -42,6 +42,7 @@ const CTX: RowKindContext = {
   defaultRowName: "✨ {library_name} Picked for You",
   globalSources: ["tmdb_similar", "tmdb_discover"],
   seasonCatalogue: ["valentines", "halloween", "christmas"],
+  builtinSeasons: ["valentines", "halloween", "christmas"],
 };
 const DEFAULT_CTX: RowKindContext = { ...CTX, isDefault: true };
 
@@ -578,7 +579,7 @@ describe("applyRowKind", () => {
   it("→ Because you watched on a row that already is one changes nothing but the seasons", () => {
     const blend = row({ ...named(BYW_NAME), max_seeds: 3, seed_window: 1 });
     expect(applyRowKind(seasonal(blend), { kind: "byw", fill: "byw" }, CTX)).toEqual(blend);
-    expect(applyRowKind(blend, { kind: "seasonal", fill: "byw" }, CTX)).toEqual({ ...blend, seasons: CTX.seasonCatalogue });
+    expect(applyRowKind(blend, { kind: "seasonal", fill: "byw" }, CTX)).toEqual({ ...blend, seasons: CTX.builtinSeasons });
     expect(applyRowKind(blend, { kind: "byw", fill: "byw" }, CTX)).toEqual(blend);
   });
 
@@ -616,7 +617,7 @@ describe("applyRowKind", () => {
 
   it("→ Seasonal with a new fill applies both", () => {
     const out = applyRowKind(FIXTURES.picked, { kind: "seasonal", fill: "popular" }, CTX);
-    expect(out).toEqual({ ...FIXTURES.picked, seasons: CTX.seasonCatalogue, build: "shared", request_tag: "" });
+    expect(out).toEqual({ ...FIXTURES.picked, seasons: CTX.builtinSeasons, build: "shared", request_tag: "" });
   });
 
   it("switching only a seasonal row's fill leaves its seasons alone", () => {
@@ -749,6 +750,15 @@ describe("switching from the kind baseline", () => {
     expect(kindSwitchBase(drifted, kindBaseline(input), PICKED, CTX)).toEqual({ ...input, size: 12 });
   });
 
+  it("starts a row turned Seasonal on the built-in seasons only, never the owner's own (#137)", () => {
+    const ctx = { ...CTX, seasonCatalogue: ["valentines", "halloween", "thanksgiving", "christmas"] };
+    expect(applyRowKind(row(), { kind: "seasonal", fill: "picked" }, ctx).seasons).toEqual([
+      "valentines",
+      "halloween",
+      "christmas",
+    ]);
+  });
+
   it("keeps the seasons on screen while the row stays seasonal", () => {
     const loaded = row();
     const narrowed = { ...applyRowKind(loaded, { kind: "seasonal", fill: "picked" }, CTX), seasons: ["halloween"] };
@@ -761,7 +771,7 @@ describe("switching from the kind baseline", () => {
     const onScreen = { ...applyRowKind(loaded, { kind: "byw", fill: "byw" }, CTX), seed_window: 5 };
     const choice = { kind: "seasonal", fill: "byw" } as const;
     const out = applyRowKind(kindSwitchBase(onScreen, kindBaseline(loaded), choice, CTX), choice, CTX);
-    expect(out).toEqual({ ...onScreen, seasons: CTX.seasonCatalogue });
+    expect(out).toEqual({ ...onScreen, seasons: CTX.builtinSeasons });
   });
 
   it("enters Seasonal with the loaded seasons when the row was loaded seasonal", () => {

@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SeasonEditorDialog, type SeasonEditorTarget } from "@/components/rows/seasons/season-editor-dialog";
@@ -34,25 +35,32 @@ const MISSING_COLLECTION =
 
 function renderEditor(
   target: SeasonEditorTarget,
-  { rowSize = 15, perPerson = true, tickedHere = ["halloween"] as string[] } = {},
+  {
+    rowSize = 15,
+    perPerson = true,
+    tickedHere = ["halloween"] as string[],
+    savedRow = null as { id: number; seasons: string[] } | null,
+  } = {},
 ) {
   const onClose = vi.fn();
   const onSaved = vi.fn();
   const onDeleted = vi.fn();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
-    <QueryClientProvider client={client}>
-      <SeasonEditorDialog
-        target={target}
-        rowSize={rowSize}
-        perPerson={perPerson}
-        rowId={null}
-        tickedHere={tickedHere}
-        onClose={onClose}
-        onSaved={onSaved}
-        onDeleted={onDeleted}
-      />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <SeasonEditorDialog
+          target={target}
+          rowSize={rowSize}
+          perPerson={perPerson}
+          savedRow={savedRow}
+          tickedHere={tickedHere}
+          onClose={onClose}
+          onSaved={onSaved}
+          onDeleted={onDeleted}
+        />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
   return { onClose, onSaved, onDeleted };
 }
@@ -210,14 +218,77 @@ describe("SeasonEditorDialog", () => {
     ).toBeInTheDocument();
   });
 
-  it("offers Retry when the count fails, with the server's reason", async () => {
-    mocks.previewSeason.mockRejectedValueOnce(new ApiError(503, "Add a TMDB API key in Settings first."));
+  it("offers Retry when the count fails in a way that may pass next time, with the server's reason", async () => {
+    mocks.previewSeason.mockRejectedValueOnce(new ApiError(502, "HTTPError: TMDB timed out"));
     renderEditor({ kind: "preset", preset: THANKSGIVING_US });
-    expect(await screen.findByText("Add a TMDB API key in Settings first.")).toBeInTheDocument();
+    expect(await screen.findByText("HTTPError: TMDB timed out")).toBeInTheDocument();
 
     mocks.previewSeason.mockResolvedValue(preview({ total: 150, from_tags: 150 }));
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("Enough for this row")).toBeInTheDocument();
+  });
+
+  it("sends the owner to Settings, not Retry, when there is no TMDB key", async () => {
+    mocks.previewSeason.mockRejectedValue(new ApiError(503, "Add a TMDB API key in Settings first."));
+    renderEditor({ kind: "preset", preset: THANKSGIVING_US });
+    expect(await screen.findByText("Add a TMDB API key in Settings first.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Settings in a new tab" })).toHaveAttribute("href", "/settings#connections");
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("opens with the cursor in Season name", async () => {
+    renderEditor({ kind: "create" });
+    await waitFor(() => expect(screen.getByLabelText("Season name")).toHaveFocus());
+  });
+
+  it("puts focus back in the search box after an Add, for a film and for a tag", async () => {
+    mocks.searchLibrary.mockResolvedValue([{ tmdb_id: 11, media_type: "movie", title: "Free Birds", year: 2013 }]);
+    mocks.getTmdbTags.mockResolvedValue([{ id: 4543, name: "thanksgiving", movies: 133 }]);
+    renderEditor({ kind: "create" });
+
+    const films = screen.getByLabelText("Search your libraries");
+    await userEvent.type(films, "Free");
+    await userEvent.click(await screen.findByRole("button", { name: "Add Free Birds (2013)" }));
+    expect(films).toHaveFocus();
+
+    const tags = screen.getByLabelText("Search TMDB tags");
+    await userEvent.type(tags, "thanks");
+    await userEvent.click(await screen.findByRole("button", { name: "Add tag thanksgiving" }));
+    expect(tags).toHaveFocus();
+    // The next Tab goes on through the results, not back to the top of the dialog.
+    await userEvent.tab();
+    expect(screen.getByLabelText("Emoji")).not.toHaveFocus();
+  });
+
+  it("says beside the emoji box when it is empty", async () => {
+    renderEditor({ kind: "create" });
+    const emoji = screen.getByLabelText("Emoji");
+    await userEvent.clear(emoji);
+    expect(emoji).toHaveAttribute("aria-invalid", "true");
+    expect(emoji).toHaveAccessibleDescription("Add an emoji.");
+  });
+
+  it("won't delete the only season ticked in this row", async () => {
+    renderEditor({ kind: "edit", season: THANKSGIVING }, { tickedHere: ["thanksgiving"] });
+    await userEvent.click(screen.getByRole("button", { name: "Delete season" }));
+    const confirm = await screen.findByRole("dialog", { name: "Delete “Thanksgiving”?" });
+    expect(within(confirm).getByText(/only season ticked in this row/)).toBeInTheDocument();
+    expect(within(confirm).getByRole("button", { name: "Delete season" })).toBeDisabled();
+  });
+
+  it("asks for the row to be saved first when, as saved, it follows only this season", async () => {
+    // The form already ticks Christmas as well, but the server judges the SAVED row: it would refuse.
+    renderEditor(
+      { kind: "edit", season: { ...THANKSGIVING, used_by: [{ id: 3, name: "Turkey" }] } },
+      { tickedHere: ["thanksgiving", "christmas"], savedRow: { id: 3, seasons: ["thanksgiving"] } },
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Delete season" }));
+    const confirm = await screen.findByRole("dialog", { name: "Remove “Thanksgiving” from Turkey and delete it?" });
+    expect(within(confirm).getByText(/Save this row first, then delete the season\./)).toBeInTheDocument();
+    const remove = within(confirm).getByRole("button", { name: "Delete season" });
+    expect(remove).toBeDisabled();
+    await userEvent.click(remove);
+    expect(mocks.deleteSeason).not.toHaveBeenCalled();
   });
 
   it("refuses a name another season already has, before saving", async () => {

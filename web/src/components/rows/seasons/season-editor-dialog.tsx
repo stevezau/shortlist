@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -62,9 +62,10 @@ export function SeasonEditorDialog({
   target,
   rowSize,
   perPerson,
-  rowId,
+  savedRow,
   tickedHere,
   onClose,
+  onCloseAutoFocus,
   onSaved,
   onDeleted,
 }: {
@@ -72,11 +73,14 @@ export function SeasonEditorDialog({
   /** The row the editor was opened from: its size and mode decide the verdict. */
   rowSize: number;
   perPerson: boolean;
-  /** That row's id, left out of "Also used by"; null for a row not saved yet. */
-  rowId: number | null;
+  /** That row as saved: left out of "Also used by", and what the server judges a delete by. Null for a
+   *  row not saved yet. */
+  savedRow: { id: number; seasons: readonly string[] } | null;
   /** The seasons ticked in that row's form right now. */
   tickedHere: readonly string[];
   onClose: () => void;
+  /** Where focus goes once the dialog has gone (Radix's `onCloseAutoFocus`). */
+  onCloseAutoFocus?: (event: Event) => void;
   onSaved: (slug: string) => void;
   onDeleted: (slug: string) => void;
 }) {
@@ -87,6 +91,7 @@ export function SeasonEditorDialog({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const update = (patch: Partial<SeasonDraft>) => setDraft((prev) => ({ ...prev, ...patch }));
+  const nameInput = useRef<HTMLInputElement>(null);
 
   const catalogue = useSeasons();
   const create = useCreateSeason();
@@ -108,6 +113,7 @@ export function SeasonEditorDialog({
   const ruleError = (countedRule?.rule_error ?? null) || ruleProblem(draft.rule);
 
   const clash = nameClash(draft.name, catalogue.data ?? [], editing?.slug ?? null);
+  const emojiError = emojiProblem(draft.emoji);
   const problems = draftProblems(draft, { clash, ruleError });
   const nameError = clash
     ? `There's already a season called “${clash}”.${
@@ -127,7 +133,19 @@ export function SeasonEditorDialog({
         ? `Add ${target.preset.label}`
         : `Edit ${target.season.name}`;
   const alreadyTicked = editing !== null && tickedHere.includes(editing.slug);
-  const alsoUsedBy = (editing?.used_by ?? []).filter((row) => row.id !== rowId).map((row) => row.name);
+  const alsoUsedBy = (editing?.used_by ?? []).filter((row) => row.id !== savedRow?.id).map((row) => row.name);
+  // Why Delete can't go ahead from here, said before anything is sent. The server judges by SAVED rows:
+  // one whose only saved season this is gets a 409, however many the form here ticks.
+  const deleteBlocked = !editing
+    ? null
+    : tickedHere.length === 1 && tickedHere[0] === editing.slug
+      ? "It’s the only season ticked in this row. Tick another season for this row first, then delete it."
+      : savedRow !== null &&
+          savedRow.seasons.length > 0 &&
+          savedRow.seasons.every((slug) => slug === editing.slug) &&
+          tickedHere.some((slug) => slug !== editing.slug)
+        ? "Save this row first, then delete the season. As saved, it follows only this season."
+        : null;
 
   const nextDate = countedRule?.next_date ?? null;
   const nextLine = ruleError
@@ -153,6 +171,7 @@ export function SeasonEditorDialog({
   const ids = {
     nameHeading: useId(),
     emoji: useId(),
+    emojiError: useId(),
     name: useId(),
     nameHint: useId(),
     nameError: useId(),
@@ -166,6 +185,12 @@ export function SeasonEditorDialog({
         className="max-h-[90vh] w-[calc(100%-2rem)] max-w-[1100px] gap-6 overflow-y-auto p-4 pb-0 sm:p-6 sm:pb-0"
         // A season takes a while to put together; a stray click beside the dialog mustn't lose it.
         onInteractOutside={(event) => event.preventDefault()}
+        // The name is what every season needs first; Emoji already has one.
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          nameInput.current?.focus();
+        }}
+        onCloseAutoFocus={onCloseAutoFocus}
       >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
@@ -185,13 +210,15 @@ export function SeasonEditorDialog({
                     id={ids.emoji}
                     value={draft.emoji}
                     onChange={(event) => update({ emoji: event.target.value })}
-                    aria-invalid={emojiProblem(draft.emoji) !== null}
+                    aria-invalid={emojiError !== null}
+                    aria-describedby={emojiError ? ids.emojiError : undefined}
                     className="text-center text-lg"
                   />
                 </div>
                 <div className="min-w-0 flex-1 space-y-1">
                   <Label htmlFor={ids.name}>Season name</Label>
                   <Input
+                    ref={nameInput}
                     id={ids.name}
                     value={draft.name}
                     maxLength={40}
@@ -205,6 +232,11 @@ export function SeasonEditorDialog({
                   />
                 </div>
               </div>
+              {emojiError && (
+                <p id={ids.emojiError} role="alert" className="text-sm text-destructive-text">
+                  {emojiError}
+                </p>
+              )}
               {nameError && (
                 <p id={ids.nameError} role="alert" className="text-sm text-destructive-text">
                   {nameError}
@@ -310,7 +342,7 @@ export function SeasonEditorDialog({
         {editing && confirmingDelete && (
           <DeleteSeasonDialog
             season={editing}
-            onlySeasonHere={tickedHere.length === 1 && tickedHere[0] === editing.slug}
+            blocked={deleteBlocked}
             onCancel={() => setConfirmingDelete(false)}
             onDeleted={() => onDeleted(editing.slug)}
           />
@@ -326,13 +358,13 @@ export function SeasonEditorDialog({
  */
 function DeleteSeasonDialog({
   season,
-  onlySeasonHere,
+  blocked,
   onCancel,
   onDeleted,
 }: {
   season: Season;
-  /** It is the only season ticked in the row the editor was opened from, saved or not. */
-  onlySeasonHere: boolean;
+  /** Why it can't be deleted from here (nothing is sent); null when it can. */
+  blocked: string | null;
   onCancel: () => void;
   onDeleted: () => void;
 }) {
@@ -357,11 +389,7 @@ function DeleteSeasonDialog({
               : "It's deleted for the whole server, and can't be brought back."}
           </DialogDescription>
         </DialogHeader>
-        {onlySeasonHere && (
-          <p className="rounded-md bg-muted/60 p-3 text-sm">
-            It’s the only season ticked in this row. Tick another season for this row first, then delete it.
-          </p>
-        )}
+        {blocked && <p className="rounded-md bg-muted/60 p-3 text-sm">{blocked}</p>}
         {refusal && (
           <p role="alert" className="rounded-md border border-destructive/40 p-3 text-sm">
             {refusal}
@@ -374,7 +402,7 @@ function DeleteSeasonDialog({
           <Button
             type="button"
             variant="destructive"
-            disabled={onlySeasonHere}
+            disabled={blocked !== null}
             loading={remove.isPending}
             onClick={() => remove.mutate(season.slug, { onSuccess: onDeleted })}
           >

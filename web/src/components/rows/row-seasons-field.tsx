@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { SeasonEditorDialog, type SeasonEditorTarget } from "@/components/rows/seasons/season-editor-dialog";
 import { SeasonListItem } from "@/components/rows/seasons/season-list-item";
@@ -44,7 +44,7 @@ export function RowSeasonsField({
   status,
   rowSize,
   perPerson,
-  rowId,
+  savedRow,
 }: {
   value: SeasonsValue;
   onChange: (patch: Partial<SeasonsValue>) => void;
@@ -57,25 +57,61 @@ export function RowSeasonsField({
   /** The row's size and whether each person gets their own: what a season's film count is judged by. */
   rowSize: number;
   perPerson: boolean;
-  /** The saved row's id, so the editor names only OTHER rows that use a season; null for a new row. */
-  rowId: number | null;
+  /** The row as saved: its id, so the editor names only OTHER rows that use a season, and its seasons,
+   *  so a delete the server would refuse for this row is explained first. Null for a new row. */
+  savedRow: { id: number; seasons: readonly string[] } | null;
 }) {
   const catalogue = useSeasons();
   const queryClient = useQueryClient();
   const [editor, setEditor] = useState<SeasonEditorTarget | null>(null);
   const [keptLast, setKeptLast] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
+  const root = useRef<HTMLDivElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  // What had focus when the editor opened, and where focus goes when it closes: a saved season's
+  // checkbox (slug), the Seasons heading after a delete (""), or back to the opener (null).
+  const opener = useRef<HTMLElement | null>(null);
+  const focusAfterClose = useRef<string | null>(null);
 
   const seasons = catalogue.data ?? [];
   const ticked = seasons.filter((season) => value.seasons.includes(season.slug));
   const builtinTicked = catalogue.isSuccess ? ticked.some((season) => season.builtin) : catalogue.isError;
+  // Seasons the form ticks that the server no longer has — deleted in another tab, say. They have no
+  // checkbox, and saving the row with them would be refused.
+  const gone = catalogue.isSuccess ? value.seasons.filter((slug) => !seasons.some((s) => s.slug === slug)) : [];
+  const allGone = gone.length > 0 && gone.length === value.seasons.length;
 
-  /** The row's seasons in calendar order: the server's catalogue order. */
-  const setSeasons = (chosen: string[], catalogueNow: readonly Season[] = seasons) => {
-    const known = catalogueNow.map((season) => season.slug);
-    onChange({
-      seasons: [...known.filter((slug) => chosen.includes(slug)), ...chosen.filter((slug) => !known.includes(slug))],
-    });
+  useEffect(() => {
+    if (!catalogue.isSuccess) return;
+    const kept = value.seasons.filter((slug) => catalogue.data.some((s) => s.slug === slug));
+    // Never down to none: that would make it a row that follows nothing. `allGone` says what to do.
+    if (kept.length > 0 && kept.length < value.seasons.length) onChange({ seasons: kept });
+  }, [catalogue.isSuccess, catalogue.data, value.seasons, onChange]);
+
+  /** The row's seasons in calendar order — the server's catalogue order — and only ones it has. */
+  const ordered = (chosen: readonly string[], catalogueNow: readonly Season[] = seasons) =>
+    catalogueNow.map((season) => season.slug).filter((slug) => chosen.includes(slug));
+  const setSeasons = (chosen: string[]) => onChange({ seasons: ordered(chosen) });
+
+  const openEditor = (target: SeasonEditorTarget) => {
+    opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    focusAfterClose.current = null;
+    setEditor(target);
+  };
+
+  /** Radix gives focus back to a trigger, and this dialog has none; and after a save from a ready-made
+   *  season, or a delete, the button that opened it is gone. */
+  const placeFocusAfterClose = (event: Event) => {
+    event.preventDefault();
+    const slug = focusAfterClose.current;
+    focusAfterClose.current = null;
+    const box = slug
+      ? [...(root.current?.querySelectorAll<HTMLElement>("[data-season]") ?? [])]
+          .find((item) => item.dataset.season === slug)
+          ?.querySelector<HTMLInputElement>("input[type=checkbox]")
+      : null;
+    const back = slug === null && opener.current?.isConnected ? opener.current : null;
+    (box ?? back ?? heading.current)?.focus();
   };
 
   const toggleSeason = (slug: string) => {
@@ -97,10 +133,12 @@ export function RowSeasonsField({
     if (value.seasons.includes(slug)) {
       setSaved(`Saved ${label}.`);
     } else {
-      setSeasons([...value.seasons, slug], catalogueNow);
+      const next = ordered([...value.seasons, slug], catalogueNow);
+      onChange({ seasons: next.includes(slug) ? next : [...next, slug] });
       setSaved(`Saved ${label} and ticked it here. Save this row to keep it ticked.`);
     }
     setKeptLast(false);
+    focusAfterClose.current = slug;
     setEditor(null);
   };
 
@@ -108,15 +146,22 @@ export function RowSeasonsField({
     // The server took it out of every saved row; the form here follows.
     if (value.seasons.includes(slug)) onChange({ seasons: value.seasons.filter((s) => s !== slug) });
     setSaved(null);
+    focusAfterClose.current = "";
     setEditor(null);
   };
 
   const statusLine = seasonStatusLine(status);
 
   return (
-    <div className="space-y-4">
+    <div ref={root} className="space-y-4">
       <div className="space-y-1">
-        <h3 className="text-sm font-semibold">Seasons</h3>
+        <h3
+          ref={heading}
+          tabIndex={-1}
+          className="rounded-sm text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          Seasons
+        </h3>
         <p className="text-sm text-muted-foreground">
           Ticked seasons show in this row on their dates. Only films in your libraries are used.
         </p>
@@ -149,11 +194,16 @@ export function RowSeasonsField({
                 rowAfterDays={value.season_after_days}
                 rowSize={rowSize}
                 perPerson={perPerson}
-                onEdit={() => setEditor({ kind: "edit", season })}
+                onEdit={() => openEditor({ kind: "edit", season })}
               />
             ))}
           </ul>
         </fieldset>
+      )}
+      {allGone && (
+        <p role="status" className="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm">
+          The season this row followed has been deleted. Tick another season for it before saving.
+        </p>
       )}
       {keptLast && (
         <p role="status" className="text-sm text-muted-foreground">
@@ -171,8 +221,8 @@ export function RowSeasonsField({
           defaultOpen={ticked.every((season) => season.builtin)}
           rowSize={rowSize}
           perPerson={perPerson}
-          onAdd={(preset) => setEditor({ kind: "preset", preset })}
-          onCreate={() => setEditor({ kind: "create" })}
+          onAdd={(preset) => openEditor({ kind: "preset", preset })}
+          onCreate={() => openEditor({ kind: "create" })}
         />
       )}
 
@@ -232,9 +282,10 @@ export function RowSeasonsField({
           target={editor}
           rowSize={rowSize}
           perPerson={perPerson}
-          rowId={rowId}
+          savedRow={savedRow}
           tickedHere={value.seasons}
           onClose={() => setEditor(null)}
+          onCloseAutoFocus={placeFocusAfterClose}
           onSaved={onSaved}
           onDeleted={onDeleted}
         />

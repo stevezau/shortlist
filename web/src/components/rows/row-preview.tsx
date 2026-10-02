@@ -6,6 +6,7 @@ import { SEASON_TOKENS, TOP_SEED } from "@/lib/placeholders";
 import { targetsLibrary } from "@/lib/placement";
 import { asRatingSource, RATING_LABELS } from "@/lib/rating-sources";
 import { requestsSummary } from "@/lib/requests";
+import { seasonTiming } from "@/lib/seasons";
 import {
   basedOn,
   effectiveMaxSeeds,
@@ -339,19 +340,22 @@ function rowFacts({
     add("Counts", ["min_watchers"], `Only titles at least ${input.min_watchers} people here have watched`);
   }
   if (shown.has("seasons")) {
-    const names = seasons
-      .filter((season) => input.seasons.includes(season.slug))
-      .map((season) => `${season.emoji} ${season.name}`)
-      .join(", ");
+    const span = (lead: number, after: number) =>
+      `${daysLabel(lead)} before to ${after > 0 ? `${daysLabel(after)} after` : "the day itself"}`;
+    // A built-in follows the row's timing; a season the owner made carries its own (#137 D8). Seasons
+    // that show for the same span share one clause.
+    const bySpan = new Map<string, string[]>();
+    for (const season of seasons.filter((s) => input.seasons.includes(s.slug))) {
+      const { lead, after } = seasonTiming(season, input.season_lead_days, input.season_after_days);
+      const key = span(lead, after);
+      bySpan.set(key, [...(bySpan.get(key) ?? []), `${season.emoji} ${season.name}`]);
+    }
     const count = input.seasons.length;
-    const before = `${daysLabel(input.season_lead_days)} before`;
-    const after =
-      input.season_after_days > 0 ? `${daysLabel(input.season_after_days)} after` : "the day itself";
-    add(
-      "Seasons",
-      ["seasons"],
-      `${names || `${count} season${count === 1 ? "" : "s"}`} — ${before} to ${after}, hidden between seasons`,
-    );
+    const clauses =
+      bySpan.size > 0
+        ? [...bySpan].map(([when, names]) => `${names.join(", ")} — ${when}`).join("; ")
+        : `${count} season${count === 1 ? "" : "s"} — ${span(input.season_lead_days, input.season_after_days)}`;
+    add("Seasons", ["seasons"], `${clauses}, hidden between seasons`);
   }
   if (shown.has("requests_window_days")) {
     add(

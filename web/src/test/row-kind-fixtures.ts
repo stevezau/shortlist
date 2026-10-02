@@ -15,6 +15,7 @@ export const CTX: RowKindContext = {
   defaultRowName: "✨ {library_name} Picked for You",
   globalSources: ["tmdb_similar", "tmdb_discover"],
   seasonCatalogue: ["valentines", "halloween", "christmas"],
+  builtinSeasons: ["valentines", "halloween", "christmas"],
 };
 
 export const BYW_NAME = "🎯 Because you watched {top_seed}";

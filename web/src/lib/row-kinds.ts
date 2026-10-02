@@ -33,8 +33,11 @@ export interface RowKindContext {
   defaultRowName: string;
   /** `candidates.sources`: what a row with no sources of its own gathers from. */
   globalSources: readonly string[];
-  /** Every season slug, in catalogue order — what a row turned Seasonal starts with. */
+  /** Every season slug, in catalogue order: the built-ins and the owner's own (#137). */
   seasonCatalogue: readonly string[];
+  /** The built-in seasons' slugs — what a row turned Seasonal starts with. A season the owner made is
+   *  ticked row by row, never by default (#137). */
+  builtinSeasons: readonly string[];
   /** Settings › Danger zone's `paused_all`: no run or Plex pass happens until it is lifted. */
   pausedAll?: boolean;
 }
@@ -296,7 +299,7 @@ export function applyRowKind(input: CollectionInput, choice: RowKindChoice, ctx:
   return {
     ...input,
     ...(fill !== current.fill ? fillPatch(input, fill, ctx) : {}),
-    ...(toSeasonal && !wasSeasonal ? { seasons: [...ctx.seasonCatalogue] } : {}),
+    ...(toSeasonal && !wasSeasonal ? { seasons: [...ctx.builtinSeasons] } : {}),
     ...(!toSeasonal && wasSeasonal ? { seasons: [] } : {}),
   };
 }

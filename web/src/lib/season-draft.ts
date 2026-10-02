@@ -1,3 +1,4 @@
+import { ApiError } from "@/lib/api";
 import { MONTH_NAMES } from "@/lib/seasons";
 import type {
   DateRule,
@@ -199,6 +200,19 @@ export function draftProblems(
   if (ruleError) problems.push("Fix the date.");
   if (!hasSource(draft)) problems.push("Add at least one tag, collection or film.");
   return problems;
+}
+
+/** The server's 503s for a missing setup step (`api/seasons.py` `_NO_TMDB` / `_NO_PLEX`). */
+export const NO_TMDB_KEY = /TMDB API key/;
+const NO_PLEX = /Plex isn't connected/;
+
+/** A count or search refused for a missing setup step: trying again can't help until the owner does
+ *  something, so the editor offers no Retry for it, and `useSeasonPreview` counts again by itself when
+ *  the owner comes back to the tab. */
+export function needsSetup(error: unknown): boolean {
+  return (
+    error instanceof ApiError && error.status === 503 && (NO_TMDB_KEY.test(error.message) || NO_PLEX.test(error.message))
+  );
 }
 
 export function clampDays(raw: string, max: number): number {

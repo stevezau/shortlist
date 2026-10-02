@@ -263,6 +263,7 @@ export function RowEditor({
     ),
     globalSources: effectiveSources([], settings.data),
     seasonCatalogue: (seasonCatalogue.data ?? []).map((season) => season.slug),
+    builtinSeasons: (seasonCatalogue.data ?? []).filter((season) => season.builtin).map((season) => season.slug),
     pausedAll: settings.data?.["paused_all"] === true,
   };
   // What the row will be once a pending rename lands. The kind is read from this, or a {top_seed}
@@ -774,7 +775,7 @@ export function RowEditor({
               hidden={hidden}
               settings={settings.data}
               users={users}
-              rowId={collection?.id ?? null}
+              savedRow={collection ? { id: collection.id, seasons: collection.seasons ?? [] } : null}
               // Only while the form still matches what is saved: the status describes the SAVED row.
               seasonStatus={
                 collection &&

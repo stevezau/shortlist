@@ -1,10 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RowSeasonsField } from "@/components/rows/row-seasons-field";
 import type * as ApiModule from "@/lib/api";
+import { ApiError } from "@/lib/api";
 import { seasonDate } from "@/lib/seasons";
 
 import {
@@ -44,18 +46,20 @@ function renderField(
   const onChange = vi.fn();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
-    <QueryClientProvider client={client}>
-      <RowSeasonsField
-        value={value}
-        onChange={onChange}
-        schedule={schedule}
-        name={name}
-        status={status}
-        rowSize={15}
-        perPerson
-        rowId={null}
-      />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <RowSeasonsField
+          value={value}
+          onChange={onChange}
+          schedule={schedule}
+          name={name}
+          status={status}
+          rowSize={15}
+          perPerson
+          savedRow={null}
+        />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
   return onChange;
 }
@@ -206,6 +210,76 @@ describe("RowSeasonsField", () => {
 
     await waitFor(() => expect(onChange).toHaveBeenCalledWith({ seasons: ["halloween", "turkey-day", "christmas"] }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("takes a season the server no longer has off the row, so saving it isn't refused", async () => {
+    // Deleted in another tab: Thanksgiving is ticked here but gone from the catalogue.
+    mocks.getSeasons.mockResolvedValue([VALENTINES, HALLOWEEN, CHRISTMAS]);
+    const onChange = renderField({ ...ON, seasons: ["halloween", "thanksgiving"] });
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith({ seasons: ["halloween"] }));
+  });
+
+  it("asks for another season when every one the row ticked has been deleted", async () => {
+    mocks.getSeasons.mockResolvedValue([VALENTINES, HALLOWEEN, CHRISTMAS]);
+    const onChange = renderField({ ...ON, seasons: ["thanksgiving"] });
+    expect(await screen.findByText(/The season this row followed has been deleted/)).toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("unticks a deleted season in the form, and puts focus on the Seasons heading", async () => {
+    mocks.deleteSeason.mockResolvedValue(undefined);
+    const onChange = renderField({ ...ON, seasons: ["thanksgiving", "christmas"] });
+    await userEvent.click(await screen.findByRole("button", { name: "Edit Thanksgiving" }));
+    await screen.findByRole("dialog", { name: "Edit Thanksgiving" });
+    await userEvent.click(screen.getByRole("button", { name: "Delete season" }));
+    const confirm = await screen.findByRole("dialog", { name: "Delete “Thanksgiving”?" });
+    await userEvent.click(within(confirm).getByRole("button", { name: "Delete season" }));
+
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith({ seasons: ["christmas"] }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Seasons" })).toHaveFocus());
+  });
+
+  it("drops a ready-made season's card once it is saved, ticks it, and puts focus on its checkbox", async () => {
+    mocks.getSeasons.mockResolvedValue([VALENTINES, HALLOWEEN, CHRISTMAS]);
+    mocks.createSeason.mockImplementation(() => {
+      mocks.getSeasons.mockResolvedValue(CATALOGUE);
+      mocks.getSeasonPresets.mockResolvedValue([FATHERS_DAY_AU]);
+      return Promise.resolve(THANKSGIVING);
+    });
+    const onChange = renderField(ON);
+    const presets = await screen.findByRole("list", { name: "Ready-made seasons" });
+    await userEvent.click(await within(presets).findByRole("button", { name: "Add Thanksgiving (US)" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add Thanksgiving (US)" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save and add to this row" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(onChange).toHaveBeenCalledWith({ seasons: ["halloween", "thanksgiving", "christmas"] });
+    await waitFor(() => expect(within(presets).queryByText("Thanksgiving (US)")).toBeNull());
+    expect(within(presets).getByText("Father's Day (AU, NZ)")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: /Thanksgiving/ })).toHaveFocus());
+  });
+
+  it("gives the server's reason when a count fails, and Settings rather than Retry for a missing TMDB key", async () => {
+    mocks.previewSeason.mockRejectedValue(new ApiError(503, "Add a TMDB API key in Settings first."));
+    renderField(ON);
+    const item = (await screen.findByRole("checkbox", { name: /Thanksgiving/ })).closest("[data-season]") as HTMLElement;
+    expect(await within(item).findByText(/Add a TMDB API key in Settings first\./)).toBeInTheDocument();
+    expect(within(item).getByRole("link", { name: "Open Settings in a new tab" })).toHaveAttribute(
+      "href",
+      "/settings#connections",
+    );
+    expect(within(item).queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("offers Retry when a count fails in a way that may pass next time", async () => {
+    mocks.previewSeason.mockRejectedValue(new ApiError(502, "HTTPError: TMDB timed out"));
+    renderField(ON);
+    const item = (await screen.findByRole("checkbox", { name: /Thanksgiving/ })).closest("[data-season]") as HTMLElement;
+    expect(await within(item).findByText(/HTTPError: TMDB timed out/)).toBeInTheDocument();
+    mocks.previewSeason.mockResolvedValue(preview({ total: 26, from_tags: 26 }));
+    await userEvent.click(within(item).getByRole("button", { name: "Retry" }));
+    expect(await within(item).findByText("26 films")).toBeInTheDocument();
   });
 
   it("warns when the row does not run every night", () => {

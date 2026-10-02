@@ -9,6 +9,7 @@ import {
 import { api } from "./api";
 import { dailyCronTime, describeCron } from "./cron";
 import { runRefetchIntervalMs, runsListRefetchIntervalMs } from "./run-format";
+import { needsSetup } from "./season-draft";
 import { useSSE } from "./sse";
 import { useLiveClock } from "./use-live-clock";
 import type {
@@ -593,7 +594,9 @@ export function useSeasonPreview(
     queryFn: async () => ({ ...(await api.previewSeason(draft)), draft }),
     staleTime: 5 * 60_000,
     retry: false,
-    refetchOnWindowFocus: false,
+    // Only after a refusal for a missing setup step: the owner went to Settings (in another tab) to add
+    // the TMDB key, and coming back is the moment to count again.
+    refetchOnWindowFocus: (query) => needsSetup(query.state.error),
     placeholderData: keepPrevious ? keepPreviousData : undefined,
     enabled,
   });

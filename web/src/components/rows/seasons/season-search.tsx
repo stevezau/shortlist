@@ -1,6 +1,6 @@
 import type { UseQueryResult } from "@tanstack/react-query";
 import { Search, X } from "lucide-react";
-import { useId, type ReactNode } from "react";
+import { useId, type ReactNode, type Ref } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,7 @@ export const MIN_QUERY = 2;
 
 /** One of the season editor's three searches: a labelled box, then what it found in all four states. */
 export function SeasonSearch<T>({
+  inputRef,
   label,
   placeholder,
   value,
@@ -23,6 +24,9 @@ export function SeasonSearch<T>({
   resultsLabel,
   children,
 }: {
+  /** The search box, so a picker can put focus back in it after an Add: the button that had it is
+   *  disabled ("Added") or gone, and focus would otherwise fall out of the dialog. */
+  inputRef: Ref<HTMLInputElement>;
   label: string;
   placeholder: string;
   value: string;
@@ -78,6 +82,7 @@ export function SeasonSearch<T>({
       <div className="relative">
         <Search aria-hidden="true" className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
         <Input
+          ref={inputRef}
           id={id}
           type="search"
           autoComplete="off"

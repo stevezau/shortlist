@@ -1,12 +1,12 @@
 import type { UseQueryResult } from "@tanstack/react-query";
 import { useId } from "react";
 
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiErrorMessage } from "@/lib/api";
 import { seasonVerdict } from "@/lib/season-verdict";
 import type { SeasonPreview, SeasonPreviewInput } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+import { SeasonPreviewError } from "./season-preview-error";
 
 export type CountedPreview = SeasonPreview & { draft: SeasonPreviewInput };
 
@@ -71,16 +71,7 @@ function SummaryBody({
     );
   }
   if (preview.isError) {
-    return (
-      <div className="space-y-3">
-        <p role="alert" className="text-sm">
-          {apiErrorMessage(preview.error, "Couldn’t count the films. Check Shortlist is running, then try again.")}
-        </p>
-        <Button type="button" variant="outline" size="sm" onClick={() => void preview.refetch()}>
-          Retry
-        </Button>
-      </div>
-    );
+    return <SeasonPreviewError error={preview.error} onRetry={() => void preview.refetch()} />;
   }
 
   const data = preview.data;

@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 
 import { badgeVariants } from "@/components/ui/badge";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
@@ -34,6 +34,7 @@ export function SeasonCollectionPicker({
 }) {
   const headingId = useId();
   const [query, setQuery] = useState("");
+  const searchBox = useRef<HTMLInputElement>(null);
   const searched = useDebouncedValue(query, 250);
   const search = usePlexCollections(searched);
   const full = collections.length >= MAX_COLLECTIONS;
@@ -51,6 +52,7 @@ export function SeasonCollectionPicker({
       </div>
 
       <SeasonSearch
+        inputRef={searchBox}
         label="Search your Plex collections"
         placeholder="e.g. christmas"
         value={query}
@@ -66,12 +68,13 @@ export function SeasonCollectionPicker({
             addLabel={`Add ${found.title} (${found.section_title})`}
             added={collections.some((c) => sameCollection(c, found))}
             full={full}
-            onAdd={() =>
+            onAdd={() => {
               onChange([
                 ...collections,
                 { section_key: found.section_key, section_title: found.section_title, title: found.title },
-              ])
-            }
+              ]);
+              searchBox.current?.focus();
+            }}
           >
             <span className="font-medium">{found.title}</span>{" "}
             {found.smart && <span className={badgeVariants({ variant: "secondary" })}>Smart</span>}{" "}

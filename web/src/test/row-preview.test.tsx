@@ -16,8 +16,9 @@ import {
   type RowKindContext,
   type RowSettingKey,
 } from "@/lib/row-kinds";
-import type { CollectionInput, Settings } from "@/lib/types";
+import type { CollectionInput, Season, Settings } from "@/lib/types";
 import { BYW_NAME, CTX, EVERY_OVERRIDE, FIXTURES, named, row } from "@/test/row-kind-fixtures";
+import { CHRISTMAS, HALLOWEEN, THANKSGIVING } from "@/test/season-fixtures";
 
 /** A real server's globals, as `GET /settings` serves them. */
 const SETTINGS = {
@@ -46,12 +47,14 @@ function renderPreview(
     enabled,
     rowNames,
     compact = false,
+    seasons = [],
   }: {
     ctx?: RowKindContext;
     settings?: Settings;
     enabled?: boolean;
     rowNames?: Record<string, string>;
     compact?: boolean;
+    seasons?: Season[];
   } = {},
 ) {
   render(
@@ -64,7 +67,7 @@ function renderPreview(
       users={[]}
       libraries={[]}
       settings={settings}
-      seasons={[]}
+      seasons={seasons}
     />,
   );
 }
@@ -147,6 +150,16 @@ describe("the lines that are easy to get wrong", () => {
     expect(sources).toHaveTextContent(/^Found viaSeasonal list, TMDB similar/);
     expect(sources).not.toHaveTextContent(/AI web search/);
     expect(sources).toHaveTextContent(/Only titles on that season's list are kept/);
+  });
+
+  it("gives a season the owner made its own timing, and a built-in the row's (#137)", () => {
+    renderPreview(
+      toInput(row({ seasons: ["halloween", "thanksgiving", "christmas"], season_lead_days: 30, season_after_days: 0 })),
+      { seasons: [HALLOWEEN, THANKSGIVING, CHRISTMAS] },
+    );
+    expect(valueOf("Seasons")).toHaveTextContent(
+      "🎃 Halloween, 🎄 Christmas — 30 days before to the day itself; 🦃 Thanksgiving — 14 days before to the day itself, hidden between seasons",
+    );
   });
 
   it("names every source in full on an ordinary row", () => {

@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 
 import { badgeVariants } from "@/components/ui/badge";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
@@ -28,6 +28,7 @@ export function SeasonPicksPicker({
 }) {
   const headingId = useId();
   const [query, setQuery] = useState("");
+  const searchBox = useRef<HTMLInputElement>(null);
   const searched = useDebouncedValue(query, 250);
   const search = useLibrarySearch(searched);
   const full = picks.length >= MAX_PICKS;
@@ -44,6 +45,7 @@ export function SeasonPicksPicker({
       </div>
 
       <SeasonSearch
+        inputRef={searchBox}
         label="Search your libraries"
         placeholder="e.g. home alone"
         value={query}
@@ -65,6 +67,7 @@ export function SeasonPicksPicker({
                 { tmdb_id: title.tmdb_id, media_type: title.media_type, title: title.title, year: title.year },
               ]);
               setQuery("");
+              searchBox.current?.focus();
             }}
           >
             <span className="font-medium">{title.title}</span>

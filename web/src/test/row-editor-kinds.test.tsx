@@ -25,7 +25,10 @@ import {
 import { findRowTemplate, type RowTemplate } from "@/lib/row-templates";
 import type { Collection, CollectionInput } from "@/lib/types";
 import { BYW_NAME, CTX, FIXTURES, named, row } from "@/test/row-kind-fixtures";
-import { BUILTINS } from "@/test/season-fixtures";
+import { BUILTINS, CATALOGUE } from "@/test/season-fixtures";
+
+// Mutable so a test can serve the owner's own seasons beside the built-ins.
+const catalogueData = vi.hoisted(() => ({ current: [] as unknown[] }));
 
 const { updateCollection, createCollection, settingsData, librariesData, rowSources } = vi.hoisted(() => ({
   updateCollection: vi.fn((id: number, body: unknown) =>
@@ -66,7 +69,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getSettings: () => Promise.resolve(settingsData.current),
       getLibraries: () => Promise.resolve(librariesData.current),
       getLibraryCollections: () => Promise.resolve([]),
-      getSeasons: () => Promise.resolve(BUILTINS),
+      getSeasons: () => Promise.resolve(catalogueData.current),
       getSeasonPresets: () => Promise.resolve([]),
       getImageProvider: () => Promise.resolve({ capable: false, provider: "", reason: "" }),
       getRequestRowSources: () => Promise.resolve(rowSources),
@@ -119,6 +122,7 @@ beforeEach(() => {
   createCollection.mockClear();
   settingsData.current = {};
   librariesData.current = [];
+  catalogueData.current = BUILTINS;
 });
 
 describe("opening a row never changes it", () => {
@@ -210,6 +214,19 @@ describe("the kind picker", () => {
     const body = createCollection.mock.calls[0]?.[0] as CollectionInput;
     expect(body.seasons).toEqual(["valentines", "halloween", "christmas"]);
     expect(body.season_lead_days).toBe(30);
+  });
+
+  it("turning it on leaves the owner's own seasons unticked: they are opt-in, row by row (#137)", async () => {
+    catalogueData.current = CATALOGUE;
+    renderEditor(null);
+    await userEvent.type(screen.getByLabelText("Name"), "{{season} picks");
+    await waitFor(() => expect(kindRadio("Seasonal")).toBeEnabled());
+    await userEvent.click(kindRadio("Seasonal"));
+    await save();
+
+    await waitFor(() => expect(createCollection).toHaveBeenCalled());
+    const body = createCollection.mock.calls[0]?.[0] as CollectionInput;
+    expect(body.seasons).toEqual(["valentines", "halloween", "christmas"]);
   });
 
   it("renames a new {top_seed} row as it leaves Because you watched, or it would read straight back", async () => {

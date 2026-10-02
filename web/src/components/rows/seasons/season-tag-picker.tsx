@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useTmdbTags } from "@/lib/queries";
@@ -26,6 +26,7 @@ export function SeasonTagPicker({
 }) {
   const headingId = useId();
   const [query, setQuery] = useState("");
+  const searchBox = useRef<HTMLInputElement>(null);
   const searched = useDebouncedValue(query, 250);
   const search = useTmdbTags(searched);
   const chosen = new Set(tags.map((tag) => tag.id));
@@ -44,6 +45,7 @@ export function SeasonTagPicker({
       </div>
 
       <SeasonSearch
+        inputRef={searchBox}
         label="Search TMDB tags"
         placeholder="e.g. thanksgiving"
         value={query}
@@ -59,7 +61,10 @@ export function SeasonTagPicker({
             addLabel={`Add tag ${tag.name}`}
             added={chosen.has(tag.id)}
             full={full}
-            onAdd={() => onChange([...tags, { id: tag.id, name: tag.name }])}
+            onAdd={() => {
+              onChange([...tags, { id: tag.id, name: tag.name }]);
+              searchBox.current?.focus();
+            }}
           >
             <span className="font-medium">{tag.name}</span>{" "}
             <span className="text-muted-foreground">

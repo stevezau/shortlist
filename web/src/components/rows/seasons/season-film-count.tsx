@@ -4,6 +4,7 @@ import { seasonVerdict } from "@/lib/season-verdict";
 import { useSeasonPreview } from "@/lib/queries";
 import type { Season, SeasonPreset } from "@/lib/types";
 
+import { SeasonPreviewError } from "./season-preview-error";
 import { SeasonVerdictChip } from "./season-verdict-chip";
 
 /**
@@ -36,18 +37,7 @@ export function SeasonFilmCount({
     );
   }
   if (preview.isError) {
-    return (
-      <span className="text-xs text-muted-foreground">
-        Couldn’t count the films.{" "}
-        <button
-          type="button"
-          onClick={() => void preview.refetch()}
-          className="rounded-sm underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          Try again
-        </button>
-      </span>
-    );
+    return <SeasonPreviewError compact error={preview.error} onRetry={() => void preview.refetch()} />;
   }
 
   const { total } = preview.data;

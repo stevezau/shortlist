@@ -501,15 +501,15 @@ export function RowKindSettings({
   choice,
   onChooseFill,
   seasonStatus,
-  rowId,
+  savedRow,
   ...props
 }: KindBlockProps & {
   choice: RowKindChoice;
   onChooseFill: (fill: RowFill) => void;
   /** Where the SAVED row is in its calendar, while the form still matches it; else null. */
   seasonStatus: SeasonStatus | null;
-  /** The saved row's id; null for a row not saved yet. */
-  rowId: number | null;
+  /** The row as saved (its id and seasons); null for a row not saved yet. */
+  savedRow: { id: number; seasons: readonly string[] } | null;
 }) {
   if (choice.kind !== "seasonal") return <FillBlock {...props} fill={choice.fill} />;
   const { input, set } = props;
@@ -529,7 +529,7 @@ export function RowKindSettings({
             status={seasonStatus}
             rowSize={input.size}
             perPerson={input.build !== "shared"}
-            rowId={rowId}
+            savedRow={savedRow}
           />
         </div>
       )}
