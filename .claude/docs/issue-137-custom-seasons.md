@@ -14,7 +14,7 @@ a feature request. Nothing is broken.
 
 | Question | Answer |
 | --- | --- |
-| How many library films does each holiday's own TMDB tag give? (10,030 films) | New Year's 31, Thanksgiving 15, 4th of July 8, Hanukkah 6, Easter 5, St Patrick's 2, Mother's Day 2, Diwali 0, Lunar New Year 0. Father's Day has no TMDB tag at all. |
+| How many library films does each holiday's own TMDB tag give? (10,030 films) | New Year's 31, Thanksgiving 15, 4th of July 8, Hanukkah 6, Easter 5, St Patrick's 2, Mother's Day 2, Diwali 0, Lunar New Year 0. Father's Day's tag (195439) holds 3 films on TMDB, none in this library. |
 | Do broader tags fix it? | They fill the count with the wrong films. Mother's Day plus "mother–daughter relationship" etc. gives 235, but TMDB's top films there are Forrest Gump, Joker, The Shining and Black Swan. Father tags give 270 (Interstellar, Endgame). Irish tags give a usable 58 for St Patrick's (In Bruges, Banshees, Brooklyn). |
 | Can a season read an owner's Plex collection? | Yes. 150 movie collections (43 smart). Members of smart and regular collections read in 0.05–1.4s (46–1,187 films), and every one carried a TMDB guid. |
 | Can the editor search the library by title? | `section.search(title=…, maxresults=20)` takes 0.06s, and every result carried a TMDB guid. |
@@ -66,6 +66,18 @@ a feature request. Nothing is broken.
     `{season}`, so two seasons sharing a name would collide.
 14. **Slugs are made from the name at creation and never change.** Rows store slugs, and the recipe
     carries the slug.
+15. **A season that finds nothing keeps last season's collection hidden** (final review C-1, 2026-10-02).
+    A library where a seasonal row builds nothing for tonight's season keeps the collection it last built,
+    with that season's title and films. Promotion never shows a seasonal row's collection unless it was last
+    BUILT for tonight's season (`slug@anchor`, recorded per library in `deliveries.season`, migration 0096,
+    else read from the stored picks' recipe). A mismatch is treated as dormant: hidden, placement off.
+    Nothing is deleted. A collection with neither record is promoted as before, so no row loses its place
+    on the night this ships.
+16. **The editor counts for its row** (final review I-1). `POST /preview` takes the row's `media` and
+    `library_keys`, and the editor says "films", "shows" or "titles" to match.
+17. **A season's name cannot give two rows one title** (final review I-2). `POST`/`PUT` render every
+    `{season}` row's template with the proposed name and emoji and run the row editor's duplicate-title
+    check; a row PATCH that ticks a season checks the title it gives the row in that season.
 
 ## Engine
 
@@ -170,8 +182,8 @@ a feature request. Nothing is broken.
 | 🐣 Easter | Easter Sunday | 14 | 9921 easter, 9923 easter bunny |
 | 💐 Mother's Day (US, CA, AU, NZ) | 2nd Sun May | 7 | 173983 mother's day |
 | 💐 Mothering Sunday (UK, IE) | Easter −21 | 7 | 173983 mother's day |
-| 👔 Father's Day (US, UK, CA, IE) | 3rd Sun Jun | 7 | none: TMDB has no tag. The editor asks for a collection or picks |
-| 👔 Father's Day (AU, NZ) | 1st Sun Sep | 7 | none: same |
+| 👔 Father's Day (US, UK, CA, IE) | 3rd Sun Jun | 7 | 195439 father's day: 3 films on TMDB, so the note asks for a collection or picks |
+| 👔 Father's Day (AU, NZ) | 1st Sun Sep | 7 | 195439 father's day: same |
 
 ## Non-goals
 

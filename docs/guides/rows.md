@@ -354,7 +354,9 @@ filled in, so you can check it, rename it or change the films before saving. Sav
 you are editing. Ready-made seasons are New Year's Eve, 4th of July, Thanksgiving (US), Thanksgiving (Canada), St
 Patrick's Day, Easter, Mother's Day (US, CA, AU, NZ), Mothering Sunday (UK, IE), Father's Day (US, UK,
 CA, IE) and Father's Day (AU, NZ). A card shows its region, but the season's name does not, because the name appears in Plex row titles. Season names must
-be unique, so to add both regional versions of a holiday, rename one first.
+be unique, so to add both regional versions of a holiday, rename one first. A season name is also
+refused when it would give a row named after its season (`{season} picks`) the title another row already
+has in a library they share, because the two rows would then be one collection on Plex.
 
 **Making your own.** Press **Create your own**. Give it a name and an emoji, then choose when it is:
 
@@ -373,18 +375,25 @@ date and the window it gives.
   these genres** to drop genres you don't want (Horror from a St Patrick's Day season, say). Leave-out never drops a film you picked by hand.
 - **From your library** — pick Plex collections on your server. They are only read, never changed, and are
   matched by title. A Kometa collection that is absent out of season is normal: the season counts it
-  as empty until Kometa recreates it, and picks it up on the next run.
+  as empty until Kometa recreates it, and the row picks it up from its next refresh.
 - **Picked by hand** — search your libraries and add titles one at a time.
 
 Only films that are in your libraries are used, whatever the source.
 
-**Counts and verdicts.** The editor counts the films in your libraries as you change sources, and sets
-the count against the row's size. A season shows one of three verdicts:
+**Counts and verdicts.** The editor counts what the row you opened it from can draw, as you change
+sources: titles of the row's type (films for a films row, shows for a shows row, titles for both) in the
+row's libraries. It sets the count against the row's size. A season shows one of three verdicts:
 
-- **Too few to fill this row (n of size)** — add a tag, a collection or a few films.
+- **Too few films to fill this row (n of size)** — add a tag, a collection or a few films.
 - **People's rows will be much alike — works best in a shared row** — a per-person row has fewer than
   100 films to draw from, so everyone's row would be nearly the same. This never shows for a shared row.
-- **Enough for this row.**
+- **Enough films for this row.**
+
+**When a season finds nothing.** A season can find nothing for a row in one of its libraries: a thin
+season everyone has already watched, a TV library no tag reaches, or a Kometa collection that does not
+exist yet. The row then builds nothing there, and that library's collection still holds the previous
+season's films under its title. Shortlist keeps that collection hidden, as it does between seasons,
+until a run builds the new season into it. It is never deleted.
 
 **Editing and deleting.** Built-in seasons can't be edited or deleted. Deleting one of your own seasons
 unticks it in every row that follows it. If it is a row's only season, Shortlist refuses and names the
