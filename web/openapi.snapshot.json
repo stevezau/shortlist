@@ -4159,6 +4159,10 @@
             "title": "Key",
             "type": "string"
           },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
           "lead_days": {
             "default": 7,
             "maximum": 90.0,
@@ -4212,6 +4216,7 @@
           "emoji",
           "rule",
           "key",
+          "label",
           "note"
         ],
         "title": "PresetOut",

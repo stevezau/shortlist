@@ -95,6 +95,18 @@ class DateRule:
             return first + timedelta(days=(self.weekday - first.weekday()) % 7 + 7 * (self.nth - 1))
         return easter_sunday(year) + timedelta(days=self.offset)
 
+    def normalised(self) -> DateRule:
+        """This rule with the fields its kind ignores at their defaults, so two rules that name the same days
+        are equal: a fixed rule ignores nth, weekday and offset; an nth rule day and offset; an Easter rule
+        everything but its offset."""
+        if self.kind == "fixed":
+            return replace(self, nth=1, weekday=0, offset=0)
+        if self.kind == "nth":
+            return replace(self, day=1, offset=0)
+        if self.kind == "easter":
+            return replace(self, month=1, day=1, nth=1, weekday=0)
+        return self
+
     def label(self) -> str:
         """The rule in plain English: "17 March", "4th Thursday of November", "21 days before Easter"."""
         if self.kind == "fixed":
@@ -480,8 +492,11 @@ def _read_sources(
     plex: _CollectionReader,
     season: Season,
     discover: Callable[[MediaType, dict], list[dict]],
+    *,
+    missing_level: str = "WARNING",
 ) -> _SourceReads:
-    """Read every source of ``season`` (see `load_titles`). ``discover`` reads one TMDB list."""
+    """Read every source of ``season`` (see `load_titles`). ``discover`` reads one TMDB list; ``missing_level`` is
+    the log level for a collection that is not in its library."""
     tagged: dict[tuple[int, MediaType], dict] = {}
     genre: dict[tuple[int, MediaType], dict] = {}
     for media_type, params in _queries(season):
@@ -495,7 +510,8 @@ def _read_sources(
     for ref in season.collections:
         titles = plex.collection_members(ref.section_key, ref.title)
         if titles is None:
-            logger.warning(
+            logger.log(
+                missing_level,
                 "{}: collection “{}” isn't in your library tonight — using the season's other sources",
                 season.name,
                 ref.title,
@@ -641,7 +657,9 @@ def preview(
         return title[0] in library_index.get(title[1], {})
 
     discover = functools.partial(tmdb.discover_all, workers=workers)
-    reads = _read_sources(tmdb, plex, season, discover)
+    # A draft naming a collection Kometa only makes in season is normal while the owner edits; a WARNING per
+    # preview would bury the ones a nightly run logs, which owners do read.
+    reads = _read_sources(tmdb, plex, season, discover, missing_level="DEBUG")
     in_library = {title: item for title, item in reads.all_titles().items() if held(title)}
 
     from_tags = reads.tagged.keys() & in_library.keys()
@@ -693,6 +711,9 @@ class Preset:
     is saved until the owner saves. ``season.slug`` is the preset's key: a saved season gets its own slug."""
 
     key: str
+    #: What the editor calls the preset, region included: "Mother's Day (US, CA, AU, NZ)". The season's own
+    #: NAME carries no region, because a row's title renders it ("💐 Mother's Day picks").
+    label: str
     season: Season
     #: What the editor says beside it — what to add when TMDB's tags fall short. Empty when they don't.
     note: str
@@ -724,12 +745,30 @@ _NO_TAG = "TMDB has no Father's Day tag — add a collection or your own picks."
 
 
 def _preset(
-    key: str, name: str, emoji: str, rule: DateRule, *, lead: int, after: int = 0, note: str = "", **sources
+    key: str,
+    label: str,
+    name: str,
+    emoji: str,
+    rule: DateRule,
+    *,
+    lead: int,
+    after: int = 0,
+    keywords: tuple[int, ...] = (),
+    keyword_excluded_genres: tuple[int, ...] = (),
+    note: str = "",
 ) -> Preset:
     season = Season(
-        slug=key, name=name, emoji=emoji, rule=rule, description="", lead_days=lead, after_days=after, **sources
+        slug=key,
+        name=name,
+        emoji=emoji,
+        rule=rule,
+        description="",
+        keywords=keywords,
+        keyword_excluded_genres=keyword_excluded_genres,
+        lead_days=lead,
+        after_days=after,
     )
-    return Preset(key=key, season=season, note=note)
+    return Preset(key=key, label=label, season=season, note=note)
 
 
 # The spec's table (`.claude/docs/issue-137-custom-seasons.md`, "Presets"): tag ids verified against TMDB on
@@ -737,6 +776,7 @@ def _preset(
 PRESETS: tuple[Preset, ...] = (
     _preset(
         "new_years_eve",
+        "New Year's Eve",
         "New Year's Eve",
         "🎆",
         DateRule("fixed", month=12, day=31),
@@ -747,6 +787,7 @@ PRESETS: tuple[Preset, ...] = (
     _preset(
         "fourth_of_july",
         "4th of July",
+        "4th of July",
         "🎇",
         DateRule("fixed", month=7, day=4),
         lead=7,
@@ -756,6 +797,7 @@ PRESETS: tuple[Preset, ...] = (
     _preset(
         "thanksgiving_us",
         "Thanksgiving (US)",
+        "Thanksgiving",
         "🦃",
         DateRule("nth", month=11, nth=4, weekday=3),
         lead=14,
@@ -764,6 +806,7 @@ PRESETS: tuple[Preset, ...] = (
     _preset(
         "thanksgiving_ca",
         "Thanksgiving (Canada)",
+        "Thanksgiving",
         "🍁",
         DateRule("nth", month=10, nth=2, weekday=0),
         lead=7,
@@ -771,6 +814,7 @@ PRESETS: tuple[Preset, ...] = (
     ),
     _preset(
         "st_patricks_day",
+        "St Patrick's Day",
         "St Patrick's Day",
         "☘️",
         DateRule("fixed", month=3, day=17),
@@ -783,6 +827,7 @@ PRESETS: tuple[Preset, ...] = (
     _preset(
         "easter",
         "Easter",
+        "Easter",
         "🐣",
         DateRule("easter"),
         lead=14,
@@ -791,6 +836,7 @@ PRESETS: tuple[Preset, ...] = (
     _preset(
         "mothers_day",
         "Mother's Day (US, CA, AU, NZ)",
+        "Mother's Day",
         "💐",
         DateRule("nth", month=5, nth=2, weekday=6),
         lead=7,
@@ -800,6 +846,7 @@ PRESETS: tuple[Preset, ...] = (
     _preset(
         "mothering_sunday",
         "Mothering Sunday (UK, IE)",
+        "Mothering Sunday",
         "💐",
         DateRule("easter", offset=-21),
         lead=7,
@@ -809,6 +856,7 @@ PRESETS: tuple[Preset, ...] = (
     _preset(
         "fathers_day",
         "Father's Day (US, UK, CA, IE)",
+        "Father's Day",
         "👔",
         DateRule("nth", month=6, nth=3, weekday=6),
         lead=7,
@@ -817,6 +865,7 @@ PRESETS: tuple[Preset, ...] = (
     _preset(
         "fathers_day_au_nz",
         "Father's Day (AU, NZ)",
+        "Father's Day",
         "👔",
         DateRule("nth", month=9, nth=1, weekday=6),
         lead=7,

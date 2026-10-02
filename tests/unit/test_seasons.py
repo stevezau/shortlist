@@ -541,6 +541,29 @@ class TestDateRule:
         assert seasons.DateRule("fixed", month=3, day=17).anchor(2027) == date(2027, 3, 17)
 
     @pytest.mark.parametrize(
+        ("rule", "expected"),
+        [
+            (
+                seasons.DateRule("fixed", month=3, day=17, nth=3, weekday=4, offset=9),
+                seasons.DateRule("fixed", month=3, day=17),
+            ),
+            (
+                seasons.DateRule("nth", month=11, day=20, nth=4, weekday=3, offset=9),
+                seasons.DateRule("nth", month=11, nth=4, weekday=3),
+            ),
+            (
+                seasons.DateRule("easter", month=5, day=20, nth=2, weekday=6, offset=-21),
+                seasons.DateRule("easter", offset=-21),
+            ),
+        ],
+    )
+    def test_normalised_resets_what_its_kind_ignores_and_names_the_same_days(
+        self, rule: seasons.DateRule, expected: seasons.DateRule
+    ) -> None:
+        assert rule.normalised() == expected
+        assert [rule.normalised().anchor(y) for y in (2026, 2027)] == [rule.anchor(y) for y in (2026, 2027)]
+
+    @pytest.mark.parametrize(
         ("rule", "year", "expected"),
         [
             (seasons.DateRule("nth", month=11, nth=4, weekday=3), 2026, date(2026, 11, 26)),  # US Thanksgiving
@@ -697,7 +720,27 @@ class TestPresets:
             assert len(preset.key) <= 32, "seasons.preset is String(32)"
             assert preset.season.name.casefold() not in builtin_names, "names are unique, built-ins included"
         assert len({p.key for p in seasons.PRESETS}) == len(seasons.PRESETS)
-        assert len({p.season.name.casefold() for p in seasons.PRESETS}) == len(seasons.PRESETS)
+        assert len({p.label for p in seasons.PRESETS}) == len(seasons.PRESETS), "the editor tells them apart"
+
+    def test_a_region_is_in_the_label_and_never_in_the_name(self) -> None:
+        """A season's name renders into Plex row titles ("💐 {season} picks"); the region is only for choosing."""
+        assert {p.key: (p.label, p.season.name) for p in seasons.PRESETS} == {
+            "new_years_eve": ("New Year's Eve", "New Year's Eve"),
+            "fourth_of_july": ("4th of July", "4th of July"),
+            "thanksgiving_us": ("Thanksgiving (US)", "Thanksgiving"),
+            "thanksgiving_ca": ("Thanksgiving (Canada)", "Thanksgiving"),
+            "st_patricks_day": ("St Patrick's Day", "St Patrick's Day"),
+            "easter": ("Easter", "Easter"),
+            "mothers_day": ("Mother's Day (US, CA, AU, NZ)", "Mother's Day"),
+            "mothering_sunday": ("Mothering Sunday (UK, IE)", "Mothering Sunday"),
+            "fathers_day": ("Father's Day (US, UK, CA, IE)", "Father's Day"),
+            "fathers_day_au_nz": ("Father's Day (AU, NZ)", "Father's Day"),
+        }
+
+    def test_preset_rules_are_stored_as_they_come(self) -> None:
+        """The API stores a rule normalised; a preset already is, so adding one and saving it unedited is no edit."""
+        for preset in seasons.PRESETS:
+            assert preset.season.rule.normalised() == preset.season.rule, preset.key
 
     def test_every_preset_tag_has_its_tmdb_name(self) -> None:
         """The editor shows a tag by name, and a preset is saved without a TMDB lookup."""
@@ -842,6 +885,25 @@ class TestPreview:
         tmdb, plex, season = self._sources()
         seasons.preview(tmdb, plex, season, self.LIB, today=self.TODAY, workers=6)
         assert tmdb.workers and set(tmdb.workers) == {6}
+
+    def test_a_missing_collection_is_logged_quietly_by_a_preview_and_loudly_by_a_run(self) -> None:
+        """Kometa removes its seasonal collections out of season, so an owner editing one sees "not found" in the
+        editor; a WARNING per preview would bury the nightly ones, which owners audit."""
+        from loguru import logger
+
+        tmdb, plex, season = self._sources()
+        lines: list[str] = []
+        sink = logger.add(lines.append, level="DEBUG", format="{level} {message}")
+        try:
+            seasons.preview(tmdb, plex, season, self.LIB, today=self.TODAY)
+            previewed = [line for line in lines if "“Gone”" in line]
+            lines.clear()
+            seasons.load_titles(tmdb, plex, season, self.LIB)
+            nightly = [line for line in lines if "“Gone”" in line]
+        finally:
+            logger.remove(sink)
+        assert len(previewed) == 1 and previewed[0].startswith("DEBUG"), previewed
+        assert len(nightly) == 1 and nightly[0].startswith("WARNING"), nightly
 
     def test_a_season_with_no_sources_reads_nothing(self) -> None:
         tmdb = _PagedTmdb({})

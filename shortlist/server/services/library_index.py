@@ -15,13 +15,16 @@ from __future__ import annotations
 import json
 import threading
 import time
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 from sqlalchemy.orm import Session, sessionmaker
 
 from shortlist.engine.models import MediaType
 from shortlist.server.db.adapters import DbCache
+
+if TYPE_CHECKING:
+    from plexapi.library import LibrarySection
 
 #: How long a scan made here is reused.
 MEMO_TTL_S = 600.0
@@ -33,11 +36,11 @@ _scan_locks: dict[str, threading.Lock] = {}
 
 
 class _LibraryReader(Protocol):
-    def sections(self) -> list: ...
+    def sections(self) -> list[LibrarySection]: ...
 
-    def section_signature(self, section: object) -> str | None: ...
+    def section_signature(self, section: LibrarySection) -> str | None: ...
 
-    def build_library_index(self, section: object) -> dict[int, int]: ...
+    def build_library_index(self, section: LibrarySection) -> dict[int, int]: ...
 
 
 def library_index(plex: _LibraryReader, sessions: sessionmaker[Session]) -> dict[MediaType, dict[int, int]]:
@@ -64,7 +67,7 @@ def forget() -> None:
         _memo.clear()
 
 
-def _section_index(plex: _LibraryReader, cache: DbCache, section) -> dict[int, int]:
+def _section_index(plex: _LibraryReader, cache: DbCache, section: LibrarySection) -> dict[int, int]:
     signature = plex.section_signature(section)
     # The run's key (`pipeline._library_index`). With no signature a run never caches, so there is nothing to read.
     if signature and (cached := cache.get(f"index3:{section.key}:{signature}")):

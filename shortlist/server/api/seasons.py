@@ -18,10 +18,12 @@ from loguru import logger
 from pydantic import ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.datastructures import State
 
 import shortlist.server.services.context_builder as context_builder
 from shortlist.engine import seasons as seasons_mod
 from shortlist.engine.clients.http_retry import redact
+from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.models import MediaType
 from shortlist.engine.seasons import (
     BUILTIN_SEASONS,
@@ -34,6 +36,7 @@ from shortlist.engine.seasons import (
     Preset,
     Season,
 )
+from shortlist.server.api.collections import row_display_name
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import Collection, SeasonDef
@@ -152,6 +155,9 @@ class PresetOut(SeasonIn):
     model_config = ConfigDict(extra="allow")
 
     key: str
+    #: What the editor calls the preset, region included: "Mother's Day (US, CA, AU, NZ)". ``name`` has none,
+    #: because a row's title renders it.
+    label: str
     #: What to add when TMDB's tags fall short, e.g. "TMDB has no Father's Day tag — add a collection or…".
     note: str
 
@@ -274,7 +280,7 @@ async def update_season(slug: str, body: SeasonIn, request: Request) -> dict:
         followers = _enabled_rows(session, [entry["id"] for entry in used_by.get(slug, [])]) if moved else []
         view = _season_view(season_from_row(row), row, used_by, today)
     if followers:
-        await _apply_visibility(request.app.state, followers, f"season '{slug}' moved")
+        _apply_visibility(request.app.state, followers, f"season '{slug}' moved")
     return view
 
 
@@ -293,7 +299,7 @@ async def delete_season(slug: str, request: Request) -> Response:
             for c in session.scalars(select(Collection).order_by(Collection.sort_order, Collection.id))
             if slug in (c.seasons or [])
         ]
-        alone = [c.name for c in following if set(c.seasons) == {slug}]
+        alone = [row_display_name(session, c) for c in following if set(c.seasons) == {slug}]
         if alone:
             raise HTTPException(
                 status_code=409,
@@ -308,7 +314,7 @@ async def delete_season(slug: str, request: Request) -> Response:
         session.delete(row)
         session.commit()
     if followers:
-        await _apply_visibility(request.app.state, followers, f"season '{slug}' was deleted")
+        _apply_visibility(request.app.state, followers, f"season '{slug}' was deleted")
     return Response(status_code=204)
 
 
@@ -405,6 +411,8 @@ def _checked(session: Session, body: SeasonIn, *, editing: str | None) -> DateRu
         rule.validate()
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from None
+    # Stored normalised, so an edit to a field the kind ignores changes nothing and moves no row (`_calendar`).
+    rule = rule.normalised()
     if not (body.tags or body.genre is not None or body.collections or body.picks):
         raise HTTPException(status_code=422, detail="Add at least one tag, collection or film.")
     # Every stored name, not just the catalogue's, and the built-ins': a row's title renders `{season}`, so two
@@ -453,9 +461,11 @@ def _unique[T](items: list[T], key: Callable[[T], object]) -> list[T]:
     return list(kept.values())
 
 
-def _calendar(row: SeasonDef) -> tuple:
-    """Everything that decides which days a season's rows are shown on."""
-    return (row.rule_kind, row.month, row.day, row.nth, row.weekday, row.easter_offset, row.lead_days, row.after_days)
+def _calendar(row: SeasonDef) -> tuple[DateRule, int, int]:
+    """Everything that decides which days a season's rows are shown on. Normalised, so a field the rule's kind
+    ignores never reads as a move."""
+    rule = DateRule(row.rule_kind, row.month, row.day, row.nth, row.weekday, row.easter_offset)
+    return rule.normalised(), row.lead_days, row.after_days
 
 
 def _draft(body: SeasonPreviewIn) -> Season:
@@ -494,7 +504,7 @@ def _used_by(session: Session) -> dict[str, list[dict]]:
     used: dict[str, list[dict]] = {}
     for row in session.scalars(select(Collection).order_by(Collection.sort_order, Collection.id)):
         for slug in dict.fromkeys(row.seasons or []):
-            used.setdefault(slug, []).append({"id": row.id, "name": row.name})
+            used.setdefault(slug, []).append({"id": row.id, "name": row_display_name(session, row)})
     return used
 
 
@@ -542,6 +552,7 @@ def _preset_view(preset: Preset) -> dict:
     season = preset.season
     return {
         "key": preset.key,
+        "label": preset.label,
         "note": preset.note,
         "preset": preset.key,
         "name": season.name,
@@ -563,7 +574,7 @@ def _and_list(names: list[str]) -> str:
     return quoted[0] if len(quoted) == 1 else f"{', '.join(quoted[:-1])} and {quoted[-1]}"
 
 
-def _plex(state):
+def _plex(state: State) -> PlexClient:
     """The owner's PMS (this connects: call it off the event loop), or 503 before setup."""
     plex = state.run_service.build_plex_reader()
     if plex is None:
@@ -582,13 +593,18 @@ async def _off_loop[T](read: Callable[[], T], what: str) -> T:
         raise HTTPException(status_code=502, detail=redact(f"{type(e).__name__}: {e}")) from e
 
 
-async def _apply_visibility(state, rows: list[str], reason: str) -> None:
+def _apply_visibility(state: State, rows: list[str], reason: str) -> None:
     """Re-apply today's shown-or-hidden to these rows now, as the row editor does when a row's seasons change.
 
     One `rows.visibility` pass per row, named, because the pass's own gate looks only at rows whose answer
     changed in the past week — and it recomputes with today's catalogue, in which these rows' past days have
-    changed too. The pass merges every account's excludes before it promotes anything (plex-safety rule 1).
+    changed too. The handler promotes one named row at a time (`promote_user_rows(only_row=…)`), so the rows
+    cannot share a pass. Each pass merges every account's excludes before it promotes anything (plex-safety
+    rule 1).
+
+    Not awaited: each pass is a whole privacy sync, and the season is saved, which is what the editor is
+    waiting to hear. The jobs are durable and retried, and show in the header's activity popover.
     """
     for slug in rows:
         jobs.enqueue(state.sessions, "rows.visibility", {"row": slug})
-    await jobs.drain_now(state, reason)
+    jobs.drain_in_background(state, reason)

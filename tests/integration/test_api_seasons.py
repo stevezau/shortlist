@@ -45,10 +45,35 @@ def _create(client: TestClient, **overrides) -> dict:
     return r.json()
 
 
-def _row(client: TestClient, name: str, seasons: list[str]) -> dict:
-    r = client.post("/api/collections", json={"name": name, "seasons": seasons})
+def _row(client: TestClient, name: str, seasons: list[str], *, enabled: bool = True) -> dict:
+    r = client.post("/api/collections", json={"name": name, "seasons": seasons, "enabled": enabled})
     assert r.status_code == 201, r.text
     return r.json()
+
+
+def _jobs(monkeypatch) -> tuple[list[tuple[str, dict]], list[str]]:
+    """Record what a handler queues and every background drain it starts; a drain it WAITS on fails the test."""
+    from shortlist.server.services import jobs as jobs_mod
+
+    queued: list[tuple[str, dict]] = []
+    drains: list[str] = []
+
+    async def waited_on(state, reason: str) -> None:
+        raise AssertionError(f"the response waited on the queue ({reason})")
+
+    monkeypatch.setattr(jobs_mod, "enqueue", lambda sessions, kind, payload=None, **kw: queued.append((kind, payload)))
+    monkeypatch.setattr(jobs_mod, "drain_in_background", lambda state, reason: drains.append(reason))
+    monkeypatch.setattr(jobs_mod, "drain_now", waited_on)
+    return queued, drains
+
+
+def _default_row_follows(client: TestClient, slug: str) -> None:
+    """The default row cannot be given a season through the API; written directly, as an older database may hold."""
+    from shortlist.server.db.models import DEFAULT_SLUG, Collection
+
+    with client.app.state.sessions() as session:
+        session.query(Collection).filter_by(slug=DEFAULT_SLUG).one().seasons = [slug]
+        session.commit()
 
 
 def _rows(client: TestClient) -> dict[int, list[str]]:
@@ -242,28 +267,49 @@ class TestUpdate:
         assert client.put("/api/seasons/arbor-day", json=_body()).status_code == 404
         assert client.delete("/api/seasons/arbor-day").status_code == 404
 
-    def test_moving_the_date_of_a_season_a_row_follows_applies_it_now(self, client: TestClient, monkeypatch):
-        """Which days a row is shown on has just changed, as it would had the row's own seasons changed."""
-        from shortlist.server.services import jobs as jobs_mod
-
+    def test_moving_the_date_of_a_season_a_row_follows_applies_it_without_waiting(
+        self, client: TestClient, monkeypatch
+    ):
+        """Which days a row is shown on has just changed, as it would had the row's own seasons changed. Each pass
+        is a whole privacy sync, so the saved season is answered first and the passes run behind it."""
         _create(client)
         row = _row(client, "Turkey", ["thanksgiving"])
-        queued: list[tuple[str, dict]] = []
-        monkeypatch.setattr(
-            jobs_mod, "enqueue", lambda sessions, kind, payload=None, **kw: queued.append((kind, payload))
-        )
+        queued, drains = _jobs(monkeypatch)
 
         client.put("/api/seasons/thanksgiving", json=_body(name="Turkey Day"))
-        assert queued == [], "a rename changes no day the row is shown on"
+        assert (queued, drains) == ([], []), "a rename changes no day the row is shown on"
 
-        client.put("/api/seasons/thanksgiving", json=_body(lead_days=3))
+        assert client.put("/api/seasons/thanksgiving", json=_body(lead_days=3)).status_code == 200
         assert queued == [("rows.visibility", {"row": row["slug"]})]
+        assert drains == ["season 'thanksgiving' moved"]
+
+    def test_a_disabled_row_is_not_given_a_pass(self, client: TestClient, monkeypatch):
+        _create(client)
+        on = _row(client, "On", ["thanksgiving"])
+        _row(client, "Off", ["thanksgiving"], enabled=False)
+        queued, _drains = _jobs(monkeypatch)
+
+        client.put("/api/seasons/thanksgiving", json=_body(after_days=2))
+
+        assert queued == [("rows.visibility", {"row": on["slug"]})]
+
+    def test_a_rule_is_stored_without_the_fields_its_kind_ignores(self, client: TestClient, monkeypatch):
+        """So editing one of them is no edit: nothing stored changes and no row is re-applied."""
+        _create(client, rule={"kind": "nth", "month": 11, "nth": 4, "weekday": 3, "day": 20, "offset": 5})
+        _row(client, "Turkey", ["thanksgiving"])
+        queued, _drains = _jobs(monkeypatch)
+
+        r = client.put(
+            "/api/seasons/thanksgiving",
+            json=_body(rule={"kind": "nth", "month": 11, "nth": 4, "weekday": 3, "day": 9, "offset": -2}),
+        )
+
+        assert r.json()["rule"] == {"kind": "nth", "month": 11, "day": 1, "nth": 4, "weekday": 3, "offset": 0}
+        assert queued == []
 
 
 class TestDelete:
     def test_a_season_that_is_a_rows_only_season_is_not_deleted(self, client: TestClient, monkeypatch):
-        from shortlist.server.services import jobs as jobs_mod
-
         _create(client)
         a = _row(client, "Row A", ["halloween", "thanksgiving"])
         b = _row(client, "Row B", ["thanksgiving"])
@@ -281,10 +327,7 @@ class TestDelete:
         assert client.patch(
             f"/api/collections/{b['id']}", json={"name": "Row B", "seasons": ["christmas", "thanksgiving"]}
         ).is_success
-        queued: list[tuple[str, dict]] = []
-        monkeypatch.setattr(
-            jobs_mod, "enqueue", lambda sessions, kind, payload=None, **kw: queued.append((kind, payload))
-        )
+        queued, drains = _jobs(monkeypatch)
 
         assert client.delete("/api/seasons/thanksgiving").status_code == 204
 
@@ -294,6 +337,29 @@ class TestDelete:
         # Those rows no longer follow it, so whether they are on Home today is re-applied now.
         assert sorted(payload["row"] for _kind, payload in queued) == sorted([a["slug"], b["slug"]])
         assert {kind for kind, _payload in queued} == {"rows.visibility"}
+        assert drains == ["season 'thanksgiving' was deleted"], "queued behind the response, never waited on"
+
+    def test_the_default_row_is_named_as_the_rows_page_names_it(self, client: TestClient):
+        """Its title is the global `row.name_template`; its own `name` column is stale seed data."""
+        from shortlist.server.db.models import DEFAULT_SLUG
+        from shortlist.server.settings_store import SettingsStore
+
+        _create(client)
+        _default_row_follows(client, "thanksgiving")
+        with client.app.state.sessions() as session:
+            SettingsStore(session).set("row.name_template", "✨ Picked for You")
+            session.commit()
+        listed = next(c for c in client.get("/api/collections").json() if c["slug"] == DEFAULT_SLUG)
+
+        season = next(s for s in client.get("/api/seasons").json() if s["slug"] == "thanksgiving")
+        detail = client.delete("/api/seasons/thanksgiving").json()["detail"]
+
+        assert (
+            season["used_by"]
+            == [{"id": listed["id"], "name": "✨ Picked for You"}]
+            == [{"id": listed["id"], "name": listed["name"]}]
+        )
+        assert detail.startswith("“Thanksgiving” is the only season in “✨ Picked for You”.")
 
     def test_every_row_it_is_the_only_season_of_is_named(self, client: TestClient):
         _create(client)
@@ -324,6 +390,7 @@ class TestPresets:
         offered = {p["key"]: p for p in client.get("/api/seasons/presets").json()}
         assert {"thanksgiving_us", "thanksgiving_ca"} <= set(offered)
         thanksgiving = offered["thanksgiving_us"]
+        assert (thanksgiving["label"], thanksgiving["name"]) == ("Thanksgiving (US)", "Thanksgiving")
         assert thanksgiving["tags"] == [{"id": 4543, "name": "thanksgiving"}]
         assert (thanksgiving["preset"], thanksgiving["lead_days"]) == ("thanksgiving_us", 14)
         assert thanksgiving["rule"] == {"kind": "nth", "month": 11, "day": 1, "nth": 4, "weekday": 3, "offset": 0}
@@ -337,10 +404,23 @@ class TestPresets:
     def test_a_preset_posts_back_as_a_season(self, client: TestClient):
         """What the editor does with one: open it pre-filled, then save it."""
         preset = next(p for p in client.get("/api/seasons/presets").json() if p["key"] == "st_patricks_day")
-        body = {k: v for k, v in preset.items() if k not in ("key", "note")}
+        body = {k: v for k, v in preset.items() if k not in ("key", "label", "note")}
         r = client.post("/api/seasons", json=body)
         assert r.status_code == 201, r.text
         assert r.json()["excluded_genres"] == [27]
+
+    def test_two_regions_of_one_holiday_cannot_both_be_added_under_one_name(self, client: TestClient):
+        """Names are unique (D13): the second asks the owner for another name rather than titling two rows alike."""
+        offered = {p["key"]: p for p in client.get("/api/seasons/presets").json()}
+        bodies = [
+            {k: v for k, v in offered[key].items() if k not in ("key", "label", "note")}
+            for key in ("fathers_day", "fathers_day_au_nz")
+        ]
+        bodies = [{**body, "picks": [{"tmdb_id": 1, "media_type": "movie", "title": "Big Fish"}]} for body in bodies]
+
+        assert client.post("/api/seasons", json=bodies[0]).status_code == 201
+        second = client.post("/api/seasons", json=bodies[1])
+        assert (second.status_code, second.json()["detail"]) == (422, "There's already a season called “Father's Day”.")
 
 
 class TestPreview:

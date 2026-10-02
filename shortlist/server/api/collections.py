@@ -828,6 +828,18 @@ def _season_status(collection: Collection, now: datetime, *, catalogue: seasons_
     return {"showing": _season_window_view(showing), "next": _season_window_view(upcoming)}
 
 
+def row_display_name(session: Session, collection: Collection) -> str:
+    """What the Rows page calls a row.
+
+    The default row's real title is the global template (Settings → Defaults), which the engine renders per
+    library — not its stale seeded `name` column. Surfacing the template shows the actual default
+    ("✨ {library_name} Picked for You"), consistent with what delivers.
+    """
+    if collection.slug == DEFAULT_SLUG:
+        return SettingsStore(session).get("row.name_template") or collection.name
+    return collection.name
+
+
 def _serialize(
     session, collection: Collection, now: datetime | None = None, *, catalogue: seasons_mod.Catalogue
 ) -> dict:
@@ -837,12 +849,7 @@ def _serialize(
     audience_ids = [
         row.user_id for row in session.query(CollectionAudience).filter_by(collection_id=collection.id).all()
     ]
-    # The default row's real title is the global template (Settings → Defaults), which the engine
-    # renders per library — not its stale seeded `name` column. Surface the template so the Rows UI
-    # shows the actual default ("✨ {library_name} Picked for You"), consistent with what delivers.
-    name = collection.name
-    if collection.slug == DEFAULT_SLUG:
-        name = SettingsStore(session).get("row.name_template") or collection.name
+    name = row_display_name(session, collection)
     # The most recent run that delivered picks for THIS row — so the Rows UI can link straight to what
     # happened (the run detail groups its results by row). None until the row has ever built.
     last_run_id = session.query(func.max(PickRow.run_id)).filter(PickRow.collection_slug == collection.slug).scalar()
