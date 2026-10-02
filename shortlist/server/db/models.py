@@ -340,6 +340,43 @@ class CollectionAudience(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
 
 
+class SeasonDef(Base):
+    """An owner-defined season (issue #137). Built-ins live in code (`seasons.BUILTIN_SEASONS`).
+
+    Rows reference a season by `slug`, and its recipe carries it, so the slug is made from the name once,
+    at creation, and never changes. The rule columns hold every `DateRule` field whatever `rule_kind` is;
+    the kind decides which of them mean anything.
+    """
+
+    __tablename__ = "seasons"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    slug: Mapped[str] = mapped_column(String(64), unique=True)
+    name: Mapped[str] = mapped_column(String(40))
+    emoji: Mapped[str] = mapped_column(String(16))
+    rule_kind: Mapped[str] = mapped_column(String(8))
+    month: Mapped[int] = mapped_column(Integer, server_default="1")
+    day: Mapped[int] = mapped_column(Integer, server_default="1")
+    nth: Mapped[int] = mapped_column(Integer, server_default="1")
+    weekday: Mapped[int] = mapped_column(Integer, server_default="0")
+    easter_offset: Mapped[int] = mapped_column(Integer, server_default="0")
+    lead_days: Mapped[int] = mapped_column(Integer, server_default="7")
+    after_days: Mapped[int] = mapped_column(Integer, server_default="0")
+    # [{"id": int, "name": str}] — TMDB keywords; the name is kept so the editor can show it without TMDB.
+    tags: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    genre: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    excluded_genres: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    # [{"section_key", "section_title", "title"}] — by title, never ratingKey: Kometa recreates its
+    # seasonal collections under a new key every year (D5).
+    collections: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    # [{"tmdb_id", "media_type", "title", "year"}]
+    picks: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    # The preset this season was added from, so the editor stops offering it (D9).
+    preset: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class PosterAsset(Base):
     """Binary image storage for row posters: uploaded originals and cached generated images.
 

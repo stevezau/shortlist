@@ -1654,6 +1654,68 @@ class TestPickLeadSeed0093:
         assert not ({"lead_seed_tmdb_id", "lead_seed_title"} & self._columns(tmp_path))
 
 
+class TestCustomSeasons0095:
+    """0095 adds the `seasons` table for owner-defined seasons (issue #137). It starts empty, so every
+    existing row still follows only the built-ins it followed before."""
+
+    @staticmethod
+    def _columns(config_dir: Path) -> dict[str, tuple[bool, str | None]]:
+        """column -> (NOT NULL, default)."""
+        with closing(sqlite3.connect(config_dir / "shortlist.db")) as con:
+            return {r[1]: (bool(r[3]), r[4]) for r in con.execute("PRAGMA table_info(seasons)")}
+
+    def test_it_creates_an_empty_seasons_table(self, tmp_path: Path):
+        run_migrations(tmp_path)
+
+        columns = self._columns(tmp_path)
+        assert columns == {
+            "id": (True, None),
+            "slug": (True, None),
+            "name": (True, None),
+            "emoji": (True, None),
+            "rule_kind": (True, None),
+            "month": (True, "'1'"),
+            "day": (True, "'1'"),
+            "nth": (True, "'1'"),
+            "weekday": (True, "'0'"),
+            "easter_offset": (True, "'0'"),
+            "lead_days": (True, "'7'"),
+            "after_days": (True, "'0'"),
+            "tags": (True, "'[]'"),
+            "genre": (False, None),
+            "excluded_genres": (True, "'[]'"),
+            "collections": (True, "'[]'"),
+            "picks": (True, "'[]'"),
+            "preset": (False, None),
+            "created_at": (True, None),
+            "updated_at": (True, None),
+        }
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as con:
+            assert con.execute("SELECT COUNT(*) FROM seasons").fetchone() == (0,)
+
+    def test_a_slug_is_unique(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        insert = (
+            "INSERT INTO seasons (slug, name, emoji, rule_kind, created_at, updated_at) "
+            "VALUES ('diwali', ?, '🪔', 'fixed', '2026-10-02', '2026-10-02')"
+        )
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as con:
+            con.execute(insert, ("Diwali",))
+            with pytest.raises(sqlite3.IntegrityError):
+                con.execute(insert, ("Deepavali",))
+
+    def test_running_it_again_over_an_already_migrated_database_is_a_no_op(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.stamp(_alembic(tmp_path), "0094")
+        run_migrations(tmp_path)
+        assert "slug" in self._columns(tmp_path)
+
+    def test_the_downgrade_drops_the_table(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0094")
+        assert self._columns(tmp_path) == {}
+
+
 class TestRowShowDaysDowngrade0088:
     """0089's downgrade re-creates `shown_state` for any install that had it, and 0088's downgrade has to
     take it out again, or a database downgraded past 0088 keeps a column no revision below it defines."""
